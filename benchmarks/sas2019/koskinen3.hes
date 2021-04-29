@@ -1,0 +1,40 @@
+/*
+Taken from
+Koskinen and Terauchi, "Local Temporal Reasoning", CSL-LICS 2014
+
+Program:
+
+let rec halt () = Halt; halt ()
+let rec bar x = Bar; if x > 0 then bar (x - 2) else x
+let rec foo x = Foo; if x <= 0 then foo x else halt ()
+let main () = let t = * in if * then foo 0 else foo (bar t)
+
+Spec \phi: FG Foo
+
+Buchi automaton \neg \phi:
+(Foo | Halt | Bar)^* (Halt | Bar)^omega
+
+q0 Foo -> q0
+q0 Halt -> q0
+q0 Bar -> q0
+q0 Halt -> q1
+q0 Bar -> q1
+q1 Halt -> q1
+q1 Bar -> q1
+
+q1 in F
+*/
+
+exists (t: int).
+  Foo_0_ff 0 \/
+  Bar_0_ff t \/
+  (exists (r: int). Bar_0_ff_0 t r /\ Foo_0_ff r)
+s.t.
+Bar_1_tt (x: int): bool =nu
+  x > 0 /\ Bar_1_tt (x - 2);
+Foo_0_ff (x: int): bool =mu x <= 0 /\ Foo_0_ff x;
+Bar_0_ff (x: int): bool =mu
+  x > 0 /\ Bar_0_ff (x - 2) \/
+  x > 0 /\ Bar_1_tt (x - 2);
+Bar_0_ff_0 (x: int) (r: int): bool =mu
+  x > 0 /\ Bar_0_ff_0 (x - 2) r \/ x <= 0 /\ r = x;

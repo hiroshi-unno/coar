@@ -1,0 +1,44 @@
+[
+       "Sequential",
+       {
+              "phase_list": [
+                     [
+                            "S",
+                            [
+                                   "Filename",
+                                   "./config/pcsat/synthesizer/dbg_tb_ucore_woar.json"
+                            ]
+                     ],
+                     [
+                            "V",
+                            [
+                                   "Filename",
+                                   "./config/pcsat/validator/dbg_nce.json"
+                            ]
+                     ],
+                     [
+                            "C",
+                            [
+                                   "Filename",
+                                   "./config/pcsat/sat_checker/dbg_sat.json"
+                            ]
+                     ],
+                     [
+                            "R",
+                            [
+                                   "Filename",
+                                   "./config/pcsat/resolver/dbg_smt.json"
+                            ]
+                     ],
+                     [
+                            "C",
+                            [
+                                   "Filename",
+                                   "./config/pcsat/sat_checker/dbg_sat.json"
+                            ]
+                     ]
+              ],
+              "verbose": true,
+              "validate_each_candidate": true
+       }
+]

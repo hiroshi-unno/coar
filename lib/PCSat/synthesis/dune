@@ -1,0 +1,24 @@
+(library
+  (name synthesis)
+  (public_name CoAR.PCSat.synthesis)
+  (libraries
+    core
+    yojson
+    CoAR.Z3Smt
+    CoAR.SAT
+    CoAR.SATSolver
+    CoAR.PCSat.common
+    CoAR.PCSat.classification
+    CoAR.PCSat.template
+    CoAR.PCSat.qualifier)
+  (modules
+    synthesizer
+    CBSynthTemplateUpdateStrategy
+    templateUpdateStrategy
+    solutionTemplate
+    TBSynthesizer
+
+    CBSynthesizer
+    PASynthesizer)
+  (preprocess (pps ppx_deriving_yojson))
+)

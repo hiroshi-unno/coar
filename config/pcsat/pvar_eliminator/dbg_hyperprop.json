@@ -1,0 +1,8 @@
+{
+    "preprocess": true,
+    "resolution_threshold": 4,
+    "simplification_with_smt": true,
+    "num_elim_bool_vars": 4,
+    "propagate_lb_ub": true,
+    "verbose": true
+}

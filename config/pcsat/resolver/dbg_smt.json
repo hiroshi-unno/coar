@@ -1,0 +1,15 @@
+[
+    "SMT",
+    {
+        "verbose": true,
+        "only_diff": true,
+        "refute": true,
+        "decide": true,
+        "acquire_und": true,
+        "acquire_org": false,
+        "unit_prop": false,
+        "enforce_new": false,
+        "parametric_examples": true,
+        "add_unit_clause_as_is": false
+    }
+]

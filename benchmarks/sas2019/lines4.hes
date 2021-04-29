@@ -1,0 +1,10 @@
+/*
+  y = ax + b
+  y = cx + d
+  forall a, b, c, d. a > b => exists x >= 0. forall x'. x > x' => ax' + b > cx' + d
+*/
+
+forall (a: int) (b: int) (c: int) (d: int). a <= b \/ F a b c d
+s.t.
+F (a: int) (b: int) (c: int) (d: int): bool =mu G a b c d \/ F a b (c + a) (d + b);
+G (a: int) (b: int) (c: int) (d: int): bool =nu c > d /\ G a b (c + a) (d + b);

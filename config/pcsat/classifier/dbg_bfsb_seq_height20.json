@@ -1,0 +1,23 @@
+[
+    "BFSB",
+    {
+        "verbose": true,
+        "qualifier_generator": [
+            "Filename",
+            "./config/pcsat/qualifier/polyhedron023.json"
+        ],
+        "strategy": [
+            "SeqHeight",
+            20
+        ],
+        "bfsynth": [
+            "Instance",
+            [
+                "DTBF",
+                {
+                    "verbose": true
+                }
+            ]
+        ]
+    }
+]

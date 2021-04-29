@@ -1,0 +1,22 @@
+[
+    "BFSB",
+    {
+        "verbose": false,
+        "qualifier_generator": [
+            "Filename",
+            "./config/pcsat/qualifier/interval.json"
+        ],
+        "strategy": [
+            "Single"
+        ],
+        "bfsynth": [
+            "Instance",
+            [
+                "DTBF",
+                {
+                    "verbose": false
+                }
+            ]
+        ]
+    }
+]

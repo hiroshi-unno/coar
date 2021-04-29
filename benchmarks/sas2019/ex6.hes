@@ -1,0 +1,125 @@
+/* AG((AFG x=0)\/ (AFG x=1)) */
+
+X0 0
+
+s.t.
+
+X0 (x: int): bool =nu X10 x /\ X20 x;
+X1 (x: int): bool =nu X11 x /\ X21 x;
+X2 (x: int): bool =nu X12 x /\ X22 x;
+X3 (x: int): bool =nu X13 x /\ X23 x;
+X4 (x: int): bool =nu X14 x /\ X24 x;
+X5 (x: int): bool =nu X15 x /\ X25 x;
+X6 (x: int): bool =nu X16 x /\ X26 x;
+
+X10 (x: int): bool =nu X1 1;
+X11 (x: int): bool =nu X1 x /\ X4 x;
+X12 (x: int): bool =nu X5 x /\ X6 x;
+X13 (x: int): bool =nu X3 x;
+X14 (x: int): bool =nu X2 0;
+X15 (x: int): bool =nu X3 1;
+X16 (x: int): bool =nu X3 0;
+
+X20 (x: int): bool =nu Y0 x \/ U0 x;
+X21 (x: int): bool =nu Y1 x \/ U1 x;
+X22 (x: int): bool =nu Y2 x \/ U2 x;
+X23 (x: int): bool =nu Y3 x \/ U3 x;
+X24 (x: int): bool =nu Y4 x \/ U4 x;
+X25 (x: int): bool =nu Y5 x \/ U5 x;
+X26 (x: int): bool =nu Y6 x \/ U6 x;
+
+Y0 (x: int): bool =mu Z0 x;
+Y1 (x: int): bool =mu Z1 x;
+Y2 (x: int): bool =mu Z2 x;
+Y3 (x: int): bool =mu Z3 x;
+Y4 (x: int): bool =mu Z4 x;
+Y5 (x: int): bool =mu Z5 x;
+Y6 (x: int): bool =mu Z6 x;
+
+U0 (x: int): bool =mu V0 x;
+U1 (x: int): bool =mu V1 x;
+U2 (x: int): bool =mu V2 x;
+U3 (x: int): bool =mu V3 x;
+U4 (x: int): bool =mu V4 x;
+U5 (x: int): bool =mu V5 x;
+U6 (x: int): bool =mu V6 x;
+
+Z0 (x: int): bool =nu Z10 x \/ Z20 x;
+Z1 (x: int): bool =nu Z11 x \/ Z21 x;
+Z2 (x: int): bool =nu Z12 x \/ Z22 x;
+Z3 (x: int): bool =nu Z13 x \/ Z23 x;
+Z4 (x: int): bool =nu Z14 x \/ Z24 x;
+Z5 (x: int): bool =nu Z15 x \/ Z25 x;
+Z6 (x: int): bool =nu Z16 x \/ Z26 x;
+
+Z10 (x: int): bool =nu Y1 1;
+Z11 (x: int): bool =nu Y1 x /\ Y4 x;
+Z12 (x: int): bool =nu Y5 x /\ Y6 x;
+Z13 (x: int): bool =nu Y3 x;
+Z14 (x: int): bool =nu Y2 0;
+Z15 (x: int): bool =nu Y3 1;
+Z16 (x: int): bool =nu Y3 0;
+
+Z20 (x: int): bool =nu Z210 x /\ Z220 x;
+Z21 (x: int): bool =nu Z211 x /\ Z221 x;
+Z22 (x: int): bool =nu Z212 x /\ Z222 x;
+Z23 (x: int): bool =nu Z213 x /\ Z223 x;
+Z24 (x: int): bool =nu Z214 x /\ Z224 x;
+Z25 (x: int): bool =nu Z215 x /\ Z225 x;
+Z26 (x: int): bool =nu Z216 x /\ Z226 x;
+
+Z210 (x: int): bool =nu x = 0;
+Z211 (x: int): bool =nu x = 0;
+Z212 (x: int): bool =nu x = 0;
+Z213 (x: int): bool =nu x = 0;
+Z214 (x: int): bool =nu x = 0;
+Z215 (x: int): bool =nu x = 0;
+Z216 (x: int): bool =nu x = 0;
+
+Z220 (x: int): bool =nu Z1 1;
+Z221 (x: int): bool =nu Z1 x /\ Z4 x;
+Z222 (x: int): bool =nu Z5 x /\ Z6 x;
+Z223 (x: int): bool =nu Z3 x;
+Z224 (x: int): bool =nu Z2 0;
+Z225 (x: int): bool =nu Z3 1;
+Z226 (x: int): bool =nu Z3 0;
+
+V0 (x: int): bool =nu V10 x \/ V20 x;
+V1 (x: int): bool =nu V11 x \/ V21 x;
+V2 (x: int): bool =nu V12 x \/ V22 x;
+V3 (x: int): bool =nu V13 x \/ V23 x;
+V4 (x: int): bool =nu V14 x \/ V24 x;
+V5 (x: int): bool =nu V15 x \/ V25 x;
+V6 (x: int): bool =nu V16 x \/ V26 x;
+
+V10 (x: int): bool =nu U1 1;
+V11 (x: int): bool =nu U1 x /\ U4 x;
+V12 (x: int): bool =nu U5 x /\ U6 x;
+V13 (x: int): bool =nu U3 x;
+V14 (x: int): bool =nu U2 0;
+V15 (x: int): bool =nu U3 1;
+V16 (x: int): bool =nu U3 0;
+
+V20 (x: int): bool =nu V210 x /\ V220 x;
+V21 (x: int): bool =nu V211 x /\ V221 x;
+V22 (x: int): bool =nu V212 x /\ V222 x;
+V23 (x: int): bool =nu V213 x /\ V223 x;
+V24 (x: int): bool =nu V214 x /\ V224 x;
+V25 (x: int): bool =nu V215 x /\ V225 x;
+V26 (x: int): bool =nu V216 x /\ V226 x;
+
+V210 (x: int): bool =nu x = 1;
+V211 (x: int): bool =nu x = 1;
+V212 (x: int): bool =nu x = 1;
+V213 (x: int): bool =nu x = 1;
+V214 (x: int): bool =nu x = 1;
+V215 (x: int): bool =nu x = 1;
+V216 (x: int): bool =nu x = 1;
+
+V220 (x: int): bool =nu V1 1;
+V221 (x: int): bool =nu V1 x /\ V4 x;
+V222 (x: int): bool =nu V5 x /\ V6 x;
+V223 (x: int): bool =nu V3 x;
+V224 (x: int): bool =nu V2 0;
+V225 (x: int): bool =nu V3 1;
+V226 (x: int): bool =nu V3 0;

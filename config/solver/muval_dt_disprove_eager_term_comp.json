@@ -1,0 +1,21 @@
+[
+    "MuVal",
+    {
+        "pcsp_solver": [
+            "Filename",
+            "./config/solver/pcsat_dt.json"
+        ],
+        "qelim": {
+            "mode": [
+                "SkolemPred"
+            ],
+            "verbose": false
+        },
+        "mode": [
+            "Disprove"
+        ],
+        "check_problem": false,
+        "verbose": false,
+        "output_iteration": false
+    }
+]

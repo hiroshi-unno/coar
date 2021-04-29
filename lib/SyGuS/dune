@@ -1,0 +1,18 @@
+
+(library
+  (name SyGuS)
+  (public_name CoAR.SyGuS)
+  (libraries
+    num
+    core
+    z3
+    CoAR.ast
+    CoAR.common
+    CoAR.Z3Smt)
+  (modules
+    invParser
+    invPrinter
+    parser
+    printer
+    problem)
+  (synopsis "interface for SyGuS-IF"))

@@ -1,0 +1,9 @@
+{
+    "verbose": false,
+    "num_of_examples": null,
+    "strategy_synthesis": false,
+    "parametric_candidates": true,
+    "parametric_examples": true,
+    "rl": true,
+    "smt_timeout": null
+}

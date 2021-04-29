@@ -1,0 +1,16 @@
+(library
+  (name satChecking)
+  (public_name CoAR.PCSat.satChecking)
+  (libraries
+    core
+    yojson
+    ocamlgraph
+    CoAR.pCSP
+    CoAR.SAT
+    CoAR.SATSolver
+    CoAR.PCSat.common)
+  (modules
+    loopDetector
+    satChecker)
+  (preprocess (pps ppx_deriving_yojson))
+)

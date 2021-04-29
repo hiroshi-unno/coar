@@ -1,0 +1,9 @@
+(executable
+  (name main)
+  (public_name main)
+  (libraries
+    core
+    async
+    CoAR)
+  (preprocess (pps ppx_deriving.std))
+  (flags (-cclib -lstdc++)))

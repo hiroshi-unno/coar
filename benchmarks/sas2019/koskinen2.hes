@@ -1,0 +1,40 @@
+/*
+Taken from
+Koskinen and Terauchi, "Local Temporal Reasoning", CSL-LICS 2014
+
+Program:
+
+let rec print x = Print; print x
+let rec rumble x y =
+  Rumble;
+  if x < y then
+    if * then rumble (x + 1) y else rumble x (y - 1)
+  else x
+
+let main () =
+  let a = * in
+  let b = * in
+  print (rumble a (rumble b a)
+
+Spec \phi: F Print
+
+Buchi automaton \neg \phi:
+Rumble^omega
+
+q0 Rumble -> q0
+
+q0 in F
+*/
+
+exists (a: int).
+exists (b: int).
+  Rumble_0_ff b a \/
+  (exists (r: int). Rumble_0_tt_0 b a r /\ Rumble_0_tt a r)
+s.t.
+Rumble_0_tt (x: int) (y: int): bool =nu
+  x < y /\ (Rumble_0_tt (x + 1) y \/ Rumble_0_tt x (y - 1));
+Rumble_0_ff (x: int) (y: int): bool =mu
+  x < y /\ (Rumble_0_tt (x + 1) y \/ Rumble_0_tt x (y - 1));
+Rumble_0_tt_0 (x: int) (y: int) (r: int): bool =mu
+  x < y /\ (Rumble_0_tt_0 (x + 1) y r \/ Rumble_0_tt_0 x (y - 1) r) \/
+  x >= y /\ r = x;

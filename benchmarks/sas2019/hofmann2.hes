@@ -1,0 +1,68 @@
+/*
+Taken from
+Hofmann and Chen, "Buchi Types for Infinite Traces and Liveness", CSL-LICS 2014
+
+Program:
+
+let rec inner_loop i s =
+  if i < 1024 && not (s=0) then
+    let s = * in
+    inner_loop (i+1) s
+  else (C; 0)
+let rec loop () = let _ = inner_loop 0 0 in B; loop ()
+let main () = loop ()
+
+Spec \phi:
+if C occurs infinitely often, so does B
+
+Buchi automaton \neg \phi:
+(B | C)^* C^omega
+
+q0 B -> q0
+q0 C -> q0
+q0 C -> q1
+q1 C -> q1
+
+q1 in F
+*/
+
+Loop_0_ff 0
+s.t.
+Loop_0_tt (dummy: int): bool =nu
+  Inner_loop_0_ff 0 0 \/
+  (exists (r: int). Inner_loop_0_ff_0 0 0 r /\ Loop_0_ff 0) \/
+  (exists (r: int). Inner_loop_0_tt_0 0 0 r /\ Loop_0_tt 0);
+Inner_loop_1_tt (i: int) (s: int): bool =nu
+  i < 1024 /\ s != 0 /\
+  (exists (s: int). Inner_loop_1_ff (i+1) s);
+Loop_0_ff (dummy: int): bool =mu
+  Inner_loop_0_ff 0 0 \/
+  (exists (r: int). Inner_loop_0_ff_0 0 0 r /\ Loop_0_ff 0) \/
+  (exists (r: int). Inner_loop_0_tt_0 0 0 r /\ Loop_0_tt 0);
+Inner_loop_0_ff (i: int) (s: int): bool =mu
+  i < 1024 /\ s != 0 /\
+  (exists (s: int). Inner_loop_0_ff (i+1) s);
+Inner_loop_1_ff (i: int) (s: int): bool =mu
+  i < 1024 /\ s != 0 /\
+  (exists (s: int). Inner_loop_1_ff (i+1) s);
+Inner_loop_0_ff_0 (i: int) (s: int) (r: int): bool =mu
+  i < 1024 /\ s != 0 /\
+  (exists (s: int). Inner_loop_0_ff_0 (i+1) s r) \/
+  (i >= 1024 \/ s = 0) /\ r = 0;
+Inner_loop_0_tt_0 (i: int) (s: int) (r: int): bool =mu
+  i < 1024 /\ s != 0 /\
+  (exists (s: int). Inner_loop_0_tt_0 (i+1) s r);
+Inner_loop_0_tt_1 (i: int) (s: int) (r: int): bool =mu
+  i < 1024 /\ s != 0 /\
+  (exists (s: int). Inner_loop_0_tt_1 (i+1) s r) \/
+  (i >= 1024 \/ s = 0) /\ r = 0;
+Inner_loop_1_ff_0 (i: int) (s: int) (r: int): bool =mu
+  i < 1024 /\ s != 0 /\
+  (exists (s: int). Inner_loop_1_ff_0 (i+1) s r);
+Inner_loop_1_tt_0 (i: int) (s: int) (r: int): bool =mu
+  i < 1024 /\ s != 0 /\
+  (exists (s: int). Inner_loop_1_tt_0 (i+1) s r);
+Inner_loop_1_tt_1 (i: int) (s: int) (r: int): bool =mu
+  i < 1024 /\ s != 0 /\
+  (exists (s: int). Inner_loop_1_tt_1 (i+1) s r) \/
+  (i >= 1024 \/ s = 0) /\ r = 0;

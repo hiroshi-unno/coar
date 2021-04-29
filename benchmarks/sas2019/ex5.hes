@@ -1,0 +1,29 @@
+X0 0
+s.t.
+X0 (x: int): bool =nu Y0 x;
+X1 (x: int): bool =nu Y1 x;
+X2 (x: int): bool =nu Y2 x;
+Y0 (x: int): bool =mu Y10 x \/ Y20 x;
+Y1 (x: int): bool =mu Y11 x \/ Y21 x;
+Y2 (x: int): bool =mu Y12 x \/ Y22 x;
+Y10 (x: int): bool =mu forall (x: int). Y1 x;
+Y11 (x: int): bool =mu (0 >= x /\ Y0 x) \/ (x >= 1 /\ Y2 x);
+Y12 (x: int): bool =mu Y1 (x - 1);
+Y20 (x: int): bool =mu Y210 x \/ Z0 x;
+Y21 (x: int): bool =mu Y211 x \/ Z1 x;
+Y22 (x: int): bool =mu Y212 x \/ Z2 x;
+Y210 (x: int): bool =mu 0 >= x;
+Y211 (x: int): bool =mu 0 >= x;
+Y212 (x: int): bool =mu 0 >= x;
+Z0 (x: int): bool =mu Z10 x \/ Z20 x;
+Z1 (x: int): bool =mu Z11 x \/ Z21 x;
+Z2 (x: int): bool =mu Z12 x \/ Z22 x;
+Z10 (x: int): bool =mu exists (x: int). Z1 x;
+Z12 (x: int): bool =mu Z1 (x - 1);
+Z11 (x: int): bool =mu (0 >= x /\ Z0 x) \/ (x >= 1 /\ Z2 x);
+Z20 (x: int): bool =mu Z210 x /\ X0 x;
+Z21 (x: int): bool =mu Z211 x /\ X1 x;
+Z22 (x: int): bool =mu Z212 x /\ X2 x;
+Z210 (x: int): bool =mu x >= 1;
+Z211 (x: int): bool =mu x >= 1;
+Z212 (x: int): bool =mu x >= 1;

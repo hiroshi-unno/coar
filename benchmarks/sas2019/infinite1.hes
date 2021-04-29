@@ -1,0 +1,13 @@
+/*
+  'A' infinitely executes in
+  let f n m =
+    if n < m then
+      A; f (n + 1) m
+    else
+      f n (m + 1)
+*/
+
+forall (m: int) (n: int). F n m
+s.t.
+F (n: int) (m: int): bool =nu (n >= m \/ F (n + 1) m) /\ (n < m \/ G n (m + 1));
+G (n: int) (m: int): bool =mu (n >= m \/ F (n + 1) m) /\ (n < m \/ G n (m + 1));

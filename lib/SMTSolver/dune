@@ -1,0 +1,14 @@
+(library
+  (name SMTSolver)
+  (public_name CoAR.SMTSolver)
+  (libraries
+    CoAR.Z3Smt
+    SMT
+    core
+    yojson
+    common
+    ast)
+  (modules
+    solver
+    config)
+  (preprocess (pps ppx_deriving_yojson)))

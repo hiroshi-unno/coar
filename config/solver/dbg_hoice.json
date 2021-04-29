@@ -1,0 +1,8 @@
+[
+    "Hoice",
+    {
+        "timeout": null,
+        "produce_proofs": false,
+        "verbose": true
+    }
+]

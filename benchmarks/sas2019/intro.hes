@@ -1,0 +1,104 @@
+/*
+Taken from
+Murase et al., "Temporal Verification of Higher-order Functional Programs", POPL 2016
+
+Program:
+
+let rec f x =
+  B;
+  if x < 0 then 0
+  else if x = 0 then (A; 0)
+  else let _ = f 0 in f 1
+let rec loop () = C; loop ()
+let rec main () = let x = * in let _ = f x in loop ()
+
+Spec \phi:
+A or C occurs infinitely often
+
+Buchi automaton:
+(A | B | C)^* B^omega
+
+q0 A -> q0
+q0 B -> q0
+q0 C -> q0
+q0 B -> q1
+q1 B -> q1
+
+q1 in F
+
+*/
+
+exists (x: int).
+  F_0_ff x /*\/
+  (exists (r: int). F_0_ff_0 x r /\ Loop_0_ff r) \/
+  (exists (r: int). F_0_tt_0 x r /\ Loop_0_tt r) \/
+  (exists (r: int). F_0_tt_1 x r /\ Loop_1_tt r)*/
+
+s.t.
+
+F_0_tt (x: int): bool =nu
+  x > 0 /\
+  (F_0_ff 0 \/
+   (exists (r: int). F_0_ff_0 0 r /\ F_0_ff 1) \/
+   (exists (r: int). F_0_tt_0 0 r /\ F_0_tt 1) \/
+   (exists (r: int). F_0_tt_1 0 r /\ F_1_tt 1) \/
+   F_1_tt 0 \/
+   (exists (r: int). F_1_tt_0 0 r /\ F_0_tt 1) \/
+   (exists (r: int). F_1_tt_1 0 r /\ F_1_tt 1));
+F_1_tt (x: int): bool =nu
+  x > 0 /\
+  (F_1_tt 0 \/
+   (exists (r: int). F_1_tt_0 0 r /\ F_0_tt 1) \/
+   (exists (r: int). F_1_tt_1 0 r /\ F_1_tt 1));
+F_0_ff (x: int): bool =mu
+  x > 0 /\
+  (F_0_ff 0 \/
+   (exists (r: int). F_0_ff_0 0 r /\ F_0_ff 1) \/
+   (exists (r: int). F_0_tt_0 0 r /\ F_0_tt 1) \/
+   (exists (r: int). F_0_tt_1 0 r /\ F_1_tt 1) \/
+   F_1_tt 0 \/
+   (exists (r: int). F_1_tt_0 0 r /\ F_0_tt 1) \/
+   (exists (r: int). F_1_tt_1 0 r /\ F_1_tt 1));
+F_1_ff (x: int): bool =mu
+  x > 0 /\
+  (F_1_tt 0 \/
+   (exists (r: int). F_1_tt_0 0 r /\ F_0_tt 1) \/
+   (exists (r: int). F_1_tt_1 0 r /\ F_1_tt 1));
+
+
+F_0_ff_0 (x: int) (r: int): bool =mu
+  x < 0 /\ r = 0 \/
+  x = 0 /\ r = 0 \/
+  x > 0 /\ (exists (s: int). F_0_ff_0 0 s /\ F_0_ff_0 1 r);
+
+F_0_tt_0 (x: int) (r: int): bool =mu
+  x > 0 /\
+  ((exists (s: int). F_0_ff_0 0 r /\ F_0_tt_0 1 r) \/
+   (exists (s: int). F_0_tt_0 0 r /\ F_0_ff_0 1 r) \/
+   (exists (s: int). F_0_tt_0 0 r /\ F_0_tt_0 1 r) \/
+   (exists (s: int). F_0_tt_1 0 r /\ F_1_tt_0 1 r)) \/
+  x > 0 /\
+  ((exists (s: int). F_1_tt_0 0 r /\ F_0_ff_0 1 r) \/
+   (exists (s: int). F_1_tt_0 0 r /\ F_0_tt_0 1 r) \/
+   (exists (s: int). F_1_tt_1 0 r /\ F_1_tt_0 1 r));
+
+F_0_tt_1 (x: int) (r: int): bool =mu
+  x > 0 /\
+  ((exists (s: int). F_0_ff_0 0 r /\ F_0_tt_1 1 r) \/
+   (exists (s: int). F_0_tt_0 0 r /\ F_0_tt_1 1 r) \/
+   (exists (s: int). F_0_tt_1 0 r /\ F_1_tt_1 1 r)) \/
+  x < 0 \/
+  x > 0 /\
+  ((exists (s: int). F_1_tt_0 0 r /\ F_0_tt_1 1 r) \/
+   (exists (s: int). F_1_tt_1 0 r /\ F_1_tt_1 1 r));
+
+F_1_tt_0 (x: int) (r: int): bool =mu
+  x > 0 /\
+  ((exists (s: int). F_1_tt_0 0 r /\ F_0_ff_0 1 r) \/
+   (exists (s: int). F_1_tt_0 0 r /\ F_0_tt_0 1 r) \/
+   (exists (s: int). F_1_tt_1 0 r /\ F_1_tt_0 1 r));
+
+F_1_tt_1 (x: int) (r: int): bool =mu
+  x > 0 /\
+  ((exists (s: int). F_1_tt_0 0 r /\ F_0_tt_1 1 r) \/
+   (exists (s: int). F_1_tt_1 0 r /\ F_1_tt_1 1 r));

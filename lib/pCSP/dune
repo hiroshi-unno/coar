@@ -1,0 +1,21 @@
+(library
+  (name pCSP)
+  (public_name CoAR.pCSP)
+  (libraries
+    core
+    CoAR.ast
+    CoAR.common
+    CoAR.SyGuS
+    CoAR.SMT
+    CoAR.LTS)
+  (modules
+    params
+    problem
+    LPParser
+    LPLexer
+    parser
+    forwardPropagate)
+  (synopsis "The definition of pfwCSP"))
+
+(ocamllex (modules LPLexer))
+(menhir (modules LPParser))

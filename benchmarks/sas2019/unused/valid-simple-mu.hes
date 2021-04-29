@@ -1,0 +1,10 @@
+/*
+forall (x: int). x >= 0 <=> F x
+s.t.
+F (x: int): bool =mu x = 0 \/ F (x - 1);
+*/
+
+forall (x: int). (x < 0 \/ F x) /\ (x >= 0 \/ F' x)
+s.t.
+F (x: int): bool =mu x = 0 \/ F (x - 1);
+F' (x: int): bool =mu x != 0 /\ F' (x - 1);

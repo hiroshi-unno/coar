@@ -1,0 +1,14 @@
+(library
+  (name common)
+  (public_name CoAR.common)
+  (libraries
+    core
+    zarith
+    yojson)
+  (modules
+    util
+    debug
+    contFrac
+  )
+  (preprocess (pps ppx_deriving_yojson))
+)

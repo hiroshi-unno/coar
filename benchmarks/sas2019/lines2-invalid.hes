@@ -1,0 +1,10 @@
+/*
+  forall a, b. F a b
+  F a b =mu G a b \/ F (a + 2) (b + 1)
+  G a b =nu a > b /\ G (a + 2) (b + 1) /\ F b a
+*/
+
+forall (m: int) (n: int). F n m
+s.t.
+F (a: int) (b: int): bool =mu G a b \/ F (a + 2) (b + 1);
+G (a: int) (b: int): bool =nu a > b /\ G (a + 2) (b + 1) /\ F a a;

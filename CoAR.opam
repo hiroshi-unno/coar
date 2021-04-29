@@ -1,0 +1,26 @@
+opam-version: "2.0"
+name: "CoAR"
+version: "1.0"
+maintainer: "Hiroshi Unno <uhiro@cs.tsukuba.ac.jp>"
+authors: "Hiroshi Unno <uhiro@cs.tsukuba.ac.jp>"
+homepage: "https://github.com/hiroshi-unno/coar"
+bug-reports: "https://github.com/hiroshi-unno/coar/issues"
+synopsis: "Collection of Automated Reasoners"
+description: ""
+pin-depends: [
+  ["libsvm.0.10.0~modified" "git+https://github.com/umedaikiti/libsvm-ocaml.git"]
+]
+depends: [
+  "ocaml"
+  "zarith" {>= "1.9"}
+  "z3" {>= "4.8.7"}
+  "core"
+  "minisat"
+  "menhir"
+  "yojson"
+  "ppx_deriving_yojson"
+  "async"
+  "ocamlgraph"
+  "libsvm" {= "0.10.0~modified"}
+]
+build: ["dune" "build"]

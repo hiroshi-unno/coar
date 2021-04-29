@@ -1,0 +1,14 @@
+[
+    "RGB",
+    {
+        "verbose": true,
+        "qualifier_generator": [
+            "Filename",
+            "./config/pcsat/qualifier/polyhedron023.json"
+        ],
+        "regressor": [
+            "Filename",
+            "./config/pcsat/regressor/dbg_dt.json"
+        ]
+    }
+]

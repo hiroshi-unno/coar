@@ -1,0 +1,6 @@
+X0 0 0
+s.t.
+X0 (x: int) (y: int): bool =nu x + y >= 0 /\ Y1 (x - 1) y;
+X1 (x: int) (y: int): bool =nu x + y >= 0 /\ Y0 x (y + 1);
+Y0 (x: int) (y: int): bool =nu X1 (x - 1) y;
+Y1 (x: int) (y: int): bool =nu X0 x (y + 1);

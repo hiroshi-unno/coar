@@ -1,0 +1,4 @@
+#! /bin/bash
+
+export LD_LIBRARY_PATH=./
+./main.exe -c ./config/solver/pcsat_tb_ucore_chc_comp_ar_cf_thr.json -p pcsp $1

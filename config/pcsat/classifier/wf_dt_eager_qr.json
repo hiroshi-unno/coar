@@ -1,0 +1,13 @@
+[
+    "DT",
+    {
+        "verbose": false,
+		"lex_deg": 2,
+		"qualifier": "octagon",
+		"approx_level": 0,
+		"csvm": 10.0,
+		"eager_halfspace_gen": true,
+		"optimize_sum_coeff": true,
+		"qualifier_reduction": true
+    }
+]

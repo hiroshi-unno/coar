@@ -1,0 +1,14 @@
+.merlin
+.DS_Store
+_build
+dune-project
+coar.install
+src/.merlin
+z3.log
+*~
+*.csv
+*.code-workspace
+output*
+.vscode
+__pycache__
+benchmarks/cannotpush/*

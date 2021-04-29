@@ -1,0 +1,18 @@
+[
+  "Classification",
+  {
+    "verbose": false,
+    "classifier": [
+      "Filename",
+      "./config/pcsat/classifier/bfsb_svm.json"
+    ],
+    "wf_classifier": [
+      "Filename",
+      "./config/pcsat/classifier/wf_dt_eager.json"
+    ],
+    "fn_classifier": [
+      "Filename",
+      "./config/pcsat/classifier/fn_tb_thr.json"
+    ]
+  }
+]

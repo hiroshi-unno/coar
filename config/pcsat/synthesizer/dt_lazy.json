@@ -1,0 +1,18 @@
+[
+  "Classification",
+  {
+    "verbose": false,
+    "classifier": [
+      "Filename",
+      "./config/pcsat/classifier/bfsb.json"
+    ],
+    "wf_classifier": [
+      "Filename",
+      "./config/pcsat/classifier/wf_dt_lazy.json"
+    ],
+    "fn_classifier": [
+      "Filename",
+      "./config/pcsat/classifier/fn_tb.json"
+    ]
+  }
+]

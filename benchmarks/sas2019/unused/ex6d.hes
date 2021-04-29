@@ -1,0 +1,79 @@
+/* A(FG x=0 \/ FG x=1)
+
+negation: E(GF x/=0 /\ GF xF x/=1)
+is expressed by:
+nu X.mu Y.(<>Y \/ (x=/=0 /\ mu Z.<>Z \/ (x=/=1 /\ <>X)))
+(there is a path in which both x=/=0 and x=/=1 happen infinitely often)
+
+Thus, A(FG x=0 \/ FG x=1)
+is expressed by:
+mu X.nu Y.([]Y /\ (x=0 \/ nu Z.[]Z /\ (x=1\/[]X)))
+*/
+
+X0 0
+
+s.t.
+
+X0 (x: int): bool =mu Y0 x;
+X1 (x: int): bool =mu Y1 x;
+X2 (x: int): bool =mu Y2 x;
+X3 (x: int): bool =mu Y3 x;
+X4 (x: int): bool =mu Y4 x;
+X5 (x: int): bool =mu Y5 x;
+X6 (x: int): bool =mu Y6 x;
+
+Y0 (x: int): bool =nu Y10 x /\ Y20 x;
+Y1 (x: int): bool =nu Y11 x /\ Y21 x;
+Y2 (x: int): bool =nu Y12 x /\ Y22 x;
+Y3 (x: int): bool =nu Y13 x /\ Y23 x;
+Y4 (x: int): bool =nu Y14 x /\ Y24 x;
+Y5 (x: int): bool =nu Y15 x /\ Y25 x;
+Y6 (x: int): bool =nu Y16 x /\ Y26 x;
+
+Y10 (x: int): bool =nu Y1 1;
+Y11 (x: int): bool =nu Y1 x /\ Y4 x;
+Y12 (x: int): bool =nu Y5 x /\ Y6 x;
+Y13 (x: int): bool =nu Y3 x;
+Y14 (x: int): bool =nu Y2 0;
+Y15 (x: int): bool =nu Y3 1;
+Y16 (x: int): bool =nu Y3 0;
+
+Y20 (x: int): bool =nu (x=0) \/ Z0 x;
+Y21 (x: int): bool =nu (x=0) \/ Z1 x;
+Y22 (x: int): bool =nu (x=0) \/ Z2 x;
+Y23 (x: int): bool =nu (x=0) \/ Z3 x;
+Y24 (x: int): bool =nu (x=0) \/ Z4 x;
+Y25 (x: int): bool =nu (x=0) \/ Z5 x;
+Y26 (x: int): bool =nu (x=0) \/ Z6 x;
+
+Z0 (x: int): bool =nu Z10 x /\ Z20 x;
+Z1 (x: int): bool =nu Z11 x /\ Z21 x;
+Z2 (x: int): bool =nu Z12 x /\ Z22 x;
+Z3 (x: int): bool =nu Z13 x /\ Z23 x;
+Z4 (x: int): bool =nu Z14 x /\ Z24 x;
+Z5 (x: int): bool =nu Z15 x /\ Z25 x;
+Z6 (x: int): bool =nu Z16 x /\ Z26 x;
+
+Z10 (x: int): bool =nu Z1 1;
+Z11 (x: int): bool =nu Z1 x /\ Z4 x;
+Z12 (x: int): bool =nu Z5 x /\ Z6 x;
+Z13 (x: int): bool =nu Z3 x;
+Z14 (x: int): bool =nu Z2 0;
+Z15 (x: int): bool =nu Z3 1;
+Z16 (x: int): bool =nu Z3 0;
+
+Z20 (x: int): bool =nu (x=1) \/ Z220 x;
+Z21 (x: int): bool =nu (x=1) \/ Z221 x;
+Z22 (x: int): bool =nu (x=1) \/ Z222 x;
+Z23 (x: int): bool =nu (x=1) \/ Z223 x;
+Z24 (x: int): bool =nu (x=1) \/ Z224 x;
+Z25 (x: int): bool =nu (x=1) \/ Z225 x;
+Z26 (x: int): bool =nu (x=1) \/ Z226 x;
+
+Z220 (x: int): bool =nu X1 1;
+Z221 (x: int): bool =nu X1 x /\ X4 x;
+Z222 (x: int): bool =nu X5 x /\ X6 x;
+Z223 (x: int): bool =nu X3 x;
+Z224 (x: int): bool =nu X2 0;
+Z225 (x: int): bool =nu X3 1;
+Z226 (x: int): bool =nu X3 0;

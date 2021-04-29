@@ -1,0 +1,27 @@
+/*
+forall n, m.
+    for all timing, A and B occurs in the future
+    iff m > 0
+
+  let f x y =
+    if x > 0 then
+      A; f (x - y) y
+    else
+      B; f (x + y) y
+*/
+/*
+  forall n, m. m > 0 <=> F n m
+  s.t.
+  F x y =nu A x y /\ B x y /\ (x > 0 => F (x - y) y) /\ (x <= 0 => F (x + y) y);
+  A x y =mu x <= 0 => A (x + y) y;
+  B x y =mu x > 0 => B (x - y) y;
+*/
+
+forall (m: int) (n: int). (m <= 0 \/ F n m) /\ (F2 n m \/ m > 0)
+s.t.
+F2 (x: int) (y: int): bool =mu A2 x y \/ B2 x y \/ x <= 0 /\ F2 (x + y) y \/ x > 0 /\ F2 (x - y) y;
+B2 (x: int) (y: int): bool =nu x > 0 /\ B2 (x - y) y;
+A2 (x: int) (y: int): bool =nu x <= 0 /\ A2 (x + y) y;
+F (x: int) (y: int): bool =nu A x y /\ B x y /\ (x > 0 \/ F (x + y) y) /\ (x <= 0 \/ F (x - y) y);
+B (x: int) (y: int): bool =mu x <= 0 \/ B (x - y) y;
+A (x: int) (y: int): bool =mu x > 0 \/ A (x + y) y;

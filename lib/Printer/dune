@@ -1,0 +1,14 @@
+(library
+  (name Printer)
+  (public_name CoAR.Printer)
+  (libraries
+    core
+    async
+    common
+    muCLP
+    pCSP)
+  (modules
+    config
+    solver)
+  (preprocess (pps ppx_deriving_yojson))
+)

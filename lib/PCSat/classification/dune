@@ -1,0 +1,22 @@
+(library
+  (name classification)
+  (public_name CoAR.PCSat.classification)
+  (libraries
+    core
+    yojson
+    CoAR.Z3Smt
+    CoAR.PCSat.common
+    CoAR.PCSat.bf_synthesis
+    CoAR.PCSat.regression
+    CoAR.PCSat.template
+    CoAR.PCSat.qualifier)
+  (modules
+    classifier
+    WFClassifier
+    FNClassifier
+    TB_Classifier
+    BFSB_Classifier
+    DT_WFClassifier
+    RGB_FNClassifier)
+  (preprocess (pps ppx_deriving_yojson))
+)

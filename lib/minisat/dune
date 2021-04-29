@@ -1,0 +1,13 @@
+(library
+  (name MINISAT)
+  (public_name CoAR.MINISAT)
+  (libraries
+    minisat
+    core
+    async
+    CoAR.SAT)
+  (modules
+    config
+    solver)
+  (preprocess (pps ppx_deriving_yojson))
+)

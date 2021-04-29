@@ -1,0 +1,15 @@
+(library
+  (name PCSat)
+  (public_name CoAR.PCSat)
+  (libraries
+    CoAR.pCSP
+    CoAR.SMT
+    CoAR.PCSat.template
+    CoAR.PCSat.coordination)
+  (modules
+    config
+    pvarEliminator
+    solver)
+  (preprocess (pps ppx_deriving_yojson))
+  (synopsis "A pfwCSP solver based on CEGIS")
+)

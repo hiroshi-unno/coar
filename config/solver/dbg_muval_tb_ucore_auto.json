@@ -1,0 +1,21 @@
+[
+    "MuVal",
+    {
+        "pcsp_solver": [
+            "Filename",
+            "./config/solver/dbg_pcsat_tb_ucore.json"
+        ],
+        "qelim": {
+            "mode": [
+                "SkolemPred"
+            ],
+            "verbose": true
+        },
+        "mode": [
+            "Auto"
+        ],
+        "check_problem": true,
+        "verbose": true,
+        "output_iteration": true
+    }
+]

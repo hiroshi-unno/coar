@@ -1,0 +1,16 @@
+(library
+  (name Hoice)
+  (public_name CoAR.Hoice)
+  (libraries
+    core
+    yojson
+    str
+    z3
+    CoAR.common
+    CoAR.Z3Smt
+    CoAR.pCSP)
+  (modules
+    config
+    solver)
+  (preprocess (pps ppx_deriving_yojson))
+)

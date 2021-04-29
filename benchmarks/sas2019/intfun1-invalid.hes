@@ -1,0 +1,14 @@
+/*
+  'A' executes infinitely in g x for all x >= 0
+  where g is defined below:
+
+  let f x = if x = 0 then 3 else f (x - 3) in
+  let g x =
+    if x >= 0 then
+      A; let a = f x in g (x + a)
+*/
+
+forall (n: int) (x: int). x < 0 \/ G n
+s.t.
+G (x: int): bool =nu x >= 0 /\ F x;
+F (x: int): bool =mu x = 0 /\ G 3 \/ x != 0 /\ F (x - 3);

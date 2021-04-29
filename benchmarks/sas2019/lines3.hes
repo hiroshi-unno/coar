@@ -1,0 +1,4 @@
+forall (m: int) (n: int). n <= m \/ G n m
+s.t.
+G (a: int) (b: int): bool =nu a > b /\ G (a + 2) (b + 1) /\ F b a;
+F (a: int) (b: int): bool =mu G a b \/ F (a + 2) (b + 1);

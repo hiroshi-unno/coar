@@ -1,0 +1,16 @@
+(library
+  (name bf_synthesis)
+  (public_name CoAR.PCSat.bf_synthesis)
+  (libraries
+    core
+    yojson
+    CoAR.SMT
+    CoAR.pCSP
+    CoAR.Z3Smt
+    CoAR.PCSat.common)
+  (modules
+    BFSynthesizer
+    DT_BFSynthesizer
+    SCQM_BFSynthesizer)
+  (preprocess (pps ppx_deriving_yojson))
+)

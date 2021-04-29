@@ -1,0 +1,5 @@
+// X n => n >= 0
+forall (n: int). X n \/ n >= 0
+s.t.
+X (x: int): bool =mu X (x + 1) \/ Y x;
+Y (y: int): bool =nu y != 0 /\ Y (y - 1);

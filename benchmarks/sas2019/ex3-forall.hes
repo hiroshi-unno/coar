@@ -1,0 +1,6 @@
+forall (x: int). F_0_ff x
+s.t.
+F_0_tt (x: int): bool =nu exists (r: int). (G_0_ff_1 x r /\ F_0_tt r);
+F_0_ff (x: int): bool =mu exists (r: int). (G_0_ff_1 x r /\ F_0_tt r);
+G_0_ff_1 (x: int) (r: int): bool =mu (x >= 0 /\ G_1_ff_1 (x - 1) r) \/ (x < 0 /\ r = 5);
+G_1_ff_1 (x: int) (r: int): bool =mu (x >= 0 /\ G_1_ff_1 (x - 1) r) \/ (x < 0 /\ r = 5);

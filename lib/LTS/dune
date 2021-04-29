@@ -1,0 +1,15 @@
+(ocamllex (modules T2Lexer))
+(menhir (modules T2Parser))
+
+(library
+  (name LTS)
+  (public_name CoAR.LTS)
+  (libraries
+    ocamlgraph
+    CoAR.ast)
+  (modules
+    T2Parser
+    T2Lexer
+    parser
+    problem)
+  (synopsis "Labeled Transition Systems"))

@@ -1,0 +1,17 @@
+(library
+  (name resolution)
+  (public_name CoAR.PCSat.resolution)
+  (libraries
+    core
+    yojson
+    ocamlgraph
+    CoAR.pCSP
+    CoAR.Z3Smt
+    CoAR.PCSat.synthesis
+    CoAR.PCSat.common)
+  (modules
+    resolver
+    oldResolver
+    SMTResolver)
+  (preprocess (pps ppx_deriving_yojson))
+)

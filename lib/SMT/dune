@@ -1,0 +1,19 @@
+(library
+  (name SMT)
+  (public_name CoAR.SMT)
+  (libraries
+    core
+    yojson
+    common
+    ast
+    z3)
+  (modules
+    lexer
+    parser
+    printer
+    smtlib2
+    problem)
+  (preprocess (pps ppx_deriving_yojson)))
+
+(ocamllex (modules lexer))
+(menhir (modules parser))

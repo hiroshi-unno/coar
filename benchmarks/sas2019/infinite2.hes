@@ -1,0 +1,4 @@
+forall (n: int). F n
+s.t.
+F (x: int): bool =nu G x;
+G (y: int): bool =mu y < 0 /\ (forall (x: int). F x) \/ y >= 0 /\ (forall (x: int). G (y - 1));

@@ -1,0 +1,1 @@
+MuVal is a validity checker for fixpoint logic modulo theories

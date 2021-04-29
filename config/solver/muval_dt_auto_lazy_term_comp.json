@@ -1,0 +1,21 @@
+[
+    "MuVal",
+    {
+        "pcsp_solver": [
+            "Filename",
+            "./config/solver/pcsat_dt_lazy.json"
+        ],
+        "qelim": {
+            "mode": [
+                "SkolemPred"
+            ],
+            "verbose": false
+        },
+        "mode": [
+            "Auto"
+        ],
+        "check_problem": false,
+        "verbose": false,
+        "output_iteration": false
+    }
+]

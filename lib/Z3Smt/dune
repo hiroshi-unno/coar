@@ -1,0 +1,15 @@
+(library
+  (name Z3Smt)
+  (public_name CoAR.Z3Smt)
+  (libraries
+    core
+    z3
+    SMT
+    ast)
+  (modules
+    z3interface
+    z3interfaceNew
+    config
+    solver)
+  (preprocess (pps ppx_deriving_yojson))
+)

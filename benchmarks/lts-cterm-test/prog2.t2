@@ -1,0 +1,39 @@
+START: main_bb0;
+
+FROM: main_bb0;
+var__temp_vx.0 := v0;
+vx.0 := var__temp_vx.0;
+TO: main_bb1;
+
+FROM: main_bb1;
+TO: main_bb1_end;
+
+FROM: main_bb1_end;
+assume(vx.0 > 0);
+TO: main_bb2;
+
+FROM: main_bb1_end;
+assume(vx.0 <= 0);
+TO: main_bb3;
+
+FROM: main_bb2;
+v3 := vx.0 + -1;
+v4 := vx.0 + 1;
+TO: main_bb2_vx.1;
+FROM: main_bb2_vx.1;
+assume(vx.0 < 10);
+vx.1 := v3;
+TO: main_bb2_svx.1;
+
+FROM: main_bb2_vx.1;
+assume(vx.0 >= 10);
+vx.1 := v4;
+TO: main_bb2_svx.1;
+
+FROM: main_bb2_svx.1;
+var__temp_vx.0 := vx.1;
+vx.0 := var__temp_vx.0;
+TO: main_bb1;
+
+FROM: main_bb3;
+TO: main_bb3_ret;

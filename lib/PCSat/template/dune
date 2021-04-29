@@ -1,0 +1,19 @@
+(library
+  (name template)
+  (public_name CoAR.PCSat.template)
+  (libraries
+    core
+    yojson
+    CoAR.ast
+    CoAR.PCSat.qualifier
+    CoAR.common)
+  (modules
+    arith
+    generator
+    function
+    predicate
+    WFPredicate
+    FNPredicate
+    intFunction)
+  (preprocess (pps ppx_deriving_yojson))
+)

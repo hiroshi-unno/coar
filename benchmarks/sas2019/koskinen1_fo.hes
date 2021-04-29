@@ -1,0 +1,30 @@
+/*
+Taken from
+Koskinen and Terauchi, "Local Temporal Reasoning", CSL-LICS 2014
+
+Program:
+
+let rec done () = Done; done ()
+let reduce x = if x <= 0 then x else x - 2
+le rec explore x =
+  Explore;
+  let y = reduce x in
+  if y <= 0 then done ()
+  else explore y
+let main () = let t = * in explore t
+
+Spec \phi: F Done
+
+Buchi automaton \neg \phi:
+Explore^omega
+
+q0 Explore -> q0
+
+q0 in F
+*/
+
+exists (t: int). Explore_0_ff t
+s.t.
+Explore_0_tt (x: int): bool =nu exists (y: int). Reduce_0_ff_0 x y /\ y > 0 /\ Explore_0_tt y;
+Explore_0_ff (x: int): bool =mu exists (y: int). Reduce_0_ff_0 x y /\ y > 0 /\ Explore_0_tt y;
+Reduce_0_ff_0 (x: int) (r: int): bool =mu x <= 0 /\ r = x \/ x > 0 /\ r = x - 2;

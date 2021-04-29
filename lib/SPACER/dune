@@ -1,0 +1,15 @@
+(library
+  (name SPACER)
+  (public_name CoAR.SPACER)
+  (libraries
+    core
+    yojson
+    z3
+    CoAR.common
+    CoAR.Z3Smt
+    pCSP)
+  (modules
+    config
+    solver)
+  (preprocess (pps ppx_deriving_yojson))
+)

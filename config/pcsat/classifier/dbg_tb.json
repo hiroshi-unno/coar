@@ -1,0 +1,13 @@
+[
+    "TB",
+    {
+        "verbose": true,
+        "kind": [
+            "Ord",
+            [
+                "Filename",
+                "./config/pcsat/template/dbg_predicate_template.json"
+            ]
+        ]
+    }
+]

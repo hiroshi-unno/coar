@@ -1,0 +1,14 @@
+(library
+  (name SAT)
+  (public_name CoAR.SAT)
+  (libraries
+    core
+    yojson
+    common
+    ast
+    z3
+    minisat)
+  (modules
+    parser
+    problem)
+  (preprocess (pps ppx_deriving_yojson)))

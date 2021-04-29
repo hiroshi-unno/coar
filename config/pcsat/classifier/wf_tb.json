@@ -1,0 +1,13 @@
+[
+    "TB",
+    {
+        "verbose": false,
+        "kind": [
+            "WF",
+            [
+                "Filename",
+                "./config/pcsat/template/wf_predicate_template.json"
+            ]
+        ]
+    }
+]

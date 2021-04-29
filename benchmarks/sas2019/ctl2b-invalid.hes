@@ -1,0 +1,18 @@
+/*
+  There exists an infinite path A occurs infinitely but B doesn't occur infinitely in the graph:
+
+  v1 -[B, -3]-> v2
+  v2 -[A, +1]-> v3
+  v3 -[A, +1]-> v1
+  v1 -[A, +1, n<=0]-> v4
+  v4 -[A, -5, n=0]-> v3
+  v4 -[A, +1]-> v2
+*/
+
+forall (n: int). E12 n
+s.t.
+E12 (n: int): bool =mu V2 n;
+V2 (n: int): bool =nu V3 (n + 1);
+V3 (n: int): bool =nu V1 (n + 1);
+V1 (n: int): bool =nu n <= 0 /\ V4 (n + 1) \/ E12 (n - 3);
+V4 (n: int): bool =nu n = 0 /\ V3 (n - 5) \/ V2 (n + 1);

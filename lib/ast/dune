@@ -1,0 +1,31 @@
+(library
+  (name ast)
+  (public_name CoAR.ast)
+  (modules
+    arithTerm
+    mbp
+    ident
+    propLogic
+    logic
+    candSol
+    formulaUtil
+    normalizer
+    evaluator
+    typeinf
+    qelim
+    clause
+    clauseSet
+    affine
+    env
+    logicOld
+    candSolOld
+    clauseOld
+    clauseSetOld
+    rank)
+  (libraries
+    core
+    zarith
+    common)
+    
+  (preprocess (pps ppx_deriving.std))
+  (synopsis "AST definitions"))

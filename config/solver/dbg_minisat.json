@@ -1,0 +1,7 @@
+[
+  "Minisat",
+  {
+    "dim_reduction": false,
+    "verbose": true
+  }
+]

@@ -1,0 +1,13 @@
+[
+    "TB",
+    {
+        "verbose": false,
+        "kind": [
+            "FN",
+            [
+                "Filename",
+                "./config/pcsat/template/fn_predicate_template_thr.json"
+            ]
+        ]
+    }
+]

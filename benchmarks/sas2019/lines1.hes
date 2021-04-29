@@ -1,0 +1,10 @@
+/*
+  y = 2x + a
+  y = x + b
+  forall a, b. exists x >= 0. forall x'. x > x' => 2x' + a > x' + b
+*/
+
+forall (m: int) (n: int). F n m
+s.t.
+F (a: int) (b: int): bool =mu G a b \/ F (a + 2) (b + 1);
+G (a: int) (b: int): bool =nu a > b /\ G (a + 2) (b + 1);
