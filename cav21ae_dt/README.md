@@ -7,6 +7,8 @@ Satoshi Kura, Hiroshi Unno, and Ichiro Hasuo. Decision Tree Learning in CEGIS-Ba
 
 ## Getting Started
 
+You can choose either of the following two options.
+
 ### Using Dockerfile
 
 1. Download `cav21ae_dt/Dockerfile` from [the repository](https://github.com/hiroshi-unno/coar)
@@ -15,13 +17,28 @@ Satoshi Kura, Hiroshi Unno, and Ichiro Hasuo. Decision Tree Learning in CEGIS-Ba
     
     ```bash
     cd /path/to/Dockerfile
-    sudo docker build -t cav21ae .
+    sudo docker build -t coar:cav21ae_dt .
     ```
-    This will make a docker image tagged with `cav21ae:latest`.
+    This will make a docker image tagged with `coar:cav21ae_dt`.
 
 3. Run the image
     ```bash
-    sudo docker run -it cav21ae:latest /bin/bash --login
+    sudo docker run -it coar:cav21ae_dt /bin/bash --login
+    ```
+    Now, you are ready to conduct experiments.
+
+### Using a Pre-built Image
+
+1. Download `cav21ae.tar` from [https://doi.org/10.5281/zenodo.4747775](https://doi.org/10.5281/zenodo.4747775)
+
+2. Load the image
+    ```bash
+    sudo docker load -i cav21ae.tar
+    ```
+
+3. Run the image
+    ```bash
+    sudo docker run -it coar:cav21ae_dt /bin/bash --login
     ```
     Now, you are ready to conduct experiments.
 
