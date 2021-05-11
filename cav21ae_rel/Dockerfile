@@ -30,5 +30,5 @@ RUN eval $(opam env) && opam install . --deps-only -y && dune build main.exe
 WORKDIR /home/pcsat
 
 # Build & run the image
-# sudo docker build -t cav21ae_pcsat .
-# sudo docker run --rm -it cav21ae_pcsat:latest /bin/bash --login
+# sudo docker build -t coar:cav21ae_rel .
+# sudo docker run --rm -it coar:cav21ae_rel /bin/bash --login
