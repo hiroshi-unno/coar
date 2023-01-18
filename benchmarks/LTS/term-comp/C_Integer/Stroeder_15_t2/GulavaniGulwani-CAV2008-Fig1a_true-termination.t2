@@ -1,0 +1,63 @@
+///*** 1_main ***///
+START: main_entry;
+
+FROM: main_entry;
+vcall := nondet();
+vcall1 := nondet();
+vcall2 := nondet();
+vcall3 := nondet();
+var__temp_vz.0 := vcall2;
+var__temp_vx.0 := vcall;
+var__temp_vi.0 := vcall3;
+TO: main_while.cond;
+
+FROM: main_while.cond;
+vz.0 := var__temp_vz.0;
+vx.0 := var__temp_vx.0;
+vi.0 := var__temp_vi.0;
+TO: main_while.cond_end;
+
+FROM: main_while.cond_end;
+assume(vx.0 < vcall1);
+TO: main_while.body;
+
+FROM: main_while.cond_end;
+assume(vx.0 >= vcall1);
+TO: main_while.end;
+
+FROM: main_while.body;
+vadd := vi.0 + 1;
+vadd5 := vx.0 + 1;
+vadd6 := vz.0 + 1;
+TO: main_while.body_vz.1;
+FROM: main_while.body_vz.1;
+assume(vz.0 > vx.0);
+vz.1 := vz.0;
+TO: main_while.body_svz.1;
+
+FROM: main_while.body_vz.1;
+assume(vz.0 <= vx.0);
+vz.1 := vadd6;
+TO: main_while.body_svz.1;
+
+FROM: main_while.body_svz.1;
+TO: main_while.body_vx.1;
+FROM: main_while.body_vx.1;
+assume(vz.0 > vx.0);
+vx.1 := vadd5;
+TO: main_while.body_svx.1;
+
+FROM: main_while.body_vx.1;
+assume(vz.0 <= vx.0);
+vx.1 := vx.0;
+TO: main_while.body_svx.1;
+
+FROM: main_while.body_svx.1;
+var__temp_vz.0 := vz.1;
+var__temp_vx.0 := vx.1;
+var__temp_vi.0 := vadd;
+TO: main_while.cond;
+
+FROM: main_while.end;
+TO: main_while.end_ret;
+

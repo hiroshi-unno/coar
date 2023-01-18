@@ -1,5 +1,4 @@
 open Core
-open Async
 
 module Config = struct
 
@@ -9,12 +8,16 @@ module Config = struct
     | Minisat of MINISAT.Config.t (** configuration of Minisat *)
     (* SMT solvers *)
     | Z3Smt of Z3Smt.Config.t (** configuration of Z3Smt *)
-    (* pfwCSP/CHC solvers *)
+    (* CHC/pCSP/pfwCSP solvers *)
     | PCSat of PCSat.Config.t (** configuration of PCSat *)
     | SPACER of SPACER.Config.t (** configuration of SPACER *)
     | Hoice of Hoice.Config.t (** configuration of Hoice *)
+    (* CHC optimizers *)
+    | OptPCSat of OptPCSat.Config.t
     (* muCLP solvers *)
     | MuVal of MuVal.Config.t (** configuration of MuVal *)
+    (* Refinement Type Inference and Checking Tools *)
+    | RCaml of RCaml.Config.t (** configuration of RCaml *)
     (* printer *)
     | Printer of Printer.Config.t
   [@@deriving yojson]
@@ -30,6 +33,7 @@ module Config = struct
 
     | Z3Smt cfg ->
       Z3Smt.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (Z3Smt cfg)
+
     | PCSat cfg ->
       PCSat.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (PCSat cfg)
     | SPACER cfg ->
@@ -37,8 +41,14 @@ module Config = struct
     | Hoice cfg ->
       Hoice.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (Hoice cfg)
 
+    | OptPCSat cfg ->
+      OptPCSat.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (OptPCSat cfg)
+
     | MuVal cfg ->
       MuVal.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (MuVal cfg)
+
+    | RCaml cfg ->
+      RCaml.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (RCaml cfg)
 
     | Printer cfg ->
       Printer.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (Printer cfg)
@@ -57,107 +67,140 @@ module Config = struct
 end
 
 module type SolverType = sig
-  val solve_sat: SAT.Problem.t -> unit Deferred.Or_error.t
-  val solve_smt: SMT.Problem.t -> unit Deferred.Or_error.t
-  val solve_pcsp: ?bpvs:(Ast.Ident.tvar Set.Poly.t) -> PCSP.Problem.t -> unit Deferred.Or_error.t
-  val solve_muclp: MuCLP.Problem.t -> unit Deferred.Or_error.t
-  val solve_sygus: SyGuS.Problem.Make(SyGuS.Problem.ExtTerm).t -> unit Deferred.Or_error.t
-  val solve_lts: LTS.Problem.t -> unit Deferred.Or_error.t
+  val solve_sat : SAT.Problem.t -> unit Or_error.t
+  val solve_smt : SMT.Problem.t -> unit Or_error.t
+  val solve_pcsp : ?bpvs:(Ast.Ident.tvar Set.Poly.t) -> ?filename:(string option) -> PCSP.Problem.t -> unit Or_error.t
+  val solve_muclp : MuCLP.Problem.t -> unit Or_error.t
+  val solve_sygus : ?filename:(string option) -> SyGuS.Problem.Make(SyGuS.Problem.ExtTerm).t -> unit Or_error.t
+  val solve_lts : LTS.Problem.t -> unit Or_error.t
+  val solve_ml : string -> unit Or_error.t
+  val solve_chcopt : ?filename:(string option) -> CHCOpt.Problem.t -> unit Or_error.t
 end
 
-module Make (Config: Config.ConfigType): SolverType = struct
+module Make (Config: Config.ConfigType) : SolverType = struct
+  open Or_error.Monad_infix
   let solve_sat cnf =
+    let open Or_error.Monad_infix in
     match Config.config with
     | Z3Sat cfg ->
       let module Cfg = struct let config = cfg end in
       let module Z3Sat = Z3Sat.Solver.Make(Cfg) in
-      Deferred.return (Z3Sat.solve ~print_sol:true cnf) >>=? fun _ -> Deferred.Or_error.ok_unit
+      Z3Sat.solve ~print_sol:true cnf >>= fun _ -> Ok ()
     | Minisat cfg ->
       let module Cfg = struct let config = cfg end in
       let module MINISAT = MINISAT.Solver.Make(Cfg) in
-      Deferred.return (MINISAT.solve ~print_sol:true cnf) >>=? fun _ -> Deferred.Or_error.ok_unit
-    | _ -> Deferred.Or_error.unimplemented "Solver.solve_sat"
+      MINISAT.solve ~print_sol:true cnf >>= fun _ -> Ok ()
+    | _ -> Or_error.unimplemented "Solver.solve_sat"
   let solve_smt phi =
+    let open Or_error.Monad_infix in
     match Config.config with
     | Z3Smt cfg ->
       let module Cfg = struct let config = cfg end in
       let module Z3Smt = Z3Smt.Solver.Make(Cfg) in
-      Deferred.return (Z3Smt.solve ~print_sol:true phi) >>=? fun _ -> Deferred.Or_error.ok_unit
-    | _ -> Deferred.Or_error.unimplemented "Solver.solve_smt"
-  let solve_pcsp ?(bpvs=Set.Poly.empty) pcsp =
+      Z3Smt.solve ~print_sol:true phi >>= fun _ -> Ok ()
+    | _ -> Or_error.unimplemented "Solver.solve_smt"
+  let solve_pcsp ?(bpvs=Set.Poly.empty) ?(filename=None) pcsp =
     match Config.config with
     | PCSat cfg ->
       let module Cfg = struct let config = cfg end in
       let module PCSat = PCSat.Solver.Make(Cfg) in
-      Deferred.return (PCSat.solve ~bpvs ~print_sol:true pcsp) >>=? fun _ -> Deferred.Or_error.ok_unit
+      PCSat.solve ~bpvs ~filename ~print_sol:true pcsp >>= fun _ -> Ok ()
     | SPACER cfg ->
       let module Cfg = struct let config = cfg end in
       let module SPACER = SPACER.Solver.Make(Cfg) in
-      Deferred.return (SPACER.solve ~print_sol:true pcsp) >>=? fun _ -> Deferred.Or_error.ok_unit
+      SPACER.solve ~print_sol:true pcsp >>= fun _ -> Ok ()
     | Hoice cfg ->
       let module Cfg = struct let config = cfg end in
       let module Hoice = Hoice.Solver.Make(Cfg) in
-      Deferred.return (Hoice.solve ~print_sol:true pcsp) >>=? fun _ -> Deferred.Or_error.ok_unit
+      Hoice.solve ~print_sol:true pcsp >>= fun _ -> Ok ()
     | MuVal cfg ->
       let module Cfg = struct let config = cfg end in
       let module MuVal = MuVal.Solver.Make(Cfg) in
-      MuVal.solve_pcsp ~print_sol:true pcsp >>=? fun _ -> Deferred.Or_error.ok_unit
+      MuVal.solve_pcsp ~print_sol:true pcsp >>= fun _ -> Ok ()
     | Printer cfg ->
       let module Cfg = struct let config = cfg end in
       let module Printer = Printer.Solver.Make(Cfg) in
-      Printer.print_pcsp pcsp; Deferred.Or_error.ok_unit
-    | _ -> Deferred.Or_error.unimplemented "Solve.solve_pcsp"
+      Printer.print_pcsp pcsp >>= fun _ -> Ok ()
+    | _ -> Or_error.unimplemented "Solve.solve_pcsp"
   let solve_muclp muclp =
     let config = Config.config in
+    let open Or_error.Monad_infix in
     match config with
     | MuVal cfg ->
       let module Cfg = struct let config = cfg end in
       let module MuVal = MuVal.Solver.Make(Cfg) in
-      MuVal.solve muclp ~print_sol:true >>=? fun _ -> Deferred.Or_error.ok_unit
+      MuVal.solve ~print_sol:true muclp >>= fun _ -> Ok ()
     | Printer cfg ->
       let module Cfg = struct let config = cfg end in
       let module Printer = Printer.Solver.Make(Cfg) in
-      Printer.print_muclp muclp; Deferred.Or_error.ok_unit
-    | _ -> Deferred.Or_error.unimplemented "Solver.solve_muclp"
+      Printer.print_muclp muclp; Ok ()
+    | _ -> Or_error.unimplemented "Solver.solve_muclp"
   let solve_lts lts =
+    let open Or_error.Monad_infix in
     match Config.config with
     | PCSat cfg ->
       let module Cfg = struct let config = cfg end in
       let module PCSat = PCSat.Solver.Make(Cfg) in
-      Deferred.return (PCSat.solve ~print_sol:true (PCSP.Problem.of_lts lts)) >>=? fun _ -> Deferred.Or_error.ok_unit
+      PCSat.solve ~print_sol:true (PCSP.Problem.of_lts lts) >>= fun _ -> Ok ()
     | MuVal cfg ->
       let module Cfg = struct let config = cfg end in
       let module MuVal = MuVal.Solver.Make(Cfg) in
-      MuVal.solve_lts ~print_sol:true lts >>=? fun _ -> Deferred.Or_error.ok_unit
+      MuVal.solve_lts ~print_sol:true lts >>= fun _ -> Ok ()
     | Printer cfg ->
       let module Cfg = struct let config = cfg end in
       let module Printer = Printer.Solver.Make(Cfg) in
-      Printer.print_lts lts; Deferred.Or_error.ok_unit
-    | _ -> Deferred.Or_error.unimplemented "Solve.solve_lts"
-  let solve_sygus sygus =
+      Printer.print_lts lts; Ok ()
+    | _ -> Or_error.unimplemented "Solve.solve_lts"
+  let solve_sygus ?(filename=None) sygus =
     let pcsp = PCSP.Problem.of_sygus sygus in
+    let open Or_error.Monad_infix in
     match Config.config with
     | PCSat cfg ->
       let module Cfg = struct let config = cfg end in
       let module PCSat = PCSat.Solver.Make(Cfg) in
-      Deferred.return (PCSat.solve ~print_sol:true pcsp) >>=? fun _ -> Deferred.Or_error.ok_unit
+      PCSat.solve ~filename ~print_sol:true pcsp >>= fun (solution, _) ->
+      Out_channel.print_endline (PCSP.Problem.str_of_solution solution);
+      Out_channel.flush stdout;
+      Ok ()
     | SPACER cfg ->
       let module Cfg = struct let config = cfg end in
       let module SPACER = SPACER.Solver.Make(Cfg) in
-      Deferred.return (SPACER.solve pcsp) >>=? fun solution ->
+      SPACER.solve pcsp >>= fun solution ->
       Out_channel.print_endline (PCSP.Problem.str_of_solution solution);
       Out_channel.flush stdout;
-      Deferred.Or_error.ok_unit
+      Ok ()
     | Hoice cfg ->
       let module Cfg = struct let config = cfg end in
       let module Hoice = Hoice.Solver.Make(Cfg) in
-      Deferred.return (Hoice.solve pcsp) >>=? fun solution ->
+      Hoice.solve pcsp >>= fun solution ->
       Out_channel.print_endline (PCSP.Problem.str_of_solution solution);
       Out_channel.flush stdout;
-      Deferred.Or_error.ok_unit
+      Ok ()
+    | MuVal cfg ->
+      let module Cfg = struct let config = cfg end in
+      let module MuVal = MuVal.Solver.Make(Cfg) in
+      MuVal.solve_pcsp ~print_sol:true pcsp >>= fun (solution, _) ->
+      Out_channel.print_endline (PCSP.Problem.str_of_solution solution);
+      Out_channel.flush stdout;
+      Ok ()
     | Printer cfg ->
       let module Cfg = struct let config = cfg end in
       let module Printer = Printer.Solver.Make(Cfg) in
-      Printer.print_pcsp pcsp; Deferred.Or_error.ok_unit
-    | _ -> Deferred.Or_error.unimplemented "Solver.solve_sygus"
-end            
+      Printer.print_pcsp pcsp >>= fun _ -> Ok ()
+    | _ -> Or_error.unimplemented "Solver.solve_sygus"
+  let solve_ml filename =
+    let open Or_error.Monad_infix in
+    match Config.config with
+    | RCaml cfg ->
+      let module Cfg = struct let config = cfg end in
+      let module RCaml = RCaml.Solver.Make(Cfg) in
+      RCaml.solve_from_file ~print_sol:true filename >>= fun _ -> Ok ()
+    | _ -> Or_error.unimplemented "Solver.solve_ml"
+  let solve_chcopt ?(filename=None) chcopt =
+    match Config.config with
+    | OptPCSat cfg ->
+      let module Cfg = struct let config = cfg end in
+      let module OptPCSat = OptPCSat.Solver.Make(Cfg) in
+      OptPCSat.solve ~filename ~print_sol:true chcopt |> fun _ -> Ok ()
+    | _ -> Or_error.unimplemented "Solver.solve_chcopt"
+end

@@ -1,0 +1,69 @@
+///*** 1_main ***///
+START: main_entry;
+
+FROM: main_entry;
+vcall := nondet();
+var__temp_vi.0 := vcall;
+var__temp_vrange.0 := 20;
+TO: main_while.cond;
+
+FROM: main_while.cond;
+vi.0 := var__temp_vi.0;
+vrange.0 := var__temp_vrange.0;
+TO: main_while.cond_end;
+
+FROM: main_while.cond_end;
+assume((0 <= vi.0) && (vi.0 <= vrange.0));
+TO: main_while.body;
+
+FROM: main_while.cond_end;
+assume((0 > vi.0) || (vi.0 > vrange.0));
+TO: main_while.end;
+
+FROM: main_while.body;
+var__temp_vi.0 := vi.0;
+var__temp_vrange.0 := vrange.0;
+TO: main_while.body_end;
+
+FROM: main_while.body_end;
+assume((0 == vi.0) && (vi.0 == vrange.0));
+TO: main_while.cond;
+
+FROM: main_while.body_end;
+assume((0 != vi.0) || (vi.0 != vrange.0));
+TO: main_if.then;
+
+FROM: main_if.then;
+vsub := vrange.0 - 1;
+vadd := vi.0 + 1;
+TO: main_if.then_vi.1;
+FROM: main_if.then_vi.1;
+assume(vi.0 == vrange.0);
+vi.1 := 0;
+TO: main_if.then_svi.1;
+
+FROM: main_if.then_vi.1;
+assume(vi.0 != vrange.0);
+vi.1 := vadd;
+TO: main_if.then_svi.1;
+
+FROM: main_if.then_svi.1;
+TO: main_if.then_vrange.1;
+FROM: main_if.then_vrange.1;
+assume(vi.0 == vrange.0);
+vrange.1 := vsub;
+TO: main_if.then_svrange.1;
+
+FROM: main_if.then_vrange.1;
+assume(vi.0 != vrange.0);
+vrange.1 := vrange.0;
+TO: main_if.then_svrange.1;
+
+FROM: main_if.then_svrange.1;
+var__temp_vi.0 := vi.1;
+var__temp_vrange.0 := vrange.1;
+TO: main_while.cond;
+
+FROM: main_while.end;
+TO: main_while.end_ret;
+

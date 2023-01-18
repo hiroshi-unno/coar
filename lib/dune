@@ -1,19 +1,18 @@
 (library
   (name CoAR)
   (public_name CoAR)
+  (preprocess (pps ppx_deriving.std ppx_deriving_yojson))
   (libraries
     core
-    async
     CoAR.Z3Sat
     CoAR.MINISAT
     CoAR.Z3Smt
-    CoAR.SyGuS
-    CoAR.PCSat
     CoAR.SPACER
     CoAR.Hoice
+    CoAR.SyGuS
+    CoAR.PCSat
     CoAR.MuVal
     CoAR.Printer
-    CoAR.cCtl
-    CoAR.LTS)
-  (preprocess (pps ppx_deriving.std ppx_deriving_yojson))
+    CoAR.c
+    CoAR.RCaml)
   (modules solver))

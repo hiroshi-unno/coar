@@ -1,0 +1,16 @@
+exists (x: int). EF1 0 x
+s.t.
+EF1 (p: int) (x: int): bool =mu EG1 p x \/ EF2 p x \/ EF3 p x;
+EF2 (p: int) (x: int): bool =mu EG2 p x \/ (not (x > 0) => EF4 p x) /\ (not (not (x > 0)) => EF5 p x);
+EF4 (p: int) (x: int): bool =mu EG3 p x \/ EF3 (-1) x;
+EF3 (p: int) (x: int): bool =mu EG4 p x \/ EF1 0 x;
+EF5 (p: int) (x: int): bool =mu EG5 p x \/ EF6 p x \/ EF7 p x;
+EF6 (p: int) (x: int): bool =mu EG6 p x \/ EF2 p (x - 1);
+EF7 (p: int) (x: int): bool =mu EG7 p x \/ EF2 p (x + 1);
+EG1 (p: int) (x: int): bool =nu p > 0 /\ (EG2 p x \/ EG4 p x);
+EG2 (p: int) (x: int): bool =nu p > 0 /\ (not (x > 0) => EG3 p x) /\ (not (not (x > 0)) => EG5 p x);
+EG3 (p: int) (x: int): bool =nu p > 0 /\ EG4 (-1) x;
+EG4 (p: int) (x: int): bool =nu p > 0 /\ EG1 0 x;
+EG5 (p: int) (x: int): bool =nu p > 0 /\ (EG6 p x \/ EG7 p x);
+EG6 (p: int) (x: int): bool =nu p > 0 /\ EG2 p (x - 1);
+EG7 (p: int) (x: int): bool =nu p > 0 /\ EG2 p (x + 1);

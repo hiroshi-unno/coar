@@ -1,0 +1,20 @@
+(set-logic HORN)
+
+(declare-fun P (Int Int Int) Bool)
+(assert (forall ((A Int) (B Int))
+  (=> (and (P B 0 A) (not (= A B))) false)))
+(assert (forall ((A Int) (B Int) (C Int) (D Int) (E Int) (F Int) (G Int))
+  (=> (and (P C B D)
+              (P A F E)
+              (= A (- G 1))
+              (= B (+ F 1))
+              (= C (- G 1))
+              (> G 0))
+         (or (P G F D) (P G F E)))
+    ))
+(assert (forall ((A Int) (B Int) (C Int))
+  (=> (and (<= C 0) (= A B)) (P C B A))))
+
+
+(check-sat)
+(exit)

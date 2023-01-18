@@ -1,0 +1,20 @@
+(L1Q0 0 0)
+s.t.
+L1Q1 (a: int) (r: int): bool =mu r != 0 \/ (L2Q1 a r) /\ (L9Q1 a r);
+L2Q1 (a: int) (r: int): bool =mu r != 0 \/ (L3Q1 1 r);
+L3Q1 (a: int) (r: int): bool =mu r != 0 \/ (L4Q1 0 r);
+L4Q1 (a: int) (r: int): bool =mu r != 0 \/ (forall (n#0: int). (L5Q1 a n#0 r));
+L5Q1 (a: int) (n#0: int) (r: int): bool =mu r != 0 \/ n#0 > 0 /\ (L6Q1 a n#0 r) \/ n#0 <= 0 /\ (L7Q1 a r);
+L6Q1 (a: int) (n#0: int) (r: int): bool =mu r != 0 \/ (L5Q1 a (n#0 - 1) r);
+L7Q1 (a: int) (r: int): bool =mu r != 0 \/ (L8Q1 a 1);
+L8Q1 (a: int) (r: int): bool =mu r != 0 \/ (L1Q1 a 0);
+L9Q1 (a: int) (r: int): bool =mu r != 0 \/ (L9Q1 a r);
+L1Q0 (a: int) (r: int): bool =nu (a = 0 \/ r != 0 \/ (L2Q1 a r) /\ (L9Q1 a r)) /\ (L2Q0 a r) /\ (L9Q0 a r);
+L2Q0 (a: int) (r: int): bool =nu (a = 0 \/ r != 0 \/ (L3Q1 1 r)) /\ (L3Q0 1 r);
+L3Q0 (a: int) (r: int): bool =nu (a = 0 \/ r != 0 \/ (L4Q1 0 r)) /\ (L4Q0 0 r);
+L4Q0 (a: int) (r: int): bool =nu (a = 0 \/ r != 0 \/ (forall (n#0: int). (L5Q1 a n#0 r))) /\ (forall (n#0: int). (L5Q0 a n#0 r));
+L5Q0 (a: int) (n#0: int) (r: int): bool =nu (a = 0 \/ r != 0 \/ n#0 > 0 /\ (L6Q1 a n#0 r) \/ n#0 <= 0 /\ (L7Q1 a r)) /\ (n#0 > 0 /\ (L6Q0 a n#0 r) \/ n#0 <= 0 /\ (L7Q0 a r));
+L6Q0 (a: int) (n#0: int) (r: int): bool =nu (a = 0 \/ r != 0 \/ (L5Q1 a (n#0 - 1) r)) /\ (L5Q0 a (n#0 - 1) r);
+L7Q0 (a: int) (r: int): bool =nu (a = 0 \/ r != 0 \/ (L8Q1 a 1)) /\ (L8Q0 a 1);
+L8Q0 (a: int) (r: int): bool =nu (a = 0 \/ r != 0 \/ (L1Q1 a 0)) /\ (L1Q0 a 0);
+L9Q0 (a: int) (r: int): bool =nu (a = 0 \/ r != 0 \/ (L9Q1 a r)) /\ (L9Q0 a r);

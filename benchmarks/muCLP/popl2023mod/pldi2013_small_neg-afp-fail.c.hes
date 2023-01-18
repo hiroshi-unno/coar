@@ -1,0 +1,6 @@
+exists (y: int). EG1 0 y
+s.t.
+EG1 (p: int) (y: int): bool =nu p <= 0 /\ (not (y > 0) => EG2 p) /\ (not (not (y > 0)) => EG3 p y);
+EG2 (p: int): bool =nu p <= 0 /\ EG4 1;
+EG4 (p: int): bool =nu p <= 0 /\ true;
+EG3 (p: int) (y: int): bool =nu p <= 0 /\ EG1 p (y - 1);

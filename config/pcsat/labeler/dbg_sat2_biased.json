@@ -1,0 +1,31 @@
+{
+    "verbose": true,
+    "num_labelings": 2,
+    "strategy": [
+        "Mixed",
+        [
+            [
+                [
+                    "POS_BIASED_SAT"
+                ],
+                true
+            ],
+            [
+                [
+                    "NEG_BIASED_SAT"
+                ],
+                true
+            ],
+            [
+                [
+                    "SAT"
+                ],
+                false
+            ]
+        ]
+    ],
+    "sat_solver": [
+        "Filename",
+        "./config/solver/dbg_minisat.json"
+    ]
+}

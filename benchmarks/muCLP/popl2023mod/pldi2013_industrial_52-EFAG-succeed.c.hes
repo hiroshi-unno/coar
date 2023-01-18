@@ -1,0 +1,26 @@
+exists (__rho_2_: int) (__rho_3_: int) (__rho_4_: int) (__rho_5_: int). EF1 __rho_3_ __rho_4_ __rho_5_ __rho_2_ 1
+s.t.
+EF1 (__rho_3_: int) (__rho_4_: int) (__rho_5_: int) (got_SIGHUP: int) (wakend: int): bool =mu AG1 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP wakend \/ EF2 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP 1;
+EF2 (__rho_3_: int) (__rho_4_: int) (__rho_5_: int) (got_SIGHUP: int) (wakend: int): bool =mu AG2 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP wakend \/ (got_SIGHUP > 0 => EF3 __rho_3_ __rho_4_ __rho_5_ wakend) /\ (not (got_SIGHUP > 0) => EF4 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP wakend);
+EF3 (__rho_3_: int) (__rho_4_: int) (__rho_5_: int) (wakend: int): bool =mu AG3 __rho_3_ __rho_4_ __rho_5_ wakend \/ EF5 __rho_3_ __rho_4_ __rho_5_ 0 wakend;
+EF5 (__rho_3_: int) (__rho_4_: int) (__rho_5_: int) (got_SIGHUP: int) (wakend: int): bool =mu AG4 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP wakend \/ (__rho_3_ <= 0 => EF6 wakend) /\ (not (__rho_3_ <= 0) => EF4 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP wakend);
+EF6 (wakend: int): bool =mu AG5 wakend \/ false;
+EF4 (__rho_3_: int) (__rho_4_: int) (__rho_5_: int) (got_SIGHUP: int) (wakend: int): bool =mu AG6 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP wakend \/ (wakend > 0 => EF7 __rho_3_ __rho_5_ got_SIGHUP wakend) /\ (not (wakend > 0) => EF8 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP wakend);
+EF7 (__rho_3_: int) (__rho_5_: int) (got_SIGHUP: int) (wakend: int): bool =mu AG7 __rho_3_ __rho_5_ got_SIGHUP wakend \/ EF9 __rho_3_ __rho_5_ got_SIGHUP 0;
+EF9 (__rho_3_: int) (__rho_5_: int) (got_SIGHUP: int) (wakend: int): bool =mu AG8 __rho_3_ __rho_5_ got_SIGHUP wakend \/ (exists (__rho_4_: int). EF8 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP wakend);
+EF8 (__rho_3_: int) (__rho_4_: int) (__rho_5_: int) (got_SIGHUP: int) (wakend: int): bool =mu AG9 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP wakend \/ (wakend <= 0 => EF10 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP wakend) /\ (not (wakend <= 0) => EF11 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP wakend);
+EF10 (__rho_3_: int) (__rho_4_: int) (__rho_5_: int) (got_SIGHUP: int) (wakend: int): bool =mu AG10 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP wakend \/ (__rho_4_ >= 1000 => EF12 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP wakend) /\ (not (__rho_4_ >= 1000) => EF11 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP wakend);
+EF12 (__rho_3_: int) (__rho_4_: int) (__rho_5_: int) (got_SIGHUP: int) (wakend: int): bool =mu AG11 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP wakend \/ EF11 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP 1;
+EF11 (__rho_3_: int) (__rho_4_: int) (__rho_5_: int) (got_SIGHUP: int) (wakend: int): bool =mu AG12 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP wakend \/ (__rho_5_ <= 0 => EF6 wakend) /\ (not (__rho_5_ <= 0) => EF2 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP wakend);
+AG1 (__rho_3_: int) (__rho_4_: int) (__rho_5_: int) (got_SIGHUP: int) (wakend: int): bool =nu wakend != 1 /\ AG2 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP 1;
+AG2 (__rho_3_: int) (__rho_4_: int) (__rho_5_: int) (got_SIGHUP: int) (wakend: int): bool =nu wakend != 1 /\ (got_SIGHUP > 0 => AG3 __rho_3_ __rho_4_ __rho_5_ wakend) /\ (not (got_SIGHUP > 0) => AG6 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP wakend);
+AG3 (__rho_3_: int) (__rho_4_: int) (__rho_5_: int) (wakend: int): bool =nu wakend != 1 /\ AG4 __rho_3_ __rho_4_ __rho_5_ 0 wakend;
+AG4 (__rho_3_: int) (__rho_4_: int) (__rho_5_: int) (got_SIGHUP: int) (wakend: int): bool =nu wakend != 1 /\ (__rho_3_ <= 0 => AG5 wakend) /\ (not (__rho_3_ <= 0) => AG6 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP wakend);
+AG5 (wakend: int): bool =nu wakend != 1 /\ true;
+AG6 (__rho_3_: int) (__rho_4_: int) (__rho_5_: int) (got_SIGHUP: int) (wakend: int): bool =nu wakend != 1 /\ (wakend > 0 => AG7 __rho_3_ __rho_5_ got_SIGHUP wakend) /\ (not (wakend > 0) => AG9 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP wakend);
+AG7 (__rho_3_: int) (__rho_5_: int) (got_SIGHUP: int) (wakend: int): bool =nu wakend != 1 /\ AG8 __rho_3_ __rho_5_ got_SIGHUP 0;
+AG8 (__rho_3_: int) (__rho_5_: int) (got_SIGHUP: int) (wakend: int): bool =nu wakend != 1 /\ (forall (__rho_4_: int). AG9 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP wakend);
+AG9 (__rho_3_: int) (__rho_4_: int) (__rho_5_: int) (got_SIGHUP: int) (wakend: int): bool =nu wakend != 1 /\ (wakend <= 0 => AG10 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP wakend) /\ (not (wakend <= 0) => AG12 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP wakend);
+AG10 (__rho_3_: int) (__rho_4_: int) (__rho_5_: int) (got_SIGHUP: int) (wakend: int): bool =nu wakend != 1 /\ (__rho_4_ >= 1000 => AG11 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP wakend) /\ (not (__rho_4_ >= 1000) => AG12 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP wakend);
+AG11 (__rho_3_: int) (__rho_4_: int) (__rho_5_: int) (got_SIGHUP: int) (wakend: int): bool =nu wakend != 1 /\ AG12 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP 1;
+AG12 (__rho_3_: int) (__rho_4_: int) (__rho_5_: int) (got_SIGHUP: int) (wakend: int): bool =nu wakend != 1 /\ (__rho_5_ <= 0 => AG5 wakend) /\ (not (__rho_5_ <= 0) => AG2 __rho_3_ __rho_4_ __rho_5_ got_SIGHUP wakend);

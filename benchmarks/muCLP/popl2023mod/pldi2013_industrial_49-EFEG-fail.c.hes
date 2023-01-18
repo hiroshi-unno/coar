@@ -1,0 +1,24 @@
+exists (got_SIGHUP: int). EF1 got_SIGHUP 1
+s.t.
+EF1 (got_SIGHUP: int) (wakend: int): bool =mu EG1 got_SIGHUP wakend \/ EF2 got_SIGHUP 1;
+EF2 (got_SIGHUP: int) (wakend: int): bool =mu EG2 got_SIGHUP wakend \/ (got_SIGHUP > 0 => EF3 wakend) /\ (not (got_SIGHUP > 0) => EF4 got_SIGHUP wakend);
+EF3 (wakend: int): bool =mu EG3 wakend \/ EF5 0 wakend;
+EF5 (got_SIGHUP: int) (wakend: int): bool =mu EG4 got_SIGHUP wakend \/ EF6 wakend \/ EF4 got_SIGHUP wakend;
+EF6 (wakend: int): bool =mu EG5 wakend \/ EF6 1;
+EF4 (got_SIGHUP: int) (wakend: int): bool =mu EG6 got_SIGHUP wakend \/ (wakend > 0 => EF7 got_SIGHUP wakend) /\ (not (wakend > 0) => EF8 got_SIGHUP wakend);
+EF7 (got_SIGHUP: int) (wakend: int): bool =mu EG7 got_SIGHUP wakend \/ EF8 got_SIGHUP 0;
+EF8 (got_SIGHUP: int) (wakend: int): bool =mu EG8 got_SIGHUP wakend \/ (wakend <= 0 => EF9 got_SIGHUP wakend) /\ (not (wakend <= 0) => EF10 got_SIGHUP wakend);
+EF9 (got_SIGHUP: int) (wakend: int): bool =mu EG9 got_SIGHUP wakend \/ EF11 got_SIGHUP wakend \/ EF10 got_SIGHUP wakend;
+EF11 (got_SIGHUP: int) (wakend: int): bool =mu EG10 got_SIGHUP wakend \/ EF10 got_SIGHUP 1;
+EF10 (got_SIGHUP: int) (wakend: int): bool =mu EG11 got_SIGHUP wakend \/ EF6 wakend \/ EF2 got_SIGHUP wakend;
+EG1 (got_SIGHUP: int) (wakend: int): bool =nu wakend != 1 /\ EG2 got_SIGHUP 1;
+EG2 (got_SIGHUP: int) (wakend: int): bool =nu wakend != 1 /\ (got_SIGHUP > 0 => EG3 wakend) /\ (not (got_SIGHUP > 0) => EG6 got_SIGHUP wakend);
+EG3 (wakend: int): bool =nu wakend != 1 /\ EG4 0 wakend;
+EG4 (got_SIGHUP: int) (wakend: int): bool =nu wakend != 1 /\ (EG5 wakend \/ EG6 got_SIGHUP wakend);
+EG5 (wakend: int): bool =nu wakend != 1 /\ EG5 1;
+EG6 (got_SIGHUP: int) (wakend: int): bool =nu wakend != 1 /\ (wakend > 0 => EG7 got_SIGHUP wakend) /\ (not (wakend > 0) => EG8 got_SIGHUP wakend);
+EG7 (got_SIGHUP: int) (wakend: int): bool =nu wakend != 1 /\ EG8 got_SIGHUP 0;
+EG8 (got_SIGHUP: int) (wakend: int): bool =nu wakend != 1 /\ (wakend <= 0 => EG9 got_SIGHUP wakend) /\ (not (wakend <= 0) => EG11 got_SIGHUP wakend);
+EG9 (got_SIGHUP: int) (wakend: int): bool =nu wakend != 1 /\ (EG10 got_SIGHUP wakend \/ EG11 got_SIGHUP wakend);
+EG10 (got_SIGHUP: int) (wakend: int): bool =nu wakend != 1 /\ EG11 got_SIGHUP 1;
+EG11 (got_SIGHUP: int) (wakend: int): bool =nu wakend != 1 /\ (EG5 wakend \/ EG2 got_SIGHUP wakend);

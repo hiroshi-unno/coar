@@ -1,0 +1,4 @@
+#! /bin/bash
+
+export LD_LIBRARY_PATH=./
+./main.exe -c ./config/solver/spacer.json -p sygus $1

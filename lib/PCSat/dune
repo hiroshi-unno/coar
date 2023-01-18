@@ -1,6 +1,7 @@
 (library
   (name PCSat)
   (public_name CoAR.PCSat)
+  (preprocess (pps ppx_deriving_yojson))
   (libraries
     CoAR.pCSP
     CoAR.SMT
@@ -9,7 +10,7 @@
   (modules
     config
     pvarEliminator
+    dimReducer
+    solPrinter
     solver)
-  (preprocess (pps ppx_deriving_yojson))
-  (synopsis "A pfwCSP solver based on CEGIS")
-)
+  (synopsis "A CHC/pfwnCSP/SyGuS solver based on CEGIS"))

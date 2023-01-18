@@ -1,0 +1,12 @@
+forall (__rho_2_: int). __rho_2_ > 0 => OR1 __rho_2_ 4 0
+s.t.
+OR1 (c: int) (curr_serv: int) (resp: int): bool =nu c <= 5 \/ EF1 c curr_serv resp;
+EF1 (c: int) (curr_serv: int) (resp: int): bool =mu resp > 5 \/ (c <= 5 => EF2 c curr_serv resp) /\ (not (c <= 5) => EF3 resp);
+EF2 (c: int) (curr_serv: int) (resp: int): bool =mu resp > 5 \/ (not (curr_serv > 0) => EF3 resp) /\ (not (not (curr_serv > 0)) => EF4 c curr_serv resp);
+EF3 (resp: int): bool =mu resp > 5 \/ false;
+EF4 (c: int) (curr_serv: int) (resp: int): bool =mu resp > 5 \/ EF5 c curr_serv resp \/ EF6 c curr_serv resp;
+EF5 (c: int) (curr_serv: int) (resp: int): bool =mu resp > 5 \/ EF7 (c - 1) curr_serv resp;
+EF7 (c: int) (curr_serv: int) (resp: int): bool =mu resp > 5 \/ EF8 c (curr_serv - 1) resp;
+EF8 (c: int) (curr_serv: int) (resp: int): bool =mu resp > 5 \/ EF2 c curr_serv (resp + 1);
+EF6 (c: int) (curr_serv: int) (resp: int): bool =mu resp > 5 \/ c < curr_serv /\ EF9 c curr_serv resp;
+EF9 (c: int) (curr_serv: int) (resp: int): bool =mu resp > 5 \/ EF2 c (curr_serv - 1) resp;

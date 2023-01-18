@@ -13,7 +13,7 @@
 %token PLUS MINUS TIMES DIV MOD
 %token EQ NOTEQ GT LT GEQ LEQ COMMA COLON
 %token LPAREN RPAREN
-%token ASSUME DECLARE
+%token ASSUME DECLARE QUERY
 %token BOT TOP BOOL
 %token DOT EOF
 /* %token FORALL */
@@ -38,6 +38,7 @@ clause:
   | head DOT { $1, Formula.mk_atom (Atom.mk_true ()) }
   | head ASSUME body DOT { $1, $3 }
   | head DECLARE body DOT { $1, $3 }
+  | QUERY body DOT { Formula.mk_atom (Atom.mk_false ()), $2 }
   | error {
         let message = Printf.sprintf "clause parse error near characters %d-%d"
                                      (Parsing.symbol_start ())
@@ -83,6 +84,7 @@ atom:
 *)
 
 term:
+ | LPAREN term RPAREN { $2 }
  | VAR { Term.mk_var (Ident.Tvar $1) T_int.SInt (* assume sort is int *) }
  | VAR COLON BOOL { Term.mk_var (Ident.Tvar $1) T_bool.SBool }
  | FALSE { T_bool.mk_false () }
@@ -97,5 +99,5 @@ term:
 
 terms : separated_list(COMMA, term) { $1 }
 
-vars : separated_list(COMMA, VAR) { SortEnv.of_list @@ List.map (fun x -> Ident.Tvar x, T_int.SInt) $1 }
+vars : separated_list(COMMA, VAR) { List.map (fun x -> Ident.Tvar x, T_int.SInt) $1 }
 

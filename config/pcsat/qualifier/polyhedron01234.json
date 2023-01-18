@@ -1,0 +1,33 @@
+{
+    "domains": [
+        [
+            "Polyhedron",
+            0
+        ],
+        [
+            "Polyhedron",
+            1
+        ],
+        [
+            "Polyhedron",
+            2
+        ],
+        [
+            "Polyhedron",
+            3
+        ],
+        [
+            "Polyhedron",
+            4
+        ]
+    ],
+    "extract_pcsp": true,
+    "normalize_pcsp": true,
+    "add_bool": true,
+    "add_homogeneous": false,
+    "add_neg": false,
+    "filter_out_neg": true,
+    "filter_out_non_div_mod": false,
+    "filter_out_quantified": false,
+    "reduce": false
+}

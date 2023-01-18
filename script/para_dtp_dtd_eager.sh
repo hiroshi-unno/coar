@@ -30,5 +30,5 @@ do
         break
     fi
 #    echo "still run"
-    sleep 1
+    sleep 0.1
 done

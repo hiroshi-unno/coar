@@ -1,22 +1,20 @@
 open Core
 open Common
-open Util
+open Common.Ext
+open Common.Util
+open Common.Combinator
 open Ast
-open LogicOld
+open Ast.LogicOld
 
+(* ToDo *)module Debug = Debug.Make(val Debug.Config.disable)
 
-(* TODO : should be replaced with appropriate configuration (dummy instantiation) *)
-module Debug = Debug.Make(val Debug.Config.disable)
-
-type entrypoint = Formula.t
-type func = (Predicate.fixpoint * Ident.pvar * SortEnv.t * Formula.t)
-type t = MuCLP of func list * entrypoint
+type query = Formula.t
+type t = { preds : Pred.t list; query : query }
 type solution = Valid | Invalid | Unknown
 
 exception Timeout
 
-let make funcs entry = MuCLP (funcs, entry)
-let mk_func fix pvar args formula : func = (fix, pvar, args, formula)
+let make preds query = { preds = preds; query = query }
 
 let flip_solution = function
   | Valid -> Invalid
@@ -27,134 +25,143 @@ let str_of_solution = function
   | Valid -> "valid"
   | Invalid -> "invalid"
   | Unknown -> "unknown"
+let lts_str_of_solution = function
+  | Valid -> "YES"
+  | Invalid -> "NO"
+  | Unknown -> "MAYBE"
 
-let get_functions = function MuCLP (funs, _) -> funs
-let get_entrypoint = function MuCLP (_, entry) -> entry
-let get_fixpoint_of_function = function (fix, _, _, _) -> fix
-let get_pvar_of_function = function (_, pvar, _, _) -> pvar
-let get_args_of_function = function (_, _, args, _) -> args
-let get_body_of_function = function (_, _, _, body) -> body
-let get_size = function MuCLP (funs, _) -> List.length funs
+let preds_of muclp = muclp.preds
+let query_of muclp = muclp.query
+let size_of muclp = List.length muclp.preds
 
-let let_muclp = function MuCLP (funcs, entry) -> (funcs, entry)
-let let_function = function func -> func
+let penv_of ?(init=Map.Poly.empty) muclp =
+  Pred.pred_sort_env_map_of_list init muclp.preds
+
+let let_muclp muclp = muclp.preds, muclp.query
+
+let get_depth_ht muclp =
+  let res = Hashtbl.Poly.create ~size:(List.length muclp.preds) () in
+  List.iteri muclp.preds ~f:(fun i (_, pvar, _, _) ->
+      Hashtbl.Poly.add_exn res ~key:pvar ~data:i);
+  res
 
 let avoid_dup pvar pvars =
-  if not @@ List.exists ~f:(fun pvar' -> Stdlib.(=) (Ident.name_of_pvar pvar') (Ident.name_of_pvar pvar)) pvars then
+  if not @@ List.exists pvars ~f:(fun pvar' ->
+      Stdlib.(Ident.name_of_pvar pvar' = Ident.name_of_pvar pvar)) then
     pvar
   else
     let suffix = ref 2 in
-    while List.exists ~f:(fun pvar' -> Stdlib.(=) (Ident.name_of_pvar pvar') (Ident.name_of_pvar pvar ^ (string_of_int !suffix))) pvars do
+    while List.exists pvars ~f:(fun pvar' ->
+        Stdlib.(Ident.name_of_pvar pvar' = Ident.name_of_pvar pvar ^ (string_of_int !suffix))) do
       suffix := !suffix + 1
     done;
-    Ident.Pvar (Ident.name_of_pvar pvar ^ (string_of_int !suffix))
+    Ident.Pvar (Ident.name_of_pvar pvar ^ string_of_int !suffix)
 
-(* Usage: let entry, funcs, _ = muclp_of_formula_with_env fml [] Env.empty Env.empty *)
+(* Usage: let query, preds, _ = muclp_of_formula_with_env [] [] [] fml *)
 (* Note: bound_tvars: term variables bound by fixpoint predicates *)
-let rec of_formula_with_env fml funcs env used_pvars bound_tvars =
-  let open Formula in
-  match fml with
-  | Atom (atom, info) -> begin
-      match atom with
-      | App (Fixpoint (fp, pvar, bounds, body), outer_args, info') ->
-        (* (fp pvar(bounds). body)(args) *)
-        let new_pvar = avoid_dup pvar used_pvars in
-        let used_pvars = new_pvar :: used_pvars in
-        let env = Env.update [pvar, new_pvar] env in
-        let bound_tvars = Set.Poly.union bound_tvars (SortEnv.set_of bounds) in
-        let body, funcs, used_pvars = of_formula_with_env body funcs env used_pvars bound_tvars in
+let rec of_formula_with_env preds env used_pvars bound_tvars =
+  let open Formula in function
+    | Atom (atom, info) as fml -> begin
+        match atom with
+        | App (Fixpoint (fp, pvar, bounds, body), outer_args, info') ->
+          (* (fp pvar(bounds). body)(args) *)
+          let new_pvar = avoid_dup pvar used_pvars in
+          let used_pvars = new_pvar :: used_pvars in
+          let env = (pvar, new_pvar) :: env in
+          let bound_tvars = Set.Poly.union bound_tvars (Set.Poly.of_list bounds) in
+          let body, preds, used_pvars =
+            of_formula_with_env preds env used_pvars bound_tvars body
+          in
 
-        let fvs_of_body = Formula.term_sort_env_of body in
-        let additional_params = SortEnv.of_set @@
-          Set.Poly.diff fvs_of_body (Set.Poly.inter bound_tvars (SortEnv.set_of bounds)) in
+          let fvs_of_body = Formula.term_sort_env_of body in
+          let additional_params = Set.Poly.to_list @@
+            Set.Poly.diff fvs_of_body
+              (Set.Poly.inter bound_tvars (Set.Poly.of_list bounds)) in
 
-        let new_bounds = SortEnv.append bounds additional_params in
-        let new_outer_args = outer_args @ Term.of_sort_env additional_params in
-        let new_inner_args = Term.of_sort_env new_bounds in
-        let new_sorts = SortEnv.sorts_of new_bounds in
+          let new_bounds = bounds @ additional_params in
+          let new_outer_args = outer_args @ Term.of_sort_env additional_params in
+          let new_inner_args = Term.of_sort_env new_bounds in
+          let new_sorts = List.map ~f:snd new_bounds in
 
-        let new_pvar_app = Formula.mk_atom (Atom.mk_app (Predicate.Var(new_pvar, new_sorts)) new_inner_args) in
-        let body = subst_preds (Map.Poly.singleton pvar (bounds, new_pvar_app)) body in
-        let funcs = (mk_func fp new_pvar new_bounds body) :: funcs in
-        let fml' = Formula.mk_atom
-            (Atom.mk_app
-               (Predicate.mk_var new_pvar new_sorts)
-               new_outer_args ~info:info')
-            ~info in
-        fml', funcs, used_pvars
-      | App (Var (pvar, sorts), args, info') ->
-        let new_pred = Predicate.mk_var (Env.lookup_exn pvar env) sorts in
-        let fml' = Formula.mk_atom (Atom.mk_app new_pred args ~info:info') ~info in
-        fml', funcs, used_pvars
-      | _ -> fml, funcs, used_pvars
-    end
-  | UnaryOp (op, fml, info) ->
-    let entry, funcs, used_pvars = of_formula_with_env fml funcs env used_pvars bound_tvars in
-    let fml' = Formula.mk_unop op entry ~info in
-    fml', funcs, used_pvars
-  | BinaryOp (op, lhs, rhs, info) ->
-    let left_entry, funcs, used_pvars = of_formula_with_env lhs funcs env used_pvars bound_tvars in
-    let right_entry, funcs, used_pvars = of_formula_with_env rhs funcs env used_pvars bound_tvars in
-    let fml' = Formula.mk_binop op left_entry right_entry ~info in
-    fml', funcs, used_pvars
-  | Bind (binder, bounds, body, info) ->
-    let entry, funcs, used_pvars = of_formula_with_env body funcs env used_pvars bound_tvars in
-    let fml' = Formula.mk_bind binder bounds entry ~info in
-    fml', funcs, used_pvars
-  | LetRec (letrec_funcs, body, _) ->
-    let env, used_pvars = List.fold ~init:(env, used_pvars) letrec_funcs
-        ~f:(fun (env, used_pvars) (_, pvar, _, _) ->
-            let new_pvar = avoid_dup pvar used_pvars in
-            let used_pvars = new_pvar :: used_pvars in
-            Env.update [pvar, new_pvar] env, used_pvars)
-    in
-    let entry, funcs, used_pvars = of_formula_with_env body funcs env used_pvars bound_tvars in
-    let funcs, used_pvars = List.fold ~init:(funcs, used_pvars) letrec_funcs
-        ~f:(fun (funcs, used_pvars) (fp, pvar, bounds, body) ->
-            let body, funcs, used_pvars = of_formula_with_env body funcs env used_pvars bound_tvars in
-            mk_func fp (Env.lookup_exn pvar env) bounds body :: funcs, used_pvars)
-    in
-    entry, funcs, used_pvars
-
-let of_formula fml =
-  let entry, funcs, _ = of_formula_with_env fml [] Env.empty [] Set.Poly.empty in
-  make funcs entry
+          let new_pvar_app =
+            Formula.mk_atom @@ Atom.mk_pvar_app new_pvar new_sorts new_inner_args
+          in
+          let body =
+            Formula.subst_preds (Map.Poly.singleton pvar (bounds, new_pvar_app)) body
+          in
+          let preds = (Pred.make fp new_pvar new_bounds body) :: preds in
+          let fml' =
+            Formula.mk_atom ~info @@
+            Atom.mk_pvar_app new_pvar new_sorts new_outer_args ~info:info'
+          in
+          fml', preds, used_pvars
+        | App (Var (pvar, sorts), args, info') ->
+          let new_pred =
+            Predicate.mk_var (List.Assoc.find_exn ~equal:Stdlib.(=) env pvar) sorts
+          in
+          let fml' = Formula.mk_atom (Atom.mk_app new_pred args ~info:info') ~info in
+          fml', preds, used_pvars
+        | _ -> fml, preds, used_pvars
+      end
+    | UnaryOp (op, fml, info) ->
+      let query, preds, used_pvars =
+        of_formula_with_env preds env used_pvars bound_tvars fml
+      in
+      let fml' = Formula.mk_unop op query ~info in
+      fml', preds, used_pvars
+    | BinaryOp (op, lhs, rhs, info) ->
+      let left_query, preds, used_pvars =
+        of_formula_with_env preds env used_pvars bound_tvars lhs
+      in
+      let right_query, preds, used_pvars =
+        of_formula_with_env preds env used_pvars bound_tvars rhs
+      in
+      let fml' = Formula.mk_binop op left_query right_query ~info in
+      fml', preds, used_pvars
+    | Bind (binder, bounds, body, info) ->
+      let query, preds, used_pvars =
+        of_formula_with_env preds env used_pvars bound_tvars body
+      in
+      let fml' = Formula.mk_bind binder bounds query ~info in
+      fml', preds, used_pvars
+    | LetRec (letrec_preds, body, _) ->
+      let env, used_pvars =
+        List.fold ~init:(env, used_pvars) letrec_preds
+          ~f:(fun (env, used_pvars) (_, pvar, _, _) ->
+              let new_pvar = avoid_dup pvar used_pvars in
+              let used_pvars = new_pvar :: used_pvars in
+              (pvar, new_pvar) :: env, used_pvars)
+      in
+      let query, preds, used_pvars =
+        of_formula_with_env preds env used_pvars bound_tvars body
+      in
+      let preds, used_pvars =
+        List.fold ~init:(preds, used_pvars) letrec_preds
+          ~f:(fun (preds, used_pvars) (fp, pvar, bounds, body) ->
+              let body, preds, used_pvars =
+                of_formula_with_env preds env used_pvars bound_tvars body
+              in
+              Pred.make fp (List.Assoc.find_exn ~equal:Stdlib.(=) env pvar)
+                bounds body :: preds, used_pvars)
+      in
+      query, preds, used_pvars
+    | LetFormula _ -> failwith @@ "'LetFormula' is not supported yet" (* TODO *)
+let of_formula phi =
+  let query, preds, _ = of_formula_with_env [] [] [] Set.Poly.empty phi in
+  make preds query
 
 let to_formula _ = assert false (* TODO *)
 
-let str_of_func func =
-  let fix, Ident.Pvar pvar_name, args, body = let_function func in
-  Printf.sprintf
-    "%s%s: bool =%s %s;"
-    pvar_name
-    (if SortEnv.length args > 0 then " " ^ SortMap.str_of Term.str_of_sort (Map.Poly.of_alist_exn @@ SortEnv.list_of args) else "")
-    (Predicate.str_of_fixpoint fix)
-    (Formula.str_of body)
-
-let str_of_func_list funcs = List.map ~f:str_of_func funcs |> String.concat ~sep:"\n"
-
 let str_of muclp =
-  let funcs, entry = let_muclp muclp in
-  (Formula.str_of entry) ^ "\n"
-  ^ "s.t.\n"
-  ^ str_of_func_list funcs
-(*  ^ (String.concat "\n"
-       (List.map
-          (fun func ->
-             let fix, Ident.Pvar pvar_name, args, body = let_function func in
-             pvar_name
-             ^ "(" ^ (String.concat "," (List.map (fun (Ident.Tvar var_name, _) -> var_name) args)) ^ ")"
-             ^ " =" ^ (PrinterHum.str_of_fixpoint fix) ^ " "
-             ^ (Formula.str_of body)
-          ) funcs)
-    ) *)
+  let preds, query = let_muclp muclp in
+  Printf.sprintf "%s\ns.t.\n%s" (Formula.str_of query) (Pred.str_of_list preds)
 
-let is_onlymu = function MuCLP (funs, _) ->
-  List.for_all ~f:(fun (fixpoint, _, _, _) -> Stdlib.(=) fixpoint Predicate.Mu) funs
-let is_onlynu = function MuCLP (funs, _) -> 
-  List.for_all ~f:(fun (fixpoint, _, _, _) -> Stdlib.(=) fixpoint Predicate.Nu) funs
-let is_onlyexists muclp =
-  let funcs, entry = let_muclp muclp in
+let has_only_mu muclp =
+  List.for_all ~f:(fun (fix, _, _, _) -> Stdlib.(fix = Predicate.Mu)) muclp.preds
+let has_only_nu muclp =
+  List.for_all ~f:(fun (fix, _, _, _) -> Stdlib.(fix = Predicate.Nu)) muclp.preds
+let has_only_exists muclp =
+  let preds, query = let_muclp muclp in
   let rec check fml =
     if Formula.is_atom fml then
       true
@@ -171,9 +178,9 @@ let is_onlyexists muclp =
         failwith "not implemented")
   in
   List.for_all ~f:(fun fml -> check @@ Evaluator.simplify fml)
-  @@ entry :: List.map ~f:(fun (_, _, _, body) -> body) funcs
-let is_onlyforall muclp =
-  let funcs, entry = let_muclp muclp in
+  @@ query :: List.map ~f:(fun (_, _, _, body) -> body) preds
+let has_only_forall muclp =
+  let preds, query = let_muclp muclp in
   let rec check fml =
     if Formula.is_atom fml then
       true
@@ -189,183 +196,74 @@ let is_onlyforall muclp =
       failwith "not implemented"
   in
   List.for_all ~f:check
-  @@ entry :: List.map ~f:(fun (_, _, _, body) -> body) funcs
-let is_noquantifier muclp = is_onlyexists muclp && is_onlyforall muclp
+  @@ query :: List.map ~f:(fun (_, _, _, body) -> body) preds
+let has_no_quantifier muclp = has_only_exists muclp && has_only_forall muclp
 
-let aconv_tvar (MuCLP (funcs, entry)) =
-  let open Core in
-  let entry' = Formula.aconv_tvar entry in
-  let funcs' =
-    List.map funcs ~f:(fun (fp, pvar, params, phi) ->
-        let pmap = 
-          SortEnv.map params ~f:(fun (x, sort) -> (x, sort, Ident.mk_fresh_tvar ()))
-        in 
+let aconv_tvar muclp =
+  let query' = Formula.aconv_tvar muclp.query in
+  let preds' =
+    List.map muclp.preds ~f:(fun (fp, pvar, params, phi) ->
+        let pmap =
+          List.map params ~f:(fun (x, sort) -> (x, sort, Ident.mk_fresh_tvar ()))
+        in
         let map = List.map pmap ~f:(fun (x, sort, x') -> (x, Term.mk_var x' sort)) in
-        let params' = SortEnv.of_list @@ List.map pmap ~f:(fun (_, sort, x') -> x', sort) in
+        let params' = List.map pmap ~f:(fun (_, sort, x') -> x', sort) in
         let phi' = Formula.subst (Map.Poly.of_alist_exn map) @@ Formula.aconv_tvar phi in
         (fp, pvar, params', phi'))
   in
-  MuCLP (funcs', entry')
+  make preds' query'
 
 let move_quantifiers_to_front muclp =
-  let funcs, entry = let_muclp muclp in
-  make
-    (List.map funcs
-       ~f:(fun func ->
-           let fix, pvar, args, body = let_function func in
-           mk_func fix pvar args @@ FormulaUtil.move_quantifiers_to_front body))
-  @@ FormulaUtil.move_quantifiers_to_front entry
+  let preds, query = let_muclp muclp in
+  make (Pred.map_list Formula.move_quantifiers_to_front preds)
+  @@ Formula.move_quantifiers_to_front query
 
-let rm_forall (MuCLP (funcs, entry)) =
-  let _, entry' = Formula.rm_forall entry in
-  let funcs' =
-    List.map funcs ~f:(fun (fp, pvar, params, phi) ->
-        (fp, pvar, params, snd @@ Formula.rm_forall phi)) in
-  MuCLP (funcs', entry')
+let rm_forall muclp =
+  let _, query' = Formula.rm_forall muclp.query in
+  let preds' = Pred.map_list (fun phi -> snd @@ Formula.rm_forall phi) muclp.preds in
+  make preds' query'
 
-let penv_of ?(init=Map.Poly.empty) (MuCLP (funcs, _entry)) =
-  let rec inner map = function
-    | [] -> map
-    | (_, pvar, params, _)::funcs ->
-      let sorts = SortEnv.sorts_of params in
-      let map' = Map.Poly.add_exn map ~key:pvar ~data:sorts in
-      inner map' funcs
-  in
-  inner init funcs
-
-let complete_tsort (MuCLP (funcs, entry)) =
-  MuCLP
-    (List.map funcs ~f:(fun (fp, pvar, params, phi) ->
-         (fp, pvar, params, Formula.complete_tsort phi)),
-     Formula.complete_tsort entry)
+let complete_tsort muclp =
+  make (Pred.map_list Formula.complete_tsort muclp.preds)
+    (Formula.complete_tsort muclp.query)
 
 (* TODO : this should be applied to hes Parser *)
-let complete_psort uninterp_pvs (MuCLP (funcs, entry)) =
-  let map = penv_of ~init:uninterp_pvs (MuCLP (funcs, entry)) in
-  MuCLP
-    (List.map funcs ~f:(fun (fp, pvar, params, phi) ->
-         (fp, pvar, params, Formula.complete_psort map phi)),
-     Formula.complete_psort map entry)
+let complete_psort uninterp_pvs muclp =
+  let map = penv_of ~init:uninterp_pvs (make muclp.preds muclp.query) in
+  make (Pred.map_list (Formula.complete_psort map) muclp.preds)
+    (Formula.complete_psort map muclp.query)
 
 let simplify muclp =
-  let funcs, entry = let_muclp muclp in
-  make
-    (List.map funcs
-       ~f:(fun (fixpoint, pvar, args, formula) ->
-           (fixpoint, pvar, args, Evaluator.simplify formula)))
-    (Evaluator.simplify entry)
+  make (Pred.map_list Evaluator.simplify muclp.preds) (Evaluator.simplify muclp.query)
 
 let get_dual muclp =
-  let funcs, entry = let_muclp muclp in
-  let pvars = List.map funcs ~f:(fun (_, pvar, _, _) -> pvar) in
-  let subst formula = List.fold ~init:formula pvars ~f:(fun fml pvar -> Formula.subst_neg pvar fml) in
+  let pvars = List.map muclp.preds ~f:(fun (_, pvar, _, _) -> pvar) in
+  let subst formula =
+    List.fold ~init:formula pvars ~f:(fun fml pvar -> Formula.subst_neg pvar fml)
+  in
   make
-    (List.map funcs
-       ~f:(fun (fixpoint, pvar, args, formula) ->
-           (Predicate.flip_fixpoint fixpoint,
-            pvar, args, Evaluator.simplify_neg (subst formula))))
-    (Evaluator.simplify_neg (subst entry))
+    (List.map muclp.preds ~f:(fun (fixpoint, pvar, args, formula) ->
+         (Predicate.flip_fixpoint fixpoint,
+          pvar, args, Evaluator.simplify_neg (subst formula))))
+    (Evaluator.simplify_neg (subst muclp.query))
 
 let get_greatest_approx muclp =
-  let funcs, entry = let_muclp muclp in
-  make (List.map funcs ~f:(fun (_, pvar, args, formula) -> (Predicate.Nu, pvar, args, formula))) entry
+  make (List.map muclp.preds ~f:(fun (_, pvar, args, phi) -> Predicate.Nu, pvar, args, phi)) muclp.query
 
-let rec replace_app (replacer: Formula.t -> Formula.t) formula =
-  if Formula.is_atom formula then
-    let atom, info = Formula.let_atom formula in
-    let formula = Formula.mk_atom atom ~info in
-    if Atom.is_app atom then
-      let pred, _, _ = Atom.let_app atom in
-      if Predicate.is_var pred then
-        replacer formula
-      else formula
-    else
-      formula
-  else if Formula.is_binop formula then
-    let binop, left, right, info = Formula.let_binop formula in
-    Formula.mk_binop binop (replace_app replacer left) (replace_app replacer right) ~info
-  else if Formula.is_unop formula then
-    let unop, body, info = Formula.let_unop formula in
-    Formula.mk_unop unop (replace_app replacer body) ~info
-  else if Formula.is_bind formula then
-    let binder, bounds, body, info = Formula.let_bind formula in
-    Formula.mk_bind binder bounds (replace_app replacer body) ~info
-  else assert false
+let bind_fvs_with_forall muclp =
+  let query = Formula.bind_fvs_with_forall muclp.query in
+  make muclp.preds query
 
-let get_next_funcs fml =
-  let res = ref [] in
-  let _ = replace_app (fun fml ->
-      let atom, _ = Formula.let_atom fml in
-      let pred, _, _ = Atom.let_app atom in
-      let pvar, _ = Predicate.let_var pred in
-      res := pvar :: !res;
-      fml
-    ) fml
-  in
-  Stdlib.List.sort_uniq Ident.pvar_compare !res
-
-let replace_app_add formula arg sort =
-  replace_app (fun fml ->
-      let atom, info = Formula.let_atom fml in
-      let pred, args, info' = Atom.let_app atom in
-      let pvar, arg_sorts = Predicate.let_var pred in
-      Formula.mk_atom
-        (Atom.mk_app
-           (Predicate.mk_var pvar (sort :: arg_sorts))
-           (arg :: args)
-           ~info:info'
-        ) ~info
-    ) formula
-
-let elim_mu_from_funcs_with_rec funcs tvar_rec =
-  List.map ~f:(fun func ->
-      let fix, pvar, args, body = (let_function func) in
-      let args = SortEnv.append (SortEnv.singleton tvar_rec T_int.SInt) args in
-      let term = Term.mk_var tvar_rec T_int.SInt in
-      if Stdlib.(=) fix Predicate.Nu then
-        let body = replace_app_add body term T_int.SInt in
-        mk_func Predicate.Nu pvar args body
-      else
-        (* replace all F X Y --> F (rec_ - 1) X Y in body*)
-        let term = Term.mk_fsym_app T_int.Sub [term; T_int.one ()] in
-        let body = replace_app_add body term T_int.SInt in
-        (* body --> rec_ > 0 /\ body *)
-        let body = Formula.mk_and (Formula.mk_atom (T_int.mk_gt term (T_int.zero ()))) body in
-        mk_func Predicate.Nu pvar args body
-    ) funcs
-
-let rename_args group =
-  let (_, a1, _, _) = List.hd_exn group in
-  match a1 |> Set.Poly.to_list with
-  | [] ->
-    List.map group ~f:(fun (senv, ps, ns, phi) ->
-        assert (Set.Poly.is_empty ps);
-        senv, None, ns, Evaluator.simplify_neg phi)
-  | [Atom.App(Predicate.Var(_, sorts), args0, _)] ->
-    let new_vars = List.map2_exn ~f:(fun _ s -> Ident.mk_fresh_tvar (), s) args0 sorts in
-    let args' = List.map new_vars ~f:(uncurry Term.mk_var) in
-    List.map group ~f:(fun (uni_senv, ps, ns, phi) ->
-        match Set.Poly.to_list ps with
-        | [Atom.App(Predicate.Var(p, _), args, _)] ->
-          Logic.SortMap.merge uni_senv
-            (Logic.SortMap.of_set @@ Set.Poly.of_list @@ List.map ~f:(Pair.map_snd Logic.ExtTerm.of_old_sort) new_vars),
-          Some (p, SortEnv.of_list new_vars),
-          ns,
-          Formula.and_of @@ Evaluator.simplify_neg phi :: List.map2_exn args args' ~f:Formula.eq
-        | _ -> assert false)
-  | _ -> assert false
-
-(*let detect_arity0_preds (MuCLP (funcs, entry)) =
-  if List.exists ~f:(fun (_, _, params, _) -> List.length params = 0) funcs
+(*let detect_arity0_preds muclp =
+  if List.exists ~f:(fun (_, _, params, _) -> List.length params = 0) muclp.preds
   then failwith "arity0 predicates is not supported."
-  else MuCLP (funcs, entry)*)
+  else make muclp.preds muclp.query*)
 
-let detect_undefined_preds (MuCLP (funcs, entry)) =
+let detect_undefined_preds muclp =
   let check map formula =
     let fpv = LogicOld.Formula.pvs_of formula in
     (*Debug.print @@
-      lazy (Printf.sprintf "fpvs: %s" @@ String.concat ~sep:"," @@
-          Set.Poly.to_list @@
+      lazy (Printf.sprintf "fpvs: %s" @@ String.concat_set ~sep:"," @@
           Set.Poly.map ~f:(fun (Ident.Pvar pid) -> pid) fpv);*)
     match Set.Poly.find ~f:(fun pvar -> not @@ Map.Poly.mem map pvar) fpv with
     | Some (Ident.Pvar pid) -> failwith @@ "undefined predicates: " ^ pid
@@ -376,10 +274,10 @@ let detect_undefined_preds (MuCLP (funcs, entry)) =
     | (_, pvar, _, _)::xs ->
       mk_env (Map.Poly.add_exn map ~key:pvar ~data:pvar) xs
   in
-  let map = mk_env Map.Poly.empty funcs in
-  check map entry;
-  List.iter ~f:(fun (_, _, _, phi) -> check map phi) funcs;
-  MuCLP (funcs, entry)
+  let map = mk_env Map.Poly.empty muclp.preds in
+  check map muclp.query;
+  List.iter ~f:(fun (_, _, _, phi) -> check map phi) muclp.preds;
+  make muclp.preds muclp.query
 
 let _check_problem muclp =
   muclp
@@ -387,6 +285,28 @@ let _check_problem muclp =
   |> detect_undefined_preds
 let check_problem muclp = muclp
 
+let rename_args group =
+  let (_, a1, _, _) = List.hd_exn group in
+  match Set.Poly.to_list a1 with
+  | [] ->
+    List.map group ~f:(fun (senv, ps, ns, phi) ->
+        assert (Set.Poly.is_empty ps);
+        senv, None, ns, Evaluator.simplify_neg phi)
+  | [Atom.App (Predicate.Var (_, sorts), _args0, _)] ->
+    let new_vars = mk_fresh_sort_env_list sorts in
+    let args' = List.map new_vars ~f:(uncurry Term.mk_var) in
+    List.map group ~f:(fun (uni_senv, ps, ns, phi) ->
+        match Set.Poly.to_list ps with
+        | [Atom.App (Predicate.Var (p, _), args, _)] ->
+          Map.force_merge uni_senv @@
+          Map.of_list_exn @@
+          List.map ~f:(Pair.map_snd Logic.ExtTerm.of_old_sort) new_vars,
+          Some (p, new_vars),
+          ns,
+          Formula.and_of @@
+          Evaluator.simplify_neg phi :: List.map2_exn args args' ~f:Formula.eq
+        | _ -> assert false)
+  | _ -> assert false
 let of_chc chc =
   let chc = chc |> PCSP.Problem.to_nnf |> PCSP.Problem.to_cnf in
   let groups =
@@ -404,31 +324,31 @@ let of_chc chc =
           assert (Predicate.is_var p1 && Predicate.is_var p2);
           let pred1 = Predicate.let_var p1 in
           let pred2 = Predicate.let_var p2 in
-          Stdlib.(=) pred1 pred2
+          Stdlib.(pred1 = pred2)
         | _, _ -> false)
     |> List.map ~f:rename_args
   in
   let goals, defs = List.partition_tf groups ~f:(function
       | [] -> assert false
       | ((_senv, p, _ns, _phi) :: _group) -> Option.is_none p) in
-  let make_func = function
+  let make_pred = function
     | ((_, Some (p, args), _, _) :: _) as group ->
-      mk_func Predicate.Mu p args
+      Pred.make Predicate.Mu p args
         (Formula.or_of @@
          List.map group ~f:(fun (senv, _, ns, phi) ->
              let phi = Formula.and_of @@ Evaluator.simplify phi :: List.map (Set.Poly.to_list ns) ~f:Formula.mk_atom in
              let senv =
                let fvs = Formula.fvs_of phi in
-               Logic.SortMap.filter_keys senv ~f:(Set.Poly.mem fvs) in
+               Map.Poly.filter_keys senv ~f:(Set.Poly.mem fvs) in
              let senv, phi = Pair.map_snd Evaluator.simplify_neg @@
-               Ast.Qelim.qelim_old (Logic.SortMap.of_set @@ Set.Poly.of_list @@ Logic.ExtTerm.of_old_sort_env args) (PCSP.Problem.senv_of chc) (senv, Evaluator.simplify_neg phi) in
+               Ast.Qelim.qelim_old (Map.of_list_exn @@ Logic.ExtTerm.of_old_sort_env args) (PCSP.Problem.senv_of chc) (senv, Evaluator.simplify_neg phi) in
              let unbound =
-               Logic.SortMap.to_old_sort_env Logic.ExtTerm.to_old_sort @@
-               Logic.SortMap.filter_keys senv ~f:(fun x -> not @@ SortEnv.mem args x) in
+               Map.to_alist @@ Logic.to_old_sort_env_map Logic.ExtTerm.to_old_sort @@
+               Map.Poly.filter_keys senv ~f:(fun x -> not @@ List.Assoc.mem ~equal:Stdlib.(=) args x) in
              Formula.exists unbound phi))
     | _ -> assert false
   in
-  let funcs = List.map ~f:make_func defs in
+  let preds = List.map ~f:make_pred defs in
   let query =
     match goals with
     | [] -> Formula.mk_false ()
@@ -436,27 +356,27 @@ let of_chc chc =
       Formula.or_of @@
       List.map goals ~f:(fun (senv, _, ns, phi) ->
           let phi = Formula.and_of @@ Evaluator.simplify phi :: List.map (Set.Poly.to_list ns) ~f:Formula.mk_atom in
-          let senv = let ftvs = Formula.tvs_of phi(*ToDo:also use pvs?*) in Logic.SortMap.filter_keys senv ~f:(Set.Poly.mem ftvs) in
+          let senv = let ftvs = Formula.tvs_of phi(*ToDo:also use pvs?*) in Map.Poly.filter_keys senv ~f:(Set.Poly.mem ftvs) in
           let senv, phi = Pair.map_snd Evaluator.simplify_neg @@
-            Ast.Qelim.qelim_old Logic.SortMap.empty (PCSP.Problem.senv_of chc) (senv, Evaluator.simplify_neg phi) in
-          let unbound = SortEnv.of_list @@ List.map ~f:(fun (x, s) -> x, Logic.ExtTerm.to_old_sort s) @@ Logic.SortMap.to_alist senv in
+            Ast.Qelim.qelim_old Map.Poly.empty (PCSP.Problem.senv_of chc) (senv, Evaluator.simplify_neg phi) in
+          let unbound = List.map ~f:(fun (x, s) -> x, Logic.ExtTerm.to_old_sort s) @@ Map.Poly.to_alist senv in
           Formula.exists unbound phi)
     | _ -> assert false
   in
-  let undef_funcs =
-    let def_funcs = List.map ~f:(fun (_, p, _, _) -> p) funcs in 
-    let senv = Logic.SortMap.filter_keys ~f:(fun x -> not @@ List.mem def_funcs ~equal:Stdlib.(=) (Ident.Pvar (Ident.name_of_tvar x))) @@ PCSP.Problem.senv_of chc in
-    Logic.SortMap.mapi senv ~f:(fun ~key:(Ident.Tvar n) ~data ->
+  let undef_preds =
+    let def_preds = List.map ~f:(fun (_, p, _, _) -> p) preds in
+    let senv = Map.Poly.filter_keys ~f:(fun x -> not @@ List.mem def_preds ~equal:Stdlib.(=) (Ident.tvar_to_pvar x)) @@ PCSP.Problem.senv_of chc in
+    Map.Poly.mapi senv ~f:(fun ~key:(Ident.Tvar n) ~data ->
         let sorts = List.map ~f:Logic.ExtTerm.to_old_sort @@ Logic.Sort.args_of data in
         let args sorts =
           let flag = ref 0 in
           List.map sorts ~f:(fun sort ->
               let _ = flag := !flag + 1 in
-              Ident.Tvar("x" ^ (string_of_int !flag)), sort)
+              Ident.Tvar ("x" ^ (string_of_int !flag)), sort)
         in
-        mk_func Predicate.Mu (Ident.Pvar n) (SortEnv.of_list @@ args sorts) (Formula.mk_false()))
-    |> Logic.SortMap.to_alist |> List.map ~f:snd in
-  get_dual @@ make (funcs @ undef_funcs) query
+        Pred.make Predicate.Mu (Ident.Pvar n) (args sorts) (Formula.mk_false ()))
+    |> Map.Poly.to_alist |> List.map ~f:snd in
+  get_dual @@ make (preds @ undef_preds) query
 (* |>( fun res -> let _ = Printf.printf "\n\n-------------->>>before res<<<--------\n\n%s\n" @@ str_of res in res) *)
 (* |>( fun res -> let _ = Printf.printf "\n\n-------------->>>after res<<<--------\n\n%s\n" @@ str_of res in res) *)
 
@@ -467,13 +387,13 @@ let rec of_lts ?(live_vars=None) ?(cut_points=None) = function
     let tenv_of =
       match live_vars with
       | None ->
-        let tenv = SortEnv.of_set @@ Set.Poly.filter ~f:(fun (x, _) -> not @@ String.is_prefix ~prefix:LTS.Problem.nondet_prefix @@ Ident.name_of_tvar x) @@ LTS.Problem.term_sort_env_of lts in
+        let tenv = Set.Poly.to_list @@ Set.Poly.filter ~f:(fun (x, _) -> not @@ String.is_prefix ~prefix:LTS.Problem.nondet_prefix @@ Ident.name_of_tvar x) @@ LTS.Problem.term_sort_env_of lts in
         fun _ -> tenv
-      | Some live_vars -> fun s -> try SortEnv.of_set (live_vars s) with Caml.Not_found -> failwith ("not found: " ^ s)
+      | Some live_vars -> fun s -> try Set.Poly.to_list (live_vars s) with Caml.Not_found -> failwith ("not found: " ^ s)
     in
     Debug.print @@ lazy (Printf.sprintf "LTS:\n%s" @@ LTS.Problem.str_of_lts lts);
-    let funcs =
-      Common.Util.List.classify (fun (s1, _, _) (s2, _, _) -> String.(s1 = s2)) transitions
+    let preds =
+      List.classify (fun (s1, _, _) (s2, _, _) -> String.(s1 = s2)) transitions
       |> List.map ~f:(function
           | [] -> assert false
           | (from, c, to_) :: trs ->
@@ -481,17 +401,17 @@ let rec of_lts ?(live_vars=None) ?(cut_points=None) = function
               (c, to_) :: List.map trs ~f:(fun (_, c, to_) -> c, to_)
               |> List.map ~f:(fun (c, to_) ->
                   let pvar = pvar_of to_ in
-                  let tenv = tenv_of to_ in
+                  let senv = tenv_of to_ in
                   let phi = LTS.Problem.wp c
-                      (Formula.mk_atom @@ Atom.mk_pvar_app pvar (SortEnv.sorts_of tenv) (Term.of_sort_env tenv)) in
-                  let nondet_tenv = SortEnv.of_set @@
+                      (Formula.mk_atom @@ Atom.pvar_app_of_senv (pvar, senv)) in
+                  let nondet_tenv = Set.Poly.to_list @@
                     Set.Poly.filter (Formula.term_sort_env_of phi) ~f:(fun (x, _) ->
                         String.is_prefix ~prefix:LTS.Problem.nondet_prefix @@ Ident.name_of_tvar x)
                   in
                   Formula.mk_forall_if_bounded nondet_tenv phi)
               |> Formula.and_of
             in
-            mk_func
+            Pred.make
               (match cut_points with None -> Predicate.Mu | Some cut_points -> if Set.Poly.mem cut_points from then Predicate.Mu else Predicate.Nu)
               (pvar_of from)
               (tenv_of from)
@@ -502,18 +422,18 @@ let rec of_lts ?(live_vars=None) ?(cut_points=None) = function
        assert (List.is_empty transitions);
        make [] (Formula.mk_true ())
      | Some start ->
-       let undef_funcs =
+       let undef_preds =
          Set.Poly.diff
            (Set.Poly.add (Set.Poly.of_list @@ List.map transitions ~f:(fun (_, _, _to) -> _to)) start)
            (Set.Poly.of_list @@ List.map transitions ~f:(fun (from, _, _) -> from))
-         |> Set.Poly.map ~f:(fun from -> mk_func Predicate.Mu (pvar_of from) (tenv_of from) (Formula.mk_true ()))
+         |> Set.Poly.map ~f:(fun from -> Pred.make Predicate.Mu (pvar_of from) (tenv_of from) (Formula.mk_true ()))
          |> Set.Poly.to_list
        in
        let query =
          let tenv = tenv_of start in
          Formula.mk_forall_if_bounded tenv @@
          Formula.mk_atom @@
-         Atom.mk_pvar_app (pvar_of start) (SortEnv.sorts_of tenv) (Term.of_sort_env tenv) in
-       make (funcs @ undef_funcs) query)
+         Atom.mk_pvar_app (pvar_of start) (List.map ~f:snd tenv) (Term.of_sort_env tenv) in
+       make (preds @ undef_preds) query)
   | lts, LTS.Problem.NonTerm -> get_dual @@ of_lts ~live_vars ~cut_points (lts, LTS.Problem.Term)
-  | _, LTS.Problem.CondTerm -> assert false
+  | _, (LTS.Problem.Safe | LTS.Problem.NonSafe | LTS.Problem.CondTerm | LTS.Problem.Rel | LTS.Problem.MuCal) -> assert false

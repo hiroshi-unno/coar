@@ -1,0 +1,26 @@
+[
+    "MuVal",
+    {
+        "optimizer": [
+            "Filename",
+            "./config/muval/optimizer/default.json"
+        ],
+        "pcsp_solver": [
+            "Filename",
+            "./config/solver/pcsat_dt_lazy.json"
+        ],
+        "qelim": {
+            "mode": [
+                "Nu",
+                100
+            ],
+            "verbose": false
+        },
+        "mode": [
+            "Disprove"
+        ],
+        "check_problem": false,
+        "verbose": false,
+        "output_iteration": false
+    }
+]

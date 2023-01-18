@@ -1,0 +1,32 @@
+(L1Q0 0)
+s.t.
+L1Q1 (chainBroken: int): bool =mu chainBroken != 1 \/ (L2Q1 0);
+L2Q1 (chainBroken: int): bool =mu chainBroken != 1 \/ (L3Q1 chainBroken 0);
+L3Q1 (chainBroken: int) (temp: int): bool =mu chainBroken != 1 \/ (L4Q1 chainBroken temp 0);
+L4Q1 (chainBroken: int) (temp: int) (try#0: int): bool =mu chainBroken != 1 \/ (forall (limit#1: int). (L5Q1 chainBroken limit#1 temp try#0));
+L5Q1 (chainBroken: int) (limit#1: int) (temp: int) (try#0: int): bool =mu chainBroken != 1 \/ limit#1 < 10 /\ limit#1 > -273 /\ (L6Q1 chainBroken temp) \/ (limit#1 >= 10 \/ limit#1 <= -273) /\ (L14Q1 chainBroken temp try#0);
+L6Q1 (chainBroken: int) (temp: int): bool =mu chainBroken != 1 \/ (L7Q1 chainBroken temp 0);
+L7Q1 (chainBroken: int) (temp: int) (time#2: int): bool =mu chainBroken != 1 \/ (L8Q1 chainBroken time#2 temp);
+L8Q1 (chainBroken: int) (otime#1: int) (temp: int): bool =mu chainBroken != 1 \/ (L9Q1 chainBroken temp (otime#1 + 1));
+L9Q1 (chainBroken: int) (temp: int) (time#2: int): bool =mu chainBroken != 1 \/ temp < 0 /\ (L10Q1 chainBroken time#2) \/ temp >= 0 /\ (L10Q1 chainBroken time#2);
+L10Q1 (chainBroken: int) (time#2: int): bool =mu chainBroken != 1 \/ (forall (temp: int). (L11Q1 chainBroken temp time#2));
+L11Q1 (chainBroken: int) (temp: int) (time#2: int): bool =mu chainBroken != 1 \/ temp > 8 /\ (L12Q1 chainBroken temp time#2) \/ temp <= 8 /\ (L13Q1 chainBroken temp time#2);
+L12Q1 (chainBroken: int) (temp: int) (time#2: int): bool =mu chainBroken != 1 \/ (L7Q1 1 temp time#2);
+L13Q1 (chainBroken: int) (temp: int) (time#2: int): bool =mu chainBroken != 1 \/ (L7Q1 0 temp time#2);
+L14Q1 (chainBroken: int) (temp: int) (try#0: int): bool =mu chainBroken != 1 \/ try#0 >= 3 /\ (L6Q1 chainBroken temp) \/ try#0 < 3 /\ (L15Q1 chainBroken temp try#0);
+L15Q1 (chainBroken: int) (temp: int) (try#0: int): bool =mu chainBroken != 1 \/ (L4Q1 chainBroken temp (try#0 + 1));
+L1Q0 (chainBroken: int): bool =mu (chainBroken != 1 \/ (L2Q1 0)) /\ (chainBroken = 1 \/ (L2Q0 0));
+L2Q0 (chainBroken: int): bool =mu (chainBroken != 1 \/ (L3Q1 chainBroken 0)) /\ (chainBroken = 1 \/ (L3Q0 chainBroken 0));
+L3Q0 (chainBroken: int) (temp: int): bool =mu (chainBroken != 1 \/ (L4Q1 chainBroken temp 0)) /\ (chainBroken = 1 \/ (L4Q0 chainBroken temp 0));
+L4Q0 (chainBroken: int) (temp: int) (try#0: int): bool =mu (chainBroken != 1 \/ (forall (limit#1: int). (L5Q1 chainBroken limit#1 temp try#0))) /\ (chainBroken = 1 \/ (forall (limit#1: int). (L5Q0 chainBroken limit#1 temp try#0)));
+L5Q0 (chainBroken: int) (limit#1: int) (temp: int) (try#0: int): bool =mu (chainBroken != 1 \/ limit#1 < 10 /\ limit#1 > -273 /\ (L6Q1 chainBroken temp) \/ (limit#1 >= 10 \/ limit#1 <= -273) /\ (L14Q1 chainBroken temp try#0)) /\ (chainBroken = 1 \/ limit#1 < 10 /\ limit#1 > -273 /\ (L6Q0 chainBroken temp) \/ (limit#1 >= 10 \/ limit#1 <= -273) /\ (L14Q0 chainBroken temp try#0));
+L6Q0 (chainBroken: int) (temp: int): bool =mu (chainBroken != 1 \/ (L7Q1 chainBroken temp 0)) /\ (chainBroken = 1 \/ (L7Q0 chainBroken temp 0));
+L7Q0 (chainBroken: int) (temp: int) (time#2: int): bool =mu (chainBroken != 1 \/ (L8Q1 chainBroken time#2 temp)) /\ (chainBroken = 1 \/ (L8Q0 chainBroken time#2 temp));
+L8Q0 (chainBroken: int) (otime#1: int) (temp: int): bool =mu (chainBroken != 1 \/ (L9Q1 chainBroken temp (otime#1 + 1))) /\ (chainBroken = 1 \/ (L9Q0 chainBroken temp (otime#1 + 1)));
+L9Q0 (chainBroken: int) (temp: int) (time#2: int): bool =mu (chainBroken != 1 \/ temp < 0 /\ (L10Q1 chainBroken time#2) \/ temp >= 0 /\ (L10Q1 chainBroken time#2)) /\ (chainBroken = 1 \/ temp < 0 /\ (L10Q0 chainBroken time#2) \/ temp >= 0 /\ (L10Q0 chainBroken time#2));
+L10Q0 (chainBroken: int) (time#2: int): bool =mu (chainBroken != 1 \/ (forall (temp: int). (L11Q1 chainBroken temp time#2))) /\ (chainBroken = 1 \/ (forall (temp: int). (L11Q0 chainBroken temp time#2)));
+L11Q0 (chainBroken: int) (temp: int) (time#2: int): bool =mu (chainBroken != 1 \/ temp > 8 /\ (L12Q1 chainBroken temp time#2) \/ temp <= 8 /\ (L13Q1 chainBroken temp time#2)) /\ (chainBroken = 1 \/ temp > 8 /\ (L12Q0 chainBroken temp time#2) \/ temp <= 8 /\ (L13Q0 chainBroken temp time#2));
+L12Q0 (chainBroken: int) (temp: int) (time#2: int): bool =mu (chainBroken != 1 \/ (L7Q1 1 temp time#2)) /\ (chainBroken = 1 \/ (L7Q0 1 temp time#2));
+L13Q0 (chainBroken: int) (temp: int) (time#2: int): bool =mu (chainBroken != 1 \/ (L7Q1 0 temp time#2)) /\ (chainBroken = 1 \/ (L7Q0 0 temp time#2));
+L14Q0 (chainBroken: int) (temp: int) (try#0: int): bool =mu (chainBroken != 1 \/ try#0 >= 3 /\ (L6Q1 chainBroken temp) \/ try#0 < 3 /\ (L15Q1 chainBroken temp try#0)) /\ (chainBroken = 1 \/ try#0 >= 3 /\ (L6Q0 chainBroken temp) \/ try#0 < 3 /\ (L15Q0 chainBroken temp try#0));
+L15Q0 (chainBroken: int) (temp: int) (try#0: int): bool =mu (chainBroken != 1 \/ (L4Q1 chainBroken temp (try#0 + 1))) /\ (chainBroken = 1 \/ (L4Q0 chainBroken temp (try#0 + 1)));

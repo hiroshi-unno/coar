@@ -1,0 +1,33 @@
+(set-logic QF_LIA)
+(set-option :produce-models true)
+(declare-fun tvar40 () Int)
+(declare-fun tvar41 () Int)
+(declare-fun tvar42 () Int)
+(declare-fun tvar43 () Int)
+(declare-fun tvar44 () Int)
+(declare-fun tvar45 () Int)
+(declare-fun tvar46 () Int)
+(declare-fun tvar47 () Int)
+
+(assert 
+(or
+    (= 0 tvar46)
+    (>= tvar47 tvar41)
+    (and (= 0 tvar42) (> tvar41 0))
+    (and (not (= 0 tvar42)) (<= tvar41 0))
+    (and (= 0 tvar43) (>= 0 tvar40))
+    (and (not (= 0 tvar43)) (< tvar40 0))
+    (and (= tvar44 0) (<= tvar40 0))
+    (and (not (= 0 tvar44)) (> tvar40 0))
+    (and 
+        (or (not (= 0 tvar45)) (and (not (= tvar43 0)) (not (= 0 tvar44))))
+        (or (= 0 tvar43) (or (= 0 tvar44) (= 0 tvar45)))
+    )
+    (and
+        (or (not (= 0 tvar46)) (and (not (= 0 tvar42)) (not (= 0 tvar45))))
+        (or (= 0 tvar42) (or (= 0 tvar45) (= 0 tvar46)))
+    )
+)
+)
+(check-sat)
+(exit)

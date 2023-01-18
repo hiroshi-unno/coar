@@ -1,0 +1,18 @@
+{
+    "verbose": false,
+
+    "shape": [1],
+    "depth": 0,
+
+    "upper_bound_coeff": 1,
+    "upper_bound_const": 0,
+    "seeds": null,
+
+    "bound_each_coeff": null,
+    "threshold_coeff": null,
+    "threshold_const": null,
+
+    "disj_first": true,
+    "fix_shape": false,
+    "eq_atom": false
+}

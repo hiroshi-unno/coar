@@ -6,8 +6,11 @@
             "Filename",
             "./config/pcsat/qualifier/octagon.json"
         ],
+        "qual_order": [
+            "Rank"
+        ],
         "strategy": [
-            "Single"
+            "First"
         ],
         "bfsynth": [
             "Instance",

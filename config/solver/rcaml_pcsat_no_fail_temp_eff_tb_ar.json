@@ -1,0 +1,27 @@
+[
+    "RCaml",
+    {
+        "solver": [
+            "Filename",
+            "./config/solver/pcsat_tb_ar.json"
+        ],
+        "optimizer": [
+            "Filename",
+            "./config/solver/optpcsat_nc_tb_ar.json"
+        ],
+        "cgen_config": {
+            "depend_on_func_args": false,
+            "depend_on_unit_args": false,
+            "instantiate_svars_to_int": true,
+            "gen_ref_pred_for_fun_types": false,
+            "gen_type_temp_for_constrs": false,
+            "never_fail": true,
+            "can_fail_only_at_total_apps": true,
+            "can_cause_temp_eff_only_at_total_apps": true,
+            "enable_temp_eff": true
+        },
+        "verbose": false,
+        "printer": false,
+        "timeout": null
+    }
+]

@@ -7,8 +7,6 @@ Satoshi Kura, Hiroshi Unno, and Ichiro Hasuo. Decision Tree Learning in CEGIS-Ba
 
 ## Getting Started
 
-You can choose either of the following two options.
-
 ### Using Dockerfile
 
 1. Download `cav21ae_dt/Dockerfile` from [the repository](https://github.com/hiroshi-unno/coar)
@@ -17,28 +15,13 @@ You can choose either of the following two options.
     
     ```bash
     cd /path/to/Dockerfile
-    sudo docker build -t coar:cav21ae_dt .
+    sudo docker build -t cav21ae .
     ```
-    This will make a docker image tagged with `coar:cav21ae_dt`.
+    This will make a docker image tagged with `cav21ae:latest`.
 
 3. Run the image
     ```bash
-    sudo docker run -it coar:cav21ae_dt /bin/bash --login
-    ```
-    Now, you are ready to conduct experiments.
-
-### Using a Pre-built Image
-
-1. Download `cav21ae.tar` from [https://doi.org/10.5281/zenodo.4747775](https://doi.org/10.5281/zenodo.4747775)
-
-2. Load the image
-    ```bash
-    sudo docker load -i cav21ae.tar
-    ```
-
-3. Run the image
-    ```bash
-    sudo docker run -it coar:cav21ae_dt /bin/bash --login
+    sudo docker run -it cav21ae:latest /bin/bash --login
     ```
     Now, you are ready to conduct experiments.
 
@@ -165,10 +148,10 @@ Assume that we want to solve the termination (or non-termination) problem for `I
     ```
     Possible choices for `CONFIG.json` are as follows.
 
-    - `./config/solver/muval_dt_prove_eager_term_comp_nu.json` for the termination problem with the eager strategy
-    - `./config/solver/muval_dt_disprove_eager_term_comp_nu.json` for eager non-termination
-    - `./config/solver/muval_dt_prove_lazy_term_comp_thr.json` for lazy termination
-    - `./config/solver/muval_dt_disprove_lazy_term_comp_thr.json` for lazy non-termination
+    - `./config/solver/muval_term_comp_prove_nu_dt_eager.json` for the termination problem with the eager strategy
+    - `./config/solver/muval_term_comp_disprove_nu_dt_eager.json` for eager non-termination
+    - `./config/solver/muval_term_comp_prove_dt_lazy_thr.json` for lazy termination
+    - `./config/solver/muval_term_comp_disprove_dt_lazy_thr.json` for lazy non-termination
 
 ## On StarExec
 

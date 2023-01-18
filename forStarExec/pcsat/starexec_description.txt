@@ -1,1 +1,1 @@
-PCSat is a general second_order constraint solver for the full class of pfwCSP that subsumes the class of CHCs
+PCSat is a general second_order constraint solver for CHC/pCSP/pfwCSP/SyGuS

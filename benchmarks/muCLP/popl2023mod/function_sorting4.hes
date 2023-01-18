@@ -1,0 +1,26 @@
+/*
+int main() {
+	int x1, x2, x3, x4;
+	while (x1 > x2 || x2 > x3 || x3 > x4) {
+		if (x1 > x2) {
+			x1 = x2;
+			x2 = x1;
+		} else if (x2 > x3) {
+			x2 = x3;
+			x3 = x2;
+		} else if (x3 > x4) {
+			x4 = x3;
+			x3 = x4;
+		}
+	}
+	return 0;
+}
+*/
+forall (x1: int) (x2: int) (x3: int) (x4: int). I x1 x2 x3 x4
+s.t.
+I (x1: int) (x2: int) (x3: int) (x4: int): bool =mu
+  (x1 <= x2 /\ x2 <= x3 /\ x3 <= x4 => true) /\
+  ((x1 > x2 \/ x2 > x3 \/ x3 > x4) =>
+    (x1 > x2 => I x2 x2 x3 x4) /\
+    (x1 <= x2 /\ x2 > x3 => I x1 x3 x3 x4) /\
+    (x1 <= x2 /\ x2 <= x3 /\ x3 > x4 => I x1 x2 x3 x3));

@@ -1,0 +1,27 @@
+[
+    "BFSB",
+    {
+        "verbose": false,
+        "qualifier_generator": [
+            "Filename",
+            "./config/pcsat/qualifier/polyhedron012.json"
+        ],
+        "qual_order": [
+            "Shuffle"
+        ],
+        "strategy": [
+            "All"
+        ],
+        "bfsynth": [
+            "Instance",
+            [
+                "MCTSBF",
+                {
+                    "verbose": false,
+                    "coeff": 2,
+                    "bias": 1
+                }
+            ]
+        ]
+    }
+]

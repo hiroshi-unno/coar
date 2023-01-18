@@ -3,7 +3,7 @@ open Common.Util
 
 type t = Z3Smt of Z3Smt.Config.t [@@ deriving yojson]
 
-module type ConfigType = sig val config : t end 
+module type ConfigType = sig val config : t end
 
 let instantiate_ext_files = let open Or_error in
   function
@@ -21,8 +21,7 @@ let load_ext_file = function
         instantiate_ext_files x >>= fun x ->
         Ok (ExtFile.Instance x)
       | Error msg ->
-        error_string
-        @@ Printf.sprintf
+        error_string @@ Printf.sprintf
           "Invalid SMTSolver Configuration (%s): %s" filename msg
     end
   | Instance x -> Ok (ExtFile.Instance x)

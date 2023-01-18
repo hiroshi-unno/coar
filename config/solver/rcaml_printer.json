@@ -1,0 +1,27 @@
+[
+    "RCaml",
+    {
+        "solver": [
+            "Filename",
+            "./config/solver/printer_smt2.json"
+        ],
+        "optimizer": [
+            "Filename",
+            "./config/solver/optpcsat_nc_tb.json"
+        ],
+        "cgen_config": {
+            "depend_on_func_args": false,
+            "depend_on_unit_args": false,
+            "instantiate_svars_to_int": true,
+            "gen_ref_pred_for_fun_types": false,
+            "gen_type_temp_for_constrs": false,
+            "never_fail": false,
+            "can_fail_only_at_total_apps": false,
+            "can_cause_temp_eff_only_at_total_apps": false,
+            "enable_temp_eff": false
+        },
+        "verbose": false,
+        "printer": true,
+        "timeout": null
+    }
+]

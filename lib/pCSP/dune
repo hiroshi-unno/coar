@@ -1,6 +1,10 @@
+(ocamllex (modules LPLexer))
+(menhir (modules LPParser))
+
 (library
   (name pCSP)
   (public_name CoAR.pCSP)
+  (preprocess (pps ppx_deriving_yojson))
   (libraries
     core
     CoAR.ast
@@ -14,8 +18,7 @@
     LPParser
     LPLexer
     parser
+    solSpace
+    kind
     forwardPropagate)
-  (synopsis "The definition of pfwCSP"))
-
-(ocamllex (modules LPLexer))
-(menhir (modules LPParser))
+  (synopsis "The definition of pfwnCSP"))

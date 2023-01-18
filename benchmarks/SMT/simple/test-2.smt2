@@ -1,0 +1,10 @@
+(set-logic QF_LIA)
+(set-option :produce-models true)
+(declare-fun w () Int)
+(declare-fun x () Int)
+(declare-fun y () Int)
+(declare-fun z () Int)
+
+(assert (or (and (> x 3) (< y x)) (and (> z x) (> y z))))
+(check-sat)
+(exit)

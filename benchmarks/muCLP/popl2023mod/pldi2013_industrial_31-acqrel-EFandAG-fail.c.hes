@@ -1,0 +1,24 @@
+EF1 0 0
+s.t.
+EF1 (A: int) (R: int): bool =mu A = 1 /\ AG1 R \/ (exists (dobreak: int). EF2 A R dobreak);
+EF2 (A: int) (R: int) (dobreak: int): bool =mu A = 1 /\ AG2 R dobreak \/ (dobreak > 0 => EF3 A R) /\ (not (dobreak > 0) => EF4 A R);
+EF3 (A: int) (R: int): bool =mu A = 1 /\ AG3 R \/ false;
+EF4 (A: int) (R: int): bool =mu A = 1 /\ AG4 R \/ EF5 1 R;
+EF5 (A: int) (R: int): bool =mu A = 1 /\ AG5 R \/ EF6 0 R;
+EF6 (A: int) (R: int): bool =mu A = 1 /\ AG6 R \/ (exists (n: int). EF7 A R n);
+EF7 (A: int) (R: int) (n: int): bool =mu A = 1 /\ AG7 R n \/ (not (n > 0) => EF8 A R) /\ (not (not (n > 0)) => EF9 A R n);
+EF8 (A: int) (R: int): bool =mu A = 1 /\ AG8 R \/ EF10 A 1;
+EF10 (A: int) (R: int): bool =mu A = 1 /\ AG9 R \/ EF11 A 0;
+EF11 (A: int) (R: int): bool =mu A = 1 /\ AG10 R \/ (exists (dobreak: int). EF2 A R dobreak);
+EF9 (A: int) (R: int) (n: int): bool =mu A = 1 /\ AG11 R n \/ EF7 A R (n + 0);
+AG1 (R: int): bool =nu R != 1 /\ (forall (dobreak: int). AG2 R dobreak);
+AG2 (R: int) (dobreak: int): bool =nu R != 1 /\ (dobreak > 0 => AG3 R) /\ (not (dobreak > 0) => AG4 R);
+AG3 (R: int): bool =nu R != 1 /\ true;
+AG4 (R: int): bool =nu R != 1 /\ AG5 R;
+AG5 (R: int): bool =nu R != 1 /\ AG6 R;
+AG6 (R: int): bool =nu R != 1 /\ (forall (n: int). AG7 R n);
+AG7 (R: int) (n: int): bool =nu R != 1 /\ (not (n > 0) => AG8 R) /\ (not (not (n > 0)) => AG11 R n);
+AG8 (R: int): bool =nu R != 1 /\ AG9 1;
+AG9 (R: int): bool =nu R != 1 /\ AG10 0;
+AG10 (R: int): bool =nu R != 1 /\ (forall (dobreak: int). AG2 R dobreak);
+AG11 (R: int) (n: int): bool =nu R != 1 /\ AG7 R (n + 0);

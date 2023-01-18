@@ -1,0 +1,4 @@
+#! /bin/bash
+
+export LD_LIBRARY_PATH=./
+./main.exe -c ./config/solver/pcsat_chc_comp_dt1_poly012_all_sat.json -p pcsp $1

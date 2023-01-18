@@ -1,0 +1,20 @@
+exists (WItemsNum: int). EF1 WItemsNum
+s.t.
+EF1 (WItemsNum: int): bool =mu AG1 WItemsNum \/ (exists (WItemsNum: int). EF2 WItemsNum);
+EF2 (WItemsNum: int): bool =mu AG2 WItemsNum \/ (WItemsNum <= 5 => EF3 WItemsNum) /\ (not (WItemsNum <= 5) => EF4 WItemsNum);
+EF3 (WItemsNum: int): bool =mu AG3 WItemsNum \/ EF5 WItemsNum \/ EF4 WItemsNum;
+EF5 (WItemsNum: int): bool =mu AG4 WItemsNum \/ (not (WItemsNum > 2) => EF6 WItemsNum) /\ (not (not (WItemsNum > 2)) => EF7 WItemsNum);
+EF6 (WItemsNum: int): bool =mu AG5 WItemsNum \/ false;
+EF7 (WItemsNum: int): bool =mu AG6 WItemsNum \/ EF5 (WItemsNum - 1);
+EF4 (WItemsNum: int): bool =mu AG7 WItemsNum \/ (WItemsNum <= 5 => EF8 WItemsNum) /\ (not (WItemsNum <= 5) => EF9 WItemsNum);
+EF8 (WItemsNum: int): bool =mu AG8 WItemsNum \/ EF2 (WItemsNum + 1);
+EF9 (WItemsNum: int): bool =mu AG9 WItemsNum \/ EF2 (WItemsNum + 1);
+AG1 (WItemsNum: int): bool =nu WItemsNum < 1 /\ (forall (WItemsNum: int). AG2 WItemsNum);
+AG2 (WItemsNum: int): bool =nu WItemsNum < 1 /\ (WItemsNum <= 5 => AG3 WItemsNum) /\ (not (WItemsNum <= 5) => AG7 WItemsNum);
+AG3 (WItemsNum: int): bool =nu WItemsNum < 1 /\ AG4 WItemsNum /\ AG7 WItemsNum;
+AG4 (WItemsNum: int): bool =nu WItemsNum < 1 /\ (not (WItemsNum > 2) => AG5 WItemsNum) /\ (not (not (WItemsNum > 2)) => AG6 WItemsNum);
+AG5 (WItemsNum: int): bool =nu WItemsNum < 1 /\ true;
+AG6 (WItemsNum: int): bool =nu WItemsNum < 1 /\ AG4 (WItemsNum - 1);
+AG7 (WItemsNum: int): bool =nu WItemsNum < 1 /\ (WItemsNum <= 5 => AG8 WItemsNum) /\ (not (WItemsNum <= 5) => AG9 WItemsNum);
+AG8 (WItemsNum: int): bool =nu WItemsNum < 1 /\ AG2 (WItemsNum + 1);
+AG9 (WItemsNum: int): bool =nu WItemsNum < 1 /\ AG2 (WItemsNum + 1);

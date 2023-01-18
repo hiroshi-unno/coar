@@ -1,0 +1,12 @@
+(L1Q0 0)
+s.t.
+L1Q1 (x: int): bool =mu (x = 1 \/ (L2Q1 1)) /\ (x != 1 \/ (L2Q0 1));
+L2Q1 (x: int): bool =mu (x = 1 \/ (L2Q1 x) /\ (L3Q1 x)) /\ (x != 1 \/ (L2Q0 x) /\ (L3Q0 x));
+L3Q1 (x: int): bool =mu (x = 1 \/ (L4Q1 0)) /\ (x != 1 \/ (L4Q0 0));
+L4Q1 (x: int): bool =mu (x = 1 \/ (L5Q1 1)) /\ (x != 1 \/ (L5Q0 1));
+L5Q1 (x: int): bool =mu (x = 1 \/ (L5Q1 x)) /\ (x != 1 \/ (L5Q0 x));
+L1Q0 (x: int): bool =nu (x = 1 \/ (L2Q1 1)) /\ (x != 1 \/ (L2Q0 1));
+L2Q0 (x: int): bool =nu (x = 1 \/ (L2Q1 x) /\ (L3Q1 x)) /\ (x != 1 \/ (L2Q0 x) /\ (L3Q0 x));
+L3Q0 (x: int): bool =nu (x = 1 \/ (L4Q1 0)) /\ (x != 1 \/ (L4Q0 0));
+L4Q0 (x: int): bool =nu (x = 1 \/ (L5Q1 1)) /\ (x != 1 \/ (L5Q0 1));
+L5Q0 (x: int): bool =nu (x = 1 \/ (L5Q1 x)) /\ (x != 1 \/ (L5Q0 x));

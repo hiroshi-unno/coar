@@ -1,0 +1,25 @@
+[
+    "BFSB",
+    {
+        "verbose": true,
+        "qualifier_generator": [
+            "Filename",
+            "./config/pcsat/qualifier/nn.json"
+        ],
+        "qual_order": [
+            "Rank"
+        ],
+        "strategy": [
+            "First"
+        ],
+        "bfsynth": [
+            "Instance",
+            [
+                "DTBF",
+                {
+                    "verbose": true
+                }
+            ]
+        ]
+    }
+]

@@ -1,4 +1,5 @@
 %{
+  open Core
   open Ast
   open Ast.LogicOld
 
@@ -35,7 +36,7 @@ let mk_nondet () =
 
 main:
   | start_opt error_opt cutpoint_opt list(transition) EOF
-    { ($1, $2, $3, Core.List.filter_map ~f:(fun x -> x) $4) }
+    { ($1, $2, $3, List.filter_map ~f:Fn.id $4) }
 
 start_opt:
     { None }
@@ -83,7 +84,7 @@ expr:
   | expr TIMES expr { T_int.mk_mult $1 $3 }
   | expr DIV expr { T_int.mk_div $1 $3 }
   | expr MOD expr { T_int.mk_mod $1 $3 }
-  | LPAREN expr RPAREN { $2 } 
+  | LPAREN expr RPAREN { $2 }
   | INT { T_int.mk_int (Z.of_int $1) }
   | VAR { Term.mk_var (Ident.Tvar $1) T_int.SInt }
   | NONDET LPAREN RPAREN { Term.mk_var (mk_nondet ()) T_int.SInt}

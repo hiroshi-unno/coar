@@ -16,7 +16,7 @@ module Make (Config: Config.ConfigType): SolverType = struct
 
   type result = (SAT.Problem.solution, Error.t) Result.t
 
-  let rec check_sat ?(print_sol=false) ?(solver=create()) ?(lits = Hashtbl.Poly.create ~size:0 ~growth_allowed:true ()) cnf =
+  let rec check_sat ?(print_sol=false) ?(solver=create ()) ?(lits = Hashtbl.Poly.create ~size:0 ~growth_allowed:true ()) cnf =
     Minisat.set_verbose solver 0;
     let cnt = ref 1 in
     List.iter (SAT.Problem.to_list cnf) ~f:(fun (negatives, positives) ->
@@ -24,7 +24,7 @@ module Make (Config: Config.ConfigType): SolverType = struct
             if Hashtbl.Poly.mem lits var then () else
               let new_lit = Lit.make !cnt in
               incr cnt;
-              Hashtbl.Poly.add_exn lits ~key:var ~data:new_lit) in 
+              Hashtbl.Poly.add_exn lits ~key:var ~data:new_lit) in
         mk_lit_sub negatives; mk_lit_sub positives);
     let solution =
       try
@@ -45,7 +45,7 @@ module Make (Config: Config.ConfigType): SolverType = struct
     if print_sol then print_endline (SAT.Problem.str_of_incsol solution);
     solution
 
-  let solve ?(print_sol=false) cnf = 
+  let solve ?(print_sol=false) cnf =
     match check_sat ~print_sol:print_sol cnf with
     | SAT.Problem.IncSat (assigns, _) -> Ok (SAT.Problem.Sat assigns)
     | SAT.Problem.IncUnsat -> Ok (SAT.Problem.Unsat)

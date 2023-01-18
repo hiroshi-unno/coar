@@ -25,6 +25,7 @@ rule token = parse
     INT (Z.of_string str) }
 | ":=" { ASSUME }
 | ":-" { DECLARE }
+| "?-" { QUERY }
 | '=' { EQ }
 | "\\=" { NOTEQ }
 | "<>" { NOTEQ }

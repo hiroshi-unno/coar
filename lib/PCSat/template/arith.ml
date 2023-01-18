@@ -22,7 +22,7 @@ let eq = function
   | T_int.SInt | T_real.SReal -> T_bool.mk_eq
   | sort -> failwith ("not supported: " ^ Term.str_of_sort sort)
 let cast = function
-  | T_int.SInt, T_int.SInt | T_real.SReal, T_real.SReal -> ident
+  | T_int.SInt, T_int.SInt | T_real.SReal, T_real.SReal -> Fn.id
   | T_int.SInt, T_real.SReal -> fun t -> T_real_int.mk_to_real t
   | T_real.SReal, T_int.SInt -> fun t -> T_real_int.mk_to_int t
   | sort1, sort2 ->

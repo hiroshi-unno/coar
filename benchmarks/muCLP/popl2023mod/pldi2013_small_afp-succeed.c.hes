@@ -1,0 +1,6 @@
+forall (y: int). y > 0 => AF1 0 y
+s.t.
+AF1 (p: int) (y: int): bool =mu p > 0 \/ (not (y > 0) => AF2 p) /\ (not (not (y > 0)) => AF3 p y);
+AF2 (p: int): bool =mu p > 0 \/ AF4 1;
+AF4 (p: int): bool =mu p > 0 \/ false;
+AF3 (p: int) (y: int): bool =mu p > 0 \/ AF1 p (y - 1);

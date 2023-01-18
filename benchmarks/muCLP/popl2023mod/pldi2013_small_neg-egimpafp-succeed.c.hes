@@ -1,0 +1,16 @@
+AF1 0 0 5
+s.t.
+AF1 (check: int) (p: int) (y: int): bool =mu check = 1 /\ EG1 p y \/ AF2 1 p y;
+AF2 (check: int) (p: int) (y: int): bool =mu check = 1 /\ EG2 p y \/ AF3 check p y /\ AF4 check p;
+AF3 (check: int) (p: int) (y: int): bool =mu check = 1 /\ EG3 p y \/ (y < 0 => AF5 check p) /\ (not (y < 0) => AF6 check p y);
+AF5 (check: int) (p: int): bool =mu check = 1 /\ EG4 p \/ AF4 check 1;
+AF4 (check: int) (p: int): bool =mu check = 1 /\ EG5 p \/ false;
+AF6 (check: int) (p: int) (y: int): bool =mu check = 1 /\ EG6 p y \/ AF7 1 p y;
+AF7 (check: int) (p: int) (y: int): bool =mu check = 1 /\ EG7 p y \/ AF3 check p (y - 1);
+EG1 (p: int) (y: int): bool =nu p <= 0 /\ EG2 p y;
+EG2 (p: int) (y: int): bool =nu p <= 0 /\ (EG3 p y \/ EG5 p);
+EG3 (p: int) (y: int): bool =nu p <= 0 /\ (y < 0 => EG4 p) /\ (not (y < 0) => EG6 p y);
+EG4 (p: int): bool =nu p <= 0 /\ EG5 1;
+EG5 (p: int): bool =nu p <= 0 /\ true;
+EG6 (p: int) (y: int): bool =nu p <= 0 /\ EG7 p y;
+EG7 (p: int) (y: int): bool =nu p <= 0 /\ EG3 p (y - 1);

@@ -1,0 +1,16 @@
+EG1 0 5 5
+s.t.
+EG1 (p: int) (x: int) (y: int): bool =nu AG1 p x y /\ (y < 0 => EG2 p x) /\ (not (y < 0) => EG3 p x y);
+EG2 (p: int) (x: int): bool =nu AG2 p x /\ (x < 0 => EG4 p) /\ (not (x < 0) => EG5 p x);
+EG4 (p: int): bool =nu AG3 p /\ EG6 1;
+EG6 (p: int): bool =nu AG4 p /\ true;
+EG5 (p: int) (x: int): bool =nu AG5 p x /\ (EG7 p x \/ EG2 p x);
+EG7 (p: int) (x: int): bool =nu AG6 p x /\ EG2 p (x - 1);
+EG3 (p: int) (x: int) (y: int): bool =nu AG7 p x y /\ EG1 p x (y - 1);
+AG1 (p: int) (x: int) (y: int): bool =nu p <= 0 /\ (y < 0 => AG2 p x) /\ (not (y < 0) => AG7 p x y);
+AG2 (p: int) (x: int): bool =nu p <= 0 /\ (x < 0 => AG3 p) /\ (not (x < 0) => AG5 p x);
+AG3 (p: int): bool =nu p <= 0 /\ AG4 1;
+AG4 (p: int): bool =nu p <= 0 /\ true;
+AG5 (p: int) (x: int): bool =nu p <= 0 /\ AG6 p x /\ AG2 p x;
+AG6 (p: int) (x: int): bool =nu p <= 0 /\ AG2 p (x - 1);
+AG7 (p: int) (x: int) (y: int): bool =nu p <= 0 /\ AG1 p x (y - 1);

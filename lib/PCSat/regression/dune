@@ -1,6 +1,7 @@
 (library
   (name regression)
   (public_name CoAR.PCSat.regression)
+  (preprocess (pps ppx_deriving_yojson))
   (libraries
     core
     yojson
@@ -11,6 +12,4 @@
     CoAR.PCSat.qualifier)
   (modules
     regressor
-    DT_Regressor)
-  (preprocess (pps ppx_deriving_yojson))
-)
+    DT_Regressor))

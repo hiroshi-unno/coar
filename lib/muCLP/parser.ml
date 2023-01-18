@@ -15,8 +15,10 @@ let parse_from_lexbuf lexbuf =
     |> fun muclp -> Ok muclp
   with
   | HESParser.Error ->
+    print_endline @@ Printf.sprintf "%s: syntax error" (get_position_string lexbuf);
     Result.fail @@ Error.of_string (Printf.sprintf "%s: syntax error" (get_position_string lexbuf))
   | HESLexer.SyntaxError error ->
+    print_endline @@ Printf.sprintf "%s: syntax error" (get_position_string lexbuf);
     Result.fail @@ Error.of_string (Printf.sprintf "%s: syntax error: %s" (get_position_string lexbuf) error)
 
 let parse_formula_from_lexbuf lexbuf =

@@ -1,0 +1,55 @@
+///*** 1_main ***///
+START: main_entry;
+
+FROM: main_entry;
+var__temp_vam.0 := v0;
+var__temp_vbm.0 := v1;
+TO: main_while.cond;
+
+FROM: main_while.cond;
+vam.0 := var__temp_vam.0;
+vbm.0 := var__temp_vbm.0;
+TO: main_while.cond_end;
+
+FROM: main_while.cond_end;
+assume(vam.0 != vbm.0);
+TO: main_while.body;
+
+FROM: main_while.cond_end;
+assume(vam.0 == vbm.0);
+TO: main_while.end;
+
+FROM: main_while.body;
+vadd := vbm.0 + v1;
+vadd2 := vam.0 + v0;
+TO: main_while.body_vam.1;
+FROM: main_while.body_vam.1;
+assume(vam.0 > vbm.0);
+vam.1 := vam.0;
+TO: main_while.body_svam.1;
+
+FROM: main_while.body_vam.1;
+assume(vam.0 <= vbm.0);
+vam.1 := vadd2;
+TO: main_while.body_svam.1;
+
+FROM: main_while.body_svam.1;
+TO: main_while.body_vbm.1;
+FROM: main_while.body_vbm.1;
+assume(vam.0 > vbm.0);
+vbm.1 := vadd;
+TO: main_while.body_svbm.1;
+
+FROM: main_while.body_vbm.1;
+assume(vam.0 <= vbm.0);
+vbm.1 := vbm.0;
+TO: main_while.body_svbm.1;
+
+FROM: main_while.body_svbm.1;
+var__temp_vam.0 := vam.1;
+var__temp_vbm.0 := vbm.1;
+TO: main_while.cond;
+
+FROM: main_while.end;
+TO: main_while.end_ret;
+

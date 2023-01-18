@@ -1,7 +1,8 @@
 open Core
-open Ast
-open LogicOld
 open Graph
+open Common.Ext
+open Ast
+open Ast.LogicOld
 
 let nondet_prefix = "#nondet"
 
@@ -9,11 +10,11 @@ type lts = string option(*start*) * string option(*error*) * string option(*cutp
 and transition = string * command * string
 and command = Skip | Assume of LogicOld.Formula.t | Subst of (Ident.tvar * LogicOld.Sort.t) * LogicOld.Term.t | Seq of command * command | Choice of command * command
 
-type mode = Term | NonTerm | CondTerm
+type mode = Safe | NonSafe | Term | NonTerm | CondTerm | MuCal | Rel
 type t = lts * mode
 
 let seq = function [] -> Skip | c::cs -> List.fold_left ~init:c cs ~f:(fun c1 c2 -> Seq (c1, c2))
-let seq cs = seq @@ List.filter cs ~f:(fun c -> not @@ Stdlib.(=) c Skip)
+let seq cs = seq @@ List.filter cs ~f:(Stdlib.(<>) Skip)
 let choice = function [] -> assert false | c::cs -> List.fold_left ~init:c cs ~f:(fun c1 c2 -> Choice (c1, c2))
 
 let rec term_sort_env_of_command = function
@@ -27,7 +28,9 @@ let term_sort_env_of (_, _, _, trs) =
 
 let rec is_effect_free = function
   | Skip | Assume _ -> true
-  | Subst ((_, _), t) -> Set.Poly.for_all (Term.tvs_of t) ~f:(fun x -> not @@ String.is_prefix (Ident.name_of_tvar x) ~prefix:nondet_prefix)
+  | Subst ((_, _), t) ->
+    Set.Poly.for_all (Term.tvs_of t) ~f:(fun x ->
+      not @@ String.is_prefix (Ident.name_of_tvar x) ~prefix:nondet_prefix)
   | Seq (c1, c2) | Choice (c1, c2) -> is_effect_free c1 && is_effect_free c2
 
 let rec str_of_command = function
@@ -40,13 +43,13 @@ let rec str_of_command = function
   | Choice (c1, c2) -> "(\n" ^ str_of_command c1 ^ ") || (\n" ^ str_of_command c2 ^ ");\n"
 
 let str_of_transition (from, c, to_) =
-  Printf.sprintf "FROM: %s;\n" from ^ str_of_command c ^ Printf.sprintf "TO: %s;\n\n" to_
+  Printf.sprintf "FROM: %s;\n%sTO: %s;\n\n" from (str_of_command c) to_
 
 let str_of_lts (s, e, c, trans) =
   (match s with None -> "" | Some s -> Printf.sprintf "START: %s;\n" s) ^
   (match e with None -> "" | Some e -> Printf.sprintf "ERROR: %s;\n" e) ^
   (match c with None -> "" | Some c -> Printf.sprintf "CUTPOINT: %s;\n" c) ^
-  String.concat @@ List.map ~f:str_of_transition trans
+  String.concat_map_list ~f:str_of_transition trans
 
 let rec wp c phi = match c with
   | Skip -> phi
@@ -67,7 +70,7 @@ let used_vars c =
       let env' =
         Set.Poly.filter (Term.term_sort_env_of t) ~f:(fun (x, _) ->
             not @@ String.is_prefix ~prefix:nondet_prefix @@ Ident.name_of_tvar x) in
-      Set.Poly.union env' (Set.Poly.filter env ~f:(fun (y, _) -> not @@ Stdlib.(=) x y))
+      Set.Poly.union env' (Set.Poly.filter env ~f:(fun (y, _) -> Stdlib.(x <> y)))
     | Seq (c1, c2) -> aux (aux env c2) c1
     | Choice (c1, c2) -> Set.Poly.union (aux env c1) (aux env c2)
   in aux Set.Poly.empty c
@@ -113,15 +116,15 @@ let contract_edges cfa =
      | Found_Edges (((s, _ ,d) :: _) as es) ->
        (*print_endline ("eliminating edge (" ^ s ^ ", " ^ d ^ ")");*)
        let c = choice @@ List.map es ~f:(fun (_, c, _) -> c) in
-       G.remove_edge cfa s d; 
+       G.remove_edge cfa s d;
        G.add_edge_e cfa (s, c, d);
        true
 exception Found_Vertex_1_1 of G.edge * G.vertex * G.edge
 let contract_vertex_1_1 s cfa =
   try
     G.iter_vertex (fun v ->
-        if String.(s = v) (* ignore start node *) || 
-           not @@ List.is_empty @@ G.find_all_edges cfa v v (*ignore vertex with a self-loop*)
+        if String.(s = v) (* ignore start node *) ||
+          Fn.non List.is_empty @@ G.find_all_edges cfa v v (*ignore vertex with a self-loop*)
         then () else
           match G.pred_e cfa v, G.succ_e cfa v with
           | [e1], [e2] -> raise (Found_Vertex_1_1 (e1, v, e2))
@@ -129,15 +132,15 @@ let contract_vertex_1_1 s cfa =
     false
   with Found_Vertex_1_1 ((s, c1, _d), v, (_s, c2, d)) ->
     (*print_endline ("eliminating vertex " ^ v);*)
-    G.remove_vertex cfa v; 
+    G.remove_vertex cfa v;
     G.add_edge_e cfa (s, seq [c1; c2], d);
     true
 exception Found_Vertex_1_n of G.edge * G.vertex * G.edge list
 let contract_vertex_1_n s cfa =
   try
     G.iter_vertex (fun v ->
-        if String.(s = v) (* ignore start node *) || 
-           not @@ List.is_empty @@ G.find_all_edges cfa v v (*ignore vertex with a self-loop*)
+        if String.(s = v) (* ignore start node *) ||
+          Fn.non List.is_empty @@ G.find_all_edges cfa v v (*ignore vertex with a self-loop*)
         then () else
           match G.pred_e cfa v, G.succ_e cfa v with
           | [(_, c, _) as e], es when is_effect_free c -> raise (Found_Vertex_1_n (e, v, es))
@@ -145,15 +148,15 @@ let contract_vertex_1_n s cfa =
     false
   with Found_Vertex_1_n ((s, c1, _d), v, es) ->
     (*print_endline ("eliminating vertex " ^ v);*)
-    G.remove_vertex cfa v; 
+    G.remove_vertex cfa v;
     List.iter es ~f:(fun (_s, c2, d) -> G.add_edge_e cfa (s, seq [c1; c2], d));
     true
 exception Found_Vertex_n_1 of G.edge list * G.vertex * G.edge
 let contract_vertex_n_1 s cfa =
   try
     G.iter_vertex (fun v ->
-        if String.(s = v) (* ignore start node *) || 
-           not @@ List.is_empty @@ G.find_all_edges cfa v v (*ignore vertex with a self-loop*)
+        if String.(s = v) (* ignore start node *) ||
+          Fn.non List.is_empty @@ G.find_all_edges cfa v v (*ignore vertex with a self-loop*)
         then () else
           match G.pred_e cfa v, G.succ_e cfa v with
           | es, [(_, c, _) as e] when is_effect_free c -> raise (Found_Vertex_n_1 (es, v, e))
@@ -161,7 +164,7 @@ let contract_vertex_n_1 s cfa =
     false
   with Found_Vertex_n_1 (es, v, (_s, c2, d)) ->
     (*print_endline ("eliminating vertex " ^ v);*)
-    G.remove_vertex cfa v; 
+    G.remove_vertex cfa v;
     List.iter es ~f:(fun (s, c1, _d) -> G.add_edge_e cfa (s, seq [c1; c2], d));
     true
 let rec simplify s cfa =
@@ -174,14 +177,14 @@ module LiveVariables = Graph.Fixpoint.Make(G)
       type vertex = G.E.vertex
       type edge = G.E.t
       type g = G.t
-      type data = (Ident.tvar * Sort.t) Set.Poly.t
+      type data = sort_env_set
       let direction = Graph.Fixpoint.Backward
       let equal = Set.Poly.equal
       let join = Set.Poly.union
       let analyze (_, c, _) env =
         let def = Set.Poly.map ~f:fst @@ defined_vars c in
         let use = used_vars c in
-        Set.Poly.union use (Set.Poly.filter env ~f:(fun (x, _) -> not @@ Set.Poly.mem def x)) 
+        Set.Poly.union use (Set.Poly.filter env ~f:(fun (x, _) -> not @@ Set.Poly.mem def x))
     end)
 
 let analyze (s, e, c, trans) =

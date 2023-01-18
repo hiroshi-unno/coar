@@ -1,0 +1,24 @@
+forall (__rho_1_: int) (__rho_4: int). AG1 __rho_4 __rho_1_ 1
+s.t.
+AG1 (__rho_4: int) (got_SIGHUP: int) (wakend: int): bool =nu EF1 __rho_4 got_SIGHUP wakend /\ AG2 __rho_4 got_SIGHUP 1;
+AG2 (__rho_4: int) (got_SIGHUP: int) (wakend: int): bool =nu EF2 __rho_4 got_SIGHUP wakend /\ (got_SIGHUP > 0 => AG3 __rho_4 wakend) /\ (not (got_SIGHUP > 0) => AG4 __rho_4 got_SIGHUP wakend);
+AG3 (__rho_4: int) (wakend: int): bool =nu EF3 __rho_4 wakend /\ AG5 __rho_4 0 wakend;
+AG5 (__rho_4: int) (got_SIGHUP: int) (wakend: int): bool =nu EF4 __rho_4 got_SIGHUP wakend /\ AG6 wakend /\ AG4 __rho_4 got_SIGHUP wakend;
+AG6 (wakend: int): bool =nu EF5 wakend /\ true;
+AG4 (__rho_4: int) (got_SIGHUP: int) (wakend: int): bool =nu EF6 __rho_4 got_SIGHUP wakend /\ (wakend > 0 => AG7 __rho_4 got_SIGHUP wakend) /\ (not (wakend > 0) => AG8 __rho_4 got_SIGHUP wakend);
+AG7 (__rho_4: int) (got_SIGHUP: int) (wakend: int): bool =nu EF7 __rho_4 got_SIGHUP wakend /\ AG8 __rho_4 got_SIGHUP 0;
+AG8 (__rho_4: int) (got_SIGHUP: int) (wakend: int): bool =nu EF8 __rho_4 got_SIGHUP wakend /\ (wakend <= 0 => AG9 __rho_4 got_SIGHUP wakend) /\ (not (wakend <= 0) => AG10 __rho_4 got_SIGHUP wakend);
+AG9 (__rho_4: int) (got_SIGHUP: int) (wakend: int): bool =nu EF9 __rho_4 got_SIGHUP wakend /\ AG11 __rho_4 got_SIGHUP wakend /\ AG10 __rho_4 got_SIGHUP wakend;
+AG11 (__rho_4: int) (got_SIGHUP: int) (wakend: int): bool =nu EF10 __rho_4 got_SIGHUP wakend /\ AG10 __rho_4 got_SIGHUP 1;
+AG10 (__rho_4: int) (got_SIGHUP: int) (wakend: int): bool =nu EF11 __rho_4 got_SIGHUP wakend /\ (__rho_4 <= 0 => AG6 wakend) /\ (not (__rho_4 <= 0) => AG2 __rho_4 got_SIGHUP wakend);
+EF1 (__rho_4: int) (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ EF2 __rho_4 got_SIGHUP 1;
+EF2 (__rho_4: int) (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ (got_SIGHUP > 0 => EF3 __rho_4 wakend) /\ (not (got_SIGHUP > 0) => EF6 __rho_4 got_SIGHUP wakend);
+EF3 (__rho_4: int) (wakend: int): bool =mu wakend = 1 \/ EF4 __rho_4 0 wakend;
+EF4 (__rho_4: int) (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ EF5 wakend \/ EF6 __rho_4 got_SIGHUP wakend;
+EF5 (wakend: int): bool =mu wakend = 1 \/ false;
+EF6 (__rho_4: int) (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ (wakend > 0 => EF7 __rho_4 got_SIGHUP wakend) /\ (not (wakend > 0) => EF8 __rho_4 got_SIGHUP wakend);
+EF7 (__rho_4: int) (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ EF8 __rho_4 got_SIGHUP 0;
+EF8 (__rho_4: int) (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ (wakend <= 0 => EF9 __rho_4 got_SIGHUP wakend) /\ (not (wakend <= 0) => EF11 __rho_4 got_SIGHUP wakend);
+EF9 (__rho_4: int) (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ EF10 __rho_4 got_SIGHUP wakend \/ EF11 __rho_4 got_SIGHUP wakend;
+EF10 (__rho_4: int) (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ EF11 __rho_4 got_SIGHUP 1;
+EF11 (__rho_4: int) (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ (__rho_4 <= 0 => EF5 wakend) /\ (not (__rho_4 <= 0) => EF2 __rho_4 got_SIGHUP wakend);

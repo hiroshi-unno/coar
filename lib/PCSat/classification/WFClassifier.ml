@@ -31,16 +31,15 @@ module Config = struct
           instantiate_ext_files x >>= fun x ->
           Ok (ExtFile.Instance x)
         | Error msg ->
-          error_string
-          @@ Printf.sprintf
+          error_string @@ Printf.sprintf
             "Invalid WFClassifier Configuration (%s): %s" filename msg
       end
     | Instance x -> Ok (ExtFile.Instance x)
 end
 
 module type WFClassifierType = sig
-  type classifier = SortMap.t * (Ident.pvar * (SortEnv.t * Formula.t))
-  val mk_classifier: Ident.pvar -> SortEnv.t -> PCSatCommon.TruthTable.t -> (int, int) Map.Poly.t -> (SortMap.t * PCSatCommon.VersionSpace.examples) -> classifier Or_error.t
+  type classifier = sort_env_map * (Ident.pvar * (sort_env_list * Formula.t))
+  val mk_classifier: Ident.pvar -> sort_env_list -> PCSatCommon.TruthTable.t -> (int, int) Map.Poly.t -> (sort_env_map * PCSatCommon.VersionSpace.examples) -> classifier list Or_error.t
 end
 
 module Make (Cfg: Config.ConfigType) (Problem: PCSP.Problem.ProblemType) =

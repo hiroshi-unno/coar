@@ -1,0 +1,30 @@
+(L1Q0 0)
+s.t.
+L1Q2 (init: int): bool =mu init != 1 \/ (L2Q2 0);
+L2Q2 (init: int): bool =mu init != 1 \/ (L3Q2 init);
+L3Q2 (init: int): bool =mu init != 1 \/ (L4Q2 1);
+L4Q2 (init: int): bool =mu init != 1 \/ (forall (limit#0: int). (L5Q2 init limit#0));
+L5Q2 (init: int) (limit#0: int): bool =mu init != 1 \/ limit#0 < 10 /\ limit#0 > -273 /\ (L6Q2 init) \/ (limit#0 >= 10 \/ limit#0 <= -273) /\ (L4Q2 init);
+L6Q2 (init: int): bool =mu init != 1 \/ (L7Q2 3);
+L7Q2 (init: int): bool =mu init != 1 \/ (L7Q2 init);
+L1Q1 (init: int): bool =mu init != 3 \/ (L2Q1 0);
+L2Q1 (init: int): bool =mu init != 3 \/ (L3Q1 init);
+L3Q1 (init: int): bool =mu init != 3 \/ (L4Q1 1);
+L4Q1 (init: int): bool =mu init != 3 \/ (forall (limit#0: int). (L5Q1 init limit#0));
+L5Q1 (init: int) (limit#0: int): bool =mu init != 3 \/ limit#0 < 10 /\ limit#0 > -273 /\ (L6Q1 init) \/ (limit#0 >= 10 \/ limit#0 <= -273) /\ (L4Q1 init);
+L6Q1 (init: int): bool =mu init != 3 \/ (L7Q1 3);
+L7Q1 (init: int): bool =mu init != 3 \/ (L7Q1 init);
+L1Q3 (init: int): bool =nu (init != 1 \/ (L2Q3 0)) /\ (init != 3 \/ (L2Q1 0));
+L2Q3 (init: int): bool =nu (init != 1 \/ (L3Q3 init)) /\ (init != 3 \/ (L3Q1 init));
+L3Q3 (init: int): bool =nu (init != 1 \/ (L4Q3 1)) /\ (init != 3 \/ (L4Q1 1));
+L4Q3 (init: int): bool =nu (init != 1 \/ (forall (limit#0: int). (L5Q3 init limit#0))) /\ (init != 3 \/ (forall (limit#0: int). (L5Q1 init limit#0)));
+L5Q3 (init: int) (limit#0: int): bool =nu (init != 1 \/ limit#0 < 10 /\ limit#0 > -273 /\ (L6Q3 init) \/ (limit#0 >= 10 \/ limit#0 <= -273) /\ (L4Q3 init)) /\ (init != 3 \/ limit#0 < 10 /\ limit#0 > -273 /\ (L6Q1 init) \/ (limit#0 >= 10 \/ limit#0 <= -273) /\ (L4Q1 init));
+L6Q3 (init: int): bool =nu (init != 1 \/ (L7Q3 3)) /\ (init != 3 \/ (L7Q1 3));
+L7Q3 (init: int): bool =nu (init != 1 \/ (L7Q3 init)) /\ (init != 3 \/ (L7Q1 init));
+L1Q0 (init: int): bool =nu (init != 1 \/ (L2Q3 0)) /\ (init != 1 \/ (L2Q2 0)) /\ (init != 3 \/ (L2Q1 0)) /\ (init != 0 \/ (L2Q0 0));
+L2Q0 (init: int): bool =nu (init != 1 \/ (L3Q3 init)) /\ (init != 1 \/ (L3Q2 init)) /\ (init != 3 \/ (L3Q1 init)) /\ (init != 0 \/ (L3Q0 init));
+L3Q0 (init: int): bool =nu (init != 1 \/ (L4Q3 1)) /\ (init != 1 \/ (L4Q2 1)) /\ (init != 3 \/ (L4Q1 1)) /\ (init != 0 \/ (L4Q0 1));
+L4Q0 (init: int): bool =nu (init != 1 \/ (forall (limit#0: int). (L5Q3 init limit#0))) /\ (init != 1 \/ (forall (limit#0: int). (L5Q2 init limit#0))) /\ (init != 3 \/ (forall (limit#0: int). (L5Q1 init limit#0))) /\ (init != 0 \/ (forall (limit#0: int). (L5Q0 init limit#0)));
+L5Q0 (init: int) (limit#0: int): bool =nu (init != 1 \/ limit#0 < 10 /\ limit#0 > -273 /\ (L6Q3 init) \/ (limit#0 >= 10 \/ limit#0 <= -273) /\ (L4Q3 init)) /\ (init != 1 \/ limit#0 < 10 /\ limit#0 > -273 /\ (L6Q2 init) \/ (limit#0 >= 10 \/ limit#0 <= -273) /\ (L4Q2 init)) /\ (init != 3 \/ limit#0 < 10 /\ limit#0 > -273 /\ (L6Q1 init) \/ (limit#0 >= 10 \/ limit#0 <= -273) /\ (L4Q1 init)) /\ (init != 0 \/ limit#0 < 10 /\ limit#0 > -273 /\ (L6Q0 init) \/ (limit#0 >= 10 \/ limit#0 <= -273) /\ (L4Q0 init));
+L6Q0 (init: int): bool =nu (init != 1 \/ (L7Q3 3)) /\ (init != 1 \/ (L7Q2 3)) /\ (init != 3 \/ (L7Q1 3)) /\ (init != 0 \/ (L7Q0 3));
+L7Q0 (init: int): bool =nu (init != 1 \/ (L7Q3 init)) /\ (init != 1 \/ (L7Q2 init)) /\ (init != 3 \/ (L7Q1 init)) /\ (init != 0 \/ (L7Q0 init));

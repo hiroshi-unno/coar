@@ -1,0 +1,97 @@
+///*** 1_main ***///
+START: main_entry;
+
+FROM: main_entry;
+vcall := nondet();
+var__temp_vrange.0 := 20;
+var__temp_vi.0 := vcall;
+var__temp_vup.0 := 0;
+TO: main_while.cond;
+
+FROM: main_while.cond;
+vrange.0 := var__temp_vrange.0;
+vi.0 := var__temp_vi.0;
+vup.0 := var__temp_vup.0;
+TO: main_while.cond_end;
+
+FROM: main_while.cond_end;
+assume((0 <= vi.0) && (vi.0 <= vrange.0));
+TO: main_while.body;
+
+FROM: main_while.cond_end;
+assume((0 > vi.0) || (vi.0 > vrange.0));
+TO: main_while.end;
+
+FROM: main_while.body;
+TO: main_while.body_v.up.0;
+FROM: main_while.body_v.up.0;
+assume(vi.0 == 0);
+v.up.0 := 1;
+TO: main_while.body_sv.up.0;
+
+FROM: main_while.body_v.up.0;
+assume(vi.0 != 0);
+v.up.0 := vup.0;
+TO: main_while.body_sv.up.0;
+
+FROM: main_while.body_sv.up.0;
+TO: main_while.body_vup.2;
+FROM: main_while.body_vup.2;
+assume(vi.0 == vrange.0);
+vup.2 := 0;
+TO: main_while.body_svup.2;
+
+FROM: main_while.body_vup.2;
+assume(vi.0 != vrange.0);
+vup.2 := v.up.0;
+TO: main_while.body_svup.2;
+
+FROM: main_while.body_svup.2;
+vadd := vi.0 + 1;
+TO: main_while.body_vadd.i.0;
+FROM: main_while.body_vadd.i.0;
+assume(vup.2 == 1);
+vadd.i.0 := vadd;
+TO: main_while.body_svadd.i.0;
+
+FROM: main_while.body_vadd.i.0;
+assume(vup.2 != 1);
+vadd.i.0 := vi.0;
+TO: main_while.body_svadd.i.0;
+
+FROM: main_while.body_svadd.i.0;
+vsub := vadd.i.0 - 1;
+TO: main_while.body_vi.2;
+FROM: main_while.body_vi.2;
+assume(vup.2 == 0);
+vi.2 := vsub;
+TO: main_while.body_svi.2;
+
+FROM: main_while.body_vi.2;
+assume(vup.2 != 0);
+vi.2 := vadd.i.0;
+TO: main_while.body_svi.2;
+
+FROM: main_while.body_svi.2;
+vsub12 := vrange.0 - 2;
+vsub15 := vrange.0 - 1;
+TO: main_while.body_vsub15.range.0;
+FROM: main_while.body_vsub15.range.0;
+assume(vi.2 == vsub12);
+vsub15.range.0 := vsub15;
+TO: main_while.body_svsub15.range.0;
+
+FROM: main_while.body_vsub15.range.0;
+assume(vi.2 != vsub12);
+vsub15.range.0 := vrange.0;
+TO: main_while.body_svsub15.range.0;
+
+FROM: main_while.body_svsub15.range.0;
+var__temp_vrange.0 := vsub15.range.0;
+var__temp_vi.0 := vi.2;
+var__temp_vup.0 := vup.2;
+TO: main_while.cond;
+
+FROM: main_while.end;
+TO: main_while.end_ret;
+

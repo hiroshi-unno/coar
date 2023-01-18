@@ -1,0 +1,20 @@
+forall (WItemsNum: int). AG1 WItemsNum
+s.t.
+AG1 (WItemsNum: int): bool =nu AF1 WItemsNum /\ (forall (WItemsNum: int). AG2 WItemsNum);
+AG2 (WItemsNum: int): bool =nu AF2 WItemsNum /\ (WItemsNum <= 5 => AG3 WItemsNum) /\ (not (WItemsNum <= 5) => AG4 WItemsNum);
+AG3 (WItemsNum: int): bool =nu AF3 WItemsNum /\ AG5 WItemsNum /\ AG4 WItemsNum;
+AG5 (WItemsNum: int): bool =nu AF4 WItemsNum /\ (not (WItemsNum > 2) => AG6 WItemsNum) /\ (not (not (WItemsNum > 2)) => AG7 WItemsNum);
+AG6 (WItemsNum: int): bool =nu AF5 WItemsNum /\ true;
+AG7 (WItemsNum: int): bool =nu AF6 WItemsNum /\ AG5 (WItemsNum - 1);
+AG4 (WItemsNum: int): bool =nu AF7 WItemsNum /\ (WItemsNum <= 5 => AG8 WItemsNum) /\ (not (WItemsNum <= 5) => AG9 WItemsNum);
+AG8 (WItemsNum: int): bool =nu AF8 WItemsNum /\ AG2 (WItemsNum + 1);
+AG9 (WItemsNum: int): bool =nu AF9 WItemsNum /\ AG2 (WItemsNum + 1);
+AF1 (WItemsNum: int): bool =mu WItemsNum >= 1 \/ (forall (WItemsNum: int). AF2 WItemsNum);
+AF2 (WItemsNum: int): bool =mu WItemsNum >= 1 \/ (WItemsNum <= 5 => AF3 WItemsNum) /\ (not (WItemsNum <= 5) => AF7 WItemsNum);
+AF3 (WItemsNum: int): bool =mu WItemsNum >= 1 \/ AF4 WItemsNum /\ AF7 WItemsNum;
+AF4 (WItemsNum: int): bool =mu WItemsNum >= 1 \/ (not (WItemsNum > 2) => AF5 WItemsNum) /\ (not (not (WItemsNum > 2)) => AF6 WItemsNum);
+AF5 (WItemsNum: int): bool =mu WItemsNum >= 1 \/ false;
+AF6 (WItemsNum: int): bool =mu WItemsNum >= 1 \/ AF4 (WItemsNum - 1);
+AF7 (WItemsNum: int): bool =mu WItemsNum >= 1 \/ (WItemsNum <= 5 => AF8 WItemsNum) /\ (not (WItemsNum <= 5) => AF9 WItemsNum);
+AF8 (WItemsNum: int): bool =mu WItemsNum >= 1 \/ AF2 (WItemsNum + 1);
+AF9 (WItemsNum: int): bool =mu WItemsNum >= 1 \/ AF2 (WItemsNum + 1);

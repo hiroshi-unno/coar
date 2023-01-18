@@ -1,6 +1,7 @@
 (library
   (name bf_synthesis)
   (public_name CoAR.PCSat.bf_synthesis)
+  (preprocess (pps ppx_deriving_yojson))
   (libraries
     core
     yojson
@@ -10,7 +11,8 @@
     CoAR.PCSat.common)
   (modules
     BFSynthesizer
+    boolFunction
+    decisionTree
     DT_BFSynthesizer
-    SCQM_BFSynthesizer)
-  (preprocess (pps ppx_deriving_yojson))
-)
+    MCTS_BFSynthesizer
+    SCQM_BFSynthesizer))

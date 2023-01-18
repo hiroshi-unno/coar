@@ -1,0 +1,16 @@
+(library
+  (name labeling)
+  (public_name CoAR.PCSat.labeling)
+  (preprocess (pps ppx_deriving_yojson))
+  (libraries
+    core
+    yojson
+    ocamlgraph
+    CoAR.pCSP
+    CoAR.SAT
+    CoAR.SATSolver
+    CoAR.PCSat.common)
+  (modules
+    loopDetector
+    NWFLoopDetector
+    labeler))

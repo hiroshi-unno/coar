@@ -1,0 +1,18 @@
+exists (y: int). EF1 0 5 y
+s.t.
+EF1 (p: int) (x: int) (y: int): bool =mu AF1 p x y \/ (x < 0 => EF2 p y) /\ (not (x < 0) => EF3 p x y);
+EF2 (p: int) (y: int): bool =mu AF2 p y \/ (y < 0 => EF4 p) /\ (not (y < 0) => EF5 p y);
+EF4 (p: int): bool =mu AF3 p \/ EF6 1;
+EF6 (p: int): bool =mu AF4 p \/ false;
+EF5 (p: int) (y: int): bool =mu AF5 p y \/ EF2 p (y - 1);
+EF3 (p: int) (x: int) (y: int): bool =mu AF6 p x y \/ EF7 p x y \/ EF8 p x y;
+EF7 (p: int) (x: int) (y: int): bool =mu AF7 p x y \/ EF1 p (x - 1) y;
+EF8 (p: int) (x: int) (y: int): bool =mu AF8 p x y \/ EF1 0 x y;
+AF1 (p: int) (x: int) (y: int): bool =mu p > 0 \/ (x < 0 => AF2 p y) /\ (not (x < 0) => AF6 p x y);
+AF2 (p: int) (y: int): bool =mu p > 0 \/ (y < 0 => AF3 p) /\ (not (y < 0) => AF5 p y);
+AF3 (p: int): bool =mu p > 0 \/ AF4 1;
+AF4 (p: int): bool =mu p > 0 \/ false;
+AF5 (p: int) (y: int): bool =mu p > 0 \/ AF2 p (y - 1);
+AF6 (p: int) (x: int) (y: int): bool =mu p > 0 \/ AF7 p x y /\ AF8 p x y;
+AF7 (p: int) (x: int) (y: int): bool =mu p > 0 \/ AF1 p (x - 1) y;
+AF8 (p: int) (x: int) (y: int): bool =mu p > 0 \/ AF1 0 x y;

@@ -53,3 +53,4 @@ if      [ "$result" = "valid" ] ||
 else
         echo "${@:$#:1},abort,$elapsed,$iterations"
 fi
+

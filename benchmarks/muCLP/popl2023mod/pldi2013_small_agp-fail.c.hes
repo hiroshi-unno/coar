@@ -1,0 +1,5 @@
+AG1 2
+s.t.
+AG1 (x: int): bool =nu x > 1 /\ AG2 x /\ AG3 x;
+AG2 (x: int): bool =nu x > 1 /\ AG1 (x + 1);
+AG3 (x: int): bool =nu x > 1 /\ AG1 (x - 1);

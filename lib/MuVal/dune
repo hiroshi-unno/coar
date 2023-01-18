@@ -1,14 +1,15 @@
 (library
   (name MuVal)
   (public_name CoAR.MuVal)
+  (preprocess (pps ppx_deriving.std ppx_deriving_yojson))
   (libraries
-    ast
     core
+    CoAR.ast
     CoAR.muCLP
-    CoAR.PCSPSolver)
+    CoAR.PCSPSolver
+    CoAR.Z3Smt)
   (modules
     config
     reducer
     solver)
-  (preprocess (pps ppx_deriving.std ppx_deriving_yojson))
   (synopsis "A fixpoint logic validity checker based on pfwCSP solving"))

@@ -1,0 +1,28 @@
+forall (c: int) (servers: int) (serversdiv2: int). servers <= 0 \/ c <= 0 \/ (L1Q1 c 0 servers serversdiv2)
+s.t.
+L1Q0 (c: int) (resp: int) (servers: int) (serversdiv2: int): bool =mu resp > servers div 2 \/ (L2Q0 c resp servers serversdiv2) /\ (L13Q0 c resp servers serversdiv2);
+L2Q0 (c: int) (resp: int) (servers: int) (serversdiv2: int): bool =mu resp > servers div 2 \/ serversdiv2 + serversdiv2 != servers \/ (L3Q0 c resp servers);
+L3Q0 (c: int) (resp: int) (servers: int): bool =mu resp > servers div 2 \/ (L4Q0 c 0 servers);
+L4Q0 (c: int) (resp: int) (servers: int): bool =mu resp > servers div 2 \/ (L5Q0 c servers resp servers);
+L5Q0 (c: int) (curr_serv: int) (resp: int) (servers: int): bool =mu resp > servers div 2 \/ curr_serv > 0 /\ (L6Q0 c curr_serv resp servers) \/ curr_serv <= 0 /\ (L12Q0 c resp servers);
+L6Q0 (c: int) (curr_serv: int) (resp: int) (servers: int): bool =mu resp > servers div 2 \/ (L7Q0 c curr_serv resp servers) /\ (L10Q0 c curr_serv resp servers);
+L7Q0 (c: int) (curr_serv: int) (resp: int) (servers: int): bool =mu resp > servers div 2 \/ (L8Q0 (c - 1) curr_serv resp servers);
+L8Q0 (c: int) (curr_serv: int) (resp: int) (servers: int): bool =mu resp > servers div 2 \/ (L9Q0 c (curr_serv - 1) resp servers);
+L9Q0 (c: int) (curr_serv: int) (resp: int) (servers: int): bool =mu resp > servers div 2 \/ (L5Q0 c curr_serv (resp + 1) servers);
+L10Q0 (c: int) (curr_serv: int) (resp: int) (servers: int): bool =mu resp > servers div 2 \/ c >= curr_serv \/ (L11Q0 c curr_serv resp servers);
+L11Q0 (c: int) (curr_serv: int) (resp: int) (servers: int): bool =mu resp > servers div 2 \/ (L5Q0 c (curr_serv - 1) resp servers);
+L12Q0 (c: int) (resp: int) (servers: int): bool =mu resp > servers div 2 \/ (L12Q0 c resp servers);
+L13Q0 (c: int) (resp: int) (servers: int) (serversdiv2: int): bool =mu resp > servers div 2 \/ serversdiv2 + serversdiv2 + 1 != servers \/ (L3Q0 c resp servers);
+L1Q1 (c: int) (resp: int) (servers: int) (serversdiv2: int): bool =nu c <= servers div 2 \/ resp > servers div 2 \/ (L2Q0 c resp servers serversdiv2) /\ (L13Q0 c resp servers serversdiv2);
+L2Q1 (c: int) (resp: int) (servers: int) (serversdiv2: int): bool =nu c <= servers div 2 \/ resp > servers div 2 \/ serversdiv2 + serversdiv2 != servers \/ (L3Q0 c resp servers);
+L3Q1 (c: int) (resp: int) (servers: int): bool =nu c <= servers div 2 \/ resp > servers div 2 \/ (L4Q0 c 0 servers);
+L4Q1 (c: int) (resp: int) (servers: int): bool =nu c <= servers div 2 \/ resp > servers div 2 \/ (L5Q0 c servers resp servers);
+L5Q1 (c: int) (curr_serv: int) (resp: int) (servers: int): bool =nu c <= servers div 2 \/ resp > servers div 2 \/ curr_serv > 0 /\ (L6Q0 c curr_serv resp servers) \/ curr_serv <= 0 /\ (L12Q0 c resp servers);
+L6Q1 (c: int) (curr_serv: int) (resp: int) (servers: int): bool =nu c <= servers div 2 \/ resp > servers div 2 \/ (L7Q0 c curr_serv resp servers) /\ (L10Q0 c curr_serv resp servers);
+L7Q1 (c: int) (curr_serv: int) (resp: int) (servers: int): bool =nu c <= servers div 2 \/ resp > servers div 2 \/ (L8Q0 (c - 1) curr_serv resp servers);
+L8Q1 (c: int) (curr_serv: int) (resp: int) (servers: int): bool =nu c <= servers div 2 \/ resp > servers div 2 \/ (L9Q0 c (curr_serv - 1) resp servers);
+L9Q1 (c: int) (curr_serv: int) (resp: int) (servers: int): bool =nu c <= servers div 2 \/ resp > servers div 2 \/ (L5Q0 c curr_serv (resp + 1) servers);
+L10Q1 (c: int) (curr_serv: int) (resp: int) (servers: int): bool =nu c <= servers div 2 \/ resp > servers div 2 \/ c >= curr_serv \/ (L11Q0 c curr_serv resp servers);
+L11Q1 (c: int) (curr_serv: int) (resp: int) (servers: int): bool =nu c <= servers div 2 \/ resp > servers div 2 \/ (L5Q0 c (curr_serv - 1) resp servers);
+L12Q1 (c: int) (resp: int) (servers: int): bool =nu c <= servers div 2 \/ resp > servers div 2 \/ (L12Q0 c resp servers);
+L13Q1 (c: int) (resp: int) (servers: int) (serversdiv2: int): bool =nu c <= servers div 2 \/ resp > servers div 2 \/ serversdiv2 + serversdiv2 + 1 != servers \/ (L3Q0 c resp servers);

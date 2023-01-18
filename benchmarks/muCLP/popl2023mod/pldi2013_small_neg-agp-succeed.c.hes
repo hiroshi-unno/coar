@@ -1,0 +1,5 @@
+EF1 2
+s.t.
+EF1 (x: int): bool =mu x <= 1 \/ EF2 x \/ EF3 x;
+EF2 (x: int): bool =mu x <= 1 \/ EF1 (x + 1);
+EF3 (x: int): bool =mu x <= 1 \/ EF1 (x - 1);

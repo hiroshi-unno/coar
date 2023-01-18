@@ -1,0 +1,5 @@
+#! /bin/bash
+
+export LD_LIBRARY_PATH=./
+export PATH=./:$PATH
+./main.exe -c ./config/solver/hoice.json -p pcsp $1

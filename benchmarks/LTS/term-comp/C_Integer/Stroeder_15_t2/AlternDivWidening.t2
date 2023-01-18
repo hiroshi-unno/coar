@@ -1,0 +1,68 @@
+///*** 1_main ***///
+START: main_entry;
+
+FROM: main_entry;
+vcall := nondet();
+var__temp_vi.0 := vcall;
+var__temp_vw.0 := 5;
+TO: main_while.cond;
+
+FROM: main_while.cond;
+vi.0 := var__temp_vi.0;
+vw.0 := var__temp_vw.0;
+TO: main_while.cond_end;
+
+FROM: main_while.cond_end;
+assume(vi.0 != 0);
+TO: main_while.body;
+
+FROM: main_while.cond_end;
+assume(vi.0 == 0);
+TO: main_while.end;
+
+FROM: main_while.body;
+vsub := 0 - vw.0;
+TO: main_while.body_end;
+
+FROM: main_while.body_end;
+assume(vi.0 < vsub);
+TO: main_if.then;
+
+FROM: main_while.body_end;
+assume(vi.0 >= vsub);
+TO: main_if.else;
+
+FROM: main_if.then;
+vsub2 := vi.0 - 1;
+vmul := vsub2 * -1;
+var__temp_vi.2 := vmul;
+TO: main_if.end7;
+
+FROM: main_if.else;
+var__temp_vi.2 := 0;
+TO: main_if.else_end;
+
+FROM: main_if.else_end;
+assume(vi.0 > vw.0);
+TO: main_if.then4;
+
+FROM: main_if.else_end;
+assume(vi.0 <= vw.0);
+TO: main_if.end7;
+
+FROM: main_if.then4;
+vadd := vi.0 + 1;
+vmul5 := vadd * -1;
+var__temp_vi.2 := vmul5;
+TO: main_if.end7;
+
+FROM: main_if.end7;
+vi.2 := var__temp_vi.2;
+vadd8 := vw.0 + 1;
+var__temp_vi.0 := vi.2;
+var__temp_vw.0 := vadd8;
+TO: main_while.cond;
+
+FROM: main_while.end;
+TO: main_while.end_ret;
+

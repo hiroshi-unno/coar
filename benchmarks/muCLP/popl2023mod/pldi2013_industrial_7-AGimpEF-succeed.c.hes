@@ -1,0 +1,32 @@
+forall (Pdolen: int) (i: int). AG1 Pdolen i 0 0
+s.t.
+AG1 (Pdolen: int) (i: int) (set: int) (unset: int): bool =nu (set = 1 => EF1 Pdolen i unset) /\ AG2 Pdolen i 1 unset;
+AG2 (Pdolen: int) (i: int) (set: int) (unset: int): bool =nu (set = 1 => EF2 Pdolen i unset) /\ AG3 Pdolen i 0 unset;
+AG3 (Pdolen: int) (i: int) (set: int) (unset: int): bool =nu (set = 1 => EF3 Pdolen i unset) /\ (not (i < Pdolen) => AG4 set unset) /\ (not (not (i < Pdolen)) => AG5 Pdolen i set unset);
+AG4 (set: int) (unset: int): bool =nu (set = 1 => EF4 unset) /\ (forall (dummy: int). AG6 dummy set unset);
+AG6 (dummy: int) (set: int) (unset: int): bool =nu (set = 1 => EF5 dummy unset) /\ (dummy > 0 => AG7 set unset) /\ (not (dummy > 0) => AG8 set unset);
+AG7 (set: int) (unset: int): bool =nu (set = 1 => EF6 unset) /\ AG9 set 1;
+AG9 (set: int) (unset: int): bool =nu (set = 1 => EF7 unset) /\ AG8 set 0;
+AG8 (set: int) (unset: int): bool =nu (set = 1 => EF8 unset) /\ true;
+AG5 (Pdolen: int) (i: int) (set: int) (unset: int): bool =nu (set = 1 => EF9 Pdolen i unset) /\ (forall (DName: int). AG10 DName Pdolen i set unset);
+AG10 (DName: int) (Pdolen: int) (i: int) (set: int) (unset: int): bool =nu (set = 1 => EF10 DName Pdolen i unset) /\ (DName > 0 => AG4 set unset) /\ (not (DName > 0) => AG11 Pdolen i set unset);
+AG11 (Pdolen: int) (i: int) (set: int) (unset: int): bool =nu (set = 1 => EF11 Pdolen i unset) /\ (forall (status: int). AG12 Pdolen i set status unset);
+AG12 (Pdolen: int) (i: int) (set: int) (status: int) (unset: int): bool =nu (set = 1 => EF12 Pdolen i status unset) /\ (1 != status => AG13 set status unset) /\ (not (1 != status) => AG14 Pdolen i set unset);
+AG13 (set: int) (status: int) (unset: int): bool =nu (set = 1 => EF13 status unset) /\ (2 = status => AG15 set unset) /\ (not (2 = status) => AG4 set unset);
+AG15 (set: int) (unset: int): bool =nu (set = 1 => EF14 unset) /\ (forall (num: int). AG4 set unset);
+AG14 (Pdolen: int) (i: int) (set: int) (unset: int): bool =nu (set = 1 => EF15 Pdolen i unset) /\ AG3 Pdolen (i + 1) set unset;
+EF1 (Pdolen: int) (i: int) (unset: int): bool =mu unset = 1 \/ EF2 Pdolen i unset;
+EF2 (Pdolen: int) (i: int) (unset: int): bool =mu unset = 1 \/ EF3 Pdolen i unset;
+EF3 (Pdolen: int) (i: int) (unset: int): bool =mu unset = 1 \/ (not (i < Pdolen) => EF4 unset) /\ (not (not (i < Pdolen)) => EF9 Pdolen i unset);
+EF4 (unset: int): bool =mu unset = 1 \/ (exists (dummy: int). EF5 dummy unset);
+EF5 (dummy: int) (unset: int): bool =mu unset = 1 \/ (dummy > 0 => EF6 unset) /\ (not (dummy > 0) => EF8 unset);
+EF6 (unset: int): bool =mu unset = 1 \/ EF7 1;
+EF7 (unset: int): bool =mu unset = 1 \/ EF8 0;
+EF8 (unset: int): bool =mu unset = 1 \/ false;
+EF9 (Pdolen: int) (i: int) (unset: int): bool =mu unset = 1 \/ (exists (DName: int). EF10 DName Pdolen i unset);
+EF10 (DName: int) (Pdolen: int) (i: int) (unset: int): bool =mu unset = 1 \/ (DName > 0 => EF4 unset) /\ (not (DName > 0) => EF11 Pdolen i unset);
+EF11 (Pdolen: int) (i: int) (unset: int): bool =mu unset = 1 \/ (exists (status: int). EF12 Pdolen i status unset);
+EF12 (Pdolen: int) (i: int) (status: int) (unset: int): bool =mu unset = 1 \/ (1 != status => EF13 status unset) /\ (not (1 != status) => EF15 Pdolen i unset);
+EF13 (status: int) (unset: int): bool =mu unset = 1 \/ (2 = status => EF14 unset) /\ (not (2 = status) => EF4 unset);
+EF14 (unset: int): bool =mu unset = 1 \/ (exists (num: int). EF4 unset);
+EF15 (Pdolen: int) (i: int) (unset: int): bool =mu unset = 1 \/ EF3 Pdolen (i + 1) unset;

@@ -1,0 +1,14 @@
+(L1Q0 0)
+s.t.
+L1Q1 (Stored: int): bool =mu (Stored = 0 \/ (L2Q1 Stored) /\ (L4Q1 Stored)) /\ (Stored != 0 \/ (L2Q0 Stored) /\ (L4Q0 Stored));
+L2Q1 (Stored: int): bool =mu (Stored = 0 \/ (L1Q1 Stored) /\ (L3Q1 Stored)) /\ (Stored != 0 \/ (L1Q0 Stored) /\ (L3Q0 Stored));
+L3Q1 (Stored: int): bool =mu (Stored = 0 \/ (L4Q1 1)) /\ (Stored != 0 \/ (L4Q0 1));
+L4Q1 (Stored: int): bool =mu (Stored = 0 \/ Stored = 1 /\ (L5Q1 Stored) \/ Stored != 1 /\ (L6Q1 Stored)) /\ (Stored != 0 \/ Stored = 1 /\ (L5Q0 Stored) \/ Stored != 1 /\ (L6Q0 Stored));
+L5Q1 (Stored: int): bool =mu (Stored = 0 \/ (L6Q1 0)) /\ (Stored != 0 \/ (L6Q0 0));
+L6Q1 (Stored: int): bool =mu (Stored = 0 \/ (L6Q1 Stored)) /\ (Stored != 0 \/ (L6Q0 Stored));
+L1Q0 (Stored: int): bool =nu (Stored = 0 \/ (L2Q1 Stored) /\ (L4Q1 Stored)) /\ (Stored != 0 \/ (L2Q0 Stored) /\ (L4Q0 Stored));
+L2Q0 (Stored: int): bool =nu (Stored = 0 \/ (L1Q1 Stored) /\ (L3Q1 Stored)) /\ (Stored != 0 \/ (L1Q0 Stored) /\ (L3Q0 Stored));
+L3Q0 (Stored: int): bool =nu (Stored = 0 \/ (L4Q1 1)) /\ (Stored != 0 \/ (L4Q0 1));
+L4Q0 (Stored: int): bool =nu (Stored = 0 \/ Stored = 1 /\ (L5Q1 Stored) \/ Stored != 1 /\ (L6Q1 Stored)) /\ (Stored != 0 \/ Stored = 1 /\ (L5Q0 Stored) \/ Stored != 1 /\ (L6Q0 Stored));
+L5Q0 (Stored: int): bool =nu (Stored = 0 \/ (L6Q1 0)) /\ (Stored != 0 \/ (L6Q0 0));
+L6Q0 (Stored: int): bool =nu (Stored = 0 \/ (L6Q1 Stored)) /\ (Stored != 0 \/ (L6Q0 Stored));

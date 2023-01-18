@@ -15,7 +15,7 @@
 %token <int> INTL
 %token <string> REALL
 %token TRUE FALSE
-%token SUCHTHAT
+%token WHERE
 %token <string> ID
 
 %start toplevel
@@ -34,18 +34,18 @@
 */
 
 toplevel:
-    entry=Formula SUCHTHAT funcs=Funs EOF { Problem.make funcs entry }
+    query=Formula WHERE preds=Funs EOF { Problem.make preds query }
 
 formula:
     fml=Formula EOF { fml }
 
 Funs:
-    f=Fun SEMI funs=Funs { f :: funs }
+    f=Fun SEMI preds=Funs { f :: preds }
   | f=Fun SEMI { [f] }
 
 Fun:
     funname=ID bounds=Bounds CORON BOOL fix=EQFIX body=Formula {
-      Problem.mk_func fix (Ident.Pvar funname) (SortEnv.of_list bounds) body
+      Pred.make fix (Ident.Pvar funname) bounds body
     }
 
 /* Ast.LogicOld.Formula.t */
@@ -54,7 +54,7 @@ Formula:
     fml=FormulaBinder { fml }
 
 FormulaBinder:
-    binder=BINDER bounds=Bounds DOT body=Formula { Formula.mk_bind binder (SortEnv.of_list bounds) body }
+    binder=BINDER bounds=Bounds DOT body=Formula { Formula.mk_bind binder bounds body }
   | fml=FormulaIff { fml }
 
 FormulaIff:
@@ -90,8 +90,8 @@ FormulaAtom:
 Atom:
     funname=ID args=AtomAppArgs { Atom.mk_app (Predicate.mk_var (Ident.Pvar funname) []) args }
   | atom=T_bool { atom }
-  | TRUE { True Dummy }
-  | FALSE { False Dummy }
+  | TRUE { Atom.True Dummy }
+  | FALSE { Atom.False Dummy }
 
 AtomAppArgs:
     { [] }

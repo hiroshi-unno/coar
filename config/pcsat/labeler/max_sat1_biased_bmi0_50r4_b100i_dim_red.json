@@ -1,0 +1,45 @@
+{
+    "verbose": false,
+    "num_labelings": 1,
+    "strategy": [
+        "Mixed",
+        [
+            [
+                [
+                    "POS_BIASED_MAX_SAT",
+                    true,
+                    4
+                ],
+                true
+            ],
+            [
+                [
+                    "NEG_BIASED_MAX_SAT",
+                    true,
+                    4
+                ],
+                true
+            ],
+            [
+                [
+                    "BMI_MAX_SAT",
+                    50,
+                    200,
+                    4.0,
+                    [
+                        "None"
+                    ],
+                    0.0,
+                    0.0,
+                    100.0,
+                    true
+                ],
+                false
+            ]
+        ]
+    ],
+    "sat_solver": [
+        "Filename",
+        "./config/solver/z3_sat_dim_red.json"
+    ]
+}

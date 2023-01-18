@@ -1,0 +1,18 @@
+forall (WItemsNum: int). (L1Q0 WItemsNum)
+s.t.
+L1Q1 (WItemsNum: int): bool =mu (WItemsNum >= 1 \/ (forall (WItemsNum: int). (L2Q1 WItemsNum))) /\ (WItemsNum < 1 \/ (forall (WItemsNum: int). (L2Q0 WItemsNum)));
+L2Q1 (WItemsNum: int): bool =mu (WItemsNum >= 1 \/ (forall (#result0: int). (L3Q1 #result0 WItemsNum))) /\ (WItemsNum < 1 \/ (forall (#result0: int). (L3Q0 #result0 WItemsNum)));
+L3Q1 (#result0: int) (WItemsNum: int): bool =mu (WItemsNum >= 1 \/ WItemsNum <= 5 /\ #result0 != 0 /\ (L4Q1 WItemsNum) \/ (WItemsNum > 5 \/ #result0 = 0) /\ (L7Q1 WItemsNum)) /\ (WItemsNum < 1 \/ WItemsNum <= 5 /\ #result0 != 0 /\ (L4Q0 WItemsNum) \/ (WItemsNum > 5 \/ #result0 = 0) /\ (L7Q0 WItemsNum));
+L4Q1 (WItemsNum: int): bool =mu (WItemsNum >= 1 \/ WItemsNum <= 5 /\ (L5Q1 WItemsNum) \/ WItemsNum > 5 /\ (L6Q1 WItemsNum)) /\ (WItemsNum < 1 \/ WItemsNum <= 5 /\ (L5Q0 WItemsNum) \/ WItemsNum > 5 /\ (L6Q0 WItemsNum));
+L5Q1 (WItemsNum: int): bool =mu (WItemsNum >= 1 \/ (L2Q1 (WItemsNum + 1))) /\ (WItemsNum < 1 \/ (L2Q0 (WItemsNum + 1)));
+L6Q1 (WItemsNum: int): bool =mu (WItemsNum >= 1 \/ (L2Q1 (WItemsNum + 1))) /\ (WItemsNum < 1 \/ (L2Q0 (WItemsNum + 1)));
+L7Q1 (WItemsNum: int): bool =mu (WItemsNum >= 1 \/ WItemsNum > 2 /\ (L8Q1 WItemsNum) \/ WItemsNum <= 2 /\ (L2Q1 WItemsNum)) /\ (WItemsNum < 1 \/ WItemsNum > 2 /\ (L8Q0 WItemsNum) \/ WItemsNum <= 2 /\ (L2Q0 WItemsNum));
+L8Q1 (WItemsNum: int): bool =mu (WItemsNum >= 1 \/ (L7Q1 (WItemsNum - 1))) /\ (WItemsNum < 1 \/ (L7Q0 (WItemsNum - 1)));
+L1Q0 (WItemsNum: int): bool =nu (WItemsNum >= 1 \/ (forall (WItemsNum: int). (L2Q1 WItemsNum))) /\ (WItemsNum < 1 \/ (forall (WItemsNum: int). (L2Q0 WItemsNum)));
+L2Q0 (WItemsNum: int): bool =nu (WItemsNum >= 1 \/ (forall (#result0: int). (L3Q1 #result0 WItemsNum))) /\ (WItemsNum < 1 \/ (forall (#result0: int). (L3Q0 #result0 WItemsNum)));
+L3Q0 (#result0: int) (WItemsNum: int): bool =nu (WItemsNum >= 1 \/ WItemsNum <= 5 /\ #result0 != 0 /\ (L4Q1 WItemsNum) \/ (WItemsNum > 5 \/ #result0 = 0) /\ (L7Q1 WItemsNum)) /\ (WItemsNum < 1 \/ WItemsNum <= 5 /\ #result0 != 0 /\ (L4Q0 WItemsNum) \/ (WItemsNum > 5 \/ #result0 = 0) /\ (L7Q0 WItemsNum));
+L4Q0 (WItemsNum: int): bool =nu (WItemsNum >= 1 \/ WItemsNum <= 5 /\ (L5Q1 WItemsNum) \/ WItemsNum > 5 /\ (L6Q1 WItemsNum)) /\ (WItemsNum < 1 \/ WItemsNum <= 5 /\ (L5Q0 WItemsNum) \/ WItemsNum > 5 /\ (L6Q0 WItemsNum));
+L5Q0 (WItemsNum: int): bool =nu (WItemsNum >= 1 \/ (L2Q1 (WItemsNum + 1))) /\ (WItemsNum < 1 \/ (L2Q0 (WItemsNum + 1)));
+L6Q0 (WItemsNum: int): bool =nu (WItemsNum >= 1 \/ (L2Q1 (WItemsNum + 1))) /\ (WItemsNum < 1 \/ (L2Q0 (WItemsNum + 1)));
+L7Q0 (WItemsNum: int): bool =nu (WItemsNum >= 1 \/ WItemsNum > 2 /\ (L8Q1 WItemsNum) \/ WItemsNum <= 2 /\ (L2Q1 WItemsNum)) /\ (WItemsNum < 1 \/ WItemsNum > 2 /\ (L8Q0 WItemsNum) \/ WItemsNum <= 2 /\ (L2Q0 WItemsNum));
+L8Q0 (WItemsNum: int): bool =nu (WItemsNum >= 1 \/ (L7Q1 (WItemsNum - 1))) /\ (WItemsNum < 1 \/ (L7Q0 (WItemsNum - 1)));

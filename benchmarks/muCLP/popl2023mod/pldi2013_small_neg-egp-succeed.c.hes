@@ -1,0 +1,9 @@
+AF1 0 5
+s.t.
+AF1 (p: int) (x: int): bool =mu p <= 0 \/ AF2 0 x;
+AF2 (p: int) (x: int): bool =mu p <= 0 \/ (not (x > 0) => AF3 p) /\ (not (not (x > 0)) => AF4 p x);
+AF3 (p: int): bool =mu p <= 0 \/ AF5 1;
+AF5 (p: int): bool =mu p <= 0 \/ false;
+AF4 (p: int) (x: int): bool =mu p <= 0 \/ AF6 p x /\ AF7 p x;
+AF6 (p: int) (x: int): bool =mu p <= 0 \/ AF2 p (x + 1);
+AF7 (p: int) (x: int): bool =mu p <= 0 \/ AF2 p (x + 2);

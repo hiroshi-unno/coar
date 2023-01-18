@@ -1,0 +1,22 @@
+forall (x: int). AF1 0 0 x
+s.t.
+AF1 (check: int) (p: int) (x: int): bool =mu check = 1 /\ AG1 p x \/ AF2 1 p x;
+AF2 (check: int) (p: int) (x: int): bool =mu check = 1 /\ AG2 p x \/ AF3 check p x /\ AF4 check p x;
+AF3 (check: int) (p: int) (x: int): bool =mu check = 1 /\ AG3 p x \/ (not (x > 0) => AF5 check p x) /\ (not (not (x > 0)) => AF6 check p x);
+AF5 (check: int) (p: int) (x: int): bool =mu check = 1 /\ AG4 p x \/ AF4 check 1 x;
+AF4 (check: int) (p: int) (x: int): bool =mu check = 1 /\ AG5 p x \/ AF1 check 0 x;
+AF6 (check: int) (p: int) (x: int): bool =mu check = 1 /\ AG6 p x \/ AF7 check p x /\ AF8 check p x;
+AF7 (check: int) (p: int) (x: int): bool =mu check = 1 /\ AG7 p x \/ AF3 check p (x - 1);
+AF8 (check: int) (p: int) (x: int): bool =mu check = 1 /\ AG8 p x \/ (forall (t: int). AF9 check p t x);
+AF9 (check: int) (p: int) (t: int) (x: int): bool =mu check = 1 /\ AG9 p t x \/ (t > 0 => AF10 check p t x);
+AF10 (check: int) (p: int) (t: int) (x: int): bool =mu check = 1 /\ AG10 p t x \/ AF3 check p (x + t);
+AG1 (p: int) (x: int): bool =nu p <= 0 /\ AG2 p x;
+AG2 (p: int) (x: int): bool =nu p <= 0 /\ AG3 p x /\ AG5 p x;
+AG3 (p: int) (x: int): bool =nu p <= 0 /\ (not (x > 0) => AG4 p x) /\ (not (not (x > 0)) => AG6 p x);
+AG4 (p: int) (x: int): bool =nu p <= 0 /\ AG5 1 x;
+AG5 (p: int) (x: int): bool =nu p <= 0 /\ AG1 0 x;
+AG6 (p: int) (x: int): bool =nu p <= 0 /\ AG7 p x /\ AG8 p x;
+AG7 (p: int) (x: int): bool =nu p <= 0 /\ AG3 p (x - 1);
+AG8 (p: int) (x: int): bool =nu p <= 0 /\ (forall (t: int). AG9 p t x);
+AG9 (p: int) (t: int) (x: int): bool =nu p <= 0 /\ (t > 0 => AG10 p t x);
+AG10 (p: int) (t: int) (x: int): bool =nu p <= 0 /\ AG3 p (x + t);

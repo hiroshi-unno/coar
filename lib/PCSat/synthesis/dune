@@ -1,6 +1,7 @@
 (library
   (name synthesis)
   (public_name CoAR.PCSat.synthesis)
+  (preprocess (pps ppx_deriving_yojson))
   (libraries
     core
     yojson
@@ -17,8 +18,6 @@
     templateUpdateStrategy
     solutionTemplate
     TBSynthesizer
-
+    CandidateChecker
     CBSynthesizer
-    PASynthesizer)
-  (preprocess (pps ppx_deriving_yojson))
-)
+    PASynthesizer))

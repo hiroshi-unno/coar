@@ -1,12 +1,16 @@
 open Core
 open Common
+open Common.Ext
 open Ast
 open Ast.LogicOld
 
-module Make (Cfg: Config.ConfigType) = struct
+module type SolverType = sig
+  val solve: ?print_sol:bool -> PCSP.Problem.t -> PCSP.Problem.solution Or_error.t
+end
+module Make (Cfg: Config.ConfigType): SolverType = struct
   let config = Cfg.config
 
-  module Debug = Debug.Make (val (Debug.Config.(if config.verbose then enable else disable)))
+  module Debug = Debug.Make (val Debug.Config.(if config.verbose then enable else disable))
 
   let ctx =
     let options =
@@ -26,7 +30,9 @@ module Make (Cfg: Config.ConfigType) = struct
     | msg :: tail ->
       if Str.string_match (Str.regexp "^(error \\\"$") msg 0 then
         let rec read_error errors = function
-          | [] -> failwith @@ Printf.sprintf "can't read error from %s" @@ String.concat ~sep:"\n" result
+          | [] ->
+            failwith @@ Printf.sprintf "can't read error from %s" @@
+            String.concat ~sep:"\n" result
           | "\")" :: tail -> errors, tail
           | error :: tail -> read_error (error :: errors) tail
         in
@@ -37,7 +43,9 @@ module Make (Cfg: Config.ConfigType) = struct
           raise @@ Z3.Error ((String.concat ~sep:"\n" errors) ^ "\n\n" ^ error)
       else if Str.string_match (Str.regexp "^; |===| Warning:") msg 0 then
         let rec read_warning = function
-          | [] -> failwith @@ Printf.sprintf "can't read warning from %s" @@ String.concat ~sep:"\n" result
+          | [] ->
+            failwith @@ Printf.sprintf "can't read warning from %s" @@
+            String.concat ~sep:"\n" result
           | "; |===|" :: tail -> tail
           | _ :: tail -> read_warning tail
         in
@@ -56,14 +64,14 @@ module Make (Cfg: Config.ConfigType) = struct
     let query_name, exi_senv =
       try
         let query_name = "__query__" in
-        query_name, Logic.SortMap.add_exn (PCSP.Problem.senv_of pcsp) ~key:(Ident.Tvar query_name) ~data:Logic.BoolTerm.SBool
+        query_name, Map.Poly.add_exn (PCSP.Problem.senv_of pcsp) ~key:(Ident.Tvar query_name) ~data:Logic.BoolTerm.SBool
       with _ ->
         let query_name = "__query__hmm__" (*ToDo*) in
-        query_name, Logic.SortMap.add_exn (PCSP.Problem.senv_of pcsp) ~key:(Ident.Tvar query_name) ~data:Logic.BoolTerm.SBool
+        query_name, Map.Poly.add_exn (PCSP.Problem.senv_of pcsp) ~key:(Ident.Tvar query_name) ~data:Logic.BoolTerm.SBool
     in
     let fenv = PCSP.Problem.fenv_of pcsp in
     let penv =
-      List.map (Logic.SortMap.to_alist exi_senv) ~f:(fun (tvar, sort) ->
+      List.map (Map.Poly.to_alist exi_senv) ~f:(fun (tvar, sort) ->
           let Ident.Tvar name = tvar in
           let arg_sorts =
             Logic.Sort.args_of sort
@@ -75,27 +83,31 @@ module Make (Cfg: Config.ConfigType) = struct
     let exists_query = ref false in
     List.iter ~f:(fun (_, funcdecl) -> Z3.Fixedpoint.register_relation solver funcdecl) penv;
     Set.Poly.iter cls ~f:(fun (uni_senv, ps, ns, phi) ->
-        let senv = (Logic.SortMap.merge exi_senv uni_senv) in
+        let lenv = Logic.Term.let_sort_env_of phi in
+        let uni_senv' = Map.force_merge uni_senv lenv in
         let ps =
           match Set.Poly.length ps with
           | 0 ->
             exists_query := true;
             Set.Poly.singleton (Atom.mk_app (Predicate.mk_var (Ident.Pvar query_name) []) [])
-          | 1 -> Set.Poly.map ps ~f:(fun t -> Logic.ExtTerm.to_old_atom senv t [])
+          | 1 -> Set.Poly.map ps ~f:(fun t -> Logic.ExtTerm.to_old_atom exi_senv uni_senv t [])
           | _ -> assert false
         in
-        let ns = Set.Poly.map ns ~f:(fun t -> Logic.ExtTerm.to_old_atom senv t []) in
+        let ns = Set.Poly.map ns ~f:(fun t -> Logic.ExtTerm.to_old_atom exi_senv uni_senv t []) in
         let body =
-          Formula.mk_neg (Logic.ExtTerm.to_old_formula senv phi []) ::
+          Formula.mk_neg
+            (Logic.ExtTerm.to_old_formula exi_senv uni_senv phi []
+             |> Normalizer.normalize_let
+             |> Formula.equivalent_valid) ::
           (ns |> Set.Poly.map ~f:Formula.mk_atom |> Set.Poly.to_list)
           |> Formula.and_of
         in
-        let head = 
-          ps |> Set.Poly.map ~f:(fun a -> Formula.mk_atom a) |> Set.Poly.to_list |> Formula.and_of
+        let head =
+          ps |> Set.Poly.map ~f:Formula.mk_atom |> Set.Poly.to_list |> Formula.and_of
         in
         let phi' = Formula.mk_imply body head in
         Debug.print @@ lazy (Formula.str_of phi');
-        let tenv = Logic.SortMap.to_alist uni_senv |> List.map ~f:(fun (x, s) -> x, Logic.ExtTerm.to_old_sort s) in
+        let tenv = Map.Poly.to_alist uni_senv' |> List.map ~f:(fun (x, s) -> x, Logic.ExtTerm.to_old_sort s) in
         let c = Z3Smt.Z3interface.of_formula ctx tenv penv fenv dtenv phi' in
         Z3.Fixedpoint.add_rule solver c None);
     (* set params *)
@@ -124,6 +136,8 @@ module Make (Cfg: Config.ConfigType) = struct
                 line
               end else line)
     in
+    let reg_anno = Str.regexp "(! \\| :weight.*[0-9])" in
+    let inputs = List.map inputs ~f:(fun s -> Str.global_replace reg_anno "" s) in
     let inputs = inputs @ [ !prefix ] in
     let inputs = inputs @ if !exists_query then [ Printf.sprintf "(assert (forall () (not (%s))))" query_name ] else [] in
     let inputs = inputs @ [ "(check-sat)" ] in
@@ -131,7 +145,7 @@ module Make (Cfg: Config.ConfigType) = struct
         "(set-option :produce-proofs true)" :: inputs @ ["(get-proof)"]
       else inputs in
     let inputs = inputs @ ["(exit)"] in
-    Debug.print @@ lazy ("input to Hoice: " ^ String.concat ~sep:"\n" inputs);
+    Debug.print @@ lazy ("input to Hoice: \n" ^ String.concat ~sep:"\n" inputs);
     let args = match config.timeout with None -> [] | Some timeout -> ["--timeout"; string_of_int timeout] in
     try
       Util.Command.sync_command "hoice" args inputs
@@ -144,3 +158,5 @@ module Make (Cfg: Config.ConfigType) = struct
       Debug.print @@ lazy (Printf.sprintf "Shell Error in hoice: %s\n" error);
       Or_error.error_string error
 end
+let make (config : Config.t) =
+  (module Make (struct let config = config end) : SolverType)

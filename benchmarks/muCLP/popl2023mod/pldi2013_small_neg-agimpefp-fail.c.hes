@@ -1,0 +1,16 @@
+exists (check: int). EF1 check 0 5
+s.t.
+EF1 (check: int) (p: int) (x: int): bool =mu check = 1 /\ AG1 p x \/ EF2 1 p x;
+EF2 (check: int) (p: int) (x: int): bool =mu check = 1 /\ AG2 p x \/ (x < 0 => EF3 check p) /\ (not (x < 0) => EF4 check p x);
+EF3 (check: int) (p: int): bool =mu check = 1 /\ AG3 p \/ EF5 check 1;
+EF5 (check: int) (p: int): bool =mu check = 1 /\ AG4 p \/ false;
+EF4 (check: int) (p: int) (x: int): bool =mu check = 1 /\ AG5 p x \/ EF6 1 p x;
+EF6 (check: int) (p: int) (x: int): bool =mu check = 1 /\ AG6 p x \/ EF7 check p x \/ EF2 check p x;
+EF7 (check: int) (p: int) (x: int): bool =mu check = 1 /\ AG7 p x \/ EF2 check p (x - 1);
+AG1 (p: int) (x: int): bool =nu p <= 0 /\ AG2 p x;
+AG2 (p: int) (x: int): bool =nu p <= 0 /\ (x < 0 => AG3 p) /\ (not (x < 0) => AG5 p x);
+AG3 (p: int): bool =nu p <= 0 /\ AG4 1;
+AG4 (p: int): bool =nu p <= 0 /\ true;
+AG5 (p: int) (x: int): bool =nu p <= 0 /\ AG6 p x;
+AG6 (p: int) (x: int): bool =nu p <= 0 /\ AG7 p x /\ AG2 p x;
+AG7 (p: int) (x: int): bool =nu p <= 0 /\ AG2 p (x - 1);

@@ -1,0 +1,18 @@
+/*
+int main() {
+  int x, K;
+  while (x != K) {
+    if (x > K) {
+      x = x - 1;
+    } else {
+      x = x + 1;
+    }
+  }
+  return 0;
+}
+*/
+forall (x: int) (k: int). I x k
+s.t.
+I (x: int) (k: int): bool =mu
+  (x = k => true) /\
+  (x != k => (x > k => I (x - 1) k) /\ (x <= k => I (x + 1) k));

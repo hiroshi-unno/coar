@@ -1,14 +1,23 @@
 (library
   (name common)
   (public_name CoAR.common)
+  (preprocess (pps ppx_deriving_yojson))
   (libraries
     core
+    core_unix
+    core_unix.sys_unix
     zarith
+    domainslib
     yojson)
   (modules
+    combinator
+    ext
     util
+    timer
     debug
+    messenger
     contFrac
-  )
-  (preprocess (pps ppx_deriving_yojson))
-)
+    unionFind
+    unionFindInt
+    lazyList
+    zipper))

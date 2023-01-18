@@ -1,5 +1,5 @@
 open Core
-open Common.Util
+open Common.Ext
 open Ast
 open Ast.LogicOld
 open PCSatCommon
@@ -18,10 +18,10 @@ let make seeds =
       if Set.Poly.is_empty @@ Formula.fvs_of qual then None else Some qual)
 
 let octahedron_half_spaces_of sorts examples =
-  let params = LogicOld.SortEnv.of_sorts sorts in
+  let params = LogicOld.sort_env_list_of_sorts sorts in
   params,
   Set.Poly.union
-    (SortEnv.set_of params
+    (Set.Poly.of_list params
      |> Set.Poly.filter_map ~f:(function
          | (x, T_bool.SBool) -> Some (Term.mk_var x T_bool.SBool)
          | (_, T_int.SInt) -> None
@@ -29,8 +29,8 @@ let octahedron_half_spaces_of sorts examples =
          | (_, s) -> failwith ("not supported" ^ Term.str_of_sort s))
      |> Set.Poly.map ~f:(fun x -> Formula.eq x (T_bool.mk_true ())))
     (Set.concat_map examples ~f:(fun terms ->
-         List.map2_exn (SortEnv.list_of params) terms ~f:(fun (x, s) t -> Term.mk_var x s, s, t)
-         |> List.filter ~f:(function (_, s, _) -> Stdlib.(<>) s T_bool.SBool)
+         List.map2_exn params terms ~f:(fun (x, s) t -> Term.mk_var x s, s, t)
+         |> List.filter ~f:(fun (_, s, _) -> Fn.non Term.is_bool_sort s)
          |> Set.Poly.of_list
          |> make))
 

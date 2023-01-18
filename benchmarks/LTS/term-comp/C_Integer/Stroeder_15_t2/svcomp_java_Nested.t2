@@ -1,0 +1,53 @@
+///*** 1_main ***///
+START: main_entry;
+
+FROM: main_entry;
+var__temp_vi.0 := 0;
+var__temp_vc.0 := 0;
+TO: main_while.cond;
+
+FROM: main_while.cond;
+vi.0 := var__temp_vi.0;
+vc.0 := var__temp_vc.0;
+var__temp_vj.0 := 3;
+var__temp_vc.1 := vc.0;
+TO: main_while.cond_end;
+
+FROM: main_while.cond_end;
+assume(vi.0 < 10);
+TO: main_while.cond1;
+
+FROM: main_while.cond_end;
+assume(vi.0 >= 10);
+TO: main_while.end6;
+
+FROM: main_while.cond1;
+vj.0 := var__temp_vj.0;
+vc.1 := var__temp_vc.1;
+TO: main_while.cond1_end;
+
+FROM: main_while.cond1_end;
+assume(vj.0 < 12);
+TO: main_while.body3;
+
+FROM: main_while.cond1_end;
+assume(vj.0 >= 12);
+TO: main_while.end;
+
+FROM: main_while.body3;
+vsub := vj.0 - 1;
+vadd := vc.1 + 1;
+vadd4 := vsub + 2;
+var__temp_vj.0 := vadd4;
+var__temp_vc.1 := vadd;
+TO: main_while.cond1;
+
+FROM: main_while.end;
+vadd5 := vi.0 + 1;
+var__temp_vi.0 := vadd5;
+var__temp_vc.0 := vc.1;
+TO: main_while.cond;
+
+FROM: main_while.end6;
+TO: main_while.end6_ret;
+

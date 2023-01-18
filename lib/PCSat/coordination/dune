@@ -1,6 +1,7 @@
 (library
   (name coordination)
   (public_name CoAR.PCSat.coordination)
+  (preprocess (pps ppx_deriving_yojson))
   (libraries
     core
     yojson
@@ -8,12 +9,6 @@
     CoAR.PCSat.validation
     CoAR.PCSat.resolution
     CoAR.PCSat.synthesis
-    CoAR.PCSat.satChecking)
+    CoAR.PCSat.labeling)
   (modules
-    coordinator
-    sequentialCoordinator
-    portfolioCoordinator
-    PseudoParallelCoordinator
-    ParallelCoordinator)
-  (preprocess (pps ppx_deriving_yojson))
-)
+    coordinator))

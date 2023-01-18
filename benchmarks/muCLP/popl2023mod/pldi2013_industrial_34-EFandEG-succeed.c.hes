@@ -1,0 +1,30 @@
+exists (Pdolen: int) (i: int). EF1 Pdolen i 0 0
+s.t.
+EF1 (Pdolen: int) (i: int) (set: int) (unset: int): bool =mu set = 1 /\ EG1 Pdolen i unset \/ EF2 Pdolen i 1 unset;
+EF2 (Pdolen: int) (i: int) (set: int) (unset: int): bool =mu set = 1 /\ EG2 Pdolen i unset \/ EF3 Pdolen i 0 unset;
+EF3 (Pdolen: int) (i: int) (set: int) (unset: int): bool =mu set = 1 /\ EG3 Pdolen i unset \/ (not (i < Pdolen) => EF4 set unset) /\ (not (not (i < Pdolen)) => EF5 Pdolen i set unset);
+EF4 (set: int) (unset: int): bool =mu set = 1 /\ EG4 unset \/ EF6 set unset \/ EF7 set unset;
+EF6 (set: int) (unset: int): bool =mu set = 1 /\ EG5 unset \/ EF8 set 1;
+EF8 (set: int) (unset: int): bool =mu set = 1 /\ EG6 unset \/ EF7 set 0;
+EF7 (set: int) (unset: int): bool =mu set = 1 /\ EG7 unset \/ false;
+EF5 (Pdolen: int) (i: int) (set: int) (unset: int): bool =mu set = 1 /\ EG8 Pdolen i unset \/ (exists (DName: int). EF9 DName Pdolen i set unset);
+EF9 (DName: int) (Pdolen: int) (i: int) (set: int) (unset: int): bool =mu set = 1 /\ EG9 DName Pdolen i unset \/ (DName > 0 => EF4 set unset) /\ (not (DName > 0) => EF10 Pdolen i set unset);
+EF10 (Pdolen: int) (i: int) (set: int) (unset: int): bool =mu set = 1 /\ EG10 Pdolen i unset \/ (exists (status: int). EF11 Pdolen i set status unset);
+EF11 (Pdolen: int) (i: int) (set: int) (status: int) (unset: int): bool =mu set = 1 /\ EG11 Pdolen i status unset \/ (1 != status => EF12 set status unset) /\ (not (1 != status) => EF13 Pdolen i set unset);
+EF12 (set: int) (status: int) (unset: int): bool =mu set = 1 /\ EG12 status unset \/ (2 = status => EF14 set unset) /\ (not (2 = status) => EF4 set unset);
+EF14 (set: int) (unset: int): bool =mu set = 1 /\ EG13 unset \/ (exists (num: int). EF4 set unset);
+EF13 (Pdolen: int) (i: int) (set: int) (unset: int): bool =mu set = 1 /\ EG14 Pdolen i unset \/ EF3 Pdolen (i + 1) set unset;
+EG1 (Pdolen: int) (i: int) (unset: int): bool =nu unset != 1 /\ EG2 Pdolen i unset;
+EG2 (Pdolen: int) (i: int) (unset: int): bool =nu unset != 1 /\ EG3 Pdolen i unset;
+EG3 (Pdolen: int) (i: int) (unset: int): bool =nu unset != 1 /\ (not (i < Pdolen) => EG4 unset) /\ (not (not (i < Pdolen)) => EG8 Pdolen i unset);
+EG4 (unset: int): bool =nu unset != 1 /\ (EG5 unset \/ EG7 unset);
+EG5 (unset: int): bool =nu unset != 1 /\ EG6 1;
+EG6 (unset: int): bool =nu unset != 1 /\ EG7 0;
+EG7 (unset: int): bool =nu unset != 1 /\ true;
+EG8 (Pdolen: int) (i: int) (unset: int): bool =nu unset != 1 /\ (exists (DName: int). EG9 DName Pdolen i unset);
+EG9 (DName: int) (Pdolen: int) (i: int) (unset: int): bool =nu unset != 1 /\ (DName > 0 => EG4 unset) /\ (not (DName > 0) => EG10 Pdolen i unset);
+EG10 (Pdolen: int) (i: int) (unset: int): bool =nu unset != 1 /\ (exists (status: int). EG11 Pdolen i status unset);
+EG11 (Pdolen: int) (i: int) (status: int) (unset: int): bool =nu unset != 1 /\ (1 != status => EG12 status unset) /\ (not (1 != status) => EG14 Pdolen i unset);
+EG12 (status: int) (unset: int): bool =nu unset != 1 /\ (2 = status => EG13 unset) /\ (not (2 = status) => EG4 unset);
+EG13 (unset: int): bool =nu unset != 1 /\ (exists (num: int). EG4 unset);
+EG14 (Pdolen: int) (i: int) (unset: int): bool =nu unset != 1 /\ EG3 Pdolen (i + 1) unset;

@@ -1,0 +1,32 @@
+///*** 1_main ***///
+START: main_entry;
+
+FROM: main_entry;
+var__temp_vi.0 := 10000;
+var__temp_vj.0 := 1;
+TO: main_while.cond;
+
+FROM: main_while.cond;
+vi.0 := var__temp_vi.0;
+vj.0 := var__temp_vj.0;
+vsub := vi.0 - vj.0;
+TO: main_while.cond_end;
+
+FROM: main_while.cond_end;
+assume(vsub >= 1);
+TO: main_while.body;
+
+FROM: main_while.cond_end;
+assume(vsub < 1);
+TO: main_while.end;
+
+FROM: main_while.body;
+vadd := vj.0 + 1;
+vsub1 := vi.0 - 1;
+var__temp_vi.0 := vsub1;
+var__temp_vj.0 := vadd;
+TO: main_while.cond;
+
+FROM: main_while.end;
+TO: main_while.end_ret;
+

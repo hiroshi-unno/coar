@@ -1,0 +1,107 @@
+///*** 1_main ***///
+START: main_entry;
+
+FROM: main_entry;
+vcall := nondet();
+vcall2 := nondet();
+var__temp_vy.0 := vcall2;
+var__temp_vx.0 := vcall;
+TO: main_while.cond;
+
+FROM: main_while.cond;
+vy.0 := var__temp_vy.0;
+vx.0 := var__temp_vx.0;
+TO: main_while.cond_end;
+
+FROM: main_while.cond_end;
+assume((vy.0 > 0) && (vx.0 > 0));
+TO: main_while.body;
+
+FROM: main_while.cond_end;
+assume((vy.0 <= 0) || (vx.0 <= 0));
+TO: main_while.end21;
+
+FROM: main_while.body;
+var__temp_vxtmp.1 := vx.0;
+TO: main_while.body_end;
+
+FROM: main_while.body_end;
+assume(vy.0 == 0);
+TO: main_if.end7;
+
+FROM: main_while.body_end;
+assume(vy.0 != 0);
+TO: main_if.else;
+
+FROM: main_if.else;
+vsub := 0 - vx.0;
+TO: main_if.else_vsub.x.0;
+FROM: main_if.else_vsub.x.0;
+assume(vy.0 < 0);
+vsub.x.0 := vsub;
+TO: main_if.else_svsub.x.0;
+
+FROM: main_if.else_vsub.x.0;
+assume(vy.0 >= 0);
+vsub.x.0 := vx.0;
+TO: main_if.else_svsub.x.0;
+
+FROM: main_if.else_svsub.x.0;
+var__temp_vxtmp.1 := vsub.x.0;
+TO: main_if.end7;
+
+FROM: main_if.end7;
+vxtmp.1 := var__temp_vxtmp.1;
+var__temp_vxtmp.2 := vxtmp.1;
+var__temp_vxtmp.3 := vxtmp.1;
+TO: main_if.end7_end;
+
+FROM: main_if.end7_end;
+assume(vxtmp.1 > 0);
+TO: main_while.cond10;
+
+FROM: main_if.end7_end;
+assume(vxtmp.1 <= 0);
+TO: main_while.cond15;
+
+FROM: main_while.cond10;
+vxtmp.2 := var__temp_vxtmp.2;
+var__temp_vy.0 := vxtmp.2;
+var__temp_vx.0 := vy.0;
+TO: main_while.cond10_end;
+
+FROM: main_while.cond10_end;
+assume(vxtmp.2 >= vy.0);
+TO: main_while.body12;
+
+FROM: main_while.cond10_end;
+assume(vxtmp.2 < vy.0);
+TO: main_while.cond;
+
+FROM: main_while.body12;
+vsub13 := vxtmp.2 - vy.0;
+var__temp_vxtmp.2 := vsub13;
+TO: main_while.cond10;
+
+FROM: main_while.cond15;
+vxtmp.3 := var__temp_vxtmp.3;
+var__temp_vy.0 := vxtmp.3;
+var__temp_vx.0 := vy.0;
+TO: main_while.cond15_end;
+
+FROM: main_while.cond15_end;
+assume(vxtmp.3 < 0);
+TO: main_while.body17;
+
+FROM: main_while.cond15_end;
+assume(vxtmp.3 >= 0);
+TO: main_while.cond;
+
+FROM: main_while.body17;
+vsub18 := vxtmp.3 - vy.0;
+var__temp_vxtmp.3 := vsub18;
+TO: main_while.cond15;
+
+FROM: main_while.end21;
+TO: main_while.end21_ret;
+

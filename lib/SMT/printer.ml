@@ -4,16 +4,15 @@ open Ast.LogicOld
 
 module Sexp = Ppx_sexp_conv_lib.Sexp
 
-let str_of_binop op = let open Formula in
-  match op with
-  | And -> "and"
+let str_of_binop = function
+  | Formula.And -> "and"
   | Or -> "or"
   | Imply -> "imply"
   | Iff -> "iff"
+  | Xor -> "xor"
 
-let str_of_binder binder = let open Formula in
-  match binder with
-  | Forall -> "forall"
+let str_of_binder = function
+  | Formula.Forall -> "forall"
   | Exists -> "exists"
   | Random r -> Rand.str_of r
 
@@ -27,9 +26,8 @@ let str_of_fixpoint = function
   | Predicate.Mu -> "mu"
   | Predicate.Nu -> "nu"
 
-let rec sexp_of_formula phi = let open Formula in
-  match phi with
-  | Atom (atom, _) ->
+let rec sexp_of_formula = function
+  | Formula.Atom (atom, _) ->
     let atom = sexp_of_atom atom in
     Sexp.List [Sexp.Atom "atom"; atom]
   | UnaryOp (Not, phi, _) ->
@@ -46,35 +44,25 @@ let rec sexp_of_formula phi = let open Formula in
     let phi = sexp_of_formula phi in
     Sexp.List [Sexp.Atom binder; params; phi]
   | LetRec (bounded, phi, _) ->
-    let bounded = List.map bounded ~f:(fun (fp, pvar, params, phi) -> sexp_of_pred @@ Predicate.Fixpoint (fp, pvar, params, phi) ) in
+    let bounded = List.map bounded ~f:(fun (fp, pvar, params, phi) ->
+        sexp_of_pred @@ Predicate.Fixpoint (fp, pvar, params, phi) ) in
     let phi = sexp_of_formula phi in
     Sexp.List [Sexp.Atom "letrec"; Sexp.List bounded; phi]
-and sexp_of_atom atom = let open Atom in
-  match atom with
-  | True _ -> Sexp.Atom "true"
+  | LetFormula _ -> failwith @@ "'LetFormula' is not supported yet" (* TODO *)
+and sexp_of_atom = function
+  | Atom.True _ -> Sexp.Atom "true"
   | False _ -> Sexp.Atom "false"
   | App (pred, args, _) ->
     let pred = sexp_of_pred pred in
     let args = sexp_of_args args in
     Sexp.List [Sexp.Atom "predapp"; pred; args]
 and sexp_of_params params =
-  let rec aux = function
-    | [] -> []
-    | (Ident.Tvar ident, sort)::xs ->
-      let param = Sexp.List [Sexp.Atom ident; Sexp.Atom (str_of_sort sort)] in
-      param :: (aux xs)
-  in
-  Sexp.List (aux (SortEnv.list_of params))
+  Sexp.List (List.map params ~f:(fun (Ident.Tvar ident, sort) ->
+      Sexp.List [Sexp.Atom ident; Sexp.Atom (str_of_sort sort)]))
 
-and sexp_of_args args =
-  let rec aux = function
-    | [] -> []
-    | t :: ts -> (sexp_of_term t) :: (aux ts)
-  in
-  Sexp.List (aux args)
-and sexp_of_term t = let open Term in
-  match t with
-  | Var (Ident.Tvar ident, sort, _) ->
+and sexp_of_args args = Sexp.List (List.map args ~f:sexp_of_term)
+and sexp_of_term = function
+  | Term.Var (Ident.Tvar ident, sort, _) ->
     Sexp.List [Sexp.Atom ident; Sexp.Atom (str_of_sort sort)]
   | FunApp (T_bool.IfThenElse, [cond; then_; else_], _) ->
     let cond = sexp_of_term cond in
@@ -85,6 +73,7 @@ and sexp_of_term t = let open Term in
     let sym = sexp_of_fun_sym sym in
     let args = sexp_of_args args in
     Sexp.List [Sexp.Atom "funapp"; sym; args]
+  | LetTerm _ -> failwith "unsupported let_term"
 
 and sexp_of_fun_sym = function
   | T_bool.Formula (Formula.Atom (atom, _)) ->
@@ -109,9 +98,8 @@ and sexp_of_pred_sym = function
   | T_int.Gt -> Sexp.Atom "gt"
   | _ -> failwith "invalid predicate symbol"
 
-and sexp_of_pred pred = let open Predicate in
-  match pred with
-  | Var (Ident.Pvar ident, sorts) ->
+and sexp_of_pred = function
+  | Predicate.Var (Ident.Pvar ident, sorts) ->
     let sorts = List.map ~f:(fun sort -> Sexp.Atom (str_of_sort sort)) sorts in
     Sexp.List [Sexp.Atom ident; Sexp.List sorts]
   | Psym sym -> sexp_of_pred_sym sym
@@ -121,11 +109,8 @@ and sexp_of_pred pred = let open Predicate in
     let phi = sexp_of_formula phi in
     Sexp.List [Sexp.Atom fp; Sexp.Atom ident; params; phi]
 
-let str_of_formula phi =
-  Sexp.to_string_hum (sexp_of_formula phi)
+let str_of_formula phi = Sexp.to_string_hum (sexp_of_formula phi)
 
-let str_of_pred pred =
-  Sexp.to_string_hum (sexp_of_pred pred)
+let str_of_pred pred = Sexp.to_string_hum (sexp_of_pred pred)
 
-let str_of_atom atom =
-  Sexp.to_string_hum (sexp_of_atom atom)
+let str_of_atom atom = Sexp.to_string_hum (sexp_of_atom atom)

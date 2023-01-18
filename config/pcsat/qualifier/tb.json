@@ -12,6 +12,5 @@
     "filter_out_neg": true,
     "filter_out_non_div_mod": false,
     "filter_out_quantified": true,
-    "reduce": false,
-    "rank": true
+    "reduce": false
 }

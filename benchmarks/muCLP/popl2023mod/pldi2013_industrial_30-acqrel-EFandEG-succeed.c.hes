@@ -1,0 +1,20 @@
+EF1 0 0
+s.t.
+EF1 (A: int) (R: int): bool =mu A = 1 /\ EG1 R \/ EF2 A R \/ EF3 A R;
+EF2 (A: int) (R: int): bool =mu A = 1 /\ EG2 R \/ false;
+EF3 (A: int) (R: int): bool =mu A = 1 /\ EG3 R \/ EF4 1 R;
+EF4 (A: int) (R: int): bool =mu A = 1 /\ EG4 R \/ EF5 0 R;
+EF5 (A: int) (R: int): bool =mu A = 1 /\ EG5 R \/ (exists (n: int). EF6 A R n);
+EF6 (A: int) (R: int) (n: int): bool =mu A = 1 /\ EG6 R n \/ (not (n > 0) => EF7 A R) /\ (not (not (n > 0)) => EF8 A R n);
+EF7 (A: int) (R: int): bool =mu A = 1 /\ EG7 R \/ EF9 A 1;
+EF9 (A: int) (R: int): bool =mu A = 1 /\ EG8 R \/ EF1 A 0;
+EF8 (A: int) (R: int) (n: int): bool =mu A = 1 /\ EG9 R n \/ EF6 A R (n - 1);
+EG1 (R: int): bool =nu R != 5 /\ (EG2 R \/ EG3 R);
+EG2 (R: int): bool =nu R != 5 /\ true;
+EG3 (R: int): bool =nu R != 5 /\ EG4 R;
+EG4 (R: int): bool =nu R != 5 /\ EG5 R;
+EG5 (R: int): bool =nu R != 5 /\ (exists (n: int). EG6 R n);
+EG6 (R: int) (n: int): bool =nu R != 5 /\ (not (n > 0) => EG7 R) /\ (not (not (n > 0)) => EG9 R n);
+EG7 (R: int): bool =nu R != 5 /\ EG8 1;
+EG8 (R: int): bool =nu R != 5 /\ EG1 0;
+EG9 (R: int) (n: int): bool =nu R != 5 /\ EG6 R (n - 1);

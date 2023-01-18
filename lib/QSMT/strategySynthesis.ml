@@ -1,12 +1,11 @@
 open Core
-open Common
-open Util
+open Common.Ext
 open Ast
-open Logic
+open Ast.Logic
 
 module PreFormula = struct
   type binder = Forall | Exists
-  type var = Ident.tvar * Sort.t
+  type var = sort_bind
   type 'a formula =
     | Atom of 'a
     | And of 'a formula list
@@ -17,7 +16,7 @@ module PreFormula = struct
     | Exists -> Forall
   let rec atoms = function
     | Atom a -> [a]
-    | And l | Or l -> List.map ~f:atoms l |> List.concat
+    | And l | Or l -> List.concat_map ~f:atoms l
     | Bind (_, _, f) -> atoms f
   let rec term_of_formula term_of_atom = function
     | Atom a -> term_of_atom a
@@ -28,7 +27,7 @@ module PreFormula = struct
     | Atom a -> neg_atom a
     | And l -> Or (List.map ~f:(neg_formula neg_atom) l)
     | Or l -> And (List.map ~f:(neg_formula neg_atom) l)
-    | Bind (b, v, f) -> Bind(neg_binder b, v, neg_formula neg_atom f)
+    | Bind (b, v, f) -> Bind (neg_binder b, v, neg_formula neg_atom f)
 end
 
 module StrategySynthesis (A : sig
@@ -44,7 +43,7 @@ module StrategySynthesis (A : sig
     val rename_var_atom : Ident.tvar -> Ident.tvar -> atom -> atom
     val term_of_atom : atom -> Logic.term
     val select : (Ident.tvar, domain) Map.Poly.t -> Ident.tvar -> atom PreFormula.formula -> term
-    val check_sat : atom PreFormula.formula -> (Ident.tvar, Sort.t) Env.t -> (Ident.tvar, domain) Map.Poly.t option
+    val check_sat : atom PreFormula.formula -> (Ident.tvar, Sort.t) List.Assoc.t -> (Ident.tvar, domain) Map.Poly.t option
     val term_of_term : term -> Logic.term
   end) = struct
   open PreFormula
@@ -52,7 +51,7 @@ module StrategySynthesis (A : sig
     | Atom a -> A.subst_atom tvar t a
     | And l -> And (List.map ~f:(subst_formula tvar t) l)
     | Or l -> Or (List.map ~f:(subst_formula tvar t) l)
-    | Bind (b, u, f) -> Bind(b, u, subst_formula tvar t f)
+    | Bind (b, u, f) -> Bind (b, u, subst_formula tvar t f)
   let rec rename_var_formula v v' = function
     | Atom a -> Atom (A.rename_var_atom v v' a)
     | And l -> And (List.map ~f:(rename_var_formula v v') l)
@@ -65,10 +64,10 @@ module StrategySynthesis (A : sig
   let rec merge_ssforest f f' = List.zip_exn f f' |> List.map ~f:merge_sstree
   and merge_sstree = function
     | ForallSS (v, f), ForallSS (v', f') ->
-      assert (Stdlib.(=) v v');
+      assert (Stdlib.(v = v'));
       ForallSS (v, merge_ssforest f f')
     | ExistsSS (v, l), ExistsSS (v', l') ->
-      assert (Stdlib.(=) v v');
+      assert (Stdlib.(v = v'));
       let rec unify_term_forest_list l = function
         | [] -> l
         | (t', ssf')::l' ->
@@ -90,11 +89,13 @@ module StrategySynthesis (A : sig
     | s::l -> merge_ssforest s (merge_ssforest_nonempty_list l)
 
   let herbrandize position tvar =
-    let suffix = List.rev position |> List.map ~f:string_of_int |> String.concat ~sep:"_" in
+    let suffix = List.rev position |> String.concat_map_list ~sep:"_" ~f:string_of_int in
     Ident.Tvar (Ident.name_of_tvar tvar ^ "_" ^ suffix)
 
-  let remove_forall v s = List.find_map_exn s ~f:(function ForallSS (u, s') when Stdlib.(=) v u -> Some s' | _ -> None)
-  let remove_exists v s = List.find_map_exn s ~f:(function ExistsSS (u, l) when Stdlib.(=) v u -> Some l | _ -> None)
+  let remove_forall v s =
+    List.find_map_exn s ~f:(function ForallSS (u, s') when Stdlib.(v = u) -> Some s' | _ -> None)
+  let remove_exists v s =
+    List.find_map_exn s ~f:(function ExistsSS (u, l) when Stdlib.(v = u) -> Some l | _ -> None)
 
   let rec winning_formula (position : int list) (s : ssforest) = function
     | Atom a -> Atom a, []
@@ -110,7 +111,7 @@ module StrategySynthesis (A : sig
       let herbrand = herbrandize position tvar in
       let f, vars = winning_formula (0::position) s' f in
       rename_var_formula tvar herbrand f, herbrand::vars
-    | Bind(Exists, v, f) -> 
+    | Bind (Exists, v, f) ->
       let tvar, _ = v in
       let fs, vars = remove_exists v s
                      |> List.mapi ~f:(fun i (t, s) ->
@@ -128,7 +129,7 @@ module StrategySynthesis (A : sig
     | Or l ->
       let ss, gs = List.mapi ~f:(fun i f -> css (i::position) f model model' s) l |> List.unzip in
       List.concat ss, And gs
-    | Bind(Forall, v, f) ->
+    | Bind (Forall, v, f) ->
       let tvar, _ = v in
       let herbrand = herbrandize position tvar in
       let model' = Map.Poly.add_exn model' ~key:tvar ~data:(match Map.Poly.find model herbrand with Some v -> v | None -> A.default_value) in
@@ -137,7 +138,7 @@ module StrategySynthesis (A : sig
       let tvar, _ = v in
       let t = A.select model' tvar g in
       [ExistsSS (v, [(t, u)])], subst_formula tvar t g
-    | Bind(Exists, v, f) ->
+    | Bind (Exists, v, f) ->
       let tvar, _ = v in
       let us, gs = remove_exists v s
                    |> List.mapi ~f:(fun i (t, s') ->
@@ -179,7 +180,7 @@ module StrategySynthesis (A : sig
         | And l ->
           let ss, gs = List.map ~f:build_strategy l |> List.unzip in
           List.concat ss, And gs
-        | Or l -> 
+        | Or l ->
           let ss, gs = List.map ~f:build_strategy l |> List.unzip in
           List.concat ss, Or gs
         | Bind (b, v, f) ->
@@ -213,7 +214,7 @@ module StrategySynthesis (A : sig
     | Or l ->
       let fmls, chc, strategies, params = List.map ~f:(loseCHC vars s) l |> List.unzip4 in
       BoolTerm.and_of fmls, List.concat chc, merge_map_list strategies, List.concat params
-    | Bind(Forall, v, f) ->
+    | Bind (Forall, v, f) ->
       let s' = remove_forall v s in
       let fml, chc, strategies, params = loseCHC (v::vars) s' f in
       let pvar = Ident.mk_fresh_tvar () in
@@ -221,16 +222,16 @@ module StrategySynthesis (A : sig
       let sort = Sort.mk_fun (sorts @ [BoolTerm.SBool]) in
       let p = Term.mk_var pvar in
       let pfml = Term.mk_apps p (List.map ~f:Term.mk_var tvs) in
-      let chc = (Logic.SortMap.of_set @@ Set.Poly.of_list (v::vars), Term.mk_apps (BoolTerm.mk_imply ()) [fml; pfml])::chc in
+      let chc = (Map.of_list_exn (v::vars), Term.mk_apps (BoolTerm.mk_imply ()) [fml; pfml])::chc in
       pfml, chc, strategies, (pvar, sort)::params
-    | Bind(Exists, v, f) ->
+    | Bind (Exists, v, f) ->
       let l = remove_exists v s in
       let tvar, _ = v in
       let l' = List.map l ~f:(fun (t, s') ->
           let fml, chc, strategy, params = loseCHC (v::vars) s' f in
           Term.subst (Map.Poly.singleton tvar (A.term_of_term t)) fml (* this should be equivalent to subst_formula *),
           chc,
-          Map.Poly.add_exn ~key:tvar ~data:(Logic.SortMap.of_set @@ Set.Poly.of_list vars, A.term_of_term t) strategy,
+          Map.Poly.add_exn ~key:tvar ~data:(Map.of_list_exn vars, A.term_of_term t) strategy,
           params) in
       let pvar = Ident.mk_fresh_tvar () in
       let tvs, sorts = List.unzip vars in
@@ -238,7 +239,7 @@ module StrategySynthesis (A : sig
       let p = Term.mk_var pvar in
       let pfml = Term.mk_apps p (List.map ~f:Term.mk_var tvs) in
       let fmls, chcs, _, params = List.unzip4 l' in
-      let chc = (Logic.SortMap.of_set @@ Set.Poly.of_list (v::vars), Term.mk_apps (BoolTerm.mk_imply ()) [(BoolTerm.and_of fmls); pfml])::List.concat chcs in
+      let chc = (Map.of_list_exn (v::vars), Term.mk_apps (BoolTerm.mk_imply ()) [(BoolTerm.and_of fmls); pfml])::List.concat chcs in
       match l' with
       | [] -> assert false
       | (_, _, strategy, _)::l' ->
@@ -285,9 +286,9 @@ module LIA = struct
     | Div (d, a) ->
       Or (list_init_z Z.(d - one) ~f:(fun n -> Atom (Div (d, Affine.(of_z Z.(n + one) + a)))))
   let find_var_affine tvar a =
-    match Map.Poly.find a (Some tvar) with
+    match Affine.get_coeff_of tvar a with
     | None -> None
-    | Some c -> Some (c, Map.Poly.remove a (Some tvar))
+    | Some c -> Some (c, Affine.remove tvar a)
   let subst_atom tvar (t, a, b) = function
     | Gt0 s ->
       (match find_var_affine tvar s with
@@ -302,41 +303,37 @@ module LIA = struct
                And [Atom div; Atom gt0])))
     | Div (d, s) ->
       (match find_var_affine tvar s with
-       | None -> Atom (Div(d, s))
+       | None -> Atom (Div (d, s))
        | Some (c, rest) ->
          Or (list_init_z a ~f:(fun i ->
              let div = Div (a, Affine.(t - of_z i)) in
-             let div' = Div(Z.(a * d), Affine.(mult a rest + mult c (t + of_z Z.(a * b - i)))) in
+             let div' = Div (Z.(a * d), Affine.(mult a rest + mult c (t + of_z Z.(a * b - i)))) in
              And [Atom div; Atom div'])))
-  let eval_affine m a =
-    Map.Poly.fold a ~init:Z.zero ~f:(fun ~key ~data sum ->
-        match key with
-        | None -> Z.(sum + data)
-        | Some tvar -> let v = match Map.Poly.find m tvar with Some v -> v | None -> default_value in Z.(sum + data * v))
+  let eval_affine m a = Affine.eval ~default_value:(Some default_value) m a
   let eval_term m (a, b, c) =
     let a' = eval_affine m a in
     Z.(a' /< b + c)
   let rename_var_affine t s a =
-    match Map.Poly.find a (Some t) with
+    match Affine.get_coeff_of t a with
     | None -> a
-    | Some c -> Map.Poly.remove a (Some t) |> Map.Poly.add_exn ~key:(Some s) ~data:c
+    | Some c -> Affine.remove t a |> Affine.(+) (Affine.make [(s, c)] Z.zero)
   let rename_var_atom t s = function
     | Gt0 a -> Gt0 (rename_var_affine t s a)
     | Div (d, a) -> Div (d, rename_var_affine t s a)
   (* TODO: support divisibility *)
   let rec formula_of_term = function
-    | Bin(b, var, sort, term, _) when (match b with
+    | Bin (b, var, sort, term, _) when (match b with
         | Forall | Exists -> true
         | _ -> false) ->
       Option.(formula_of_term term >>= fun f ->
               match b with
-              | Forall -> return (Bind(Forall, (var, sort), f))
-              | Exists -> return (Bind(Exists, (var, sort), f))
+              | Forall -> return (Bind (Forall, (var, sort), f))
+              | Exists -> return (Bind (Exists, (var, sort), f))
               | _ -> assert false)
-    | App(Con(BoolTerm.Not, _), t, _) ->
+    | App (Con (BoolTerm.Not, _), t, _) ->
       Option.(formula_of_term t >>= fun f ->
               return (neg_formula neg_atom f))
-    | App(App(Con(r, _), t1, _), t2, _) when (match r with
+    | App (App (Con (r, _), t1, _), t2, _) when (match r with
         | BoolTerm.And | BoolTerm.Or | BoolTerm.Imply -> true
         | _ -> false) ->
       Option.(formula_of_term t1 >>= fun f1 ->
@@ -346,7 +343,7 @@ module LIA = struct
               | BoolTerm.Or -> return (Or [f1; f2])
               | BoolTerm.Imply -> return (Or [neg_formula neg_atom f1; f2])
               | _ -> assert false)
-    | App(App(Con(r, _), t1, _), t2, _) when (match r with
+    | App (App (Con (r, _), t1, _), t2, _) when (match r with
         | ExtTerm.Gt | ExtTerm.Lt | ExtTerm.Geq | ExtTerm.Leq -> true
         | _ -> false) ->
       Option.(Affine.of_term t1 >>= fun a1 ->
@@ -357,7 +354,7 @@ module LIA = struct
               | ExtTerm.Geq -> return (Atom (Gt0 Affine.(a1 - a2 + of_z Z.one)))
               | ExtTerm.Leq -> return (Atom (Gt0 Affine.(a2 - a1 + of_z Z.one)))
               | _ -> assert false)
-    | App(App(TyApp(Con(r, _), IntTerm.SInt, _), t1, _), t2, _) when (match r with ExtTerm.Eq | ExtTerm.Neq -> true | _ -> false) ->
+    | App (App (TyApp (Con (r, _), IntTerm.SInt, _), t1, _), t2, _) when (match r with ExtTerm.Eq | ExtTerm.Neq -> true | _ -> false) ->
       Option.(Affine.of_term t1 >>= fun a1 ->
               Affine.of_term t2 >>= fun a2 ->
               match r with
@@ -370,7 +367,7 @@ module LIA = struct
                 let lt = Atom (Gt0 Affine.(a2 - a1)) in
                 return (Or [gt; lt])
               | _ -> assert false)
-    | App(App(TyApp(Con(r, _), BoolTerm.SBool, _), t1, _), t2, _) when (match r with ExtTerm.Eq | ExtTerm.Neq -> true | _ -> false) ->
+    | App (App (TyApp (Con (r, _), BoolTerm.SBool, _), t1, _), t2, _) when (match r with ExtTerm.Eq | ExtTerm.Neq -> true | _ -> false) ->
       Option.(formula_of_term t1 >>= fun a1 ->
               formula_of_term t2 >>= fun a2 ->
               match r with
@@ -383,7 +380,7 @@ module LIA = struct
                 let ft = And ([(neg_formula neg_atom a1); a2]) in
                 return (Or [tf; ft])
               | _ -> assert false)
-    | App(App(Con(ExtTerm.PDiv, _), Con(IntTerm.Int n, _), _), t, _) ->
+    | App (App (Con (ExtTerm.PDiv, _), Con (IntTerm.Int n, _), _), t, _) ->
       Option.(Affine.of_term t >>= fun a ->
               return (Atom (Div (n, a))))
     | _ -> None
@@ -472,11 +469,11 @@ module LIA = struct
         let ev_tvar = match Map.Poly.find model tvar with Some v -> v | None -> default_value in
         let delta = delta model tvar f in
         (Affine.of_z Z.zero, Z.one, Z.(erem ev_tvar delta))
-  let check_sat f senv = 
+  let check_sat f senv =
     let module Z3interface = Z3Smt.Z3interfaceNew.Make(Z3Smt.Z3interfaceNew.ExtTerm) in
     match Z3interface.check_sat [term_of_formula (fun x -> term_of_atom x) f] senv (Z3.mk_context []) with
     | None -> None
-    | Some model -> 
+    | Some model ->
       let let_int t =
         match Term.let_con t with
         | ExtTerm.Int n, _ -> n
@@ -497,9 +494,13 @@ module LIAStrategySynthesis = struct
     | UNSAT -> "UNSAT"
   let rec formula_to_string = function
     | Atom a -> LIA.atom_to_string a
-    | And l -> List.map ~f:(fun f -> "(" ^ formula_to_string f ^ ")") l |> String.concat ~sep:" /\\ "
-    | Or l -> List.map ~f:(fun f -> "(" ^ formula_to_string f ^ ")") l |> String.concat ~sep:" \\/ "
-    | Bind (b, (tvar, _), f) -> (match b with Forall -> "forall" | Exists -> "exists") ^ " " ^ Ident.name_of_tvar tvar ^ ". " ^ formula_to_string f
+    | And l ->
+      String.concat_map_list ~sep:" /\\ " ~f:(fun f -> "(" ^ formula_to_string f ^ ")") l
+    | Or l ->
+      String.concat_map_list ~sep:" \\/ " ~f:(fun f -> "(" ^ formula_to_string f ^ ")") l
+    | Bind (b, (tvar, _), f) ->
+      (match b with Forall -> "forall" | Exists -> "exists") ^ " " ^
+      Ident.name_of_tvar tvar ^ ". " ^ formula_to_string f
   (*  let rec sstree_to_formatter ppf = function
       | ForallSS ((tvar, _), f) ->
           Format.open_vbox 1;
@@ -547,38 +548,40 @@ module RTerm = struct
   let (-) a b = a + (~-b)
   let mult r a = Map.Poly.map a ~f:(fun data -> Q.(r * data))
   let div a r = Map.Poly.map a ~f:(fun data -> Q.(data / r))
-  let to_string a = Map.Poly.to_alist a |> List.map ~f:(fun (key, data) -> 
+  let to_string a =
+    Map.Poly.to_alist a |>
+    String.concat_map_list ~sep:" + " ~f:(fun (key, data) ->
       match key with
       | None -> Q.to_string data
-      | Some tvar -> Q.to_string data ^ "*" ^ Ident.name_of_tvar tvar) |> String.concat ~sep:" + "
+      | Some tvar -> Q.to_string data ^ "*" ^ Ident.name_of_tvar tvar)
   let (=) : t -> t -> bool = Map.Poly.equal Q.(=)
   let term_of a =
     Map.Poly.to_alist a |> List.map ~f:(fun (key, data) -> match key with
         | None -> RealTerm.mk_real data
         | Some tvar -> Term.mk_apps (RealTerm.mk_rmult ()) [RealTerm.mk_real data; Term.mk_var tvar]) |> RealTerm.sum
   let rec of_term = function
-    | Con(RealTerm.Real r, _) -> Some (of_q r)
-    | Con(IntTerm.Int n, _) -> Some (of_q @@Q.of_bigint n)
-    | Var(var, _) -> Some (of_var var)
-    | App(App(Con(RealTerm.RAdd, _), t1, _), t2, _)
-    | App(App(Con(IntTerm.Add, _), t1, _), t2, _) ->
+    | Con (RealTerm.Real r, _) -> Some (of_q r)
+    | Con (IntTerm.Int n, _) -> Some (of_q @@Q.of_bigint n)
+    | Var (var, _) -> Some (of_var var)
+    | App (App (Con (RealTerm.RAdd, _), t1, _), t2, _)
+    | App (App (Con (IntTerm.Add, _), t1, _), t2, _) ->
       Option.(of_term t1 >>= fun a1 ->
               of_term t2 >>= fun a2 ->
               return (a1 + a2))
-    | App(App(Con(RealTerm.RSub, _), t1, _), t2, _)
-    | App(App(Con(IntTerm.Sub, _), t1, _), t2, _) ->
+    | App (App (Con (RealTerm.RSub, _), t1, _), t2, _)
+    | App (App (Con (IntTerm.Sub, _), t1, _), t2, _) ->
       Option.(of_term t1 >>= fun a1 ->
               of_term t2 >>= fun a2 ->
               return (a1 - a2))
-    | App(App(Con(RealTerm.RMult, _), Con(RealTerm.Real r, _), _), t, _)
-    | App(App(Con(RealTerm.RMult, _), t, _), Con(RealTerm.Real r, _), _) ->
+    | App (App (Con (RealTerm.RMult, _), Con (RealTerm.Real r, _), _), t, _)
+    | App (App (Con (RealTerm.RMult, _), t, _), Con (RealTerm.Real r, _), _) ->
       Option.(of_term t >>= fun a ->
               return (mult r a))
-    | App(App(Con(RealTerm.RDiv, _), t, _), Con(RealTerm.Real r, _), _) ->
+    | App (App (Con (RealTerm.RDiv, _), t, _), Con (RealTerm.Real r, _), _) ->
       Option.(of_term t >>= fun a ->
               return (div a r))
-    | App(Con(RealTerm.RNeg, _), t, _)
-    | App(Con(IntTerm.Neg, _), t, _) ->
+    | App (Con (RealTerm.RNeg, _), t, _)
+    | App (Con (IntTerm.Neg, _), t, _) ->
       Option.(of_term t >>= fun a ->
               return (~- a))
     | _ -> None
@@ -635,18 +638,18 @@ module LRA = struct
     | Eq0 t -> Eq0 (rename_var_term v v' t)
     | Gt0 t -> Gt0 (rename_var_term v v' t)
   let rec formula_of_term = function
-    | Bin(b, var, sort, term, _) when (match b with
+    | Bin (b, var, sort, term, _) when (match b with
         | Forall | Exists -> true
         | _ -> false) ->
       Option.(formula_of_term term >>= fun f ->
               match b with
-              | Forall -> return (Bind(Forall, (var, sort), f))
-              | Exists -> return (Bind(Exists, (var, sort), f))
+              | Forall -> return (Bind (Forall, (var, sort), f))
+              | Exists -> return (Bind (Exists, (var, sort), f))
               | _ -> assert false)
-    | App(Con(BoolTerm.Not, _), t, _) ->
+    | App (Con (BoolTerm.Not, _), t, _) ->
       Option.(formula_of_term t >>= fun f ->
               return (neg_formula neg_atom f))
-    | App(App(Con(r, _), t1, _), t2, _) when (match r with
+    | App (App (Con (r, _), t1, _), t2, _) when (match r with
         | BoolTerm.And | BoolTerm.Or | BoolTerm.Imply -> true
         | _ -> false) ->
       Option.(formula_of_term t1 >>= fun f1 ->
@@ -656,7 +659,7 @@ module LRA = struct
               | BoolTerm.Or -> return (Or [f1; f2])
               | BoolTerm.Imply -> return (Or [neg_formula neg_atom f1; f2])
               | _ -> assert false)
-    | App(App(Con(r, _), t1, _), t2, _) when (match r with
+    | App (App (Con (r, _), t1, _), t2, _) when (match r with
         | ExtTerm.Gt | ExtTerm.Lt | ExtTerm.Geq | ExtTerm.Leq (*TODO: remove*)
         | ExtTerm.RGt | ExtTerm.RLt | ExtTerm.RGeq | ExtTerm.RLeq -> true
         | _ -> false) ->
@@ -668,14 +671,14 @@ module LRA = struct
               | ExtTerm.Geq | ExtTerm.RGeq -> return (Or [Atom (Eq0 RTerm.(a1 - a2)); Atom (Gt0 RTerm.(a1 - a2))])
               | ExtTerm.Leq | ExtTerm.RLeq -> return (Or [Atom (Eq0 RTerm.(a2 - a1)); Atom (Gt0 RTerm.(a2 - a1))])
               | _ -> assert false)
-    | App(App(TyApp(Con(r, _), RealTerm.SReal, _), t1, _), t2, _) when (match r with ExtTerm.Eq | ExtTerm.Neq -> true | _ -> false) ->
+    | App (App (TyApp (Con (r, _), RealTerm.SReal, _), t1, _), t2, _) when (match r with ExtTerm.Eq | ExtTerm.Neq -> true | _ -> false) ->
       Option.(RTerm.of_term t1 >>= fun a1 ->
               RTerm.of_term t2 >>= fun a2 ->
               match r with
               | ExtTerm.Eq -> return (Atom (Eq0 RTerm.(a1 - a2)))
               | ExtTerm.Neq -> return (Or [Atom (Gt0 RTerm.(a1 - a2)); Atom (Gt0 RTerm.(a2 - a1))])
               | _ -> assert false)
-    | App(App(TyApp(Con(r, _), BoolTerm.SBool, _), t1, _), t2, _) when (match r with ExtTerm.Eq | ExtTerm.Neq -> true | _ -> false) ->
+    | App (App (TyApp (Con (r, _), BoolTerm.SBool, _), t1, _), t2, _) when (match r with ExtTerm.Eq | ExtTerm.Neq -> true | _ -> false) ->
       Option.(formula_of_term t1 >>= fun a1 ->
               formula_of_term t2 >>= fun a2 ->
               match r with
@@ -706,8 +709,8 @@ module LRA = struct
     | Gt0 _ -> None
   let rec eq model tvar = function
     | Atom a -> eq_atom model tvar a
-    | And l -> List.find_map l ~f:(fun a -> eq model tvar a)
-    | Or l -> List.find_map l ~f:(fun a -> eq model tvar a)
+    | And l -> List.find_map l ~f:(eq model tvar)
+    | Or l -> List.find_map l ~f:(eq model tvar)
     | Bind (_, _, f) -> eq model tvar f
   let ub_atom model tvar = function
     | Eq0 _ -> Set.Poly.empty
@@ -759,11 +762,11 @@ module LRA = struct
         | (None, Some glb) -> RTerm.(glb + (RTerm.of_q Q.one))
         | (None, None) -> RTerm.of_q default_value
       end
-  let check_sat f senv = 
+  let check_sat f senv =
     let module Z3interface = Z3Smt.Z3interfaceNew.Make(Z3Smt.Z3interfaceNew.ExtTerm) in
     match Z3interface.check_sat [term_of_formula (fun x -> term_of_atom x) f] senv (Z3.mk_context []) with
     | None -> None
-    | Some model -> 
+    | Some model ->
       let let_real t =
         match Term.let_con t with
         | ExtTerm.Real r, _ -> r
@@ -785,9 +788,13 @@ module LRAStrategySynthesis = struct
     | UNSAT -> "UNSAT"
   let rec formula_to_string = function
     | Atom a -> LRA.atom_to_string a
-    | And l -> List.map ~f:(fun f -> "(" ^ formula_to_string f ^ ")") l |> String.concat ~sep:" /\\ "
-    | Or l -> List.map ~f:(fun f -> "(" ^ formula_to_string f ^ ")") l |> String.concat ~sep:" \\/ "
-    | Bind (b, (tvar, _), f) -> (match b with Forall -> "forall" | Exists -> "exists") ^ " " ^ Ident.name_of_tvar tvar ^ ". " ^ formula_to_string f
+    | And l ->
+      String.concat_map_list ~sep:" /\\ " ~f:(fun f -> "(" ^ formula_to_string f ^ ")") l
+    | Or l ->
+      String.concat_map_list ~sep:" \\/ " ~f:(fun f -> "(" ^ formula_to_string f ^ ")") l
+    | Bind (b, (tvar, _), f) ->
+      (match b with Forall -> "forall" | Exists -> "exists") ^ " " ^
+      Ident.name_of_tvar tvar ^ ". " ^ formula_to_string f
   let rec sstree_to_string ?(indent=0) = function
     | ForallSS ((tvar, _), f) ->
       Format.sprintf "%sforall %s\n%s" (String.make indent ' ') (Ident.name_of_tvar tvar) (ssforest_to_string ~indent:(indent+1) f)
@@ -806,7 +813,7 @@ module QBF = struct
   type formula = atom PreFormula.formula
   let default_value = true
   let sort = BoolTerm.SBool
-  let term_equal t t' = Stdlib.(=) t t'
+  let term_equal t t' = Stdlib.(t = t')
   let atom_to_string = function
     | True -> "True"
     | False -> "False"
@@ -820,8 +827,8 @@ module QBF = struct
     | NVar v -> Var v
   let neg_atom atom = Atom (neg_term atom)
   let subst_atom tvar t = function
-    | Var v when Stdlib.(=) v tvar -> Atom t
-    | NVar v when Stdlib.(=) v tvar -> Atom (neg_term t)
+    | Var v when Stdlib.(v = tvar) -> Atom t
+    | NVar v when Stdlib.(v = tvar) -> Atom (neg_term t)
     | atom -> Atom atom
   let eval_term m = function
     | True -> true | False -> false
@@ -836,22 +843,22 @@ module QBF = struct
         | None -> not default_value
       end
   let rename_var_atom v v' = function
-    | Var tvar when Stdlib.(=) tvar v -> Var v'
-    | NVar tvar when Stdlib.(=) tvar v -> NVar v'
+    | Var tvar when Stdlib.(tvar = v) -> Var v'
+    | NVar tvar when Stdlib.(tvar = v) -> NVar v'
     | atom -> atom
   let rec formula_of_term = function
-    | Bin(b, var, sort, term, _) when (match b with
+    | Bin (b, var, sort, term, _) when (match b with
         | Forall | Exists -> true
         | _ -> false) ->
       Option.(formula_of_term term >>= fun f ->
               match b with
-              | Forall -> return (Bind(Forall, (var, sort), f))
-              | Exists -> return (Bind(Exists, (var, sort), f))
+              | Forall -> return (Bind (Forall, (var, sort), f))
+              | Exists -> return (Bind (Exists, (var, sort), f))
               | _ -> assert false)
-    | App(Con(BoolTerm.Not, _), t, _) ->
+    | App (Con (BoolTerm.Not, _), t, _) ->
       Option.(formula_of_term t >>= fun f ->
               return (neg_formula neg_atom f))
-    | App(App(Con(r, _), t1, _), t2, _) when (match r with
+    | App (App (Con (r, _), t1, _), t2, _) when (match r with
         | BoolTerm.And | BoolTerm.Or | BoolTerm.Imply -> true
         | _ -> false) ->
       Option.(formula_of_term t1 >>= fun f1 ->
@@ -861,9 +868,9 @@ module QBF = struct
               | BoolTerm.Or -> return (Or [f1; f2])
               | BoolTerm.Imply -> return (Or [neg_formula neg_atom f1; f2])
               | _ -> assert false)
-    | Con(BoolTerm.True, _) -> Some (Atom True)
-    | Con(BoolTerm.False, _) -> Some (Atom False)
-    | Var(var, _) -> Some (Atom (Var var))
+    | Con (BoolTerm.True, _) -> Some (Atom True)
+    | Con (BoolTerm.False, _) -> Some (Atom False)
+    | Var (var, _) -> Some (Atom (Var var))
     | _ -> None
 
   let term_of_atom = function
@@ -873,11 +880,11 @@ module QBF = struct
     | NVar v -> Term.mk_app (BoolTerm.mk_not ()) (Term.mk_var v)
   let term_of_term = term_of_atom
   let select _model _tvar _f = assert false(*ToDo*)
-  let check_sat f senv = 
+  let check_sat f senv =
     let module Z3interface = Z3Smt.Z3interfaceNew.Make(Z3Smt.Z3interfaceNew.ExtTerm) in
     match Z3interface.check_sat [term_of_formula (fun x -> term_of_atom x) f] senv (Z3.mk_context []) with
     | None -> None
-    | Some model -> 
+    | Some model ->
       let let_bool t =
         match Term.let_con t with
         | ExtTerm.True, _ -> true
@@ -899,9 +906,13 @@ module QBFStrategySynthesis = struct
     | UNSAT -> "UNSAT"
   let rec formula_to_string = function
     | Atom a -> LRA.atom_to_string a
-    | And l -> List.map ~f:(fun f -> "(" ^ formula_to_string f ^ ")") l |> String.concat ~sep:" /\\ "
-    | Or l -> List.map ~f:(fun f -> "(" ^ formula_to_string f ^ ")") l |> String.concat ~sep:" \\/ "
-    | Bind (b, (tvar, _), f) -> (match b with Forall -> "forall" | Exists -> "exists") ^ " " ^ Ident.name_of_tvar tvar ^ ". " ^ formula_to_string f
+    | And l ->
+      String.concat_map_list ~sep:" /\\ " ~f:(fun f -> "(" ^ formula_to_string f ^ ")") l
+    | Or l ->
+      String.concat_map_list ~sep:" \\/ " ~f:(fun f -> "(" ^ formula_to_string f ^ ")") l
+    | Bind (b, (tvar, _), f) ->
+      (match b with Forall -> "forall" | Exists -> "exists") ^ " " ^
+      Ident.name_of_tvar tvar ^ ". " ^ formula_to_string f
   let rec sstree_to_string ?(indent=0) = function
     | ForallSS ((tvar, _), f) ->
       Format.sprintf "%sforall %s\n%s" (String.make indent ' ') (Ident.name_of_tvar tvar) (ssforest_to_string ~indent:(indent+1) f)

@@ -53,5 +53,5 @@ WORKDIR /home/muval
 # RUN rm -r llvm-3.6.2.src
 
 # Build & run the image
-# sudo docker build -t coar:cav21ae_dt .
-# sudo docker run --rm -it coar:cav21ae_dt /bin/bash --login
+# sudo docker build -t cav21ae .
+# sudo docker run --rm -it cav21ae:latest /bin/bash --login

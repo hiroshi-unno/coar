@@ -1,0 +1,16 @@
+(menhir (modules regTreeExpParser))
+(ocamllex (modules regTreeExpLexer))
+(library
+  (name grammar)
+  (public_name CoAR.grammar)
+  (preprocess (pps ppx_deriving_yojson))
+  (libraries
+    core
+    yojson
+    CoAR.common
+    CoAR.automaton)
+  (modules
+    regWordExp
+    regTreeExp
+    regTreeExpLexer
+    regTreeExpParser))

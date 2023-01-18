@@ -1,0 +1,11 @@
+{
+    "verbose": false,
+    "num_labelings": 1,
+    "strategy": [
+        "SAT"
+    ],
+    "sat_solver": [
+        "Filename",
+        "./config/solver/minisat_dim_red.json"
+    ]
+}

@@ -1,6 +1,7 @@
 (library
   (name Hoice)
   (public_name CoAR.Hoice)
+  (preprocess (pps ppx_deriving_yojson))
   (libraries
     core
     yojson
@@ -11,6 +12,4 @@
     CoAR.pCSP)
   (modules
     config
-    solver)
-  (preprocess (pps ppx_deriving_yojson))
-)
+    solver))

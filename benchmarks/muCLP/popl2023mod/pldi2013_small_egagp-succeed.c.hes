@@ -1,0 +1,8 @@
+EG1 1
+s.t.
+EG1 (p: int): bool =nu AG1 p /\ (EG2 p \/ EG3 p);
+EG2 (p: int): bool =nu AG2 p /\ EG3 1;
+EG3 (p: int): bool =nu AG3 p /\ true;
+AG1 (p: int): bool =nu p > 0 /\ AG2 p /\ AG3 p;
+AG2 (p: int): bool =nu p > 0 /\ AG3 1;
+AG3 (p: int): bool =nu p > 0 /\ true;

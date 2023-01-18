@@ -1,0 +1,20 @@
+[
+    "OptPCSat",
+    {
+        "load_init_sol": true,
+        "improve_solver": [
+            "Filename",
+            "./config/solver/pcsat_tb.json"
+        ],
+        "opt_check_solver": [
+            "Filename",
+            "./config/solver/pcsat_tb.json"
+        ],
+        "verbose": false,
+        "one_by_one": true,
+        "improve_current": true,
+        "mode": [
+            "NoSideCond"
+        ]
+    }
+]

@@ -1,0 +1,65 @@
+///*** 1_main ***///
+START: main_entry;
+
+FROM: main_entry;
+vcall := nondet();
+vcall1 := nondet();
+TO: main_entry_end;
+
+FROM: main_entry_end;
+assume((0 <= vcall) && (vcall < vcall1));
+TO: main_if.then;
+
+FROM: main_entry_end;
+assume((0 > vcall) || (vcall >= vcall1));
+TO: main_if.end9;
+
+FROM: main_if.then;
+vadd := vcall + 1;
+var__temp_vtmp.0 := vadd;
+TO: main_while.cond;
+
+FROM: main_while.cond;
+vtmp.0 := var__temp_vtmp.0;
+TO: main_while.cond_end;
+
+FROM: main_while.cond_end;
+assume(vtmp.0 != vcall);
+TO: main_land.rhs;
+
+FROM: main_while.cond_end;
+assume(vtmp.0 == vcall);
+TO: main_if.end9;
+
+FROM: main_land.rhs;
+vcall4 := nondet();
+TO: main_land.rhs_end;
+
+FROM: main_land.rhs_end;
+assume(vcall4 != 0);
+TO: main_while.body;
+
+FROM: main_land.rhs_end;
+assume(vcall4 == 0);
+TO: main_if.end9;
+
+FROM: main_while.body;
+vadd8 := vtmp.0 + 1;
+TO: main_while.body_vtmp.1;
+FROM: main_while.body_vtmp.1;
+assume(vtmp.0 <= vcall1);
+vtmp.1 := vadd8;
+TO: main_while.body_svtmp.1;
+
+FROM: main_while.body_vtmp.1;
+assume(vtmp.0 > vcall1);
+vtmp.1 := 0;
+TO: main_while.body_svtmp.1;
+
+FROM: main_while.body_svtmp.1;
+var__temp_vtmp.0 := vtmp.1;
+TO: main_while.cond;
+
+FROM: main_if.end9;
+TO: main_if.end9_ret;
+

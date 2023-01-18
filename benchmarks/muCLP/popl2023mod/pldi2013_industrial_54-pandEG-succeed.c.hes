@@ -1,0 +1,12 @@
+forall (__rho_2_: int). __rho_2_ > 0 => AND1 __rho_2_ 4 0
+s.t.
+AND1 (c: int) (curr_serv: int) (resp: int): bool =nu c > 5 /\ EG1 c curr_serv resp;
+EG1 (c: int) (curr_serv: int) (resp: int): bool =nu resp <= 5 /\ EG2 c curr_serv resp;
+EG2 (c: int) (curr_serv: int) (resp: int): bool =nu resp <= 5 /\ (not (curr_serv > 0) => EG3 resp) /\ (not (not (curr_serv > 0)) => EG4 c curr_serv resp);
+EG3 (resp: int): bool =nu resp <= 5 /\ true;
+EG4 (c: int) (curr_serv: int) (resp: int): bool =nu resp <= 5 /\ (EG5 c curr_serv resp \/ EG6 c curr_serv resp);
+EG5 (c: int) (curr_serv: int) (resp: int): bool =nu resp <= 5 /\ EG7 (c - 1) curr_serv resp;
+EG7 (c: int) (curr_serv: int) (resp: int): bool =nu resp <= 5 /\ EG8 c (curr_serv - 1) resp;
+EG8 (c: int) (curr_serv: int) (resp: int): bool =nu resp <= 5 /\ EG2 c curr_serv (resp + 1);
+EG6 (c: int) (curr_serv: int) (resp: int): bool =nu resp <= 5 /\ c < curr_serv /\ EG9 c curr_serv resp;
+EG9 (c: int) (curr_serv: int) (resp: int): bool =nu resp <= 5 /\ EG2 c (curr_serv - 1) resp;

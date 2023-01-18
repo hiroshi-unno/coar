@@ -3,10 +3,10 @@
     {
         "verbose": true,
         "kind": [
-            "Ord",
+            "Ord_DNF",
             [
                 "Filename",
-                "./config/pcsat/template/dbg_predicate_template_thr.json"
+                "./config/pcsat/template/dbg_predicate_dnf_template_thr.json"
             ]
         ]
     }

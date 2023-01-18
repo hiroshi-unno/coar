@@ -1,13 +1,15 @@
 open Core
 open Common.Util
+open PCSatCommon
 
 module type BFSynthesizerType = sig
-  val synthesize: PCSatCommon.TruthTable.table-> Ast.PropLogic.Formula.t Or_error.t
+  val synthesize: TruthTable.table -> (TruthTable.qlist * TruthTable.alist) -> Ast.PropLogic.Formula.t Or_error.t
 end
 
 module Config = struct
   type t =
     | DTBF of DT_BFSynthesizer.Config.t
+    | MCTSBF of MCTS_BFSynthesizer.Config.t
     | SCQMBF of SCQM_BFSynthesizer.Config.t [@@deriving yojson]
 
   module type ConfigType = sig val config : t end
@@ -21,8 +23,7 @@ module Config = struct
         match of_yojson raw_json with
         | Ok x -> Ok (ExtFile.Instance x)
         | Error msg ->
-          error_string
-          @@ Printf.sprintf
+          error_string @@ Printf.sprintf
             "Invalid BFSynthesizer Configuration (%s): %s" filename msg
       end
     | Instance x -> Ok (ExtFile.Instance x)
@@ -32,6 +33,8 @@ module Make (Cfg: Config.ConfigType)
   : BFSynthesizerType =
   (val (match Cfg.config with
        | DTBF cfg -> (module (DT_BFSynthesizer.Make (struct let config = cfg end))
+                       : BFSynthesizerType)
+       | MCTSBF cfg -> (module (MCTS_BFSynthesizer.Make (struct let config = cfg end))
                        : BFSynthesizerType)
        | SCQMBF cfg -> (module (SCQM_BFSynthesizer.Make (struct let config = cfg end))
                          : BFSynthesizerType)))

@@ -1,0 +1,16 @@
+forall (__rho_1_: int) (x: int). AG1 __rho_1_ 0 x
+s.t.
+AG1 (__rho_1_: int) (p: int) (x: int): bool =nu AF1 __rho_1_ p x /\ (not (x > 0) => AG2 p) /\ (not (not (x > 0)) => AG3 __rho_1_ p x);
+AG2 (p: int): bool =nu AF2 p /\ AG4 p /\ AG5 p;
+AG4 (p: int): bool =nu AF3 p /\ AG2 0;
+AG5 (p: int): bool =nu AF4 p /\ AG2 (-1);
+AG3 (__rho_1_: int) (p: int) (x: int): bool =nu AF5 __rho_1_ p x /\ (__rho_1_ > 0 => AG6 __rho_1_ p x) /\ (not (__rho_1_ > 0) => AG7 __rho_1_ p x);
+AG6 (__rho_1_: int) (p: int) (x: int): bool =nu AF6 __rho_1_ p x /\ AG1 __rho_1_ p (x + 1);
+AG7 (__rho_1_: int) (p: int) (x: int): bool =nu AF7 __rho_1_ p x /\ AG1 __rho_1_ p (x - 1);
+AF1 (__rho_1_: int) (p: int) (x: int): bool =mu p <= 0 \/ (not (x > 0) => AF2 p) /\ (not (not (x > 0)) => AF5 __rho_1_ p x);
+AF2 (p: int): bool =mu p <= 0 \/ AF3 p /\ AF4 p;
+AF3 (p: int): bool =mu p <= 0 \/ AF2 0;
+AF4 (p: int): bool =mu p <= 0 \/ AF2 (-1);
+AF5 (__rho_1_: int) (p: int) (x: int): bool =mu p <= 0 \/ (__rho_1_ > 0 => AF6 __rho_1_ p x) /\ (not (__rho_1_ > 0) => AF7 __rho_1_ p x);
+AF6 (__rho_1_: int) (p: int) (x: int): bool =mu p <= 0 \/ AF1 __rho_1_ p (x + 1);
+AF7 (__rho_1_: int) (p: int) (x: int): bool =mu p <= 0 \/ AF1 __rho_1_ p (x - 1);

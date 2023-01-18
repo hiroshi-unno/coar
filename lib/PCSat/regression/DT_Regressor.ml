@@ -18,5 +18,5 @@ module Make (Cfg: Config.ConfigType) = struct
   module Debug = Debug.Make (val Debug.Config.(if config.verbose then enable else disable))
 
   let mk_regressor _params _labeled_atoms =
-    Ok ((*ToDo*)SortMap.empty, Term.mk_dummy T_int.SInt)
+    Ok ((*ToDo*)Map.Poly.empty, Term.mk_dummy T_int.SInt)
 end

@@ -24,15 +24,14 @@ module Config = struct
           instantiate_ext_files x >>= fun x ->
           Ok (ExtFile.Instance x)
         | Error msg ->
-          error_string
-          @@ Printf.sprintf
+          error_string @@ Printf.sprintf
             "Invalid Regressor Configuration (%s): %s" filename msg
       end
     | Instance x -> Ok (ExtFile.Instance x)
 end
 
 module type RegressorType = sig
-  val mk_regressor: SortEnv.t -> (PCSatCommon.ExAtom.t * int) Set.Poly.t -> (SortMap.t * Term.t) Or_error.t
+  val mk_regressor: sort_env_list -> (PCSatCommon.ExAtom.t * int) Set.Poly.t -> (sort_env_map * Term.t) Or_error.t
 end
 
 module Make (Cfg: Config.ConfigType) =

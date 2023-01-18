@@ -20,8 +20,7 @@ let load_ext_file = function
         instantiate_ext_files x >>= fun x ->
         Ok (ExtFile.Instance x)
       | Error msg ->
-        error_string
-        @@ Printf.sprintf
+        error_string @@ Printf.sprintf
           "Invalid Z3Smt Configuration (%s): %s" filename msg
     end
   | Instance x -> Ok (Instance x)

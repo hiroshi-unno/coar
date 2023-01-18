@@ -1,0 +1,10 @@
+AG1 0 1
+s.t.
+AG1 (check: int) (p: int): bool =nu (check = 1 => EG1 p) /\ AG2 1 p;
+AG2 (check: int) (p: int): bool =nu (check = 1 => EG2 p) /\ AG3 check p /\ AG4 check p;
+AG3 (check: int) (p: int): bool =nu (check = 1 => EG3 p) /\ AG1 check 1;
+AG4 (check: int) (p: int): bool =nu (check = 1 => EG4 p) /\ AG1 check 2;
+EG1 (p: int): bool =nu p > 0 /\ EG2 p;
+EG2 (p: int): bool =nu p > 0 /\ (EG3 p \/ EG4 p);
+EG3 (p: int): bool =nu p > 0 /\ EG1 1;
+EG4 (p: int): bool =nu p > 0 /\ EG1 2;

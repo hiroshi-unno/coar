@@ -1,14 +1,15 @@
 (library
   (name Printer)
   (public_name CoAR.Printer)
+  (preprocess (pps ppx_deriving_yojson))
   (libraries
     core
-    async
-    common
-    muCLP
-    pCSP)
+    z3
+    CoAR.common
+    CoAR.muCLP
+    CoAR.pCSP
+    CoAR.PCSat)
   (modules
     config
-    solver)
-  (preprocess (pps ppx_deriving_yojson))
-)
+    smtlib2
+    solver))

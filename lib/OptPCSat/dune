@@ -1,0 +1,26 @@
+(library
+ (name OptPCSat)
+ (public_name CoAR.OptPCSat)
+ (preprocess
+  (pps ppx_deriving_yojson))
+ (libraries
+  core
+  yojson
+  CoAR.common
+  CoAR.ast
+  CoAR.SMT
+  CoAR.pCSP
+  CoAR.Z3Smt
+  CoAR.PCSPSolver
+  CoAR.CHCOpt)
+ (modules
+  config
+  optimizer
+  optimalityChecker
+  maximalityChecker
+  minimalityChecker
+  tupleExtracter
+  nonOptChecker
+  lexicoNonOptChecker
+  solver)
+ (synopsis "An optimizing CHC solver based on pfwnCSP solving"))

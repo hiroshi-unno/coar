@@ -1,0 +1,4 @@
+AG1 1 1
+s.t.
+AG1 (x: int) (y: int): bool =nu x >= y /\ AG2 (x + 1) y;
+AG2 (x: int) (y: int): bool =nu x >= y /\ AG1 x (y + 1);

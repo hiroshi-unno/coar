@@ -1,0 +1,95 @@
+///*** 1_main ***///
+START: main_entry;
+
+FROM: main_entry;
+vcall := nondet();
+vcall1 := nondet();
+vcall2 := nondet();
+var__temp_vy.0 := vcall2;
+var__temp_vx.0 := vcall1;
+TO: main_while.cond;
+
+FROM: main_while.cond;
+vy.0 := var__temp_vy.0;
+vx.0 := var__temp_vx.0;
+var__temp_vy.1 := vy.0;
+TO: main_while.cond_end;
+
+FROM: main_while.cond_end;
+assume(vx.0 >= 0);
+TO: main_while.cond3;
+
+FROM: main_while.cond_end;
+assume(vx.0 < 0);
+TO: main_while.end17;
+
+FROM: main_while.cond3;
+vy.1 := var__temp_vy.1;
+TO: main_while.cond3_end;
+
+FROM: main_while.cond3_end;
+assume(vy.1 >= 0);
+TO: main_land.rhs;
+
+FROM: main_while.cond3_end;
+assume(vy.1 < 0);
+TO: main_while.end;
+
+FROM: main_land.rhs;
+vcall5 := nondet();
+TO: main_land.rhs_end;
+
+FROM: main_land.rhs_end;
+assume(vcall5 != 0);
+TO: main_while.body7;
+
+FROM: main_land.rhs_end;
+assume(vcall5 == 0);
+TO: main_while.end;
+
+FROM: main_while.body7;
+vsub := vy.1 - 1;
+var__temp_vy.1 := vsub;
+TO: main_while.cond3;
+
+FROM: main_while.end;
+vsub8 := vx.0 - 1;
+var__temp_vy.2 := vy.1;
+TO: main_while.cond9;
+
+FROM: main_while.cond9;
+vy.2 := var__temp_vy.2;
+var__temp_vy.0 := vy.2;
+var__temp_vx.0 := vsub8;
+TO: main_while.cond9_end;
+
+FROM: main_while.cond9_end;
+assume(vy.2 <= vcall);
+TO: main_land.rhs11;
+
+FROM: main_while.cond9_end;
+assume(vy.2 > vcall);
+TO: main_while.cond;
+
+FROM: main_land.rhs11;
+vcall12 := nondet();
+var__temp_vy.0 := vy.2;
+var__temp_vx.0 := vsub8;
+TO: main_land.rhs11_end;
+
+FROM: main_land.rhs11_end;
+assume(vcall12 != 0);
+TO: main_while.body15;
+
+FROM: main_land.rhs11_end;
+assume(vcall12 == 0);
+TO: main_while.cond;
+
+FROM: main_while.body15;
+vadd := vy.2 + 1;
+var__temp_vy.2 := vadd;
+TO: main_while.cond9;
+
+FROM: main_while.end17;
+TO: main_while.end17_ret;
+

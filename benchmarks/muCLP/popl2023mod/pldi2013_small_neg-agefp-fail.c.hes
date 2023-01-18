@@ -1,0 +1,12 @@
+EF1 0 5
+s.t.
+EF1 (p: int) (x: int): bool =mu AG1 p x \/ (x < 0 => EF2 p) /\ (not (x < 0) => EF3 p x);
+EF2 (p: int): bool =mu AG2 p \/ EF4 1;
+EF4 (p: int): bool =mu AG3 p \/ false;
+EF3 (p: int) (x: int): bool =mu AG4 p x \/ EF5 p x \/ EF1 p x;
+EF5 (p: int) (x: int): bool =mu AG5 p x \/ EF1 p (x - 1);
+AG1 (p: int) (x: int): bool =nu p <= 0 /\ (x < 0 => AG2 p) /\ (not (x < 0) => AG4 p x);
+AG2 (p: int): bool =nu p <= 0 /\ AG3 1;
+AG3 (p: int): bool =nu p <= 0 /\ true;
+AG4 (p: int) (x: int): bool =nu p <= 0 /\ AG5 p x /\ AG1 p x;
+AG5 (p: int) (x: int): bool =nu p <= 0 /\ AG1 p (x - 1);

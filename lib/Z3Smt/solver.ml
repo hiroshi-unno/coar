@@ -10,13 +10,14 @@ end
 module Make (Config: Config.ConfigType): SolverType = struct
   let config = Config.config
 
-  module Debug = Debug.Make (val (Debug.Config.(if config.verbose then enable else disable)))
+  module Debug = Debug.Make (val Debug.Config.(if config.verbose then enable else disable))
 
   type result = (SMT.Problem.solution, Error.t) Result.t
 
   let solve ?(print_sol=false) phi =
     Debug.print @@ lazy ("input: " ^ Ast.LogicOld.Formula.str_of phi);
-    match Z3interface.check_sat Set.Poly.empty [phi] with
+    let fenv = Map.Poly.empty (** TODO *) in
+    match Z3interface.check_sat ~id:None fenv [phi] with
     | `Sat model ->
       let solution = SMT.Problem.Sat model in
       if print_sol then print_endline (SMT.Problem.str_of_solution solution);

@@ -1,19 +1,25 @@
 (library
   (name template)
   (public_name CoAR.PCSat.template)
+  (preprocess (pps ppx_deriving_yojson))
   (libraries
     core
     yojson
     CoAR.ast
     CoAR.PCSat.qualifier
+    CoAR.PCSat.common
     CoAR.common)
   (modules
     arith
     generator
     function
-    predicate
+    predicateDNF
+    predicateFlex
+    NWFPredicate
     WFPredicate
+    WFPredicateFlex
     FNPredicate
-    intFunction)
-  (preprocess (pps ppx_deriving_yojson))
-)
+    NEPredicate
+    FNPredicateFlex
+    intFunction
+    intFunctionFlex))

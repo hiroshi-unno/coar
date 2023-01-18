@@ -18,5 +18,4 @@
     BFSB_Classifier
     DT_WFClassifier
     RGB_FNClassifier)
-  (preprocess (pps ppx_deriving_yojson))
-)
+  (preprocess (pps ppx_deriving_yojson)))

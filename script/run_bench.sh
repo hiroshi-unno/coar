@@ -1,14 +1,14 @@
 #!/bin/bash
 
-is_mac () {
-  sw_vers > /dev/null 2>&1
-  return $?
+is_mac() {
+        sw_vers >/dev/null 2>&1
+        return $?
 }
 
-if is_mac ; then
-       date='gdate'
+if is_mac; then
+        date='gdate'
 else
-       date='date'
+        date='date'
 fi
 
 if [ "$1" != "--xargs" ]; then
@@ -22,37 +22,49 @@ if [ "$1" != "--xargs" ]; then
                 exit
         fi
 
-        find $@ | xargs -P 8 -n 1 $0 --xargs
+        find $@ | xargs -P 3 -n 1 $0 --xargs
         exit
 fi
 
-dune build main.exe
+# dune build main.exe
 
-start_time=$($date +%s%N)
-output=`timeout $timeout _build/default/main.exe $options $2`
+run() {
+        start_time=$($date +%s%N)
+        output=$(timeout $timeout _build/default/main.exe $options $2)
+        ret=$?
 
-if [ $? = 124 ]; then
-        echo "$2,timeout,"
-        exit
-fi
+        if [ $ret = 124 ]; then
+                echo "solved $2:timeout" 1>&2
+                echo "$2,timeout,"
+                exit
+        fi
 
-IFS="," read result iterations <<< "$output"
+        echo "solved $2:$output" 1>&2
 
-end_time=$($date +%s%N)
-elapsed="0000000000$((end_time - start_time))"
-elapsed=`sed -E 's/(.{9})$/.\1/' <<< "$elapsed" | sed -E 's/^0*([^0]*.)\./\1./'`
+        IFS="," read result iterations <<<"$output"
 
-if      [ "$result" = "valid" ] ||
-        [ "$result" = "invalid" ] ||
-        [ "$result" = "sat" ] ||
-        [ "$result" = "unsat" ] ||
-        [ "$result" = "unknown" ] ||
-        [ "$result" = "infeasible" ] ||
-        [ "$result" = "YES" ] ||
-        [ "$result" = "NO" ] ||
-        [ "$result" = "MAYBE" ]; then
+        end_time=$($date +%s%N)
+        elapsed="0000000000$((end_time - start_time))"
+        elapsed=$(sed -E 's/(.{9})$/.\1/' <<<"$elapsed" | sed -E 's/^0*([^0]*.)\./\1./')
 
-        echo "$2,$result,$elapsed,$iterations"
-else
-        echo "$2,abort,$elapsed,$iterations"
-fi
+        if [ "$result" = "valid" ] ||
+                [ "$result" = "invalid" ] ||
+                [ "$result" = "sat" ] ||
+                [ "$result" = "unsat" ] ||
+                [ "$result" = "unknown" ] ||
+                [ "$result" = "infeasible" ] ||
+                [ "$result" = "YES" ] ||
+                [ "$result" = "NO" ] ||
+                [ "$result" = "MAYBE" ]; then
+
+                echo "$2,$result,$elapsed,$iterations"
+        elif [$1 -gt 0]; then
+                echo "$2 Abort, restart!" 1>&2
+                run $(expr $1 - 1) $2
+        else
+                echo "solved $2,$elapsed,abort" 1>&2
+                echo "$2,abort,$elapsed,$iterations"
+        fi
+}
+
+run 1 $2

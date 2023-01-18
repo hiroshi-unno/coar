@@ -1,18 +1,23 @@
-[
-  "Classification",
-  {
-    "verbose": true,
-    "classifier": [
-      "Filename",
-      "./config/pcsat/classifier/dbg_bfsb_svm.json"
-    ],
-    "wf_classifier": [
-      "Filename",
-      "./config/pcsat/classifier/dbg_wf_dt_lazy.json"
-    ],
-    "fn_classifier": [
-      "Filename",
-      "./config/pcsat/classifier/dbg_fn_tb.json"
-    ]
-  }
-]
+{
+  "strategy": [
+    "Classification",
+    {
+      "verbose": true,
+      "classifier": [
+        "Filename",
+        "./config/pcsat/classifier/dbg_bfsb_svm.json"
+      ],
+      "wf_classifier": [
+        "Filename",
+        "./config/pcsat/classifier/dbg_wf_dt_lazy.json"
+      ],
+      "fn_classifier": [
+        "Filename",
+        "./config/pcsat/classifier/dbg_fn_tb.json"
+      ]
+    }
+  ],
+  "check_candidates": true,
+  "refine_candidates": false,
+  "verbose": true
+}

@@ -1,0 +1,44 @@
+{
+       "phase_list": [
+              [
+                     "S",
+                     [
+                            "Filename",
+                            "./config/pcsat/synthesizer/dbg_tb_hyperprop3.json"
+                     ]
+              ],
+              [
+                     "V",
+                     [
+                            "Filename",
+                            "./config/pcsat/validator/dbg_nce.json"
+                     ]
+              ],
+              [
+                     "L",
+                     [
+                            "Filename",
+                            "./config/pcsat/labeler/dbg_sat1.json"
+                     ]
+              ],
+              [
+                     "R",
+                     [
+                            "Filename",
+                            "./config/pcsat/resolver/dbg_smt.json"
+                     ]
+              ],
+              [
+                     "L",
+                     [
+                            "Filename",
+                            "./config/pcsat/labeler/dbg_sat1.json"
+                     ]
+              ]
+       ],
+       "verbose": true,
+       "rl_config": [
+              "Filename",
+              "./config/pcsat/rl/disable.json"
+       ]
+}

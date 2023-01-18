@@ -1,9 +1,11 @@
 {
     "verbose": false,
-    "num_of_examples": null,
     "strategy_synthesis": false,
     "parametric_candidates": true,
     "parametric_examples": true,
-    "rl": false,
-    "smt_timeout": null
+    "smt_timeout": null,
+    "cex_strategy": [
+        "AllExamples"
+    ],
+    "check_part_sol_with_lbs": false
 }

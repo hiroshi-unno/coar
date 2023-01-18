@@ -1,0 +1,42 @@
+///*** 1_main ***///
+START: main_entry;
+
+FROM: main_entry;
+var__temp_vdeath.0 := 17;
+var__temp_vlife.0 := 13;
+TO: main_while.cond;
+
+FROM: main_while.cond;
+vdeath.0 := var__temp_vdeath.0;
+vlife.0 := var__temp_vlife.0;
+TO: main_while.cond_end;
+
+FROM: main_while.cond_end;
+assume(vlife.0 < vdeath.0);
+TO: main_while.body;
+
+FROM: main_while.cond_end;
+assume(vlife.0 >= vdeath.0);
+TO: main_while.end;
+
+FROM: main_while.body;
+vadd := vlife.0 + 1;
+TO: main_while.body_vlife.1;
+FROM: main_while.body_vlife.1;
+assume((2 < vdeath.0) || (2 < vadd));
+vlife.1 := 2;
+TO: main_while.body_svlife.1;
+
+FROM: main_while.body_vlife.1;
+assume((2 >= vdeath.0) && (2 >= vadd));
+vlife.1 := vdeath.0;
+TO: main_while.body_svlife.1;
+
+FROM: main_while.body_svlife.1;
+var__temp_vdeath.0 := vadd;
+var__temp_vlife.0 := vlife.1;
+TO: main_while.cond;
+
+FROM: main_while.end;
+TO: main_while.end_ret;
+

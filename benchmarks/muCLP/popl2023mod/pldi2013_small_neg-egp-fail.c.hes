@@ -1,0 +1,5 @@
+AF1 2
+s.t.
+AF1 (x: int): bool =mu x <= 1 \/ AF2 x /\ AF3 x;
+AF2 (x: int): bool =mu x <= 1 \/ AF1 (x + 1);
+AF3 (x: int): bool =mu x <= 1 \/ AF1 (x - 1);

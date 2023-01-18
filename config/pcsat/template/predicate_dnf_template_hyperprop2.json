@@ -1,0 +1,16 @@
+{
+    "verbose": false,
+    "number_of_disj": 2,
+    "number_of_conj": 2,
+    "incr_interval": 2,
+    "depth": 0,
+    "upper_bound_coeff": 4,
+    "upper_bound_const": 1,
+    "seeds": null,
+    "bound_each_coeff": null,
+    "threshold_coeff": null,
+    "threshold_const": null,
+    "disj_first": true,
+    "fix_shape": false,
+    "eq_atom": true
+}

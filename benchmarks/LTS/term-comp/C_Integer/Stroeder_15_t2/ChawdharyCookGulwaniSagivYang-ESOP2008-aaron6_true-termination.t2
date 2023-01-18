@@ -1,0 +1,82 @@
+///*** 1_main ***///
+START: main_entry;
+
+FROM: main_entry;
+vcall := nondet();
+vcall1 := nondet();
+vcall2 := nondet();
+vcall3 := nondet();
+vcall4 := nondet();
+vadd := vcall + vcall2;
+var__temp_vty.0 := vcall3;
+var__temp_vy.0 := vcall2;
+var__temp_vtx.0 := vcall1;
+var__temp_vx.0 := vcall;
+TO: main_entry_end;
+
+FROM: main_entry_end;
+assume(vadd >= 0);
+TO: main_while.cond;
+
+FROM: main_entry_end;
+assume(vadd < 0);
+TO: main_if.end19;
+
+FROM: main_while.cond;
+vty.0 := var__temp_vty.0;
+vy.0 := var__temp_vy.0;
+vtx.0 := var__temp_vtx.0;
+vx.0 := var__temp_vx.0;
+TO: main_while.cond_end;
+
+FROM: main_while.cond_end;
+assume(vx.0 <= vcall4);
+TO: main_land.lhs.true;
+
+FROM: main_while.cond_end;
+assume(vx.0 > vcall4);
+TO: main_if.end19;
+
+FROM: main_land.lhs.true;
+vmul := 2 * vtx.0;
+vadd6 := vmul + vy.0;
+vadd9 := vty.0 + 1;
+vadd11 := vtx.0 + 1;
+TO: main_land.lhs.true_end;
+
+FROM: main_land.lhs.true_end;
+assume(((vx.0 >= vadd6) && (vy.0 >= vadd9)) && (vx.0 >= vadd11));
+TO: main_while.body;
+
+FROM: main_land.lhs.true_end;
+assume(((vx.0 < vadd6) || (vy.0 < vadd9)) || (vx.0 < vadd11));
+TO: main_if.end19;
+
+FROM: main_while.body;
+vcall13 := nondet();
+vcall16 := nondet();
+var__temp_vty.0 := vty.0;
+var__temp_vy.0 := vy.0;
+var__temp_vtx.0 := vx.0;
+var__temp_vx.0 := vcall16;
+TO: main_while.body_end;
+
+FROM: main_while.body_end;
+assume(vcall13 != 0);
+TO: main_if.then15;
+
+FROM: main_while.body_end;
+assume(vcall13 == 0);
+TO: main_while.cond;
+
+FROM: main_if.then15;
+vcall17 := nondet();
+var__temp_vty.0 := vy.0;
+var__temp_vy.0 := vcall17;
+var__temp_vtx.0 := vx.0;
+var__temp_vx.0 := vcall16;
+TO: main_while.cond;
+
+FROM: main_if.end19;
+TO: main_if.end19_ret;
+

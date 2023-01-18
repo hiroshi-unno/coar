@@ -1,0 +1,18 @@
+/*
+void main() {
+  int x, y;
+  while (x >= 0) {
+    if (y <= 50)
+      x = x + 1;
+    else
+      x = x - 1;
+    y = y + 1;
+  }
+}
+*/
+forall (x: int) (y: int). I x y
+s.t.
+I (x: int) (y: int): bool =mu
+  (x < 0 => true) /\
+  (x >= 0 => (y <= 50 => I (x + 1) (y + 1)) /\
+             (y > 50 => I (x - 1) (y + 1)));

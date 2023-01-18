@@ -1,0 +1,7 @@
+(library
+ (name CHCOpt)
+ (public_name CoAR.CHCOpt)
+ (preprocess
+  (pps ppx_deriving_yojson))
+ (libraries core yojson CoAR.common CoAR.pCSP)
+ (modules problem))

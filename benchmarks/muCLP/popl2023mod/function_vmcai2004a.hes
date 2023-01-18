@@ -1,0 +1,10 @@
+/*
+void main() {
+  int x;
+  while (x >= 0)
+    x = - 2 * x + 10;
+}
+*/
+forall (x: int). I x
+s.t.
+I (x: int): bool =mu (x < 0 => true) /\ (x >= 0 => I (-2 * x + 10));

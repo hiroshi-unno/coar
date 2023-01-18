@@ -1,0 +1,8 @@
+EG1 0 5
+s.t.
+EG1 (p: int) (x: int): bool =nu p > 0 /\ (not (x > 0) => EG2 p) /\ (not (not (x > 0)) => EG3 p x);
+EG2 (p: int): bool =nu p > 0 /\ EG4 1;
+EG4 (p: int): bool =nu p > 0 /\ true;
+EG3 (p: int) (x: int): bool =nu p > 0 /\ (EG5 p x \/ EG6 p x);
+EG5 (p: int) (x: int): bool =nu p > 0 /\ EG1 p (x - 1);
+EG6 (p: int) (x: int): bool =nu p > 0 /\ EG1 p (x - 2);

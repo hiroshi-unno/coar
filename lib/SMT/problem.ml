@@ -3,17 +3,17 @@ open Ast
 type t = LogicOld.Formula.t
 
 type solution =
-  | Sat of ((Ident.tvar * LogicOld.Sort.t) * LogicOld.Term.t option) list
+  | Sat of LogicOld.model
   | Unsat
   | Unknown
 
-type incsol = 
-  | IncSat of ((Ident.tvar * LogicOld.Sort.t) * LogicOld.Term.t option) list * (t -> incsol) 
+type incsol =
+  | IncSat of LogicOld.model * (t -> incsol)
   | IncUnsat of (t -> incsol)
   | IncUnknown of (t -> incsol)
 
 let str_of_solution = function
-  | Sat model -> "sat\nmodel: " ^ LogicOld.TermSubst.str_of_model model
+  | Sat model -> "sat\nmodel: " ^ LogicOld.str_of_model model
   | Unsat     -> "unsat"
   | Unknown   -> "unknown"
 

@@ -1,0 +1,4 @@
+#! /bin/bash
+
+export LD_LIBRARY_PATH=./
+./main.exe -c ./config/solver/pcsat_sygus_comp_dt1_poly01234_min_size_bmi0_100r1_b100i.json -p sygus $1

@@ -1,0 +1,5 @@
+EG1 2
+s.t.
+EG1 (x: int): bool =nu x > 1 /\ (EG2 x \/ EG3 x);
+EG2 (x: int): bool =nu x > 1 /\ EG1 (x + 1);
+EG3 (x: int): bool =nu x > 1 /\ EG1 (x - 1);

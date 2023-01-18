@@ -1,13 +1,13 @@
 open Core
 open Common
-open Common.Util
+open Common.Ext
 open Ast
 open Ast.LogicOld
 open PCSatCommon
 
-let get_hyperplane_float c ?(weights=[]) params_x x y : (Ident.tvar * Ast.LogicOld.Sort.t, float) Map.Poly.t * float =
+let get_hyperplane_float c ?(weights=[]) params_x x y : (Ident.tvar, float) Map.Poly.t * float =
   let open Libsvm in
-  let n_feat = SortEnv.length params_x in
+  let n_feat = List.length params_x in
   let problem = Svm.Problem.create_dense ~x ~y in
   let model = Svm.train ~kernel:`LINEAR ~c ~weights problem in
   let n_sv = Svm.Model.get_n_sv model in
@@ -18,7 +18,7 @@ let get_hyperplane_float c ?(weights=[]) params_x x y : (Ident.tvar * Ast.LogicO
     Array.iter ~f:(fun (i, v) -> w.(i) <- w.(i) +. sv_coef *. v) sv
   done;
   let b = ~-. (Svm.Model.get_rho model 0) in
-  let w = List.zip_exn (SortEnv.list_of params_x) (Array.to_list w) |> Map.Poly.of_alist_exn in
+  let w = List.zip_exn (List.map ~f:fst params_x) (Array.to_list w) |> Map.Poly.of_alist_exn in
   (w, b)
 
 (* [params] may contain a boolean parameter*)
@@ -28,7 +28,7 @@ let rec classify approx_level csvm params pos_examples neg_examples =
     Set.Poly.empty
   else
     let eval_halfspace h x =
-      let params_tvar = SortEnv.args_of params in
+      let params_tvar = List.map ~f:fst params in
       let m = List.zip_exn params_tvar x |> Map.Poly.of_alist_exn in
       Evaluator.eval (Formula.subst m h) in
     let rec get_useful_halfspace pos_examples neg_examples =
@@ -39,7 +39,7 @@ let rec classify approx_level csvm params pos_examples neg_examples =
         let neg_example = List.map ~f:(fun x -> match Evaluator.eval_term x with Value.Int i -> i | _ -> assert false) (match Set.Poly.to_list neg_examples with [ex] -> ex | _ -> assert false) in
         let w = List.zip_exn pos_example neg_example |> List.map ~f:(fun (p, n) -> Z.(of_int 2 * (n - p))) in (* 2 * (neg_example - pos_example) *)
         let b = List.zip_exn pos_example neg_example |> List.fold ~init:Z.zero ~f:(fun sum (p, n) -> Z.(sum + p*p - n*n)) in (* |pos_example|^2 - |neg_example|^2 *)
-        let t = List.fold ~init:(T_int.mk_int b) ~f:(fun sum ((tvar, sort), c) -> T_int.mk_add sum (T_int.mk_mult (T_int.mk_int c) (Term.mk_var tvar sort))) (List.zip_exn (SortEnv.list_of params) w) in
+        let t = List.fold ~init:(T_int.mk_int b) ~f:(fun sum ((tvar, sort), c) -> T_int.mk_add sum (T_int.mk_mult (T_int.mk_int c) (Term.mk_var tvar sort))) (List.zip_exn params w) in
         Formula.mk_atom (T_int.mk_geq t (T_int.zero ()))
       else
         let weights = [(1, 1. /. float_of_int n_pos); (-1, 1. /. float_of_int n_neg)] in
@@ -61,25 +61,25 @@ let rec classify approx_level csvm params pos_examples neg_examples =
           let w' = Map.Poly.map ~f:mul_lcm_den w in
           w', b' in
         let make_halfspace w b =
-          let t = Map.Poly.fold w ~init:(T_int.mk_int b) ~f:(fun ~key:(tvar, sort) ~data:c t -> T_int.mk_add t (T_int.mk_mult (T_int.mk_int c) (Term.mk_var tvar sort))) in
+          let t = Map.Poly.fold w ~init:(T_int.mk_int b) ~f:(fun ~key:tvar ~data:c t -> T_int.mk_add t (T_int.mk_mult (T_int.mk_int c) (Term.mk_var tvar T_int.SInt))) in
           Formula.mk_atom (T_int.mk_geq t (T_int.zero ()))in
         let exact_w = Map.Poly.map ~f:Q.of_float w in
         let exact_b = Q.of_float b in
         let exact_w, exact_b = wb_to_int exact_w exact_b in
-        let exact_bw = exact_b :: SortEnv.map params ~f:(fun key -> Map.Poly.find_exn exact_w key) in
+        let exact_bw = exact_b :: List.map params ~f:(fun (key, _) -> Map.Poly.find_exn exact_w key) in
         let abs_exact_bw = List.map ~f:Z.abs exact_bw in
         let sorted_abs_exact_bw = List.sort ~compare:Z.compare abs_exact_bw in
         let all_examples = Set.Poly.union pos_examples neg_examples in
         let h =
           if approx_level <= 0 then
             let exact_halfspace = make_halfspace exact_w exact_b in
-            let len_params = SortEnv.length params in
+            let len_params = List.length params in
             let rec loop level cut =
               let lb = List.nth_exn sorted_abs_exact_bw cut in
               let abs_exact_bw' = List.map ~f:(fun n -> if Z.Compare.(n >= lb) then n else Z.zero) abs_exact_bw in
               let abs_approx_bw' = ContFrac.approximate_ratio abs_exact_bw' level in
               let approx_bw' = List.zip_exn abs_approx_bw' exact_bw |> List.map ~f:(fun (a, s) -> if Z.Compare.(s < Z.zero) then Z.(~-a) else a) in
-              let w' = (List.zip_exn (SortEnv.list_of params) (List.tl_exn approx_bw') |> Map.Poly.of_alist_exn) in
+              let w' = (List.zip_exn (List.map ~f:fst params) (List.tl_exn approx_bw') |> Map.Poly.of_alist_exn) in
               let b' = List.hd_exn approx_bw' in
               let h = make_halfspace w' b' in
               if Set.Poly.for_all all_examples ~f:(fun ex -> Bool.(eval_halfspace h ex = eval_halfspace exact_halfspace ex)) then
@@ -93,7 +93,7 @@ let rec classify approx_level csvm params pos_examples neg_examples =
           else
             let abs_approx_bw = ContFrac.approximate_ratio abs_exact_bw approx_level in
             let approx_bw = List.zip_exn abs_approx_bw exact_bw |> List.map ~f:(fun (a, s) -> if Z.Compare.(s < Z.zero) then Z.(~-a) else a) in
-            let w' = (List.zip_exn (SortEnv.list_of params) (List.tl_exn approx_bw) |> Map.Poly.of_alist_exn) in
+            let w' = (List.zip_exn (List.map ~f:fst params) (List.tl_exn approx_bw) |> Map.Poly.of_alist_exn) in
             let b' = List.hd_exn approx_bw in
             make_halfspace w' b' in
         if Set.Poly.map all_examples ~f:(eval_halfspace h) |> Set.Poly.length < 2 then
@@ -117,10 +117,10 @@ let rec classify approx_level csvm params pos_examples neg_examples =
     Set.Poly.add (Set.Poly.union hst hsf) h
 
 let svm_half_spaces_of approx_level csvm sorts pos_examples neg_examples =
-  let params = LogicOld.SortEnv.of_sorts sorts in
+  let params = LogicOld.sort_env_list_of_sorts sorts in
   params,
   Set.Poly.union
-    (SortEnv.set_of params
+    (Set.Poly.of_list params
      |> Set.Poly.filter_map ~f:(function
          | (x, T_bool.SBool) -> Some (Term.mk_var x T_bool.SBool)
          | (_, T_int.SInt) -> None

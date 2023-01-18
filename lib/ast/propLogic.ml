@@ -1,5 +1,5 @@
 open Core
-open Common.Util
+open Common.Ext
 
 type info = Dummy
 
@@ -37,7 +37,7 @@ module Formula : sig
   val pos_atoms_of_clause: t -> t list
 
   val eval: t -> bool
-  val subst: (string, bool) Core.Map.Poly.t -> t -> t
+  val subst: (string, bool) Map.Poly.t -> t -> t
   val cnf_of: t -> (string list * string list) list
   val nnf_of: t -> t
   val tseitinize: t -> (string Set.Poly.t * string Set.Poly.t) Set.Poly.t
@@ -56,9 +56,9 @@ end = struct
   let mk_false ?(info=Dummy) () = False info
 
   let mk_atom ?(info=Dummy) ident = Atom (ident, info)
-  let mk_neg ?(info=Dummy) t = UnaryOp(Neg, t, info)
-  let mk_and ?(info=Dummy) t1 t2 = BinaryOp(And, t1, t2, info)
-  let mk_or ?(info=Dummy) t1 t2 = BinaryOp(Or, t1, t2, info)
+  let mk_neg ?(info=Dummy) t = UnaryOp (Neg, t, info)
+  let mk_and ?(info=Dummy) t1 t2 = BinaryOp (And, t1, t2, info)
+  let mk_or ?(info=Dummy) t1 t2 = BinaryOp (Or, t1, t2, info)
 
   let and_of ?(info=Dummy) ts =
     List.fold ~f:(fun acc t -> mk_and acc t ~info) ~init:(mk_true () ~info) ts
@@ -69,11 +69,11 @@ end = struct
   let rec str_of = function
     | True _ -> "True"
     | False _ -> "False"
-    | Atom(id, _) -> id
-    | UnaryOp(_, t, _) -> Printf.sprintf "not (%s)" (str_of t)
-    | BinaryOp(And, t1, t2, _) ->
+    | Atom (id, _) -> id
+    | UnaryOp (_, t, _) -> Printf.sprintf "not (%s)" (str_of t)
+    | BinaryOp (And, t1, t2, _) ->
       Printf.sprintf "(%s /\\ %s)" (str_of t1) (str_of t2)
-    | BinaryOp(Or, t1, t2, _) ->
+    | BinaryOp (Or, t1, t2, _) ->
       Printf.sprintf "(%s \\/ %s)" (str_of t1) (str_of t2)
   let let_atom = function
     | Atom (name, info) -> (name, info)
@@ -92,38 +92,38 @@ end = struct
     | UnaryOp (_, phi, _) -> 1 + height phi
     | BinaryOp (_, phi1, phi2, _) -> 1 + max (height phi1) (height phi2)
 
-  let rec occurs_in phi1 phi2 = 
-    if Stdlib.(=) phi1 phi2 then true
-    else 
+  let rec occurs_in phi1 phi2 =
+    if Stdlib.(phi1 = phi2) then true
+    else
       match phi2 with
-      | True _ | False _ | Atom(_, _) -> false
-      | UnaryOp(_, phi2', _) -> occurs_in phi1 phi2'
-      | BinaryOp(_, phi', phi'', _) -> (occurs_in phi1 phi' || occurs_in phi1 phi'')
+      | True _ | False _ | Atom (_, _) -> false
+      | UnaryOp (_, phi2', _) -> occurs_in phi1 phi2'
+      | BinaryOp (_, phi', phi'', _) -> (occurs_in phi1 phi' || occurs_in phi1 phi'')
 
   let rec neg_atoms_of_clause = function
-    | UnaryOp(Neg, Atom(id, Dummy), _) -> [Atom(id, Dummy)]
-    | Atom(_, _) | True _ | False _ -> []
-    | BinaryOp(Or, phi1, phi2, _) -> neg_atoms_of_clause phi1 @ neg_atoms_of_clause phi2
+    | UnaryOp (Neg, Atom (id, Dummy), _) -> [Atom (id, Dummy)]
+    | Atom (_, _) | True _ | False _ -> []
+    | BinaryOp (Or, phi1, phi2, _) -> neg_atoms_of_clause phi1 @ neg_atoms_of_clause phi2
     | phi -> failwith @@ Printf.sprintf "The formula %s is not of clause" (str_of phi)
 
   let rec pos_atoms_of_clause = function
-    | UnaryOp(Neg, Atom(_, _), _) | True _ | False _ -> []
-    | Atom(id, Dummy) -> [Atom(id, Dummy)]
-    | BinaryOp(Or, phi1, phi2, _) -> pos_atoms_of_clause phi1 @ pos_atoms_of_clause phi2
+    | UnaryOp (Neg, Atom (_, _), _) | True _ | False _ -> []
+    | Atom (id, Dummy) -> [Atom (id, Dummy)]
+    | BinaryOp (Or, phi1, phi2, _) -> pos_atoms_of_clause phi1 @ pos_atoms_of_clause phi2
     | _ -> failwith "This formula is not of clause"
 
   let eval formula =
     let rec inner = function
       | True _ -> [true] | False _ -> [false]
-      | Atom _ -> [true; false] 
+      | Atom _ -> [true; false]
       | UnaryOp (Neg, phi, _) ->
         List.map ~f:(fun tf -> not tf) @@ inner phi
       | BinaryOp (And, phi1, phi2, _) ->
-        List.map (inner phi1) ~f:(fun tf ->
-            List.map (inner phi2) ~f:(fun tf' -> tf && tf')) |> List.concat
+        List.concat_map (inner phi1) ~f:(fun tf ->
+            List.map (inner phi2) ~f:(Stdlib.(&&) tf))
       | BinaryOp (Or, phi1, phi2, _) ->
-        List.map (inner phi1) ~f:(fun tf ->
-            List.map (inner phi2) ~f:(fun tf' -> tf || tf')) |> List.concat
+        List.concat_map (inner phi1) ~f:(fun tf ->
+            List.map (inner phi2) ~f:(Stdlib.(||) tf))
     in
     if List.for_all (inner formula) ~f:(Stdlib.(=) true) then true
     else if List.for_all (inner formula) ~f:(Stdlib.(=) false) then false
@@ -136,33 +136,33 @@ end = struct
         | None -> Atom (name, info)
         | Some true -> True info | Some false -> False info
       end
-    | UnaryOp(op, phi, info) -> UnaryOp(op, subst map phi, info)
-    | BinaryOp(op, phi1, phi2, info) -> BinaryOp(op, subst map phi1, subst map phi2, info)
+    | UnaryOp (op, phi, info) -> UnaryOp (op, subst map phi, info)
+    | BinaryOp (op, phi1, phi2, info) -> BinaryOp (op, subst map phi1, subst map phi2, info)
 
   let rec cnf_of = function
-    | True _ | UnaryOp(Neg, (False _), _) -> []
-    | False _ | UnaryOp(Neg, (True _), _) -> [[], []]
-    | Atom(name, _) -> [[], [name]]
-    | UnaryOp(Neg, (Atom (name, _)), _) -> [[name], []]
-    | UnaryOp(Neg, UnaryOp(Neg, phi, _), _) -> cnf_of phi
-    | BinaryOp(And, phi1, phi2, _) -> cnf_of phi1 @ cnf_of phi2
-    | BinaryOp(Or, phi1, phi2, _) ->
+    | True _ | UnaryOp (Neg, (False _), _) -> []
+    | False _ | UnaryOp (Neg, (True _), _) -> [[], []]
+    | Atom (name, _) -> [[], [name]]
+    | UnaryOp (Neg, (Atom (name, _)), _) -> [[name], []]
+    | UnaryOp (Neg, UnaryOp (Neg, phi, _), _) -> cnf_of phi
+    | BinaryOp (And, phi1, phi2, _) -> cnf_of phi1 @ cnf_of phi2
+    | BinaryOp (Or, phi1, phi2, _) ->
       let cls1, cls2 = cnf_of phi1, cnf_of phi2 in
       List.map (List.cartesian_product cls1 cls2)
         ~f:(fun ((ns1, ps1), (ns2, ps2)) -> ns1 @ ns2, ps1 @ ps2)
     | phi -> failwith @@ Printf.sprintf "fail @ cnf_of %s " @@ str_of phi
   let rec nnf_of = function
-    | UnaryOp(Neg, (True Dummy), _) -> False Dummy
-    | UnaryOp(Neg, (False Dummy), _) -> True Dummy
-    | UnaryOp(Neg, UnaryOp(Neg, phi, _), _) -> nnf_of phi
-    | UnaryOp(Neg, BinaryOp(And, phi1, phi2, _), _) ->
+    | UnaryOp (Neg, (True Dummy), _) -> False Dummy
+    | UnaryOp (Neg, (False Dummy), _) -> True Dummy
+    | UnaryOp (Neg, UnaryOp (Neg, phi, _), _) -> nnf_of phi
+    | UnaryOp (Neg, BinaryOp (And, phi1, phi2, _), _) ->
       let phi1', phi2' = nnf_of (UnaryOp (Neg, phi1, Dummy)), nnf_of (UnaryOp (Neg, phi2, Dummy)) in
-      BinaryOp(Or, phi1', phi2', Dummy)
-    | UnaryOp(Neg, BinaryOp(Or, phi1, phi2, _), _) ->
+      BinaryOp (Or, phi1', phi2', Dummy)
+    | UnaryOp (Neg, BinaryOp (Or, phi1, phi2, _), _) ->
       let phi1', phi2' = nnf_of (UnaryOp (Neg, phi1, Dummy)), nnf_of (UnaryOp (Neg, phi2, Dummy)) in
-      BinaryOp(And, phi1', phi2', Dummy)
-    | BinaryOp(And, phi1, phi2, _) -> BinaryOp(And, nnf_of phi1, nnf_of phi2, Dummy)
-    | BinaryOp(Or, phi1, phi2, _) -> BinaryOp(Or, nnf_of phi1, nnf_of phi2, Dummy)
+      BinaryOp (And, phi1', phi2', Dummy)
+    | BinaryOp (And, phi1, phi2, _) -> BinaryOp (And, nnf_of phi1, nnf_of phi2, Dummy)
+    | BinaryOp (Or, phi1, phi2, _) -> BinaryOp (Or, nnf_of phi1, nnf_of phi2, Dummy)
     | phi -> phi
 
   let strue cnf_or_dnf =
@@ -202,14 +202,14 @@ end = struct
                 else if Set.Poly.length p = 1 && Set.Poly.is_empty n then
                   First (Set.Poly.choose_exn p), strue true
                 else
-                  let name = Ident.mk_fresh_pvar () |> function | Ident.Pvar name -> name in
+                  let name = Ident.mk_fresh_pvar () |> function Ident.Pvar name -> name in
                   First name,
                   Set.Poly.add
                     (Set.Poly.union
                        (Set.Poly.map n ~f:(fun atm -> Set.Poly.empty, Set.Poly.of_list [name; atm]))
                        (Set.Poly.map p ~f:(fun atm -> Set.Poly.singleton atm, Set.Poly.singleton name)))
                     (Set.Poly.add n name, p)) in
-          let ps, ns = Set.partition_map names ~f:ident in
+          let ps, ns = Set.partition_map names ~f:Fn.id in
           Set.Poly.singleton (ns, ps),
           Set.Poly.union c (Set.concat cc)
     | BinaryOp (Or, formula_0, formula_1, _) ->
@@ -228,14 +228,14 @@ end = struct
                 else if Set.Poly.length p = 1 && Set.Poly.is_empty n then
                   First (Set.Poly.choose_exn p), strue true
                 else
-                  let name = Ident.mk_fresh_pvar () |> function | Ident.Pvar name -> name in
+                  let name = Ident.mk_fresh_pvar () |> function Ident.Pvar name -> name in
                   First name,
                   Set.Poly.add
                     (Set.Poly.union
                        (Set.Poly.map n ~f:(fun atm -> Set.Poly.of_list [name; atm], Set.Poly.empty))
                        (Set.Poly.map p ~f:(fun atm -> Set.Poly.singleton name, Set.Poly.singleton atm)))
                     (p, Set.Poly.add n name)) in
-          let ps, ns = Set.partition_map names ~f:ident in
+          let ps, ns = Set.partition_map names ~f:Fn.id in
           Set.Poly.singleton (ns, ps),
           Set.Poly.union c (Set.concat cc)
         else
@@ -243,9 +243,8 @@ end = struct
   let tseitinize phi = let s, c = tseitinize true phi in sand_cnf [s; c]
 end
 
-let str_of_model model =
-  String.concat ~sep:", " @@
-  List.map model ~f:(function
+let str_of_model =
+  String.concat_map_list ~sep:", " ~f:(function
       | phi, None ->
         Printf.sprintf "%s -> *" (Formula.str_of phi)
       | phi, Some value ->

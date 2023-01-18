@@ -1,15 +1,15 @@
 {
     "verbose": false,
-
     "number_of_expr": 1,
     "number_of_cond_conj": 1,
+    "depth": 1,
+    "ext": 0,
     "upper_bound_expr_coeff": 1,
     "upper_bound_expr_const": 0,
     "expr_seeds": null,
     "upper_bound_cond_coeff": 1,
     "upper_bound_cond_const": 0,
     "cond_seeds": null,
-
     "max_number_of_cond_conj": null,
     "lower_bound_expr_coeff": null,
     "lower_bound_cond_coeff": null,
@@ -19,6 +19,6 @@
     "threshold_expr_const": 3,
     "threshold_cond_coeff": null,
     "threshold_cond_const": 3,
-
-    "ignore_bool": true
+    "ignore_bool": true,
+    "fix_shape": false
 }

@@ -1,0 +1,23 @@
+{
+  "strategy": [
+    "Classification",
+    {
+      "verbose": false,
+      "classifier": [
+        "Filename",
+        "./config/pcsat/classifier/bfsb_mcts1_poly012shuffle_all.json"
+      ],
+      "wf_classifier": [
+        "Filename",
+        "./config/pcsat/classifier/wf_dt_eager.json"
+      ],
+      "fn_classifier": [
+        "Filename",
+        "./config/pcsat/classifier/fn_tb.json"
+      ]
+    }
+  ],
+  "check_candidates": false,
+  "refine_candidates": false,
+  "verbose": false
+}

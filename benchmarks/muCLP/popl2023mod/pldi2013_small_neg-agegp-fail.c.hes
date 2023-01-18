@@ -1,0 +1,8 @@
+EF1 1
+s.t.
+EF1 (p: int): bool =mu AF1 p \/ EF2 p \/ EF3 p;
+EF2 (p: int): bool =mu AF2 p \/ EF1 1;
+EF3 (p: int): bool =mu AF3 p \/ EF1 2;
+AF1 (p: int): bool =mu p <= 0 \/ AF2 p /\ AF3 p;
+AF2 (p: int): bool =mu p <= 0 \/ AF1 1;
+AF3 (p: int): bool =mu p <= 0 \/ AF1 2;

@@ -1,4 +1,5 @@
 open Core
+open Common
 open Common.Util
 open Ast
 open PCSatCommon
@@ -33,8 +34,7 @@ module Config = struct
           instantiate_ext_files x >>= fun x ->
           Ok (ExtFile.Instance x)
         | Error msg ->
-          error_string
-          @@ Printf.sprintf
+          error_string @@ Printf.sprintf
             "Invalid TemplateUpdateStrategy Configuration (%s): %s" filename msg
       end
     | Instance x -> Ok (ExtFile.Instance x)
@@ -49,7 +49,7 @@ module type TemplateUpdateStrategyType = sig
     -> unit
 end
 
-module Make (Cfg: Config.ConfigType) (PCSP: PCSP.Problem.ProblemType) : TemplateUpdateStrategyType = struct
+module Make (RLCfg: RLConfig.ConfigType) (Cfg: Config.ConfigType) (PCSP: PCSP.Problem.ProblemType) : TemplateUpdateStrategyType = struct
   let config = Cfg.config
 
   module S =
@@ -57,25 +57,32 @@ module Make (Cfg: Config.ConfigType) (PCSP: PCSP.Problem.ProblemType) : Template
          | Config.Default ->
            (module struct
              let update template_modules _example _ =
-               Map.Poly.iter template_modules ~f:(fun ft ->
-                   let (module FunTemplate : Template.Function.Type) = ft in
+               Map.Poly.iter template_modules ~f:(fun (module FunTemplate : Template.Function.Type) ->
                    FunTemplate.next ())
            end : TemplateUpdateStrategyType)
          | Config.UnsatCore ->
            (module struct
              let update template_modules _example pvar_labels_map = (*ToDo: output -> boolean value *)
-               Map.Poly.iteri template_modules ~f:(fun ~key:pvar ~data:ft ->
+               Map.Poly.iteri template_modules ~f:(fun ~key:pvar ~data:(module FunTemplate : Template.Function.Type) ->
                    match Map.Poly.find pvar_labels_map pvar with
                    | None -> ()
-                   | Some labels ->
-                     let (module FunTemplate : Template.Function.Type) = ft in
-                     FunTemplate.update_with_labels labels)
+                   | Some labels -> FunTemplate.update_with_labels labels)
            end : TemplateUpdateStrategyType)
          | Config.RL ->
            (module struct
              let update template_modules _example pvar_labels_map =
-               Map.Poly.iteri template_modules ~f:(fun ~key:pvar ~data:ft ->
-                   let (module FunTemplate : Template.Function.Type) = ft in
+               Map.Poly.iteri template_modules ~f:(fun ~key:pvar ~data:(module FunTemplate : Template.Function.Type) ->
+                   let labels =
+                     match Map.Poly.find pvar_labels_map pvar with
+                     | None -> Set.Poly.empty (*ToDo: is this OK?*)
+                     | Some labels -> labels
+                   in
+                   FunTemplate.show_state RLCfg.config.show_num_args labels);
+               if RLCfg.config.show_user_time then
+                 Out_channel.print_endline (Printf.sprintf "user time: %s" (string_of_float @@ Timer.get_user_time ()));
+               Out_channel.print_endline ("end of states");
+               Out_channel.flush Out_channel.stdout;
+               Map.Poly.iteri template_modules ~f:(fun ~key:pvar ~data:(module FunTemplate : Template.Function.Type) ->
                    let labels =
                      match Map.Poly.find pvar_labels_map pvar with
                      | None -> Set.Poly.empty (*ToDo: is this OK?*)

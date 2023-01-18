@@ -1,0 +1,28 @@
+[
+    "MuVal",
+    {
+        "optimizer": [
+            "Filename",
+            "./config/muval/optimizer/dbg.json"
+        ],
+        "pcsp_solver": [
+            "Filename",
+            "./config/solver/dbg_pcsat_tb_ar.json"
+        ],
+        "qelim": {
+            "mode": [
+                "SkolemPred"
+            ],
+            "verbose": true
+        },
+        "mode": [
+            "ParallelExc"
+        ],
+        "check_problem": true,
+        "verbose": true,
+        "gen_extra_partial_sols": true,
+        "random_ex_size": 1,
+        "random_ex_bound": 200,
+        "output_iteration": true
+    }
+]

@@ -21,6 +21,6 @@ module Config = struct
   module type ConfigType = sig val config : t end
 end
 
-module Make (Cfg : Config.ConfigType) (Problem: PCSP.Problem.ProblemType) = struct
-  let run_phase _ = Or_error.unimplemented "PASynthesizer.run_phase"
+module Make (Cfg: Config.ConfigType) (Problem: PCSP.Problem.ProblemType) = struct
+  let run_phase _ _ = Or_error.unimplemented "PASynthesizer.run_phase"
 end

@@ -3,6 +3,7 @@
 
     "number_of_expr": 1,
     "number_of_cond_conj": 1,
+
     "upper_bound_expr_coeff": 1,
     "upper_bound_expr_const": 0,
     "expr_seeds": null,
@@ -20,5 +21,6 @@
     "threshold_cond_coeff": null,
     "threshold_cond_const": 3,
 
-    "ignore_bool": true
+    "ignore_bool": true,
+    "fix_shape": false
 }

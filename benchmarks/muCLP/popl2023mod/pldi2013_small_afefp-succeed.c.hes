@@ -1,0 +1,16 @@
+AF1 0 5 5
+s.t.
+AF1 (p: int) (x: int) (y: int): bool =mu EF1 p x y \/ (y < 0 => AF2 p x) /\ (not (y < 0) => AF3 p x y);
+AF2 (p: int) (x: int): bool =mu EF2 p x \/ (x < 0 => AF4 p) /\ (not (x < 0) => AF5 p x);
+AF4 (p: int): bool =mu EF3 p \/ AF6 1;
+AF6 (p: int): bool =mu EF4 p \/ false;
+AF5 (p: int) (x: int): bool =mu EF5 p x \/ AF7 p x /\ AF2 p x;
+AF7 (p: int) (x: int): bool =mu EF6 p x \/ AF2 p (x - 1);
+AF3 (p: int) (x: int) (y: int): bool =mu EF7 p x y \/ AF1 p x (y - 1);
+EF1 (p: int) (x: int) (y: int): bool =mu p > 0 \/ (y < 0 => EF2 p x) /\ (not (y < 0) => EF7 p x y);
+EF2 (p: int) (x: int): bool =mu p > 0 \/ (x < 0 => EF3 p) /\ (not (x < 0) => EF5 p x);
+EF3 (p: int): bool =mu p > 0 \/ EF4 1;
+EF4 (p: int): bool =mu p > 0 \/ false;
+EF5 (p: int) (x: int): bool =mu p > 0 \/ EF6 p x \/ EF2 p x;
+EF6 (p: int) (x: int): bool =mu p > 0 \/ EF2 p (x - 1);
+EF7 (p: int) (x: int) (y: int): bool =mu p > 0 \/ EF1 p x (y - 1);

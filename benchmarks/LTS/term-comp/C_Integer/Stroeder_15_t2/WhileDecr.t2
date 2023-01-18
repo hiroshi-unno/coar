@@ -1,0 +1,28 @@
+///*** 1_main ***///
+START: main_entry;
+
+FROM: main_entry;
+vcall := nondet();
+var__temp_vi.0 := vcall;
+TO: main_while.cond;
+
+FROM: main_while.cond;
+vi.0 := var__temp_vi.0;
+TO: main_while.cond_end;
+
+FROM: main_while.cond_end;
+assume(vi.0 > 5);
+TO: main_while.body;
+
+FROM: main_while.cond_end;
+assume(vi.0 <= 5);
+TO: main_while.end;
+
+FROM: main_while.body;
+vsub := vi.0 - 1;
+var__temp_vi.0 := vsub;
+TO: main_while.cond;
+
+FROM: main_while.end;
+TO: main_while.end_ret;
+

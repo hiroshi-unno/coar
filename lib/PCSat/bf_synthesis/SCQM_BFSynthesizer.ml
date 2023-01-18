@@ -6,5 +6,5 @@ module Config = struct
 end
 
 module Make (Cfg: Config.ConfigType) = struct
-  let synthesize _ = Or_error.unimplemented "SCQM_BFSynthesizer.synthesize"
+  let synthesize _ _ = Or_error.unimplemented "SCQM_BFSynthesizer.synthesize"
 end

@@ -1,41 +1,62 @@
-[submodule "benchmarks/smt-test/QF_ALIA"]
-	path = benchmarks/smt-test/QF_ALIA
+[submodule "benchmarks/SMT/QF_ALIA"]
+	path = benchmarks/SMT/QF_ALIA
 	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/QF_ALIA.git
-[submodule "benchmarks/smt-test/QF_DT"]
-	path = benchmarks/smt-test/QF_DT
+[submodule "benchmarks/SMT/QF_DT"]
+	path = benchmarks/SMT/QF_DT
 	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/QF_DT.git
-[submodule "benchmarks/smt-test/QF_LIA"]
-	path = benchmarks/smt-test/QF_LIA
+[submodule "benchmarks/SMT/QF_LIA"]
+	path = benchmarks/SMT/QF_LIA
 	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/QF_LIA.git
-[submodule "benchmarks/smt-test/QF_LIRA"]
-	path = benchmarks/smt-test/QF_LIRA
+[submodule "benchmarks/SMT/QF_LIRA"]
+	path = benchmarks/SMT/QF_LIRA
 	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/QF_LIRA.git
-[submodule "benchmarks/smt-test/QF_LRA"]
-	path = benchmarks/smt-test/QF_LRA
+[submodule "benchmarks/SMT/QF_LRA"]
+	path = benchmarks/SMT/QF_LRA
 	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/QF_LRA.git
-[submodule "benchmarks/smt-test/QF_NIA"]
-	path = benchmarks/smt-test/QF_NIA
+[submodule "benchmarks/SMT/QF_NIA"]
+	path = benchmarks/SMT/QF_NIA
 	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/QF_NIA.git
-[submodule "benchmarks/smt-test/QF_NIRA"]
-	path = benchmarks/smt-test/QF_NIRA
+[submodule "benchmarks/SMT/QF_NIRA"]
+	path = benchmarks/SMT/QF_NIRA
 	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/QF_NIRA.git
-[submodule "benchmarks/smt-test/QF_NRA"]
-	path = benchmarks/smt-test/QF_NRA
+[submodule "benchmarks/SMT/QF_NRA"]
+	path = benchmarks/SMT/QF_NRA
 	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/QF_NRA.git
-[submodule "benchmarks/smt-test/QF_UF"]
-	path = benchmarks/smt-test/QF_UF
+[submodule "benchmarks/SMT/QF_UF"]
+	path = benchmarks/SMT/QF_UF
 	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/QF_UF.git
 
-[submodule "benchmarks/qsmt-test/LIA"]
-	path = benchmarks/qsmt-test/LIA
+[submodule "benchmarks/QSMT/LIA"]
+	path = benchmarks/QSMT/LIA
 	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/LIA.git
-[submodule "benchmarks/qsmt-test/LRA"]
-	path = benchmarks/qsmt-test/LRA
+[submodule "benchmarks/QSMT/LRA"]
+	path = benchmarks/QSMT/LRA
 	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/LRA.git
-[submodule "benchmarks/qsmt-test/strategy-improvement"]
-	path = benchmarks/qsmt-test/strategy-improvement
+[submodule "benchmarks/QSMT/ijcai2016"]
+	path = benchmarks/QSMT/ijcai2016
 	url = https://github.com/zkincaid/strategy-improvement.git
 
-[submodule "benchmarks/term-comp20"]
-	path = benchmarks/term-comp20
+[submodule "benchmarks/chc-comp18"]
+	path = benchmarks/chc-comp18
+	url = https://github.com/chc-comp/chc-comp18-benchmarks.git
+[submodule "benchmarks/chc-comp19"]
+	path = benchmarks/chc-comp19
+	url = https://github.com/chc-comp/chc-comp19-benchmarks.git
+[submodule "benchmarks/chc-comp20"]
+	path = benchmarks/chc-comp20
+	url = https://github.com/chc-comp/chc-comp20-benchmarks.git
+[submodule "benchmarks/chc-comp21"]
+	path = benchmarks/chc-comp21
+	url = https://github.com/chc-comp/chc-comp21-benchmarks.git
+[submodule "benchmarks/chc-comp22"]
+	path = benchmarks/chc-comp22
+	url = https://github.com/chc-comp/chc-comp22-benchmarks.git
+[submodule "benchmarks/sygus-comp"]
+	path = benchmarks/sygus-comp
+	url = https://github.com/SyGuS-Org/benchmarks.git
+[submodule "benchmarks/term-comp"]
+	path = benchmarks/term-comp
 	url = https://github.com/TermCOMP/TPDB.git
+[submodule "benchmarks/sv-comp"]
+	path = benchmarks/sv-comp
+	url = https://gitlab.com/sosy-lab/benchmarking/sv-benchmarks.git

@@ -1,0 +1,26 @@
+forall (Pdolen: int) (i: int). AG1 Pdolen i 0 0
+s.t.
+AG1 (Pdolen: int) (i: int) (set: int) (unset: int): bool =nu (set = 1 => AF1 Pdolen i unset) /\ AG2 Pdolen i 1 unset;
+AG2 (Pdolen: int) (i: int) (set: int) (unset: int): bool =nu (set = 1 => AF2 Pdolen i unset) /\ AG3 Pdolen i 0 unset;
+AG3 (Pdolen: int) (i: int) (set: int) (unset: int): bool =nu (set = 1 => AF3 Pdolen i unset) /\ (not (i < Pdolen) => AG4 set unset) /\ (not (not (i < Pdolen)) => AG5 Pdolen i set unset);
+AG4 (set: int) (unset: int): bool =nu (set = 1 => AF4 unset) /\ AG6 set 1;
+AG6 (set: int) (unset: int): bool =nu (set = 1 => AF5 unset) /\ AG7 set 0;
+AG7 (set: int) (unset: int): bool =nu (set = 1 => AF6 unset) /\ true;
+AG5 (Pdolen: int) (i: int) (set: int) (unset: int): bool =nu (set = 1 => AF7 Pdolen i unset) /\ AG4 set unset /\ AG8 Pdolen i set unset;
+AG8 (Pdolen: int) (i: int) (set: int) (unset: int): bool =nu (set = 1 => AF8 Pdolen i unset) /\ (forall (status: int). AG9 Pdolen i set status unset);
+AG9 (Pdolen: int) (i: int) (set: int) (status: int) (unset: int): bool =nu (set = 1 => AF9 Pdolen i status unset) /\ (1 != status => AG10 set status unset) /\ (not (1 != status) => AG11 Pdolen i set unset);
+AG10 (set: int) (status: int) (unset: int): bool =nu (set = 1 => AF10 status unset) /\ (2 = status => AG12 set unset) /\ (not (2 = status) => AG4 set unset);
+AG12 (set: int) (unset: int): bool =nu (set = 1 => AF11 unset) /\ (forall (num: int). AG4 set unset);
+AG11 (Pdolen: int) (i: int) (set: int) (unset: int): bool =nu (set = 1 => AF12 Pdolen i unset) /\ AG3 Pdolen (i + 1) set unset;
+AF1 (Pdolen: int) (i: int) (unset: int): bool =mu unset = 1 \/ AF2 Pdolen i unset;
+AF2 (Pdolen: int) (i: int) (unset: int): bool =mu unset = 1 \/ AF3 Pdolen i unset;
+AF3 (Pdolen: int) (i: int) (unset: int): bool =mu unset = 1 \/ (not (i < Pdolen) => AF4 unset) /\ (not (not (i < Pdolen)) => AF7 Pdolen i unset);
+AF4 (unset: int): bool =mu unset = 1 \/ AF5 1;
+AF5 (unset: int): bool =mu unset = 1 \/ AF6 0;
+AF6 (unset: int): bool =mu unset = 1 \/ false;
+AF7 (Pdolen: int) (i: int) (unset: int): bool =mu unset = 1 \/ AF4 unset /\ AF8 Pdolen i unset;
+AF8 (Pdolen: int) (i: int) (unset: int): bool =mu unset = 1 \/ (forall (status: int). AF9 Pdolen i status unset);
+AF9 (Pdolen: int) (i: int) (status: int) (unset: int): bool =mu unset = 1 \/ (1 != status => AF10 status unset) /\ (not (1 != status) => AF12 Pdolen i unset);
+AF10 (status: int) (unset: int): bool =mu unset = 1 \/ (2 = status => AF11 unset) /\ (not (2 = status) => AF4 unset);
+AF11 (unset: int): bool =mu unset = 1 \/ (forall (num: int). AF4 unset);
+AF12 (Pdolen: int) (i: int) (unset: int): bool =mu unset = 1 \/ AF3 Pdolen (i + 1) unset;

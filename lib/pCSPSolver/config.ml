@@ -5,9 +5,10 @@ type t =
   | PCSat of PCSat.Config.t
   | SPACER of SPACER.Config.t
   | Hoice of Hoice.Config.t
-  | Forward [@@ deriving yojson]
+  | Forward
+  | Printer of Printer.Config.t [@@ deriving yojson]
 
-module type ConfigType = sig val config : t end 
+module type ConfigType = sig val config : t end
 
 let instantiate_ext_files = let open Or_error in
   function
@@ -19,6 +20,8 @@ let instantiate_ext_files = let open Or_error in
     Hoice.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (Hoice cfg)
   | Forward ->
     Ok Forward
+  | Printer cfg ->
+    Printer.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (Printer cfg)
 
 let load_ext_file = function
   | ExtFile.Filename filename ->
@@ -31,8 +34,7 @@ let load_ext_file = function
         instantiate_ext_files x >>= fun x ->
         Ok (ExtFile.Instance x)
       | Error msg ->
-        error_string
-        @@ Printf.sprintf
+        error_string @@ Printf.sprintf
           "Invalid PCSPSolver Configuration (%s): %s" filename msg
     end
   | Instance x -> Ok (ExtFile.Instance x)

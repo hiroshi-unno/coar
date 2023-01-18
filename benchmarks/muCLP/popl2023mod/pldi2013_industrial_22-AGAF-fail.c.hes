@@ -1,0 +1,24 @@
+forall (got_SIGHUP: int). AG1 got_SIGHUP 1
+s.t.
+AG1 (got_SIGHUP: int) (wakend: int): bool =nu AF1 got_SIGHUP wakend /\ AG2 got_SIGHUP 1;
+AG2 (got_SIGHUP: int) (wakend: int): bool =nu AF2 got_SIGHUP wakend /\ (got_SIGHUP > 0 => AG3 wakend) /\ (not (got_SIGHUP > 0) => AG4 got_SIGHUP wakend);
+AG3 (wakend: int): bool =nu AF3 wakend /\ AG5 0 wakend;
+AG5 (got_SIGHUP: int) (wakend: int): bool =nu AF4 got_SIGHUP wakend /\ AG6 wakend /\ AG4 got_SIGHUP wakend;
+AG6 (wakend: int): bool =nu AF5 wakend /\ true;
+AG4 (got_SIGHUP: int) (wakend: int): bool =nu AF6 got_SIGHUP wakend /\ (wakend > 0 => AG7 got_SIGHUP wakend) /\ (not (wakend > 0) => AG8 got_SIGHUP wakend);
+AG7 (got_SIGHUP: int) (wakend: int): bool =nu AF7 got_SIGHUP wakend /\ AG8 got_SIGHUP 0;
+AG8 (got_SIGHUP: int) (wakend: int): bool =nu AF8 got_SIGHUP wakend /\ (wakend <= 0 => AG9 got_SIGHUP wakend) /\ (not (wakend <= 0) => AG10 got_SIGHUP wakend);
+AG9 (got_SIGHUP: int) (wakend: int): bool =nu AF9 got_SIGHUP wakend /\ AG11 got_SIGHUP wakend /\ AG10 got_SIGHUP wakend;
+AG11 (got_SIGHUP: int) (wakend: int): bool =nu AF10 got_SIGHUP wakend /\ AG10 got_SIGHUP 1;
+AG10 (got_SIGHUP: int) (wakend: int): bool =nu AF11 got_SIGHUP wakend /\ AG6 wakend /\ AG2 got_SIGHUP wakend;
+AF1 (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ AF2 got_SIGHUP 1;
+AF2 (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ (got_SIGHUP > 0 => AF3 wakend) /\ (not (got_SIGHUP > 0) => AF6 got_SIGHUP wakend);
+AF3 (wakend: int): bool =mu wakend = 1 \/ AF4 0 wakend;
+AF4 (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ AF5 wakend /\ AF6 got_SIGHUP wakend;
+AF5 (wakend: int): bool =mu wakend = 1 \/ false;
+AF6 (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ (wakend > 0 => AF7 got_SIGHUP wakend) /\ (not (wakend > 0) => AF8 got_SIGHUP wakend);
+AF7 (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ AF8 got_SIGHUP 0;
+AF8 (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ (wakend <= 0 => AF9 got_SIGHUP wakend) /\ (not (wakend <= 0) => AF11 got_SIGHUP wakend);
+AF9 (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ AF10 got_SIGHUP wakend /\ AF11 got_SIGHUP wakend;
+AF10 (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ AF11 got_SIGHUP 1;
+AF11 (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ AF5 wakend /\ AF2 got_SIGHUP wakend;

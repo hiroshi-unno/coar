@@ -1,0 +1,16 @@
+forall (x: int). AG1 0 x
+s.t.
+AG1 (p: int) (x: int): bool =nu AF1 p x /\ AG2 p x /\ AG3 p x;
+AG2 (p: int) (x: int): bool =nu AF2 p x /\ (not (x > 0) => AG4 p x) /\ (not (not (x > 0)) => AG5 p x);
+AG4 (p: int) (x: int): bool =nu AF3 p x /\ AG3 (-1) x;
+AG3 (p: int) (x: int): bool =nu AF4 p x /\ AG1 0 x;
+AG5 (p: int) (x: int): bool =nu AF5 p x /\ AG6 p x /\ AG7 p x;
+AG6 (p: int) (x: int): bool =nu AF6 p x /\ AG2 p (x - 1);
+AG7 (p: int) (x: int): bool =nu AF7 p x /\ AG2 p (x + 1);
+AF1 (p: int) (x: int): bool =mu p <= 0 \/ AF2 p x /\ AF4 p x;
+AF2 (p: int) (x: int): bool =mu p <= 0 \/ (not (x > 0) => AF3 p x) /\ (not (not (x > 0)) => AF5 p x);
+AF3 (p: int) (x: int): bool =mu p <= 0 \/ AF4 (-1) x;
+AF4 (p: int) (x: int): bool =mu p <= 0 \/ AF1 0 x;
+AF5 (p: int) (x: int): bool =mu p <= 0 \/ AF6 p x /\ AF7 p x;
+AF6 (p: int) (x: int): bool =mu p <= 0 \/ AF2 p (x - 1);
+AF7 (p: int) (x: int): bool =mu p <= 0 \/ AF2 p (x + 1);

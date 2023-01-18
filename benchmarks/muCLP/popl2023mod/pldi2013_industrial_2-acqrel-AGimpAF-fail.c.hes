@@ -1,0 +1,20 @@
+AG1 0 0
+s.t.
+AG1 (A: int) (R: int): bool =nu (A = 1 => AF1 R) /\ AG2 A R /\ AG3 A R;
+AG2 (A: int) (R: int): bool =nu (A = 1 => AF2 R) /\ true;
+AG3 (A: int) (R: int): bool =nu (A = 1 => AF3 R) /\ AG4 1 R;
+AG4 (A: int) (R: int): bool =nu (A = 1 => AF4 R) /\ AG5 0 R;
+AG5 (A: int) (R: int): bool =nu (A = 1 => AF5 R) /\ (forall (n: int). AG6 A R n);
+AG6 (A: int) (R: int) (n: int): bool =nu (A = 1 => AF6 R n) /\ (not (n > 0) => AG7 A R) /\ (not (not (n > 0)) => AG8 A R n);
+AG7 (A: int) (R: int): bool =nu (A = 1 => AF7 R) /\ AG9 A 1;
+AG9 (A: int) (R: int): bool =nu (A = 1 => AF8 R) /\ AG1 A 0;
+AG8 (A: int) (R: int) (n: int): bool =nu (A = 1 => AF9 R n) /\ AG6 A R (n - 1);
+AF1 (R: int): bool =mu R = 5 \/ AF2 R /\ AF3 R;
+AF2 (R: int): bool =mu R = 5 \/ false;
+AF3 (R: int): bool =mu R = 5 \/ AF4 R;
+AF4 (R: int): bool =mu R = 5 \/ AF5 R;
+AF5 (R: int): bool =mu R = 5 \/ (forall (n: int). AF6 R n);
+AF6 (R: int) (n: int): bool =mu R = 5 \/ (not (n > 0) => AF7 R) /\ (not (not (n > 0)) => AF9 R n);
+AF7 (R: int): bool =mu R = 5 \/ AF8 1;
+AF8 (R: int): bool =mu R = 5 \/ AF1 0;
+AF9 (R: int) (n: int): bool =mu R = 5 \/ AF6 R (n - 1);

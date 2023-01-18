@@ -1,14 +1,13 @@
 (library
   (name Z3Sat)
   (public_name CoAR.Z3Sat)
+  (preprocess (pps ppx_deriving_yojson))
   (libraries
     core
     z3
-    ast
-    SAT)
+    CoAR.ast
+    CoAR.SAT)
   (modules
     config
     solver
-    z3interface)
-  (preprocess (pps ppx_deriving_yojson))
-)
+    z3interface))

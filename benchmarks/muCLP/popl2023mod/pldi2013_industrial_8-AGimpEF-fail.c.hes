@@ -1,0 +1,34 @@
+forall (Pdolen: int) (i: int). AG1 Pdolen i 0 0
+s.t.
+AG1 (Pdolen: int) (i: int) (set: int) (unset: int): bool =nu (set = 1 => EF1 Pdolen i unset) /\ (forall (__rho_1_: int). AG2 Pdolen __rho_1_ i set unset);
+AG2 (Pdolen: int) (__rho_1_: int) (i: int) (set: int) (unset: int): bool =nu (set = 1 => EF2 Pdolen __rho_1_ i unset) /\ (__rho_1_ > 0 => AG3 Pdolen __rho_1_ i set unset) /\ (not (__rho_1_ > 0) => AG4 Pdolen __rho_1_ i set unset);
+AG3 (Pdolen: int) (__rho_1_: int) (i: int) (set: int) (unset: int): bool =nu (set = 1 => EF3 Pdolen __rho_1_ i unset) /\ AG5 Pdolen __rho_1_ i 1 unset;
+AG5 (Pdolen: int) (__rho_1_: int) (i: int) (set: int) (unset: int): bool =nu (set = 1 => EF4 Pdolen __rho_1_ i unset) /\ AG4 Pdolen __rho_1_ i 0 unset;
+AG4 (Pdolen: int) (__rho_1_: int) (i: int) (set: int) (unset: int): bool =nu (set = 1 => EF5 Pdolen __rho_1_ i unset) /\ (not (i < Pdolen) => AG6 __rho_1_ set unset) /\ (not (not (i < Pdolen)) => AG7 Pdolen __rho_1_ i set unset);
+AG6 (__rho_1_: int) (set: int) (unset: int): bool =nu (set = 1 => EF6 __rho_1_ unset) /\ (__rho_1_ <= 0 => AG8 set unset) /\ (not (__rho_1_ <= 0) => AG9 set unset);
+AG8 (set: int) (unset: int): bool =nu (set = 1 => EF7 unset) /\ AG10 set 1;
+AG10 (set: int) (unset: int): bool =nu (set = 1 => EF8 unset) /\ AG9 set 0;
+AG9 (set: int) (unset: int): bool =nu (set = 1 => EF9 unset) /\ true;
+AG7 (Pdolen: int) (__rho_1_: int) (i: int) (set: int) (unset: int): bool =nu (set = 1 => EF10 Pdolen __rho_1_ i unset) /\ (forall (DName: int). AG11 DName Pdolen __rho_1_ i set unset);
+AG11 (DName: int) (Pdolen: int) (__rho_1_: int) (i: int) (set: int) (unset: int): bool =nu (set = 1 => EF11 DName Pdolen __rho_1_ i unset) /\ (DName > 0 => AG6 __rho_1_ set unset) /\ (not (DName > 0) => AG12 Pdolen __rho_1_ i set unset);
+AG12 (Pdolen: int) (__rho_1_: int) (i: int) (set: int) (unset: int): bool =nu (set = 1 => EF12 Pdolen __rho_1_ i unset) /\ (forall (status: int). AG13 Pdolen __rho_1_ i set status unset);
+AG13 (Pdolen: int) (__rho_1_: int) (i: int) (set: int) (status: int) (unset: int): bool =nu (set = 1 => EF13 Pdolen __rho_1_ i status unset) /\ (1 != status => AG14 __rho_1_ set status unset) /\ (not (1 != status) => AG15 Pdolen __rho_1_ i set unset);
+AG14 (__rho_1_: int) (set: int) (status: int) (unset: int): bool =nu (set = 1 => EF14 __rho_1_ status unset) /\ (2 = status => AG16 __rho_1_ set unset) /\ (not (2 = status) => AG6 __rho_1_ set unset);
+AG16 (__rho_1_: int) (set: int) (unset: int): bool =nu (set = 1 => EF15 __rho_1_ unset) /\ (forall (num: int). AG6 __rho_1_ set unset);
+AG15 (Pdolen: int) (__rho_1_: int) (i: int) (set: int) (unset: int): bool =nu (set = 1 => EF16 Pdolen __rho_1_ i unset) /\ AG4 Pdolen __rho_1_ (i + 1) set unset;
+EF1 (Pdolen: int) (i: int) (unset: int): bool =mu unset = 1 \/ (exists (__rho_1_: int). EF2 Pdolen __rho_1_ i unset);
+EF2 (Pdolen: int) (__rho_1_: int) (i: int) (unset: int): bool =mu unset = 1 \/ (__rho_1_ > 0 => EF3 Pdolen __rho_1_ i unset) /\ (not (__rho_1_ > 0) => EF5 Pdolen __rho_1_ i unset);
+EF3 (Pdolen: int) (__rho_1_: int) (i: int) (unset: int): bool =mu unset = 1 \/ EF4 Pdolen __rho_1_ i unset;
+EF4 (Pdolen: int) (__rho_1_: int) (i: int) (unset: int): bool =mu unset = 1 \/ EF5 Pdolen __rho_1_ i unset;
+EF5 (Pdolen: int) (__rho_1_: int) (i: int) (unset: int): bool =mu unset = 1 \/ (not (i < Pdolen) => EF6 __rho_1_ unset) /\ (not (not (i < Pdolen)) => EF10 Pdolen __rho_1_ i unset);
+EF6 (__rho_1_: int) (unset: int): bool =mu unset = 1 \/ (__rho_1_ <= 0 => EF7 unset) /\ (not (__rho_1_ <= 0) => EF9 unset);
+EF7 (unset: int): bool =mu unset = 1 \/ EF8 1;
+EF8 (unset: int): bool =mu unset = 1 \/ EF9 0;
+EF9 (unset: int): bool =mu unset = 1 \/ false;
+EF10 (Pdolen: int) (__rho_1_: int) (i: int) (unset: int): bool =mu unset = 1 \/ (exists (DName: int). EF11 DName Pdolen __rho_1_ i unset);
+EF11 (DName: int) (Pdolen: int) (__rho_1_: int) (i: int) (unset: int): bool =mu unset = 1 \/ (DName > 0 => EF6 __rho_1_ unset) /\ (not (DName > 0) => EF12 Pdolen __rho_1_ i unset);
+EF12 (Pdolen: int) (__rho_1_: int) (i: int) (unset: int): bool =mu unset = 1 \/ (exists (status: int). EF13 Pdolen __rho_1_ i status unset);
+EF13 (Pdolen: int) (__rho_1_: int) (i: int) (status: int) (unset: int): bool =mu unset = 1 \/ (1 != status => EF14 __rho_1_ status unset) /\ (not (1 != status) => EF16 Pdolen __rho_1_ i unset);
+EF14 (__rho_1_: int) (status: int) (unset: int): bool =mu unset = 1 \/ (2 = status => EF15 __rho_1_ unset) /\ (not (2 = status) => EF6 __rho_1_ unset);
+EF15 (__rho_1_: int) (unset: int): bool =mu unset = 1 \/ (exists (num: int). EF6 __rho_1_ unset);
+EF16 (Pdolen: int) (__rho_1_: int) (i: int) (unset: int): bool =mu unset = 1 \/ EF5 Pdolen __rho_1_ (i + 1) unset;

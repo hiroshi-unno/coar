@@ -1,0 +1,15 @@
+[
+    "Printer",
+    {
+        "lts_format": [
+            "MuCLP"
+        ],
+        "smt_format": [
+            "SMT2"
+        ],
+        "pvar_eliminator": [
+            "Filename",
+            "./config/pcsat/pvar_eliminator/default.json"
+        ]
+    }
+]

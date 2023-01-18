@@ -47,6 +47,11 @@ module BoolTerm : TermType = struct
         | exp1 :: exp2 :: [] -> Boolean.mk_eq ctx exp1 exp2
         | _ -> assert false
       end
+    | Xor -> begin
+        match args with
+        | exp1 :: exp2 :: [] -> Boolean.mk_not ctx @@ Boolean.mk_eq ctx exp1 exp2
+        | _ -> assert false
+      end
     | IfThenElse -> begin
         match args with
         | exp1 :: exp2 :: exp3 :: [] -> Boolean.mk_ite ctx exp1 exp2 exp3
@@ -147,7 +152,7 @@ module RealTerm : TermType = struct
     | RMult -> Arithmetic.mk_mul ctx args
     | RDiv -> begin
         match args with
-        | exp1 :: exp2 :: [] -> 
+        | exp1 :: exp2 :: [] ->
           Arithmetic.mk_div ctx
             (Arithmetic.Integer.mk_int2real(*ToDo: remove*) ctx exp1)
             (Arithmetic.Integer.mk_int2real(*ToDo: remove*) ctx exp2)
@@ -308,9 +313,9 @@ module ExtTerm : TermType = struct
 end
 
 module Make (Term : TermType) : sig
-  val of_term: context -> (Ident.tvar, Sort.t) Env.t -> Logic.term -> Z3.Expr.expr
-  val term_of: (Ident.tvar, Sort.t) Env.t -> Z3.Expr.expr -> Logic.term
-  val check_sat: Logic.term list -> (Ident.tvar, Sort.t) Env.t -> context -> (Ident.tvar * Logic.term option) list option
+  val of_term: context -> (Ident.tvar, Sort.t) List.Assoc.t -> Logic.term -> Z3.Expr.expr
+  val term_of: (Ident.tvar, Sort.t) List.Assoc.t -> Z3.Expr.expr -> Logic.term
+  val check_sat: Logic.term list -> (Ident.tvar, Sort.t) List.Assoc.t -> context -> (Ident.tvar * Logic.term option) list option
 end = struct
   open Logic.Term
 
@@ -322,8 +327,8 @@ end = struct
   let rec of_term ctx env term =
     if is_var term then
       let var, _ = let_var term in
-      match Env.lookupi var env with
-      | Some(sort, _i) -> Expr.mk_const ctx (of_var ctx var) (Term.of_sort ctx sort)
+      match List.findi env ~f:(fun _ (key, _) -> Stdlib.(key = var)) with
+      | Some (_i, (_, sort)) -> Expr.mk_const ctx (of_var ctx var) (Term.of_sort ctx sort)
       | None -> failwith @@ Printf.sprintf "var %s cannot be found in the env" (match var with | Ident.Tvar v -> v)
     else if is_con term then
       let sym, _ = let_con term in Term.of_nullary_con ctx sym
@@ -348,8 +353,8 @@ end = struct
   let rec term_of senv expr =
     if Expr.ast_of_expr expr |> AST.is_var then
       let var = Expr.to_string expr in
-      let index = Env.length senv - Scanf.sscanf var "(:var %d)" (fun x -> x) - 1 in
-      let (var, _sort) = Env.nth senv index in
+      let index = List.length senv - Scanf.sscanf var "(:var %d)" Fn.id - 1 in
+      let (var, _sort) = List.nth_exn senv index in
       let _ = mk_var var in
       failwith "the sort of the variable must be managed with something like hashtable"
     else
@@ -372,8 +377,8 @@ end = struct
     List.map decls ~f:(fun decl ->
         let tvar = Ident.Tvar (Symbol.get_string (FuncDecl.get_name decl)) in
         match Model.get_const_interp model decl with
-        | Some(expr) ->
-          let t = term_of Env.empty expr in
+        | Some expr ->
+          let t = term_of [] expr in
           tvar, Some t
         | None -> tvar, None)
 

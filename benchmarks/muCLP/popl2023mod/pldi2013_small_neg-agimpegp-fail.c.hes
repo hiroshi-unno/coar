@@ -1,0 +1,10 @@
+EF1 0 1
+s.t.
+EF1 (check: int) (p: int): bool =mu check = 1 /\ AF1 p \/ EF2 1 p;
+EF2 (check: int) (p: int): bool =mu check = 1 /\ AF2 p \/ EF3 check p \/ EF4 check p;
+EF3 (check: int) (p: int): bool =mu check = 1 /\ AF3 p \/ EF1 check 1;
+EF4 (check: int) (p: int): bool =mu check = 1 /\ AF4 p \/ EF1 check 2;
+AF1 (p: int): bool =mu p <= 0 \/ AF2 p;
+AF2 (p: int): bool =mu p <= 0 \/ AF3 p /\ AF4 p;
+AF3 (p: int): bool =mu p <= 0 \/ AF1 1;
+AF4 (p: int): bool =mu p <= 0 \/ AF1 2;

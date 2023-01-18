@@ -1,0 +1,24 @@
+forall (WItemsNum: int). AG1 WItemsNum
+s.t.
+AG1 (WItemsNum: int): bool =nu EF1 WItemsNum /\ (forall (WItemsNum: int). AG2 WItemsNum);
+AG2 (WItemsNum: int): bool =nu EF2 WItemsNum /\ (WItemsNum < 0 => AG3 WItemsNum) /\ (not (WItemsNum < 0) => AG4 WItemsNum);
+AG3 (WItemsNum: int): bool =nu EF3 WItemsNum /\ AG3 WItemsNum;
+AG4 (WItemsNum: int): bool =nu EF4 WItemsNum /\ (WItemsNum <= 5 => AG5 WItemsNum) /\ (not (WItemsNum <= 5) => AG6 WItemsNum);
+AG5 (WItemsNum: int): bool =nu EF5 WItemsNum /\ AG7 WItemsNum /\ AG6 WItemsNum;
+AG7 (WItemsNum: int): bool =nu EF6 WItemsNum /\ (not (WItemsNum > 2) => AG8 WItemsNum) /\ (not (not (WItemsNum > 2)) => AG9 WItemsNum);
+AG8 (WItemsNum: int): bool =nu EF7 WItemsNum /\ true;
+AG9 (WItemsNum: int): bool =nu EF8 WItemsNum /\ AG7 (WItemsNum - 1);
+AG6 (WItemsNum: int): bool =nu EF9 WItemsNum /\ (WItemsNum <= 5 => AG10 WItemsNum) /\ (not (WItemsNum <= 5) => AG11 WItemsNum);
+AG10 (WItemsNum: int): bool =nu EF10 WItemsNum /\ AG4 (WItemsNum + 1);
+AG11 (WItemsNum: int): bool =nu EF11 WItemsNum /\ AG4 (WItemsNum + 1);
+EF1 (WItemsNum: int): bool =mu WItemsNum >= 1 \/ (exists (WItemsNum: int). EF2 WItemsNum);
+EF2 (WItemsNum: int): bool =mu WItemsNum >= 1 \/ (WItemsNum < 0 => EF3 WItemsNum) /\ (not (WItemsNum < 0) => EF4 WItemsNum);
+EF3 (WItemsNum: int): bool =mu WItemsNum >= 1 \/ EF3 WItemsNum;
+EF4 (WItemsNum: int): bool =mu WItemsNum >= 1 \/ (WItemsNum <= 5 => EF5 WItemsNum) /\ (not (WItemsNum <= 5) => EF9 WItemsNum);
+EF5 (WItemsNum: int): bool =mu WItemsNum >= 1 \/ EF6 WItemsNum \/ EF9 WItemsNum;
+EF6 (WItemsNum: int): bool =mu WItemsNum >= 1 \/ (not (WItemsNum > 2) => EF7 WItemsNum) /\ (not (not (WItemsNum > 2)) => EF8 WItemsNum);
+EF7 (WItemsNum: int): bool =mu WItemsNum >= 1 \/ false;
+EF8 (WItemsNum: int): bool =mu WItemsNum >= 1 \/ EF6 (WItemsNum - 1);
+EF9 (WItemsNum: int): bool =mu WItemsNum >= 1 \/ (WItemsNum <= 5 => EF10 WItemsNum) /\ (not (WItemsNum <= 5) => EF11 WItemsNum);
+EF10 (WItemsNum: int): bool =mu WItemsNum >= 1 \/ EF4 (WItemsNum + 1);
+EF11 (WItemsNum: int): bool =mu WItemsNum >= 1 \/ EF4 (WItemsNum + 1);

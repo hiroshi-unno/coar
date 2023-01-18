@@ -1,0 +1,16 @@
+forall (check: int). AG1 check 0 5
+s.t.
+AG1 (check: int) (p: int) (x: int): bool =nu (check = 1 => EF1 p x) /\ AG2 1 p x;
+AG2 (check: int) (p: int) (x: int): bool =nu (check = 1 => EF2 p x) /\ (x < 0 => AG3 check p) /\ (not (x < 0) => AG4 check p x);
+AG3 (check: int) (p: int): bool =nu (check = 1 => EF3 p) /\ AG5 check 1;
+AG5 (check: int) (p: int): bool =nu (check = 1 => EF4 p) /\ true;
+AG4 (check: int) (p: int) (x: int): bool =nu (check = 1 => EF5 p x) /\ AG6 1 p x;
+AG6 (check: int) (p: int) (x: int): bool =nu (check = 1 => EF6 p x) /\ AG7 check p x /\ AG2 check p x;
+AG7 (check: int) (p: int) (x: int): bool =nu (check = 1 => EF7 p x) /\ AG2 check p (x - 1);
+EF1 (p: int) (x: int): bool =mu p > 0 \/ EF2 p x;
+EF2 (p: int) (x: int): bool =mu p > 0 \/ (x < 0 => EF3 p) /\ (not (x < 0) => EF5 p x);
+EF3 (p: int): bool =mu p > 0 \/ EF4 1;
+EF4 (p: int): bool =mu p > 0 \/ false;
+EF5 (p: int) (x: int): bool =mu p > 0 \/ EF6 p x;
+EF6 (p: int) (x: int): bool =mu p > 0 \/ EF7 p x \/ EF2 p x;
+EF7 (p: int) (x: int): bool =mu p > 0 \/ EF2 p (x - 1);

@@ -1,0 +1,18 @@
+forall (c: int). c <= 0 \/ (L1Q1 c 4 0)
+s.t.
+L1Q0 (c: int) (curr_serv: int) (resp: int): bool =mu resp > 5 \/ curr_serv > 0 /\ (L2Q0 c curr_serv resp) \/ curr_serv <= 0 /\ (L8Q0 c resp);
+L2Q0 (c: int) (curr_serv: int) (resp: int): bool =mu resp > 5 \/ (L3Q0 c curr_serv resp) /\ (L6Q0 c curr_serv resp);
+L3Q0 (c: int) (curr_serv: int) (resp: int): bool =mu resp > 5 \/ (L4Q0 (c - 1) curr_serv resp);
+L4Q0 (c: int) (curr_serv: int) (resp: int): bool =mu resp > 5 \/ (L5Q0 c (curr_serv - 1) resp);
+L5Q0 (c: int) (curr_serv: int) (resp: int): bool =mu resp > 5 \/ (L1Q0 c curr_serv (resp + 1));
+L6Q0 (c: int) (curr_serv: int) (resp: int): bool =mu resp > 5 \/ c >= curr_serv \/ (L7Q0 c curr_serv resp);
+L7Q0 (c: int) (curr_serv: int) (resp: int): bool =mu resp > 5 \/ (L1Q0 c (curr_serv - 1) resp);
+L8Q0 (c: int) (resp: int): bool =mu resp > 5 \/ (L8Q0 c resp);
+L1Q1 (c: int) (curr_serv: int) (resp: int): bool =nu c <= 5 \/ resp > 5 \/ curr_serv > 0 /\ (L2Q0 c curr_serv resp) \/ curr_serv <= 0 /\ (L8Q0 c resp);
+L2Q1 (c: int) (curr_serv: int) (resp: int): bool =nu c <= 5 \/ resp > 5 \/ (L3Q0 c curr_serv resp) /\ (L6Q0 c curr_serv resp);
+L3Q1 (c: int) (curr_serv: int) (resp: int): bool =nu c <= 5 \/ resp > 5 \/ (L4Q0 (c - 1) curr_serv resp);
+L4Q1 (c: int) (curr_serv: int) (resp: int): bool =nu c <= 5 \/ resp > 5 \/ (L5Q0 c (curr_serv - 1) resp);
+L5Q1 (c: int) (curr_serv: int) (resp: int): bool =nu c <= 5 \/ resp > 5 \/ (L1Q0 c curr_serv (resp + 1));
+L6Q1 (c: int) (curr_serv: int) (resp: int): bool =nu c <= 5 \/ resp > 5 \/ c >= curr_serv \/ (L7Q0 c curr_serv resp);
+L7Q1 (c: int) (curr_serv: int) (resp: int): bool =nu c <= 5 \/ resp > 5 \/ (L1Q0 c (curr_serv - 1) resp);
+L8Q1 (c: int) (resp: int): bool =nu c <= 5 \/ resp > 5 \/ (L8Q0 c resp);

@@ -1,0 +1,24 @@
+(L1Q0 0 0 0 0)
+s.t.
+L1Q1 (Pdolen: int) (i: int) (set: int) (unset: int): bool =mu unset != 0 \/ (L2Q1 Pdolen i 1 unset);
+L2Q1 (Pdolen: int) (i: int) (set: int) (unset: int): bool =mu unset != 0 \/ (L3Q1 Pdolen i 0 unset);
+L3Q1 (Pdolen: int) (i: int) (set: int) (unset: int): bool =mu unset != 0 \/ i < Pdolen /\ (L4Q1 Pdolen i set unset) \/ i >= Pdolen /\ (L5Q1 set unset);
+L4Q1 (Pdolen: int) (i: int) (set: int) (unset: int): bool =mu unset != 0 \/ (L5Q1 set unset) /\ (L8Q1 Pdolen i set unset);
+L5Q1 (set: int) (unset: int): bool =mu unset != 0 \/ (L6Q1 set 1);
+L6Q1 (set: int) (unset: int): bool =mu unset != 0 \/ (L7Q1 set 0);
+L7Q1 (set: int) (unset: int): bool =mu unset != 0 \/ (L7Q1 set unset);
+L8Q1 (Pdolen: int) (i: int) (set: int) (unset: int): bool =mu unset != 0 \/ (forall (status: int). (L9Q1 Pdolen i set status unset));
+L9Q1 (Pdolen: int) (i: int) (set: int) (status: int) (unset: int): bool =mu unset != 0 \/ 1 != status /\ (L10Q1 set status unset) \/ 1 = status /\ (L11Q1 Pdolen i set unset);
+L10Q1 (set: int) (status: int) (unset: int): bool =mu unset != 0 \/ 2 = status /\ (L7Q1 set unset) \/ 2 != status /\ (L5Q1 set unset);
+L11Q1 (Pdolen: int) (i: int) (set: int) (unset: int): bool =mu unset != 0 \/ (L3Q1 Pdolen (i + 1) set unset);
+L1Q0 (Pdolen: int) (i: int) (set: int) (unset: int): bool =nu (set = 0 \/ unset != 0 \/ (L2Q1 Pdolen i 1 unset)) /\ (L2Q0 Pdolen i 1 unset);
+L2Q0 (Pdolen: int) (i: int) (set: int) (unset: int): bool =nu (set = 0 \/ unset != 0 \/ (L3Q1 Pdolen i 0 unset)) /\ (L3Q0 Pdolen i 0 unset);
+L3Q0 (Pdolen: int) (i: int) (set: int) (unset: int): bool =nu (set = 0 \/ unset != 0 \/ i < Pdolen /\ (L4Q1 Pdolen i set unset) \/ i >= Pdolen /\ (L5Q1 set unset)) /\ (i < Pdolen /\ (L4Q0 Pdolen i set unset) \/ i >= Pdolen /\ (L5Q0 set unset));
+L4Q0 (Pdolen: int) (i: int) (set: int) (unset: int): bool =nu (set = 0 \/ unset != 0 \/ (L5Q1 set unset) /\ (L8Q1 Pdolen i set unset)) /\ (L5Q0 set unset) /\ (L8Q0 Pdolen i set unset);
+L5Q0 (set: int) (unset: int): bool =nu (set = 0 \/ unset != 0 \/ (L6Q1 set 1)) /\ (L6Q0 set 1);
+L6Q0 (set: int) (unset: int): bool =nu (set = 0 \/ unset != 0 \/ (L7Q1 set 0)) /\ (L7Q0 set 0);
+L7Q0 (set: int) (unset: int): bool =nu (set = 0 \/ unset != 0 \/ (L7Q1 set unset)) /\ (L7Q0 set unset);
+L8Q0 (Pdolen: int) (i: int) (set: int) (unset: int): bool =nu (set = 0 \/ unset != 0 \/ (forall (status: int). (L9Q1 Pdolen i set status unset))) /\ (forall (status: int). (L9Q0 Pdolen i set status unset));
+L9Q0 (Pdolen: int) (i: int) (set: int) (status: int) (unset: int): bool =nu (set = 0 \/ unset != 0 \/ 1 != status /\ (L10Q1 set status unset) \/ 1 = status /\ (L11Q1 Pdolen i set unset)) /\ (1 != status /\ (L10Q0 set status unset) \/ 1 = status /\ (L11Q0 Pdolen i set unset));
+L10Q0 (set: int) (status: int) (unset: int): bool =nu (set = 0 \/ unset != 0 \/ 2 = status /\ (L7Q1 set unset) \/ 2 != status /\ (L5Q1 set unset)) /\ (2 = status /\ (L7Q0 set unset) \/ 2 != status /\ (L5Q0 set unset));
+L11Q0 (Pdolen: int) (i: int) (set: int) (unset: int): bool =nu (set = 0 \/ unset != 0 \/ (L3Q1 Pdolen (i + 1) set unset)) /\ (L3Q0 Pdolen (i + 1) set unset);

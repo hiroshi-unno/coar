@@ -1,0 +1,65 @@
+{
+  "strategy": [
+    "Template",
+    {
+      "verbose": true,
+      "generalize": false,
+      "solution_template": {
+        "update_strategy": [
+          "UnsatCore"
+        ],
+        "smt_timeout": null,
+        "extract_qualifiers": true,
+        "extract_terms": false,
+        "extract_seeds": false,
+        "reduce_quals_terms": false,
+        "qualifier_generator": [
+          "Filename",
+          "./config/pcsat/qualifier/tb.json"
+        ],
+        "pex": [
+          "InstDefault"
+        ],
+        "sync_threshold": null,
+        "restart_threshold": 20,
+        "auto_incr_shape_interval": 2,
+        "predicate_template": [
+          "DNF",
+          [
+            "Filename",
+            "./config/pcsat/template/dbg_predicate_dnf_template_interval3.json"
+          ]
+        ],
+        "wf_predicate_template": [
+          "WF",
+          [
+            "Filename",
+            "./config/pcsat/template/dbg_wf_predicate_template.json"
+          ]
+        ],
+        "fn_predicate_template": [
+          "FN",
+          [
+            "Filename",
+            "./config/pcsat/template/dbg_fn_predicate_template_fix1.json"
+          ]
+        ],
+        "ne_predicate_template": [
+          "Filename",
+          "./config/pcsat/template/dbg_ne_predicate_template.json"
+        ],
+        "int_function_template": [
+          "IntFun",
+          [
+            "Filename",
+            "./config/pcsat/template/dbg_int_function_template.json"
+          ]
+        ],
+        "verbose": true
+      }
+    }
+  ],
+  "check_candidates": true,
+  "refine_candidates": false,
+  "verbose": true
+}

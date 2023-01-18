@@ -1,0 +1,11 @@
+/* 
+int main() {
+  int x;
+  while (x <= 10) 
+    x = x + 1;
+  return 0;
+}
+*/
+forall (x: int). I x
+s.t.
+I (x: int): bool =mu (x > 10 => true) /\ (x <= 10 => I (x + 1));

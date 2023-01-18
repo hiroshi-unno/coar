@@ -28,16 +28,15 @@ rule main = parse
 | "=nu" { HESParser.EQFIX Predicate.Nu }
 | "/\\" { HESParser.AND }
 | "\\/" { HESParser.OR }
-| "!" { HESParser.NOT }
+| "!" | "not" { HESParser.NOT }
 | "and" { HESParser.AND }
 | "or" { HESParser.OR }
-| "not" { HESParser.NOT }
 | "<=>" { HESParser.IFF }
 | "=>" { HESParser.IMPLY }
 | "-" { HESParser.MINUS }
 | "+" { HESParser.ADD }
 | "*" { HESParser.MULT }
-| "/" { HESParser.DIV }
+| "/" | "div" { HESParser.DIV }
 | "%" { HESParser.MOD }
 | ">=" { HESParser.PREDSYM T_int.Geq }
 | ">" { HESParser.PREDSYM T_int.Gt }
@@ -49,12 +48,12 @@ rule main = parse
 | ";" { HESParser.SEMI }
 | "forall" { HESParser.BINDER Forall }
 | "exists" { HESParser.BINDER Exists }
-| "s.t." { HESParser.SUCHTHAT }
+| "s.t." | "where" { HESParser.WHERE }
 | "." { HESParser.DOT }
 | "(" { HESParser.LPAREN }
 | ")" { HESParser.RPAREN }
 
-| ['a'-'z''A'-'Z''_']['a'-'z''A'-'Z''_''0'-'9'''']*
+| ['a'-'z''A'-'Z''#''!''_']['a'-'z''A'-'Z''0'-'9'''''_''#''!']*
     {
       let str = Lexing.lexeme lexbuf in
       HESParser.ID str

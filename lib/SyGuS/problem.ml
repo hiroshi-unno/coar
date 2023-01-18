@@ -1,4 +1,5 @@
 open Core
+open Common.Ext
 open Ast
 
 type logic_type = Any | Lia | BV | Reals | Arrays
@@ -83,7 +84,7 @@ end = struct
   let rec str_of_bfTerm = function
     | Id (Identifier term) | Lit term -> Term.str_of term
     | Fun ((Identifier sym), bfTerms) ->
-      Printf.sprintf "(%s %s)" (Term.str_of sym) (List.map ~f:str_of_bfTerm bfTerms |> String.concat ~sep:" ")
+      Printf.sprintf "(%s %s)" (Term.str_of sym) (String.concat_map_list ~sep:" " ~f:str_of_bfTerm bfTerms)
 
   let str_of_gTerm = function
     | Constant sort -> Printf.sprintf "Constant %s" (Term.str_of_sort sort)
@@ -91,22 +92,21 @@ end = struct
     | BfTerm bfTerm -> Printf.sprintf "%s" (str_of_bfTerm bfTerm)
 
   let str_of_rule rule =
-    List.map ~f:str_of_gTerm rule |> String.concat ~sep:"\n   " |> Printf.sprintf "   %s"
+    String.concat_map_list ~sep:"\n   " ~f:str_of_gTerm rule |> Printf.sprintf "   %s"
 
   let str_of = function
     | sym, map ->
-      Map.Poly.to_alist map        
-      |> List.map ~f:(fun (sym, (sort, rule)) ->
+      Map.Poly.to_alist map
+      |> String.concat_map_list ~sep:"\n" ~f:(fun (sym, (sort, rule)) ->
           Printf.sprintf "%s : %s\n%s" sym (Term.str_of_sort sort) (str_of_rule rule))
-      |> String.concat ~sep:"\n"
-      |> Printf.sprintf "starting symbol : %s\n%s" sym 
+      |> Printf.sprintf "starting symbol : %s\n%s" sym
 end
 
 module Make (Term : TermType) : sig
-  type t = (Ident.tvar, Logic.Sort.t * CFG(Term).t option) Map.Poly.t * Logic.SortMap.t * Logic.term list
+  type t = (Ident.tvar, Logic.Sort.t * CFG(Term).t option) Map.Poly.t * Logic.sort_env_map * Logic.term list
 
   (* constructor *)
-  val mk_problem: (Ident.tvar, Logic.Sort.t * CFG(Term).t option) Map.Poly.t -> Logic.SortMap.t -> Logic.term list -> t
+  val mk_problem: (Ident.tvar, Logic.Sort.t * CFG(Term).t option) Map.Poly.t -> Logic.sort_env_map -> Logic.term list -> t
 
   val add_synth_fun: t -> Ident.tvar -> Logic.Sort.t -> CFG(Term).t option -> t
   val add_declared_var: t -> Ident.tvar -> Logic.Sort.t -> t
@@ -117,40 +117,41 @@ module Make (Term : TermType) : sig
   val str_of: t -> string
 end = struct
   module CFG = CFG(Term)
-  type t = (Ident.tvar, Logic.Sort.t * CFG.t option) Map.Poly.t * Logic.SortMap.t * Logic.term list
+  type t = (Ident.tvar, Logic.Sort.t * CFG.t option) Map.Poly.t * Logic.sort_env_map * Logic.term list
 
   let mk_problem synth_funs declared_vars constraints = synth_funs, declared_vars, constraints
 
-  let add_synth_fun problem sym sort cfg = match problem with
-    | synth_funs, declared_vars, constraints ->
-      let synth_funs = Map.Poly.add_exn synth_funs ~key:sym ~data:(sort, cfg) in
-      synth_funs, declared_vars, constraints
-  let add_declared_var problem sym sort = match problem with
-    | synth_funs, declared_vars, constraints ->
-      let declared_vars = Logic.SortMap.add_exn declared_vars ~key:sym ~data:sort in
-      synth_funs, declared_vars, constraints
-  let add_constraint problem constraint_ = match problem with
-    | synth_funs, declared_vars, constraints -> synth_funs, declared_vars, constraint_ :: constraints
+  let add_synth_fun (synth_funs, declared_vars, constraints) sym sort cfg =
+    Map.Poly.add_exn synth_funs ~key:sym ~data:(sort, cfg),
+    declared_vars, constraints
+  let add_declared_var (synth_funs, declared_vars, constraints) sym sort =
+    synth_funs,
+    Map.Poly.add_exn declared_vars ~key:sym ~data:sort,
+    constraints
+  let add_constraint (synth_funs, declared_vars, constraints) constr =
+    synth_funs,
+    declared_vars,
+    constr :: constraints
 
   let logic_of = Term.logic_of
 
-  let find_synth_fun_of problem symbol = match problem with
-    | synth_funs, _declared_vars, _constraints -> Map.Poly.find synth_funs symbol
+  let find_synth_fun_of (synth_funs, _declared_vars, _constraints) symbol =
+    Map.Poly.find synth_funs symbol
 
   let str_of_synth_funs map =
     Map.Poly.to_alist map
-    |> List.fold ~f:(fun acc (sym, (sort, cfg)) ->
+    |> List.fold ~init:"" ~f:(fun acc (sym, (sort, cfg)) ->
         Printf.sprintf "%s\n%s, (%s) %s" acc (Ident.name_of_tvar sym) (Term.str_of_sort sort)
-          (match cfg with | Some cfg -> CFG.str_of cfg | None -> "")) ~init:""
+          (match cfg with Some cfg -> CFG.str_of cfg | None -> ""))
 
   let str_of_declared_vars map =
-    Logic.SortMap.to_alist map
-    |> List.fold ~f:(fun acc (sym, sort) ->
-        Printf.sprintf "%s\n%s, (%s)" acc (Ident.name_of_tvar sym) (Term.str_of_sort sort)) ~init:""
+    Map.Poly.to_alist map
+    |> List.fold ~init:"" ~f:(fun acc (sym, sort) ->
+        Printf.sprintf "%s\n%s, (%s)" acc (Ident.name_of_tvar sym) (Term.str_of_sort sort))
 
   let str_of_constraints constraints =
-    List.fold ~f:(fun acc constraint_ ->
-        Printf.sprintf "%s\nconstraint : %s" acc (Term.str_of constraint_)) ~init:"" constraints
+    List.fold ~init:"" constraints ~f:(fun acc constr ->
+        Printf.sprintf "%s\nconstraint : %s" acc (Term.str_of constr))
 
   let str_of = function
     | synth_funs, declared_vars, constraints ->

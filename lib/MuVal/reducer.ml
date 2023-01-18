@@ -1,68 +1,55 @@
 open Core
 open Common
-open Util
+open Common.Combinator
+open Common.Ext
 open Ast
 open Ast.LogicOld
 
 module Make (Cfg: Config.ConfigType) = struct
   let config = Cfg.config
 
-  module Debug = Debug.Make (val (Debug.Config.(if config.verbose then enable else disable)))
+  module Debug = Debug.Make (val Debug.Config.(if config.verbose then enable else disable))
 
-  let params_of_sorts sorts = SortEnv.of_list @@ List.map ~f:(fun sort -> Ident.mk_fresh_tvar (), sort) sorts
-
-  let uninterp (Ident.Pvar pid) = Ident.Pvar ("U_" ^ pid)
-  let wfpred (Ident.Pvar pid) = Ident.Pvar ("WF_" ^ pid)
-
-  let rename_preds bpvs phi =
-    let mk_papp (pvar, sorts) =
-      let params = params_of_sorts sorts in
-      let terms = Term.of_sort_env params in
-      (params, Formula.mk_atom (Atom.mk_app (Predicate.mk_var pvar sorts) terms)) in
-    let preds = Formula.pred_sort_env_of phi in
-    Set.Poly.diff preds bpvs
-    |> Set.Poly.map ~f:(fun (pvar, sorts) -> pvar, mk_papp (uninterp pvar, sorts))
-    |> Map.of_set
-    |> fun map -> Formula.subst_preds map phi
+  let rename_preds psenv bpvs phi =
+    Set.Poly.diff psenv bpvs
+    |> Set.Poly.map ~f:(fun (pvar, sorts) ->
+        let params = mk_fresh_sort_env_list sorts in
+        pvar, (params, Formula.mk_atom @@ Atom.mk_pvar_app (Ident.uninterp_pvar pvar) sorts @@ Term.of_sort_env params))
+    |> Map.of_set_exn |> Fn.flip Formula.subst_preds phi
 
   let cnf_of query =
-    let cnf = query |> Evaluator.simplify |> Formula.cnf_of Set.Poly.empty(*ToDo:check*) in
-    Set.Poly.map cnf ~f:(fun (pos, neg, pure) ->
-        pure :: (Set.Poly.to_list @@ Set.Poly.map pos ~f:Formula.mk_atom)
-        @ (Set.Poly.to_list @@ Set.Poly.map neg ~f:(Formula.mk_atom >> Formula.mk_neg))
-        |> Formula.or_of)
+    query |> Evaluator.simplify |> Formula.cnf_of Map.Poly.empty(*ToDo:check*)
+    |> Set.Poly.map ~f:(fun (pos, neg, pure) ->
+        Formula.or_of @@
+        pure ::
+        (Set.Poly.to_list @@ Set.Poly.map pos ~f:Formula.mk_atom) @
+        (Set.Poly.to_list @@ Set.Poly.map neg ~f:(Formula.mk_atom >> Formula.mk_neg)))
 
-  let rec elim_nu query bpvs = function
+  let rec elim_nu psenv bpvs query = function
     | [] ->
-      Set.Poly.empty,
-      rename_preds bpvs query
+      rename_preds psenv bpvs query
       |> cnf_of
       |> Set.Poly.map ~f:(fun phi ->
           let senv, phi = LogicOld.Formula.rm_forall phi in
-          Formula.reduce_sort_map (Map.of_set senv, phi))
-    | (Predicate.Nu, pvar, params, phi)::funcs ->
-      let pvar' = uninterp pvar in
-      let sargs = SortEnv.sorts_of params in
-      let left =
-        Formula.mk_atom
-          (Atom.mk_app (Predicate.mk_var pvar' sargs)
-             (Term.of_sort_env params)) in
+          Formula.reduce_sort_map (Map.of_set_exn senv, phi)),
+      Set.Poly.empty
+    | (Predicate.Nu, pvar, params, phi) :: preds ->
+      let pvar' = Ident.uninterp_pvar pvar in
       let bounds, phi = LogicOld.Formula.rm_forall phi in
       (*let bounds(* ToDo: this should be empty *) =
-        Formula.get_ftv phi |> Set.Poly.filter_map ~f:(fun x -> if List.Assoc.mem params ~equal:Stdlib.(=) x then None else Some (x, LogicOld.T_int.SInt))
+        Set.Poly.filter_map (Formula.tvs_of phi)
+        ~f:(fun x -> if List.Assoc.mem ~equal:Stdlib.(=) params x then None else Some (x, LogicOld.T_int.SInt))
         in*)
-      let uni_senv = Map.of_set @@ Set.Poly.union (SortEnv.set_of params) bounds in
-      let right = rename_preds bpvs phi in
-      let exi_senv, clauses = elim_nu query bpvs funcs in
-      Set.Poly.add exi_senv (pvar', sargs),
-      Formula.mk_imply left right
+      let uni_senv = Map.of_set_exn @@ Set.Poly.union (Set.Poly.of_list params) bounds in
+      let queries, clauses = elim_nu psenv bpvs query preds in
+      queries,
+      Formula.mk_imply
+        (Formula.mk_atom @@ Atom.pvar_app_of_senv (pvar', params))
+        (rename_preds psenv bpvs phi)
       (*|> fun phi -> Debug.print @@ lazy (Formula.str_of phi); phi*)
-      |> cnf_of
-      |> Set.Poly.map ~f:(fun phi -> Formula.reduce_sort_map (uni_senv, phi))
+      |> cnf_of |> Set.Poly.map ~f:(fun phi -> Formula.reduce_sort_map (uni_senv, phi))
       |> Set.Poly.union clauses
-    (*     Formula.mk_imply left right
-           |> Set.Poly.add (elim_nu query bpvs funcs) *)
-    | _ -> failwith "every mu predicate must be eliminated before appliying elim_nu to a muCLP"
+    | _ -> failwith "every mu predicate must be eliminated before applying elim_nu"
 
   (* Dependency Graph for optimization of pfwCSP generation *)
 (*
@@ -104,22 +91,25 @@ Here, G(l) represents the subgraph of G obtained by eliminating the nodes with t
     let (=>) a b (g: t) = Set.Poly.mem (try Map.Poly.find_exn g a with _ -> failwith ("not found: " ^ Ident.name_of_pvar a)).forward b
     let (-->) a b (g: t) = Set.Poly.mem (try Map.Poly.find_exn g a with _ -> failwith ("not found: " ^ Ident.name_of_pvar a)).backward b
     let (=>+) a b (g: t) = Set.Poly.mem (try Map.Poly.find_exn g a with _ -> failwith ("not found: " ^ Ident.name_of_pvar a)).forward_reachable b
-    let (=>*) a b (g: t) = (Stdlib.(=) a b) || ((a =>+ b) g)
+    let (=>*) a b (g: t) = (Stdlib.(a = b)) || ((a =>+ b) g)
     let (=->+) a b (g: t) = Set.Poly.mem (try Map.Poly.find_exn g a with _ -> failwith ("not found: " ^ Ident.name_of_pvar a)).reachable b
-    let (=->*) a b (g: t) = (Stdlib.(=) a b) || ((a =->+ b) g)
+    let (=->*) a b (g: t) = (Stdlib.(a = b)) || ((a =->+ b) g)
     let level g a = (Map.Poly.find_exn g a).level
-    let gen_init_graph (query: Formula.t) (funcs: MuCLP.Problem.func list) : t =
-      let pvars = List.mapi ~f:(fun i (_, pvar, _, _) -> (pvar, i)) funcs in
+    let gen_init_graph (query: Formula.t) (preds: MuCLP.Pred.t list) : t =
+      let pvars = List.mapi ~f:(fun i (_, pvar, _, _) -> (pvar, i)) preds in
       let level_of = let map = Map.Poly.of_alist_exn pvars in fun p ->
           match Map.Poly.find map p with None -> -1(** uninterpreted pvars are of level -1*) | Some i -> i
       in
       let occurrences_in pvar =
-        List.find_map_exn funcs ~f:(fun (_, pvar', _, phi) ->
-            if Stdlib.(=) pvar pvar' then Some (Formula.pvs_of phi) else None) in
+        List.find_map_exn preds ~f:(fun (_, pvar', _, phi) ->
+            if Stdlib.(pvar = pvar') then Some (Formula.pvs_of phi) else None)
+      in
       let query_node =
         (Ident.Pvar "#query",
          { level = -1; forward = Formula.pvs_of query; backward = Set.Poly.empty;
-           forward_reachable = Set.Poly.empty; reachable = Set.Poly.empty }) in
+           forward_reachable = Set.Poly.empty; reachable = Set.Poly.empty })
+      in
+      Map.Poly.of_alist_exn @@
       query_node
       :: List.map pvars ~f:(fun (pvar, level) ->
           let pvars' = occurrences_in pvar in
@@ -127,7 +117,6 @@ Here, G(l) represents the subgraph of G obtained by eliminating the nodes with t
           (pvar,
            { level = level; forward = forward; backward = backward;
              forward_reachable = Set.Poly.empty; reachable = Set.Poly.empty }))
-      |> Map.Poly.of_alist_exn
 
     let restrict_to pvs g =
       Map.Poly.filter_keys g ~f:(Set.Poly.mem pvs)
@@ -159,19 +148,17 @@ Here, G(l) represents the subgraph of G obtained by eliminating the nodes with t
                       reachable = Set.Poly.union attr.forward attr.backward })
 
     let str_of (g: t) =
-      let str_of_pred_set ps = String.concat ~sep:";" (Set.Poly.map ~f:Ident.name_of_pvar ps |> Set.Poly.to_list) in
-      Map.Poly.to_alist g
-      |> List.map ~f:(fun (Ident.Pvar pname, attr) ->
+      String.concat_map_list ~sep:";\n" ~f:(fun (Ident.Pvar pname, attr) ->
           Printf.sprintf "(%s, %d, [%s], [%s], [%s], [%s])"
             pname
-            attr.level (str_of_pred_set attr.forward)
-            (str_of_pred_set attr.forward_reachable)
-            (str_of_pred_set attr.backward)
-            (str_of_pred_set attr.reachable))
-      |> String.concat ~sep:";\n"
+            attr.level (Ident.str_of_pvars ~sep:";" attr.forward)
+            (Ident.str_of_pvars ~sep:";" attr.forward_reachable)
+            (Ident.str_of_pvars ~sep:";" attr.backward)
+            (Ident.str_of_pvars ~sep:";" attr.reachable)) @@
+      Map.Poly.to_alist g
   end
 
-  let elim_mu (g0: DepGraph.t) (query: Formula.t) (funcs: MuCLP.Problem.func list) =
+  let elim_mu (g0: DepGraph.t) (query: Formula.t) (preds: MuCLP.Pred.t list) =
     let rec inner query wfpvs nu_only = function
       | [] -> (query, nu_only, wfpvs)
       | (Predicate.Nu, _, _, _) as nu_pred :: rest ->
@@ -183,23 +170,22 @@ Here, G(l) represents the subgraph of G obtained by eliminating the nodes with t
         Debug.print @@ lazy (DepGraph.str_of g);
         let is_tainted =
           let called_outside =
+            Set.Poly.union_list @@
             List.map nu_only ~f:(fun (_, pvar', _, phi) ->
                 if let open DepGraph in (pvar =->+ pvar') g && (pvar' =->+ pvar) g then Set.Poly.empty
                 else Formula.pvs_of phi) @
             List.map rest ~f:(fun (_, _, _, phi) -> Formula.pvs_of phi)
-            |> Set.Poly.union_list
           in
           let open DepGraph in
           fun pvar -> Set.Poly.exists called_outside ~f:(fun pvar' ->
-              Stdlib.(=) pvar pvar' || Map.Poly.mem g pvar' && (pvar' =->+ pvar) g)
+              Stdlib.(pvar = pvar') || Map.Poly.mem g pvar' && (pvar' =->+ pvar) g)
         in
         let bot, top = T_bool.mk_false (), T_bool.mk_true () in
         let ext_arg b (xs_terms, xs_sorts) preds =
-          preds
-          |> List.filter ~f:(fun (p, _) -> let open DepGraph in (pvar =->+ p) g && (p =->+ pvar) g)
+          List.filter preds ~f:(fun (p, _) -> let open DepGraph in (pvar =->+ p) g && (p =->+ pvar) g)
           |> List.map ~f:(fun (pvar', ys) ->
-              let ys_sorts = SortEnv.sorts_of ys in
-              let ys_params = params_of_sorts ys_sorts in
+              let ys_sorts = List.map ~f:snd ys in
+              let ys_params = mk_fresh_sort_env_list ys_sorts in
               let ys_terms = Term.of_sort_env ys_params in
               let phi =
                 if is_tainted pvar' then
@@ -215,78 +201,102 @@ Here, G(l) represents the subgraph of G obtained by eliminating the nodes with t
         in
         let bi_term, bi_param =
           let bi_name = Ident.mk_fresh_tvar () in
-          Term.mk_var bi_name T_bool.SBool, (bi_name, T_bool.SBool) in
+          Term.mk_var bi_name T_bool.SBool, (bi_name, T_bool.SBool)
+        in
         let emb_wfp ~indirect (xs_terms, xs_sorts) =
-          let ys_params = params_of_sorts xs_sorts in
+          let ys_params = mk_fresh_sort_env_list xs_sorts in
           let ys_terms = Term.of_sort_env ys_params in
           let wfpva =
             Formula.mk_atom @@ Atom.mk_app
-              (Predicate.mk_var (wfpred pvar) (xs_sorts @ xs_sorts))
-              (xs_terms @ ys_terms) in
+              (Predicate.mk_var (Ident.wfpred_pvar pvar) @@ xs_sorts @ xs_sorts)
+              (xs_terms @ ys_terms)
+          in
           let phi =
             Formula.mk_and
               (Formula.mk_atom @@ Atom.mk_app (Predicate.mk_var pvar xs_sorts) ys_terms)
-              (if indirect then Formula.mk_imply (Formula.mk_atom (T_bool.mk_eq bi_term top)) wfpva else wfpva) in
+              (if indirect then Formula.mk_imply (Formula.mk_atom (T_bool.mk_eq bi_term top)) wfpva else wfpva)
+          in
           (pvar, (ys_params, phi))
         in
         let preds = List.map nu_only ~f:(fun (_, pvar, params, _) -> pvar, params) in
         let sigma_1_ =
-          let dummy_args = List.map (SortEnv.sorts_of params) ~f:Term.mk_dummy in
-          Map.Poly.of_alist_exn @@ ext_arg bot (dummy_args, SortEnv.sorts_of params) preds
+          let dummy_args = List.map (List.map ~f:snd params) ~f:Term.mk_dummy in
+          Map.Poly.of_alist_exn @@ ext_arg bot (dummy_args, List.map ~f:snd params) preds
         in
         let sigma_2_ =
-          let ps = Term.of_sort_env params, SortEnv.sorts_of params in
+          let ps = Term.of_sort_env params, List.map ~f:snd params in
           let psubst = ext_arg top ps preds in
-          emb_wfp ~indirect:false ps :: psubst
-          |> Map.Poly.of_alist_exn
+          Map.Poly.of_alist_exn @@ emb_wfp ~indirect:false ps :: psubst
         in
         let sigma_3_ =
-          let ps = Term.of_sort_env params, SortEnv.sorts_of params in
+          let ps = Term.of_sort_env params, List.map ~f:snd params in
           let psubst = ext_arg bi_term ps preds in
-          emb_wfp ~indirect:true ps :: psubst
-          |> Map.Poly.of_alist_exn
+          Map.Poly.of_alist_exn @@ emb_wfp ~indirect:true ps :: psubst
         in
         let sigma_1, sigma_2, sigma_3 =
           Formula.(subst_preds sigma_1_, subst_preds sigma_2_, subst_preds sigma_3_)
         in
         let query' = sigma_1 query in
         let wfps' =
-          let sorts = SortEnv.sorts_of params in
-          if DepGraph.(pvar =->+ pvar) g then Set.Poly.add wfpvs (wfpred pvar, sorts @ sorts) else wfpvs in
+          let sorts = List.map ~f:snd params in
+          if DepGraph.(pvar =->+ pvar) g then Set.Poly.add wfpvs (Ident.wfpred_pvar pvar, sorts @ sorts) else wfpvs
+        in
         let nu_only' =
           (Predicate.Nu, pvar, params, sigma_2 phi)
           :: List.map nu_only ~f:(fun (fp, pvar', params', phi) ->
               if let open DepGraph in (pvar =->+ pvar') g && (pvar' =->+ pvar) g then
                 if is_tainted pvar' then
-                  (fp, pvar', SortEnv.append (uncurry SortEnv.singleton bi_param) (SortEnv.append params params'), sigma_3 phi)
+                  (fp, pvar', bi_param :: params @ params', sigma_3 phi)
                 else
-                  (fp, pvar', SortEnv.append params params', sigma_2 phi)
+                  (fp, pvar', params @ params', sigma_2 phi)
               else (fp, pvar', params', sigma_1 phi))
         in
-        let rest' = List.map rest ~f:(fun (fp, pvar, params, phi) -> (fp, pvar, params, sigma_1 phi)) in
-        inner query' wfps' nu_only' rest'
+        inner query' wfps' nu_only' @@
+        List.map rest ~f:(fun (fp, pvar, params, phi) -> fp, pvar, params, sigma_1 phi)
     in
     Debug.print @@ lazy "************ Initial DepGraph:";
     Debug.print @@ lazy (DepGraph.str_of g0);
-    List.rev funcs |> inner query Set.Poly.empty []
+    inner query Set.Poly.empty [] @@ List.rev preds
 
-  let f (MuCLP(funcs, query) : MuCLP.Problem.t) ordpvs fnpvs fnsenv =
-    let g = DepGraph.gen_init_graph query funcs in
-    let query', funcs', wfpvs = elim_mu g query funcs in
+  let f ?(id=None) ~divide_query (muclp : MuCLP.Problem.t) messenger (ordpvs, fnpvs, fnsenv) =
+    let g = DepGraph.gen_init_graph muclp.query muclp.preds in
+    let query', preds', wfpvs = elim_mu g muclp.query muclp.preds in
+    Debug.set_id id;
     Debug.print @@ lazy "**************** elim_mu ***********";
-    Debug.print @@ lazy (MuCLP.Problem.str_of @@ MuCLP.Problem.make funcs' query');
-    let pvs, formulas = elim_nu query' (Set.Poly.union_list [ordpvs; wfpvs; fnpvs]) funcs' in
-    let params =
-      let senv =
-        Logic.SortMap.merge fnsenv @@
-        Map.of_set @@
-        Set.Poly.map (Set.Poly.union_list [pvs; ordpvs; wfpvs; fnpvs]) ~f:(fun (Ident.Pvar n, sargs) ->
-            Ident.Tvar n,
-            Logic.Sort.mk_fun (List.map sargs ~f:Logic.ExtTerm.of_old_sort @ [Logic.ExtTerm.SBool])) in
-      let wfpvs = Set.Poly.map wfpvs ~f:(fun (Ident.Pvar n, _) -> Ident.Tvar n) in
-      let fnpvs = Set.Poly.map fnpvs ~f:(fun (Ident.Pvar n, _) -> Ident.Tvar n) in
-      PCSP.Params.make ~wfpvs ~fnpvs senv in
-    PCSP.Problem.of_formulas ~params (Set.Poly.map formulas ~f:(fun (senv, phi) ->
-        Logic.SortMap.of_old_sort_map Logic.ExtTerm.of_old_sort senv,
-        Logic.ExtTerm.of_old_formula phi))
+    Debug.print @@ lazy (MuCLP.Problem.str_of @@ MuCLP.Problem.make preds' query');
+    let pvs, (queries, formulas) =
+      let psenv = MuCLP.Pred.pred_sort_env_of_list preds' in
+      Set.Poly.map psenv ~f:(fun (pvar, sorts) -> Ident.uninterp_pvar pvar, sorts),
+      elim_nu psenv (Set.Poly.union_list [ordpvs; wfpvs; fnpvs]) query' preds'
+    in
+    let senv =
+      Map.force_merge fnsenv @@ Map.of_set_exn @@
+      Set.Poly.map ~f:(fun (Ident.Pvar n, sargs) ->
+          Ident.Tvar n,
+          Logic.Sort.mk_fun @@ List.map sargs ~f:Logic.ExtTerm.of_old_sort @ [Logic.ExtTerm.SBool]) @@
+      Set.Poly.union_list [pvs; ordpvs; wfpvs; fnpvs]
+    in
+    let wfpvs = Set.Poly.map wfpvs ~f:(fun (Ident.Pvar n, _) -> Ident.Tvar n) in
+    let fnpvs = Set.Poly.map fnpvs ~f:(fun (Ident.Pvar n, _) -> Ident.Tvar n) in
+    if divide_query then
+      let query_clauses =
+        Set.concat_map queries ~f:(fun (param_senv, phi) ->
+            let uni_senv = Map.Poly.map param_senv ~f:Logic.ExtTerm.of_old_sort in
+            Logic.ExtTerm.of_old_formula phi
+            |> Logic.ExtTerm.nnf_of |> Logic.ExtTerm.cnf_of senv uni_senv
+            |> Set.Poly.map ~f:(fun (ps, ns, phi) -> uni_senv, ps, ns, phi))
+      in
+      let params = PCSP.Params.make ~wfpvs ~fnpvs ~messenger ~id ~unpreprocessable_clauses:query_clauses senv in
+      PCSP.Problem.of_formulas ~params @@
+      Set.Poly.map ~f:(fun (senv, phi) ->
+          Logic.of_old_sort_env_map Logic.ExtTerm.of_old_sort senv,
+          Logic.ExtTerm.of_old_formula phi) @@
+      formulas
+    else
+      let params = PCSP.Params.make ~wfpvs ~fnpvs ~messenger ~id senv  in
+      PCSP.Problem.of_formulas ~params @@
+      Set.Poly.map ~f:(fun (senv, phi) ->
+          Logic.of_old_sort_env_map Logic.ExtTerm.of_old_sort senv,
+          Logic.ExtTerm.of_old_formula phi) @@
+      Set.Poly.union formulas queries
 end

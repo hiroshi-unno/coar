@@ -1,0 +1,35 @@
+(L1Q0 0 0 0)
+s.t.
+L1Q2 (init: int) (otime: int) (time: int): bool =mu time > otime \/ (L2Q2 0 otime time);
+L2Q2 (init: int) (otime: int) (time: int): bool =mu time > otime \/ (L3Q2 init otime 0 time);
+L3Q2 (init: int) (otime: int) (temp: int) (time: int): bool =mu time > otime \/ (L4Q2 1 otime temp time);
+L4Q2 (init: int) (otime: int) (temp: int) (time: int): bool =mu time > otime \/ (forall (limit#0: int). (L5Q2 init limit#0 otime temp time));
+L5Q2 (init: int) (limit#0: int) (otime: int) (temp: int) (time: int): bool =mu time > otime \/ limit#0 < 10 /\ limit#0 > -273 /\ (L6Q2 init otime temp time) \/ (limit#0 >= 10 \/ limit#0 <= -273) /\ (L4Q2 init otime temp time);
+L6Q2 (init: int) (otime: int) (temp: int) (time: int): bool =mu time > otime \/ (L7Q2 3 otime temp time);
+L7Q2 (init: int) (otime: int) (temp: int) (time: int): bool =mu time > otime \/ (L8Q2 init time temp time);
+L8Q2 (init: int) (otime: int) (temp: int) (time: int): bool =mu time > otime \/ (L9Q2 init otime temp (otime + 1));
+L9Q2 (init: int) (otime: int) (temp: int) (time: int): bool =mu time > otime \/ temp < 0 /\ (L10Q2 init otime time) \/ temp >= 0 /\ (L10Q2 init otime time);
+L10Q2 (init: int) (otime: int) (time: int): bool =mu time > otime \/ (forall (temp: int). (L11Q2 init otime temp time));
+L11Q2 (init: int) (otime: int) (temp: int) (time: int): bool =mu time > otime \/ temp > 8 /\ (L7Q2 init otime temp time) \/ temp <= 8 /\ (L7Q2 init otime temp time);
+L1Q1 (init: int) (otime: int) (time: int): bool =nu (L2Q1 0 otime time) /\ (time > otime \/ (L2Q2 0 otime time));
+L2Q1 (init: int) (otime: int) (time: int): bool =nu (L3Q1 init otime 0 time) /\ (time > otime \/ (L3Q2 init otime 0 time));
+L3Q1 (init: int) (otime: int) (temp: int) (time: int): bool =nu (L4Q1 1 otime temp time) /\ (time > otime \/ (L4Q2 1 otime temp time));
+L4Q1 (init: int) (otime: int) (temp: int) (time: int): bool =nu (forall (limit#0: int). (L5Q1 init limit#0 otime temp time)) /\ (time > otime \/ (forall (limit#0: int). (L5Q2 init limit#0 otime temp time)));
+L5Q1 (init: int) (limit#0: int) (otime: int) (temp: int) (time: int): bool =nu (limit#0 < 10 /\ limit#0 > -273 /\ (L6Q1 init otime temp time) \/ (limit#0 >= 10 \/ limit#0 <= -273) /\ (L4Q1 init otime temp time)) /\ (time > otime \/ limit#0 < 10 /\ limit#0 > -273 /\ (L6Q2 init otime temp time) \/ (limit#0 >= 10 \/ limit#0 <= -273) /\ (L4Q2 init otime temp time));
+L6Q1 (init: int) (otime: int) (temp: int) (time: int): bool =nu (L7Q1 3 otime temp time) /\ (time > otime \/ (L7Q2 3 otime temp time));
+L7Q1 (init: int) (otime: int) (temp: int) (time: int): bool =nu (L8Q1 init time temp time) /\ (time > otime \/ (L8Q2 init time temp time));
+L8Q1 (init: int) (otime: int) (temp: int) (time: int): bool =nu (L9Q1 init otime temp (otime + 1)) /\ (time > otime \/ (L9Q2 init otime temp (otime + 1)));
+L9Q1 (init: int) (otime: int) (temp: int) (time: int): bool =nu (temp < 0 /\ (L10Q1 init otime time) \/ temp >= 0 /\ (L10Q1 init otime time)) /\ (time > otime \/ temp < 0 /\ (L10Q2 init otime time) \/ temp >= 0 /\ (L10Q2 init otime time));
+L10Q1 (init: int) (otime: int) (time: int): bool =nu (forall (temp: int). (L11Q1 init otime temp time)) /\ (time > otime \/ (forall (temp: int). (L11Q2 init otime temp time)));
+L11Q1 (init: int) (otime: int) (temp: int) (time: int): bool =nu (temp > 8 /\ (L7Q1 init otime temp time) \/ temp <= 8 /\ (L7Q1 init otime temp time)) /\ (time > otime \/ temp > 8 /\ (L7Q2 init otime temp time) \/ temp <= 8 /\ (L7Q2 init otime temp time));
+L1Q0 (init: int) (otime: int) (time: int): bool =nu (init != 3 \/ (L2Q1 0 otime time)) /\ (L2Q0 0 otime time);
+L2Q0 (init: int) (otime: int) (time: int): bool =nu (init != 3 \/ (L3Q1 init otime 0 time)) /\ (L3Q0 init otime 0 time);
+L3Q0 (init: int) (otime: int) (temp: int) (time: int): bool =nu (init != 3 \/ (L4Q1 1 otime temp time)) /\ (L4Q0 1 otime temp time);
+L4Q0 (init: int) (otime: int) (temp: int) (time: int): bool =nu (init != 3 \/ (forall (limit#0: int). (L5Q1 init limit#0 otime temp time))) /\ (forall (limit#0: int). (L5Q0 init limit#0 otime temp time));
+L5Q0 (init: int) (limit#0: int) (otime: int) (temp: int) (time: int): bool =nu (init != 3 \/ limit#0 < 10 /\ limit#0 > -273 /\ (L6Q1 init otime temp time) \/ (limit#0 >= 10 \/ limit#0 <= -273) /\ (L4Q1 init otime temp time)) /\ (limit#0 < 10 /\ limit#0 > -273 /\ (L6Q0 init otime temp time) \/ (limit#0 >= 10 \/ limit#0 <= -273) /\ (L4Q0 init otime temp time));
+L6Q0 (init: int) (otime: int) (temp: int) (time: int): bool =nu (init != 3 \/ (L7Q1 3 otime temp time)) /\ (L7Q0 3 otime temp time);
+L7Q0 (init: int) (otime: int) (temp: int) (time: int): bool =nu (init != 3 \/ (L8Q1 init time temp time)) /\ (L8Q0 init time temp time);
+L8Q0 (init: int) (otime: int) (temp: int) (time: int): bool =nu (init != 3 \/ (L9Q1 init otime temp (otime + 1))) /\ (L9Q0 init otime temp (otime + 1));
+L9Q0 (init: int) (otime: int) (temp: int) (time: int): bool =nu (init != 3 \/ temp < 0 /\ (L10Q1 init otime time) \/ temp >= 0 /\ (L10Q1 init otime time)) /\ (temp < 0 /\ (L10Q0 init otime time) \/ temp >= 0 /\ (L10Q0 init otime time));
+L10Q0 (init: int) (otime: int) (time: int): bool =nu (init != 3 \/ (forall (temp: int). (L11Q1 init otime temp time))) /\ (forall (temp: int). (L11Q0 init otime temp time));
+L11Q0 (init: int) (otime: int) (temp: int) (time: int): bool =nu (init != 3 \/ temp > 8 /\ (L7Q1 init otime temp time) \/ temp <= 8 /\ (L7Q1 init otime temp time)) /\ (temp > 8 /\ (L7Q0 init otime temp time) \/ temp <= 8 /\ (L7Q0 init otime temp time));

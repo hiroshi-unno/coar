@@ -1,0 +1,14 @@
+forall (istemp: int). (L1Q1 0 istemp)
+s.t.
+L1Q0 (A: int) (istemp: int): bool =mu istemp = 1 /\ (L2Q0 A istemp) \/ istemp != 1 /\ (L3Q0 A istemp);
+L2Q0 (A: int) (istemp: int): bool =mu (L2Q0 A istemp);
+L3Q0 (A: int) (istemp: int): bool =mu (L4Q0 1 istemp);
+L4Q0 (A: int) (istemp: int): bool =mu (L2Q0 0 istemp);
+L1Q2 (A: int) (istemp: int): bool =nu (A = 1 \/ istemp = 1 /\ (L2Q2 A istemp) \/ istemp != 1 /\ (L3Q2 A istemp)) /\ (A != 1 \/ istemp = 1 /\ (L2Q0 A istemp) \/ istemp != 1 /\ (L3Q0 A istemp));
+L2Q2 (A: int) (istemp: int): bool =nu (A = 1 \/ (L2Q2 A istemp)) /\ (A != 1 \/ (L2Q0 A istemp));
+L3Q2 (A: int) (istemp: int): bool =nu (A = 1 \/ (L4Q2 1 istemp)) /\ (A != 1 \/ (L4Q0 1 istemp));
+L4Q2 (A: int) (istemp: int): bool =nu (A = 1 \/ (L2Q2 0 istemp)) /\ (A != 1 \/ (L2Q0 0 istemp));
+L1Q1 (A: int) (istemp: int): bool =nu (istemp != 0 \/ A = 1 \/ istemp = 1 /\ (L2Q2 A istemp) \/ istemp != 1 /\ (L3Q2 A istemp)) /\ (istemp != 0 \/ A != 1 \/ istemp = 1 /\ (L2Q0 A istemp) \/ istemp != 1 /\ (L3Q0 A istemp));
+L2Q1 (A: int) (istemp: int): bool =nu (istemp != 0 \/ A = 1 \/ (L2Q2 A istemp)) /\ (istemp != 0 \/ A != 1 \/ (L2Q0 A istemp));
+L3Q1 (A: int) (istemp: int): bool =nu (istemp != 0 \/ A = 1 \/ (L4Q2 1 istemp)) /\ (istemp != 0 \/ A != 1 \/ (L4Q0 1 istemp));
+L4Q1 (A: int) (istemp: int): bool =nu (istemp != 0 \/ A = 1 \/ (L2Q2 0 istemp)) /\ (istemp != 0 \/ A != 1 \/ (L2Q0 0 istemp));

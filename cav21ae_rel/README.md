@@ -1,13 +1,11 @@
 # CAV21 Artifact Evaluation: PCSat
 
-We explain how to use PCSat, a CHC/pCSP/pfwCSP constraint solver.
+We explain how to use PCSat, a pfwCSP constraint solver.
 Technical details are explained in the following paper.
 
 Hiroshi Unno, Tachio Terauchi, and Eric Koskinen. Constraint-based Relational Verification. CAV 2021.
 
 ## Getting Started
-
-You can choose either of the following two options.
 
 ### Using Dockerfile
 
@@ -17,28 +15,13 @@ You can choose either of the following two options.
     
     ```bash
     cd /path/to/Dockerfile
-    sudo docker build -t coar:cav21ae_rel .
+    sudo docker build -t cav21ae_pcsat .
     ```
-    This will make a docker image tagged with `coar:cav21ae_rel`.
+    This will make a docker image tagged with `cav21ae_pcsat:latest`.
 
 3. Run the image
     ```bash
-    sudo docker run -it coar:cav21ae_rel /bin/bash --login
-    ```
-    Now, you are ready to conduct experiments.
-
-### Using a Pre-built Image
-
-1. Download `cav21ae_rel.tar` from [https://doi.org/10.5281/zenodo.4748374](https://doi.org/10.5281/zenodo.4748374)
-
-2. Load the image
-    ```bash
-    sudo docker load -i cav21ae_rel.tar
-    ```
-
-3. Run the image
-    ```bash
-    sudo docker run -it coar:cav21ae_rel /bin/bash --login
+    sudo docker run -it cav21ae_pcsat:latest /bin/bash --login
     ```
     Now, you are ready to conduct experiments.
 

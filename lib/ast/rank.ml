@@ -1,5 +1,4 @@
 open Core
-open Common.Util
 open LogicOld
 
 let rank_of phi =
@@ -21,8 +20,14 @@ let compare ((x1, x2, x3):Z.t option * int * int) (y1, y2, y3) =
   else if x3 < y3 then -1 else if x3 > y3 then 1
   else 0
 
-let sort_by_rank quals =
+let sort_quals quals =
   Set.Poly.map quals ~f:(fun ((_, phi) as qual) -> rank_of phi, qual)
+  |> Set.Poly.to_list
+  |> List.sort ~compare:(fun (r1, _) (r2, _) -> compare r1 r2)
+  |> List.map ~f:snd
+
+let sort_indices qarr qlist =
+  Set.Poly.map qlist ~f:(fun idx -> rank_of (qarr.(idx)), idx)
   |> Set.Poly.to_list
   |> List.sort ~compare:(fun (r1, _) (r2, _) -> compare r1 r2)
   |> List.map ~f:snd

@@ -6,11 +6,11 @@ type t = {
   (* main configuration *)
   coordinator: Coordinator.Config.t ext_file;
   pvar_eliminator: PvarEliminator.Config.t ext_file;
-  solve_each_query: bool;
-  check_problem: bool; (** check if the given pfw-CSP problem is well-formed. *)
-  check_solution: bool;
-  output_iteration: bool; (* TODO: generalize to output_format *)
-  sygus_comp: bool;
+  sol_printer: SolPrinter.Config.t ext_file;
+  load_oracle_sol: bool;
+  solve_each_query: bool; (** solve each query independently *)
+  check_problem: bool; (** check the well-formedness of the input pfwCSP *)
+  check_solution: bool; (** check the correctness of the output solution *)
 } [@@ deriving yojson]
 
 module type ConfigType = sig val config: t end
@@ -19,7 +19,10 @@ let instantiate_ext_files cfg =
   let open Or_error in
   Coordinator.Config.load_ext_file cfg.coordinator >>= fun coordinator ->
   PvarEliminator.Config.load_ext_file cfg.pvar_eliminator >>= fun pvar_eliminator ->
-  Ok { cfg with coordinator = coordinator; pvar_eliminator = pvar_eliminator }
+  SolPrinter.Config.load_ext_file cfg.sol_printer >>= fun sol_printer ->
+  Ok { cfg with coordinator = coordinator;
+                pvar_eliminator = pvar_eliminator;
+                sol_printer = sol_printer }
 
 let load_ext_file = function
   | ExtFile.Filename filename ->
@@ -32,8 +35,7 @@ let load_ext_file = function
         instantiate_ext_files x >>= fun x ->
         Ok (ExtFile.Instance x)
       | Error msg ->
-        error_string
-        @@ Printf.sprintf
+        error_string @@ Printf.sprintf
           "Invalid PCSat Configuration (%s): %s" filename msg
     end
   | Instance x -> Ok (Instance x)

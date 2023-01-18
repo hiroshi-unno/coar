@@ -1,0 +1,68 @@
+///*** 1_main ***///
+START: main_entry;
+
+FROM: main_entry;
+vcall := nondet();
+var__temp_vi.0 := vcall;
+var__temp_vup.0 := 0;
+TO: main_while.cond;
+
+FROM: main_while.cond;
+vi.0 := var__temp_vi.0;
+vup.0 := var__temp_vup.0;
+TO: main_while.cond_end;
+
+FROM: main_while.cond_end;
+assume(vi.0 > 0);
+TO: main_while.body;
+
+FROM: main_while.cond_end;
+assume(vi.0 <= 0);
+TO: main_while.end;
+
+FROM: main_while.body;
+TO: main_while.body_v.up.0;
+FROM: main_while.body_v.up.0;
+assume(vi.0 == 1);
+v.up.0 := 1;
+TO: main_while.body_sv.up.0;
+
+FROM: main_while.body_v.up.0;
+assume(vi.0 != 1);
+v.up.0 := vup.0;
+TO: main_while.body_sv.up.0;
+
+FROM: main_while.body_sv.up.0;
+TO: main_while.body_vup.2;
+FROM: main_while.body_vup.2;
+assume(vi.0 == 10);
+vup.2 := 0;
+TO: main_while.body_svup.2;
+
+FROM: main_while.body_vup.2;
+assume(vi.0 != 10);
+vup.2 := v.up.0;
+TO: main_while.body_svup.2;
+
+FROM: main_while.body_svup.2;
+vadd := vi.0 + 1;
+vsub := vi.0 - 1;
+TO: main_while.body_vi.1;
+FROM: main_while.body_vi.1;
+assume(vup.2 == 1);
+vi.1 := vadd;
+TO: main_while.body_svi.1;
+
+FROM: main_while.body_vi.1;
+assume(vup.2 != 1);
+vi.1 := vsub;
+TO: main_while.body_svi.1;
+
+FROM: main_while.body_svi.1;
+var__temp_vi.0 := vi.1;
+var__temp_vup.0 := vup.2;
+TO: main_while.cond;
+
+FROM: main_while.end;
+TO: main_while.end_ret;
+

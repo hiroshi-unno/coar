@@ -1,0 +1,81 @@
+///*** 1_main ***///
+START: main_entry;
+
+FROM: main_entry;
+vcall := nondet();
+vcall1 := nondet();
+var__temp_va.0 := vcall;
+var__temp_vb.0 := vcall1;
+TO: main_while.cond;
+
+FROM: main_while.cond;
+va.0 := var__temp_va.0;
+vb.0 := var__temp_vb.0;
+var__temp_va.1 := va.0;
+var__temp_vb.1 := vb.0;
+TO: main_while.cond_end;
+
+FROM: main_while.cond_end;
+assume(va.0 < 30);
+TO: main_while.cond2;
+
+FROM: main_while.cond_end;
+assume(va.0 >= 30);
+TO: main_while.end15;
+
+FROM: main_while.cond2;
+va.1 := var__temp_va.1;
+vb.1 := var__temp_vb.1;
+TO: main_while.cond2_end;
+
+FROM: main_while.cond2_end;
+assume(vb.1 < va.1);
+TO: main_while.body4;
+
+FROM: main_while.cond2_end;
+assume(vb.1 >= va.1);
+TO: main_while.end;
+
+FROM: main_while.body4;
+vadd := vb.1 + 7;
+vadd6 := vb.1 + 2;
+TO: main_while.body4_vb.2;
+FROM: main_while.body4_vb.2;
+assume(vb.1 > 5);
+vb.2 := vadd;
+TO: main_while.body4_svb.2;
+
+FROM: main_while.body4_vb.2;
+assume(vb.1 <= 5);
+vb.2 := vadd6;
+TO: main_while.body4_svb.2;
+
+FROM: main_while.body4_svb.2;
+vadd10 := va.1 + 10;
+vadd12 := va.1 + 1;
+TO: main_while.body4_va.2;
+FROM: main_while.body4_va.2;
+assume((vb.2 >= 10) && (vb.2 <= 12));
+va.2 := vadd10;
+TO: main_while.body4_sva.2;
+
+FROM: main_while.body4_va.2;
+assume((vb.2 < 10) || (vb.2 > 12));
+va.2 := vadd12;
+TO: main_while.body4_sva.2;
+
+FROM: main_while.body4_sva.2;
+var__temp_va.1 := va.2;
+var__temp_vb.1 := vb.2;
+TO: main_while.cond2;
+
+FROM: main_while.end;
+vadd14 := va.1 + 2;
+vsub := vb.1 - 10;
+var__temp_va.0 := vadd14;
+var__temp_vb.0 := vsub;
+TO: main_while.cond;
+
+FROM: main_while.end15;
+TO: main_while.end15_ret;
+

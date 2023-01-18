@@ -1,0 +1,13 @@
+{
+    "enable": false,
+    "show_num_constrs": false,
+    "show_num_pvars": false,
+    "show_num_args": false,
+    "show_user_time": false,
+    "show_elapsed_time": false,
+    "show_constraints": false,
+    "show_candidates": false,
+    "show_examples": false,
+    "show_unsat_core": false,
+    "ask_smt_timeout": false
+}

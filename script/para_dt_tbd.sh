@@ -4,7 +4,7 @@
 #mkfifo output
 (./script/para_aux.sh $timeout ./_build/default/main.exe -c ./config/solver/pcsat_dt.json $options $1 > output1) &
 pid1=$!
-(./script/para_aux.sh $timeout ./_build/default/main.exe -c ./config/solver/muval_tb_ucore_disprove.json $options $1 > output2) &
+(./script/para_aux.sh $timeout ./_build/default/main.exe -c ./config/solver/muval_disprove_tb.json $options $1 > output2) &
 pid2=$!
 
 while :
@@ -30,5 +30,5 @@ do
         break
     fi
 #    echo "still run"
-    sleep 1
+    sleep 0.1
 done

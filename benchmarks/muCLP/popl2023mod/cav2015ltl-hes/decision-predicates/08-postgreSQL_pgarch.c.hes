@@ -1,0 +1,28 @@
+(L1Q0 0)
+s.t.
+L1Q1 (wakend: int): bool =mu wakend = 1 \/ (L2Q1 1);
+L2Q1 (wakend: int): bool =mu wakend = 1 \/ (forall (got_SIGHUP: int). (L3Q1 got_SIGHUP wakend));
+L3Q1 (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ (L4Q1 got_SIGHUP 1);
+L4Q1 (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ got_SIGHUP != 0 /\ (L5Q1 wakend) \/ got_SIGHUP = 0 /\ (L8Q1 got_SIGHUP wakend);
+L5Q1 (wakend: int): bool =mu wakend = 1 \/ (L6Q1 0 wakend);
+L6Q1 (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ (L7Q1 wakend) /\ (L8Q1 got_SIGHUP wakend);
+L7Q1 (wakend: int): bool =mu wakend = 1 \/ (L7Q1 wakend);
+L8Q1 (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ wakend != 0 /\ (L9Q1 got_SIGHUP wakend) \/ wakend = 0 /\ (L10Q1 got_SIGHUP wakend);
+L9Q1 (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ (L10Q1 got_SIGHUP 0);
+L10Q1 (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ wakend = 0 /\ (L11Q1 got_SIGHUP wakend) \/ wakend != 0 /\ (L13Q1 got_SIGHUP wakend);
+L11Q1 (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ (L12Q1 got_SIGHUP wakend) /\ (L13Q1 got_SIGHUP wakend);
+L12Q1 (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ (L13Q1 got_SIGHUP 1);
+L13Q1 (got_SIGHUP: int) (wakend: int): bool =mu wakend = 1 \/ (L4Q1 got_SIGHUP wakend) /\ (L7Q1 wakend);
+L1Q0 (wakend: int): bool =nu (wakend = 1 \/ (L2Q1 1)) /\ (L2Q0 1);
+L2Q0 (wakend: int): bool =nu (wakend = 1 \/ (forall (got_SIGHUP: int). (L3Q1 got_SIGHUP wakend))) /\ (forall (got_SIGHUP: int). (L3Q0 got_SIGHUP wakend));
+L3Q0 (got_SIGHUP: int) (wakend: int): bool =nu (wakend = 1 \/ (L4Q1 got_SIGHUP 1)) /\ (L4Q0 got_SIGHUP 1);
+L4Q0 (got_SIGHUP: int) (wakend: int): bool =nu (wakend = 1 \/ got_SIGHUP != 0 /\ (L5Q1 wakend) \/ got_SIGHUP = 0 /\ (L8Q1 got_SIGHUP wakend)) /\ (got_SIGHUP != 0 /\ (L5Q0 wakend) \/ got_SIGHUP = 0 /\ (L8Q0 got_SIGHUP wakend));
+L5Q0 (wakend: int): bool =nu (wakend = 1 \/ (L6Q1 0 wakend)) /\ (L6Q0 0 wakend);
+L6Q0 (got_SIGHUP: int) (wakend: int): bool =nu (wakend = 1 \/ (L7Q1 wakend) /\ (L8Q1 got_SIGHUP wakend)) /\ (L7Q0 wakend) /\ (L8Q0 got_SIGHUP wakend);
+L7Q0 (wakend: int): bool =nu (wakend = 1 \/ (L7Q1 wakend)) /\ (L7Q0 wakend);
+L8Q0 (got_SIGHUP: int) (wakend: int): bool =nu (wakend = 1 \/ wakend != 0 /\ (L9Q1 got_SIGHUP wakend) \/ wakend = 0 /\ (L10Q1 got_SIGHUP wakend)) /\ (wakend != 0 /\ (L9Q0 got_SIGHUP wakend) \/ wakend = 0 /\ (L10Q0 got_SIGHUP wakend));
+L9Q0 (got_SIGHUP: int) (wakend: int): bool =nu (wakend = 1 \/ (L10Q1 got_SIGHUP 0)) /\ (L10Q0 got_SIGHUP 0);
+L10Q0 (got_SIGHUP: int) (wakend: int): bool =nu (wakend = 1 \/ wakend = 0 /\ (L11Q1 got_SIGHUP wakend) \/ wakend != 0 /\ (L13Q1 got_SIGHUP wakend)) /\ (wakend = 0 /\ (L11Q0 got_SIGHUP wakend) \/ wakend != 0 /\ (L13Q0 got_SIGHUP wakend));
+L11Q0 (got_SIGHUP: int) (wakend: int): bool =nu (wakend = 1 \/ (L12Q1 got_SIGHUP wakend) /\ (L13Q1 got_SIGHUP wakend)) /\ (L12Q0 got_SIGHUP wakend) /\ (L13Q0 got_SIGHUP wakend);
+L12Q0 (got_SIGHUP: int) (wakend: int): bool =nu (wakend = 1 \/ (L13Q1 got_SIGHUP 1)) /\ (L13Q0 got_SIGHUP 1);
+L13Q0 (got_SIGHUP: int) (wakend: int): bool =nu (wakend = 1 \/ (L4Q1 got_SIGHUP wakend) /\ (L7Q1 wakend)) /\ (L4Q0 got_SIGHUP wakend) /\ (L7Q0 wakend);

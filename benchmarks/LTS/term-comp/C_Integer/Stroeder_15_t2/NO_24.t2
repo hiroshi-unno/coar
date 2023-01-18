@@ -1,0 +1,33 @@
+///*** 1_main ***///
+START: main_entry;
+
+FROM: main_entry;
+var__temp_va.0 := 1;
+var__temp_vb.0 := 2;
+TO: main_while.cond;
+
+FROM: main_while.cond;
+va.0 := var__temp_va.0;
+vb.0 := var__temp_vb.0;
+vadd := va.0 + vb.0;
+TO: main_while.cond_end;
+
+FROM: main_while.cond_end;
+assume(vadd < 5);
+TO: main_while.body;
+
+FROM: main_while.cond_end;
+assume(vadd >= 5);
+TO: main_while.end;
+
+FROM: main_while.body;
+vsub := va.0 - vb.0;
+vadd1 := vsub + vb.0;
+vsub2 := vadd1 - vsub;
+var__temp_va.0 := vsub2;
+var__temp_vb.0 := vadd1;
+TO: main_while.cond;
+
+FROM: main_while.end;
+TO: main_while.end_ret;
+

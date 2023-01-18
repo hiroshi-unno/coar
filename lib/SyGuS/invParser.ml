@@ -1,7 +1,7 @@
 (* simple parser of fixpoint logic for debug *)
 
 open Core
-open Common.Util
+open Common.Ext
 open Ast
 open Ast.LogicOld
 open Parsexp
@@ -18,7 +18,7 @@ let sort_of_sexp = function
 let sorts_of_sexp sexps = List.map ~f:sort_of_sexp sexps
 
 (* Assume that every input is integer *)
-let rec formula_of_sexp tenv = 
+let rec formula_of_sexp tenv =
   let open LogicOld in
   function
   | (Sexp.List [Sexp.Atom ">="; left; right]) ->
@@ -37,8 +37,8 @@ let rec formula_of_sexp tenv =
     let left, right = term_of_sexp tenv left, term_of_sexp tenv right in
     Formula.mk_atom (T_bool.mk_eq left right)
   | (Sexp.List [Sexp.Atom "and"; left; right]) ->
-    Formula.mk_and 
-      (formula_of_sexp tenv left) 
+    Formula.mk_and
+      (formula_of_sexp tenv left)
       (formula_of_sexp tenv right)
   | (Sexp.List ((Sexp.Atom "and")::args)) -> (* for SyGuS '18 *)
     Formula.and_of (List.map ~f:(formula_of_sexp tenv) args)
@@ -60,7 +60,7 @@ let rec formula_of_sexp tenv =
       (Formula.mk_and cond' (formula_of_sexp tenv left))
       (Formula.mk_and (Formula.mk_neg cond') (formula_of_sexp tenv right))
   | sexp -> failwith @@ "parse error: " ^ (Sexp.to_string_hum sexp)
-and term_of_sexp tenv = 
+and term_of_sexp tenv =
   function
   | Sexp.List [Sexp.Atom "+"; left; right] ->
     T_int.mk_add (term_of_sexp tenv left) (term_of_sexp tenv right)
@@ -76,10 +76,10 @@ and term_of_sexp tenv =
     T_bool.mk_if_then_else (term_of_sexp tenv cond)
       (term_of_sexp tenv left) (term_of_sexp tenv right)
   | Sexp.Atom ident -> begin
-      try T_int.mk_int (Z.of_string ident) 
-      with _ -> 
+      try T_int.mk_int (Z.of_string ident)
+      with _ ->
         begin
-          let sort = Env.lookup_exn (Ident.Tvar ident) tenv in
+          let sort = List.Assoc.find_exn ~equal:Stdlib.(=) tenv (Ident.Tvar ident) in
           Term.mk_var (Ident.Tvar ident) sort
         end
     end
@@ -105,24 +105,23 @@ let mk_map tenv =
   List.map2_exn xs xs' ~f:(fun (idx, _) (idx', sx') -> (idx, Term.mk_var idx' sx'))
   |> Map.Poly.of_alist_exn
 
-let mk_inv_constraint acc tenv 
-    (fenv: (string*(Formula.t)) list)
-    (penv: (string*Atom.t) list) cs =
+let mk_inv_constraint acc tenv
+    (fenv: (string, Formula.t) List.Assoc.t)
+    (penv: (string, Atom.t) List.Assoc.t) cs =
   match cs with
   | [Sexp.Atom invf; Sexp.Atom pref; Sexp.Atom transf; Sexp.Atom postf] ->
     let map = mk_map tenv in
-    let inv  = Formula.mk_atom (Env.lookup_exn invf penv) in
+    let inv  = Formula.mk_atom (List.Assoc.find_exn ~equal:Stdlib.(=) penv invf) in
     let inv' = Formula.subst map inv in
-    let pre  = Formula.mk_imply (Env.lookup_exn pref fenv) inv in
-    let post = Formula.mk_imply inv (Env.lookup_exn postf fenv) in
-    let trans = Formula.mk_imply 
-        (Formula.mk_and inv (Env.lookup_exn transf fenv))
+    let pre  = Formula.mk_imply (List.Assoc.find_exn ~equal:Stdlib.(=) fenv pref) inv in
+    let post = Formula.mk_imply inv (List.Assoc.find_exn ~equal:Stdlib.(=) fenv postf) in
+    let trans = Formula.mk_imply
+        (Formula.mk_and inv (List.Assoc.find_exn ~equal:Stdlib.(=) fenv transf))
         inv' in
     pre::trans::post::acc
   | _ -> failwith @@ "parse error (in mk_inv_constraint): " ^ (Sexp.to_string_hum @@ Sexp.List cs)
 
-let terms_of_sexp args =
-  args_of_exp args |> List.map ~f:(uncurry Term.mk_var)
+let terms_of_sexp args = Term.of_sort_env @@ args_of_exp args
 
 let sorts_of_sexp args =
   args_of_exp args |> List.map ~f:(fun (_, sort) -> sort)
@@ -130,14 +129,14 @@ let sorts_of_sexp args =
 let mk_fun args def =
   let tenv = args_of_exp args in formula_of_sexp tenv def
 
-let rec toplevel acc logic_type tenv 
+let rec toplevel acc logic_type tenv
     (fenv: (string*Formula.t) list)
     (penv: (string*Atom.t) list) = function
   | [] -> Result.fail @@ Error.of_string "lack of check-synth command"
   | (Sexp.List [Sexp.Atom "check-synth"]) :: _ -> Ok (logic_type, acc)
-  | (Sexp.List [Sexp.Atom "set-logic"; Sexp.Atom str]) :: es -> 
+  | (Sexp.List [Sexp.Atom "set-logic"; Sexp.Atom str]) :: es ->
     toplevel acc (logic_type_of_str str) tenv fenv penv es
-  | (Sexp.List [Sexp.Atom "synth-inv"; Sexp.Atom name; Sexp.List args]) :: es -> 
+  | (Sexp.List [Sexp.Atom "synth-inv"; Sexp.Atom name; Sexp.List args]) :: es ->
     let terms = terms_of_sexp args in
     let sorts = sorts_of_sexp args in
     let pvar  = Predicate.mk_var (Ident.Pvar name) sorts in
@@ -150,7 +149,7 @@ let rec toplevel acc logic_type tenv
   | (Sexp.List [Sexp.Atom "define-fun"; Sexp.Atom name; Sexp.List args; _; def]) :: es ->
     let fenv' = (name, mk_fun args def)::fenv in
     toplevel acc logic_type tenv fenv' penv es
-  | (Sexp.List ((Sexp.Atom "inv-constraint")::cs)) :: es -> 
+  | (Sexp.List ((Sexp.Atom "inv-constraint")::cs)) :: es ->
     let acc' = (mk_inv_constraint acc tenv fenv penv cs) in
     toplevel acc' logic_type tenv fenv penv es
   | (Sexp.List ((Sexp.Atom cmd)::_)) :: _ ->

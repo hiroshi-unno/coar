@@ -1,8 +1,9 @@
 {
-    "preprocess": true,
+    "enable": true,
+    "verbose": false,
     "resolution_threshold": 4,
     "simplification_with_smt": true,
-    "num_elim_bool_vars": 4,
+    "num_elim_bool_vars": 0,
     "propagate_lb_ub": true,
-    "verbose": false
+    "reduce_pvar_args": true
 }

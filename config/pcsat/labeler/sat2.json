@@ -1,0 +1,11 @@
+{
+    "verbose": false,
+    "num_labelings": 2,
+    "strategy": [
+        "SAT"
+    ],
+    "sat_solver": [
+        "Filename",
+        "./config/solver/minisat.json"
+    ]
+}

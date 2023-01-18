@@ -1,0 +1,11 @@
+forall (c: int). c > 0 => OR1 c 8 0
+s.t.
+OR1 (c: int) (curr_serv: int) (resp: int): bool =nu c <= 5 \/ AF1 c curr_serv resp;
+AF1 (c: int) (curr_serv: int) (resp: int): bool =mu resp > 5 \/ (not (curr_serv > 0) => AF2 resp) /\ (not (not (curr_serv > 0)) => AF3 c curr_serv resp);
+AF2 (resp: int): bool =mu resp > 5 \/ false;
+AF3 (c: int) (curr_serv: int) (resp: int): bool =mu resp > 5 \/ AF4 c curr_serv resp /\ AF5 c curr_serv resp;
+AF4 (c: int) (curr_serv: int) (resp: int): bool =mu resp > 5 \/ AF6 (c - 1) curr_serv resp;
+AF6 (c: int) (curr_serv: int) (resp: int): bool =mu resp > 5 \/ AF7 c (curr_serv - 1) resp;
+AF7 (c: int) (curr_serv: int) (resp: int): bool =mu resp > 5 \/ AF1 c curr_serv (resp + 1);
+AF5 (c: int) (curr_serv: int) (resp: int): bool =mu resp > 5 \/ (c < curr_serv => AF8 c curr_serv resp);
+AF8 (c: int) (curr_serv: int) (resp: int): bool =mu resp > 5 \/ AF1 c (curr_serv - 1) resp;

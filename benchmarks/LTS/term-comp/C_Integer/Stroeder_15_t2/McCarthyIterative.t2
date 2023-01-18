@@ -1,0 +1,50 @@
+///*** 1_main ***///
+START: main_entry;
+
+FROM: main_entry;
+vcall := nondet();
+var__temp_vx.0 := vcall;
+var__temp_vc.0 := 1;
+TO: main_while.cond;
+
+FROM: main_while.cond;
+vx.0 := var__temp_vx.0;
+vc.0 := var__temp_vc.0;
+TO: main_while.cond_end;
+
+FROM: main_while.cond_end;
+assume(vc.0 > 0);
+TO: main_while.body;
+
+FROM: main_while.cond_end;
+assume(vc.0 <= 0);
+TO: main_while.end;
+
+FROM: main_while.body;
+TO: main_while.body_end;
+
+FROM: main_while.body_end;
+assume(vx.0 > 100);
+TO: main_if.then;
+
+FROM: main_while.body_end;
+assume(vx.0 <= 100);
+TO: main_if.else;
+
+FROM: main_if.then;
+vsub := vx.0 - 10;
+vsub2 := vc.0 - 1;
+var__temp_vx.0 := vsub;
+var__temp_vc.0 := vsub2;
+TO: main_while.cond;
+
+FROM: main_if.else;
+vadd := vx.0 + 11;
+vadd3 := vc.0 + 1;
+var__temp_vx.0 := vadd;
+var__temp_vc.0 := vadd3;
+TO: main_while.cond;
+
+FROM: main_while.end;
+TO: main_while.end_ret;
+

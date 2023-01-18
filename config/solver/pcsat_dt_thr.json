@@ -7,12 +7,15 @@
     ],
     "coordinator": [
       "Filename",
-      "./config/pcsat/coordinator/dt_eager_biased_thr.json"
+      "./config/pcsat/coordinator/dt_eager_thr.json"
     ],
+    "sol_printer": [
+      "Filename",
+      "./config/pcsat/sol_printer/default.json"
+    ],
+    "load_oracle_sol": false,
     "solve_each_query": false,
     "check_problem": false,
-    "check_solution": false,
-    "output_iteration": true,
-    "sygus_comp": false
+    "check_solution": false
   }
 ]

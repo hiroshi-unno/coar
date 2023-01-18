@@ -1,0 +1,45 @@
+{
+    "verbose": true,
+    "num_labelings": 1,
+    "strategy": [
+        "Mixed",
+        [
+            [
+                [
+                    "POS_BIASED_MAX_SAT",
+                    true,
+                    4
+                ],
+                true
+            ],
+            [
+                [
+                    "NEG_BIASED_MAX_SAT",
+                    true,
+                    4
+                ],
+                true
+            ],
+            [
+                [
+                    "BMI_MAX_SAT",
+                    100,
+                    200,
+                    1.0,
+                    [
+                        "None"
+                    ],
+                    0.0,
+                    0.0,
+                    100.0,
+                    true
+                ],
+                false
+            ]
+        ]
+    ],
+    "sat_solver": [
+        "Filename",
+        "./config/solver/dbg_z3_sat_dim_red.json"
+    ]
+}

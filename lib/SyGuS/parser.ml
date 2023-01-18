@@ -58,8 +58,8 @@ module BoolTerm : TermType = struct
     | "or" -> mk_or () |> Option.some
     | "=>" -> mk_imply () |> Option.some
     | "xor" -> mk_xor () |> Option.some
-    | "=" -> mk_bool_eq () |> Option.some
-    | "ite" -> mk_bool_ite () |> Option.some
+    | "=" -> mk_eq (Sort.SVar (Ident.mk_fresh_svar ())) |> Option.some
+    | "ite" -> mk_ite (Sort.SVar (Ident.mk_fresh_svar ())) |> Option.some
     | _ -> None
 end
 
@@ -87,8 +87,9 @@ module ExtTerm : TermType = struct
 end
 
 module Make (Term : TermType) (ProblemTerm : Problem.TermType) : sig
-  val parse_term: Problem.Make(ProblemTerm).t -> (Ident.tvar, Logic.term) Map.Poly.t -> Logic.SortMap.t -> Sexp.t -> Logic.term
-  val of_problem: Sexp.t list -> (Problem.Make(ProblemTerm).t, Error.t) result
+  val parse_fundef : Logic.term_subst_map -> Logic.sort_env_map -> Sexp.t -> Ident.tvar * Logic.term
+  val parse_term : Problem.Make(ProblemTerm).t -> Logic.term_subst_map -> Logic.sort_env_map -> Sexp.t -> Logic.term
+  val of_problem : Sexp.t list -> (Problem.Make(ProblemTerm).t, Error.t) result
 end = struct
   module CFG = Problem.CFG(ProblemTerm)
   module Problem = Problem.Make(ProblemTerm)
@@ -162,8 +163,21 @@ end = struct
                 | "*" -> Logic.IntTerm.prod (List.map ~f:(parse_term problem fenv venv) args)
                 | "and" -> Logic.BoolTerm.and_of (List.map ~f:(parse_term problem fenv venv) args)
                 | "or" -> Logic.BoolTerm.or_of (List.map ~f:(parse_term problem fenv venv) args)
+                | "distinct" ->
+                  Logic.BoolTerm.and_of @@ Set.Poly.to_list @@
+                  Common.Ext.Set.fold_distinct_pairs
+                    ~f:(Logic.BoolTerm.neq_of Logic.IntTerm.SInt) @@
+                  Set.Poly.of_list @@
+                  List.map ~f:(parse_term problem fenv venv) args
                 | "let" -> begin
                     match args with
+                    | [Sexp.List [Sexp.List [Sexp.Atom var; Sexp.Atom (sort); def]]; body] ->
+                      let def_term = (parse_term problem fenv venv def) in
+                      let term_sort = (ExtTerm.sort_of_text sort) in
+                      let tvar = Ident.Tvar var in
+                      let venv' = Map.Poly.set venv ~key:tvar ~data:term_sort in
+                      (* print_endline @@ sprintf "[parse_term] let %s = %s  in %s" var (Sexp.to_string def) (Sexp.to_string body); *)
+                      Logic.Term.mk_let tvar term_sort def_term (parse_term problem fenv venv' body)
                     | [Sexp.List binds; body] ->
                       let fenv = List.fold binds ~init:fenv ~f:(fun acc -> function
                           | Sexp.List [Sexp.Atom var; _sort; def] ->
@@ -181,8 +195,10 @@ end = struct
           end
       end
     | Sexp.Atom var -> begin
-        match Logic.SortMap.find venv (Ident.Tvar var) with
-        | Some _sort -> mk_var (Ident.Tvar var)
+        match Map.Poly.find venv (Ident.Tvar var) with
+        | Some Logic.BoolTerm.SBool ->
+          Logic.ExtTerm.eq_of Logic.BoolTerm.SBool (Logic.Term.mk_var (Ident.Tvar var)) (Logic.BoolTerm.mk_bool true)
+        | Some _ -> mk_var (Ident.Tvar var)
         | None -> begin
             match Map.Poly.find fenv (Ident.Tvar var) with
             | Some term -> (* if the term is an interpreted variable, sub
@@ -202,10 +218,10 @@ end = struct
       | Some (sort, _) -> sort
       | None -> begin
           match Problem.find_synth_fun_of problem pre_f with
-          | Some(sort, _) -> sort
+          | Some (sort, _) -> sort
           | None -> begin
               match Problem.find_synth_fun_of problem post_f with
-              | Some(sort, _) -> sort
+              | Some (sort, _) -> sort
               | None -> failwith "sort need to be known by trans_f"
             end end
     in
@@ -220,7 +236,9 @@ end = struct
     (* p2 => p5 *)
     let var_list, var_list' =
       let rec sub acc = function
-        | Sort.SArrow (s1, s2) -> sub ((get_var (), s1)::acc) s2
+        | Sort.SArrow (s1, (o, s2, Sort.Pure)) when Sort.is_empty_opsig o ->
+          sub ((get_var (), s1) :: acc) s2
+        | Sort.SArrow (_, (_, _, _)) -> failwith "sub"
         | _ -> List.rev acc
       in
       sub [] sort_of_inv_f, sub [] sort_of_inv_f
@@ -259,7 +277,16 @@ end = struct
     | _ -> failwith "args are invalid"
 
   let add_args_to_venv venv args =
-    List.fold ~f:(fun acc (var, sort) -> Logic.SortMap.update acc var ~f:(function | _ -> sort)) ~init:venv args
+    List.fold ~f:(fun acc (var, sort) -> Map.Poly.update acc var ~f:(function _ -> sort)) ~init:venv args
+
+  let parse_fundef fenv venv = function
+    | Sexp.List [Sexp.Atom "define-fun"; Sexp.Atom name; Sexp.List args; Sexp.Atom _sort; def] ->
+      let args = List.map ~f:var_and_sort_of_arg args in
+      (* The defined fun contains neighter any free variable nor any synth-fun*)
+      let venv' = add_args_to_venv venv args in
+      let body = parse_term (Problem.mk_problem Map.Poly.empty Map.Poly.empty []) fenv venv' def in
+      Ident.Tvar name, mk_lambda args body
+    | _ -> failwith @@ Printf.sprintf "sygus function definition should start from 'define-fun'"
 
   let parse_smt_cmd problem fenv venv = function
     | Sexp.List [Sexp.Atom "declare-datatype"; _; _]
@@ -267,13 +294,9 @@ end = struct
       -> failwith "declare-datatype(s) is not supported yet"
     | Sexp.List [Sexp.Atom "declare-sort"; _; _]
       -> failwith "declare-sort is not supported yet"
-    | Sexp.List [Sexp.Atom "define-fun"; Sexp.Atom name; Sexp.List args; Sexp.Atom _sort; def] ->
-      let args = List.map ~f:var_and_sort_of_arg args in
-      (* The defined fun contains neighter any free variable nor any synth-fun*)
-      let venv' = add_args_to_venv venv args in
-      let body = parse_term (Problem.mk_problem Map.Poly.empty Logic.SortMap.empty []) fenv venv' def in
-      let term = mk_lambda args body in
-      problem, Map.Poly.add_exn fenv ~key:(Ident.Tvar name) ~data:term
+    | Sexp.List [Sexp.Atom "define-fun"; Sexp.Atom _name; Sexp.List _args; Sexp.Atom _sort; _def] as sexp ->
+      let name, term = parse_fundef fenv venv sexp in
+      problem, Map.Poly.add_exn fenv ~key:name ~data:term
     | Sexp.List [Sexp.Atom "define-sort"]
       -> failwith "define-sort is not supported yet"
     | Sexp.List [Sexp.Atom "set-info"] -> failwith "not implemented yet"
@@ -281,7 +304,7 @@ end = struct
     | Sexp.List (Sexp.Atom cmd :: _) -> failwith @@ Printf.sprintf "unknown smt cmd : %s" cmd
     | _ -> failwith "unknown smt cmd"
 
-  let rec parse_cmds problem fenv (venv : Logic.SortMap.t) = function
+  let rec parse_cmds problem fenv (venv : Logic.sort_env_map) = function
     | [] -> Result.fail @@ Error.of_string "lack of check-synth command"
     | (Sexp.List [Sexp.Atom "check-synth"]) :: [] -> Ok (problem)
     | (Sexp.List (Sexp.Atom "constraint" :: constraint_ :: [])) :: es ->
@@ -292,11 +315,13 @@ end = struct
       let var = Ident.Tvar var in
       let sort = Term.sort_of_text sort in
       let problem' = Problem.add_declared_var problem var sort in
-      parse_cmds problem' fenv (Logic.SortMap.add_exn venv ~key:var ~data:sort) es
+      parse_cmds problem' fenv (Map.Poly.add_exn venv ~key:var ~data:sort) es
     | (Sexp.List ((Sexp.Atom "inv-constraint") :: (Sexp.Atom inv_f):: (Sexp.Atom pre_f) :: (Sexp.Atom trans_f) :: (Sexp.Atom post_f) :: [])) :: es ->
       let inv_f, pre_f, trans_f, post_f =
         Ident.Tvar inv_f, Ident.Tvar pre_f, Ident.Tvar trans_f, Ident.Tvar post_f in
       let problem, constraints = parse_inv_constraint problem fenv inv_f pre_f trans_f post_f in
+      (* print_endline @@ sprintf "[parse_inv_constraint]\n%s"
+         (String.concat_map_list ~sep:"\n" constraints ~f:(fun t -> "*) " ^ Logic.ExtTerm.str_of t)); *)
       let problem' = List.fold ~f:(fun acc c -> Problem.add_constraint acc c) ~init:problem constraints in
       parse_cmds problem' fenv venv es
     | (Sexp.List [Sexp.Atom "set-feature"]) :: _es -> failwith "not implemented yet"
@@ -311,13 +336,13 @@ end = struct
       parse_cmds problem' fenv' venv es
 
   let of_problem es =
-    let problem = parse_cmds (Problem.mk_problem Map.Poly.empty Logic.SortMap.empty []) Map.Poly.empty Logic.SortMap.empty es in
+    let problem = parse_cmds (Problem.mk_problem Map.Poly.empty Map.Poly.empty []) Map.Poly.empty Map.Poly.empty es in
     problem
 
 end
 
 let parse = function
-  | (Sexp.List [Sexp.Atom "set-logic"; Sexp.Atom logic]) :: es -> 
+  | (Sexp.List [Sexp.Atom "set-logic"; Sexp.Atom logic]) :: es ->
     let logic = logic_type_of_str logic in begin
       match logic with
       | Lia ->
@@ -330,11 +355,27 @@ let parse = function
 let from_file filename =
   let src = In_channel.read_all filename in
   match Many.parse_string src with
-  | Ok (sexps) -> parse sexps
+  | Ok sexps -> parse sexps
   | Error err ->
     Result.fail @@
     Error.of_thunk (fun () ->
         let pos = Parse_error.position err in
         let msg = Parse_error.message err in
-        Printf.sprintf "at line %d, col %d: %s" pos.line pos.col msg
-      )
+        Printf.sprintf "at line %d, col %d: %s" pos.line pos.col msg)
+
+let parse_solution sexps =
+  let module Parser = Make (ExtTerm) (Problem.ExtTerm) in
+  Parser.parse_fundef Map.Poly.empty Map.Poly.empty sexps
+
+let solution_from_file filename =
+  try
+    let src = In_channel.read_all filename in
+    match Many.parse_string src with
+    | Ok sexps -> Result.return @@ List.map sexps ~f:parse_solution
+    | Error err ->
+      Result.fail @@
+      Error.of_thunk (fun () ->
+          let pos = Parse_error.position err in
+          let msg = Parse_error.message err in
+          Printf.sprintf "at line %d, col %d: %s" pos.line pos.col msg)
+  with Sys_error err -> Result.fail @@ Error.of_thunk (fun () -> err)

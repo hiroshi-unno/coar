@@ -1,39 +1,37 @@
 open Core
 
-type t = | Cnf of clause list 
+type t = | Cnf of clause list
 and clause = (string list * string list) (* negatives * positives *)
+type soft = (t * int) list
 
-type solution = 
+type solution =
   | Sat of assign
   | Unsat
 and assign = (string * bool) list
 
-type incsol = |IncSat of assign * (?print_sol:bool -> t -> incsol) |IncUnsat 
+type incsol = IncSat of assign * (?print_sol:bool -> t -> incsol) | IncUnsat
 
 let of_list  = function
   |clauses -> Cnf clauses
 
-let to_list = function
-  | Cnf(l) -> l
+let to_list = function Cnf l -> l
 
-let assign_of = function
-  | Sat a -> a
-  | _ -> []
+let assign_of = function Sat a -> a | _ -> []
 
 let solution_of l = Sat l
 
-let str_of_clause (neg, pos)=
+let str_of_clause (neg, pos) =
   let negstr = List.fold_left neg ~init:"/\\ (" ~f:(fun res str -> res ^ "-" ^ str ^ "\\/") in
   let posstr = List.fold_left pos ~init:"" ~f:(fun res str -> res ^ str ^ "\\/") in
   negstr ^ posstr ^ "\b\b) \n"
 
 let str_of t =
-  to_list t |> List.fold_left ~init:"" ~f:(fun res (neg, pos) -> 
-      res ^ (str_of_clause (neg, pos)))
+  to_list t |>
+  List.fold_left ~init:"" ~f:(fun res (neg, pos) -> res ^ str_of_clause (neg, pos))
 
 let assess_of edges (var, value) =
   let (neg, pos) = List.Assoc.find_exn edges var ~equal:Stdlib.(=) in
-  (if value then pos else neg) |> List.length
+  List.length @@ (if value then pos else neg)
 
 let minimize_core_cnf cnf solution =
   let clauses = to_list cnf in
@@ -56,7 +54,7 @@ let minimize_core_cnf cnf solution =
         let is_solved (neg, pos) =
           List.mem (if value then pos else neg) var ~equal:Stdlib.(=) in
         let remain =
-          List.filter ~f:(fun clause -> not @@ is_solved clause) remain in
+          List.filter ~f:(Fn.non is_solved) remain in
         greedy_search remain ((var, value)::used) not_used
   in greedy_search clauses [] assignments
 
@@ -67,7 +65,7 @@ let minimize_core clauses solution =
 let str_of_assign assign =
   let rec aux acc = function
     | [] -> acc
-    | (v, true) :: tl -> 
+    | (v, true) :: tl ->
       aux (acc ^ " " ^ v) tl
     | (v, false) :: tl ->
       aux (acc ^ " -" ^ v) tl
@@ -81,8 +79,9 @@ let str_of_solution_verbose = function
 let str_of_solution = function Sat _ -> "sat" | Unsat -> "unsat"
 
 let str_of_incsol_verbose = function
-  |IncSat (assign, _) -> "sat\n" ^ str_of_assign assign
-  |IncUnsat -> "unsat"
+  | IncSat (assign, _) -> "sat\n" ^ str_of_assign assign
+  | IncUnsat -> "unsat"
 
 let str_of_incsol = function IncSat _ -> "sat" | IncUnsat -> "unsat"
 
+let of_prop_formula phi = of_list @@ Ast.PropLogic.Formula.cnf_of phi

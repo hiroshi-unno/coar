@@ -1,0 +1,47 @@
+///*** 1_main ***///
+START: main_entry;
+
+FROM: main_entry;
+vcall := nondet();
+vcall1 := nondet();
+vcall2 := nondet();
+vcall3 := nondet();
+var__temp_vx.0 := vcall2;
+var__temp_vy.0 := vcall3;
+TO: main_entry_end;
+
+FROM: main_entry_end;
+assume(vcall == vcall1);
+TO: main_while.cond;
+
+FROM: main_entry_end;
+assume(vcall != vcall1);
+TO: main_if.end;
+
+FROM: main_while.cond;
+vx.0 := var__temp_vx.0;
+vy.0 := var__temp_vy.0;
+TO: main_while.cond_end;
+
+FROM: main_while.cond_end;
+assume((vx.0 >= 0) || (vy.0 >= 0));
+TO: main_while.body;
+
+FROM: main_while.cond_end;
+assume((vx.0 < 0) && (vy.0 < 0));
+TO: main_if.end;
+
+FROM: main_while.body;
+vadd := vx.0 + vcall;
+vsub := vadd - vcall1;
+vsub6 := vsub - 1;
+vadd7 := vy.0 + vcall1;
+vsub8 := vadd7 - vcall;
+vsub9 := vsub8 - 1;
+var__temp_vx.0 := vsub6;
+var__temp_vy.0 := vsub9;
+TO: main_while.cond;
+
+FROM: main_if.end;
+TO: main_if.end_ret;
+

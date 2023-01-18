@@ -1,0 +1,44 @@
+{
+       "phase_list": [
+              [
+                     "S",
+                     [
+                            "Filename",
+                            "./config/pcsat/synthesizer/dt_poly0123_all_eager.json"
+                     ]
+              ],
+              [
+                     "V",
+                     [
+                            "Filename",
+                            "./config/pcsat/validator/nce.json"
+                     ]
+              ],
+              [
+                     "L",
+                     [
+                            "Filename",
+                            "./config/pcsat/labeler/sat1.json"
+                     ]
+              ],
+              [
+                     "R",
+                     [
+                            "Filename",
+                            "./config/pcsat/resolver/smt.json"
+                     ]
+              ],
+              [
+                     "L",
+                     [
+                            "Filename",
+                            "./config/pcsat/labeler/max_sat1_biased_bmi0_50r1_b100i_dim_red.json"
+                     ]
+              ]
+       ],
+       "verbose": false,
+       "rl_config": [
+              "Filename",
+              "./config/pcsat/rl/disable.json"
+       ]
+}

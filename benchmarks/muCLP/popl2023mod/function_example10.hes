@@ -1,0 +1,29 @@
+/* 
+int main() {
+  int x1, x2;
+  while (x1 != 0 && x2 > 0)
+    if (x1 > 0) {
+      if (?) {
+        x1 = x1 - 1;
+        x2 = ?;
+      } else
+        x2 = x2 - 1;
+    } else {
+      if (?)
+        x1 = x1 + 1;
+      else {
+        x2 = x2 - 1;
+        x1 = ?;
+      }
+    }
+  return 0;
+}
+*/
+forall (x1: int) (x2: int). I x1 x2
+s.t.
+I (x1: int) (x2: int): bool =mu
+  (x1 = 0 => true) /\
+  (x1 != 0 =>
+    (x2 <= 0 => true) /\
+    (x2 > 0 => (x1 > 0 => (forall (x2 : int). I (x1 - 1) x2) /\ I x1 (x2 - 1)) /\
+               (x1 <= 0 => I (x1 + 1) x2 /\ (forall (x1 : int). I x1 (x2 - 1)))));

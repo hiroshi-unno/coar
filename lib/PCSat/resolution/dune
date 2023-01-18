@@ -1,6 +1,7 @@
 (library
   (name resolution)
   (public_name CoAR.PCSat.resolution)
+  (preprocess (pps ppx_deriving_yojson))
   (libraries
     core
     yojson
@@ -12,6 +13,5 @@
   (modules
     resolver
     oldResolver
-    SMTResolver)
-  (preprocess (pps ppx_deriving_yojson))
-)
+    graphResolver
+    SMTResolver))

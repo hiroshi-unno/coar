@@ -1,0 +1,36 @@
+(menhir
+  (modules
+    cCtlParser
+    cLtlParser
+    baParsing)
+  (flags ("--explain" "--dump")))
+(ocamllex
+  (modules
+    cCtlLexer
+    cLtlLexer
+    baLexer
+  )
+)
+(library
+  (name c)
+  (public_name CoAR.c)
+  (libraries
+    core
+    CoAR.ast
+    CoAR.muCLP)
+  (modules
+    parser
+    cSyntax
+    cCtlParser
+    cCtlLexer
+    cLtlParser
+    cLtlLexer
+    baParsing
+    baLexer
+    baParser
+    logicConverter
+    hesOf
+    linked
+    variables
+    optimizer)
+  (synopsis "loader for ctl written in C language"))
