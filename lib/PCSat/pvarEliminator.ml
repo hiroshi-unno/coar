@@ -666,6 +666,7 @@ module Make (Config: Config.ConfigType) = struct
     return (sol', info)
 
   let preprocess ?(bpvs=Set.Poly.empty) ?(oracle=None) ?(normalize_params=false) pcsp =
+    Debug.print @@ lazy "************* preprocessing ***************";
     Debug.print @@ lazy "input:";
     Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
     Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
@@ -693,9 +694,9 @@ module Make (Config: Config.ConfigType) = struct
       Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
       (*Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
         Debug.print @@ lazy "";*)
+      Debug.print @@ lazy "*******************************************";
       None(*ToDo:use oracle*), pcsp
     end else begin
-      Debug.print @@ lazy "************* preprocessing ***************";
       let pcsp = PCSP.Problem.(remove_unused_params @@ simplify ~timeout:(Some 1000) pcsp) in
       Debug.print @@ lazy "simplified:";
       Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);

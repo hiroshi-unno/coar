@@ -167,7 +167,7 @@ and normalize_term ?(drop_coeff = false) = function
       |> (function [] -> T_int.zero () | [t] -> t | t :: ts -> T_int.mk_sum t ts)
     | T_real.SReal ->
       real_monomials_of (Value.Real Q.one) term
-      |> NonLinear.real_simplify |> (if drop_coeff then NonLinear.div_by_gcd else Fn.id)
+      |> NonLinear.real_simplify |> (if false(*drop_coeff*) then NonLinear.div_by_gcd else Fn.id)
       |> Map.Poly.to_alist |> List.map ~f:(fun (m, c) ->
           if Map.Poly.is_empty m then Term.of_value c
           else if Stdlib.(c = Value.Real Q.one) then NonLinear.real_prod m
