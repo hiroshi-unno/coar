@@ -68,13 +68,13 @@ sudo docker build -t coar .
 ### Predicate Constraint Satisfiability Checking (CHC, $\forall\exists$ CHC, pCSP, and pfwnCSP)
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_pcsat_tb_ar.json -p pcsp benchmarks/CHC/simple/sum.smt2
+dune exec main -- -c ./config/solver/dbg_pcsat_tb_ar.json -p pcsp ./benchmarks/CHC/simple/sum.smt2
 ```
 ```bash
-dune exec main -- -c ./config/solver/dbg_pcsat_tb_ar.json -p pcsp benchmarks/AECHC/bar.smt2
+dune exec main -- -c ./config/solver/dbg_pcsat_tb_ar.json -p pcsp ./benchmarks/AECHC/bar.smt2
 ```
 ```bash
-dune exec main -- -c ./config/solver/dbg_pcsat_tb_ar.json -p pcsp benchmarks/pfwnCSP/simple/max.clp
+dune exec main -- -c ./config/solver/dbg_pcsat_tb_ar.json -p pcsp ./benchmarks/pfwnCSP/simple/max.clp
 ```
 
 ### Syntax Guided Synthesis (INV and CLIA)
@@ -88,37 +88,37 @@ dune exec main -- -c ./config/solver/dbg_pcsat_tb_ar.json -p sygus ./benchmarks/
 #### Primal
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_muval_prove_tb_ar.json -p muclp benchmarks/muCLP/sas2019/ctl1.hes
+dune exec main -- -c ./config/solver/dbg_muval_prove_tb_ar.json -p muclp ./benchmarks/muCLP/popl2023mod/sas2019_ctl1.hes
 ```
 
 #### Dual
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_muval_disprove_tb_ar.json -p muclp benchmarks/muCLP/sas2019/ctl1.hes
+dune exec main -- -c ./config/solver/dbg_muval_disprove_tb_ar.json -p muclp ./benchmarks/muCLP/popl2023mod/sas2019_ctl1.hes
 ```
 
 #### Parallel
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_muval_parallel_tb_ar.json -p muclp benchmarks/muCLP/sas2019/ctl1.hes
+dune exec main -- -c ./config/solver/dbg_muval_parallel_tb_ar.json -p muclp ./benchmarks/muCLP/popl2023mod/sas2019_ctl1.hes
 ```
 
 #### Parallel with Clause Exchange
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_muval_parallel_exc_tb_ar.json -p muclp benchmarks/muCLP/sas2019/ctl1.hes
+dune exec main -- -c ./config/solver/dbg_muval_parallel_exc_tb_ar.json -p muclp ./benchmarks/muCLP/popl2023mod/sas2019_ctl1.hes
 ```
 
 #### Interactive Conditional
 
 ```bash
-dune exec main -- -c ./config/solver/muval_prove_tb_ar.json -p muclpinter benchmarks/muCLP/sas2019/lines1.hes
+dune exec main -- -c ./config/solver/muval_prove_tb_ar.json -p muclpinter ./benchmarks/muCLP/popl2023mod/sas2019_lines1.hes
 ```
 
 ### CHC Maximization
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_optpcsat_nc_tb_ar.json -p chcmax benchmarks/CHC/popl2023opt/test2.smt2
+dune exec main -- -c ./config/solver/dbg_optpcsat_nc_tb_ar.json -p chcmax ./benchmarks/CHC/popl2023opt/test2.smt2
 ```
 
 ### Verification of OCaml Programs
@@ -159,19 +159,19 @@ dune exec main -- -c ./config/solver/dbg_muval_prove_tb_ar.json -p cctl <file>
 #### Termination Verification
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_muval_prove_tb_ar.json -p ltsterm benchmarks/LTS/simple/test.t2
+dune exec main -- -c ./config/solver/dbg_muval_prove_tb_ar.json -p ltsterm ./benchmarks/LTS/simple/test.t2
 ```
 
 #### Non-Termination Verification
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_muval_prove_tb_ar.json -p ltsnterm benchmarks/LTS/simple/test.t2
+dune exec main -- -c ./config/solver/dbg_muval_prove_tb_ar.json -p ltsnterm ./benchmarks/LTS/simple/test.t2
 ```
 
 #### Interactive Conditional (Non-)Termination Verification
 
 ```bash
-dune exec main -- -c ./config/solver/muval_prove_tb_ar.json -p ltsterminter benchmarks/LTS/simple/prog2.t2
+dune exec main -- -c ./config/solver/muval_prove_tb_ar.json -p ltsterminter ./benchmarks/LTS/simple/prog2.t2
 ```
 
 ## References
