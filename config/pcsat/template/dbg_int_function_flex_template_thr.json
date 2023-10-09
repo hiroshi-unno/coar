@@ -2,6 +2,8 @@
     "verbose": true,
 
     "shape": [1],
+    "depth": 0,
+    "ext": 0,
 
     "upper_bound_expr_coeff": 1,
     "upper_bound_expr_const": 0,

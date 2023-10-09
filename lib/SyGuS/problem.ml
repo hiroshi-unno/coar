@@ -2,10 +2,11 @@ open Core
 open Common.Ext
 open Ast
 
-type logic_type = Any | Lia | BV | Reals | Arrays
+type logic_type = Any | Lia | BV | Reals | Arrays | RE
 
 let logic_type_of_str = function
-  | "LIA" | "SAT" -> Lia | "BV" -> BV | "Reals" -> Reals | "Arrays" -> Arrays | _ -> Any
+  | "LIA" | "SAT" -> Lia | "BV" -> BV | "Reals" -> Reals
+  | "Arrays" -> Arrays | "RE" -> RE | _ -> Any
 
 type symbol = string
 type sort = symbol * Logic.Sort.t
@@ -51,7 +52,7 @@ end = struct
 
   type t = symbol * (symbol, (Logic.Sort.t * rule)) Map.Poly.t
 
-  let mk_cfg start symbols = (start, symbols)
+  let mk_cfg start symbols = start, symbols
   let mk_gTerm_constant sort = Constant sort
   let mk_gTerm_variable sort = Variable sort
   let mk_gTerm_bfTerm bfTerm = BfTerm bfTerm
@@ -62,44 +63,42 @@ end = struct
   let mk_bfTerm_fun id bfterms = Fun (id, bfterms)
   let mk_symbol symbol = symbol
 
-  let starting_symbol = function
-    | sym, _ -> sym
+  let starting_symbol = function sym, _ -> sym
 
   let sort_of_symbol cfg symbol =
     match cfg with
-    | _, map -> begin
-        match Map.Poly.find map symbol with
-        | Some (sort, _) -> sort
-        | None -> failwith @@ Printf.sprintf "%s is not defined in the grammar" symbol
-      end
+    | _, map ->
+      match Map.Poly.find map symbol with
+      | Some (sort, _) -> sort
+      | None -> failwith @@ sprintf "%s is not defined in the grammar" symbol
 
   let rule_of_symbol cfg symbol =
     match cfg with
-    | _, map -> begin
-        match Map.Poly.find map symbol with
-        | Some (_, rule) -> rule
-        | None -> failwith @@ Printf.sprintf "%s is not defined in the grammar" symbol
-      end
+    | _, map ->
+      match Map.Poly.find map symbol with
+      | Some (_, rule) -> rule
+      | None -> failwith @@ sprintf "%s is not defined in the grammar" symbol
 
   let rec str_of_bfTerm = function
     | Id (Identifier term) | Lit term -> Term.str_of term
-    | Fun ((Identifier sym), bfTerms) ->
-      Printf.sprintf "(%s %s)" (Term.str_of sym) (String.concat_map_list ~sep:" " ~f:str_of_bfTerm bfTerms)
+    | Fun (Identifier sym, bfTerms) ->
+      String.paren @@ sprintf "%s %s" (Term.str_of sym)
+        (String.concat_map_list ~sep:" " ~f:str_of_bfTerm bfTerms)
 
   let str_of_gTerm = function
-    | Constant sort -> Printf.sprintf "Constant %s" (Term.str_of_sort sort)
-    | Variable sort -> Printf.sprintf "Variable %s" (Term.str_of_sort sort)
-    | BfTerm bfTerm -> Printf.sprintf "%s" (str_of_bfTerm bfTerm)
+    | Constant sort -> sprintf "Constant %s" (Term.str_of_sort sort)
+    | Variable sort -> sprintf "Variable %s" (Term.str_of_sort sort)
+    | BfTerm bfTerm -> sprintf "%s" (str_of_bfTerm bfTerm)
 
   let str_of_rule rule =
-    String.concat_map_list ~sep:"\n   " ~f:str_of_gTerm rule |> Printf.sprintf "   %s"
+    String.concat_map_list ~sep:"\n   " ~f:str_of_gTerm rule |> sprintf "   %s"
 
   let str_of = function
     | sym, map ->
       Map.Poly.to_alist map
       |> String.concat_map_list ~sep:"\n" ~f:(fun (sym, (sort, rule)) ->
-          Printf.sprintf "%s : %s\n%s" sym (Term.str_of_sort sort) (str_of_rule rule))
-      |> Printf.sprintf "starting symbol : %s\n%s" sym
+          sprintf "%s : %s\n%s" sym (Term.str_of_sort sort) (str_of_rule rule))
+      |> sprintf "starting symbol : %s\n%s" sym
 end
 
 module Make (Term : TermType) : sig
@@ -141,21 +140,21 @@ end = struct
   let str_of_synth_funs map =
     Map.Poly.to_alist map
     |> List.fold ~init:"" ~f:(fun acc (sym, (sort, cfg)) ->
-        Printf.sprintf "%s\n%s, (%s) %s" acc (Ident.name_of_tvar sym) (Term.str_of_sort sort)
+        sprintf "%s\n%s, (%s) %s" acc (Ident.name_of_tvar sym) (Term.str_of_sort sort)
           (match cfg with Some cfg -> CFG.str_of cfg | None -> ""))
 
   let str_of_declared_vars map =
     Map.Poly.to_alist map
     |> List.fold ~init:"" ~f:(fun acc (sym, sort) ->
-        Printf.sprintf "%s\n%s, (%s)" acc (Ident.name_of_tvar sym) (Term.str_of_sort sort))
+        sprintf "%s\n%s, (%s)" acc (Ident.name_of_tvar sym) (Term.str_of_sort sort))
 
   let str_of_constraints constraints =
     List.fold ~init:"" constraints ~f:(fun acc constr ->
-        Printf.sprintf "%s\nconstraint : %s" acc (Term.str_of constr))
+        sprintf "%s\nconstraint : %s" acc (Term.str_of constr))
 
   let str_of = function
     | synth_funs, declared_vars, constraints ->
-      Printf.sprintf "***** synth_funs *****\n%s\n\n***** declared_vars *****\n%s\n\n***** constraints *****\n%s\n\n ***************\n"
+      sprintf "***** synth_funs *****\n%s\n\n***** declared_vars *****\n%s\n\n***** constraints *****\n%s\n\n ***************\n"
         (str_of_synth_funs synth_funs) (str_of_declared_vars declared_vars) (str_of_constraints constraints)
 end
 

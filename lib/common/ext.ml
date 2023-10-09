@@ -29,9 +29,11 @@ module Integer = struct
   (* let sum = fold_left (fun x -> fun y -> x + y) 0 *)
   (** @return the sum of integers ns *)
   let sum_list ns = List.fold_left ~f:(+) ~init:0 ns
+  let sum_set ns = Set.fold ~f:(+) ~init:0 ns
   let rec prod n = if n = 1 then 1 else n * prod (n - 1)
   (** @return the product of integers ns *)
   let prod_list ns = List.fold_left ~f:( * ) ~init:1 ns
+  let prod_set ns = Set.fold ~f:( * ) ~init:1 ns
   (** @return the maximum of integers *)
   let max = max
   (** @return the maximum of integers ns *)
@@ -135,6 +137,72 @@ module Float = struct
     mu +. sigma *. sqrt (-2. *. log (Random.float 1.)) *. Stdlib.cos (2. *. Float.pi *. Random.float 1.)
 end
 
+(** Ordinals *)
+module Ordinal : sig
+  type t
+
+  val make : int -> t
+  (*val pr : Format.formatter -> t -> unit*)
+  val string_of : t -> string
+end = struct
+  type t = int
+
+  let make n = n
+
+  (*let pr ppf n =
+    if n = 11 || n = 12 || n = 13 then
+      Format.fprintf ppf "%dth" n
+    else
+      match n mod 10 with
+      | 1 -> Format.fprintf ppf "%dst" n
+      | 2 -> Format.fprintf ppf "%dnd" n
+      | 3 -> Format.fprintf ppf "%drd" n
+      | _ -> Format.fprintf ppf "%dth" n
+    let string_of = Printer.string_of pr*)
+  let string_of n =
+    if n = 11 || n = 12 || n = 13 then sprintf "%dth" n
+    else
+      sprintf
+        ( match n mod 10 with
+          | 1 -> "%dst"
+          | 2 -> "%dnd"
+          | 3 -> "%drd"
+          | _ -> "%dth" )
+        n
+end
+
+(** Strings *)
+module String = struct
+  include String
+
+  let pr ppf str = Format.fprintf ppf "%s" str
+
+  let is_int s = try let _ = int_of_string s in true with Failure _ -> false
+  let is_float s = try let _ = float_of_string s in true with Failure _ -> false
+
+  (** @todo sufficient for identifiers of OCaml? *)
+  let escape s = String.map ~f:(fun c -> if Char.(c = '.' || c = '!') then '_' else c) s
+
+  let split_at i str =
+    if Stdlib.(i < 0) then "", str
+    else if Stdlib.(i > Stdlib.String.length str) then str, ""
+    else Stdlib.String.sub str 0 i, Stdlib.String.sub str i (String.length str - i)
+
+  let concat_map_list ?(sep = "") ~f l = String.concat ~sep @@ List.map l ~f
+  let concat_mapi_list ?(sep = "") ~f l = String.concat ~sep @@ List.mapi l ~f
+  let concat_set ~sep s = String.concat ~sep @@ Core.Set.to_list s
+  let concat_map_set ?(sep = "") ~f s = concat_set ~sep @@ Core.Set.Poly.map s ~f
+  let paren s = "(" ^ s ^ ")"
+  let bracket s = "[" ^ s ^ "]"
+  let brace s = "{" ^ s ^ "}"
+  let angle_bracket s = "<" ^ s ^ ">"
+  let concat_map_list_append ?(sep = "") ~f l s =
+    match l with
+    | [] -> s
+    | [e] -> f e ^ " " ^ s
+    | _ -> (paren @@ concat_map_list ~sep ~f l) ^ " " ^ s
+end
+
 (** Options *)
 module Option = struct
   include Option
@@ -149,29 +217,248 @@ module Option = struct
   let pr epr none ppf = function
     | None -> Format.fprintf ppf "%s" none
     | Some x -> Format.fprintf ppf "%a" epr x
+
+  let str_of str_of_none str_of_some = function
+    | None -> str_of_none
+    | Some elem -> str_of_some elem
 end
 
-(** Strings *)
-module String = struct
-  include String
+(** Pairs *)
+module Pair = struct
+  let make x1 x2 = (x1, x2)
 
-  let pr ppf str = Format.fprintf ppf "%s" str
+  let of_list = function [x1; x2] -> (x1, x2) | _ -> failwith ""
+  let list_of (x1, x2) = [x1; x2]
 
-  let is_int s = try let _ = int_of_string s in true with Failure _ -> false
-  let is_float s = try let _ = float_of_string s in true with Failure _ -> false
+  let map f1 f2 (x1, x2) = (f1 x1, f2 x2)
+  let map_fst f (x1, x2) = (f x1, x2)
+  let map_snd f (x1, x2) = (x1, f x2)
+  let map2 f1 f2 (x1, x2) (y1, y2) = (f1 x1 y1, f2 x2 y2)
 
-  (** @todo sufficient for identifiers of OCaml? *)
-  let escape s = map ~f:(fun c -> if Char.(c = '.' || c = '!') then '_' else c) s
+  let fold f (x1, x2) = f x1 x2
+  let lift f (x1, x2) = (f x1, f x2)
+  let lift2 f (x1, x2) (y1, y2) = (f x1 y1, f x2 y2)
+  let unfold f1 f2 x = (f1 x, f2 x)
 
-  let split_at i str =
-    if Stdlib.(i < 0) then "", str
-    else if Stdlib.(i > Stdlib.String.length str) then str, ""
-    else Stdlib.String.sub str 0 i, Stdlib.String.sub str i (String.length str - i)
+  let pr epr1 epr2 ppf (x1, x2) =
+    Format.fprintf ppf "@[(@[<hov>%a,@ %a@])@]" epr1 x1 epr2 x2
 
-  let concat_map_list ?(sep = "") ~f l = concat ~sep @@ List.map l ~f
-  let concat_mapi_list ?(sep = "") ~f l = concat ~sep @@ List.mapi l ~f
-  let concat_set ~sep s = String.concat ~sep @@ Core.Set.Poly.to_list s
-  let concat_map_set ?(sep = "") ~f s = concat_set ~sep @@ Core.Set.Poly.map s ~f
+  let flip (x1, x2) = (x2, x1)
+end
+
+(** Triples *)
+module Triple = struct
+  let make x1 x2 x3 = (x1, x2, x3)
+
+  let of_list = function [x1; x2; x3] -> (x1, x2, x3) | _ -> failwith ""
+  let list_of (x1, x2, x3) = [x1; x2; x3]
+
+  let fst (x1, _x2, _x3) = x1
+  let snd (_x1, x2, _x3) = x2
+  let trd (_x1, _x2, x3) = x3
+
+  let get12 (x1, x2, _x3) = (x1, x2)
+  let get13 (x1, _x2, x3) = (x1, x3)
+  let get21 (x1, x2, _x3) = (x2, x1)
+  let get23 (_x1, x2, x3) = (x2, x3)
+  let get31 (x1, _x2, x3) = (x3, x1)
+  let get32 (_x1, x2, x3) = (x3, x2)
+
+  let get123 (x1, x2, x3) = (x1, x2, x3)
+  let get132 (x1, x2, x3) = (x1, x3, x2)
+  let get213 (x1, x2, x3) = (x2, x1, x3)
+  let get231 (x1, x2, x3) = (x2, x3, x1)
+  let get312 (x1, x2, x3) = (x3, x1, x2)
+  let get321 (x1, x2, x3) = (x3, x2, x1)
+
+  let map f1 f2 f3 (x1, x2, x3) = (f1 x1, f2 x2, f3 x3)
+  let map_fst f (x1, x2, x3) = (f x1, x2, x3)
+  let map_snd f (x1, x2, x3) = (x1, f x2, x3)
+  let map_trd f (x1, x2, x3) = (x1, x2, f x3)
+
+  let fold f (x1, x2, x3) = f x1 x2 x3
+  let lift f (x1, x2, x3) = (f x1, f x2, f x3)
+  let unfold f1 f2 f3 x = (f1 x, f2 x, f3 x)
+
+  let pr epr1 epr2 epr3 ppf (x1, x2, x3) =
+    Format.fprintf ppf "(@[<hov>%a,@ %a,@ %a@])" epr1 x1 epr2 x2 epr3 x3
+end
+
+(** Quadruples *)
+module Quadruple = struct
+  let make x1 x2 x3 x4 = (x1, x2, x3, x4)
+
+  let of_list = function [x1; x2; x3; x4] -> (x1, x2, x3, x4) | _ -> failwith ""
+  let list_of (x1, x2, x3, x4) = [x1; x2; x3; x4]
+
+  let fst (x1, _x2, _x3, _x4) = x1
+  let snd (_x1, x2, _x3, _x4) = x2
+  let trd (_x1, _x2, x3, _x4) = x3
+  let fth (_x1, _x2, _x3, x4) = x4
+
+  let get12 (x1, x2, _x3, _x4) = (x1, x2)
+  let get13 (x1, _x2, x3, _x4) = (x1, x3)
+  let get14 (x1, _x2, _x3, x4) = (x1, x4)
+  let get21 (x1, x2, _x3, _x4) = (x2, x1)
+  let get23 (_x1, x2, x3, _x4) = (x2, x3)
+  let get24 (_x1, x2, _x3, x4) = (x2, x4)
+  let get31 (x1, _x2, x3, _x4) = (x3, x1)
+  let get32 (_x1, x2, x3, _x4) = (x3, x2)
+  let get34 (_x1, _x2, x3, x4) = (x3, x4)
+  let get41 (x1, _x2, _x3, x4) = (x4, x1)
+  let get42 (_x1, x2, _x3, x4) = (x4, x2)
+  let get43 (_x1, _x2, x3, x4) = (x4, x3)
+
+  let get123 (x1, x2, x3, _x4) = (x1, x2, x3)
+  let get124 (x1, x2, _x3, x4) = (x1, x2, x4)
+  let get132 (x1, x2, x3, _x4) = (x1, x3, x2)
+  let get134 (x1, _x2, x3, x4) = (x1, x3, x4)
+  let get142 (x1, x2, _x3, x4) = (x1, x4, x2)
+  let get143 (x1, _x2, x3, x4) = (x1, x4, x3)
+  let get213 (x1, x2, x3, _x4) = (x2, x1, x3)
+  let get214 (x1, x2, _x3, x4) = (x2, x1, x4)
+  let get231 (x1, x2, x3, _x4) = (x2, x3, x1)
+  let get234 (_x1, x2, x3, x4) = (x2, x3, x4)
+  let get241 (x1, x2, _x3, x4) = (x2, x4, x1)
+  let get243 (_x1, x2, x3, x4) = (x2, x4, x3)
+  let get312 (x1, x2, x3, _x4) = (x3, x1, x2)
+  let get314 (x1, _x2, x3, x4) = (x3, x1, x4)
+  let get321 (x1, x2, x3, _x4) = (x3, x2, x1)
+  let get324 (_x1, x2, x3, x4) = (x3, x2, x4)
+  let get341 (x1, _x2, x3, x4) = (x3, x4, x1)
+  let get342 (_x1, x2, x3, x4) = (x3, x4, x2)
+  let get412 (x1, x2, _x3, x4) = (x4, x1, x2)
+  let get413 (x1, _x2, x3, x4) = (x4, x1, x3)
+  let get421 (x1, x2, _x3, x4) = (x4, x2, x1)
+  let get423 (_x1, x2, x3, x4) = (x4, x2, x3)
+  let get431 (x1, _x2, x3, x4) = (x4, x3, x1)
+  let get432 (_x1, x2, x3, x4) = (x4, x3, x2)
+
+  let map f1 f2 f3 f4 (x1, x2, x3, x4) = (f1 x1, f2 x2, f3 x3, f4 x4)
+  let map_fst f (x1, x2, x3, x4) = (f x1, x2, x3, x4)
+  let map_snd f (x1, x2, x3, x4) = (x1, f x2, x3, x4)
+  let map_trd f (x1, x2, x3, x4) = (x1, x2, f x3, x4)
+  let map_fth f (x1, x2, x3, x4) = (x1, x2, x3, f x4)
+
+  let fold f (x1, x2, x3, x4) = f x1 x2 x3 x4
+  let lift f (x1, x2, x3, x4) = (f x1, f x2, f x3, f x4)
+  let unfold f1 f2 f3 f4 x = (f1 x, f2 x, f3 x, f4 x)
+
+  let pr epr1 epr2 epr3 epr4 ppf (x1, x2, x3, x4) =
+    Format.fprintf ppf "(@[<hov>%a,@ %a,@ %a,@ %a@])"
+      epr1 x1 epr2 x2 epr3 x3 epr4 x4
+end
+
+(** Quintuples *)
+module Quintuple = struct
+  let make x1 x2 x3 x4 x5 = (x1, x2, x3, x4, x5)
+
+  let of_list = function [x1; x2; x3; x4; x5] -> (x1, x2, x3, x4, x5) | _ -> failwith ""
+  let list_of (x1, x2, x3, x4, x5) = [x1; x2; x3; x4; x5]
+
+  let fst (x1, _x2, _x3, _x4, _x5) = x1
+  let snd (_x1, x2, _x3, _x4, _x5) = x2
+  let trd (_x1, _x2, x3, _x4, _x5) = x3
+  let fth (_x1, _x2, _x3, x4, _x5) = x4
+  let fifth (_x1, _x2, _x3, _x4, x5) = x5
+
+  let get12 (x1, x2, _x3, _x4, _x5) = (x1, x2)
+  let get13 (x1, _x2, x3, _x4, _x5) = (x1, x3)
+  let get14 (x1, _x2, _x3, x4, _x5) = (x1, x4)
+  let get15 (x1, _x2, _x3, _x4, x5) = (x1, x5)
+  let get21 (x1, x2, _x3, _x4, _x5) = (x2, x1)
+  let get23 (_x1, x2, x3, _x4, _x5) = (x2, x3)
+  let get24 (_x1, x2, _x3, x4, _x5) = (x2, x4)
+  let get25 (_x1, x2, _x3, _x4, x5) = (x2, x5)
+  let get31 (x1, _x2, x3, _x4, _x5) = (x3, x1)
+  let get32 (_x1, x2, x3, _x4, _x5) = (x3, x2)
+  let get34 (_x1, _x2, x3, x4, _x5) = (x3, x4)
+  let get35 (_x1, _x2, x3, _x4, x5) = (x3, x5)
+  let get41 (x1, _x2, _x3, x4, _x5) = (x4, x1)
+  let get42 (_x1, x2, _x3, x4, _x5) = (x4, x2)
+  let get43 (_x1, _x2, x3, x4, _x5) = (x4, x3)
+  let get45 (_x1, _x2, _x3, x4, x5) = (x4, x5)
+  let get51 (x1, _x2, _x3, _x4, x5) = (x5, x1)
+  let get52 (_x1, x2, _x3, _x4, x5) = (x5, x2)
+  let get53 (_x1, _x2, x3, _x4, x5) = (x5, x3)
+  let get54 (_x1, _x2, _x3, x4, x5) = (x5, x4)
+
+  let get123 (x1, x2, x3, _x4, _x5) = (x1, x2, x3)
+  let get124 (x1, x2, _x3, x4, _x5) = (x1, x2, x4)
+  let get125 (x1, x2, _x3, _x4, x5) = (x1, x2, x5)
+  let get132 (x1, x2, x3, _x4, _x5) = (x1, x3, x2)
+  let get134 (x1, _x2, x3, x4, _x5) = (x1, x3, x4)
+  let get135 (x1, _x2, x3, _x4, x5) = (x1, x3, x5)
+  let get142 (x1, x2, _x3, x4, _x5) = (x1, x4, x2)
+  let get143 (x1, _x2, x3, x4, _x5) = (x1, x4, x3)
+  let get145 (x1, _x2, _x3, x4, x5) = (x1, x4, x5)
+  let get152 (x1, x2, _x3, _x4, x5) = (x1, x5, x2)
+  let get153 (x1, _x2, x3, _x4, x5) = (x1, x5, x3)
+  let get154 (x1, _x2, _x3, x4, x5) = (x1, x5, x4)
+  let get213 (x1, x2, x3, _x4, _x5) = (x2, x1, x3)
+  let get214 (x1, x2, _x3, x4, _x5) = (x2, x1, x4)
+  let get215 (x1, x2, _x3, _x4, x5) = (x2, x1, x5)
+  let get231 (x1, x2, x3, _x4, _x5) = (x2, x3, x1)
+  let get234 (_x1, x2, x3, x4, _x5) = (x2, x3, x4)
+  let get235 (_x1, x2, x3, _x4, x5) = (x2, x3, x5)
+  let get241 (x1, x2, _x3, x4, _x5) = (x2, x4, x1)
+  let get243 (_x1, x2, x3, x4, _x5) = (x2, x4, x3)
+  let get245 (_x1, x2, _x3, x4, x5) = (x2, x4, x5)
+  let get251 (x1, x2, _x3, _x4, x5) = (x2, x5, x1)
+  let get253 (_x1, x2, x3, _x4, x5) = (x2, x5, x3)
+  let get254 (_x1, x2, _x3, x4, x5) = (x2, x5, x4)
+  let get312 (x1, x2, x3, _x4, _x5) = (x3, x1, x2)
+  let get314 (x1, _x2, x3, x4, _x5) = (x3, x1, x4)
+  let get315 (x1, _x2, x3, _x4, x5) = (x3, x1, x5)
+  let get321 (x1, x2, x3, _x4, _x5) = (x3, x2, x1)
+  let get324 (_x1, x2, x3, x4, _x5) = (x3, x2, x4)
+  let get325 (_x1, x2, x3, _x4, x5) = (x3, x2, x5)
+  let get341 (x1, _x2, x3, x4, _x5) = (x3, x4, x1)
+  let get342 (_x1, x2, x3, x4, _x5) = (x3, x4, x2)
+  let get345 (_x1, _x2, x3, x4, x5) = (x3, x4, x5)
+  let get351 (x1, _x2, x3, _x4, x5) = (x3, x5, x1)
+  let get352 (_x1, x2, x3, _x4, x5) = (x3, x5, x2)
+  let get354 (_x1, _x2, x3, x4, x5) = (x3, x5, x4)
+  let get412 (x1, x2, _x3, x4, _x5) = (x4, x1, x2)
+  let get413 (x1, _x2, x3, x4, _x5) = (x4, x1, x3)
+  let get415 (x1, _x2, _x3, x4, x5) = (x4, x1, x5)
+  let get421 (x1, x2, _x3, x4, _x5) = (x4, x2, x1)
+  let get423 (_x1, x2, x3, x4, _x5) = (x4, x2, x3)
+  let get425 (_x1, x2, _x3, x4, x5) = (x4, x2, x5)
+  let get431 (x1, _x2, x3, x4, _x5) = (x4, x3, x1)
+  let get432 (_x1, x2, x3, x4, _x5) = (x4, x3, x2)
+  let get435 (_x1, _x2, x3, x4, x5) = (x4, x3, x5)
+  let get451 (x1, _x2, _x3, x4, x5) = (x4, x5, x1)
+  let get452 (_x1, x2, _x3, x4, x5) = (x4, x5, x2)
+  let get453 (_x1, _x2, x3, x4, x5) = (x4, x5, x3)
+  let get512 (x1, x2, _x3, _x4, x5) = (x5, x1, x2)
+  let get513 (x1, _x2, x3, _x4, x5) = (x5, x1, x3)
+  let get514 (x1, _x2, _x3, x4, x5) = (x5, x1, x4)
+  let get521 (x1, x2, _x3, _x4, x5) = (x5, x2, x1)
+  let get523 (_x1, x2, x3, _x4, x5) = (x5, x2, x3)
+  let get524 (_x1, x2, _x3, x4, x5) = (x5, x2, x4)
+  let get531 (x1, _x2, x3, _x4, x5) = (x5, x3, x1)
+  let get532 (_x1, x2, x3, _x4, x5) = (x5, x3, x2)
+  let get534 (_x1, _x2, x3, x4, x5) = (x5, x3, x4)
+  let get541 (x1, _x2, _x3, x4, x5) = (x5, x4, x1)
+  let get542 (_x1, x2, _x3, x4, x5) = (x5, x4, x2)
+  let get543 (_x1, _x2, x3, x4, x5) = (x5, x4, x3)
+
+  let map f1 f2 f3 f4 f5 (x1, x2, x3, x4, x5) =
+    (f1 x1, f2 x2, f3 x3, f4 x4, f5 x5)
+  let map_fst f (x1, x2, x3, x4, x5) = (f x1, x2, x3, x4, x5)
+  let map_snd f (x1, x2, x3, x4, x5) = (x1, f x2, x3, x4, x5)
+  let map_trd f (x1, x2, x3, x4, x5) = (x1, x2, f x3, x4, x5)
+  let map_fth f (x1, x2, x3, x4, x5) = (x1, x2, x3, f x4, x5)
+  let map_fifth f (x1, x2, x3, x4, x5) = (x1, x2, x3, x4, f x5)
+
+  let fold f (x1, x2, x3, x4, x5) = f x1 x2 x3 x4 x5
+  let lift f (x1, x2, x3, x4, x5) = (f x1, f x2, f x3, f x4, f x5)
+  let unfold f1 f2 f3 f4 _f5 x = (f1 x, f2 x, f3 x, f4 x)
+
+  let pr epr1 epr2 epr3 epr4 epr5 ppf (x1, x2, x3, x4, x5) =
+    Format.fprintf ppf "(@[<hov>%a,@ %a,@ %a,@ %a,@ %a@])"
+      epr1 x1 epr2 x2 epr3 x3 epr4 x4 epr5 x5
 end
 
 (** Lists *)
@@ -261,19 +548,13 @@ module List = struct
 
   let rest_last = function
     | [] -> assert false
-    | l  -> (take l (List.length l - 1), last_exn l)
-
-  let rec initial_last = function
-    | [] -> assert false
-    | [x] -> [], x
-    | x :: xs' -> let ys, y = initial_last xs' in (x :: ys, y)
+    | l  -> take l (List.length l - 1), last_exn l
 
   let non_nil_list_of = function [] -> assert false | xs -> xs
 
   let elem_of_singleton = function
     | [x] -> x
-    | xs ->
-      failwith @@ Format.sprintf "an error in elem_of_singleton: %d@," (length xs)
+    | xs -> failwith @@ sprintf "an error in elem_of_singleton: %d@," (length xs)
 
   (** {6 Inspectors} *)
 
@@ -670,8 +951,9 @@ module List = struct
         epr (i, x) Format.fprintf sep (pr_aux epr sep (i + 1)) xs'
 
   let pr epr ?(header="") ?(footer="") sep ppf xs =
-    Format.fprintf ppf "%s@[<v>%a@]%s"
-      header (pr_aux (fun ppf (_, x) -> epr ppf x) sep 0) xs footer
+    if Fn.non List.is_empty xs then
+      Format.fprintf ppf "%s@[<v>%a@]%s"
+        header (pr_aux (fun ppf (_, x) -> epr ppf x) sep 0) xs footer
 
   let pri epr sep ppf xs =
     Format.fprintf ppf "@[<v>%a@]" (pr_aux epr sep 0) xs
@@ -955,7 +1237,7 @@ module List = struct
         in
         let ls, rs =
           fix
-            (uncurry2 aux)
+            (uncurry aux)
             (comp2 List.eq_length fst fst)
             ([x], s')
         in
@@ -1180,32 +1462,42 @@ module Set = struct
 
   let is_singleton s = length s = 1
 
+  let eqlen b1 b2 = Set.length b1 = Set.length b2
+
   let of_map m = Set.Poly.of_list @@ Map.Poly.to_alist m
 
   let cartesian_map ?(init = Set.Poly.empty) ~f s1 s2 =
-    Set.Poly.fold s1 ~init ~f:(fun acc x1 ->
-        Set.Poly.fold s2 ~init:acc ~f:(fun acc x2 -> Set.Poly.add acc (f x1 x2)))
+    Set.fold s1 ~init ~f:(fun acc x1 ->
+        Set.fold s2 ~init:acc ~f:(fun acc x2 -> Set.add acc (f x1 x2)))
 
-  let fold_distinct_pairs ?(init = Set.Poly.empty) ~f s =
-    Set.Poly.fold s ~init ~f:(fun acc x1 ->
-        Set.Poly.fold s ~init:acc ~f:(fun acc x2 ->
-            if Stdlib.compare x1 x2 = 0 then acc else Set.Poly.add acc (f x1 x2)))
+  let fold_distinct_pairs ~init ~f s =
+    Set.fold s ~init ~f:(fun acc x1 ->
+        Set.fold s ~init:acc ~f:(fun acc x2 ->
+            if Stdlib.compare x1 x2 = 0 then acc else f acc x1 x2))
 
-  let unzip s = (Set.Poly.map s ~f:fst, Set.Poly.map s ~f:snd)
+  let unzip s = Set.Poly.map s ~f:fst, Set.Poly.map s ~f:snd
+  let unzip3 s =
+    Set.Poly.map s ~f:Triple.fst, Set.Poly.map s ~f:Triple.snd, Set.Poly.map s ~f:Triple.trd
 
-  let concat s = Set.Poly.union_list @@ Set.Poly.to_list s
+  let concat s = Set.Poly.union_list @@ Set.to_list s
   let concat_map s ~f =
-    Set.Poly.fold s ~init:Set.Poly.empty ~f:(fun acc x -> Set.Poly.union acc (f x))
+    Set.fold s ~init:Set.Poly.empty ~f:(fun acc x -> Set.union acc (f x))
 
   let partition_map s ~f =
-    Set.Poly.fold s ~init:(Set.Poly.empty, Set.Poly.empty) ~f:(fun (s1, s2) x ->
+    Set.fold s ~init:(Set.Poly.empty, Set.Poly.empty) ~f:(fun (s1, s2) x ->
         match f x with
-        | First y -> Set.Poly.add s1 y, s2
-        | Second y -> s1, Set.Poly.add s2 y)
+        | First y -> Set.add s1 y, s2
+        | Second y -> s1, Set.add s2 y)
+  let partition3_map s ~f =
+    Set.fold s ~init:(Set.Poly.empty, Set.Poly.empty, Set.Poly.empty) ~f:(fun (s1, s2, s3) x ->
+        match f x with
+        | `Fst y -> Set.add s1 y, s2, s3
+        | `Snd y -> s1, Set.add s2 y, s3
+        | `Trd y -> s1, s2, Set.add s3 y)
 
   let representatives s ~equiv =
-    Set.Poly.group_by s ~equiv
-    |> List.map ~f:Set.Poly.choose_exn
+    Set.group_by s ~equiv
+    |> List.map ~f:Set.choose_exn
     |> Set.Poly.of_list
 end
 
@@ -1213,7 +1505,7 @@ end
 module Map = struct
   include Map
 
-  let of_set_exn s = Map.Poly.of_alist_exn @@ Set.Poly.to_list s
+  let of_set_exn s = Map.Poly.of_alist_exn @@ Set.to_list s
   let of_list_exn l = of_set_exn @@ Set.Poly.of_list l (*ToDo: different from [Map.of_alist_exn]?*)
   let to_set = Set.of_map
 
@@ -1222,14 +1514,14 @@ module Map = struct
         Map.Poly.fold m2 ~init:acc ~f:(fun ~key:key2 ~data:data2 acc ->
             f acc key1 data1 key2 data2))
 
-  (* assume f is injective, params not in dom(f) could be discared *)
+  (* assume f is injective, params not in dom(f) could be discarded *)
   let rename_keys map ~f =
     Map.Poly.fold map ~init:Map.Poly.empty ~f:(fun ~key ~data acc ->
         match f key with
         | None -> if Map.Poly.mem acc key then acc else Map.Poly.add_exn ~key ~data acc
         | Some key' -> Map.Poly.set acc ~key:key' ~data)
 
-  (* assume f is injective, params not in dom(f) will be discared *)
+  (* assume f is injective, params not in dom(f) will be discarded *)
   let rename_keys_and_drop_unused map ~f =
     Map.Poly.fold map ~init:Map.Poly.empty ~f:(fun ~key ~data acc ->
         match f key with
@@ -1266,12 +1558,12 @@ module Map = struct
   let update_with_list = List.fold ~init:Map.Poly.empty ~f:update_with
 
   let restrict ~def map dom =
-    Set.Poly.fold dom ~init:Map.Poly.empty ~f:(fun acc key ->
+    Set.fold dom ~init:Map.Poly.empty ~f:(fun acc key ->
         Map.Poly.add_exn acc ~key
           ~data:(match Map.Poly.find map key with Some data -> data | None -> def key))
 
   let remove_keys map = List.fold ~init:map ~f:Map.Poly.remove
-  let remove_keys_set map = Set.Poly.fold ~init:map ~f:Map.Poly.remove
+  let remove_keys_set map = Set.fold ~init:map ~f:Map.Poly.remove
 
   let find_with ~f map = Map.Poly.filter map ~f |> to_alist
 end

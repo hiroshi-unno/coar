@@ -16,17 +16,11 @@ let mk_fresh_tvar ?(prefix = None) () =
   in
   Tvar (prefix ^ string_of_int id)
 
-let name_of_tvar = function Tvar name -> name
+let name_of_tvar (Tvar name) = name
 let str_of_tvar x = (*if is_dontcare x then "_" else*) name_of_tvar x
 let str_of_tvars ~sep tvs = String.concat_map_set ~sep ~f:name_of_tvar tvs
-let tvar_compare (Tvar var1) (Tvar var2) =
-  let reg_number = Str.regexp "[^0-9]*" in
-  let s1, s2 = Str.global_replace reg_number "" var1, Str.global_replace reg_number "" var2 in
-  try
-    let id1, id2 = Int.of_string s1, Int.of_string s2 in
-    (* print_endline @@ sprintf "compare [%d] with [%d]" id1 id2; *)
-    Int.compare id1 id2
-  with _ -> String.compare var1 var2
+let tvar_compare (Tvar var1) (Tvar var2) = String.compare var1 var2
+let tvar_equal (Tvar var1) (Tvar var2) = String.equal var1 var2
 
 (*val str_of_tenv: (tvar, 'b) t -> string*)
 let str_of_tenv tenv = String.concat_map_list ~sep:", " tenv ~f:(fun (Tvar x, _)  -> x)
@@ -74,9 +68,8 @@ let mk_fresh_svar () =
   let id = Atomic.fetch_and_add svar_count 1 in
   Svar ("#svar" ^ string_of_int id)
 
-let name_of_svar = function Svar name -> name
-let svar_compare (Svar var1) (Svar var2) =
-  String.compare var1 var2
+let name_of_svar (Svar name) = name
+let svar_compare (Svar var1) (Svar var2) = String.compare var1 var2
 
 (** Effect variables *)
 
@@ -87,9 +80,8 @@ let mk_fresh_evar () =
   let id = Atomic.fetch_and_add evar_count 1 in
   Evar ("#evar" ^ string_of_int id)
 
-let name_of_evar = function Evar name -> name
-let evar_compare (Evar var1) (Evar var2) =
-  String.compare var1 var2
+let name_of_evar (Evar name) = name
+let evar_compare (Evar var1) (Evar var2) = String.compare var1 var2
 
 (** row variables *)
 
@@ -100,9 +92,8 @@ let mk_fresh_rvar () =
   let id = Atomic.fetch_and_add rvar_count 1 in
   Rvar ("#rvar" ^ string_of_int id)
 
-let name_of_rvar = function Rvar name -> name
-let rvar_compare (Rvar var1) (Rvar var2) =
-  String.compare var1 var2
+let name_of_rvar (Rvar name) = name
+let rvar_compare (Rvar var1) (Rvar var2) = String.compare var1 var2
 
 (** Predicate variables *)
 
@@ -119,9 +110,9 @@ let mk_fresh_pvar ?(prefix = None) () =
   in
   Pvar (prefix ^ string_of_int id)
 
-let name_of_pvar = function Pvar name -> name
-let pvar_compare (Pvar var1) (Pvar var2) =
-  String.compare var1 var2
+let name_of_pvar (Pvar name) = name
+let pvar_compare (Pvar var1) (Pvar var2) = String.compare var1 var2
+let pvar_equal (Pvar var1) (Pvar var2) = String.equal var1 var2
 
 let uninterp_pvar (Pvar pid) = Pvar ("U" ^ divide_flag ^ pid ^ divide_flag)
 let wfpred_pvar (Pvar pid) = Pvar ("WF" ^ divide_flag ^ pid ^ divide_flag)
@@ -130,6 +121,7 @@ let fnpred_pvar (Pvar pid) = Pvar ("FN" ^ divide_flag ^ pid ^ divide_flag)
 let pvar_to_tvar = function Pvar ident -> Tvar ident
 let tvar_to_pvar = function Tvar ident -> Pvar ident
 
+let str_of_pvar = name_of_pvar
 let str_of_pvars ~sep pvs = String.concat_map_set ~sep ~f:name_of_pvar pvs
 
 (*val str_of_penv: (pvar, 'b) t -> string*)

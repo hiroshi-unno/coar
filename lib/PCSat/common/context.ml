@@ -55,12 +55,12 @@ let remove_unused old_version new_version =
     PCSP.Problem.clauses_of old_version.problem
     |> Set.Poly.map ~f:ClauseGraph.mk_clause in
   let rm_vertexs =
-    Set.Poly.filter old_clauses ~f:(fun v ->
-        not @@ Set.Poly.exists new_clauses ~f:(fun v1 -> ClauseGraph.V.equal v v1))
-    |> (fun vss -> Set.Poly.add vss ClauseGraph.Dummy) in
-  (* print_endline @@ sprintf "rm_vertexs(clauses):%d" (Set.Poly.length rm_vertexs); *)
+    Set.filter old_clauses ~f:(fun v ->
+        not @@ Set.exists new_clauses ~f:(fun v1 -> ClauseGraph.V.equal v v1))
+    |> (fun vss -> Set.add vss ClauseGraph.Dummy) in
+  (* print_endline @@ sprintf "rm_vertexs(clauses):%d" (Set.length rm_vertexs); *)
   (* print_endline @@ sprintf "%s" (String.concat_map_set ~sep:"\n" ~f:(ClauseGraph.str_of_vertex old_senv) rm_vertexs); *)
-  Set.Poly.iter rm_vertexs ~f:(fun v -> ClauseGraph.remove_succ old_version.senv old_version.graph v);
+  Set.iter rm_vertexs ~f:(fun v -> ClauseGraph.remove_succ old_version.senv old_version.graph v);
   let new_graph = ClauseGraph.clone old_version.graph in
   {new_version with graph = new_graph; senv = new_senv}
 
@@ -83,8 +83,6 @@ let set_version_space version vs =
   |> VersionSpace.set_examples version.graph
   |> VersionSpace.set_truth_table version.truth_table
 
-let show_graph ?(pre="") ~id t =
-  match t with
+let show_graph ?(pre="") ~id = function
   | Some t -> ClauseGraph.output_graph ~pre ~id t.graph t.senv
   | _ -> ()
-

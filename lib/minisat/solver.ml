@@ -38,7 +38,7 @@ module Make (Config: Config.ConfigType): SolverType = struct
               | V_true -> true | V_false -> false | _ -> assert false in
             (var, asgn)::acc) in
         let reduced_assignment = if config.dim_reduction then SAT.Problem.minimize_core_cnf cnf assignment else assignment in
-        if config.dim_reduction then Debug.print @@ lazy (Printf.sprintf "minisat: #vars reduced %d -> %d" (List.length assignment) (List.length reduced_assignment));
+        if config.dim_reduction then Debug.print @@ lazy (sprintf "minisat: #vars reduced %d -> %d" (List.length assignment) (List.length reduced_assignment));
         SAT.Problem.IncSat (reduced_assignment, check_sat ~solver:solver ~lits)
       with Minisat.Unsat -> SAT.Problem.IncUnsat
     in

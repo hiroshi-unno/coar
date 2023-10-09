@@ -1,9 +1,11 @@
 {
+  open Core
+  open Lexing
+  open Common.Util.LexingHelper
+  open Ast.LogicOld
+
   exception SyntaxError of string
   exception ErrorFormatted of string
-  open Lexing
-  open Ast.LogicOld
-  open Common.Util.LexingHelper
 
   let intl_reg = Str.regexp "\\(0\\|[1-9][0-9]*\\)L?"
 }
@@ -22,7 +24,7 @@ rule main = parse
 | '"'[^'"']*'"'
     {
       let str = Lexing.lexeme lexbuf in
-      CLtlParser.STRINGL (String.sub str 1 (String.length str - 2))
+      CLtlParser.STRINGL (Stdlib.String.sub str 1 (String.length str - 2))
     }
 
 (* for LTL *)
@@ -111,7 +113,7 @@ rule main = parse
 | "0x"['a'-'z''0'-'9']+
     {
       let str = Lexing.lexeme lexbuf in
-      let str = String.sub str 2 (String.length str - 2) in
+      let str = Stdlib.String.sub str 2 (String.length str - 2) in
       let n = Seq.fold_left
         (fun res c ->
           let c = int_of_char c in
@@ -124,7 +126,7 @@ rule main = parse
           res * 16 + digit
         )
         0
-        (String.to_seq str)
+        (Stdlib.String.to_seq str)
       in
       CLtlParser.INTL n
     }
@@ -141,7 +143,7 @@ and comment openingpos = parse
 | eof {
     raise
       (ErrorFormatted
-        (Printf.sprintf
+        (sprintf
           "%d:%d:syntax error: unterminated comment."
           openingpos.pos_lnum (openingpos.pos_cnum - openingpos.pos_bol + 1)
         )
@@ -155,7 +157,7 @@ and include_file openingpos = parse
 | eof {
     raise
       (ErrorFormatted
-        (Printf.sprintf
+        (sprintf
           "%d:%d:syntax error: unterminated include."
           openingpos.pos_lnum (openingpos.pos_cnum - openingpos.pos_bol + 1)
         )

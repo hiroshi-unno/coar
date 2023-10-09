@@ -1,0 +1,4 @@
+#! /bin/bash
+
+export LD_LIBRARY_PATH=./
+./main.exe -c ./config/solver/muval_term_comp_parallel_tb_ar_noopt.json -p pcsp $1

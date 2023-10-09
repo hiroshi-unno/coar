@@ -6,6 +6,7 @@ open Common
 open Common.Ext
 open Common.Util
 open Common.Messenger
+open Common.Combinator
 
 module type OptimizerType = sig
   val optimize : ?filename:(string option) ->
@@ -16,8 +17,7 @@ module Make
     (MaximalityChecker : OptimalityChecker.OptimalityCheckerType)
     (MinimalityChecker : OptimalityChecker.OptimalityCheckerType)
     (NonOptChecker : NonOptChecker.NonOptCheckerType)
-    (Cfg : Config.ConfigType)
-  : OptimizerType = struct
+    (Cfg : Config.ConfigType) : OptimizerType = struct
   let config = Cfg.config
   module Debug = Debug.Make (val Debug.Config.(if config.verbose then enable else disable))
   let _ = Debug.set_module_name "Optimizer"
@@ -31,8 +31,9 @@ module Make
   let lock () = Caml_threads.Mutex.lock mutex
   let unlock () = Caml_threads.Mutex.unlock mutex
 
-  let pvar_eliminator =
-    PCSat.PvarEliminator.make (PCSat.PvarEliminator.Config.make config.verbose 4 0 true)
+  module PvarEliminator = PCSat.PvarEliminator.Make (struct
+      let config = PCSat.PvarEliminator.Config.make true config.verbose 4 0 true
+    end)
 
   let old_theta = Hashtbl.Poly.create ()
   let extract_tuple pcsp = TupleExtracter.extract_tuples pcsp
@@ -42,15 +43,10 @@ module Make
     Debug.print_log @@ lazy
       (sprintf "***************************** Preprocessor *****************************\n");
     let pcsp' = ref pcsp in
-    let (module PvarEliminator : PCSat.PvarEliminator.PvarEliminatorType) = pvar_eliminator in
     (try
        ignore @@
-       PvarEliminator.solve
-         ~bpvs:(Set.Poly.of_list bpvs)
-         (fun ?(oracle=None) pcsp ->
-            ignore oracle;
-            pcsp' := pcsp;
-            Or_error.unimplemented "")
+       PvarEliminator.solve ~bpvs:(Set.Poly.of_list bpvs)
+         (fun ?(oracle=None) pcsp -> ignore oracle; pcsp' := pcsp; Or_error.unimplemented "")
          pcsp
      with _ -> ());
     Debug.print_log @@ lazy
@@ -66,19 +62,14 @@ module Make
     match Hashtbl.Poly.find old_theta p with
     | Some old_sol ->
       let senv, _ = ExtTerm.let_lam sol in
-      let args = List.map ~f:(fun (v, _) -> ExtTerm.mk_var v) senv in
+      let args = List.map ~f:(fst >> ExtTerm.mk_var) senv in
       let equiv =
-        LogicOld.Formula.and_of [
-          LogicOld.Formula.mk_imply
-            (old_formula_of_sol senv args sol)
-            (old_formula_of_sol senv args old_sol);
-          LogicOld.Formula.mk_imply
-            (old_formula_of_sol senv args old_sol)
-            (old_formula_of_sol senv args sol)
-        ]
+        let phi1 = old_formula_of_sol senv args sol in
+        let phi2 = old_formula_of_sol senv args old_sol in
+        LogicOld.Formula.(and_of [mk_imply phi1 phi2; mk_imply phi2 phi1])
       in
       (* Debug.print_log ~tag:("check equiv old sol:" ^ (name_of_tvar p)) @@ LogicOld.Formula.str_of equiv; *)
-      if Z3Smt.Z3interface.is_valid ~id:None (Atomic.get LogicOld.ref_fenv) equiv then
+      if Z3Smt.Z3interface.is_valid ~id:None (LogicOld.get_fenv ()) equiv then
         (* let _ = Debug.print_log"yes" in *)
         old_sol
       else begin
@@ -91,26 +82,22 @@ module Make
   let simplify_theta delta =
     Map.Poly.mapi ~f:(fun ~key:p ~data:sol ->
         let senv, _ = ExtTerm.let_lam sol in
-        let args = List.map ~f:(fun (v, _) -> ExtTerm.mk_var v) senv in
+        let args = List.map ~f:(fst >> ExtTerm.mk_var) senv in
+        let fenv = LogicOld.get_fenv () in
         let sol = ExtTerm.beta_reduction sol args in
         (* Debug.print_log ~tag:(name_of_tvar p) @@ ExtTerm.str_of sol; *)
         ExtTerm.to_old_formula delta (Map.Poly.of_alist_exn senv) sol []
         (* |> (fun phi -> Debug.print_log ~tag:"1" @@ LogicOld.Formula.str_of phi; phi) *)
-        |> Evaluator.simplify
-        |> Normalizer.normalize
-        (* |> Z3Smt.Z3interface.z3_simplify ~id:(Some 0) (Atomic.get (LogicOld.ref_fenv)) *)
+        |> Evaluator.simplify |> Normalizer.normalize
+        (* |> Z3Smt.Z3interface.z3_simplify ~id:(Some 0) fenv *)
         |> (fun phi ->
-            match Evaluator.check
-                    (Z3Smt.Z3interface.is_valid ~id:(Some 0) (Atomic.get (LogicOld.ref_fenv)))
-                    phi with
+            match Evaluator.check (Z3Smt.Z3interface.is_valid ~id:(Some 0) fenv) phi with
             | Some true -> LogicOld.Formula.mk_true ()
             | Some false -> LogicOld.Formula.mk_false ()
             | None -> phi)
-        |> (Z3Smt.Z3interface.simplify ~id:(Some 0) (Atomic.get LogicOld.ref_fenv) ~timeout:(Some 20000))
+        |> (Z3Smt.Z3interface.simplify ~id:(Some 0) fenv ~timeout:(Some 20000))
         (* |> (fun phi -> Debug.print_log ~tag:"2" @@ LogicOld.Formula.str_of phi; phi) *)
-        |> ExtTerm.of_old_formula
-        |> ExtTerm.mk_lambda senv
-        |> equiv_old_sol_of p)
+        |> ExtTerm.of_old_formula |> ExtTerm.mk_lambda senv |> equiv_old_sol_of p)
 
   let remove_unused_params pcsp =
     PCSP.Problem.update_params pcsp @@
@@ -123,31 +110,25 @@ module Make
       Formula.cnf_of (Map.Poly.map delta ~f:ExtTerm.to_old_sort) @@ Formula.nnf_of phi
     in
     Set.Poly.map clauses ~f:(fun (ps, ns, pure_phi) ->
-        let tvs =
-          Set.Poly.union ps ns
-          |> Set.concat_map ~f:(Atom.tvs_of)
-        in
+        let tvs = Set.concat_map ~f:Atom.tvs_of @@ Set.union ps ns in
         let sort_env =
-          Formula.sort_env_of pure_phi
-          |> Set.Poly.filter ~f:(fun (v, _) -> not @@ Set.Poly.mem tvs v)
-          |> Set.Poly.to_list
+          Formula.sort_env_of pure_phi |> Set.filter ~f:(fst >> Set.mem tvs >> not)
+          |> Set.to_list
         in
         let pure_phi =
           Formula.mk_forall sort_env pure_phi
-          |> Z3Smt.Z3interface.qelim ~id (Atomic.get LogicOld.ref_fenv)
+          |> Z3Smt.Z3interface.qelim ~id (LogicOld.get_fenv ())
           |> (fun phi ->
               Debug.print_log ~tag:"qelimed" @@ lazy (Formula.str_of phi);
-              if Formula.is_bind phi then pure_phi
-              else phi)
+              if Formula.is_bind phi then pure_phi else phi)
         in
         snd @@ ClauseOld.to_formula (Map.Poly.empty, ps, ns, pure_phi))
-    |> Set.Poly.to_list
-    |> Formula.and_of
+    |> Set.to_list |> Formula.and_of
   ;;
   let subst_pcsp ?(bpvs=Set.Poly.empty) subst priority pcsp =
     let phis = PCSP.Problem.formulas_of pcsp in
     let params = PCSP.Problem.params_of pcsp in
-    let subst = Map.Poly.filter_keys subst ~f:(Fn.non @@ Set.Poly.mem bpvs) in
+    let subst = Map.Poly.filter_keys subst ~f:(Fn.non @@ Set.mem bpvs) in
     let params' = { params with PCSP.Params.sol_for_eliminated = subst } in
     let phis =
       Set.Poly.map phis ~f:(fun (param_senv, phi) -> param_senv, ExtTerm.subst subst phi)
@@ -160,25 +141,20 @@ module Make
     let delta = Map.force_merge nepvs delta in
     let params =
       let params = PCSP.Problem.params_of pcsp in
-      PCSP.Params.make
-        ~dtenv:params.dtenv
-        ~kind_map:(PCSP.Problem.kind_map_of pcsp)
-        ~nepvs:(Set.Poly.of_list @@ Map.Poly.keys nepvs)
-        ~fenv:params.fenv
-        ~sol_space:params.sol_space
-        ~id
-        ~sol_for_eliminated:params.sol_for_eliminated
-        ~messenger
-        delta
+      let kind_map =
+        params.kind_map |> Kind.add_kinds (Set.Poly.of_list @@ Map.Poly.keys nepvs) Kind.NE
+      in
+      PCSP.Params.make ~dtenv:params.dtenv ~kind_map ~fenv:params.fenv
+        ~sol_space:params.sol_space ~id ~sol_for_eliminated:params.sol_for_eliminated
+        ~messenger delta
     in
     c |> ExtTerm.nnf_of |> ExtTerm.cnf_of delta Map.Poly.empty
     |> Set.Poly.map ~f:(fun (_, _, phi) ->
         let phi = ExtTerm.to_old_formula delta Map.Poly.empty phi [] in
-        let uni_senv, _, phi = LogicOld.Formula.skolemize_fun phi in
+        let uni_senv, _, phi = LogicOld.Formula.skolemize false phi in
         Logic.of_old_sort_env_map ExtTerm.of_old_sort uni_senv,
         ExtTerm.of_old_formula phi)
-    |> Set.Poly.union @@ PCSP.Problem.formulas_of pcsp
-    |> PCSP.Problem.of_formulas ~params
+    |> Set.union @@ PCSP.Problem.formulas_of pcsp |> PCSP.Problem.of_formulas ~params
 
   let check_optimality ?(only_simple=false) (messenger, id) pcsp delta theta priority pvar =
     Debug.print_log @@ lazy
@@ -189,8 +165,7 @@ module Make
       PCSP.Problem.map_params pcsp ~f:(fun params -> { params with PCSP.Params.id = id })
     in
     let pcsp =
-      if not only_simple then
-        subst_pcsp ~bpvs:(Set.Poly.singleton pvar) theta priority pcsp
+      if not only_simple then subst_pcsp ~bpvs:(Set.Poly.singleton pvar) theta priority pcsp
       else pcsp
     in
     let res =
@@ -221,7 +196,7 @@ module Make
     let phi = ExtTerm.to_old_formula (Map.force_merge delta nepvs) Map.Poly.empty c []  in
     let bpvs =
       Map.Poly.keys nepvs @ full_priority |> Set.Poly.of_list
-      |> Set.Poly.filter ~f:(Fn.non @@ Set.Poly.mem improved)
+      |> Set.filter ~f:(Fn.non @@ Set.mem improved)
     in
     Debug.print_log ~tag:"improve" @@ lazy
       (sprintf "a pnCSP generated: %s" @@ LogicOld.Formula.str_of phi);
@@ -237,7 +212,7 @@ module Make
       in
       let params = PCSP.Problem.params_of pcsp' in
       let phis = PCSP.Problem.formulas_of pcsp' in
-      PCSP.Problem.of_formulas ~params (Set.Poly.union phis maxcs)
+      PCSP.Problem.of_formulas ~params (Set.union phis maxcs)
     in
     Debug.print_log @@ lazy
       (sprintf "***************************** Improving Start (%s) *****************************\n" @@
@@ -251,8 +226,9 @@ module Make
         let theta' =
           Map.key_set delta
           |> Map.restrict ~def:(fun p ->
-              let sort = Map.Poly.find_exn delta p in
-              let senv = mk_fresh_sort_env_list @@ Sort.args_of sort in
+              let senv =
+                mk_fresh_sort_env_list @@ Sort.args_of @@ Map.Poly.find_exn delta p
+              in
               ExtTerm.mk_lambda senv @@ ExtTerm.mk_bool true) theta'
           |> simplify_theta delta
         in
@@ -320,18 +296,18 @@ module Make
           else Task.await task_pool improve_task
         with
         | sol -> sol
-        | exception e ->
-          Printexc.print_backtrace Out_channel.stderr;
-          raise e
+        | exception e -> Printexc.print_backtrace Out_channel.stderr; raise e
       in
       Debug.print_log ~tag:"parallel_check_opt" @@ lazy ("start!");
       let sol =
         match Task.await_any_promise task_pool [improve_task; optimality_check_task] with
         | Skip, id ->
-          Debug.print_log @@ lazy ("One task finished with a useless result. Wait for the other task to complete.");
+          Debug.print_log @@ lazy
+            ("One task finished with a useless result. Wait for the other task to complete.");
           fst @@ wait_other_task id
         | (sol, id) ->
-          Debug.print_log @@ lazy ("One task finished. Wait for the other task to be terminated.");
+          Debug.print_log @@ lazy
+            ("One task finished. Wait for the other task to be terminated.");
           ignore @@ wait_other_task id;
           sol
         | exception e -> raise e
@@ -363,12 +339,15 @@ module Make
     sprintf "[%s] %s\n" (String.concat_map_list ~sep:"," priority ~f:name_of_tvar) @@
     CHCOpt.Problem.str_of_solution delta iter @@ Sat theta;
     match check_opt improved full_priority priority pcsp delta theta with
-    | Sat theta' -> num_improved := !num_improved + 1; optimize_aux (iter + 1) improved full_priority priority pcsp delta theta'
+    | Sat theta' ->
+      num_improved := !num_improved + 1;
+      optimize_aux (iter + 1) improved full_priority priority pcsp delta theta'
     | sol -> sol, iter
 
   let add_side_conditions priority pcsp =
     let senv = PCSP.Problem.senv_of pcsp in
-    if not (Config.is_non_trival_mode config.mode || Config.is_non_vacuous_mode config.mode) then pcsp
+    if not (Config.is_non_trival_mode config.mode || Config.is_non_vacuous_mode config.mode)
+    then pcsp
     else
       let nesenv1, neclause1 =
         List.map priority ~f:(fun v ->
@@ -379,52 +358,47 @@ module Make
             let head = ExtTerm.mk_var_app v args in
             let param_senv = Map.Poly.of_alist_exn param_senv in
             (pne, sort),
-            ExtTerm.imply_of body head
-            |> ExtTerm.nnf_of |> ExtTerm.cnf_of senv param_senv
+            ExtTerm.imply_of body head |> ExtTerm.nnf_of |> ExtTerm.cnf_of senv param_senv
             |> Set.Poly.map ~f:(fun (ps, ns, phi) -> param_senv, ps, ns, phi))
-        |> List.unzip
-        |> (fun (nesenv, cls) -> nesenv, Set.Poly.union_list cls)
+        |> List.unzip |> (fun (nesenv, cls) -> nesenv, Set.Poly.union_list cls)
       in
       let nesenv2, neclause2 =
         if Config.is_non_trival_mode config.mode then
           [], Set.Poly.empty
         else
           PCSP.Problem.clauses_of @@ pcsp
-          |> Set.Poly.filter ~f:(fun (_, ps, ns, _) ->
-              Fn.non Set.Poly.is_empty ps && Fn.non Set.Poly.is_empty ns)
-          |> Set.Poly.to_list
+          |> Set.filter ~f:(fun (_, ps, ns, _) ->
+              Fn.non Set.is_empty ps && Fn.non Set.is_empty ns)
+          |> Set.to_list
           |> List.filter_mapi ~f:(fun i (param_senv, _, ns, phi) ->
-              let pvs =
-                Set.Poly.to_list @@ Set.Poly.map ns ~f:ExtTerm.let_var_app
-              in
+              let pvs = Set.to_list @@ Set.Poly.map ns ~f:ExtTerm.let_var_app in
               if not (List.for_all pvs ~f:(fun (v, _) ->
                   List.exists priority ~f:(Stdlib.(=) v))) ||
-                 (Set.Poly.length ns <= 1 && Logic.ExtTerm.is_bool phi)
+                 (Set.length ns <= 1 && Logic.ExtTerm.is_bool phi)
               then None
               else
                 let pne = OptimalityChecker.pn (mk_ne_tvar (Tvar "non_vac")) i in
                 let tvs =
-                  ExtTerm.fvs_of @@ ExtTerm.and_of @@ phi::(Set.Poly.to_list ns)
-                  |> Set.Poly.filter ~f:(Map.Poly.mem param_senv)
+                  ExtTerm.fvs_of @@ ExtTerm.and_of @@ phi::(Set.to_list ns)
+                  |> Set.filter ~f:(Map.Poly.mem param_senv)
                   |> Set.Poly.map ~f:ExtTerm.mk_var
-                  |> Set.Poly.to_list
-                  |> List.sort ~compare:Stdlib.compare
+                  |> Set.to_list |> List.sort ~compare:Stdlib.compare
                 in
                 let sargs =
-                  List.map tvs ~f:(fun t -> Map.Poly.find_exn param_senv @@ fst @@ ExtTerm.let_var t)
+                  List.map tvs ~f:(ExtTerm.let_var >> fst >> Map.Poly.find_exn param_senv)
                 in
                 let body = ExtTerm.mk_var_app pne tvs in
-                let head = ExtTerm.and_of @@ ((ExtTerm.neg_of phi) :: Set.Poly.to_list ns) in
+                let head = ExtTerm.and_of (ExtTerm.neg_of phi :: Set.to_list ns) in
                 let clause =
                   ExtTerm.imply_of body head
                   |> ExtTerm.nnf_of |> ExtTerm.cnf_of senv param_senv
                   |> Set.Poly.map ~f:(fun (ps, ns, phi) -> param_senv, ps, ns, phi)
                 in
-                Some ((pne, Sort.mk_fun @@ sargs @ [ExtTerm.SBool]), clause))
+                Some ((pne, Sort.mk_fun (sargs @ [ExtTerm.SBool])), clause))
           |> List.unzip |> (fun (nesenv, cls) -> nesenv, Set.Poly.union_list cls)
       in
       let nesenv = Map.Poly.of_alist_exn (nesenv1 @ nesenv2) in
-      let kind_map = Map.Poly.map nesenv ~f:(fun _ -> PCSP.Kind.NE) in
+      let kind_map = Map.Poly.map nesenv ~f:(fun _ -> Kind.NE) in
       let params = PCSP.Problem.params_of pcsp in
       let params =
         { params with
@@ -460,7 +434,9 @@ module Make
       let sol_opt =
         if config.load_init_sol then
           Option.(filename >>= fun filename ->
-                  let basename = fst @@ Filename.split_extension @@ snd @@ Filename.split filename in
+                  let basename =
+                    fst @@ Filename.split_extension @@ snd @@ Filename.split filename
+                  in
                   let filename = "./" ^ basename ^ ".sol" in
                   match SyGuS.Parser.solution_from_file filename with
                   | Ok defs -> Some (Map.Poly.of_alist_exn defs)
@@ -488,7 +464,10 @@ module Make
             Debug.print_log @@ lazy
               (sprintf "***************************** begin optimization for %s *****************************\n" @@
                name_of_tvar p);
-            let res = num_improved := 0; optimize_aux iter improved full_priority [p] pcsp delta theta in
+            let res =
+              num_improved := 0;
+              optimize_aux iter improved full_priority [p] pcsp delta theta
+            in
             Debug.print_log @@ lazy
               (sprintf "*****************************   end optimization for %s *****************************\n" @@
                name_of_tvar p);
@@ -500,9 +479,9 @@ module Make
                 (sprintf "The current candidate:\n%s" @@
                  CandSol.str_of @@ CandSol.of_subst delta theta);
               Solver.reset ();
-              let improved = Set.Poly.add improved p in
+              let improved = Set.add improved p in
               let pcsp = pcsp
-              (*let optimized_sol = Map.Poly.filter_keys theta ~f:(Set.Poly.mem improved) in
+              (*let optimized_sol = Map.Poly.filter_keys theta ~f:(Set.mem improved) in
                 subst_pcsp optimized_sol priority pcsp*)
               in
               inner (match res with OptSatInSpace _, _ -> true | _ -> max_in_space) iter improved priority' pcsp theta
@@ -510,27 +489,22 @@ module Make
         in
         inner false 0 Set.Poly.empty full_priority src_pcsp theta
       else begin
-        num_improved := 0; optimize_aux 0 Set.Poly.empty full_priority full_priority src_pcsp delta theta
+        num_improved := 0;
+        optimize_aux 0 Set.Poly.empty full_priority full_priority src_pcsp delta theta
       end
-    | Error err -> failwith @@ Caml.Printexc.to_string @@ Error.to_exn err
+    | Error err -> failwith @@ Stdlib.Printexc.to_string @@ Error.to_exn err
 end
 
 let make (config : Config.t) improver =
-  let pcsp_solver =
+  let (module Solver : PCSPSolver.Solver.SolverType) =
     match ExtFile.unwrap config.improve_solver with
     | Ok cfg -> PCSPSolver.Solver.make cfg
     | Error exn -> Error.raise exn
   in
-  let (module Solver : PCSPSolver.Solver.SolverType) = pcsp_solver in
   let (module NonOptChecker : NonOptChecker.NonOptCheckerType) = improver in
   let (module MaximalityChecker : OptimalityChecker.OptimalityCheckerType) =
     MaximalityChecker.make config in
   let (module MinimalityChecker : OptimalityChecker.OptimalityCheckerType) =
     MinimalityChecker.make config in
-  (module Make
-       (Solver)
-       (MaximalityChecker)
-       (MinimalityChecker)
-       (NonOptChecker)
-       (struct let config = config end)
-     : OptimizerType)
+  (module Make (Solver) (MaximalityChecker) (MinimalityChecker) (NonOptChecker)
+       (struct let config = config end) : OptimizerType)

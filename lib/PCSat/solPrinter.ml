@@ -11,18 +11,14 @@ module Config = struct
   module type ConfigType = sig val config : t end
 
   let load_ext_file = function
-    | ExtFile.Filename filename ->
-      begin
-        let open Or_error in
-        try_with (fun () -> Yojson.Safe.from_file filename)
-        >>= fun raw_json ->
-        match of_yojson raw_json with
-        | Ok x -> Ok (ExtFile.Instance x)
-        | Error msg ->
-          error_string @@ Printf.sprintf
-            "Invalid SolPrinter Configuration (%s): %s" filename msg
-      end
-    | Instance x -> Ok (Instance x)
+    | ExtFile.Instance x -> Ok (ExtFile.Instance x)
+    | Filename filename ->
+      let open Or_error in
+      try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
+      match of_yojson raw_json with
+      | Ok x -> Ok (ExtFile.Instance x)
+      | Error msg ->
+        error_string @@ sprintf "Invalid SolPrinter Configuration (%s): %s" filename msg
 end
 
 module type SolPrinterType = sig val print : State.output -> unit end
@@ -35,7 +31,7 @@ module Make (Config: Config.ConfigType) = struct
     if config.sygus_comp then
       PCSP.Problem.str_of_sygus_solution solution
     else if config.output_iteration then
-      Printf.sprintf "%s,%d" (PCSP.Problem.str_of_solution solution) info.State.num_cegis_iters
+      sprintf "%s,%d" (PCSP.Problem.str_of_solution solution) info.State.num_cegis_iters
     else
       PCSP.Problem.str_of_solution solution;
     Out_channel.flush stdout

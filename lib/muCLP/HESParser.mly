@@ -1,4 +1,5 @@
 %{
+  open Core
   open Ast
   open Ast.LogicOld
 %}
@@ -88,48 +89,50 @@ FormulaAtom:
 
 /* Ast.LogicOld.Atom.t */
 Atom:
-    funname=ID args=AtomAppArgs { Atom.mk_app (Predicate.mk_var (Ident.Pvar funname) []) args }
+    funname=ID args=AtomAppArgs {
+      Atom.mk_pvar_app (Ident.Pvar funname) (List.map args ~f:Term.sort_of) args
+    }
   | atom=T_bool { atom }
   | TRUE { Atom.True Dummy }
   | FALSE { Atom.False Dummy }
 
 AtomAppArgs:
     { [] }
-  | arg=T_intAtom args=AtomAppArgs { arg :: args }
+  | arg=T_numAtom args=AtomAppArgs { arg :: args }
 
 
 /* Ast.LogicOld.Term.t */
-/* Ast.LogicOld.T_int */
+/* Ast.LogicOld.T_num */
 /* Term:
-    t=T_int { t } */
+    t=T_num { t } */
 
-T_int:
-    t=T_intAddSub { t }
+T_num:
+    t=T_numAddSub { t }
 
-T_intAddSub:
-    t=T_intMultDivMod { t }
-  | t1=T_intMultDivMod ADD t2=T_intAddSub { T_int.mk_add t1 t2 }
-  | t1=T_intMultDivMod MINUS t2=T_intAddSub { T_int.mk_sub t1 t2 }
+T_numAddSub:
+    t=T_numMultDivMod { t }
+  | t1=T_numMultDivMod ADD t2=T_numAddSub { T_num.mk_nadd t1 t2 }
+  | t1=T_numMultDivMod MINUS t2=T_numAddSub { T_num.mk_nsub t1 t2 }
 
-T_intMultDivMod:
-    t=T_intNeg { t }
-  | t1=T_intNeg MULT t2=T_intMultDivMod { T_int.mk_mult t1 t2 }
-  | t1=T_intNeg DIV t2=T_intMultDivMod { T_int.mk_div t1 t2 }
-  | t1=T_intNeg MOD t2=T_intMultDivMod { T_int.mk_mod t1 t2 }
+T_numMultDivMod:
+    t=T_numNeg { t }
+  | t1=T_numNeg MULT t2=T_numMultDivMod { T_num.mk_nmult t1 t2 }
+  | t1=T_numNeg DIV t2=T_numMultDivMod { T_num.mk_ndiv t1 t2 }
+  | t1=T_numNeg MOD t2=T_numMultDivMod { T_num.mk_mod t1 t2 }
 
-T_intNeg:
-    t=T_intAtom { t }
-  | MINUS t=T_intNeg { T_int.mk_neg t }
+T_numNeg:
+    t=T_numAtom { t }
+  | MINUS t=T_numNeg { T_num.mk_nneg t }
 
-T_intAtom:
-    LPAREN t=T_int RPAREN { t }
+T_numAtom:
+    LPAREN t=T_num RPAREN { t }
   | n=INTL { T_int.mk_int (Z.of_int n) }
   | n=REALL { T_real.mk_real (Q.of_string n) }
-  | varname=ID { Term.mk_var (Ident.Tvar varname) T_int.SInt }
+  | varname=ID { Term.mk_var (Ident.Tvar varname) @@ Sort.mk_fresh_svar () }
 
 /* Ast.LogicOld.T_bool */
 T_bool:
-    t1=T_int op=PREDSYM t2=T_int { Atom.mk_app (Predicate.mk_psym op) [t1; t2] }
+    t1=T_num op=PREDSYM t2=T_num { Atom.mk_app (Predicate.mk_psym op) [t1; t2] }
 
 /* Ast.LogicOld.Predicate.t */
 /* not including Fixpoint */

@@ -11,14 +11,13 @@
     CoAR.common
     CoAR.SyGuS
     CoAR.SMT
-    CoAR.LTS)
+    CoAR.LTS
+    CoAR.PLTS)
   (modules
     params
     problem
     LPParser
     LPLexer
     parser
-    solSpace
-    kind
     forwardPropagate)
   (synopsis "The definition of pfwnCSP"))

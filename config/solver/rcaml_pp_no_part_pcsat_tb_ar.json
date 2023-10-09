@@ -1,0 +1,35 @@
+[
+    "RCaml",
+    {
+        "solver": [
+            "Filename",
+            "./config/solver/pcsat_tb_ar.json"
+        ],
+        "optimizer": [
+            "Filename",
+            "./config/solver/optpcsat_nc_tb_ar.json"
+        ],
+        "cgen_config": {
+            "depend_on_func_args": false,
+            "depend_on_ref_args": false,
+            "depend_on_unit_args": false,
+            "gen_ref_pred_for_type_vars": true,
+            "share_ref_pred_with_same_type_vars": false,
+            "gen_ref_pred_for_fun_types": false,
+            "gen_ref_pred_for_ref_types": false,
+            "gen_ref_pred_for_tup_elems": false,
+            "gen_ref_pred_for_dt_params": true,
+            "gen_ref_type_temp_for_constructors": false,
+            "never_fail": false,
+            "can_fail_only_at_total_apps": true,
+            "can_cause_temp_eff_only_at_total_apps": false,
+            "enable_temp_eff": false,
+            "enable_pred_poly_for_constructors": true,
+            "enable_pred_poly_for_ref_types": true,
+            "instantiate_svars_to_int": true
+        },
+        "verbose": false,
+        "enable_pvar_elim": true,
+        "timeout": null
+    }
+]

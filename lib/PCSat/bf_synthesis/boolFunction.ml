@@ -9,7 +9,7 @@ let size = PropLogic.Formula.size
 let height = PropLogic.Formula.height
 let str_of = PropLogic.Formula.str_of
 
-let name_of_qual qi = Printf.sprintf "#qual_%d" qi
+let name_of_qual qi = sprintf "#qual_%d" qi
 let qual_of_name name k = Scanf.sscanf name "#qual_%d" k
 
 let rec of_dt = function

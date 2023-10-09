@@ -14,20 +14,14 @@ module Config = struct
       Ok (DT cfg)
 
   let load_ext_file = function
-    | ExtFile.Filename filename ->
-      begin
-        let open Or_error in
-        try_with (fun () -> Yojson.Safe.from_file filename)
-        >>= fun raw_json ->
-        match of_yojson raw_json with
-        | Ok x ->
-          instantiate_ext_files x >>= fun x ->
-          Ok (ExtFile.Instance x)
-        | Error msg ->
-          error_string @@ Printf.sprintf
-            "Invalid Regressor Configuration (%s): %s" filename msg
-      end
-    | Instance x -> Ok (ExtFile.Instance x)
+    | ExtFile.Instance x -> Ok (ExtFile.Instance x)
+    | Filename filename ->
+      let open Or_error in
+      try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
+      match of_yojson raw_json with
+      | Ok x -> instantiate_ext_files x >>= fun x -> Ok (ExtFile.Instance x)
+      | Error msg ->
+        error_string @@ sprintf "Invalid Regressor Configuration (%s): %s" filename msg
 end
 
 module type RegressorType = sig

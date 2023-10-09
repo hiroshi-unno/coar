@@ -1,0 +1,11 @@
+[
+    "SPACER",
+    {
+        "timeout": null,
+        "check_validity": true,
+        "conservative_check": true,
+        "solve_again_if_invalid": true,
+        "solution_needed": true,
+        "verbose": true
+    }
+]

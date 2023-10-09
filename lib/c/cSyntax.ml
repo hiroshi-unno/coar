@@ -125,14 +125,14 @@ end = struct
   let let_ap = function AP fml -> fml | _ -> assert false
 
   let rec string_of = function
-    | AF phi -> Printf.sprintf "AF(%s)" (string_of phi)
-    | EF phi -> Printf.sprintf "EF(%s)" (string_of phi)
-    | AG phi -> Printf.sprintf "AG(%s)" (string_of phi)
-    | EG phi -> Printf.sprintf "EG(%s)" (string_of phi)
-    | OR (phi1, phi2) -> Printf.sprintf "OR(%s, %s)" (string_of phi1) (string_of phi2)
-    | AND (phi1, phi2) -> Printf.sprintf "AND(%s, %s)" (string_of phi1) (string_of phi2)
-    | IMP (phi1, phi2) -> Printf.sprintf "IMP(%s, %s)" (string_of phi1) (string_of phi2)
-    | AP fml -> Printf.sprintf "AP(%s)" (Formula.str_of fml)
+    | AF phi -> sprintf "AF(%s)" (string_of phi)
+    | EF phi -> sprintf "EF(%s)" (string_of phi)
+    | AG phi -> sprintf "AG(%s)" (string_of phi)
+    | EG phi -> sprintf "EG(%s)" (string_of phi)
+    | OR (phi1, phi2) -> sprintf "OR(%s, %s)" (string_of phi1) (string_of phi2)
+    | AND (phi1, phi2) -> sprintf "AND(%s, %s)" (string_of phi1) (string_of phi2)
+    | IMP (phi1, phi2) -> sprintf "IMP(%s, %s)" (string_of phi1) (string_of phi2)
+    | AP fml -> sprintf "AP(%s)" (Formula.str_of fml)
 
   let rec get_fv = function
     | AF phi | EF phi | AG phi | EG phi -> get_fv phi
@@ -140,7 +140,7 @@ end = struct
       Variables.union (get_fv phi1) (get_fv phi2)
     | AP fml ->
       Formula.tvs_of fml
-      |> Set.Poly.to_list
+      |> Set.to_list
       |> List.map ~f:Ast.Ident.name_of_tvar
       |> Variables.of_list
 
@@ -305,30 +305,32 @@ end = struct
 
   let rec string_of ?(priority=0) = function
     | F phi ->
-      Printf.sprintf "F%s" (string_of ~priority:Priority.atom phi)
-      |> LogicOld.Priority.add_bracket priority Priority.atom
+      sprintf "F%s" (string_of ~priority:Priority.atom phi)
+      |> LogicOld.Priority.add_paren priority Priority.atom
     | G phi ->
-      Printf.sprintf "G%s" (string_of ~priority:Priority.atom phi)
-      |> LogicOld.Priority.add_bracket priority Priority.atom
+      sprintf "G%s" (string_of ~priority:Priority.atom phi)
+      |> LogicOld.Priority.add_paren priority Priority.atom
     | X phi ->
-      Printf.sprintf "X%s" (string_of ~priority:Priority.atom phi)
-      |> LogicOld.Priority.add_bracket priority Priority.atom
+      sprintf "X%s" (string_of ~priority:Priority.atom phi)
+      |> LogicOld.Priority.add_paren priority Priority.atom
     | U (phi1, phi2) ->
-      Printf.sprintf "(%s) U (%s)" (string_of ~priority:Priority.binary_u phi1) (string_of ~priority:Priority.binary_u phi2)
-      |> LogicOld.Priority.add_bracket priority Priority.binary_u
+      sprintf "%s U %s"
+        (String.paren @@ string_of ~priority:Priority.binary_u phi1)
+        (String.paren @@ string_of ~priority:Priority.binary_u phi2)
+      |> LogicOld.Priority.add_paren priority Priority.binary_u
     | OR (phi1, phi2) ->
-      Printf.sprintf "%s \\/ %s" (string_of ~priority:Priority.binary_or phi1) (string_of ~priority:Priority.binary_or phi2)
-      |> LogicOld.Priority.add_bracket priority Priority.binary_or
+      sprintf "%s \\/ %s" (string_of ~priority:Priority.binary_or phi1) (string_of ~priority:Priority.binary_or phi2)
+      |> LogicOld.Priority.add_paren priority Priority.binary_or
     | AND (phi1, phi2) ->
-      Printf.sprintf "%s /\\ %s" (string_of ~priority:Priority.binary_and phi1) (string_of ~priority:Priority.binary_and phi2)
-      |> LogicOld.Priority.add_bracket priority Priority.binary_and
+      sprintf "%s /\\ %s" (string_of ~priority:Priority.binary_and phi1) (string_of ~priority:Priority.binary_and phi2)
+      |> LogicOld.Priority.add_paren priority Priority.binary_and
     | NEG phi ->
-      Printf.sprintf "!%s" (string_of ~priority:Priority.atom phi)
-      |> LogicOld.Priority.add_bracket priority Priority.atom
+      sprintf "!%s" (string_of ~priority:Priority.atom phi)
+      |> LogicOld.Priority.add_paren priority Priority.atom
     | P fml ->
       let priority' =
         if priority = Priority.atom then
-          LogicOld.Priority.neg_abs
+          LogicOld.Priority.neg_deref
         else if priority = Priority.binary_and then
           LogicOld.Priority.binary_and
         else if priority = Priority.binary_or then
@@ -336,8 +338,8 @@ end = struct
         else
           priority
       in
-      Printf.sprintf "%s" (Formula.str_of ~priority:priority' fml)
-      |> LogicOld.Priority.add_bracket priority Priority.atom
+      sprintf "%s" (Formula.str_of ~priority:priority' fml)
+      |> LogicOld.Priority.add_paren priority Priority.atom
 
   let rec get_fv = function
     | F phi | G phi | X phi | NEG phi -> get_fv phi
@@ -345,7 +347,7 @@ end = struct
       Variables.union (get_fv phi1) (get_fv phi2)
     | P fml ->
       Formula.tvs_of fml
-      |> Set.Poly.to_list
+      |> Set.to_list
       |> List.map ~f:Ident.name_of_tvar
       |> Variables.of_list
 
@@ -413,25 +415,25 @@ end = struct
   let get_final_state_ids = function BA (_, _, final_states, _) -> final_states
   let get_transition = function BA (_, _, _, transition) -> transition
 
-  let string_of_node id = Printf.sprintf "Q%d" id
+  let string_of_node id = sprintf "Q%d" id
 
   let string_of ~printer = function
     | BA (states, initial_state, final_states, transition) ->
-      Printf.sprintf "states: %d\ninitial state: %s\nfinal states: %s\ntransition:\n%s"
+      sprintf "states: %d\ninitial state: %s\nfinal states: %s\ntransition:\n%s"
         states
         (string_of_node initial_state)
         (final_states
          |> String.concat_map_set ~sep:", "~f:string_of_node)
         (Array.to_list transition
          |> String.concat_mapi_list ~sep:"\n" ~f:(fun from_id toes ->
-             Printf.sprintf " %s%s: %s"
+             sprintf " %s%s: %s"
                (if from_id = initial_state then ">" else " ")
-               (if Set.Poly.mem final_states from_id then
-                  Printf.sprintf "(%s)" (string_of_node from_id)
+               (if Set.mem final_states from_id then
+                  String.paren (string_of_node from_id)
                 else
-                  Printf.sprintf " %s " (string_of_node from_id))
+                  sprintf " %s " (string_of_node from_id))
                (String.concat_map_list ~sep:", " toes ~f:(fun (to_id, label) ->
-                    Printf.sprintf "%s(%s)" (string_of_node to_id) (printer label)))))
+                    sprintf "%s(%s)" (string_of_node to_id) (printer label)))))
 end
 
 module HMESPriority = struct
@@ -460,12 +462,12 @@ end = struct
   let let_hmes = function Hmes (preds, query_pvar) -> preds, query_pvar
 
   let string_of = function Hmes (preds, query_pvar) ->
-    Printf.sprintf "%s\ns.t.\n%s"
+    sprintf "%s\ns.t.\n%s"
       (Ident.name_of_pvar query_pvar)
       (String.concat_map_list ~sep:";\n" preds ~f:(fun (fix, pvar, fml) ->
-           Printf.sprintf "%s =%s %s"
+           sprintf "%s =%s %s"
              (Ident.name_of_pvar pvar)
-             (Predicate.str_of_fixpoint fix)
+             (Predicate.str_of_fop fix)
              (HMESFormula.string_of fml)))
 
   let get_ftv = function Hmes (preds, _) ->
@@ -555,21 +557,21 @@ end = struct
 
   let rec string_of ?(priority=0) = function
     | And (fml1, fml2) ->
-      Printf.sprintf "%s /\\ %s"
+      sprintf "%s /\\ %s"
         (string_of ~priority:HMESPriority.binary_and fml1)
         (string_of ~priority:HMESPriority.binary_and fml2)
-      |> Priority.add_bracket priority HMESPriority.binary_and
+      |> Priority.add_paren priority HMESPriority.binary_and
     | Or (fml1, fml2) ->
-      Printf.sprintf "%s \\/ %s"
+      sprintf "%s \\/ %s"
         (string_of ~priority:HMESPriority.binary_or fml1)
         (string_of ~priority:HMESPriority.binary_or fml2)
-      |> Priority.add_bracket priority HMESPriority.binary_or
+      |> Priority.add_paren priority HMESPriority.binary_or
     | Dia fml ->
-      Printf.sprintf "<>%s" (string_of ~priority:HMESPriority.atom fml)
-      |> Priority.add_bracket priority HMESPriority.atom
+      sprintf "<>%s" (string_of ~priority:HMESPriority.atom fml)
+      |> Priority.add_paren priority HMESPriority.atom
     | Box fml ->
-      Printf.sprintf "<>%s" (string_of ~priority:HMESPriority.atom fml)
-      |> Priority.add_bracket priority HMESPriority.atom
+      sprintf "<>%s" (string_of ~priority:HMESPriority.atom fml)
+      |> Priority.add_paren priority HMESPriority.atom
     | Atom atom ->
       HMESAtom.string_of ~priority atom
 
@@ -655,24 +657,24 @@ end = struct
 
   let string_of ?(priority=0) = function
     | True _ ->
-      Printf.sprintf "true"
-      |> Priority.add_bracket priority HMESPriority.atom
+      sprintf "true"
+      |> Priority.add_paren priority HMESPriority.atom
     | False _ ->
-      Printf.sprintf "false"
-      |> Priority.add_bracket priority HMESPriority.atom
+      sprintf "false"
+      |> Priority.add_paren priority HMESPriority.atom
     | Pvar pvar ->
-      Printf.sprintf "%s" (Ident.name_of_pvar pvar)
-      |> Priority.add_bracket priority HMESPriority.atom
+      sprintf "%s" (Ident.name_of_pvar pvar)
+      |> Priority.add_paren priority HMESPriority.atom
     | PredApp (sym, args) ->
       Atom.str_of (Atom.mk_app (Predicate.mk_psym sym) args ~info:Dummy)
-      |> Priority.add_bracket priority HMESPriority.atom
+      |> Priority.add_paren priority HMESPriority.atom
 
   let get_ftv = function
     | True _ | False _ | Pvar _ -> Variables.empty
     | PredApp (_, args) ->
       List.fold_left ~init:Variables.empty args ~f:(fun vars term ->
           Term.tvs_of term
-          |> Set.Poly.to_list
+          |> Set.to_list
           |> List.map ~f:Ident.name_of_tvar
           |> Variables.of_list
           |> Variables.union vars)
@@ -698,7 +700,7 @@ end = struct
   let let_int = function INT varname -> varname
 
   let string_of = function
-    | INT varname -> Printf.sprintf "int %s;" varname
+    | INT varname -> sprintf "int %s;" varname
 end
 
 module rec Statement : sig
@@ -873,13 +875,13 @@ end = struct
   let rec string_of ?(indent=0) = function
     | IF (cond_fml, t_stmt, f_stmt) ->
       if is_nop f_stmt then
-        Printf.sprintf "%sif (%s) {\n%s\n%s}"
+        sprintf "%sif (%s) {\n%s\n%s}"
           (make_indent indent)
           (Formula.str_of cond_fml)
           (string_of ~indent:(indent+2) t_stmt)
           (make_indent indent)
       else
-        Printf.sprintf "%sif (%s) {\n%s\n%s}\n%selse {\n%s\n%s}"
+        sprintf "%sif (%s) {\n%s\n%s}\n%selse {\n%s\n%s}"
           (make_indent indent)
           (Formula.str_of cond_fml)
           (string_of ~indent:(indent+2) t_stmt)
@@ -888,30 +890,30 @@ end = struct
           (string_of ~indent:(indent+2) f_stmt)
           (make_indent indent)
     | LOOP stmt ->
-      Printf.sprintf "%swhile (1) {\n%s\n%s}"
+      sprintf "%swhile (1) {\n%s\n%s}"
         (make_indent indent)
         (string_of ~indent:(indent+2) stmt)
         (make_indent indent)
     | ASSIGN (varname, term) ->
-      Printf.sprintf "%s%s = %s;"
+      sprintf "%s%s = %s;"
         (make_indent indent)
         varname
         (Term.str_of term)
     | NONDET_ASSIGN varname ->
-      Printf.sprintf "%s%s = nondet();"
+      sprintf "%s%s = nondet();"
         (make_indent indent)
         varname
     | UNREF_ASSIGN (varname, term) ->
-      Printf.sprintf "%s*%s = %s;"
+      sprintf "%s*%s = %s;"
         (make_indent indent)
         varname
         (Term.str_of term)
     | COMPOUND (stmt1, stmt2) ->
-      Printf.sprintf "%s\n%s"
+      sprintf "%s\n%s"
         (string_of ~indent stmt1)
         (string_of ~indent stmt2)
     | NONDET (stmt1, stmt2) ->
-      Printf.sprintf "%snondet {\n%s\n%s}\n%selse {\n%s\n%s}"
+      sprintf "%snondet {\n%s\n%s}\n%selse {\n%s\n%s}"
         (make_indent indent)
         (string_of ~indent:(indent+2) stmt1)
         (make_indent indent)
@@ -919,33 +921,33 @@ end = struct
         (string_of ~indent:(indent+2) stmt2)
         (make_indent indent)
     | ASSUME fml ->
-      Printf.sprintf "%sassume(%s);"
+      sprintf "%sassume(%s);"
         (make_indent indent)
         (Formula.str_of fml)
     | CALL_VOIDFUN (funname, args) ->
-      Printf.sprintf "%s%s(%s);"
+      sprintf "%s%s(%s);"
         (make_indent indent)
         funname
         (string_of_args args)
     | CALL_ASSIGN (varname, funname, args) ->
-      Printf.sprintf "%s%s = %s(%s);"
+      sprintf "%s%s = %s(%s);"
         (make_indent indent)
         varname
         funname
         (string_of_args args)
     | VARDECL (varname, sort) ->
-      Printf.sprintf "%s%s %s;"
+      sprintf "%s%s %s;"
         (make_indent indent)
         (Term.str_of_sort sort)
         varname
-    | LABEL label_name -> Printf.sprintf "%s:" label_name
-    | GOTO label_name -> Printf.sprintf "%sgoto %s;" (make_indent indent) label_name
-    | BREAK -> Printf.sprintf "%sbreak;" (make_indent indent)
-    | RETURN_INT term -> Printf.sprintf "%sreturn %s;" (make_indent indent) (Term.str_of term)
-    | RETURN_VOID -> Printf.sprintf "%sreturn;" (make_indent indent)
-    | RETURN_NONDET -> Printf.sprintf "%sreturn nondet();" (make_indent indent)
-    | EXIT -> Printf.sprintf "%sexit 0;" (make_indent indent)
-    | NOP -> Printf.sprintf "%snop;" (make_indent indent)
+    | LABEL label_name -> sprintf "%s:" label_name
+    | GOTO label_name -> sprintf "%sgoto %s;" (make_indent indent) label_name
+    | BREAK -> sprintf "%sbreak;" (make_indent indent)
+    | RETURN_INT term -> sprintf "%sreturn %s;" (make_indent indent) (Term.str_of term)
+    | RETURN_VOID -> sprintf "%sreturn;" (make_indent indent)
+    | RETURN_NONDET -> sprintf "%sreturn nondet();" (make_indent indent)
+    | EXIT -> sprintf "%sexit 0;" (make_indent indent)
+    | NOP -> sprintf "%snop;" (make_indent indent)
 
   let subst_args sub = List.map ~f:(Term.subst sub)
 
@@ -1048,7 +1050,7 @@ end = struct
   let rec get_all_labels_rep res = function
     | LABEL label_name ->
       if Variables.is_mem res label_name then
-        failwith @@ Printf.sprintf "there are labels with the same name"
+        failwith @@ sprintf "there are labels with the same name"
       else
         Variables.add label_name res
     | stmt ->
@@ -1176,14 +1178,14 @@ end = struct
 
   let string_of = function
     | ASSIGN (varname, term) ->
-      Printf.sprintf "%s = %s;"
+      sprintf "%s = %s;"
         varname
         (Term.str_of term)
     | ASSUME fml ->
-      Printf.sprintf "assume(%s);"
+      sprintf "assume(%s);"
         (Formula.str_of fml)
     | NONDET_ASSIGN varname ->
-      Printf.sprintf "%s = nondet();"
+      sprintf "%s = nondet();"
         varname
 
   let update_state state = function
@@ -1284,7 +1286,7 @@ end = struct
 
   (* let lookup varname = function STATE state ->
      (match List.assoc_opt varname state with
-     | None -> raise (Error (Printf.sprintf "variable %s is not defined" varname))
+     | None -> raise (Error (sprintf "variable %s is not defined" varname))
      | Some term -> term) *)
 
   let update varname term = function STATE state ->
@@ -1380,7 +1382,7 @@ end = struct
   let find_fundecl funname fundecls =
     match List.find ~f:(fun fundecl -> String.equal (get_funname fundecl) funname) fundecls with
     | Some fundecl -> fundecl
-    | None -> failwith @@ Printf.sprintf "function %s was not declared in this scope" funname
+    | None -> failwith @@ sprintf "function %s was not declared in this scope" funname
 
   let rec get_next_funnames_rep stmt res =
     if Statement.is_call_assign stmt then
@@ -1429,12 +1431,12 @@ end = struct
 
   let string_of_args =
     String.concat_map_list ~sep:", " ~f:(fun (varname, sort) ->
-        Printf.sprintf "%s %s" (Term.str_of_sort sort) varname)
+        sprintf "%s %s" (Term.str_of_sort sort) varname)
 
   let string_of = function
-    | FUN_NONDET (funname, args) -> Printf.sprintf "int %s(%s) { return nondet(); }" funname (string_of_args args)
-    | FUN_VOID (funname, args, stmt) -> Printf.sprintf "void %s(%s) {\n%s\n}" funname (string_of_args args) (Statement.string_of stmt)
-    | FUN_INT (funname, args, stmt) -> Printf.sprintf "int %s(%s) {\n%s\n}" funname (string_of_args args) (Statement.string_of stmt)
+    | FUN_NONDET (funname, args) -> sprintf "int %s(%s) { return nondet(); }" funname (string_of_args args)
+    | FUN_VOID (funname, args, stmt) -> sprintf "void %s(%s) {\n%s\n}" funname (string_of_args args) (Statement.string_of stmt)
+    | FUN_INT (funname, args, stmt) -> sprintf "int %s(%s) {\n%s\n}" funname (string_of_args args) (Statement.string_of stmt)
 end
 
 type cctl = Ctl.t * Declare.t list * Init.t list * Statement.t

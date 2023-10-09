@@ -22,9 +22,10 @@ let str_of_sort = function
   | T_real.SReal -> "real"
   | _ -> failwith "invalid sort"
 
-let str_of_fixpoint = function
+let str_of_fop = function
   | Predicate.Mu -> "mu"
   | Predicate.Nu -> "nu"
+  | Predicate.Fix -> failwith "str_of_fop"
 
 let rec sexp_of_formula = function
   | Formula.Atom (atom, _) ->
@@ -104,7 +105,7 @@ and sexp_of_pred = function
     Sexp.List [Sexp.Atom ident; Sexp.List sorts]
   | Psym sym -> sexp_of_pred_sym sym
   | Fixpoint (fp, Ident.Pvar ident, params, phi) ->
-    let fp = str_of_fixpoint fp in
+    let fp = str_of_fop fp in
     let params = sexp_of_params params in
     let phi = sexp_of_formula phi in
     Sexp.List [Sexp.Atom fp; Sexp.Atom ident; params; phi]

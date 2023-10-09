@@ -37,6 +37,7 @@ let sef = side_effect
 
 (** {5 Currying} *)
 
+let curry f x y = f (x, y)
 let curry2 f x y = f (x, y)
 let curry3 f x y z = f (x, y, z)
 let curry4 f x y z w = f (x, y, z, w)
@@ -46,7 +47,7 @@ let curry_list2 f x y xs = f (x :: y :: xs)
 (** {5 Uncurrying} *)
 
 let uncurry f (x, y) = f x y
-let uncurry2 f (x, y) = f x y
+let uncurry2 = uncurry
 let uncurry3 f (x, y, z) = f x y z
 let uncurry4 f (x, y, z, w) = f x y z w
 let uncurry_list1 f = function x :: xs -> f x xs | _ -> failwith ""

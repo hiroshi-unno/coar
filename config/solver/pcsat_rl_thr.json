@@ -3,7 +3,7 @@
   {
     "pvar_eliminator": [
       "Filename",
-      "./config/pcsat/pvar_eliminator/default.json"
+      "./config/pcsat/pvar_eliminator/enable.json"
     ],
     "coordinator": [
       "Filename",
@@ -11,7 +11,7 @@
     ],
     "sol_printer": [
       "Filename",
-      "./config/pcsat/sol_printer/default.json"
+      "./config/pcsat/sol_printer/enable.json"
     ],
     "load_oracle_sol": false,
     "solve_each_query": false,

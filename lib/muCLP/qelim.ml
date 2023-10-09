@@ -18,20 +18,14 @@ module Config = struct
   let instantiate_ext_files cfg = Ok cfg
 
   let load_ext_file = function
-    | ExtFile.Filename filename ->
-      begin
-        let open Or_error in
-        try_with (fun () -> Yojson.Safe.from_file filename)
-        >>= fun raw_json ->
-        match of_yojson raw_json with
-        | Ok x ->
-          instantiate_ext_files x >>= fun x ->
-          Ok (ExtFile.Instance x)
-        | Error msg ->
-          error_string @@ Printf.sprintf
-            "Invalid Qelim Configuration (%s): %s" filename msg
-      end
-    | Instance x -> Ok (Instance x)
+    | ExtFile.Instance x -> Ok (ExtFile.Instance x)
+    | Filename filename ->
+      let open Or_error in
+      try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
+      match of_yojson raw_json with
+      | Ok x -> instantiate_ext_files x >>= fun x -> Ok (ExtFile.Instance x)
+      | Error msg ->
+        error_string @@ sprintf "Invalid Qelim Configuration (%s): %s" filename msg
 
   module type ConfigType = sig val config : t end
 end
@@ -64,12 +58,12 @@ module Make (Cfg : Config.ConfigType) = struct
 
   let encode_exists_mu prefix bounds0 pvars fnpvs exists_formula =
     (* avoid dup *)
-    let pvar = Problem.avoid_dup (Ident.Pvar prefix) (pvars @ List.map ~f:fst @@ Set.Poly.to_list fnpvs) in
+    let pvar = Problem.avoid_dup (Ident.Pvar prefix) (pvars @ List.map ~f:fst @@ Set.to_list fnpvs) in
     (* make exists body *)
     let bounds, body, _ = Formula.let_exists exists_formula in
     let bounds0 =
       let fv = Formula.tvs_of body in
-      List.filter bounds0  ~f:(fun (tvar, _) -> Set.Poly.mem fv tvar) in
+      List.filter bounds0  ~f:(fun (tvar, _) -> Set.mem fv tvar) in
     let bounds, body = add_prefix_to_tvars "#exists_" bounds body in
     (** Exists(x,y) =mu F(x,y) \/ Exists(x+1,y) \/ Exists(x-1,y) \/ Exists(x,y+1) \/ Exists(x,y-1)*)
     [ Pred.make Predicate.Mu pvar (bounds0 @ bounds) @@
@@ -83,12 +77,12 @@ module Make (Cfg : Config.ConfigType) = struct
 
   let encode_exists_mu' prefix bounds0 pvars fnpvs exists_formula =
     (* avoid dup *)
-    let pvar = Problem.avoid_dup (Ident.Pvar prefix) (pvars @ List.map ~f:fst @@ Set.Poly.to_list fnpvs) in
+    let pvar = Problem.avoid_dup (Ident.Pvar prefix) (pvars @ List.map ~f:fst @@ Set.to_list fnpvs) in
     (* make exists body *)
     let bounds, body, _ = Formula.let_exists exists_formula in
     let bounds0 =
       let fv = Formula.tvs_of body in
-      List.filter bounds0  ~f:(fun (tvar, _) -> Set.Poly.mem fv tvar) in
+      List.filter bounds0  ~f:(fun (tvar, _) -> Set.mem fv tvar) in
     let bounds, body = add_prefix_to_tvars "#exists_" bounds body in
     let rec rep body subst res = function
       | [] -> Formula.subst subst body :: res
@@ -110,7 +104,7 @@ module Make (Cfg : Config.ConfigType) = struct
     let bounds, body, _ = Formula.let_exists exists_formula in
     let bounds0 =
       let fv = Formula.tvs_of body in
-      List.filter bounds0 ~f:(fun (tvar, _) -> Set.Poly.mem fv tvar) in
+      List.filter bounds0 ~f:(fun (tvar, _) -> Set.mem fv tvar) in
     let bounds, body = add_prefix_to_tvars "#exists_" bounds body in
     let rec encode_exists args bounds pvars =
       match bounds with
@@ -119,7 +113,7 @@ module Make (Cfg : Config.ConfigType) = struct
         (* avoid dup *)
         let tvar_name = Ident.name_of_tvar tvar in
         let pvar1, pvar2 =
-          let pvars_fnpvs = pvars @ List.map ~f:fst @@ Set.Poly.to_list fnpvs in
+          let pvars_fnpvs = pvars @ List.map ~f:fst @@ Set.to_list fnpvs in
           Problem.avoid_dup (Ident.Pvar (prefix ^ "_" ^ tvar_name ^ "_n")) pvars_fnpvs,
           Problem.avoid_dup (Ident.Pvar (prefix ^ "_" ^ tvar_name ^ "_p")) pvars_fnpvs
         in
@@ -152,12 +146,12 @@ module Make (Cfg : Config.ConfigType) = struct
 
   let encode_exists_nu range prefix bounds0 pvars fnpvs exists_formula =
     (* avoid dup *)
-    let pvar = Problem.avoid_dup (Ident.Pvar prefix) (pvars @ List.map ~f:fst @@ Set.Poly.to_list fnpvs) in
+    let pvar = Problem.avoid_dup (Ident.Pvar prefix) (pvars @ List.map ~f:fst @@ Set.to_list fnpvs) in
     (* make exists body *)
     let bounds, body, _ = Formula.let_exists exists_formula in
     let bounds0 =
       let fv = Formula.tvs_of body in
-      List.filter bounds0 ~f:(fun (tvar, _) -> Set.Poly.mem fv tvar) in
+      List.filter bounds0 ~f:(fun (tvar, _) -> Set.mem fv tvar) in
     let bounds, body = add_prefix_to_tvars "#exists_" bounds body in
     let rec rep body subst res = function
       | [] -> Formula.subst subst body :: res
@@ -197,7 +191,7 @@ module Make (Cfg : Config.ConfigType) = struct
     let bounds, body, _ = Formula.let_exists exists_formula in
     let params =
       let fv = Formula.tvs_of body in
-      List.filter bounds ~f:(fun (tvar, _) -> Set.Poly.mem fv tvar) in
+      List.filter bounds ~f:(fun (tvar, _) -> Set.mem fv tvar) in
     let bool_params, arith_params =
       List.partition_tf params ~f:(function (_, T_bool.SBool) -> true | _ -> false)
     in
@@ -223,8 +217,8 @@ module Make (Cfg : Config.ConfigType) = struct
         | (x, sort) :: xs ->
           assert (Term.is_bool_sort sort);
           let body = aux body xs in
-          Formula.or_of [Formula.subst (Map.Poly.singleton x (T_bool.mk_true ())) body;
-                         Formula.subst (Map.Poly.singleton x (T_bool.mk_false ())) body]
+          Formula.or_of [Formula.apply_pred (x, body) @@ T_bool.mk_true ();
+                         Formula.apply_pred (x, body) @@ T_bool.mk_false ()]
       in
       aux body bool_params
     in
@@ -239,13 +233,13 @@ module Make (Cfg : Config.ConfigType) = struct
     let bounds, body, _ = Formula.let_exists exists_formula in
     let params =
       let fv = Formula.tvs_of body in
-      List.filter bounds ~f:(fun (tvar, _) -> Set.Poly.mem fv tvar) in
+      List.filter bounds ~f:(fun (tvar, _) -> Set.mem fv tvar) in
     let bool_params, arith_params =
       List.partition_tf params ~f:(function (_, T_bool.SBool) -> true | _ -> false)
     in
     let pvars' = List.fold_right arith_params ~init:[] ~f:(fun (x, _) pvars' ->
         let pv = Ident.fnpred_pvar (Ident.Pvar (prefix ^ Ident.name_of_tvar x)) in
-        Problem.avoid_dup pv (pvars' @ pvars @ List.map ~f:fst @@ Set.Poly.to_list fnpvs) :: pvars') in
+        Problem.avoid_dup pv (pvars' @ pvars @ List.map ~f:fst @@ Set.to_list fnpvs) :: pvars') in
     let arith_params, body = add_prefix_to_tvars "#exists_" arith_params body in
     (*assert (List.length pvars' = List.length arith_params);*)
     let body =
@@ -255,8 +249,8 @@ module Make (Cfg : Config.ConfigType) = struct
         | (x, sort) :: xs ->
           assert (Term.is_bool_sort sort);
           let body = aux body xs in
-          Formula.or_of [Formula.subst (Map.Poly.singleton x (T_bool.mk_true ())) body;
-                         Formula.subst (Map.Poly.singleton x (T_bool.mk_false ())) body]
+          Formula.or_of [Formula.apply_pred (x, body) @@ T_bool.mk_true ();
+                         Formula.apply_pred (x, body) @@ T_bool.mk_false ()]
       in
       aux body bool_params
     in
@@ -267,7 +261,7 @@ module Make (Cfg : Config.ConfigType) = struct
               mk_app pvar bounds0 [tvar, sort] ())))
       body,
     List.fold2_exn ~init:fnpvs pvars' arith_params ~f:(fun fnpvs pvar (_, sort) ->
-        Set.Poly.add fnpvs (pvar, List.map ~f:snd bounds0 @ [sort])),
+        Set.add fnpvs (pvar, List.map ~f:snd bounds0 @ [sort])),
     Map.Poly.empty
 
   let dispatched =
@@ -279,7 +273,7 @@ module Make (Cfg : Config.ConfigType) = struct
     | SkolemFun -> encode_exists_skolem_fun
     | SkolemPred -> encode_exists_skolem_pred
 
-  let encode_exists prefix bounds0 pvars fnpvs fml =
+  let encode_exists prefix bounds0 pvars (fnpvs : LogicOld.pred_sort_env_set) fml =
     let rec rep bounds0 pvars fnpvs fml =
       if Formula.is_atom fml then
         [], fml, pvars, fnpvs, Map.Poly.empty
@@ -297,9 +291,11 @@ module Make (Cfg : Config.ConfigType) = struct
         let bounds, fml, info = Formula.let_exists fml in
         let preds, fml, pvars, fnpvs, fnsenv1 = rep (bounds @ bounds0) pvars fnpvs fml in
         let fml = Formula.exists bounds fml ~info in
-        let add_preds, fml, fnpvs, fnsenv2 = dispatched prefix bounds0 pvars fnpvs fml in
-        add_preds @ preds, fml,
-        (Pred.pvars_of_list add_preds @ pvars), fnpvs, Map.force_merge fnsenv1 fnsenv2
+        if Formula.is_exists fml then
+          let add_preds, fml, fnpvs, fnsenv2 = dispatched prefix bounds0 pvars fnpvs fml in
+          add_preds @ preds, fml,
+          (Pred.pvars_of_list add_preds @ pvars), fnpvs, Map.force_merge fnsenv1 fnsenv2
+        else preds, fml, pvars, fnpvs, fnsenv1
       else failwith (Formula.str_of fml ^ " not supported")
     in
     let preds, fml, _pvars, fnpvs, fnsenv = rep bounds0 pvars fnpvs fml in

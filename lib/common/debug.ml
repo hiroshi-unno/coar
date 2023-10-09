@@ -26,20 +26,24 @@ module Make (Config : Config.ConfigType) = struct
         | None -> Out_channel.prerr_endline (Lazy.force str)
         | Some id ->
           let str = Lazy.force str in
-          let lines =
-            List.map ~f:(fun s -> sprintf "[#%d] %s" id s) @@ String.split ~on:'\n' str
-          in
-          Out_channel.prerr_endline @@ String.concat ~sep:"\n" lines end;
+          let lines = List.map ~f:(sprintf "[#%d] %s" id) @@ String.split ~on:'\n' str in
+          Out_channel.prerr_endline @@ String.concat ~sep:"\n" lines
+      end;
       Out_channel.flush stderr
     end
+  let print_stdout ?(id=Atomic.get dbg_id) str =
+    match id with
+    | None -> Out_channel.print_endline (Lazy.force str)
+    | Some id ->
+      let str = Lazy.force str in
+      let lines = List.map ~f:(sprintf "[#%d] %s" id) @@ String.split ~on:'\n' str in
+      Out_channel.print_endline @@ String.concat ~sep:"\n" lines
 
-  let print_exec_time label fapp =
-    fun () ->
-    let st = Time.now () in
+  let print_exec_time label fapp = fun () ->
+    let st = Time_float.now () in
     let res = Lazy.force fapp in
-    let diff = Time.diff (Time.now ()) st |> Time.Span.to_sec in
-    print @@
-    lazy (Printf.sprintf "**** call %s (time: %f)" label diff);
+    let diff = Time_float.diff (Time_float.now ()) st |> Time_float.Span.to_sec in
+    print @@ lazy (sprintf "**** call %s (time: %f)" label diff);
     res
   let log_str ?(tag="") msg =
     if Stdlib.(Atomic.get module_name = "") then msg
@@ -53,5 +57,4 @@ module Make (Config : Config.ConfigType) = struct
     end
 
   let set_enable switch = Atomic.set enable switch
-
 end

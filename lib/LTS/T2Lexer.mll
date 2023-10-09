@@ -1,15 +1,8 @@
 {
+  open Common.Util
   open T2Parser
-  open Lexing
 
   exception SyntaxError of string
-
-  let update_loc (lexbuf: Lexing.lexbuf) =
-    let pos = lexbuf.lex_curr_p in
-    lexbuf.lex_curr_p <- { pos with
-      pos_lnum = pos.pos_lnum + 1;
-      pos_bol = pos.pos_cnum;
-    }
 }
 
 let space = ' ' | '\t'
@@ -40,7 +33,7 @@ rule token = parse
 | '(' { LPAREN }
 | ')' { RPAREN }
 | space { token lexbuf }
-| newline | "//" [^'\n']* newline { update_loc lexbuf; token lexbuf }
+| newline | "//" [^'\n']* newline { LexingHelper.update_loc lexbuf; token lexbuf }
 
 | '+' { PLUS }
 | '-' { MINUS }

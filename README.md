@@ -38,6 +38,7 @@
 
 * `core`
 * `core_unix`
+* `domainslib`
 * `menhir`
 * `ppx_deriving_yojson`
 * `ocaml-compiler-libs`
@@ -46,7 +47,6 @@
 * `z3`
 * `minisat`
 * `libsvm` with some modification (https://github.com/hiroshi-unno/libsvm-ocaml.git)
-* `domainslib`
 
 ### External tools (optional):
 
@@ -88,39 +88,58 @@ dune exec main -- -c ./config/solver/dbg_pcsat_tb_ar.json -p sygus ./benchmarks/
 #### Primal
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_muval_prove_tb_ar.json -p muclp benchmarks/muCLP/popl2023mod/sas2019_ctl1.hes
+dune exec main -- -c ./config/solver/dbg_muval_prove_tb_ar.json -p muclp benchmarks/muCLP/sas2019/ctl1.hes
 ```
 
 #### Dual
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_muval_disprove_tb_ar.json -p muclp benchmarks/muCLP/popl2023mod/sas2019_ctl1.hes
+dune exec main -- -c ./config/solver/dbg_muval_disprove_tb_ar.json -p muclp benchmarks/muCLP/sas2019/ctl1.hes
 ```
 
 #### Parallel
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_muval_parallel_tb_ar.json -p muclp benchmarks/muCLP/popl2023mod/sas2019_ctl1.hes
+dune exec main -- -c ./config/solver/dbg_muval_parallel_tb_ar.json -p muclp benchmarks/muCLP/sas2019/ctl1.hes
 ```
 
 #### Parallel with Clause Exchange
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_muval_parallel_exc_tb_ar.json -p muclp benchmarks/muCLP/popl2023mod/sas2019_ctl1.hes
+dune exec main -- -c ./config/solver/dbg_muval_parallel_exc_tb_ar.json -p muclp benchmarks/muCLP/sas2019/ctl1.hes
+```
+
+#### Interactive Conditional
+
+```bash
+dune exec main -- -c ./config/solver/muval_prove_tb_ar.json -p muclpinter benchmarks/muCLP/sas2019/lines1.hes
+```
+
+### CHC Maximization
+
+```bash
+dune exec main -- -c ./config/solver/dbg_optpcsat_nc_tb_ar.json -p chcmax benchmarks/CHC/popl2023opt/test2.smt2
 ```
 
 ### Verification of OCaml Programs
 
-#### with PCSat
+#### Safety Verification
+##### with PCSat
 
 ```bash
 dune exec main -- -c ./config/solver/dbg_rcaml_pcsat_tb_ar.json -p ml ./benchmarks/OCaml/safety/simple/sum.ml
 ```
 
-#### with Spacer
+##### with Spacer
 
 ```bash
 dune exec main -- -c ./config/solver/dbg_rcaml_spacer.json -p ml ./benchmarks/OCaml/safety/simple/sum.ml
+```
+
+#### Temporal Verification (only for constraint generation)
+
+```bash
+dune exec main -- -c ./config/solver/dbg_rcaml_temp_eff_pcsat_tb_ar.json -p ml ./benchmarks/OCaml/temporal/sum_term.ml
 ```
 
 ### Verification of C Programs
@@ -152,14 +171,14 @@ dune exec main -- -c ./config/solver/dbg_muval_prove_tb_ar.json -p ltsnterm benc
 #### Interactive Conditional (Non-)Termination Verification
 
 ```bash
-dune exec main -- -c ./config/solver/muval_prove_tb_ar.json -p ltscterm benchmarks/LTS/simple/prog2.t2
+dune exec main -- -c ./config/solver/muval_prove_tb_ar.json -p ltsterminter benchmarks/LTS/simple/prog2.t2
 ```
 
 ## References
 
 ### RCaml
 
-1. Fuga Kawamata, Hiroshi Unno, Taro Sekiyama, and Tachio Terauchi. Answer Refinement Modification: Refinement Type System for Algebraic Effects and Handlers.
+1. Fuga Kawamata, Hiroshi Unno, Taro Sekiyama, and Tachio Terauchi. Answer Refinement Modification: Refinement Type System for Algebraic Effects and Handlers. POPL 2024.
 
 1. Taro Sekiyama and Hiroshi Unno. Temporal Verification with Answer-Effect Modification. POPL 2023.
 

@@ -1,11 +1,19 @@
 {
     "enable": false,
+    "show_constraints": false,
     "show_num_constrs": false,
     "show_num_pvars": false,
-    "show_num_args": false,
+    "show_dep_graph": false,
+
+    "show_num_iters": false,
     "show_user_time": false,
+    "show_kind": false,
+    "show_sort": false,
+    "show_relevance": false,
+    "show_num_args": false,
+    "show_pcsat_actions": false,
+
     "show_elapsed_time": false,
-    "show_constraints": false,
     "show_candidates": false,
     "show_examples": false,
     "show_unsat_core": false,

@@ -15,10 +15,10 @@
     exClause
     exClauseSet
     clauseGraph
+    hypSpace
     truthTable
     context
     state
-    messenger
     QDep
     versionSpace
     RLConfig))

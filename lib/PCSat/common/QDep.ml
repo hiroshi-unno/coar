@@ -54,7 +54,7 @@ let lformula_from_atom atm = mk_lit_formula @@ Formula.mk_atom atm
 let str_of_act (a, b, psym) =
   let a = if a = 0 then "" else if a = 1 then "_" else sprintf "%d * _" a in
   let b = if b = 0 then "" else sprintf "+ %d" b in
-  sprintf "%s %s %s 0" a b (Predicate.str_of_predsym psym)
+  sprintf "%s %s %s 0" a b (Predicate.str_of_psym psym)
 let str_of_lit = function
   | LFormula (phi, act) -> sprintf "%s:%s" (Formula.str_of phi) (str_of_act act)
   | LTrue -> "true"
@@ -62,11 +62,15 @@ let str_of_lit = function
 
 let rec str_of = function
   | CAtom lit -> sprintf "%s" (str_of_lit lit)
-  | CNeg t -> sprintf "!(%s)" @@ str_of t
-  | CImply (t1, t2) -> sprintf "(%s) => (%s)" (str_of t1) (str_of t2)
-  | CAnd (t1, t2) -> sprintf "(%s) /\\ (%s)" (str_of t1) (str_of t2)
-  | COr (t1, t2) -> sprintf "(%s) \\/ (%s)" (str_of t1) (str_of t2)
-  | CEquiv (t1, t2) -> sprintf "(%s) <=> (%s)" (str_of t1) (str_of t2)
+  | CNeg t -> sprintf "!%s" @@ String.paren @@ str_of t
+  | CImply (t1, t2) ->
+    sprintf "%s => %s" (String.paren @@ str_of t1) (String.paren @@ str_of t2)
+  | CAnd (t1, t2) ->
+    sprintf "%s /\\ %s" (String.paren @@ str_of t1) (String.paren @@ str_of t2)
+  | COr (t1, t2) ->
+    sprintf "%s \\/ %s" (String.paren @@ str_of t1) (String.paren @@ str_of t2)
+  | CEquiv (t1, t2) ->
+    sprintf "%s <=> %s" (String.paren @@ str_of t1) (String.paren @@ str_of t2)
 
 let condition_of_lit env = function
   | LFormula (phi, (a, b, psym)) ->

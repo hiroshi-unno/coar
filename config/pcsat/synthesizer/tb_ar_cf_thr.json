@@ -11,18 +11,17 @@
         "smt_timeout": null,
         "extract_qualifiers": true,
         "extract_terms": false,
-        "extract_seeds": false,
+        "extract_constants": true,
         "reduce_quals_terms": false,
         "qualifier_generator": [
           "Filename",
           "./config/pcsat/qualifier/tb.json"
         ],
-        "pex": [
+        "pex_strategy": [
           "InstDefault"
         ],
         "sync_threshold": null,
         "restart_threshold": 20,
-        "auto_incr_shape_interval": null,
         "predicate_template": [
           "DNF",
           [
@@ -53,6 +52,13 @@
           [
             "Filename",
             "./config/pcsat/template/int_function_template_thr.json"
+          ]
+        ],
+        "regex_template": [
+          "RegEx",
+          [
+            "Filename",
+            "./config/pcsat/template/regex_template.json"
           ]
         ],
         "verbose": false

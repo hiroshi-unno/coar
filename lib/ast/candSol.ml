@@ -1,6 +1,5 @@
 open Core
 open Common.Ext
-open Common.Util
 open Logic
 
 type t = sort_env_map(*parameters*) * pred_subst_set
@@ -63,8 +62,7 @@ let str_of (params_senv, cand) : string =
           LogicOld.Term.str_of @@ Evaluator.simplify_term @@ LogicOld.Term.rename map @@
           ExtTerm.to_old_term Map.Poly.empty senv term' []
       in
-      Printf.sprintf "%s(%s) :=\n  %s"
-        tvar (str_of_sort_env_list ExtTerm.str_of_sort params') str_term')
+      sprintf "%s(%s) :=\n  %s" tvar (str_of_sort_env_list ExtTerm.str_of_sort params') str_term')
 
 type pcsp =
   { candidates: (string * (string * string) list * string) list }
@@ -72,7 +70,7 @@ type pcsp =
 let to_yojson (params_senv, cand) =
   pcsp_to_yojson @@
   { candidates =
-      Set.Poly.to_list @@ Set.Poly.map cand ~f:(fun ((Ident.Tvar tvar, _sort), term) ->
+      Set.to_list @@ Set.Poly.map cand ~f:(fun ((Ident.Tvar tvar, _sort), term) ->
           let params, term' = Term.let_lam term in
           let params', map =
             LogicOld.normalize_sort_env_list @@
@@ -112,7 +110,7 @@ let replace_int_con t =
     | Logic.Con (sym, _) as t' -> begin
         match sym with
         | Logic.IntTerm.Int _ ->
-          (*if Stdlib.(a = Z.of_int 0) then t' else*)
+          (*if Stdlib.(a = Z.zero) then t' else*)
           Logic.ExtTerm.mk_var @@ Ident.mk_fresh_tvar ()
         | Logic.IntTerm.Mult -> t'
         | Logic.IntTerm.Add -> t'

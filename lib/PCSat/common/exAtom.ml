@@ -1,5 +1,6 @@
 open Core
 open Common.Ext
+open Common.Combinator
 open Ast
 open Ast.LogicOld
 
@@ -21,19 +22,17 @@ let of_old_atom exi_senv cond = function
   | Atom.App (Predicate.Var (pvar, sorts), terms, _) ->
     let param_senv = Set.Poly.union_list @@
       Formula.sort_env_of cond :: List.map ~f:Term.sort_env_of terms in
-    if Set.Poly.is_empty param_senv && (Formula.is_true cond || Formula.is_false cond) then mk_papp pvar sorts terms
+    if Set.is_empty param_senv && (Formula.is_true cond || Formula.is_false cond)
+    then mk_papp pvar sorts terms
     else
       mk_ppapp
-        (Map.of_set_exn @@
-         Set.Poly.filter param_senv ~f:(fun (x, _) -> not @@ Map.Poly.mem exi_senv x),
-         cond)
-        pvar sorts terms
+        (Map.of_set_exn @@ Set.filter param_senv ~f:(fst >> Map.Poly.mem exi_senv >> not),
+         cond) pvar sorts terms
   | Atom.App (Psym _, _, _) as atom ->
     (try if Evaluator.eval_atom atom then mk_true () else mk_false () with _ ->
        let param_senv = Atom.sort_env_of atom in
        mk_fcon
-         (Map.of_set_exn @@
-          Set.Poly.filter param_senv ~f:(fun (x, _) -> not @@ Map.Poly.mem exi_senv x),
+         (Map.of_set_exn @@ Set.filter param_senv ~f:(fst >> Map.Poly.mem exi_senv >> not),
           Formula.mk_atom atom))
   | atom ->
     failwith @@ "only atoms can be converted into examples. error with : " ^ Atom.str_of atom
@@ -53,7 +52,7 @@ let pvar_sorts_of = function
 let tvs_of = function
   | FCon (_, phi) -> Formula.tvs_of phi
   | PApp ((_, _), ts) ->
-    assert (List.for_all ts ~f:(fun t -> Set.Poly.is_empty @@ Term.tvs_of t));
+    assert (List.for_all ts ~f:(fun t -> Set.is_empty @@ Term.tvs_of t));
     Set.Poly.empty
   | PPApp ((_, phi), ((_, _), ts)) ->
     Set.Poly.union_list (Formula.tvs_of phi :: List.map ~f:Term.tvs_of ts)
@@ -66,19 +65,6 @@ let params_of = function
   | PApp (_, _) -> Map.Poly.empty
   | PPApp ((param_senv, _), _) -> param_senv
 
-(* assume all parameters in phi/ts are in dom(map) *)
-let rename map = function
-  | FCon (params, phi) ->
-    FCon (Map.rename_keys_and_drop_unused params(* Could have a parameter not in phi *)
-            ~f:(Map.Poly.find map),
-          Formula.rename map phi)
-  | PApp ((pvar, sorts), ts) ->
-    PApp ((pvar, sorts), List.map ~f:(Term.rename map) ts)
-  | PPApp ((params, phi), ((pvar, sorts), ts))->
-    PPApp ((Map.rename_keys_and_drop_unused params(* Could have a parameter not in phi and ts *)
-              ~f:(Map.Poly.find map), Formula.rename map phi),
-           ((pvar, sorts), List.map ~f:(Term.rename map) ts))
-
 let to_old_atom = function
   | FCon (_, phi) ->
     if Formula.is_true phi then Some (Map.Poly.empty, Atom.mk_true ())
@@ -87,14 +73,14 @@ let to_old_atom = function
   | PApp ((pvar, sorts), terms) ->
     Some (Map.Poly.empty, Atom.mk_app (Predicate.mk_var pvar sorts) terms)
   | PPApp ((param_senv, phi), ((pvar, sorts), terms)) ->
-    if Formula.is_true phi then Some (param_senv, Atom.mk_app (Predicate.mk_var pvar sorts) terms) else None(*ToDo*)
+    if Formula.is_true phi
+    then Some (param_senv, Atom.mk_app (Predicate.mk_var pvar sorts) terms) else None(*ToDo*)
 let to_old_atom_with_phi = function
   | FCon (_, phi) when Fn.non Formula.is_true phi ->
     phi, None
   | PPApp ((param_senv, phi), ((pvar, sorts), terms)) when Fn.non Formula.is_true phi ->
     phi, Some (param_senv, Atom.mk_app (Predicate.mk_var pvar sorts) terms)
   | atm -> Formula.mk_true (), to_old_atom atm
-
 let to_atom atm =
   match to_old_atom atm with
   | None -> None
@@ -119,11 +105,9 @@ let to_old_formula_and_cond  =function
   | FCon (param_senv, phi) ->
     param_senv, phi, Formula.mk_true ()
   | PApp ((pvar, sorts), terms) ->
-    Map.Poly.empty, Formula.mk_true (),
-    Formula.mk_atom @@ Atom.mk_pvar_app pvar sorts terms
+    Map.Poly.empty, Formula.mk_true (), Formula.mk_atom @@ Atom.mk_pvar_app pvar sorts terms
   | PPApp ((param_senv, phi), ((pvar, sorts), terms)) ->
-    param_senv, phi,
-    Formula.mk_atom @@ Atom.mk_pvar_app pvar sorts terms
+    param_senv, phi, Formula.mk_atom @@ Atom.mk_pvar_app pvar sorts terms
 
 let cond_map_of ~id fenv cond =
   if Formula.is_true cond then Map.Poly.empty else
@@ -135,24 +119,23 @@ let cond_map_of ~id fenv cond =
           | Some t -> Map.Poly.set ret ~key:tvar ~data:(Logic.ExtTerm.of_old_term t))
     | _ -> Map.Poly.empty
 let to_formula_and_cond atm =
-  to_old_formula_and_cond atm
-  |> (fun (param_senv, cond, atm) ->
-      (param_senv, Logic.ExtTerm.of_old_formula cond, Logic.ExtTerm.of_old_formula atm))
+  let param_senv, cond, atm = to_old_formula_and_cond atm in
+  param_senv, Logic.ExtTerm.of_old_formula cond, Logic.ExtTerm.of_old_formula atm
 
 let str_of_papp ((Ident.Pvar ident, _), terms) =
-  Printf.sprintf "%s(%s)"
-    ident
-    (String.concat_mapi_list ~sep:", " terms ~f:(fun _i -> (*Printf.sprintf "[x%d] %s" (i+1) @@*) Term.str_of ~priority:Priority.comma))
+  sprintf "%s(%s)" ident @@
+  String.concat_mapi_list ~sep:", " terms
+    ~f:(fun _i -> (*sprintf "[x%d] %s" (i+1) @@*) Term.str_of ~priority:Priority.comma)
 let str_of = function
   | FCon (_, phi) -> Formula.str_of phi
   | PApp papp -> str_of_papp papp
   | PPApp ((_, phi), papp) ->
-    if Formula.is_true phi then Printf.sprintf "%s" (str_of_papp papp)
-    else Printf.sprintf "(%s | %s)" (Formula.str_of phi) (str_of_papp papp)
+    if Formula.is_true phi then sprintf "%s" (str_of_papp papp)
+    else String.paren @@ sprintf "%s | %s" (Formula.str_of phi) (str_of_papp papp)
 
 let normalize_pred tvs (param_senv, phi) =
   let phi' = Normalizer.normalize @@ Evaluator.simplify phi in
-  let param_senv' = Map.Poly.filteri param_senv ~f:(fun ~key:v ~data:_ -> Set.Poly.mem tvs v) in
+  let param_senv' = Map.Poly.filteri param_senv ~f:(fun ~key:v ~data:_ -> Set.mem tvs v) in
   param_senv', phi'
 let normalize_papp (target, terms) =
   target,
@@ -166,35 +149,38 @@ let normalize t = match t with
 
 let instantiate = function
   | FCon (param_senv, phi) ->
-    let sub = Map.Poly.map param_senv ~f:T_dt.mk_dummy(*ToDo: find one that satisfies phi?*) in
+    (*ToDo: find one that satisfies phi?*)
+    let sub = Map.Poly.map param_senv ~f:T_dt.mk_dummy in
     FCon (Map.Poly.empty, Formula.subst sub phi)
   | PApp papp -> PApp papp
   | PPApp ((param_senv, phi), (target, terms)) ->
-    let sub = Map.Poly.mapi param_senv ~f:(fun ~key:_ ~data ->  T_dt.mk_dummy data)
-    (*ToDo: find one that satisfies phi*) in
+    (*ToDo: find one that satisfies phi*)
+    let sub = Map.Poly.map param_senv ~f:T_dt.mk_dummy in
     let phi = Formula.subst sub phi in
     let terms = List.map terms ~f:(Term.subst sub) in
     try
       if Evaluator.eval phi then
-        PApp (target, List.map terms ~f:(fun t -> Term.of_value @@ Evaluator.eval_term @@ t))
+        PApp (target, List.map terms ~f:(Evaluator.eval_term >> Term.of_value))
       else PPApp ((Map.Poly.empty, Formula.mk_false ()), (target, terms))
     with _ -> PPApp ((Map.Poly.empty, phi), (target, terms))
 
-let iterate_vars tvs = function
+(* assume all parameters in phi/ts are in dom(map) *)
+let rename map = function
   | FCon (params, phi) ->
-    let s = Set.Poly.of_list @@ Map.Poly.keys params in
-    (Set.Poly.to_list @@ Set.Poly.inter s @@
-     Set.Poly.diff (Formula.fvs_of phi) (Set.Poly.of_list tvs)) @ tvs
-  | PApp (_, _) -> tvs
-  | PPApp ((params, phi), (_, ts)) ->
-    let s = Set.Poly.of_list @@ Map.Poly.keys params in
-    let tvs =
-      List.fold_left ts ~init:tvs ~f:(fun tvs t ->
-          (Set.Poly.to_list @@ Set.Poly.inter s @@
-           Set.Poly.diff (Term.tvs_of t) (Set.Poly.of_list tvs)) @ tvs)
-    in
-    (Set.Poly.to_list @@ Set.Poly.inter s @@
-     Set.Poly.diff (Formula.fvs_of phi) (Set.Poly.of_list tvs)) @ tvs
+    FCon (Map.rename_keys_and_drop_unused ~f:(Map.Poly.find map)
+            params(* Could have a parameter not in phi *), Formula.rename map phi)
+  | PApp ((pvar, sorts), ts) ->
+    PApp ((pvar, sorts), List.map ~f:(Term.rename map) ts)
+  | PPApp ((params, phi), ((pvar, sorts), ts))->
+    PPApp ((Map.rename_keys_and_drop_unused ~f:(Map.Poly.find map)
+              params(* Could have a parameter not in phi and ts *), Formula.rename map phi),
+           ((pvar, sorts), List.map ~f:(Term.rename map) ts))
+let subst sub = function
+  | FCon (senv, phi) -> FCon (senv, Formula.subst sub phi)
+  | PApp (pred, terms) -> PApp (pred, List.map terms ~f:(Term.subst sub))
+  | PPApp ((senv, phi), (pred, terms)) ->
+    let senv' = Map.Poly.filteri senv ~f:(fun ~key ~data:_ -> not @@ Map.Poly.mem sub key) in
+    PPApp ((senv', Formula.subst sub phi), (pred, List.map terms ~f:(Term.subst sub)))
 
 let iterate_senv (senv, his) atom =
   let ref_senv = ref [] in
@@ -202,34 +188,38 @@ let iterate_senv (senv, his) atom =
   match atom with
   | FCon (params, phi) ->
     Formula.iter_term phi ~f:(function
-        | Term.Var (t, s, _) when Map.Poly.mem params t && not @@ Set.Poly.mem !ref_his t->
-          ref_senv := (t, s) :: !ref_senv; ref_his := Set.Poly.add !ref_his t
+        | Term.Var (t, s, _) when Map.Poly.mem params t && not @@ Set.mem !ref_his t->
+          ref_senv := (t, s) :: !ref_senv; ref_his := Set.add !ref_his t
         | _ -> ());
     !ref_senv @ senv, !ref_his
   | PApp _ -> senv, his
   | PPApp ((params, phi), (_, ts)) ->
     List.iter ts ~f:(fun t -> Term.iter_term t ~f:(function
-        | Term.Var (t, s, _) when Map.Poly.mem params t && not @@ Set.Poly.mem !ref_his t ->
-          ref_senv := (t, s) :: !ref_senv; ref_his := Set.Poly.add !ref_his t
+        | Term.Var (t, s, _) when Map.Poly.mem params t && not @@ Set.mem !ref_his t ->
+          ref_senv := (t, s) :: !ref_senv; ref_his := Set.add !ref_his t
         | _ -> ()));
     Formula.iter_term phi ~f:(function
-        | Term.Var (t, s, _) when Map.Poly.mem params t && not @@ Set.Poly.mem !ref_his t ->
-          ref_senv := (t, s) :: !ref_senv; ref_his := Set.Poly.add !ref_his t
+        | Term.Var (t, s, _) when Map.Poly.mem params t && not @@ Set.mem !ref_his t ->
+          ref_senv := (t, s) :: !ref_senv; ref_his := Set.add !ref_his t
         | _ -> ());
     !ref_senv @ senv, !ref_his
-
+let iterate_vars bvs = function
+  | FCon (_params, phi) ->
+    (*let s = Map.Poly.key_set params in*)
+    let tvs_set = (*Set.inter s @@*) Set.diff (Formula.fvs_of phi) bvs in
+    Set.union bvs tvs_set, Set.to_list tvs_set
+  | PApp (_, _) -> bvs, []
+  | PPApp ((_params, phi), (_, ts)) ->
+    (*let s = Map.Poly.key_set params in*)
+    let tvs_set = (*Set.inter s @@*) Set.diff (Formula.fvs_of phi) bvs in
+    List.fold_left ts ~init:Set.(union bvs tvs_set, to_list tvs_set) ~f:(fun (bvs, tvs) t ->
+        let tvs_set' = (*Set.inter s @@*) Set.diff (Term.tvs_of(*ToDo*) t) bvs in
+        Set.union bvs tvs_set', tvs @ Set.to_list tvs_set')
 let normalize_params atm =
-  let tvs = iterate_vars [] atm in
+  let _, tvs = iterate_vars Set.Poly.empty atm in
   let map = Map.Poly.of_alist_exn @@
     List.mapi tvs ~f:(fun i x -> x, Ident.mk_dontcare (string_of_int (i+1))) in
   rename map atm
-
-let subst sub = function
-  | FCon (senv, phi) -> FCon (senv, Formula.subst sub phi)
-  | PApp (pred, terms) -> PApp (pred, List.map terms ~f:(Term.subst sub))
-  | PPApp ((senv, phi), (pred, terms)) ->
-    let senv' = Map.Poly.filteri senv ~f:(fun ~key ~data:_ -> not @@ Map.Poly.mem sub key) in
-    PPApp ((senv', Formula.subst sub phi), (pred, List.map terms ~f:(Term.subst sub)))
 
 let exists ~f = function
   | FCon _ -> false
@@ -241,8 +231,8 @@ let is_empty_atm nepvs atm =
   | _, Some (_, atm) ->
     assert (Atom.is_pvar_app atm);
     let pvar, sorts, _, _ = Atom.let_pvar_app atm in
-    if Set.Poly.mem nepvs (Ident.pvar_to_tvar pvar) then
-      Set.Poly.length (Atom.tvs_of atm) = List.length sorts
+    if Set.mem nepvs (Ident.pvar_to_tvar pvar) then
+      Set.length (Atom.tvs_of atm) = List.length sorts
     else false
 (* type t =
    | FCon of pred

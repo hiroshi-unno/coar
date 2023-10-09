@@ -32,7 +32,7 @@ let of_model exi_senv pex (senv, phi)(* clause*) model : t =
   in
   (*print_endline @@ sprintf "[of_model] before:%s\n" (Formula.str_of phi);*)
   Formula.subst map phi
-  |> Normalizer.normalize_let_formula
+  |> Normalizer.normalize_let ~rename:true
   |> Formula.nnf_of
   |> Formula.instantiate_div0_mod0
   |> Evaluator.simplify
@@ -43,14 +43,14 @@ let of_model exi_senv pex (senv, phi)(* clause*) model : t =
   (*|> (fun phi -> print_endline @@ sprintf "[of_model] after :%s" (Formula.str_of phi); phi)*)
   |> Formula.cnf_of (Logic.to_old_sort_env_map Logic.ExtTerm.to_old_sort exi_senv)
   |> Set.Poly.filter_map ~f:(uncurry3 @@ ExClause.make exi_senv)
-  |> Set.Poly.map ~f:ExClause.normalize_params
+  |> Set.Poly.map ~f:(ExClause.normalize_params (Map.key_set exi_senv))
 
 let exatoms_of = Set.concat_map ~f:ExClause.exatoms_of
 let exatoms_of_uclauses = Set.Poly.map ~f:ExClause.exatom_of_uclause
 
 let classify_examples examples =
-  let pos, examples' = Set.Poly.partition_tf examples ~f:ExClause.is_unit_positive in
-  let neg, und = Set.Poly.partition_tf examples' ~f:ExClause.is_unit_negative in
+  let pos, examples' = Set.partition_tf examples ~f:ExClause.is_unit_positive in
+  let neg, und = Set.partition_tf examples' ~f:ExClause.is_unit_negative in
   pos, neg, und
 
 let to_clause_set exi_senv sample =
@@ -58,10 +58,10 @@ let to_clause_set exi_senv sample =
 
 let str_of ?(max_display=Some 20) sample =
   (match max_display with
-   | None -> Set.Poly.to_list sample
-   | Some max_display -> List.take (Set.Poly.to_list sample) max_display)
+   | None -> Set.to_list sample
+   | Some max_display -> List.take (Set.to_list sample) max_display)
   |> String.concat_map_list ~sep:";\n" ~f:ExClause.str_of
-  |> (fun res -> res ^ (match max_display with None -> "" | Some max_display -> if Set.Poly.length sample > max_display then ";.." else ""))
+  |> (fun res -> res ^ (match max_display with None -> "" | Some max_display -> if Set.length sample > max_display then ";.." else ""))
 
 let normalize = Set.Poly.map ~f:ExClause.normalize
 let instantiate = Set.Poly.map ~f:ExClause.instantiate
@@ -71,7 +71,7 @@ let refresh_params_with_src senv = Set.Poly.map ~f:(fun (ex, src) -> ExClause.re
 
 let inter_check ?(enable=true) pos_atoms neg_atoms =
   if not enable then
-    Set.Poly.inter pos_atoms neg_atoms |> Set.Poly.map ~f:fst
+    Set.inter pos_atoms neg_atoms |> Set.Poly.map ~f:fst
   else
     let atm_eq atm1 atm2 =
       match (ExAtom.to_old_atom atm1, ExAtom.to_old_atom atm2) with
@@ -80,9 +80,9 @@ let inter_check ?(enable=true) pos_atoms neg_atoms =
         else begin try Option.is_some @@ Atom.unify Set.Poly.empty atm1 atm2 with _ -> false end
       | _ -> false
     in
-    Set.Poly.fold pos_atoms ~init:(Set.Poly.empty) ~f:(fun confits (atm1, _) ->
-        Set.Poly.fold neg_atoms ~init:confits ~f:(fun confits (atm2, _) ->
-            if atm_eq atm1 atm2 then Set.Poly.union confits @@ Set.Poly.of_list [atm1; atm2]
+    Set.fold pos_atoms ~init:(Set.Poly.empty) ~f:(fun confits (atm1, _) ->
+        Set.fold neg_atoms ~init:confits ~f:(fun confits (atm2, _) ->
+            if atm_eq atm1 atm2 then Set.union confits @@ Set.Poly.of_list [atm1; atm2]
             else confits))
 
 let unit_propagation unknowns
@@ -93,23 +93,23 @@ let unit_propagation unknowns
     let pos_atms = Set.Poly.map pos ~f:(fun (ex, srcs) -> ExClause.exatom_of_uclause ex, srcs) in
     let neg_atms = Set.Poly.map neg ~f:(fun (ex, srcs) -> ExClause.exatom_of_uclause ex, srcs) in
     let conflicts = inter_check pos_atms neg_atms in
-    if Fn.non Set.Poly.is_empty conflicts then
+    if Fn.non Set.is_empty conflicts then
       `Unsat conflicts
     else
       let und = Set.Poly.filter_map ~f:(ExClause.simplify unknowns pos_atms neg_atms) und in
-      if Set.Poly.exists und ~f:(fun (ex, _) -> ex |> ExClause.is_empty) then
+      if Set.exists und ~f:(fun (ex, _) -> ex |> ExClause.is_empty) then
         `Unsat Set.Poly.empty(* ToDo: recover conflicting literals *)
       else
-        let ucs, nucs = Set.Poly.partition_tf und ~f:(fun (ex, _) -> ExClause.is_unit ex) in
-        if Set.Poly.is_empty ucs then
+        let ucs, nucs = Set.partition_tf und ~f:(fun (ex, _) -> ExClause.is_unit ex) in
+        if Set.is_empty ucs then
           `Result (pos, neg, und)
         else
-          let pos', neg' = Set.Poly.partition_tf ucs ~f:(fun (ex, _) -> ExClause.is_unit_positive ex) in
-          inner (Set.Poly.union pos pos') (Set.Poly.union neg neg') nucs
+          let pos', neg' = Set.partition_tf ucs ~f:(fst >> ExClause.is_unit_positive) in
+          inner (Set.union pos pos') (Set.union neg neg') nucs
   in
-  let pos = Set.Poly.map pos_clauses ~f:(fun (ex, srcs) -> (ExClause.normalize ex, srcs)) in
-  let neg = Set.Poly.map neg_clauses ~f:(fun (ex, srcs) -> (ExClause.normalize ex, srcs)) in
-  let und = Set.Poly.map undecided ~f:(fun (ex, srcs) -> (ExClause.normalize ex, srcs)) in
+  let pos = Set.Poly.map pos_clauses ~f:(fun (ex, srcs) -> ExClause.normalize ex, srcs) in
+  let neg = Set.Poly.map neg_clauses ~f:(fun (ex, srcs) -> ExClause.normalize ex, srcs) in
+  let und = Set.Poly.map undecided ~f:(fun (ex, srcs) -> ExClause.normalize ex, srcs) in
   inner pos neg und
 
 let check_candidates ?(inst=true) ~id fenv exi_senv (sample: t) (cands : CandSol.t list) =
@@ -123,12 +123,12 @@ let check_candidates ?(inst=true) ~id fenv exi_senv (sample: t) (cands : CandSol
       let sub = CandSol.to_subst cand in
       let psenv = Set.Poly.of_list @@ Map.Poly.keys @@ fst cand in
       let cex =
-        Set.Poly.find constrs ~f:(fun (_, uni_senv, phi) ->
+        Set.find constrs ~f:(fun (_, uni_senv, phi) ->
             let phi =
               Logic.ExtTerm.to_old_formula exi_senv uni_senv (Logic.Term.subst sub phi) []
             in
             let phi =
-              LogicOld.Formula.forall (Atomic.get LogicOld.dummy_term_senv) @@
+              LogicOld.Formula.forall (LogicOld.get_dummy_term_senv ()) @@
               let bounds =
                 Map.to_alist @@ Logic.to_old_sort_env_map Logic.ExtTerm.to_old_sort uni_senv
               in
@@ -140,7 +140,7 @@ let check_candidates ?(inst=true) ~id fenv exi_senv (sample: t) (cands : CandSol
                  LogicOld.Formula.forall bounds)
               @@ phi
             in
-            assert (Set.Poly.is_subset (LogicOld.Formula.fvs_of phi) ~of_:psenv);
+            assert (Set.is_subset (LogicOld.Formula.fvs_of phi) ~of_:psenv);
             not @@ Evaluator.is_valid (Z3Smt.Z3interface.is_valid ~id fenv) phi)
       in
       match cex with
@@ -149,14 +149,14 @@ let check_candidates ?(inst=true) ~id fenv exi_senv (sample: t) (cands : CandSol
 
 let discard_unused_exs pcsp exs =
   let senv = PCSP.Problem.senv_of pcsp in
-  Set.Poly.filter exs ~f:(fun ex ->
+  Set.filter exs ~f:(fun ex ->
       let pvar_sorts = ExClause.pvar_sorts_of ex in
-      not @@ Set.Poly.exists pvar_sorts ~f:(fun (Ident.Pvar v, sorts) ->
+      not @@ Set.exists pvar_sorts ~f:(fun (Ident.Pvar v, sorts) ->
           let tvar = Ident.Tvar v in
           if PCSP.Problem.is_ord_pred pcsp tvar then
             match Map.Poly.find senv tvar with
             | None -> true
-            | Some (sort) ->
+            | Some sort ->
               let sorts' = Logic.Sort.args_of sort |> List.map ~f:(Logic.ExtTerm.to_old_sort) in
               Stdlib.(sorts' <> sorts)
           else true))

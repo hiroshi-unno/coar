@@ -1,5 +1,6 @@
 open Core
 open Common.Ext
+open Common.Combinator
 open LogicOld
 
 type t =
@@ -71,28 +72,29 @@ let let_bind = function
 let rec get_ftv = function
   | AndNode fmls | OrNode fmls ->
     List.map ~f:get_ftv fmls
-    |> List.fold_left ~f:Set.Poly.union ~init:Set.Poly.empty
+    |> List.fold_left ~f:Set.union ~init:Set.Poly.empty
   | ForallNode (bounds, fml) | ExistsNode (bounds, fml) ->
-    Set.Poly.diff (get_ftv fml) (List.map ~f:fst bounds |> Set.Poly.of_list)
+    Set.diff (get_ftv fml) (List.map ~f:fst bounds |> Set.Poly.of_list)
   | CondNode (_, args) | AppNode (_, args) ->
     List.map ~f:Term.tvs_of args
-    |> List.fold_left ~f:Set.Poly.union ~init:Set.Poly.empty
+    |> List.fold_left ~f:Set.union ~init:Set.Poly.empty
   | TopNode () | BotNode () ->
     Set.Poly.empty
 
 let rec get_fpv = function
   | AndNode fmls | OrNode fmls ->
     List.map ~f:get_fpv fmls
-    |> List.fold_left ~f:Set.Poly.union ~init:Set.Poly.empty
+    |> List.fold_left ~f:Set.union ~init:Set.Poly.empty
   | ForallNode (_, fml) | ExistsNode (_, fml) ->
     get_fpv fml
-  | AppNode (pvar, _) -> Set.Poly.of_list [pvar]
+  | AppNode (pvar, _) ->
+    Set.Poly.of_list [pvar]
   | CondNode _ | TopNode () | BotNode () ->
     Set.Poly.empty
 
 let mk_branch_with_simplification_one op fmls =
   let f = match op with Formula.And -> is_top | Formula.Or -> is_bot | _ -> assert false in
-  let fmls = List.filter ~f:(fun fml -> f fml |> not) fmls in
+  let fmls = List.filter ~f:(f >> not) fmls in
   if List.exists ~f:(match op with Formula.And -> is_bot | Formula.Or -> is_top | _ -> assert false) fmls then
     match op with Formula.And -> BotNode () | Formula.Or -> TopNode () | _ -> assert false
   else
@@ -115,7 +117,7 @@ let mk_branch_with_simplification_one op fmls =
 
 let mk_bind_with_filter binder bounds fml =
   let ftv = get_ftv fml in
-  let bounds = List.filter ~f:(fun (tvar, _) -> Set.Poly.mem ftv tvar) bounds in
+  let bounds = List.filter ~f:(fun (tvar, _) -> Set.mem ftv tvar) bounds in
   mk_bind binder bounds fml
 
 (*
@@ -123,8 +125,7 @@ let mk_bind_with_filter binder bounds fml =
 *)
 let update_bounds bounds bounds' =
   let ht = Hashtbl.Poly.create ~size:1234 () in
-  List.iter
-    ~f:(fun (tvar, sort) -> Hashtbl.Poly.add_exn ht ~key:tvar ~data:sort)
+  List.iter ~f:(fun (tvar, sort) -> Hashtbl.Poly.add_exn ht ~key:tvar ~data:sort)
     (bounds @ bounds');
   Hashtbl.Poly.to_alist ht
 
@@ -139,11 +140,10 @@ let update_bounds bounds bounds' =
   (/\ [empty]) -> top
   (\/ [empty]) -> bot
 *)
-let rec simplify formula =
-  match formula with
+let rec simplify = function
   | ForallNode _
-  | ExistsNode _ ->
-    let binder, bounds, fml = let_bind formula in
+  | ExistsNode _ as phi ->
+    let binder, bounds, fml = let_bind phi in
     let fml = simplify fml in
     if is_bind fml then
       let binder', bounds', fml' = let_bind fml in
@@ -155,7 +155,7 @@ let rec simplify formula =
     if List.exists ~f:is_bot fmls then
       mk_bot ()
     else
-      let fmls = List.filter ~f:(fun fml -> is_top fml |> not) fmls in
+      let fmls = List.filter ~f:(is_top >> not) fmls in
       (match fmls with
        | [] -> mk_top ()
        | [fml] -> fml
@@ -165,7 +165,7 @@ let rec simplify formula =
     if List.exists ~f:is_top fmls then
       mk_top ()
     else
-      let fmls = List.filter ~f:(fun fml -> is_bot fml |> not) fmls in
+      let fmls = List.filter ~f:(is_bot >> not) fmls in
       (
         match fmls with
         | [] -> mk_bot ()
@@ -175,8 +175,7 @@ let rec simplify formula =
   | AppNode _
   | CondNode _
   | TopNode ()
-  | BotNode () ->
-    formula
+  | BotNode () as phi -> phi
 
 let of_atom atom =
   if Atom.is_true atom then
@@ -189,53 +188,42 @@ let of_atom atom =
   else if Atom.is_pvar_app atom then
     let pvar, _, args, _ = Atom.let_pvar_app atom in
     mk_app pvar args
-  else
-    failwith @@ Printf.sprintf "SimpleFormula.of_atom: unsupported atom"
+  else failwith @@ sprintf "SimpleFormula.of_atom: unsupported atom"
 
-let rec of_formula_rep fml =
-  if Formula.is_binop fml then
-    let binop, fml1, fml2, _ = Formula.let_binop fml in
-    let fml1 = of_formula_rep fml1 in
-    let fml2 = of_formula_rep fml2 in
-    mk_branch binop [fml1; fml2]
-  else if Formula.is_bind fml then
-    let binder, bounds, fml, _ = Formula.let_bind fml in
-    let fml = of_formula_rep fml in
-    mk_bind binder bounds fml
-  else if Formula.is_atom fml then
-    let atom, _ = Formula.let_atom fml in
-    of_atom atom
-  else
-    failwith @@ Printf.sprintf "SimpleFormula.of_formula_rep: unsupported formula"
+let rec of_formula_rep = function
+  | Formula.Atom (atom, _) -> of_atom atom
+  | UnaryOp (_op, _phi, _) ->
+    failwith @@ sprintf "[SimpleFormula.of_formula_rep] UnaryOp not supported"
+  | BinaryOp (op, phi1, phi2, _) ->
+    mk_branch op [of_formula_rep phi1; of_formula_rep phi2]
+  | Bind (binder, bounds, phi, _) ->
+    mk_bind binder bounds @@ of_formula_rep phi
+  | LetRec (_funcs, _phi, _info) ->
+    failwith @@ sprintf "[SimpleFormula.of_formula_rep] LetRec not supported"
+  | LetFormula (_var, _sort, _def, _body, _info) ->
+    failwith @@ sprintf "[SimpleFormula.of_formula_rep] LetFormula not supported"
 
 let of_formula fml =
   of_formula_rep fml |> simplify
 
-let rec formula_of fml =
-  match fml with
+let rec formula_of = function
   | AndNode fmls ->
-    Formula.and_of (List.map ~f:formula_of fmls) ~info:Dummy
+    Formula.and_of (List.map ~f:formula_of fmls)
   | OrNode fmls ->
-    Formula.or_of (List.map ~f:formula_of fmls) ~info:Dummy
+    Formula.or_of (List.map ~f:formula_of fmls)
   | ForallNode (bounds, fml) ->
-    let fml = formula_of fml in
-    Formula.mk_forall_if_bounded bounds fml ~info:Dummy
+    Formula.mk_forall_if_bounded bounds @@ formula_of fml
   | ExistsNode (bounds, fml) ->
-    let fml = formula_of fml in
-    Formula.mk_exists_if_bounded bounds fml ~info:Dummy
+    Formula.mk_exists_if_bounded bounds @@ formula_of fml
   | TopNode () ->
-    let atom = Atom.mk_true () ~info:Dummy in
-    Formula.mk_atom atom ~info:Dummy
+    Formula.mk_true ()
   | BotNode () ->
-    let atom = Atom.mk_false () ~info:Dummy in
-    Formula.mk_atom atom ~info:Dummy
+    Formula.mk_false ()
   | CondNode (psym, args) ->
-    let atom = Atom.mk_app (Predicate.mk_psym psym) args ~info:Dummy in
-    Formula.mk_atom atom ~info:Dummy
+    Formula.mk_atom @@ Atom.mk_psym_app psym args
   | AppNode (pvar, args) ->
-    let sorts = List.init (List.length args) ~f:(fun _ -> T_int.SInt) in
-    let atom = Atom.mk_app (Predicate.mk_var pvar sorts) args ~info:Dummy in
-    Formula.mk_atom atom ~info:Dummy
+    let sorts = List.map args ~f:(fun _ -> T_int.SInt(*ToDo*)) in
+    Formula.mk_atom @@ Atom.mk_pvar_app pvar sorts args
 
 let rec neg = function
   | AndNode fmls -> OrNode (List.map ~f:neg fmls)
@@ -252,18 +240,18 @@ let rec neg = function
 let rec string_of fml =
   if is_and fml then
     let fmls = let_and fml in
-    Printf.sprintf "/\\[%s]" (String.concat_map_list ~sep:"; " ~f:string_of fmls)
+    sprintf "/\\[%s]" (String.concat_map_list ~sep:"; " ~f:string_of fmls)
   else if is_or fml then
     let fmls = let_or fml in
-    Printf.sprintf "\\/[%s]" (String.concat_map_list ~sep:"; " ~f:string_of fmls)
+    sprintf "\\/[%s]" (String.concat_map_list ~sep:"; " ~f:string_of fmls)
   else if is_forall fml then
     let bounds, fml = let_forall fml in
-    Printf.sprintf "forall %s. %s"
+    sprintf "forall %s. %s"
       (str_of_sort_env_list Term.str_of_sort bounds)
       (string_of fml)
   else if is_exists fml then
     let bounds, fml = let_exists fml in
-    Printf.sprintf "exists %s. %s"
+    sprintf "exists %s. %s"
       (str_of_sort_env_list Term.str_of_sort bounds)
       (string_of fml)
   else if is_top fml then
@@ -272,7 +260,7 @@ let rec string_of fml =
     "false"
   else if is_app fml then
     let pvar, args = let_app fml in
-    Printf.sprintf "%s(%s)"
+    sprintf "%s(%s)"
       (Ident.name_of_pvar pvar)
       (String.concat_map_list ~sep:"," ~f:Term.str_of args)
   else if is_cond fml then

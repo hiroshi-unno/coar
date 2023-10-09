@@ -1,22 +1,17 @@
 {
-  open Ast.LogicOld
+  open Core
   open Lexing
+  open Common.Util
+  open Ast.LogicOld
 
   exception SyntaxError of string
-
-  let update_loc (lexbuf: Lexing.lexbuf) =
-    let pos = lexbuf.lex_curr_p in
-    lexbuf.lex_curr_p <- { pos with
-      pos_lnum = pos.pos_lnum + 1;
-      pos_bol = pos.pos_cnum;
-    }
 }
 
 rule main = parse
   (* ignore spacing and newline characters *)
   [' ' '\t' '\r']+     { main lexbuf }
 | '\n'
-| "//"[^'\n']*?'\n' { update_loc lexbuf; main lexbuf }
+| "//"[^'\n']*?'\n' { LexingHelper.update_loc lexbuf; main lexbuf }
 | "/*" { comment (lexeme_start_p lexbuf) lexbuf; main lexbuf }
 
 | "true" { HESParser.TRUE }
@@ -38,10 +33,10 @@ rule main = parse
 | "*" { HESParser.MULT }
 | "/" | "div" { HESParser.DIV }
 | "%" { HESParser.MOD }
-| ">=" { HESParser.PREDSYM T_int.Geq }
-| ">" { HESParser.PREDSYM T_int.Gt }
-| "<=" { HESParser.PREDSYM T_int.Leq }
-| "<" { HESParser.PREDSYM T_int.Lt }
+| ">=" { HESParser.PREDSYM (T_num.NGeq (Ast.Ident.mk_fresh_svar ())) }
+| ">" { HESParser.PREDSYM (T_num.NGt (Ast.Ident.mk_fresh_svar ())) }
+| "<=" { HESParser.PREDSYM (T_num.NLeq (Ast.Ident.mk_fresh_svar ())) }
+| "<" { HESParser.PREDSYM (T_num.NLt (Ast.Ident.mk_fresh_svar ())) }
 | "=" { HESParser.PREDSYM T_bool.Eq }
 | "!=" { HESParser.PREDSYM T_bool.Neq }
 | ":" { HESParser.CORON }
@@ -76,13 +71,13 @@ rule main = parse
 
 and comment openingpos = parse
 | '\n'
-    { update_loc lexbuf; comment openingpos lexbuf }
+    { LexingHelper.update_loc lexbuf; comment openingpos lexbuf }
 | "*/"
     { () }
 | eof {
     raise
       (SyntaxError
-        (Printf.sprintf
+        (sprintf
           "%d:%d:syntax error: unterminated comment."
           openingpos.pos_lnum (openingpos.pos_cnum - openingpos.pos_bol + 1)
         )

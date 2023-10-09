@@ -1,7 +1,8 @@
 open Core
 open Common
-open Common.Combinator
+open Common.Ext
 open Common.Util
+open Common.Combinator
 open Ast
 open Ast.LogicOld
 open PCSatCommon
@@ -51,7 +52,7 @@ module Make (Cfg: Config.ConfigType) (APCSP: PCSP.Problem.ProblemType) = struct
     let (module G : Qualifier.Generator.GeneratorType) = qualifier_generator in
     regressor >>= fun regressor ->
     let (module R : Regressor.RegressorType) = regressor in
-    let args, ret = List.take params (List.length params - 1), List.last_exn params in
+    let args, ret = List.rest_last params in
     let labeled_atoms =
       let alist = labeling in
       let tt = TruthTable.get_table table pvar in

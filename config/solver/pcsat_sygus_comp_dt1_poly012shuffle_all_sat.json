@@ -3,7 +3,7 @@
   {
     "pvar_eliminator": [
       "Filename",
-      "./config/pcsat/pvar_eliminator/default.json"
+      "./config/pcsat/pvar_eliminator/enable.json"
     ],
     "coordinator": [
       "Filename",

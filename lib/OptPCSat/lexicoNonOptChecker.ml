@@ -2,9 +2,11 @@ open Core
 open Common
 open Ast.Logic
 open Ast.Ident
+open Ast.Assertion
 
 module type ConfigType = sig
-  val dir_map : (tvar, CHCOpt.Problem.direction) Map.Poly.t
+  val dir_map : (tvar, direction) Map.Poly.t
+  val fronts : (tvar, term) Map.Poly.t
   val verbose : bool
   val point_wise : bool
 end
@@ -21,7 +23,7 @@ module Make (Config : ConfigType) : NonOptChecker.NonOptCheckerType = struct
     let args, senv = CHCOpt.Problem.mk_fresh_args sort in
     Map.Poly.of_alist_exn senv,
     ExtTerm.beta_reduction
-      (CHCOpt.Problem.genc ~is_pos:true dir delta theta (p, sort))
+      (CHCOpt.Problem.genc ~is_pos:true dir (Map.Poly.empty, Map.Poly.empty) delta theta (p, sort))
       args
   let improve (delta:sort_env_map) (priority:tvar list) theta =
     if Config.point_wise then
@@ -34,7 +36,7 @@ module Make (Config : ConfigType) : NonOptChecker.NonOptCheckerType = struct
             let geq =
               ExtTerm.mk_forall senv @@
               (ExtTerm.beta_reduction @@
-               CHCOpt.Problem.genc ~is_pos:true dir delta theta (p, sort))
+               CHCOpt.Problem.genc ~is_pos:true dir (Map.Poly.empty, Map.Poly.empty) delta theta (p, sort))
                 args
             in
             let mp = mk_ne_tvar p in
@@ -46,7 +48,7 @@ module Make (Config : ConfigType) : NonOptChecker.NonOptCheckerType = struct
                    args)
                 (ExtTerm.beta_reduction
                    (CHCOpt.Problem.genc ~is_pos:false (CHCOpt.Problem.reverse_direction dir)
-                      delta theta (p, sort))
+                      (Map.Poly.empty, Map.Poly.empty) delta theta (p, sort))
                    args)
             in
             geq, gt, (mp, sort))
@@ -54,6 +56,32 @@ module Make (Config : ConfigType) : NonOptChecker.NonOptCheckerType = struct
       ExtTerm.and_of @@ (ExtTerm.or_of gts :: geqs),
       Map.Poly.of_alist_exn env
     else
+      let fronts_0 =
+        let theta_01, theta_02 =
+          Map.Poly.fold theta ~init:(Map.Poly.empty, Map.Poly.empty)
+            ~f:(fun ~key:tvar ~data:psi (acc_up, acc_down) ->
+                let pup = CHCOpt.Problem.direction_tvar DUp tvar in
+                let pdown = CHCOpt.Problem.direction_tvar DDown tvar in
+                Map.Poly.add_exn acc_up ~key:pup ~data:tvar,
+                Map.Poly.add_exn acc_down ~key:pdown ~data:psi)
+        in
+        Map.Poly.map Config.fronts ~f:(fun psi ->
+            ExtTerm.subst theta_02 @@ ExtTerm.rename theta_01 psi)
+      in
+      let fronts_1 =
+        let theta_11, theta_12 =
+          Map.Poly.fold theta ~init:(Map.Poly.empty, Map.Poly.empty)
+            ~f:(fun ~key:tvar ~data:psi (acc_up, acc_down) ->
+                let pup = CHCOpt.Problem.direction_tvar DDown tvar in
+                let pdown = CHCOpt.Problem.direction_tvar DUp tvar in
+                Map.Poly.add_exn acc_up ~key:pup ~data:tvar,
+                Map.Poly.add_exn acc_down ~key:pdown ~data:psi)
+        in
+        Map.Poly.map Config.fronts ~f:(fun psi ->
+            ExtTerm.subst theta_12 @@ ExtTerm.rename theta_11 psi)
+      in
+      (* L.debug ~pre:"front_0" @@ str_of_fronts fronts_0; *)
+      (* L.debug ~pre:"front_1" @@ str_of_fronts fronts_1; *)
       let rec inner theta = function
         | [] -> ExtTerm.mk_bool false, Map.Poly.empty
         | p :: priority ->
@@ -64,7 +92,8 @@ module Make (Config : ConfigType) : NonOptChecker.NonOptCheckerType = struct
           let geq =
             ExtTerm.mk_forall senv @@
             ExtTerm.beta_reduction
-              (CHCOpt.Problem.genc ~is_pos:true dir delta theta (p, sort))
+              (CHCOpt.Problem.genc ~is_pos:true dir
+                 (fronts_0, fronts_1) delta theta (p, sort))
               args
           in
           let mp = mk_ne_tvar p in
@@ -74,14 +103,14 @@ module Make (Config : ConfigType) : NonOptChecker.NonOptCheckerType = struct
               (ExtTerm.mk_var_app mp args)
               (ExtTerm.beta_reduction
                  (CHCOpt.Problem.genc ~is_pos:false (CHCOpt.Problem.reverse_direction dir)
-                    delta theta (p, sort))
+                    (fronts_0, fronts_1) delta theta (p, sort))
                  args)
           in
           let leq =
             ExtTerm.mk_forall senv @@
             ExtTerm.beta_reduction
               (CHCOpt.Problem.genc ~is_pos:true (CHCOpt.Problem.reverse_direction dir)
-                 delta theta (p, sort))
+                 (fronts_0, fronts_1) delta theta (p, sort))
               args
           in
           (*ToDo:
@@ -93,9 +122,10 @@ module Make (Config : ConfigType) : NonOptChecker.NonOptCheckerType = struct
       inner theta priority
 end
 
-let make verbose dir_map point_wise =
+let make verbose dir_map fronts point_wise =
   (module Make (struct
        let dir_map = dir_map
+       let fronts = fronts
        let verbose = verbose
        let point_wise = point_wise
      end) : NonOptChecker.NonOptCheckerType)

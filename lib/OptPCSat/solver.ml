@@ -11,9 +11,9 @@ module Make (Config : Config.ConfigType) : SolverType = struct
   let config = Config.config
 
   let solve ?(filename=None) ?(print_sol=false) problem =
-    let (dir_map, priority), pcsp = problem in
+    let (dir_map, priority, fronts), pcsp = problem in
     let not_opt_checker =
-      LexicoNonOptChecker.make config.verbose dir_map config.improve_current
+      LexicoNonOptChecker.make config.verbose dir_map fronts config.improve_current
     in
     let (module Optimizer : Optimizer.OptimizerType) =
       Optimizer.make Config.config not_opt_checker in

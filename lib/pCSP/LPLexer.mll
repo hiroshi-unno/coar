@@ -103,4 +103,3 @@ and line_comment = parse
   | '\n' { Lexing.new_line lexbuf }
   | eof { () }
   | _ { line_comment lexbuf }
-

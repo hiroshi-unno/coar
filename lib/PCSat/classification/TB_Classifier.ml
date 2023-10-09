@@ -5,6 +5,7 @@ open Common.Util
 open Ast
 open Ast.LogicOld
 open PCSatCommon
+open PCSatCommon.HypSpace
 open Template.Function
 
 module Config = struct
@@ -43,9 +44,9 @@ module Config = struct
       Ok { cfg with kind = FN_Flex cfg_fn }
 end
 
-module Make (Cfg: Config.ConfigType) (Problem: PCSP.Problem.ProblemType) = struct
+module Make (Cfg: Config.ConfigType) (APCSP: PCSP.Problem.ProblemType) = struct
   let config = Cfg.config
-  let id = PCSP.Problem.id_of Problem.problem
+  let id = PCSP.Problem.id_of APCSP.problem
 
   module Debug = Debug.Make (val Debug.Config.(if config.verbose then enable else disable))
   let _ = Debug.set_id id
@@ -57,15 +58,15 @@ module Make (Cfg: Config.ConfigType) (Problem: PCSP.Problem.ProblemType) = struc
 
   let get_key =
     let key_cnt = ref 0 in
-    fun () -> incr key_cnt; Printf.sprintf "#S_%d" !key_cnt
+    fun () -> incr key_cnt; sprintf "#S_%d" !key_cnt
   let mk_classifier pvar (params : sort_env_list) table labeling _examples =
     let (module FT) =
       let module M = struct
         let name : Ident.tvar = Ident.pvar_to_tvar pvar
         let sorts : Sort.t list = List.map ~f:snd params
-        let dtenv : LogicOld.DTEnv.t = Map.Poly.empty
+        (*let dtenv : LogicOld.DTEnv.t = Map.Poly.empty*)
         let fenv : LogicOld.FunEnv.t = Map.Poly.empty
-        let sol_space = PCSP.Problem.sol_space_of Problem.problem
+        let sol_space = PCSP.Problem.sol_space_of APCSP.problem
         let id = id
       end in
       match config.kind with
@@ -100,8 +101,8 @@ module Make (Cfg: Config.ConfigType) (Problem: PCSP.Problem.ProblemType) = struc
     Debug.print @@ lazy (TruthTable.str_of_atoms tt alist);
     let pos_neg_ex =
       let neg_ex, pneg_ex, pos_ex, ppos_ex = TruthTable.papps_of tt alist in
-      assert (Set.Poly.is_empty pneg_ex && Set.Poly.is_empty ppos_ex);
-      Set.Poly.union
+      assert (Set.is_empty pneg_ex && Set.is_empty ppos_ex);
+      Set.union
         (Set.Poly.map ~f:(fun a -> true, a) pos_ex)
         (Set.Poly.map ~f:(fun a -> false, a) neg_ex)
     in
@@ -109,7 +110,11 @@ module Make (Cfg: Config.ConfigType) (Problem: PCSP.Problem.ProblemType) = struc
     let rec inner () =
       let tag = None in
       let (update_label, template), temp_param_cnstrs, temp_param_senv, qualifiers =
-        FT.gen_template ~tag (*(Set.Poly.to_list quals)*)[] Map.Poly.empty [] in
+        FT.gen_template ~tag @@
+        { depth = -1; params = FT.params_of ~tag;
+          quals = Set.Poly.empty(*quals*); qdeps = Map.Poly.empty;
+          terms = Set.Poly.empty; consts = Set.Poly.empty }
+      in
       let hole_qualifiers_map =
         List.map qualifiers ~f:(fun (tvar, quals) ->
             tvar,
@@ -117,7 +122,7 @@ module Make (Cfg: Config.ConfigType) (Problem: PCSP.Problem.ProblemType) = struc
                 tvar, (TruthTable.index_of_qual ~id tt fenv qdeps phi, env, phi))) in
       Debug.print @@ lazy "templates generated";
       let key_constr_map, key_tvar_update_list_map =
-        Set.Poly.fold ~init:(Map.Poly.empty, Map.Poly.empty) pos_neg_ex
+        Set.fold ~init:(Map.Poly.empty, Map.Poly.empty) pos_neg_ex
           ~f:(fun (key_constr_map, key_tvar_update_list_map) (polarity, ((pvar, sorts), args)) ->
               let atom = ExAtom.mk_papp pvar sorts args in
               let key = get_key () in
@@ -168,7 +173,7 @@ module Make (Cfg: Config.ConfigType) (Problem: PCSP.Problem.ProblemType) = struc
                 let dis_map =
                   Map.Poly.filter_mapi temp_param_senv ~f:(fun ~key ~data ->
                       assert (Ident.is_parameter key);
-                      if Set.Poly.mem used_param_senv key then None
+                      if Set.mem used_param_senv key then None
                       else Some (Term.mk_dummy (Logic.ExtTerm.to_old_sort data))) in
                 Logic.ExtTerm.to_old_formula Map.Poly.empty temp_param_senv cnstr []
                 |> Formula.subst dis_map
@@ -188,7 +193,7 @@ module Make (Cfg: Config.ConfigType) (Problem: PCSP.Problem.ProblemType) = struc
               (match List.find model ~f:(fun ((x, _), _) -> Stdlib.(x = key)) with
                | None -> (key, data), None
                | Some opt -> opt)
-              |> Logic.ExtTerm.remove_dontcare_elem (* ToDo: support parameteric candidate solution and CEGIS(T)*)
+              |> Logic.ExtTerm.remove_dontcare_elem (Logic.ExtTerm.to_old_sort)(* ToDo: support parameteric candidate solution and CEGIS(T)*)
               |> snd)
         in
         let hole_sub =
@@ -199,11 +204,14 @@ module Make (Cfg: Config.ConfigType) (Problem: PCSP.Problem.ProblemType) = struc
                 Logic.Term.mk_lambda (List.map ~f:Logic.ExtTerm.of_old_sort_bind @@ params) @@
                 Logic.BoolTerm.mk_bool true
               else
-                let _, (_, senv, _) = List.hd_exn quals in
+                let senv =
+                  let _, (_, qsenv, _) = List.hd_exn quals in
+                  Logic.of_old_sort_env_list Logic.ExtTerm.of_old_sort qsenv
+                in
                 Template.Generator.gen_from_qualifiers (senv, quals))
         in
         let phi = Logic.ExtTerm.subst temp_param_sub @@ Logic.ExtTerm.subst hole_sub template in
-        assert (Set.Poly.is_empty @@ Logic.ExtTerm.fvs_of phi);
+        assert (Set.is_empty @@ Logic.ExtTerm.fvs_of phi);
         let phi =
           Logic.ExtTerm.to_old_formula Map.Poly.empty
             (Map.Poly.of_alist_exn @@
@@ -216,7 +224,7 @@ module Make (Cfg: Config.ConfigType) (Problem: PCSP.Problem.ProblemType) = struc
         let unsat_keys = List.map unsat_keys ~f:(fun str -> String.sub str ~pos:1 ~len:(String.length str - 2)) in
         let labels =
           List.fold unsat_keys ~init:Set.Poly.empty ~f:(fun labels key ->
-              Set.Poly.add labels @@ Map.Poly.find_exn key_tvar_update_list_map key) in
+              Set.add labels @@ Map.Poly.find_exn key_tvar_update_list_map key) in
         FT.update_with_labels labels;
         inner ()
       | `Unknown reason ->

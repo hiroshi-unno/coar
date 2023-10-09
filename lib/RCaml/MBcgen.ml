@@ -2,6 +2,7 @@ open Core
 open Typedtree
 open Common
 open Common.Ext
+open Common.Util
 open Ast.LogicOld
 
 module Make (Config : Config.ConfigType) = struct
@@ -59,22 +60,26 @@ module Make (Config : Config.ConfigType) = struct
     | Texp_tuple _ -> "Texp_tuple"
     | Texp_construct _ -> "Texp_construct"
 
-  let rec sort_of_core_type dtenv (ct:core_type) =
+  let rec sort_of_core_type ?(rectyps=None) dtenv (ct:core_type) =
     match ct.ctyp_desc with
     | Ttyp_var name ->
+      (*print_endline @@ "Ttyp_var " ^ name;*)
       Sort.SVar (Svar name)
     | Ttyp_constr (ret_name, _, args) ->
-      let args = List.map args ~f:(sort_of_core_type dtenv) in
+      (*print_endline @@ "Ttyp_constr " ^ Path.name ret_name;*)
+      let args = List.map args ~f:(sort_of_core_type ~rectyps dtenv) in
       (*List.iter args ~f:(fun arg -> print_endline @@ Term.str_of_sort arg);*)
-      Ast.Typeinf.sort_of_name ~args dtenv @@ Path.name ret_name
+      Ast.Typeinf.sort_of_name ~rectyps dtenv ~args @@ Path.name ret_name
     | Ttyp_any ->
       failwith "[sort_of_core_type] Ttyp_any not supported"
     | Ttyp_arrow (Nolabel, ct1, ct2) ->
-      Sort.mk_arrow (sort_of_core_type dtenv ct1) (sort_of_core_type dtenv ct2)
+      Sort.mk_arrow
+        (sort_of_core_type ~rectyps dtenv ct1)
+        (sort_of_core_type ~rectyps dtenv ct2)
     | Ttyp_arrow ((Labelled _ | Optional _), _, _) ->
       failwith "[sort_of_core_type] Ttyp_arrow not supported"
-    | Ttyp_tuple _ ->
-      failwith "[sort_of_core_type] Ttyp_tuple not supported"
+    | Ttyp_tuple elems ->
+      T_tuple.STuple (List.map elems ~f:(sort_of_core_type ~rectyps dtenv))
     | Ttyp_object (_, _) ->
       failwith "[sort_of_core_type] Ttyp_object not supported"
     | Ttyp_class (_, _, _) ->
@@ -87,6 +92,7 @@ module Make (Config : Config.ConfigType) = struct
       failwith "[sort_of_core_type] Ttyp_poly not supported"
     | Ttyp_package _ ->
       failwith "[sort_of_core_type] Ttyp_package not supported"
+  exception NoTypeExpansion
   let rec sort_of_type_expr ?(lift = false) ?(env=Env.empty) dtenv ty =
     let open Types in
     match (Types.Transient_expr.repr ty).desc with
@@ -101,36 +107,30 @@ module Make (Config : Config.ConfigType) = struct
       Sort.mk_poly svs @@ sort_of_type_expr ~lift ~env dtenv ty
     | Tconstr (p, args, _) ->
       let args = List.map args ~f:(sort_of_type_expr ~lift ~env dtenv) in
-      (*List.iter args ~f:(fun arg -> print_endline @@ Term.str_of_sort arg);*)
+      (*print_endline @@ "Tconstr: (" ^ String.concat_map_list ~sep:"," args ~f:Term.str_of_sort ^ ") " ^ Path.name p;*)
       (try
-         let _params, ty, _ = Env.find_type_expansion p env in
+         let _params, ty, _ = try Env.find_type_expansion p env with Stdlib.Not_found -> raise NoTypeExpansion in
          (*let params = List.map params ~f:(sort_of_type_expr ~lift ~env dtenv) in*)
-         let sort =
-           match sort_of_type_expr ~lift ~env dtenv ty with
-           | T_dt.SDT dt ->
-             T_dt.SDT (Datatype.update_args dt args)
-           | sort ->
-             assert (List.is_empty args);
-             sort
-         in
+         assert (List.is_empty args);
+         let sort = sort_of_type_expr ~lift ~env dtenv ty in
          Debug.print @@ lazy
            (sprintf "[sort_of_type_expr.Tconstr] %s is locally instantiated to %s"
               (Path.name p) (Term.str_of_sort sort));
          sort
-       with Caml.Not_found -> Ast.Typeinf.sort_of_name dtenv (Path.name p) ~args)
+       with NoTypeExpansion -> Ast.Typeinf.sort_of_name dtenv (Path.name p) ~args)
     | Tvar None ->
       Sort.SVar (Svar (sprintf "s'%d" (Types.Transient_expr.repr ty).id))
     | Tvar (Some name) ->
       (try
-         let p, _ = Env.find_type_by_name (Longident.Lident name) env in
-         let params, ty, _ = Env.find_type_expansion p env in
+         let p, _ = try Env.find_type_by_name (Longident.Lident name) env with Stdlib.Not_found -> raise NoTypeExpansion in
+         let params, ty, _ = try Env.find_type_expansion p env with Stdlib.Not_found -> raise NoTypeExpansion in
          assert (List.is_empty params)(*ToDo*);
          let sort = sort_of_type_expr ~lift ~env dtenv ty in
          Debug.print @@ lazy
            (sprintf "[sort_of_type_expr.Tvar] %s is locally instantiated to %s"
               (Path.name p) (Term.str_of_sort sort));
          sort
-       with Caml.Not_found -> Sort.SVar (Svar name))
+       with NoTypeExpansion -> Sort.SVar (Svar name))
     | Tarrow (Nolabel, te1, te2, _) ->
       if lift then
         Sort.SArrow
@@ -144,8 +144,8 @@ module Make (Config : Config.ConfigType) = struct
           (sort_of_type_expr ~lift dtenv ~env te2)
     | Tarrow ((Labelled _ | Optional _), _, _, _) ->
       failwith @@ "unsupported type expr: tarrow " ^ str_of_stdbuf ty ~f:Printtyp.type_expr
-    | Ttuple tys ->
-      T_tuple.STuple (List.map tys ~f:(sort_of_type_expr ~lift ~env dtenv))
+    | Ttuple elems ->
+      T_tuple.STuple (List.map elems ~f:(sort_of_type_expr ~lift ~env dtenv))
     | Tobject _ ->
       failwith @@ "unsupported type expr: tobject " ^ str_of_stdbuf ty ~f:Printtyp.type_expr
     | Tfield _ ->
@@ -209,6 +209,10 @@ module Make (Config : Config.ConfigType) = struct
     | Texp_ident _ -> true
     | Texp_constant _ -> true
     | Texp_function _ -> true
+    | Texp_construct (_, _cd, []) -> true
+    | _ -> false(*ToDo*)
+  let is_fun = function
+    | Texp_function _ -> true
     | _ -> false(*ToDo*)
 
   let is_raise s = String.(=) "raise" s || String.(=) "Stdlib.raise" s
@@ -247,19 +251,19 @@ module Make (Config : Config.ConfigType) = struct
     match attr_opt with
     | Some attr ->
       let content = content_of attr in
-      (match config with Some config -> Envs.cgen_config := config | None -> ());
-      (match renv with Some renv -> Envs.renv := renv | None -> ());
-      (match dtenv with Some dtenv -> Envs.denv := dtenv | None -> ());
-      let c = RefTypParser.comp_ty RefTypLexer.token @@ Lexing.from_string content in
+      (match config with Some config -> Ast.Rtype.cgen_config := config | None -> ());
+      (match renv with Some renv -> Ast.Rtype.renv_ref := renv | None -> ());
+      (match dtenv with Some dtenv -> set_dtenv dtenv | None -> ());
+      let c = Ast.RtypeParser.comp_ty Ast.RtypeLexer.token @@ Lexing.from_string content in
       Some c
     | None -> None
   let find_val_attrs ?config ?renv ?dtenv ~attr_name attrs =
-    (* using RefTypParser.comp_ty insted of RefTypParser.val_ty
+    (* using RtypeParser.comp_ty insted of RtypeParser.val_ty
        because menher says "Warning: symbol val_ty is never accepted." *)
     match find_comp_attrs ?config ?renv ?dtenv ~attr_name attrs with
     | None -> None
     | Some (o, s, _, e) ->
-      if Ast.Rtype.is_empty_opsig o && Ast.Rtype.is_pure_cont_eff e then Some s
+      if ALMap.is_empty o && Ast.Rtype.is_pure_cont e then Some s
       else failwith "value type annotation expected"
 
   let rec fold_expr ~f dtenv senv expr (opsig, sort, cont) =
@@ -295,8 +299,8 @@ module Make (Config : Config.ConfigType) = struct
       let econstrs, oconstrs, next =
         call_fold senv {expr with exp_attributes = [](*todo*)} (o, s, e)
       in
-      Set.Poly.union econstrs_annot econstrs,
-      Set.Poly.union oconstrs_annot oconstrs,
+      Set.union econstrs_annot econstrs,
+      Set.union oconstrs_annot oconstrs,
       if rty_annotated then f#f_annot (attrs, next) else next
     | None, None ->
       if rty_annotated then
@@ -315,10 +319,11 @@ module Make (Config : Config.ConfigType) = struct
                 x_sort
               | None ->
                 let sort =
-                  Ast.Typeinf.generalize(*ToDo*) senv @@
+                  Ast.Typeinf.generalize Map.Poly.empty(* any type variable that occur in ty.val_type must be alpha-renamed to avoid a conflict *) @@
                   sort_of_type_expr dtenv ~env:expr.exp_env ty.val_type
                 in
-                (*print_endline @@ "[ocaml] " ^ name ^ " : " ^ Term.str_of_sort sort;*)
+                (*print_endline @@ "[ocaml] " ^ name ^ " : " ^ Term.str_of_sort sort;
+                print_endline @@ "senv: " ^ str_of_sort_env_map Term.str_of_sort senv;*)
                 sort
                 (*failwith @@ sprintf "[fold_expr] %s not found" name*)
             in
@@ -357,7 +362,7 @@ module Make (Config : Config.ConfigType) = struct
                         let econstrs2, oconstrs2, next2 =
                           call_fold senv' case.c_rhs (ovar2, sort2, evar2)
                         in
-                        Set.Poly.add econstrs2
+                        Set.add econstrs2
                           ([Sort.Eff (ovar1, x_sort2, evar1, ovar2, sort2, evar2)],
                            cont),
                         oconstrs2,
@@ -406,7 +411,7 @@ module Make (Config : Config.ConfigType) = struct
                                        ovar2, sort_reset, evar2))
                         in
                         let next2 = f#f_reset (next1, sort2) in
-                        Set.Poly.add econstrs1
+                        Set.add econstrs1
                           ([Sort.Eff (ovar1, x_sort2, evar1, ovar2, sort_reset, evar2)],
                            cont),
                         oconstrs1,
@@ -480,7 +485,7 @@ module Make (Config : Config.ConfigType) = struct
                   let opsig_op =
                     let rvar = Ast.Ident.mk_fresh_rvar () in
                     let sort_op = Sort.mk_fun @@ sort_args @ [sort_op_applied] in
-                    Sort.OpSig (Common.Util.ALMap.singleton name sort_op, Some rvar)
+                    Sort.OpSig (ALMap.singleton name sort_op, Some rvar)
                   in
                   let eff_op = Sort.Eff (ovar1, svar1, evar1, ovar2, svar2, evar2) in
 
@@ -538,8 +543,6 @@ module Make (Config : Config.ConfigType) = struct
                   let sort_op = sort_of_expr ~lift:true dtenv e_op in
                   List.unzip6 @@ List.map ~f:(fun case ->
                       let pat = pattern_of dtenv case.c_lhs in
-                      let pat_senv = Ast.Pattern.senv_of pat sort_op in
-                      let senv'' = Map.update_with(*shadowing*) senv' pat_senv in
                       let op_name, x_args, s_op_args =
                         match pat with
                         | Ast.Pattern.PCons (_dt, name, pat_args) ->
@@ -555,6 +558,38 @@ module Make (Config : Config.ConfigType) = struct
                           name, x_args, s_args
                         | _ -> failwith "handling @ eff3"
                       in
+                      let s_annot_opts =
+                        let attrss =
+                          match case.c_lhs.pat_desc with
+                          | Tpat_construct (_loc, _cd, pats, _) -> List.map ~f:(fun pat -> pat.pat_attributes) pats
+                          | _ -> failwith "handling @ eff3-2"
+                        in
+                        List.map attrss ~f:(fun attrs ->
+                            let t_annot_MB_opt = find_val_attrs ~dtenv ~attr_name:"annot_MB" attrs in
+                            let t_annot_opt = find_val_attrs ~dtenv ~attr_name:"annot" attrs in
+                            match t_annot_MB_opt, t_annot_opt with
+                            | Some t, _ | None, Some t ->
+                              let sort_annot = Ast.Rtype.sort_of_val t in
+                              (* print_endline @@ sprintf "annot: %s" (Term.str_of_sort sort_annot); *)
+                              Some sort_annot
+                            | None, None -> None
+                          )
+                      in
+                      let s_op_args = (* update with annotated sorts *)
+                        List.map2_exn s_op_args s_annot_opts ~f:(fun s_op_arg s_annot_opt ->
+                            Option.value ~default:s_op_arg s_annot_opt
+                          )
+                      in
+                      let pat_senv =
+                        let pat_senv = Ast.Pattern.senv_of pat sort_op in
+                        let pat_senv_annot =
+                          List.zip_exn x_args s_annot_opts
+                          |> List.filter_map ~f:(fun (x, s_opt) -> Option.map s_opt ~f:(fun s -> (x, s)))
+                          |> Map.Poly.of_alist_exn
+                        in
+                        Map.update_with pat_senv pat_senv_annot
+                      in
+                      let senv'' = Map.update_with(*shadowing*) senv' pat_senv in
 
                       match case.c_rhs.exp_desc with
                       | Texp_construct (_, {cstr_name = "Some"; _}, [{exp_desc = Texp_function {cases = [case]; _}; _}]) ->
@@ -568,7 +603,7 @@ module Make (Config : Config.ConfigType) = struct
                           let s_args =
                             match sort_of_type_expr ~lift:true ~env:case.c_lhs.pat_env dtenv case.c_lhs.pat_type with
                             | T_dt.SDT dt when Stdlib.(Datatype.name_of dt = "continuation") ->
-                              Datatype.args_of dt
+                              Datatype.params_of dt
                             | _ -> failwith "handling @ eff7"
                           in
                           match s_args with
@@ -670,7 +705,7 @@ module Make (Config : Config.ConfigType) = struct
                 sorts_op @ sort_exns,
                 clauses_op @ clauses_exn
               in
-              let opsig_h = Sort.OpSig (Common.Util.ALMap.of_alist_exn @@ List.zip_exn names sorts, None) in
+              let opsig_h = Sort.OpSig (ALMap.of_alist_exn @@ List.zip_exn names sorts, None) in
 
               let e_body =
                 { e_body_fun with
@@ -827,17 +862,17 @@ module Make (Config : Config.ConfigType) = struct
         | Texp_constant Const_string (str, _, None) ->
           Set.Poly.singleton ([Sort.Pure], cont),
           Set.Poly.singleton (opsig, Sort.empty_closed_opsig),
-          f#f_const @@ T_string.mk_string_const str
+          f#f_const @@ T_string.make str
         | Texp_constant Const_string (str, _, Some _) -> (* {...|...|...} *)
           Set.Poly.singleton ([Sort.Pure], cont),
           Set.Poly.singleton (opsig, Sort.empty_closed_opsig),
-          f#f_const @@ T_string.mk_string_const str
+          f#f_const @@ T_string.make str
         | Texp_constant Const_char _ ->
           failwith @@ "[fold_expr] char is unsupported: " ^ str_of_expr expr
         | Texp_assert e ->
           let evar1 = Sort.mk_fresh_evar () in
           let econstrs, oconstrs, next =
-            match e.exp_desc  with
+            match e.exp_desc with
             | Texp_construct (_, cd, []) when String.(cd.cstr_name = "false") ->
               Set.Poly.empty, Set.Poly.empty, None
             | _ ->
@@ -871,7 +906,7 @@ module Make (Config : Config.ConfigType) = struct
                 let pat_senv = Ast.Pattern.senv_of pat sort in
                 pat_senv, pat, expr, sort)
           in
-          let pats, econstrss, oconstrss, pure1s, next1s, sort1s, evar1s =
+          let pats, econstrss, oconstrss, pure1s, is_fun1s, next1s, sort1s, evar1s =
             let senv_bounds =
               match rec_flag with
               | Recursive ->
@@ -881,10 +916,12 @@ module Make (Config : Config.ConfigType) = struct
                 Map.update_with_list(*shadowing*) @@ senv :: pat_senvs
               | Nonrecursive -> senv
             in
-            List.unzip7 @@ List.map defs ~f:(fun (_, pat, expr, sort) ->
+            List.unzip8 @@ List.map defs ~f:(fun (_, pat, expr, sort) ->
                 let evar = Sort.mk_fresh_evar () in
                 let econstrs, oconstrs, next = call_fold senv_bounds expr (opsig, sort, evar) in
-                pat, econstrs, oconstrs, is_pure expr.exp_desc, next, sort, evar)
+                pat, econstrs, oconstrs,
+                is_pure expr.exp_desc, is_fun expr.exp_desc,
+                next, sort, evar)
           in
           let senv_body =
             let pat_senvs =
@@ -906,7 +943,7 @@ module Make (Config : Config.ConfigType) = struct
           Set.Poly.singleton (evar1s @ [evar2], cont) :: econstrs :: econstrss,
           Set.Poly.union_list @@ oconstrs :: oconstrss,
           f#f_let_and (Stdlib.(rec_flag = Recursive)) pats
-            (pure1s, next1s, sort1s, evar1s) (next, evar2)
+            (pure1s, is_fun1s, next1s, sort1s, evar1s) (next, evar2)
         | Texp_function func ->
           let sarg, (ovar, sret, evar) = match sort with
             | Sort.SArrow (sarg, (ovar, sret, evar)) -> sarg, (ovar, sret, evar)
@@ -914,19 +951,50 @@ module Make (Config : Config.ConfigType) = struct
           in
           let pats, econstrss, oconstrss, nexts, evars =
             List.unzip5 @@ List.map func.cases ~f:(fun case ->
+                let sarg, econstrs_annot, oconstrs_annot = (* constr on MB type annotations on arguments *)
+                  let attrs = case.c_lhs.pat_attributes in
+                  let t_annot_MB_opt = find_val_attrs ~dtenv ~attr_name:"annot_MB" attrs in
+                  let t_annot_opt = find_val_attrs ~dtenv ~attr_name:"annot" attrs in
+                  match t_annot_MB_opt, t_annot_opt with
+                  | Some t, _ | None, Some t ->
+                    let sort_annot = Ast.Rtype.sort_of_val t in
+                    (* print_endline @@ sprintf "annot: %s = %s" (Term.str_of_sort sort_annot) (Term.str_of_sort sarg); *)
+                    let eqtype s1 s2 =
+                      let _map, econstrs, oconstrs =
+                        Ast.Typeinf.subtype Map.Poly.empty s1 s2 in
+                      let _map, econstrs', oconstrs' =
+                        Ast.Typeinf.subtype Map.Poly.empty s2 s1 in
+                      Set.union econstrs econstrs', Set.union oconstrs oconstrs'
+                    in
+                    let econstrs, oconstrs = eqtype sarg sort_annot in
+                    sort_annot, econstrs, oconstrs
+                  | None, None -> sarg, Set.Poly.empty, Set.Poly.empty
+                in
                 let pat = pattern_of dtenv case.c_lhs in
                 (*print_endline @@ Term.str_of_sort sarg;*)
                 let pat_senv = Ast.Pattern.senv_of pat sarg in
                 (*print_endline @@ str_of_sort_env_map Term.str_of_sort pat_senv;*)
                 let senv' = Map.update_with(*shadowing*) senv pat_senv in
                 let econstrs, oconstrs, next = call_fold senv' case.c_rhs (ovar, sret, evar) in
-                pat, econstrs, oconstrs, next, evar)
+                pat, Set.union econstrs_annot econstrs, Set.union oconstrs_annot oconstrs, next, evar)
+          in
+          let t_annot_rty_opt = (* refinement type annotations on arguments *)
+            match func.cases with
+            | [case] ->
+              let attrs = case.c_lhs.pat_attributes in
+              let t_annot_rty_opt = find_val_attrs ~dtenv ~attr_name:"annot_rty" attrs in
+              let t_annot_opt = find_val_attrs ~dtenv ~attr_name:"annot" attrs in
+              begin match t_annot_rty_opt, t_annot_opt with
+                | Some t, _ | None, Some t -> Some t
+                | None, None -> None
+              end
+            | _ -> None (*todo*)
           in
           Set.Poly.union_list @@
           Set.Poly.singleton ([Sort.Pure], cont) :: econstrss,
           Set.Poly.union_list @@
           Set.Poly.singleton (opsig, Sort.empty_closed_opsig) :: oconstrss,
-          f#f_function pats (nexts, evars)
+          f#f_function pats t_annot_rty_opt (nexts, evars)
         | Texp_construct (_, cd, args) -> begin
             match cd.cstr_name with
             | "true" ->
@@ -953,7 +1021,7 @@ module Make (Config : Config.ConfigType) = struct
                 | T_dt.SDT dt ->
                   let sort_cons =
                     let svs =
-                      Set.Poly.of_list @@ List.filter_map (Datatype.args_of dt) ~f:(function
+                      Set.Poly.of_list @@ List.filter_map (Datatype.params_of dt) ~f:(function
                           | Sort.SVar svar -> Some svar | _ -> None)
                     in
                     Sort.mk_poly svs @@

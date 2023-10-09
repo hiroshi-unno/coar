@@ -2,6 +2,7 @@ open Core
 open Common.Ext
 open Ast
 open Ast.LogicOld
+open HypSpace
 
 (** truth table *)
 type table = {
@@ -83,13 +84,13 @@ let update_map_with_atom ~id t fenv hspaces atom =
   match ExAtom.pvar_of atom with
   | None -> ()
   | Some pvar ->
-    let _, _, _, qdeps, _ = Hashtbl.Poly.find_exn hspaces (Ident.pvar_to_tvar pvar) in
-    update_with_atom ~id (get_table t pvar) fenv qdeps atom
-let update_map_with_atoms ~id t qdeps fenv = Set.Poly.iter ~f:(update_map_with_atom ~id t fenv qdeps)
+    let hspace = Hashtbl.Poly.find_exn hspaces (Ident.pvar_to_tvar pvar) in
+    update_with_atom ~id (get_table t pvar) fenv hspace.qdeps atom
+let update_map_with_atoms ~id t qdeps fenv = Set.iter ~f:(update_map_with_atom ~id t fenv qdeps)
 let update_map_with_example ~id t fenv hspaces example =
-  Set.Poly.iter example.ExClause.negative ~f:(update_map_with_atom ~id t fenv hspaces);
-  Set.Poly.iter example.ExClause.positive ~f:(update_map_with_atom ~id t fenv hspaces)
-let update_map_with_examples ~id t fenv hspaces = Set.Poly.iter ~f:(update_map_with_example ~id t fenv hspaces)
+  Set.iter example.ExClause.negative ~f:(update_map_with_atom ~id t fenv hspaces);
+  Set.iter example.ExClause.positive ~f:(update_map_with_atom ~id t fenv hspaces)
+let update_map_with_examples ~id t fenv hspaces = Set.iter ~f:(update_map_with_example ~id t fenv hspaces)
 let update_map_with_qualifiers ~id t fenv qdeps pvar (params, qualifiers) =
   let table = get_table t pvar in
   table.params <- params;
@@ -137,33 +138,33 @@ let papps_of table alist =
     ~f:(fun ~key ~data (npapps, nppapps, ppapps, pppapps) ->
         match table.aarr.(key) with
         | ExAtom.PApp atom ->
-          if data = label_pos then (npapps, nppapps, Set.Poly.add ppapps atom, pppapps)
-          else if data = label_neg then (Set.Poly.add npapps atom, nppapps, ppapps, pppapps)
+          if data = label_pos then (npapps, nppapps, Set.add ppapps atom, pppapps)
+          else if data = label_neg then (Set.add npapps atom, nppapps, ppapps, pppapps)
           else assert false
         | ExAtom.PPApp atom ->
-          if data = label_pos then (npapps, nppapps, ppapps, Set.Poly.add pppapps atom)
-          else if data = label_neg then (npapps, Set.Poly.add nppapps atom, ppapps, pppapps)
+          if data = label_pos then (npapps, nppapps, ppapps, Set.add pppapps atom)
+          else if data = label_neg then (npapps, Set.add nppapps atom, ppapps, pppapps)
           else assert false
         | _ -> (npapps, nppapps, ppapps, pppapps))
 let pos_neg_atoms_of table =
   Map.Poly.fold ~init:(Set.Poly.empty, Set.Poly.empty)
     ~f:(fun ~key ~data (pos, neg) ->
         let atom = table.aarr.(key) in
-        if data = label_pos then (Set.Poly.add pos atom, neg)
-        else if data = label_neg then (pos, Set.Poly.add neg atom)
+        if data = label_pos then (Set.add pos atom, neg)
+        else if data = label_neg then (pos, Set.add neg atom)
         else assert false)
 let labeled_atoms_of table =
   Map.Poly.fold ~init:Set.Poly.empty
     ~f:(fun ~key ~data atoms ->
-        Set.Poly.add atoms @@ (table.aarr.(key), data))
+        Set.add atoms @@ (table.aarr.(key), data))
 
 (** remove redundant atoms *)
 let reduced_alist_of (t: table) (qlist, alist) =
   snd @@ Map.Poly.fold alist ~init:(Set.Poly.empty, Map.Poly.empty)
     ~f:(fun ~key:ai ~data:l (memo, alist)->
         let example = l, List.map qlist ~f:(fun qi -> t.table.{qi, ai}) in
-        if Set.Poly.mem memo example then (memo, alist)
-        else (Set.Poly.add memo example, Map.Poly.add_exn alist ~key:ai ~data:l))
+        if Set.mem memo example then (memo, alist)
+        else (Set.add memo example, Map.Poly.add_exn alist ~key:ai ~data:l))
 
 (** remove redundant qualifiers
     the prior qualifier in [qlist] is adopted if there are multiple indistinguishable qualifiers *)
@@ -190,9 +191,9 @@ let reduced_qlist_of (t: table) (qlist, alist) =
           Bigarray.Array1.of_array Bigarray.Int Bigarray.c_layout @@ Array.of_list @@
           List.map alist ~f:(fun (ai, _) -> t.table.{idx, ai})
       in
-      if Set.Poly.mem memo qualifier then inner memo qlist
+      if Set.mem memo qualifier then inner memo qlist
       else
-        let memo' = Set.Poly.add (Set.Poly.add memo qualifier) (neg_of qualifier) in
+        let memo' = Set.add (Set.add memo qualifier) (neg_of qualifier) in
         idx :: inner memo' qlist
   in
   inner Set.Poly.empty qlist

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 is_mac() {
-        sw_vers >/dev/null 2>&1
+        sw_vers > /dev/null 2>&1
         return $?
 }
 
@@ -32,7 +32,7 @@ run() {
         start_time=$($date +%s%N)
         output=$(timeout $timeout _build/default/main.exe $options $2)
         ret=$?
-        pkill -9 main 2>/dev/null
+        pkill -9 main 2> /dev/null
         sleep 0.1
 
         if [ $ret = 124 ]; then
@@ -60,7 +60,7 @@ run() {
                 echo "$2,$result,$elapsed,$iterations"
         elif [ $1 -gt 0 ]; then
                 # echo "$2 Abort, restart!" 1>&2
-                pkill -9 main 2>/dev/null
+                pkill -9 main 2> /dev/null
                 sleep 0.1
                 run $(expr $1 - 1) $2
         else

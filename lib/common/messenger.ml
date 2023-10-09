@@ -182,6 +182,14 @@ let exec_request messenger (src, dst, info) =
   | Resume -> send messenger (mk_response dst src Resume)
   | _ -> ()
 
+let receive_request messenger_opt id =
+  match messenger_opt with
+  | None -> ()
+  | Some messenger ->
+    match receive_request messenger id with
+    | None -> ()
+    | Some request -> exec_request messenger request
+
 let wait_response messenger src dst ~f =
   while Option.is_none @@ find messenger ~f:(function
       | Response (src0, dst0, info) as message when

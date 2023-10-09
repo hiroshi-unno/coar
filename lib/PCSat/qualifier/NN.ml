@@ -5,7 +5,7 @@ open Ast.LogicOld
 open PCSatCommon
 
 let classify _dummy_param _params pos_examples neg_examples =
-  if Set.Poly.is_empty pos_examples || Set.Poly.is_empty neg_examples then
+  if Set.is_empty pos_examples || Set.is_empty neg_examples then
     Set.Poly.empty
   else
     failwith "not implemented (should return set of qualifiers)"
@@ -13,7 +13,7 @@ let classify _dummy_param _params pos_examples neg_examples =
 let nn_half_spaces_of dummy_param sorts pos_examples neg_examples =
   let params = LogicOld.sort_env_list_of_sorts sorts in
   params,
-  Set.Poly.union
+  Set.union
     (Set.Poly.of_list params
      |> Set.Poly.filter_map ~f:(function
          | (x, T_bool.SBool) -> Some (Term.mk_var x T_bool.SBool)

@@ -6,309 +6,26 @@ module ExtFile = struct
 
   let unwrap = function
     | Filename name ->
-      Error
-        (Error.of_thunk (fun () ->
-             Printf.sprintf "Filename %s cannot unwrap" name))
+      Error (Error.of_thunk (fun () -> sprintf "Filename %s cannot unwrap" name))
     | Instance a -> Ok a
 
   let unwrap_or_abort = function
     | Filename name ->
-      ignore (Printf.printf "Filename %s cannot unwrap" name);
+      ignore (printf "Filename %s cannot unwrap" name);
       assert false
     | Instance a -> a
 end
 (** type alias for convinience *)
 type 'a ext_file = 'a ExtFile.t [@@deriving yojson]
 
-(** Ordinals *)
-module Ordinal : sig
-  type t
-
-  val make : int -> t
-  (*val pr : Format.formatter -> t -> unit*)
-  val string_of : t -> string
-end = struct
-  type t = int
-
-  let make n = n
-
-  (*let pr ppf n =
-    if n = 11 || n = 12 || n = 13 then
-      Format.fprintf ppf "%dth" n
-    else
-      match n mod 10 with
-      | 1 -> Format.fprintf ppf "%dst" n
-      | 2 -> Format.fprintf ppf "%dnd" n
-      | 3 -> Format.fprintf ppf "%drd" n
-      | _ -> Format.fprintf ppf "%dth" n
-    let string_of = Printer.string_of pr*)
-  let string_of n =
-    if n = 11 || n = 12 || n = 13 then Printf.sprintf "%dth" n
-    else
-      Printf.sprintf
-        ( match n mod 10 with
-          | 1 -> "%dst"
-          | 2 -> "%dnd"
-          | 3 -> "%drd"
-          | _ -> "%dth" )
-        n
-end
-
-(** Pairs *)
-module Pair = struct
-  let make x1 x2 = (x1, x2)
-
-  let of_list = function [x1; x2] -> (x1, x2) | _ -> failwith ""
-  let list_of (x1, x2) = [x1; x2]
-
-  let map f1 f2 (x1, x2) = (f1 x1, f2 x2)
-  let map_fst f (x1, x2) = (f x1, x2)
-  let map_snd f (x1, x2) = (x1, f x2)
-  let map2 f1 f2 (x1, x2) (y1, y2) = (f1 x1 y1, f2 x2 y2)
-
-  let fold f (x1, x2) = f x1 x2
-  let lift f (x1, x2) = (f x1, f x2)
-  let lift2 f (x1, x2) (y1, y2) = (f x1 y1, f x2 y2)
-  let unfold f1 f2 x = (f1 x, f2 x)
-
-  let pr epr1 epr2 ppf (x1, x2) =
-    Format.fprintf ppf "@[(@[<hov>%a,@ %a@])@]" epr1 x1 epr2 x2
-
-  let flip (x1, x2) = (x2, x1)
-end
-
-(** Triples *)
-module Triple = struct
-  let make x1 x2 x3 = (x1, x2, x3)
-
-  let of_list = function [x1; x2; x3] -> (x1, x2, x3) | _ -> failwith ""
-  let list_of (x1, x2, x3) = [x1; x2; x3]
-
-  let fst (x1, _x2, _x3) = x1
-  let snd (_x1, x2, _x3) = x2
-  let trd (_x1, _x2, x3) = x3
-
-  let get12 (x1, x2, _x3) = (x1, x2)
-  let get13 (x1, _x2, x3) = (x1, x3)
-  let get21 (x1, x2, _x3) = (x2, x1)
-  let get23 (_x1, x2, x3) = (x2, x3)
-  let get31 (x1, _x2, x3) = (x3, x1)
-  let get32 (_x1, x2, x3) = (x3, x2)
-
-  let get123 (x1, x2, x3) = (x1, x2, x3)
-  let get132 (x1, x2, x3) = (x1, x3, x2)
-  let get213 (x1, x2, x3) = (x2, x1, x3)
-  let get231 (x1, x2, x3) = (x2, x3, x1)
-  let get312 (x1, x2, x3) = (x3, x1, x2)
-  let get321 (x1, x2, x3) = (x3, x2, x1)
-
-  let map f1 f2 f3 (x1, x2, x3) = (f1 x1, f2 x2, f3 x3)
-  let map_fst f (x1, x2, x3) = (f x1, x2, x3)
-  let map_snd f (x1, x2, x3) = (x1, f x2, x3)
-  let map_trd f (x1, x2, x3) = (x1, x2, f x3)
-
-  let fold f (x1, x2, x3) = f x1 x2 x3
-  let lift f (x1, x2, x3) = (f x1, f x2, f x3)
-  let unfold f1 f2 f3 x = (f1 x, f2 x, f3 x)
-
-  let pr epr1 epr2 epr3 ppf (x1, x2, x3) =
-    Format.fprintf ppf "(@[<hov>%a,@ %a,@ %a@])" epr1 x1 epr2 x2 epr3 x3
-end
-
-(** Quadruples *)
-module Quadruple = struct
-  let make x1 x2 x3 x4 = (x1, x2, x3, x4)
-
-  let of_list = function [x1; x2; x3; x4] -> (x1, x2, x3, x4) | _ -> failwith ""
-  let list_of (x1, x2, x3, x4) = [x1; x2; x3; x4]
-
-  let fst (x1, _x2, _x3, _x4) = x1
-  let snd (_x1, x2, _x3, _x4) = x2
-  let trd (_x1, _x2, x3, _x4) = x3
-  let fth (_x1, _x2, _x3, x4) = x4
-
-  let get12 (x1, x2, _x3, _x4) = (x1, x2)
-  let get13 (x1, _x2, x3, _x4) = (x1, x3)
-  let get14 (x1, _x2, _x3, x4) = (x1, x4)
-  let get21 (x1, x2, _x3, _x4) = (x2, x1)
-  let get23 (_x1, x2, x3, _x4) = (x2, x3)
-  let get24 (_x1, x2, _x3, x4) = (x2, x4)
-  let get31 (x1, _x2, x3, _x4) = (x3, x1)
-  let get32 (_x1, x2, x3, _x4) = (x3, x2)
-  let get34 (_x1, _x2, x3, x4) = (x3, x4)
-  let get41 (x1, _x2, _x3, x4) = (x4, x1)
-  let get42 (_x1, x2, _x3, x4) = (x4, x2)
-  let get43 (_x1, _x2, x3, x4) = (x4, x3)
-
-  let get123 (x1, x2, x3, _x4) = (x1, x2, x3)
-  let get124 (x1, x2, _x3, x4) = (x1, x2, x4)
-  let get132 (x1, x2, x3, _x4) = (x1, x3, x2)
-  let get134 (x1, _x2, x3, x4) = (x1, x3, x4)
-  let get142 (x1, x2, _x3, x4) = (x1, x4, x2)
-  let get143 (x1, _x2, x3, x4) = (x1, x4, x3)
-  let get213 (x1, x2, x3, _x4) = (x2, x1, x3)
-  let get214 (x1, x2, _x3, x4) = (x2, x1, x4)
-  let get231 (x1, x2, x3, _x4) = (x2, x3, x1)
-  let get234 (_x1, x2, x3, x4) = (x2, x3, x4)
-  let get241 (x1, x2, _x3, x4) = (x2, x4, x1)
-  let get243 (_x1, x2, x3, x4) = (x2, x4, x3)
-  let get312 (x1, x2, x3, _x4) = (x3, x1, x2)
-  let get314 (x1, _x2, x3, x4) = (x3, x1, x4)
-  let get321 (x1, x2, x3, _x4) = (x3, x2, x1)
-  let get324 (_x1, x2, x3, x4) = (x3, x2, x4)
-  let get341 (x1, _x2, x3, x4) = (x3, x4, x1)
-  let get342 (_x1, x2, x3, x4) = (x3, x4, x2)
-  let get412 (x1, x2, _x3, x4) = (x4, x1, x2)
-  let get413 (x1, _x2, x3, x4) = (x4, x1, x3)
-  let get421 (x1, x2, _x3, x4) = (x4, x2, x1)
-  let get423 (_x1, x2, x3, x4) = (x4, x2, x3)
-  let get431 (x1, _x2, x3, x4) = (x4, x3, x1)
-  let get432 (_x1, x2, x3, x4) = (x4, x3, x2)
-
-  let map f1 f2 f3 f4 (x1, x2, x3, x4) = (f1 x1, f2 x2, f3 x3, f4 x4)
-  let map_fst f (x1, x2, x3, x4) = (f x1, x2, x3, x4)
-  let map_snd f (x1, x2, x3, x4) = (x1, f x2, x3, x4)
-  let map_trd f (x1, x2, x3, x4) = (x1, x2, f x3, x4)
-  let map_fth f (x1, x2, x3, x4) = (x1, x2, x3, f x4)
-
-  let fold f (x1, x2, x3, x4) = f x1 x2 x3 x4
-  let lift f (x1, x2, x3, x4) = (f x1, f x2, f x3, f x4)
-  let unfold f1 f2 f3 f4 x = (f1 x, f2 x, f3 x, f4 x)
-
-  let pr epr1 epr2 epr3 epr4 ppf (x1, x2, x3, x4) =
-    Format.fprintf ppf "(@[<hov>%a,@ %a,@ %a,@ %a@])"
-      epr1 x1 epr2 x2 epr3 x3 epr4 x4
-end
-
-(** Quintuples *)
-module Quintuple = struct
-  let make x1 x2 x3 x4 x5 = (x1, x2, x3, x4, x5)
-
-  let of_list = function [x1; x2; x3; x4; x5] -> (x1, x2, x3, x4, x5) | _ -> failwith ""
-  let list_of (x1, x2, x3, x4, x5) = [x1; x2; x3; x4; x5]
-
-  let fst (x1, _x2, _x3, _x4, _x5) = x1
-  let snd (_x1, x2, _x3, _x4, _x5) = x2
-  let trd (_x1, _x2, x3, _x4, _x5) = x3
-  let fth (_x1, _x2, _x3, x4, _x5) = x4
-  let fifth (_x1, _x2, _x3, _x4, x5) = x5
-
-  let get12 (x1, x2, _x3, _x4, _x5) = (x1, x2)
-  let get13 (x1, _x2, x3, _x4, _x5) = (x1, x3)
-  let get14 (x1, _x2, _x3, x4, _x5) = (x1, x4)
-  let get15 (x1, _x2, _x3, _x4, x5) = (x1, x5)
-  let get21 (x1, x2, _x3, _x4, _x5) = (x2, x1)
-  let get23 (_x1, x2, x3, _x4, _x5) = (x2, x3)
-  let get24 (_x1, x2, _x3, x4, _x5) = (x2, x4)
-  let get25 (_x1, x2, _x3, _x4, x5) = (x2, x5)
-  let get31 (x1, _x2, x3, _x4, _x5) = (x3, x1)
-  let get32 (_x1, x2, x3, _x4, _x5) = (x3, x2)
-  let get34 (_x1, _x2, x3, x4, _x5) = (x3, x4)
-  let get35 (_x1, _x2, x3, _x4, x5) = (x3, x5)
-  let get41 (x1, _x2, _x3, x4, _x5) = (x4, x1)
-  let get42 (_x1, x2, _x3, x4, _x5) = (x4, x2)
-  let get43 (_x1, _x2, x3, x4, _x5) = (x4, x3)
-  let get45 (_x1, _x2, _x3, x4, x5) = (x4, x5)
-  let get51 (x1, _x2, _x3, _x4, x5) = (x5, x1)
-  let get52 (_x1, x2, _x3, _x4, x5) = (x5, x2)
-  let get53 (_x1, _x2, x3, _x4, x5) = (x5, x3)
-  let get54 (_x1, _x2, _x3, x4, x5) = (x5, x4)
-
-  let get123 (x1, x2, x3, _x4, _x5) = (x1, x2, x3)
-  let get124 (x1, x2, _x3, x4, _x5) = (x1, x2, x4)
-  let get125 (x1, x2, _x3, _x4, x5) = (x1, x2, x5)
-  let get132 (x1, x2, x3, _x4, _x5) = (x1, x3, x2)
-  let get134 (x1, _x2, x3, x4, _x5) = (x1, x3, x4)
-  let get135 (x1, _x2, x3, _x4, x5) = (x1, x3, x5)
-  let get142 (x1, x2, _x3, x4, _x5) = (x1, x4, x2)
-  let get143 (x1, _x2, x3, x4, _x5) = (x1, x4, x3)
-  let get145 (x1, _x2, _x3, x4, x5) = (x1, x4, x5)
-  let get152 (x1, x2, _x3, _x4, x5) = (x1, x5, x2)
-  let get153 (x1, _x2, x3, _x4, x5) = (x1, x5, x3)
-  let get154 (x1, _x2, _x3, x4, x5) = (x1, x5, x4)
-  let get213 (x1, x2, x3, _x4, _x5) = (x2, x1, x3)
-  let get214 (x1, x2, _x3, x4, _x5) = (x2, x1, x4)
-  let get215 (x1, x2, _x3, _x4, x5) = (x2, x1, x5)
-  let get231 (x1, x2, x3, _x4, _x5) = (x2, x3, x1)
-  let get234 (_x1, x2, x3, x4, _x5) = (x2, x3, x4)
-  let get235 (_x1, x2, x3, _x4, x5) = (x2, x3, x5)
-  let get241 (x1, x2, _x3, x4, _x5) = (x2, x4, x1)
-  let get243 (_x1, x2, x3, x4, _x5) = (x2, x4, x3)
-  let get245 (_x1, x2, _x3, x4, x5) = (x2, x4, x5)
-  let get251 (x1, x2, _x3, _x4, x5) = (x2, x5, x1)
-  let get253 (_x1, x2, x3, _x4, x5) = (x2, x5, x3)
-  let get254 (_x1, x2, _x3, x4, x5) = (x2, x5, x4)
-  let get312 (x1, x2, x3, _x4, _x5) = (x3, x1, x2)
-  let get314 (x1, _x2, x3, x4, _x5) = (x3, x1, x4)
-  let get315 (x1, _x2, x3, _x4, x5) = (x3, x1, x5)
-  let get321 (x1, x2, x3, _x4, _x5) = (x3, x2, x1)
-  let get324 (_x1, x2, x3, x4, _x5) = (x3, x2, x4)
-  let get325 (_x1, x2, x3, _x4, x5) = (x3, x2, x5)
-  let get341 (x1, _x2, x3, x4, _x5) = (x3, x4, x1)
-  let get342 (_x1, x2, x3, x4, _x5) = (x3, x4, x2)
-  let get345 (_x1, _x2, x3, x4, x5) = (x3, x4, x5)
-  let get351 (x1, _x2, x3, _x4, x5) = (x3, x5, x1)
-  let get352 (_x1, x2, x3, _x4, x5) = (x3, x5, x2)
-  let get354 (_x1, _x2, x3, x4, x5) = (x3, x5, x4)
-  let get412 (x1, x2, _x3, x4, _x5) = (x4, x1, x2)
-  let get413 (x1, _x2, x3, x4, _x5) = (x4, x1, x3)
-  let get415 (x1, _x2, _x3, x4, x5) = (x4, x1, x5)
-  let get421 (x1, x2, _x3, x4, _x5) = (x4, x2, x1)
-  let get423 (_x1, x2, x3, x4, _x5) = (x4, x2, x3)
-  let get425 (_x1, x2, _x3, x4, x5) = (x4, x2, x5)
-  let get431 (x1, _x2, x3, x4, _x5) = (x4, x3, x1)
-  let get432 (_x1, x2, x3, x4, _x5) = (x4, x3, x2)
-  let get435 (_x1, _x2, x3, x4, x5) = (x4, x3, x5)
-  let get451 (x1, _x2, _x3, x4, x5) = (x4, x5, x1)
-  let get452 (_x1, x2, _x3, x4, x5) = (x4, x5, x2)
-  let get453 (_x1, _x2, x3, x4, x5) = (x4, x5, x3)
-  let get512 (x1, x2, _x3, _x4, x5) = (x5, x1, x2)
-  let get513 (x1, _x2, x3, _x4, x5) = (x5, x1, x3)
-  let get514 (x1, _x2, _x3, x4, x5) = (x5, x1, x4)
-  let get521 (x1, x2, _x3, _x4, x5) = (x5, x2, x1)
-  let get523 (_x1, x2, x3, _x4, x5) = (x5, x2, x3)
-  let get524 (_x1, x2, _x3, x4, x5) = (x5, x2, x4)
-  let get531 (x1, _x2, x3, _x4, x5) = (x5, x3, x1)
-  let get532 (_x1, x2, x3, _x4, x5) = (x5, x3, x2)
-  let get534 (_x1, _x2, x3, x4, x5) = (x5, x3, x4)
-  let get541 (x1, _x2, _x3, x4, x5) = (x5, x4, x1)
-  let get542 (_x1, x2, _x3, x4, x5) = (x5, x4, x2)
-  let get543 (_x1, _x2, x3, x4, x5) = (x5, x4, x3)
-
-  let map f1 f2 f3 f4 f5 (x1, x2, x3, x4, x5) =
-    (f1 x1, f2 x2, f3 x3, f4 x4, f5 x5)
-  let map_fst f (x1, x2, x3, x4, x5) = (f x1, x2, x3, x4, x5)
-  let map_snd f (x1, x2, x3, x4, x5) = (x1, f x2, x3, x4, x5)
-  let map_trd f (x1, x2, x3, x4, x5) = (x1, x2, f x3, x4, x5)
-  let map_fth f (x1, x2, x3, x4, x5) = (x1, x2, x3, f x4, x5)
-  let map_fifth f (x1, x2, x3, x4, x5) = (x1, x2, x3, x4, f x5)
-
-  let fold f (x1, x2, x3, x4, x5) = f x1 x2 x3 x4 x5
-  let lift f (x1, x2, x3, x4, x5) = (f x1, f x2, f x3, f x4, f x5)
-  let unfold f1 f2 f3 f4 _f5 x = (f1 x, f2 x, f3 x, f4 x)
-
-  let pr epr1 epr2 epr3 epr4 epr5 ppf (x1, x2, x3, x4, x5) =
-    Format.fprintf ppf "(@[<hov>%a,@ %a,@ %a,@ %a,@ %a@])"
-      epr1 x1 epr2 x2 epr3 x3 epr4 x4 epr5 x5
-end
-
-module Array2D = struct
-  let remove_column a idx = Array.map a ~f:(fun a' -> Array.remove a' idx)
-  let num_columns a = if Array.is_empty a then 0 else Array.length a.(0)
-  let column_of a idx = Array.map a ~f:(fun a' -> a'.(idx))
-end
-
 module LexingHelper = struct
   let update_loc (lexbuf : Lexing.lexbuf) =
     let pos = lexbuf.lex_curr_p in
-    lexbuf.lex_curr_p <-
-      { pos with
-        pos_lnum = pos.pos_lnum + 1;
-        pos_bol = pos.pos_cnum; }
+    lexbuf.lex_curr_p <- { pos with pos_lnum = pos.pos_lnum + 1; pos_bol = pos.pos_cnum; }
 
   let get_position_string (lexbuf : Lexing.lexbuf) =
     let pos = lexbuf.lex_curr_p in
-    Printf.sprintf "%d:%d" pos.pos_lnum (pos.pos_cnum - pos.pos_bol + 1)
+    sprintf "%d:%d" pos.pos_lnum (pos.pos_cnum - pos.pos_bol + 1)
 end
 
 module Command : sig
@@ -322,9 +39,7 @@ end = struct
   exception Shell_error of string
 
   let output_lines (output : string list) (chan : Out_channel.t) : unit =
-    List.iter
-      ~f:(fun line -> Out_channel.output_string chan (line ^ "\n"))
-      output;
+    List.iter ~f:(fun line -> Out_channel.output_string chan (line ^ "\n")) output;
     Out_channel.flush chan
 
   let rec do_channel_lines (f : string -> 'a) (chan : In_channel.t) : 'a list =
@@ -339,7 +54,7 @@ end = struct
   let async_command (name : string) (arguments : string list) :
     Core_unix.Process_channels.t =
     Core_unix.open_process_full
-      (Printf.sprintf "bash -c '%s %s 2>&1'" name (String.concat ~sep:" " arguments))
+      (sprintf "bash -c '%s %s 2>&1'" name (String.concat ~sep:" " arguments))
       ~env:(Core_unix.environment ())
 
   let sync_command (name : string) (arguments : string list)
@@ -347,54 +62,10 @@ end = struct
     let pcs = async_command name arguments in
     output_lines input pcs.stdin;
     let out = input_lines pcs.stdout in
-    let status = Core_unix.close_process_full pcs in
-    match status with
+    match Core_unix.close_process_full pcs with
     | Ok _ -> out
     | Error (`Exit_non_zero _) -> raise (Shell_error (unlines out))
-    | Error (`Signal x) ->
-      if Signal.equal x Signal.int then raise Sys_unix.Break  else out
-end
-
-module ListSet = struct
-  let cup cmp s1 s2 =
-    let res = List.merge ~compare:cmp s1 s2 in
-    List.dedup_and_sort ~compare:cmp res
-
-  let sub cmp s1 s2 =
-    let rec rep cmp s1 s2 res =
-      match s1 with
-      | [] -> res
-      | h1 :: t1 ->
-        match s2 with
-        | [] -> List.rev s1 @ res
-        | h2 :: t2 ->
-          let r = cmp h1 h2 in
-          if r < 0 then
-            rep cmp t1 s2 (h1 :: res)
-          else if r > 0 then
-            rep cmp s1 t2 res
-          else
-            rep cmp t1 s2 res
-    in
-    List.rev @@ rep cmp s1 s2 []
-
-  let cap cmp s1 s2 =
-    let rec rep cmp s1 s2 res =
-      match s1 with
-      | [] -> res
-      | h1 :: t1 ->
-        match s2 with
-        | [] -> res
-        | h2 :: t2 ->
-          let r = cmp h1 h2 in
-          if r < 0 then
-            rep cmp t1 s2 res
-          else if r > 0 then
-            rep cmp s1 t2 res
-          else
-            rep cmp t1 s2 (h1 :: res)
-    in
-    List.rev @@ rep cmp s1 s2 []
+    | Error (`Signal x) -> if Signal.equal x Signal.int then raise Sys_unix.Break else out
 end
 
 module Task = struct
@@ -406,13 +77,10 @@ module Task = struct
 
   exception TasksActive
 
-  type task_msg =
-      Task : 'a task * 'a promise -> task_msg
-    | Quit : task_msg
+  type task_msg = Task : 'a task * 'a promise -> task_msg | Quit : task_msg
 
   type pool =
-    {domains : unit Domain.t array;
-     task_chan : task_msg Domainslib__Multi_channel.t}
+    { domains : unit Domain.t array; task_chan : task_msg Domainslib__Multi_channel.t}
 
   let do_task f p =
     try
@@ -434,7 +102,7 @@ module Task = struct
         worker ()
     in
     let domains = Array.init num_additional_domains ~f:(fun _ -> Domain.spawn worker) in
-    {domains; task_chan}
+    { domains; task_chan }
 
   let async pool task =
     let p = Atomic.make None in
@@ -449,15 +117,14 @@ module Task = struct
           match Domainslib__Multi_channel.recv_poll pool.task_chan with
           | Task (t, p) -> do_task t p
           | Quit -> raise TasksActive
-        with
-        | Exit -> Domain.cpu_relax ()
+        with Exit -> Domain.cpu_relax ()
       end;
       await pool promise
     | Some (Ok v) -> v
     | Some (Error e) -> raise e
 
   let teardown_pool pool =
-    for _i=1 to Array.length pool.domains do
+    for _i = 1 to Array.length pool.domains do
       Domainslib__Multi_channel.send pool.task_chan Quit
     done;
     Domainslib__Multi_channel.clear_local_state pool.task_chan;
@@ -465,48 +132,39 @@ module Task = struct
 
   let parallel_for_reduce ?(chunk_size=0) ~start ~finish ~body pool reduce_fun init =
     let chunk_size = if chunk_size > 0 then chunk_size
-      else begin
+      else
         let n_domains = (Array.length pool.domains) + 1 in
         let n_tasks = finish - start + 1 in
-        if n_domains = 1 then n_tasks
-        else max 1 (n_tasks/(8*n_domains))
-      end
+        if n_domains = 1 then n_tasks else max 1 (n_tasks/(8*n_domains))
     in
     let rec work s e =
       if e - s < chunk_size then
-        let rec loop i acc =
-          if i > e then acc
-          else loop (i+1) (reduce_fun acc (body i))
-        in
+        let rec loop i acc = if i > e then acc else loop (i+1) (reduce_fun acc (body i)) in
         loop s init
-      else begin
+      else
         let d = s + ((e - s) / 2) in
         let p = async pool (fun _ -> work s d) in
         let right = work (d+1) e in
         let left = await pool p in
         reduce_fun left right
-      end
     in
     work start finish
 
   let parallel_for ?(chunk_size=0) ~start ~finish ~body pool =
     let chunk_size = if chunk_size > 0 then chunk_size
-      else begin
+      else
         let n_domains = (Array.length pool.domains) + 1 in
         let n_tasks = finish - start + 1 in
-        if n_domains = 1 then n_tasks
-        else max 1 (n_tasks/(8*n_domains))
-      end
+        if n_domains = 1 then n_tasks else max 1 (n_tasks/(8*n_domains))
     in
     let rec work pool fn s e =
       if e - s < chunk_size then
         for i = s to e do fn i done
-      else begin
+      else
         let d = s + ((e - s) / 2) in
         let left = async pool (fun _ -> work pool fn s d) in
         work pool fn (d+1) e;
         await pool left
-      end
     in
     work pool body start finish
 
@@ -559,6 +217,46 @@ module Task = struct
     | None -> await_any_promise pool promises
     | Some (Ok v) -> v
     | Some (Error v) -> raise v
+end
+
+module Array2D = struct
+  let remove_column a idx = Array.map a ~f:(fun a' -> Array.remove a' idx)
+  let num_columns a = if Array.is_empty a then 0 else Array.length a.(0)
+  let column_of a idx = Array.map a ~f:(fun a' -> a'.(idx))
+end
+
+module ListSet = struct
+  let cup cmp s1 s2 = List.dedup_and_sort ~compare:cmp @@ List.merge ~compare:cmp s1 s2
+
+  let sub cmp s1 s2 =
+    let rec rep cmp s1 s2 res =
+      match s1 with
+      | [] -> res
+      | h1 :: t1 ->
+        match s2 with
+        | [] -> List.rev s1 @ res
+        | h2 :: t2 ->
+          let r = cmp h1 h2 in
+          if r < 0 then rep cmp t1 s2 (h1 :: res)
+          else if r > 0 then rep cmp s1 t2 res
+          else rep cmp t1 s2 res
+    in
+    List.rev @@ rep cmp s1 s2 []
+
+  let cap cmp s1 s2 =
+    let rec rep cmp s1 s2 res =
+      match s1 with
+      | [] -> res
+      | h1 :: t1 ->
+        match s2 with
+        | [] -> res
+        | h2 :: t2 ->
+          let r = cmp h1 h2 in
+          if r < 0 then rep cmp t1 s2 res
+          else if r > 0 then rep cmp s1 t2 res
+          else rep cmp t1 s2 (h1 :: res)
+    in
+    List.rev @@ rep cmp s1 s2 []
 end
 
 (** Vectors *)
@@ -751,28 +449,23 @@ module Graph0 = struct
     let ocf = Format.make_formatter (Stdlib.output_substring oc) (fun () -> Stdlib.flush oc) in
     Format.fprintf ocf "@[<v>digraph flow {@ ";
 
-    List.iter ~f:(fun (vertex, attribute) ->
-        Format.fprintf ocf "  \"%s\" %s@ " vertex attribute)
-      vertices;
-    List.iter ~f:(fun (vertex1, vertex2, attribute) ->
-        Format.fprintf ocf "  \"%s\" -> \"%s\" %s@ " vertex1 vertex2 attribute)
-      edges;
+    List.iter vertices ~f:(fun (vertex, attribute) ->
+        Format.fprintf ocf "  \"%s\" %s@ " vertex attribute);
+    List.iter edges ~f:(fun (vertex1, vertex2, attribute) ->
+        Format.fprintf ocf "  \"%s\" -> \"%s\" %s@ " vertex1 vertex2 attribute);
 
     Format.fprintf ocf "}@]@?";
     Stdlib.close_out oc
 
-  let succs es v =
-    List.filter_map ~f:(fun (v1, v2) -> if v1 = v then Some v2 else None) es
-  let preds es v =
-    List.filter_map ~f:(fun (v1, v2) -> if v2 = v then Some v1 else None) es
+  let succs es v = List.filter_map ~f:(fun (v1, v2) -> if v1 = v then Some v2 else None) es
+  let preds es v = List.filter_map ~f:(fun (v1, v2) -> if v2 = v then Some v1 else None) es
 
   let rec assign es assigned v root =
     if List.Assoc.mem ~equal:Stdlib.(=) assigned v then assigned
     else
-      List.fold_left
+      List.fold_left (preds es v) ~init:((v, root) :: assigned)
         ~f:(fun assigned v -> assign es assigned v root)
-        ~init:((v, root) :: assigned)
-        (preds es v)
+
 
   (** Kosaraju's algorithm *)
   let rec visit es visited l v =
@@ -780,13 +473,13 @@ module Graph0 = struct
     then (visited, l)
     else
       let visited, l =
-        List.fold_left ~f:(Combinator.uncurry2 (visit es)) ~init:(v :: visited, l) (succs es v)
+        List.fold_left (succs es v) ~init:(v::visited, l) ~f:(Combinator.uncurry (visit es))
       in
       (visited, v :: l)
 
   let scc es =
-    let vs = List.map ~f:fst es @ List.map ~f:snd es |> List.unique in
-    let _, l = List.fold_left ~f:(Combinator.uncurry2 (visit es)) ~init:([], []) vs in
+    let vs = (List.map ~f:fst es @ List.map ~f:snd es) |> List.unique in
+    let _, l = List.fold_left vs ~init:([], []) ~f:(Combinator.uncurry (visit es)) in
     List.fold_left ~f:(fun assigned v -> assign es assigned v v) ~init:[] l
 end
 
@@ -795,30 +488,21 @@ module PartOrd = struct
   let is_initial ord p = List.for_all ~f:(fun (p1, p2) -> p1 <> p || p1 = p2) ord
 
   let preds ord p =
-    List.filter_map
-      ~f:(fun (p1, p2) -> if p2 = p && p1 <> p2 then Some p1 else None)
-      ord
+    List.filter_map ord ~f:(fun (p1, p2) -> if p2 = p && p1 <> p2 then Some p1 else None)
   let succs ord p =
-    List.filter_map
-      ~f:(fun (p1, p2) -> if p1 = p && p1 <> p2 then Some p1 else None)
-      ord
+    List.filter_map ord ~f:(fun (p1, p2) -> if p1 = p && p1 <> p2 then Some p1 else None)
 
   let reflexive_closure_of brel =
-    brel
-    |> List.concat_map ~f:(fun (e1, e2) -> [e1, e1; e1, e2; e2, e2])
-    |> List.unique
+    brel |> List.concat_map ~f:(fun (e1, e2) -> [e1, e1; e1, e2; e2, e2]) |> List.unique
 
   (** Warshall-Floyd algorithm @todo optimize *)
   let transitive_closure_of brel =
-    let vs = List.map ~f:fst brel @ List.map ~f:snd brel |> List.unique in
-    List.fold_left
-      ~f:(fun brel v ->
-          let open Combinator in
-          let brel1 = List.filter ~f:(snd >> (=) v) brel in
-          let brel2 = List.filter ~f:(fst >> (=) v) brel in
-          Vector.multiply (fun (v1, _) (_, v2) -> v1, v2) brel1 brel2 @ brel
-          |> List.unique)
-      ~init:brel vs
+    List.fold_left ~init:brel ~f:(fun brel v ->
+        let open Combinator in
+        let brel1 = List.filter ~f:(snd >> (=) v) brel in
+        let brel2 = List.filter ~f:(fst >> (=) v) brel in
+        Vector.multiply (fun (v1, _) (_, v2) -> v1, v2) brel1 brel2 @ brel |> List.unique) @@
+    List.unique (List.map ~f:fst brel @ List.map ~f:snd brel)
 
   let reflexive_transitive_closure_of brel =
     brel |> transitive_closure_of |> reflexive_closure_of
@@ -830,20 +514,17 @@ module Permutation = struct
     let rec aux = function
       | [] -> []
       | xs ->
-        List.concat @@ List.init
-          (List.length xs)
+        List.concat @@ List.init (List.length xs)
           ~f:(fun i ->
               match List.split_n xs i with
-              | xs1, x :: xs2 ->
-                xs1 @ xs2 |> aux |> List.map ~f:(List.cons x)
+              | xs1, x :: xs2 -> xs1 @ xs2 |> aux |> List.map ~f:(List.cons x)
               | _ -> failwith "")
     in
     aux (List.init n ~f:Fn.id)
 
   let maps n1 n2 =
     let xs = List.init n1 ~f:Fn.id in
-    permutations n2
-    |> List.map ~f:(List.zip xs)
+    permutations n2 |> List.map ~f:(List.zip xs)
 
   let rec perm xs n =
     if n <= 0 then [[]]
@@ -856,9 +537,7 @@ end
 (** Combinations *)
 module Combination = struct
   let comb2 xs =
-    List.concat_mapi
-      ~f:(fun i x -> List.map ~f:(Pair.make x) (List.drop xs (i + 1)))
-      xs
+    List.concat_mapi xs ~f:(fun i x -> List.map ~f:(Pair.make x) (List.drop xs (i + 1)))
 end
 
 (** Map implemented with asocc list ( Stdlib.(=) can be used for equality check ) *)
@@ -880,7 +559,9 @@ module ALMap = struct
     List.fold l ~init:empty ~f:(fun acc (key, data) -> add_exn ~key ~data acc)
   let data m = snd @@ List.unzip m
   let map ~f m = List.map m ~f:(fun (k, d) -> (k, f d))
-  let force_merge m1 m2 = List.fold m2 ~init:m1 ~f:(fun acc (key, data) -> add_exn ~key ~data acc)
+  let mapi ~f m = List.map m ~f:(fun (k, d) -> (k, f k d))
+  let force_merge m1 m2 =
+    List.fold m2 ~init:m1 ~f:(fun acc (key, data) -> add_exn ~key ~data acc)
   let split_lbr m1 m2 =
     let rec aux m1 m2 lefts boths rights =
       match m1, m2 with
@@ -892,5 +573,4 @@ module ALMap = struct
         else aux m1 tl2 lefts boths ((k2, d2) :: rights)
     in
     aux m1 m2 [] [] []
-
 end

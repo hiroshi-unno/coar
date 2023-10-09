@@ -39,6 +39,7 @@ val has_no_quantifier : t -> bool
 
 val bind_fvs_with_forall : t -> t
 
+val map_formula : (Formula.t -> Formula.t) -> t -> t
 val aconv_tvar : t -> t
 val move_quantifiers_to_front : t -> t
 val rm_forall : t -> t
@@ -53,6 +54,6 @@ val of_lts :
   ?live_vars:(string -> sort_env_set) option ->
   ?cut_points:(string Set.Poly.t) option -> LTS.Problem.t -> t
 
-val of_chc : PCSP.Problem.t -> t
+val of_chc : ?only_pos:bool -> PCSP.Problem.t -> t
 
 val check_problem : t -> t

@@ -2,6 +2,10 @@
     "SPACER",
     {
         "timeout": null,
+        "check_validity": false,
+        "conservative_check": true,
+        "solve_again_if_invalid": true,
+        "solution_needed": false,
         "verbose": false
     }
 ]

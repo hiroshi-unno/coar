@@ -6,7 +6,6 @@ open Ast
 open Ast.LogicOld
 open PCSatCommon
 open Bf_synthesis
-open PCSP.Problem
 
 module Config = struct
   type strategy =
@@ -36,9 +35,9 @@ module Config = struct
     Ok { cfg with qualifier_generator = qualifier_generator; bfsynth = bfsynth }
 end
 
-module Make (Cfg: Config.ConfigType) (PCSP: PCSP.Problem.ProblemType) = struct
+module Make (Cfg: Config.ConfigType) (APCSP: PCSP.Problem.ProblemType) = struct
   let config = Cfg.config
-  let id = id_of PCSP.problem
+  let id = PCSP.Problem.id_of APCSP.problem
 
   module Debug = Debug.Make (val Debug.Config.(if config.verbose then enable else disable))
   let _ = Debug.set_id id
@@ -48,7 +47,7 @@ module Make (Cfg: Config.ConfigType) (PCSP: PCSP.Problem.ProblemType) = struct
   let qualifier_generator =
     let open Or_error in
     ExtFile.unwrap config.qualifier_generator >>= fun cfg ->
-    Ok (module Qualifier.Generator.Make (struct let config = cfg end) (PCSP)
+    Ok (module Qualifier.Generator.Make (struct let config = cfg end) (APCSP)
         : Qualifier.Generator.GeneratorType)
 
   let bfsynth =
@@ -102,10 +101,10 @@ module Make (Cfg: Config.ConfigType) (PCSP: PCSP.Problem.ProblemType) = struct
     let generate n =
       let quals = G.generate pvar params labeled_atoms examples n in
       Debug.print @@ lazy
-        (Format.sprintf
+        (sprintf
            "    @[<2>%s set of qualifiers (%d) generated from the domain %s:@ %s@]"
            (Ordinal.string_of @@ Ordinal.make n)
-           (Set.Poly.length quals)
+           (Set.length quals)
            (G.str_of_domain n)
            (String.concat_set ~sep:", " @@
             Set.Poly.map quals ~f:(fun (_, phi) -> Formula.str_of phi)));
@@ -115,7 +114,7 @@ module Make (Cfg: Config.ConfigType) (PCSP: PCSP.Problem.ProblemType) = struct
         Set.Poly.map quals ~f:(fun (_, phi) -> TruthTable.index_of_qual ~id tt fenv qdeps phi)
         |> (match config.qual_order with
             | Rank -> Rank.sort_indices tt.TruthTable.qarr
-            | Shuffle -> fun indices -> List.shuffle @@ Set.Poly.to_list indices)
+            | Shuffle -> fun indices -> List.shuffle @@ Set.to_list indices)
       in
       Debug.print @@ lazy (sprintf "    created truth table ((%d + %d) x %d)"
                              (TruthTable.num_pos_labeled_atoms alist)
@@ -143,7 +142,7 @@ module Make (Cfg: Config.ConfigType) (PCSP: PCSP.Problem.ProblemType) = struct
     in
     let qbs = inner 0 in
     List.iteri qbs ~f:(fun i bf ->
-        Debug.print @@ lazy (Format.sprintf "    @[<2>%s synthesized boolean function:@ %s@]" (Ordinal.string_of @@ Ordinal.make i) (BoolFunction.str_of bf)));
+        Debug.print @@ lazy (sprintf "    @[<2>%s synthesized boolean function:@ %s@]" (Ordinal.string_of @@ Ordinal.make i) (BoolFunction.str_of bf)));
     Ok (List.map ~f:(BoolFunction.concretize (TruthTable.get_table table pvar).qarr) (select qbs))
 
   let mk_classifier pvar params table labeling examples =

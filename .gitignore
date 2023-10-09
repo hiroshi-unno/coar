@@ -26,3 +26,5 @@ ltl3ba
 z3
 hoice
 *.svg
+*.onnx
+*.pkl.gz

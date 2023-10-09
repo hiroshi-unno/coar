@@ -15,18 +15,14 @@ module Config = struct
   module type ConfigType = sig val config : t end
 
   let load_ext_file = function
-    | ExtFile.Filename filename ->
-      begin
-        let open Or_error in
-        try_with (fun () -> Yojson.Safe.from_file filename)
-        >>= fun raw_json ->
-        match of_yojson raw_json with
-        | Ok x -> Ok (ExtFile.Instance x)
-        | Error msg ->
-          error_string @@ Printf.sprintf
-            "Invalid BFSynthesizer Configuration (%s): %s" filename msg
-      end
-    | Instance x -> Ok (ExtFile.Instance x)
+    | ExtFile.Instance x -> Ok (ExtFile.Instance x)
+    | Filename filename ->
+      let open Or_error in
+      try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
+      match of_yojson raw_json with
+      | Ok x -> Ok (ExtFile.Instance x)
+      | Error msg ->
+        error_string @@ sprintf "Invalid BFSynthesizer Configuration (%s): %s" filename msg
 end
 
 module Make (Cfg: Config.ConfigType)
@@ -35,6 +31,6 @@ module Make (Cfg: Config.ConfigType)
        | DTBF cfg -> (module (DT_BFSynthesizer.Make (struct let config = cfg end))
                        : BFSynthesizerType)
        | MCTSBF cfg -> (module (MCTS_BFSynthesizer.Make (struct let config = cfg end))
-                       : BFSynthesizerType)
+                         : BFSynthesizerType)
        | SCQMBF cfg -> (module (SCQM_BFSynthesizer.Make (struct let config = cfg end))
                          : BFSynthesizerType)))

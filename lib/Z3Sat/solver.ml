@@ -22,7 +22,7 @@ module Make (Config: Config.ConfigType): SolverType = struct
       | Some sol ->
         if config.dim_reduction then begin
           let red_sol = SAT.Problem.minimize_core_cnf cnf sol in
-          Debug.print @@ lazy (Printf.sprintf "#vars reduced %d -> %d"
+          Debug.print @@ lazy (sprintf "#vars reduced %d -> %d"
                                  (List.length sol)
                                  (List.length red_sol));
           SAT.Problem.Sat red_sol
@@ -38,7 +38,7 @@ module Make (Config: Config.ConfigType): SolverType = struct
       | Some (_score, sol) ->
         if config.dim_reduction then begin
           let red_sol = SAT.Problem.minimize_core_cnf cnf sol in
-          Debug.print @@ lazy (Printf.sprintf "#vars reduced %d -> %d"
+          Debug.print @@ lazy (sprintf "#vars reduced %d -> %d"
                                  (List.length sol)
                                  (List.length red_sol));
           SAT.Problem.Sat red_sol

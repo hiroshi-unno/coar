@@ -1,8 +1,10 @@
 {
-  exception SyntaxError of string
-  exception ErrorFormatted of string
+  open Core
   open Lexing
   open Common.Util.LexingHelper
+
+  exception SyntaxError of string
+  exception ErrorFormatted of string
 }
 
 rule main = parse
@@ -51,7 +53,7 @@ and comment openingpos = parse
 | eof {
     raise
       (ErrorFormatted
-        (Printf.sprintf
+        (sprintf
           "%d:%d:syntax error: unterminated comment."
           openingpos.pos_lnum (openingpos.pos_cnum - openingpos.pos_bol + 1)
         )

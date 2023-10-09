@@ -3,7 +3,7 @@
     "number_of_rfun_pieces": 1,
     "number_of_disc_conj": 0,
     "number_of_rfun_lexicos": 1,
-    "depth": 1,
+    "depth": 0,
     "upper_bound_rfun_coeff": 1,
     "upper_bound_rfun_const": 0,
     "upper_bound_disc_coeff": 1,

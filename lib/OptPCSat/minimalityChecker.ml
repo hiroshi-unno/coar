@@ -18,14 +18,14 @@ module Make (Config : Config.ConfigType) : OptimalityChecker.OptimalityCheckerTy
         match ExtFile.unwrap config.opt_check_solver with
         | Ok cfg -> PCSPSolver.Solver.make cfg
         | Error exn -> Error.raise exn)
-  let backward_of pysenv bwd_theta idx_map (nwf:PCSP.Kind.nwf) exi_senv i (uni_senv, ps, ns, phi) =
+  let backward_of pysenv bwd_theta idx_map (nwf:Kind.nwf) exi_senv i (uni_senv, ps, ns, phi) =
     assert (Set.is_singleton ps);
     Debug.print @@ lazy "";
     Debug.print @@ lazy "";
     Debug.print_log ~tag:"*** backward_of" @@ lazy
       (Clause.str_of exi_senv (uni_senv, ps, ns, phi));
     let p_y, args_y =
-      Set.Poly.to_list ps |> List.hd_exn |> Term.let_apps
+      Set.to_list ps |> List.hd_exn |> Term.let_apps
       |> (fun (p_y, args_y) -> fst @@ Term.let_var p_y, args_y)
     in
     let p_y_subst =
@@ -34,7 +34,7 @@ module Make (Config : Config.ConfigType) : OptimalityChecker.OptimalityCheckerTy
       List.map ~f:fst @@ Map.Poly.find_exn pysenv p_y
     in
     let p_xs, args_xs =
-      Set.Poly.to_list ns
+      Set.to_list ns
       |> List.map ~f:Term.let_apps
       |> List.map ~f:(fun (p, args) -> fst @@ Term.let_var p, args)
       |> List.unzip
@@ -55,11 +55,11 @@ module Make (Config : Config.ConfigType) : OptimalityChecker.OptimalityCheckerTy
       |> List.unzip
     in
     let wfs_senv, wfapps =
-      List.map (List.zip_exn p_xs args_xs) ~f:(fun (p_x, args_x) ->
+      List.unzip @@ List.map2_exn p_xs args_xs ~f:(fun p_x args_x ->
           let wf, wfsort, appterm =
-            PCSP.Kind.app_nwf_predicate nwf [] (p_y, args_y) (p_x, args_x)
+            Kind.app_nwf_predicate nwf [] (p_y, args_y) (p_x, args_x)
           in
-          (wf, wfsort), appterm) |> List.unzip
+          (wf, wfsort), appterm)
     in
     let exi_senv =
       Map.force_merge_list
@@ -117,12 +117,11 @@ module Make (Config : Config.ConfigType) : OptimalityChecker.OptimalityCheckerTy
     Debug.print_log ~tag:"backward_constrs:\n" @@ lazy
       (String.concat_map_list ~sep:"\n" constrs ~f:(ExtTerm.str_of_formula exi_senv uni_senv));
     let kind_map =
-      List.unzip pfs_senv |> fst
-      |> List.map ~f:(fun pf -> pf, PCSP.Kind.FN)
+      List.unzip pfs_senv |> fst |> List.map ~f:(fun pf -> pf, Kind.FN)
       |> Map.Poly.of_alist_exn
     in
     let tvs = ExtTerm.fvs_of (ExtTerm.and_of constrs) in
-    let uni_senv = Map.Poly.filter_keys uni_senv ~f:(Set.Poly.mem tvs) in
+    let uni_senv = Map.Poly.filter_keys uni_senv ~f:(Set.mem tvs) in
     exi_senv, kind_map, (uni_senv, (p_y, constrs))
 
   let init_bwd_theta_of exi_senv theta =
@@ -154,7 +153,7 @@ module Make (Config : Config.ConfigType) : OptimalityChecker.OptimalityCheckerTy
 
   let backward_clauses_of pvars pysenv idx_map nwf theta exi_senv uni_senv defs =
     let trans_cls, start_cls =
-      List.partition_tf defs ~f:( fun (_, _, ns, _) -> Fn.non Set.Poly.is_empty ns)
+      List.partition_tf defs ~f:( fun (_, _, ns, _) -> Fn.non Set.is_empty ns)
     in
     let bwd_theta = OptimalityChecker.bwd_theta_of ~init:(init_bwd_theta_of exi_senv theta) exi_senv start_cls in
     let init_clauses =
@@ -204,9 +203,9 @@ module Make (Config : Config.ConfigType) : OptimalityChecker.OptimalityCheckerTy
     let idx_map = Map.Poly.of_alist_exn idxs in
     let pinfo = Map.Poly.find_exn idx_map p in
     let (pi, _), sorts_p, _ = pinfo in
-    let nwf = PCSP.Kind.create_nwf (Tvar (sprintf "WF%d" pi)) [] in
-    List.iter idxs ~f:(fun (p, (_, sorts, _)) -> PCSP.Kind.set_tag nwf p sorts);
-    let kind_map = PCSP.Kind.kind_map_of_nwf nwf in
+    let nwf = Kind.create_nwf (Tvar (sprintf "WF%d" pi)) [] in
+    List.iter idxs ~f:(fun (p, (_, sorts, _)) -> Kind.set_tag nwf p sorts);
+    let kind_map = Kind.kind_map_of_nwf nwf in
     let pdoms =
       List.map idxs ~f:(fun (p, (_, sorts, pdom)) ->
           p, (pdom, Sort.mk_fun @@ sorts @ [ExtTerm.SBool]))
@@ -249,10 +248,10 @@ module Make (Config : Config.ConfigType) : OptimalityChecker.OptimalityCheckerTy
     let exi_senv1, kind_map1, trans_clauses =
       backward_clauses_of pvars pysenv idx_map nwf theta exi_senv uni_senv defs
     in
-    let kind_map = Map.force_merge_list [kind_map; kind_map1;] in
+    let kind_map = Map.force_merge_list [kind_map; kind_map1] in
     let exi_senv = exi_senv1  in
     let clauses =
-      Set.Poly.union trans_clauses goal
+      Set.union trans_clauses goal
       (* |> Set.concat_map ~f:(simplify_fnpvs exi_senv fnpvs) *)
     in
     let params =
@@ -269,7 +268,7 @@ module Make (Config : Config.ConfigType) : OptimalityChecker.OptimalityCheckerTy
       |> PCSP.Problem.formulas_of
       |> PCSP.Problem.of_formulas ~params
     in
-    let bpvs = Set.Poly.filter ~f:OptimalityChecker.is_ptseitin @@ Map.key_set exi_senv in
+    let bpvs = Set.filter ~f:OptimalityChecker.is_ptseitin @@ Map.key_set exi_senv in
     (* Solver.reset (); *)
     let (module Solver : PCSPSolver.Solver.SolverType) = pcsp_solver_of p in
     match Solver.solve ~bpvs pcsp' with

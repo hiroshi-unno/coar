@@ -150,11 +150,11 @@ module Make (Config : Config.ConfigType) = struct
                     |> SimplState.map_res (SimplResult.add_seqls [t, T_array.SArray (sv1, sv2)])
                     |> SimplState.add_ssubs [sv1, t1; sv2, t2] in
         simplify_ssubs state
-      | t, T_dt.SDT dt when Fn.non List.is_empty (Datatype.args_of dt) ->
-        let args = Datatype.args_of dt in
+      | t, T_dt.SDT dt when Fn.non List.is_empty (Datatype.params_of dt) ->
+        let args = Datatype.params_of dt in
         let svs = List.init (List.length args) ~f:(fun _ -> Sort.mk_fresh_svar ()) in
         let state = state
-                    |> SimplState.map_res (SimplResult.add_seqls [t, T_dt.SDT (Datatype.update_args dt svs)])
+                    |> SimplState.map_res (SimplResult.add_seqls [t, T_dt.SDT (Datatype.update_params dt svs)])
                     |> SimplState.add_ssubs (List.map2_exn svs args ~f:(fun sv s -> (sv, s))) in
         simplify_ssubs state
       | t, T_tuple.STuple ((_ :: _) as ss) ->
@@ -181,11 +181,11 @@ module Make (Config : Config.ConfigType) = struct
                     |> SimplState.map_res (SimplResult.add_seqls [t, T_array.SArray (sv1, sv2)])
                     |> SimplState.add_ssubs [t1, sv1; t2, sv2] in
         simplify_ssubs state
-      | T_dt.SDT dt, t when Fn.non List.is_empty (Datatype.args_of dt) ->
-        let args = Datatype.args_of dt in
+      | T_dt.SDT dt, t when Fn.non List.is_empty (Datatype.params_of dt) ->
+        let args = Datatype.params_of dt in
         let svs = List.init (List.length args) ~f:(fun _ -> Sort.mk_fresh_svar ()) in
         let state = state
-                    |> SimplState.map_res (SimplResult.add_seqls [t, T_dt.SDT (Datatype.update_args dt svs)])
+                    |> SimplState.map_res (SimplResult.add_seqls [t, T_dt.SDT (Datatype.update_params dt svs)])
                     |> SimplState.add_ssubs (List.map2_exn args svs ~f:(fun s sv -> s, sv)) in
         simplify_ssubs state
       | T_tuple.STuple ((_ :: _) as ss), t ->
@@ -199,10 +199,10 @@ module Make (Config : Config.ConfigType) = struct
         simplify_ssubs state
       | _, T_dt.SDT _ | _, T_tuple.STuple []
       | _, T_bool.SBool | _, T_int.SInt | _, T_int.SRefInt | _, T_real.SReal
-      | _, T_string.SString | _, T_sequence.SFinSequence | _, T_sequence.SInfSequence
+      | _, T_string.SString | _, T_sequence.SSequence _ | _, T_regex.SRegEx
       | T_dt.SDT _, _ | T_tuple.STuple [], _
       | T_bool.SBool, _ | T_int.SInt, _ | T_int.SRefInt, _ | T_real.SReal, _
-      | T_string.SString, _ | T_sequence.SFinSequence, _ | T_sequence.SInfSequence, _ ->
+      | T_string.SString, _ | T_sequence.SSequence _, _ | T_regex.SRegEx, _ ->
         let state = SimplState.map_res (SimplResult.add_seqls [t1, t2]) state in
         simplify_ssubs state
       | _ -> failwith "unknown sort"
@@ -395,7 +395,7 @@ module Make (Config : Config.ConfigType) = struct
                       |> UniState.add_eeqls [e11, e21; e12, e22] in
           unify_eeqls state
         | Sort.EVar ev, e | e, Sort.EVar ev ->
-          if Set.Poly.mem (Term.evs_of_cont e) ev then fail ()
+          if Set.mem (Term.evs_of_cont e) ev then fail ()
           else
             let state = UniState.subst_cont (ev, e) state in
             unify_eeqls state
@@ -421,13 +421,13 @@ module Make (Config : Config.ConfigType) = struct
                       |> UniState.add_seqls [t11, t21; t12, t22] in
           unify_seqls state
         | Sort.SVar sv, t | t, Sort.SVar sv ->
-          if Set.Poly.mem (Term.svs_of_sort t) sv then fail ()
+          if Set.mem (Term.svs_of_sort t) sv then fail ()
           else
             let state = UniState.subst_sort (sv, t) state in
             unify_seqls state
         | T_dt.SDT dt1, T_dt.SDT dt2 ->
-          let args1 = Datatype.args_of dt1 in
-          let args2 = Datatype.args_of dt2 in
+          let args1 = Datatype.params_of dt1 in
+          let args2 = Datatype.params_of dt2 in
           if List.length args1 = List.length args2 then
             let state = UniState.add_seqls (List.zip_exn args1 args2) state in
             unify_seqls state
@@ -452,7 +452,7 @@ module Make (Config : Config.ConfigType) = struct
           let rv = mk_fresh_rvar () in
           let opsigl = Sort.OpSig (Common.Util.ALMap.of_alist_exn lefts, Some rv) in
           let opsigr = Sort.OpSig (Common.Util.ALMap.of_alist_exn rights, Some rv) in
-          if Set.Poly.mem (Term.rvs_of_opsig opsigr) rv1 || Set.Poly.mem (Term.rvs_of_opsig opsigl) rv2 then fail ()
+          if Set.mem (Term.rvs_of_opsig opsigr) rv1 || Set.mem (Term.rvs_of_opsig opsigl) rv2 then fail ()
           else
             let state = state
                         |> UniState.subst_opsig (rv1, opsigr)
@@ -472,7 +472,7 @@ module Make (Config : Config.ConfigType) = struct
           if Fn.non List.is_empty lefts then fail ()
           else
             let opsigr = Sort.OpSig (Common.Util.ALMap.of_alist_exn rights, None) in
-            if Set.Poly.mem (Term.rvs_of_opsig opsigr) rv then fail ()
+            if Set.mem (Term.rvs_of_opsig opsigr) rv then fail ()
             else
               let state = state
                           |> UniState.subst_opsig (rv, opsigr)
@@ -627,7 +627,7 @@ module Make (Config : Config.ConfigType) = struct
           |> PreprocState.add_ssubs [s1, sv1; sv2, s2]
           |> PreprocState.add_osubs [ov1, o1; o2, ov2]
           |> preprocess in
-        let embedded = Set.Poly.add state.embedded ev in
+        let embedded = Set.add state.embedded ev in
         let state : SearchState.t =
           { constr = preproc_res.constr; subst = preproc_res.subst; embedded } in
         search_subs ~embed state in
@@ -680,7 +680,7 @@ module Make (Config : Config.ConfigType) = struct
           let preproc_res =
             SearchState.add_subst_cont (ev, Sort.Eff (ov_new, sv_new, ev_new, o_last, s_last, e_last)) state
             |> preprocess in
-          let embedded = Set.Poly.add state.embedded ev in
+          let embedded = Set.add state.embedded ev in
           let state : SearchState.t =
             { constr = preproc_res.constr; subst = preproc_res.subst; embedded } in
           search_comps ~embed state in
@@ -701,7 +701,7 @@ module Make (Config : Config.ConfigType) = struct
         let effs =
           List.filter_map evs ~f:(fun ev ->
               Option.filter (Map.Poly.find state.subst.etheta ev) ~f:(fun e ->
-                  is_eff e && not (Set.Poly.mem state.embedded ev))) in
+                  is_eff e && not (Set.mem state.embedded ev))) in
         Option.value_map (List.hd effs) ~default:[] ~f:(fun eff ->
             List.map evs ~f:(fun ev ->
                 let e = Option.value (Map.Poly.find state.subst.etheta ev) ~default:(Sort.EVar ev) in
@@ -731,45 +731,48 @@ module Make (Config : Config.ConfigType) = struct
         constr.sub_pure_ev;
         List.concat_map constr.sub_evs_ev ~f:(fun (evs, ev) -> ev :: evs) ]
 
-  let resolve_svs (constr : Constr.t) =
+  let resolve_svs ~init_svs (constr : Constr.t) =
     assert (List.is_empty constr.sub_ev_eff && List.is_empty constr.ecomps);
-    match constr.sub_sv_sv with
-    | [] -> []
-    | (sv1, _) :: _ -> List.concat_map constr.sub_sv_sv ~f:(fun (sv2, sv3) -> [sv2, sv1; sv3, sv1])
+    let rec go subst = function
+      | [] -> Map.Poly.fold subst ~init:[] ~f:(fun ~key ~data s -> List.map data ~f:(fun sv -> (sv, key)) @ s)
+    | (sv1, sv2) :: sub_sv_sv ->
+        let sv, sv' = if Set.mem init_svs sv1 then (sv1, sv2) else (sv2, sv1) in
+        go (Map.Poly.update subst sv ~f:(fun svs -> sv' :: (Option.value svs ~default:[]))) sub_sv_sv in
+    go Map.Poly.empty constr.sub_sv_sv
 
   let squash_evs_cont e =
-    let evs = Set.Poly.to_list (Term.evs_of_cont e) in
+    let evs = Set.to_list (Term.evs_of_cont e) in
     let sbs = Map.Poly.of_alist_exn (List.map evs ~f:(fun ev -> ev, Sort.Pure)) in
     Term.subst_conts_cont sbs e
 
   let squash_evs_sort s =
-    let evs = Set.Poly.to_list (Term.evs_of_sort s) in
+    let evs = Set.to_list (Term.evs_of_sort s) in
     let sbs = Map.Poly.of_alist_exn (List.map evs ~f:(fun ev -> ev, Sort.Pure)) in
     Term.subst_conts_sort sbs s
 
   let squash_evs_opsig o =
-    let evs = Set.Poly.to_list (Term.evs_of_opsig o) in
+    let evs = Set.to_list (Term.evs_of_opsig o) in
     let sbs = Map.Poly.of_alist_exn (List.map evs ~f:(fun ev -> ev, Sort.Pure)) in
     Term.subst_conts_opsig sbs o
 
   let squash_rvs_cont e =
-    let rvs = Set.Poly.to_list (Term.rvs_of_cont e) in
+    let rvs = Set.to_list (Term.rvs_of_cont e) in
     let sbs = Map.Poly.of_alist_exn (List.map rvs ~f:(fun rv -> rv, Sort.empty_closed_opsig)) in
     Term.subst_opsigs_cont sbs e
 
   let squash_rvs_sort s =
-    let rvs = Set.Poly.to_list (Term.rvs_of_sort s) in
+    let rvs = Set.to_list (Term.rvs_of_sort s) in
     let sbs = Map.Poly.of_alist_exn (List.map rvs ~f:(fun rv -> rv, Sort.empty_closed_opsig)) in
     Term.subst_opsigs_sort sbs s
 
   let squash_rvs_opsig o =
-    let rvs = Set.Poly.to_list (Term.rvs_of_opsig o) in
+    let rvs = Set.to_list (Term.rvs_of_opsig o) in
     let sbs = Map.Poly.of_alist_exn (List.map rvs ~f:(fun rv -> rv, Sort.empty_closed_opsig)) in
     Term.subst_opsigs_opsig sbs o
 
-  let resolve (state : SearchState.t) : Subst.t =
+  let resolve ~init_svs (state : SearchState.t) : Subst.t =
     let subst_ev_pure = resolve_evs state.constr in
-    let subst_sv_sv = resolve_svs state.constr in
+    let subst_sv_sv = resolve_svs ~init_svs state.constr in
     let etheta = Map.Poly.map state.subst.etheta ~f:(fun e ->
         let e =
           List.fold subst_ev_pure ~init:e ~f:(fun e ev ->
@@ -791,32 +794,33 @@ module Make (Config : Config.ConfigType) = struct
     { etheta; stheta; otheta }
 
   let eliminate ~init_evs ~init_svs ~init_rvs (subst : Subst.t) : Subst.t =
-    let etheta = Map.Poly.filter_keys subst.etheta ~f:(Set.Poly.mem init_evs) in
-    let stheta = Map.Poly.filter_keys subst.stheta ~f:(Set.Poly.mem init_svs) in
-    let otheta = Map.Poly.filter_keys subst.otheta ~f:(Set.Poly.mem init_rvs) in
+    let etheta = Map.Poly.filter_keys subst.etheta ~f:(Set.mem init_evs) in
+    let stheta = Map.Poly.filter_keys subst.stheta ~f:(Set.mem init_svs) in
+    let otheta = Map.Poly.filter_keys subst.otheta ~f:(Set.mem init_rvs) in
     { etheta; stheta; otheta }
 
   let squash ~init_evs ~init_rvs (subst : Subst.t) : Subst.t =
     let etheta = Map.Poly.map subst.etheta ~f:(squash_evs_cont <<< squash_rvs_cont) in
-    let etheta = Set.Poly.fold init_evs ~init:etheta ~f:(fun etheta ev ->
+    let etheta = Set.fold init_evs ~init:etheta ~f:(fun etheta ev ->
         match Map.Poly.add etheta ~key:ev ~data:Sort.Pure with
         | `Ok etheta -> etheta
         | `Duplicate -> etheta) in
     let stheta = Map.Poly.map subst.stheta ~f:(squash_evs_sort <<< squash_rvs_sort) in
     let otheta = Map.Poly.map subst.otheta ~f:(squash_evs_opsig <<< squash_rvs_opsig) in
-    let otheta = Set.Poly.fold init_rvs ~init:otheta ~f:(fun otheta rv ->
+    let otheta = Set.fold init_rvs ~init:otheta ~f:(fun otheta rv ->
         match Map.Poly.add otheta ~key:rv ~data:Sort.empty_closed_opsig with
         | `Ok otheta -> otheta
         | `Duplicate -> otheta) in
     { etheta; stheta; otheta }
 
-  let postprocess ~init_evs ~init_svs ~init_rvs = resolve >> eliminate ~init_evs ~init_svs ~init_rvs >> squash ~init_evs ~init_rvs
+  let postprocess ~init_evs ~init_svs ~init_rvs =
+    resolve ~init_svs >> eliminate ~init_evs ~init_svs ~init_rvs >> squash ~init_evs ~init_rvs
 
   let discriminate_evs_cont ecompsub =
     List.fold ecompsub ~init:(Map.Poly.empty, []) ~f:(fun (ev_map, ecompsub) (effs, eff) ->
         let evs = Set.Poly.union_list (List.map (eff :: effs) ~f:Term.evs_of_cont) in
         let ev_map, etheta =
-          Set.Poly.fold evs ~init:(ev_map, Map.Poly.empty) ~f:(fun (ev_map, etheta) ev ->
+          Set.fold evs ~init:(ev_map, Map.Poly.empty) ~f:(fun (ev_map, etheta) ev ->
               let new_ev = ev(*mk_fresh_evar ()*) in
               let ev_map =
                 Map.Poly.update ev_map ev ~f:(fun new_evs ->
@@ -831,7 +835,7 @@ module Make (Config : Config.ConfigType) = struct
     List.fold osub ~init:(Map.Poly.empty, []) ~f:(fun (ev_map, osub) (o1, o2) ->
         let evs = Set.Poly.union_list (List.map [o1; o2] ~f:Term.evs_of_opsig) in
         let ev_map, etheta =
-          Set.Poly.fold evs ~init:(ev_map, Map.Poly.empty) ~f:(fun (ev_map, etheta) ev ->
+          Set.fold evs ~init:(ev_map, Map.Poly.empty) ~f:(fun (ev_map, etheta) ev ->
               let new_ev = ev(*mk_fresh_evar ()*) in
               let ev_map =
                 Map.Poly.update ev_map ev ~f:(fun new_evs ->
@@ -848,8 +852,8 @@ module Make (Config : Config.ConfigType) = struct
   }
 
   let solve eff_constrs opsig_constrs : solution =
-    let ev_equiv, ecompsubs = discriminate_evs_cont (Set.Poly.to_list eff_constrs) in
-    let ev_equiv', osubs = discriminate_evs_opsig (Set.Poly.to_list opsig_constrs) in
+    let ev_equiv, ecompsubs = discriminate_evs_cont (Set.to_list eff_constrs) in
+    let ev_equiv', osubs = discriminate_evs_opsig (Set.to_list opsig_constrs) in
     let ev_equiv = Map.Poly.merge ev_equiv ev_equiv' ~f:(fun ~key:_ data ->
         match data with
         | `Left evs | `Right evs -> Some evs

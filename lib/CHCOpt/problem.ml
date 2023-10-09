@@ -4,12 +4,9 @@ open Common.Combinator
 open Ast
 open Ast.Ident
 open Ast.Logic
+open Ast.Assertion
 
-type direction = DUp | DDown
-type dir_map = (tvar, direction) Map.Poly.t
-type priority = tvar list
-
-type t = (dir_map * priority) * PCSP.Problem.t
+type t = (dir_map * priority * fronts) * PCSP.Problem.t
 
 type solution =
   | Unknown
@@ -77,6 +74,12 @@ let direction_of_tvar_exn = function
 let extract_tvar tvar =
   if tvar_is_up tvar || tvar_is_down tvar then tvar else tvar
 
+let str_of_fronts fronts =
+  Map.Poly.to_alist fronts
+  |> String.concat_map_list ~sep:"\n" ~f:(fun (p, term) ->
+      sprintf "  %s -> %s" (name_of_tvar p) (ExtTerm.str_of term))
+  |> sprintf "{\n%s\n}"
+
 let of_pcsp pcsp =
   let delta = PCSP.Problem.senv_of @@ PCSP.Problem.remove_unused_params pcsp in
   let dir_map =
@@ -84,12 +87,14 @@ let of_pcsp pcsp =
         if Ast.Logic.Sort.is_arrow s then Some DUp
         else None)
   in
+  let fronts = Map.Poly.empty in
   let priority = topological_sort (Map.Poly.keys dir_map) [] in
-  (dir_map, priority), pcsp
+  (dir_map, priority, fronts), pcsp
 
 let of_dir_map_priorpair_pcsp dir_map prior pcsp =
+  let fronts = Map.Poly.empty in
   let priority = topological_sort (Map.Poly.keys dir_map) prior in
-  (dir_map, priority), pcsp
+  (dir_map, priority, fronts), pcsp
 
 (* for improve *)
 
@@ -99,13 +104,17 @@ let mk_fresh_args sort =
   let args = List.map senv ~f:(fst >> ExtTerm.mk_var) in
   args, senv
 
-let genc ~is_pos d delta theta (tvar, sort) : term =
+let genc ~is_pos d (fronts : (fronts * fronts)) delta theta (tvar, sort) : term =
   let args, senv = mk_fresh_args sort in
   (* L.debug ~pre:("genc:sort_of " ^ name_of_tvar tvar) @@ ExtTerm.str_of_sort sort; *)
   (* L.debug ~pre:"genc:delta" @@ str_of_sort_env_map delta; *)
   let simplify = fun body ->
     (* L.debug ~pre:"simplify" @@ ExtTerm.str_of body; *)
     ExtTerm.simplify_formula delta (Map.Poly.of_alist_exn senv) body
+  in
+  let pf = match Map.Poly.find ((if is_pos then fst else snd) @@ fronts) tvar with
+    | Some term -> ExtTerm.beta_reduction term args
+    | None -> ExtTerm.mk_bool true
   in
   let sol =
     match Map.Poly.find theta tvar with
@@ -120,8 +129,8 @@ let genc ~is_pos d delta theta (tvar, sort) : term =
   let body, head =
     let body, head =
       match d with
-      | DUp -> ExtTerm.and_of [ps], p
-      | DDown -> ExtTerm.and_of [p], ps
+      | DUp -> ExtTerm.and_of [pf; ps], p
+      | DDown -> ExtTerm.and_of [pf; p], ps
     in
     simplify body, simplify head
   in

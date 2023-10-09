@@ -53,8 +53,9 @@ module Make (Verbose : Debug.Config.ConfigType) (APCSP : PCSP.Problem.ProblemTyp
             | (tvar, _), Some term -> Map.Poly.add_exn ret ~key:tvar ~data:term
             | _ -> ret)
       in
-      let res = Set.Poly.singleton (ExClause.subst sub cl |> ExClause.add_cond cond |> ExClause.normalize_params) in
-      if Fn.non Set.Poly.is_empty res then (* note that res never represents true *)begin
+      let unknowns = Map.key_set exi_senv in
+      let res = Set.Poly.singleton (ExClause.subst sub cl |> ExClause.add_cond cond |> ExClause.normalize_params unknowns) in
+      if Fn.non Set.is_empty res then (* note that res never represents true *)begin
         Set.Poly.map res ~f:(fun ex -> ex, [cl])
       end else
         let ctx = Z3.mk_context [("MODEL", "true")] in
@@ -70,7 +71,7 @@ module Make (Verbose : Debug.Config.ConfigType) (APCSP : PCSP.Problem.ProblemTyp
 
   let of_cand_and_exs ?(smt_timeout=None) vs cls (cand : CandSol.t) =
     let uenv = VersionSpace.uenf_of vs in
-    Set.Poly.fold cls ~init:(Set.Poly.empty) ~f:(fun exs cl ->
+    Set.fold cls ~init:(Set.Poly.empty) ~f:(fun exs cl ->
         if not @@
           ExClause.exists cl ~f:(ExAtom.exists ~f:(fun term ->
               LogicOld.Term.is_var term ||
@@ -78,7 +79,7 @@ module Make (Verbose : Debug.Config.ConfigType) (APCSP : PCSP.Problem.ProblemTyp
         then exs
         else
           let exs' = of_cand_and_ex ~smt_timeout uenv (PCSP.Problem.senv_of APCSP.problem) cl cand in
-          Set.Poly.union exs exs')
+          Set.union exs exs')
 
   let str_of_conflicts conflicts =
     "********* conflicts *********\n"
@@ -89,8 +90,8 @@ module Make (Verbose : Debug.Config.ConfigType) (APCSP : PCSP.Problem.ProblemTyp
     let dpos' = of_cand_and_exs ~smt_timeout vs dpos cand in
     let dneg' = of_cand_and_exs ~smt_timeout vs dneg cand in
     let und' = of_cand_and_exs ~smt_timeout vs und cand in
-    if not (Set.Poly.is_empty dpos' && Set.Poly.is_empty dneg' && Set.Poly.is_empty und') then begin
-      let exs = Set.Poly.union dpos' dneg' |> Set.Poly.union und' in
+    if not (Set.is_empty dpos' && Set.is_empty dneg' && Set.is_empty und') then begin
+      let exs = Set.union dpos' dneg' |> Set.union und' in
       Debug.print @@ lazy (sprintf "The candidate: \n%s\n is invalid/" (CandSol.str_of cand));
       Debug.print @@ lazy ("Uninterpreted terms env after candidate checking:" ^ (Ast.LogicOld.UTermEnv.str_of @@ VersionSpace.uenf_of vs));
       Debug.print @@ lazy ("*** Counterexamples of parametric-examples to the Candidate Solutions:");
@@ -105,14 +106,14 @@ module Make (Verbose : Debug.Config.ConfigType) (APCSP : PCSP.Problem.ProblemTyp
       List.fold cands ~init:(Set.Poly.empty, Set.Poly.empty, Set.Poly.empty)
         ~f:(fun (dpos, dneg, und) cand ->
             let dpos', dneg', und' = check_candidate ~smt_timeout vs cand in
-            (Set.Poly.union dpos dpos', Set.Poly.union dneg dneg', Set.Poly.union und und'))
+            (Set.union dpos dpos', Set.union dneg dneg', Set.union und und'))
     in
-    if Set.Poly.is_empty dpos' && Set.Poly.is_empty dneg' && Set.Poly.is_empty und' then `Valid
+    if Set.is_empty dpos' && Set.is_empty dneg' && Set.is_empty und' then `Valid
     else
       let dpos = Set.Poly.map dpos ~f:(fun ex -> ex, [ex]) in
       let dneg = Set.Poly.map dneg ~f:(fun ex -> ex, [ex]) in
       let und = Set.Poly.map und ~f:(fun ex -> ex, [ex]) in
-      let (dpos, dneg, und) = (Set.Poly.union dpos dpos', Set.Poly.union dneg dneg', Set.Poly.union und und') in
+      let (dpos, dneg, und) = (Set.union dpos dpos', Set.union dneg dneg', Set.union und und') in
       match ExClauseSet.unit_propagation (Map.key_set @@ PCSP.Problem.senv_of APCSP.problem) dpos dneg und with
       | `Unsat conflicts ->
         Debug.print @@ lazy (str_of_conflicts conflicts);

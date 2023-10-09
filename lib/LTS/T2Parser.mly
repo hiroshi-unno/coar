@@ -2,11 +2,6 @@
   open Core
   open Ast
   open Ast.LogicOld
-
-let nondet_count = ref 0
-let mk_nondet () =
-  incr nondet_count;
-  Ident.Tvar (Problem.nondet_prefix ^ string_of_int !nondet_count)
 %}
 
 %token START ERROR CUTPOINT FROM TO AT SHADOW
@@ -87,7 +82,7 @@ expr:
   | LPAREN expr RPAREN { $2 }
   | INT { T_int.mk_int (Z.of_int $1) }
   | VAR { Term.mk_var (Ident.Tvar $1) T_int.SInt }
-  | NONDET LPAREN RPAREN { Term.mk_var (mk_nondet ()) T_int.SInt}
+  | NONDET LPAREN RPAREN { Term.mk_var (Problem.mk_nondet ()) T_int.SInt}
 
 cond:
   | LPAREN cond RPAREN { $2 }

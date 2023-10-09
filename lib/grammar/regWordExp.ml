@@ -1,4 +1,5 @@
 open Core
+open Common.Ext
 
 (** Regular expressions *)
 
@@ -41,10 +42,14 @@ let rec str_of str_of_symbol = function
   | Empty -> "bot"
   | Epsilon -> "eps"
   | Symbol y -> str_of_symbol y
-  | Concat (q, r) -> Format.sprintf "(%s) (%s)" (str_of str_of_symbol q) (str_of str_of_symbol r)
-  | Alter (q, r) -> Format.sprintf "(%s | %s)" (str_of str_of_symbol q) (str_of str_of_symbol r)
-  | Repeat q -> Format.sprintf "(%s)*" (str_of str_of_symbol q)
-  | RepeatInf q -> Format.sprintf "(%s)!" (str_of str_of_symbol q)
+  | Concat (q, r) ->
+    sprintf "%s %s"
+      (String.paren @@ str_of str_of_symbol q)
+      (String.paren @@ str_of str_of_symbol r)
+  | Alter (q, r) ->
+    String.paren @@ sprintf "%s | %s" (str_of str_of_symbol q) (str_of str_of_symbol r)
+  | Repeat q -> sprintf "%s*" (String.paren @@ str_of str_of_symbol q)
+  | RepeatInf q -> sprintf "%s!" (String.paren @@ str_of str_of_symbol q)
 
 (*
 (** @test simple *)

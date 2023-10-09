@@ -4,7 +4,7 @@ killtree=./script/killtree.sh
 LLVM2KITTEL=~/llvm2kittel/build/llvm2kittel
 CLANG=clang
 
-#INPUT=`basename $1 ".c"`
+#INPUT=$(basename $1 ".c")
 BCFILE=$(mktemp --suffix=.bc)
 T2FILE=$(mktemp --suffix=.t2)
 

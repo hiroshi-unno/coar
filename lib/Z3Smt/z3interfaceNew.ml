@@ -313,9 +313,9 @@ module ExtTerm : TermType = struct
 end
 
 module Make (Term : TermType) : sig
-  val of_term: context -> (Ident.tvar, Sort.t) List.Assoc.t -> Logic.term -> Z3.Expr.expr
-  val term_of: (Ident.tvar, Sort.t) List.Assoc.t -> Z3.Expr.expr -> Logic.term
-  val check_sat: Logic.term list -> (Ident.tvar, Sort.t) List.Assoc.t -> context -> (Ident.tvar * Logic.term option) list option
+  val of_term: context -> sort_env_list -> Logic.term -> Z3.Expr.expr
+  val term_of: sort_env_list -> Z3.Expr.expr -> Logic.term
+  val check_sat: Logic.term list -> sort_env_list -> context -> (Ident.tvar * Logic.term option) list option
 end = struct
   open Logic.Term
 
@@ -329,7 +329,7 @@ end = struct
       let var, _ = let_var term in
       match List.findi env ~f:(fun _ (key, _) -> Stdlib.(key = var)) with
       | Some (_i, (_, sort)) -> Expr.mk_const ctx (of_var ctx var) (Term.of_sort ctx sort)
-      | None -> failwith @@ Printf.sprintf "var %s cannot be found in the env" (match var with | Ident.Tvar v -> v)
+      | None -> failwith @@ sprintf "var %s cannot be found in the env" (match var with | Ident.Tvar v -> v)
     else if is_con term then
       let sym, _ = let_con term in Term.of_nullary_con ctx sym
     else if is_app term then

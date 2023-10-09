@@ -1,5 +1,3 @@
-(menhir (modules refTypParser))
-(ocamllex (modules refTypLexer))
 (library
   (name RCaml)
   (public_name CoAR.RCaml)
@@ -16,9 +14,6 @@
     CoAR.CHCOptSolver
     CoAR.PCSPSolver)
   (modules
-    refTypLexer
-    refTypParser
-    envs
     solver
     config
     problem

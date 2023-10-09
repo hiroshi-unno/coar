@@ -1,0 +1,11 @@
+(library
+  (name PLTS)
+  (public_name CoAR.PLTS)
+  (libraries
+    CoAR.ast
+    CoAR.SMT
+    CoAR.LTS)
+  (modules
+    parser
+    problem)
+  (synopsis "Pushdown Labeled Transition Systems"))

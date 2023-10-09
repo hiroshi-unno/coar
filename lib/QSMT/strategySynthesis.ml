@@ -1,5 +1,6 @@
 open Core
 open Common.Ext
+open Common.Combinator
 open Ast
 open Ast.Logic
 
@@ -43,7 +44,7 @@ module StrategySynthesis (A : sig
     val rename_var_atom : Ident.tvar -> Ident.tvar -> atom -> atom
     val term_of_atom : atom -> Logic.term
     val select : (Ident.tvar, domain) Map.Poly.t -> Ident.tvar -> atom PreFormula.formula -> term
-    val check_sat : atom PreFormula.formula -> (Ident.tvar, Sort.t) List.Assoc.t -> (Ident.tvar, domain) Map.Poly.t option
+    val check_sat : atom PreFormula.formula -> sort_env_list -> (Ident.tvar, domain) Map.Poly.t option
     val term_of_term : term -> Logic.term
   end) = struct
   open PreFormula
@@ -272,7 +273,7 @@ module LIA = struct
     | Gt0 a -> Affine.to_string a ^ " > 0"
     | Div (d, a) -> Z.to_string d ^ " | " ^ Affine.to_string a
   let term_to_string (t, a, b) =
-    Printf.sprintf "[(%s) / %s] %s %s" (Affine.to_string t) (Z.to_string a) (if Z.(Compare.(b < zero)) then "-" else "+") (Z.abs b |> Z.to_string)
+    sprintf "[(%s) / %s] %s %s" (Affine.to_string t) (Z.to_string a) (if Z.(Compare.(b < zero)) then "-" else "+") (Z.abs b |> Z.to_string)
   let list_init_z n ~f =
     let rec loop n' =
       if Z.Compare.(n' < n) then
@@ -495,9 +496,9 @@ module LIAStrategySynthesis = struct
   let rec formula_to_string = function
     | Atom a -> LIA.atom_to_string a
     | And l ->
-      String.concat_map_list ~sep:" /\\ " ~f:(fun f -> "(" ^ formula_to_string f ^ ")") l
+      String.concat_map_list ~sep:" /\\ " ~f:(formula_to_string >> String.paren) l
     | Or l ->
-      String.concat_map_list ~sep:" \\/ " ~f:(fun f -> "(" ^ formula_to_string f ^ ")") l
+      String.concat_map_list ~sep:" \\/ " ~f:(formula_to_string >> String.paren) l
     | Bind (b, (tvar, _), f) ->
       (match b with Forall -> "forall" | Exists -> "exists") ^ " " ^
       Ident.name_of_tvar tvar ^ ". " ^ formula_to_string f
@@ -528,10 +529,10 @@ module LIAStrategySynthesis = struct
       Buffer.contents buf*)
   let rec sstree_to_string ?(indent=0) = function
     | ForallSS ((tvar, _), f) ->
-      Format.sprintf "%sforall %s\n%s" (String.make indent ' ') (Ident.name_of_tvar tvar) (ssforest_to_string ~indent:(indent+1) f)
+      sprintf "%sforall %s\n%s" (String.make indent ' ') (Ident.name_of_tvar tvar) (ssforest_to_string ~indent:(indent+1) f)
     | ExistsSS ((tvar, _), l) ->
-      Format.sprintf "%sexists %s\n%s" (String.make indent ' ') (Ident.name_of_tvar tvar) (List.map l ~f:(fun (t, f) ->
-          Format.sprintf "%s%s\n%s" (String.make (indent+1) ' ') (LIA.term_to_string t) (ssforest_to_string ~indent:(indent+2) f)) |> String.concat)
+      sprintf "%sexists %s\n%s" (String.make indent ' ') (Ident.name_of_tvar tvar) (List.map l ~f:(fun (t, f) ->
+          sprintf "%s%s\n%s" (String.make (indent+1) ' ') (LIA.term_to_string t) (ssforest_to_string ~indent:(indent+2) f)) |> String.concat)
   and ssforest_to_string ?(indent=0) f =
     List.map f ~f:(sstree_to_string ~indent) |> String.concat
 end
@@ -561,7 +562,7 @@ module RTerm = struct
         | Some tvar -> Term.mk_apps (RealTerm.mk_rmult ()) [RealTerm.mk_real data; Term.mk_var tvar]) |> RealTerm.sum
   let rec of_term = function
     | Con (RealTerm.Real r, _) -> Some (of_q r)
-    | Con (IntTerm.Int n, _) -> Some (of_q @@Q.of_bigint n)
+    | Con (IntTerm.Int n, _) -> Some (of_q @@ Q.of_bigint n)
     | Var (var, _) -> Some (of_var var)
     | App (App (Con (RealTerm.RAdd, _), t1, _), t2, _)
     | App (App (Con (IntTerm.Add, _), t1, _), t2, _) ->
@@ -738,19 +739,19 @@ module LRA = struct
       List.fold l ~init:(Set.Poly.empty, Set.Poly.empty)
         ~f:(fun (ub, lb) a ->
             let (newub, newlb) = ub_and_lb model tvar a in
-            (Set.Poly.union ub newub, Set.Poly.union lb newlb))
+            (Set.union ub newub, Set.union lb newlb))
     | Or l ->
       List.fold l ~init:(Set.Poly.empty, Set.Poly.empty)
         ~f:(fun (ub, lb) a ->
             let (newub, newlb) = ub_and_lb model tvar a in
-            (Set.Poly.union ub newub, Set.Poly.union lb newlb))
+            (Set.union ub newub, Set.union lb newlb))
     | Bind (_, _, f) -> ub_and_lb model tvar f
   let lub model ub =
-    let m_lub = Set.Poly.fold ub ~init:Q.inf ~f:(fun lub t -> Q.min lub (eval_term model t)) in
-    Set.Poly.find ub ~f:(fun t -> Q.(m_lub = (eval_term model t)))
+    let m_lub = Set.fold ub ~init:Q.inf ~f:(fun lub t -> Q.min lub (eval_term model t)) in
+    Set.find ub ~f:(fun t -> Q.(m_lub = (eval_term model t)))
   let glb model lb =
-    let m_glb = Set.Poly.fold lb ~init:Q.minus_inf ~f:(fun glb t -> Q.max glb (eval_term model t)) in
-    Set.Poly.find lb ~f:(fun t -> Q.(m_glb = (eval_term model t)))
+    let m_glb = Set.fold lb ~init:Q.minus_inf ~f:(fun glb t -> Q.max glb (eval_term model t)) in
+    Set.find lb ~f:(fun t -> Q.(m_glb = (eval_term model t)))
   let select model tvar f =
     match eq model tvar f with
     | Some t -> t
@@ -789,18 +790,18 @@ module LRAStrategySynthesis = struct
   let rec formula_to_string = function
     | Atom a -> LRA.atom_to_string a
     | And l ->
-      String.concat_map_list ~sep:" /\\ " ~f:(fun f -> "(" ^ formula_to_string f ^ ")") l
+      String.concat_map_list ~sep:" /\\ " ~f:(formula_to_string >> String.paren) l
     | Or l ->
-      String.concat_map_list ~sep:" \\/ " ~f:(fun f -> "(" ^ formula_to_string f ^ ")") l
+      String.concat_map_list ~sep:" \\/ " ~f:(formula_to_string >> String.paren) l
     | Bind (b, (tvar, _), f) ->
       (match b with Forall -> "forall" | Exists -> "exists") ^ " " ^
       Ident.name_of_tvar tvar ^ ". " ^ formula_to_string f
   let rec sstree_to_string ?(indent=0) = function
     | ForallSS ((tvar, _), f) ->
-      Format.sprintf "%sforall %s\n%s" (String.make indent ' ') (Ident.name_of_tvar tvar) (ssforest_to_string ~indent:(indent+1) f)
+      sprintf "%sforall %s\n%s" (String.make indent ' ') (Ident.name_of_tvar tvar) (ssforest_to_string ~indent:(indent+1) f)
     | ExistsSS ((tvar, _), l) ->
-      Format.sprintf "%sexists %s\n%s" (String.make indent ' ') (Ident.name_of_tvar tvar) (List.map l ~f:(fun (t, f) ->
-          Format.sprintf "%s%s\n%s" (String.make (indent+1) ' ') (LRA.term_to_string t) (ssforest_to_string ~indent:(indent+2) f)) |> String.concat)
+      sprintf "%sexists %s\n%s" (String.make indent ' ') (Ident.name_of_tvar tvar) (List.map l ~f:(fun (t, f) ->
+          sprintf "%s%s\n%s" (String.make (indent+1) ' ') (LRA.term_to_string t) (ssforest_to_string ~indent:(indent+2) f)) |> String.concat)
   and ssforest_to_string ?(indent=0) f =
     List.map f ~f:(sstree_to_string ~indent) |> String.concat
 end
@@ -907,18 +908,18 @@ module QBFStrategySynthesis = struct
   let rec formula_to_string = function
     | Atom a -> LRA.atom_to_string a
     | And l ->
-      String.concat_map_list ~sep:" /\\ " ~f:(fun f -> "(" ^ formula_to_string f ^ ")") l
+      String.concat_map_list ~sep:" /\\ " ~f:(formula_to_string >> String.paren) l
     | Or l ->
-      String.concat_map_list ~sep:" \\/ " ~f:(fun f -> "(" ^ formula_to_string f ^ ")") l
+      String.concat_map_list ~sep:" \\/ " ~f:(formula_to_string >> String.paren) l
     | Bind (b, (tvar, _), f) ->
       (match b with Forall -> "forall" | Exists -> "exists") ^ " " ^
       Ident.name_of_tvar tvar ^ ". " ^ formula_to_string f
   let rec sstree_to_string ?(indent=0) = function
     | ForallSS ((tvar, _), f) ->
-      Format.sprintf "%sforall %s\n%s" (String.make indent ' ') (Ident.name_of_tvar tvar) (ssforest_to_string ~indent:(indent+1) f)
+      sprintf "%sforall %s\n%s" (String.make indent ' ') (Ident.name_of_tvar tvar) (ssforest_to_string ~indent:(indent+1) f)
     | ExistsSS ((tvar, _), l) ->
-      Format.sprintf "%sexists %s\n%s" (String.make indent ' ') (Ident.name_of_tvar tvar) (List.map l ~f:(fun (t, f) ->
-          Format.sprintf "%s%s\n%s" (String.make (indent+1) ' ') (QBF.term_to_string t) (ssforest_to_string ~indent:(indent+2) f)) |> String.concat)
+      sprintf "%sexists %s\n%s" (String.make indent ' ') (Ident.name_of_tvar tvar) (List.map l ~f:(fun (t, f) ->
+          sprintf "%s%s\n%s" (String.make (indent+1) ' ') (QBF.term_to_string t) (ssforest_to_string ~indent:(indent+2) f)) |> String.concat)
   and ssforest_to_string ?(indent=0) f =
     List.map f ~f:(sstree_to_string ~indent) |> String.concat
 end

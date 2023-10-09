@@ -5,7 +5,7 @@ open Ast.LogicOld
 open PCSatCommon
 
 let make seeds =
-  Set.Poly.fold ~init:(Set.Poly.singleton (T_int.zero (), T_int.zero ())) seeds ~f:(fun acc (x, _, t) ->
+  Set.fold ~init:(Set.Poly.singleton (T_int.zero (), T_int.zero ())) seeds ~f:(fun acc (x, _, t) ->
       Set.Poly.union_list
         [acc;
          Set.Poly.map acc ~f:(fun (left, right) -> (T_int.mk_add x left, T_int.mk_add t right));
@@ -15,12 +15,12 @@ let make seeds =
         Normalizer.normalize @@
         Formula.geq left (Evaluator.eval_term right |> Term.of_value)
       in
-      if Set.Poly.is_empty @@ Formula.fvs_of qual then None else Some qual)
+      if Set.is_empty @@ Formula.fvs_of qual then None else Some qual)
 
 let octahedron_half_spaces_of sorts examples =
   let params = LogicOld.sort_env_list_of_sorts sorts in
   params,
-  Set.Poly.union
+  Set.union
     (Set.Poly.of_list params
      |> Set.Poly.filter_map ~f:(function
          | (x, T_bool.SBool) -> Some (Term.mk_var x T_bool.SBool)

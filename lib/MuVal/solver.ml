@@ -2,6 +2,7 @@ open Core
 open Common
 open Common.Ext
 open Common.Util
+open Common.Combinator
 open Ast
 open Ast.LogicOld
 open MuCLP.Problem
@@ -13,152 +14,193 @@ module Make (Cfg: Config.ConfigType) = struct
   module Reducer = Reducer.Make (struct let config = config end)
   module Qelim = MuCLP.Qelim.Make (struct let config = config.qelim end)
 
-  let pcsp_solver ()(* ToDo *) = let open Or_error in
-    ExtFile.unwrap config.pcsp_solver >>= fun cfg ->
-    Ok (module (PCSPSolver.Solver.Make (struct let config = cfg end)) : PCSPSolver.Solver.SolverType)
+  let pcsp_solver ~primal(* ToDo *) = let open Or_error in
+    ExtFile.unwrap (if primal then config.pcsp_solver_primal else config.pcsp_solver_dual) >>= fun cfg ->
+    PCSPSolver.Solver.(Ok (module (Make (struct let config = cfg end)) : SolverType))
 
-  let optimizer = let open Or_error in
-    ExtFile.unwrap config.optimizer >>= fun cfg ->
-    Ok (MuCLP.Optimizer.make cfg)
+  let optimizer_cfg = ExtFile.unwrap config.optimizer
 
-  let messenger = None
-  let fenv = Map.Poly.empty (*TODO: generate fenv*)
+  let preprocess ?(id=None) ?(elim_forall=true) ?(elim_exists=true) ?(elim_pvar_args=true) muclp =
+    let open Or_error in
+    optimizer_cfg >>= fun optimizer_cfg -> Ok (MuCLP.Optimizer.make optimizer_cfg)
+    >>= fun (module Optimizer : MuCLP.Optimizer.OptimizerType) ->
+    let muclp = if config.check_problem then check_problem muclp else muclp in
+    Debug.print ~id @@ lazy (sprintf "before optimization: %s\n" @@ str_of muclp);
+    let muclp = Optimizer.f ~id ~elim_forall ~elim_exists ~elim_pvar_args (simplify muclp) in
+    Debug.print ~id @@ lazy (sprintf "after optimization: %s\n" @@ str_of muclp);
+    Ok muclp
 
-  let preprocess muclp =
-    Or_error.
-      (optimizer >>= fun (module Optimizer : MuCLP.Optimizer.OptimizerType) ->
-       let muclp = if config.check_problem then MuCLP.Problem.check_problem muclp else muclp in
-       Debug.print @@ lazy (Printf.sprintf "Input muCLP: %s\n" @@ MuCLP.Problem.str_of muclp);
-       let muclp = Optimizer.optimize @@ MuCLP.Problem.simplify muclp in
-       Debug.print @@ lazy (Printf.sprintf "Simplified/Optimized muCLP: %s\n" @@ MuCLP.Problem.str_of muclp);
-       Ok muclp)
-
-  let pfwcsp_of ?(id=None) ~divide_query messenger gen_partial_info (ordpvs, fnpvs, fnsenv) muclp =
+  let pfwcsp_of ?(id=None) ~messenger ~exc_info (ordpvs, (fnpvs, fnsenv)) muclp =
     let muclp =
-      muclp |> MuCLP.Problem.aconv_tvar |> MuCLP.Problem.complete_tsort
-      |> MuCLP.Problem.complete_psort (Map.of_set_exn @@ Set.Poly.union ordpvs fnpvs)
+      let pvs = Map.of_set_exn @@ Set.union ordpvs fnpvs in
+      muclp |> aconv_tvar |> complete_tsort |> complete_psort pvs
     in
-    Debug.print @@ lazy (Printf.sprintf "Preprocessed muCLP: %s\n" @@ MuCLP.Problem.str_of muclp);
-    let pcsp = Reducer.f ~id ~divide_query muclp messenger (ordpvs, fnpvs, fnsenv) in
-    let params =
-      { (PCSP.Problem.params_of pcsp) with
-        PCSP.Params.partial_sol_targets = fst gen_partial_info;
-        PCSP.Params.dep_graph = snd gen_partial_info }
+    (*Debug.print ~id @@ lazy (sprintf "Preprocessed muCLP: %s\n" @@ str_of muclp);*)
+    let pfwcsp =
+      let exchange = Option.is_some exc_info in
+      Reducer.f ~id ~exchange ~messenger muclp (ordpvs, fnpvs, fnsenv)
     in
-    let pfwcsp = PCSP.Problem.update_params pcsp params in
-    Debug.print @@ lazy (Printf.sprintf "******* Generated pfwCSP:\n%s" @@ PCSP.Problem.str_of pfwcsp);
+    let pfwcsp =
+      match exc_info with None -> pfwcsp | Some (partial_sol_targets, dep_graph) ->
+        PCSP.Problem.update_params pfwcsp @@
+        PCSP.Problem.{ (params_of pfwcsp) with partial_sol_targets; dep_graph }
+    in
+    Debug.print ~id @@ lazy
+      (sprintf "******* Generated pfwCSP:\n%s" @@ PCSP.Problem.str_of pfwcsp);
     pfwcsp
 
-  let check_forall_only ~id ~divide_query messenger gen_partial_info (fnpvs, fnsenv) muclp : (solution * int) Or_error.t =
-    Or_error.Monad_infix.
-      (pcsp_solver () >>= fun (module PCSPSolver) ->
-       pfwcsp_of ~id ~divide_query messenger gen_partial_info (Set.Poly.empty, fnpvs, fnsenv) muclp
-       |> PCSP.Problem.map_if_raw ~f:(Set.Poly.map ~f:Logic.Term.refresh)
-       |> PCSPSolver.solve >>= (function
-           | PCSP.Problem.Sat _, num_iters -> Ok (Valid, num_iters)
-           | Unsat, num_iters -> Ok (Invalid, num_iters)
-           | Unknown, num_iters -> Ok (Unknown, num_iters)
-           | OutSpace _, _ -> failwith "out of space" (* TODO *)))
-  let check ?(id=None) ?(gen_partial_info=Map.Poly.empty, Map.Poly.empty) messenger muclp  =
-    if MuCLP.Problem.has_only_forall muclp then begin
+  let check ~primal ?(id=None) ~messenger ~exc_info muclp =
+    let check_forall_only kindmap muclp : (solution * int) Or_error.t =
+      let open Or_error.Monad_infix in
+      pcsp_solver ~primal >>= fun (module PCSPSolver) ->
+      muclp
+      |> pfwcsp_of ~id ~messenger ~exc_info (Set.Poly.empty, kindmap)
+      |> PCSP.Problem.map_if_raw ~f:(Set.Poly.map ~f:Logic.Term.refresh)
+      |> PCSPSolver.solve >>= (function
+          | PCSP.Problem.Sat _, num_iters -> Ok (Valid, num_iters)
+          | Unsat, num_iters -> Ok (Invalid, num_iters)
+          | Unknown, num_iters -> Ok (Unknown, num_iters)
+          | OutSpace _, _ -> failwith "out of space" (* TODO *))
+    in
+    if has_only_forall muclp then
       (** no encoding of existential quantifiers required *)
-      check_forall_only ~id messenger gen_partial_info (Set.Poly.empty, Map.Poly.empty) muclp
-    end else begin
-      Debug.print @@ lazy (Printf.sprintf "original: %s\n" @@ MuCLP.Problem.str_of muclp);
+      check_forall_only (Set.Poly.empty, Map.Poly.empty) muclp
+    else begin
+      (*Debug.print ~id @@ lazy (sprintf "Input muCLP: %s\n" @@ str_of muclp);*)
       let muclp, kindmap = Qelim.elim_exists muclp Set.Poly.empty in
-      Debug.print @@ lazy (Printf.sprintf "existential quantifiers eliminated: %s\n" @@ MuCLP.Problem.str_of muclp);
-      check_forall_only ~id messenger gen_partial_info kindmap muclp
+      (* Skolemize existential quantifiers *)
+      Debug.print ~id @@ lazy (sprintf "Skolemized: %s\n" @@ str_of muclp);
+      check_forall_only kindmap muclp
     end
 
-  let rec solve_primal
-      ?(id=None) ?(gen_partial_info=Map.Poly.empty, Map.Poly.empty) ~divide_query messenger
-      flip_on_failure muclp =
+  let rec solve_primal ?(id=None) ~messenger ~exc_info flip_on_failure muclp =
     Or_error.Monad_infix.
-      (check ~id ~gen_partial_info ~divide_query messenger muclp
+      (muclp |> check ~primal:true ~id ~messenger ~exc_info
        >>= (function
            | Unknown, num_iters ->
              if flip_on_failure
-             then solve_dual ~id ~gen_partial_info ~divide_query messenger false muclp
+             then solve_dual ~id ~messenger ~exc_info false muclp
              else Ok (Unknown, num_iters)
            | x -> Ok x))
-  and solve_dual
-      ?(id=None) ?(gen_partial_info=Map.Poly.empty, Map.Poly.empty) ~divide_query messenger
-      flip_on_failure muclp =
+  and solve_dual ?(id=None) ~messenger ~exc_info flip_on_failure muclp =
     Or_error.Monad_infix.
-      (check ~id ~gen_partial_info ~divide_query messenger @@ MuCLP.Problem.get_dual muclp
+      (get_dual muclp |> check ~primal:false ~id ~messenger ~exc_info
        >>= (function
            | Unknown, num_iters ->
              if flip_on_failure
-             then solve_primal ~id ~gen_partial_info ~divide_query messenger false muclp
+             then solve_primal ~id ~messenger ~exc_info false muclp
              else Ok (Unknown, num_iters)
-           | (res, num_iters) -> Ok (flip_solution res, num_iters)))
+           | res, num_iters -> Ok (flip_solution res, num_iters)))
 
-  let get_candidate_solution_messages messenger mean_id cache =
-    match messenger with
+  let solve_primal_dual muclp = let open Or_error.Monad_infix in
+    assert (config.number_of_pairs >= 1);
+    let pool = Util.Task.setup_pool ~num_additional_domains:(2 * config.number_of_pairs) in
+    let rec gen_tasks i =
+      if i < config.number_of_pairs then
+        let id_primal = Some (i * 2 + 1) in
+        let id_dual = Some (i * 2 + 2) in
+        let task_primal = Util.Task.async pool (fun () ->
+            Debug.print @@ lazy "task_prove";
+            solve_primal ~id:id_primal ~messenger:None ~exc_info:None false muclp) in
+        let task_dual = Util.Task.async pool (fun () ->
+            Debug.print @@ lazy "task_disprove";
+            solve_dual ~id:id_dual ~messenger:None ~exc_info:None false muclp) in
+        task_primal :: task_dual :: gen_tasks (i + 1)
+      else []
+    in
+    try gen_tasks 0 |> Util.Task.await_any_promise pool >>=
+      function (sol, num_iters) -> Debug.print @@ lazy "task over"; Ok (sol, num_iters)
+    with err -> Or_error.of_exn err
+
+  (*type info += Examples of ExClauseSet.t
+    let send_examples messenger id exs = send_boardcast messenger id @@ Examples exs
+    let receive_examples messenger_opt id =
+    match messenger_opt with
+    | None -> Set.Poly.empty
+    | Some messenger ->
+      receive_all_infos_with messenger id ~filter:(function Examples _ -> true | _ -> false)
+      |> List.map ~f:(function (_, Examples exs) -> exs | _ -> Set.Poly.empty)
+      |> Set.Poly.union_list*)
+
+  let receive_candidate_solutions messenger_opt mean_id cache =
+    match messenger_opt with
+    | None -> ()
     | Some messenger ->
       Messenger.receive_all_infos_with messenger mean_id ~filter:(function
           | PCSP.Problem.CandidateSolution _ -> true | _ -> false)
       |> List.iter ~f:(function
-          | (_, PCSP.Problem.CandidateSolution sol) -> Hash_set.add cache sol
+          | _, PCSP.Problem.CandidateSolution sol -> Hash_set.add cache sol
           | _ -> assert false)
-    | None -> ()
   let send_records : (int option, int) Hashtbl.Poly.t = Hashtbl.Poly.create ()
-  let send_partial_solutions messenger_from messenger_to main_id from_id to_id arity_map target_pvars history cache =
+  let send_partial_solutions messenger_from messenger_to main_id from_id to_id
+      arity_map history cache =
+    let target_pvars = Map.key_set arity_map in
     Hash_set.iter cache ~f:(fun (sol, sol_before_red, violated_clauses, full_clauses, lbs_opt) ->
-        Debug.print @@ lazy (sprintf "*** load a new candidate partial solution from: [%d]" @@ Option.value_exn from_id);
+        Debug.print @@ lazy
+          (sprintf "*** A new candidate partial solution from [%d]:\n%s"
+             (Option.value_exn from_id) (Logic.str_of_term_subst Logic.ExtTerm.str_of sol));
         let interm =
           let fast_checked =
             Map.Poly.filter_mapi sol ~f:(fun ~key ~data ->
                 match Map.Poly.find arity_map key with
                 | None -> None
-                | Some (deq_pvars, arity) ->
+                | Some (dep_pvars, arity) ->
                   let (uni_params, lambda_params), upper_bound =
                     let params =
-                      List.mapi ~f:(fun i (_, s) -> Ident.Tvar (sprintf "x%d" (i + 1)), s) @@
+                      List.mapi ~f:(fun i (_, s) -> Ident.Tvar (sprintf "x%d" (i+1)), s) @@
                       fst @@ Logic.ExtTerm.let_lam data
                     in
                     List.split_n params @@ List.length params - arity,
                     Normalizer.normalize @@ Evaluator.simplify_neg @@
-                    Logic.ExtTerm.to_old_formula Map.Poly.empty (Map.Poly.of_alist_exn params)
-                      data (List.map params ~f:(fun (v, _) -> Logic.ExtTerm.mk_var v))
+                    Logic.ExtTerm.to_old_formula Map.Poly.empty
+                      (Map.Poly.of_alist_exn params) data @@
+                    List.map params ~f:(fst >> Logic.ExtTerm.mk_var)
                   in
-                  Debug.print @@ lazy (sprintf "*** fast partial solution checking for [%s]" @@ Ident.name_of_tvar key);
-                  if not (Hash_set.mem history (key, upper_bound)) &&
-                     (* ToDo: check if [is_qualified_partial_solution] is indeed sufficient for partial solution checking
-                        [violated_clauses] may contain clauses that do not define [key] but such clauses will be ignored *)
-                     not (PCSP.Problem.is_qualified_partial_solution
-                            deq_pvars target_pvars violated_clauses) then begin
-                    Debug.print @@ lazy "no";
-                    None
-                  end else begin
-                    Debug.print @@ lazy "yes";
+                  Debug.print @@ lazy
+                    (sprintf "*** fast partial solution checking for [%s]" @@
+                     Ident.name_of_tvar key);
+                  if not (Hash_set.mem history (key, upper_bound)) then
+                    (* ToDo: check if [is_qualified_partial_solution] is indeed sufficient for partial solution checking
+                       [violated_clauses] may contain clauses that do not define [key] but such clauses will be ignored *)
+                    if not (PCSP.Problem.is_qualified_partial_solution ~print:Debug.print
+                              dep_pvars target_pvars violated_clauses) then begin
+                      Debug.print @@ lazy "no";
+                      None
+                    end else begin
+                      Debug.print @@ lazy "yes!";
+                      Some (arity, (uni_params, lambda_params), upper_bound)
+                    end
+                  else begin
+                    Debug.print @@ lazy "yes!!";
                     Some (arity, (uni_params, lambda_params), upper_bound)
                   end)
           in
           Map.force_merge fast_checked @@
           match lbs_opt with
           | Some (senv, fenv, lbs) ->
-            Debug.print @@ lazy (sprintf "*** partial solution checking using lower bounds");
+            Debug.print @@ lazy "*** partial solution checking using lower bounds";
             let pvs =
-              ClauseSet.partial_sols_of ~print:Debug.print (Z3Smt.Z3interface.is_valid ~id:main_id fenv)
-                senv sol_before_red lbs full_clauses target_pvars (Map.key_set fast_checked)
+              ClauseSet.partial_sols_of ~print:Debug.print
+                (Z3Smt.Z3interface.is_valid ~id:main_id fenv)
+                senv sol_before_red lbs full_clauses target_pvars
+                (Map.key_set fast_checked)
             in
             Map.Poly.filter_mapi sol ~f:(fun ~key ~data ->
-                if not @@ Set.Poly.mem pvs key then
-                  None
+                if not @@ Set.mem pvs key then None
                 else
                   match Map.Poly.find arity_map key with
                   | None -> failwith "send_partial_solutions"
-                  | Some (_deq_pvars, arity) ->
+                  | Some (_dep_pvars, arity) ->
                     let (uni_params, lambda_params), upper_bound =
                       let params =
-                        List.mapi ~f:(fun i (_, s) -> Ident.Tvar (sprintf "x%d" (i + 1)), s) @@
+                        List.mapi ~f:(fun i (_, s) -> Ident.Tvar (sprintf "x%d" (i+1)), s) @@
                         fst @@ Logic.ExtTerm.let_lam data
                       in
                       List.split_n params @@ List.length params - arity,
                       Normalizer.normalize @@ Evaluator.simplify_neg @@
-                      Logic.ExtTerm.to_old_formula Map.Poly.empty (Map.Poly.of_alist_exn params)
-                        data (List.map params ~f:(fun (v, _) -> Logic.ExtTerm.mk_var v))
+                      Logic.ExtTerm.to_old_formula Map.Poly.empty
+                        (Map.Poly.of_alist_exn params) data @@
+                      List.map params ~f:(fst >> Logic.ExtTerm.mk_var)
                     in
                     Some (arity, (uni_params, lambda_params), upper_bound))
           | None -> Map.Poly.empty
@@ -166,24 +208,27 @@ module Make (Cfg: Config.ConfigType) = struct
         let bounds =
           Map.Poly.filter_mapi interm ~f:(fun ~key ~data:(arity, (uni_params, lambda_params), upper_bound) ->
               if Hash_set.mem history (key, upper_bound) then begin
-                Debug.print @@ lazy (sprintf "the partial solution [%s] has already been found" @@ Formula.str_of @@ Evaluator.simplify_neg upper_bound);
+                Debug.print @@ lazy
+                  (sprintf "the upper bound [%s] is not new" @@
+                   Formula.str_of @@ Evaluator.simplify_neg upper_bound);
                 None
               end else if Evaluator.is_valid
-                  (Z3Smt.Z3interface.is_valid ~id:main_id @@ Atomic.get ref_fenv)
+                  (Z3Smt.Z3interface.is_valid ~id:main_id @@ get_fenv ())
                   upper_bound
               then begin
-                Debug.print @@ lazy (sprintf "the partial solution [%s] has no information" @@ Formula.str_of @@ Evaluator.simplify_neg upper_bound);
+                Debug.print @@ lazy
+                  (sprintf "the upper bound [%s] is trivial" @@
+                   Formula.str_of @@ Evaluator.simplify_neg upper_bound);
                 Hash_set.Poly.add history (key, upper_bound);
                 None
               end else begin
                 Hash_set.Poly.add history (key, upper_bound);
                 Debug.print @@ lazy
                   (sprintf "send %d -> %d : forall %s. %s (%s) => %s"
-                     (Option.value_exn from_id)
-                     (Option.value_exn to_id)
-                     (String.concat_map_list ~sep:"," uni_params ~f:(fun (v, _) -> Ident.name_of_tvar v))
+                     (Option.value_exn from_id) (Option.value_exn to_id)
+                     (String.concat_map_list ~sep:"," uni_params ~f:(fst >> Ident.name_of_tvar))
                      (Ident.name_of_tvar key)
-                     (String.concat_map_list ~sep:"," lambda_params ~f:(fun (v, _) -> Ident.name_of_tvar v))
+                     (String.concat_map_list ~sep:"," lambda_params ~f:(fst >> Ident.name_of_tvar))
                      (Formula.str_of upper_bound));
                 let fresh_uni_params = fst @@ refresh_sort_env_list uni_params in
                 let sub =
@@ -192,15 +237,16 @@ module Make (Cfg: Config.ConfigType) = struct
                 in
                 let lb_pred =
                   Map.Poly.of_alist_exn @@ fresh_uni_params,
-                  Logic.ExtTerm.mk_lambda lambda_params @@
-                  Logic.ExtTerm.subst sub @@ Logic.ExtTerm.of_old_formula @@ Evaluator.simplify_neg upper_bound
+                  Logic.ExtTerm.mk_lambda lambda_params @@ Logic.ExtTerm.subst sub @@
+                  Logic.ExtTerm.of_old_formula @@ Evaluator.simplify_neg upper_bound
                 in
                 let ub_pred =
                   Map.Poly.of_alist_exn @@ fresh_uni_params,
-                  Logic.ExtTerm.mk_lambda lambda_params @@
-                  Logic.ExtTerm.subst sub @@ Logic.ExtTerm.of_old_formula upper_bound
+                  Logic.ExtTerm.mk_lambda lambda_params @@ Logic.ExtTerm.subst sub @@
+                  Logic.ExtTerm.of_old_formula upper_bound
                 in
-                Hashtbl.Poly.update send_records from_id ~f:(function None -> 1 | Some times -> times + 1);
+                Hashtbl.Poly.update send_records from_id
+                  ~f:(function None -> 1 | Some times -> times + 1);
                 Some (arity, lb_pred, ub_pred)
               end)
         in
@@ -208,68 +254,46 @@ module Make (Cfg: Config.ConfigType) = struct
           (match messenger_to with
            | Some messenger_to ->
              Messenger.send_boardcast messenger_to main_id @@
-             PCSP.Problem.UpperBounds (Map.Poly.map bounds ~f:(fun (ar, _lb, ub) -> ar, ub))
+             PCSP.Problem.UpperBounds (Map.Poly.map bounds ~f:(fun (ar, _, ub) -> ar, ub))
            | None -> ());
           (match messenger_from with
            | Some messenger_from ->
-             Messenger.send_boardcast messenger_from main_id @@
-             PCSP.Problem.LowerBounds (Map.Poly.map bounds ~f:(fun (ar, lb, _ub) -> ar, lb))
+             if config.send_lower_bounds then
+               Messenger.send_boardcast messenger_from main_id @@
+               PCSP.Problem.LowerBounds (Map.Poly.map bounds ~f:(fun (ar, lb, _) -> ar, lb))
+             else ()
            | None -> ())
         end);
     Hash_set.clear cache
-
+  let id_mean = Some 0
   let id_primal = Some 1
   let id_dual = Some 2
-  let solve_primal_dual muclp = let open Or_error.Monad_infix in
-    let messenger = None in
-    let pool = Util.Task.setup_pool ~num_additional_domains:2 in
-    let task_primal = Util.Task.async pool (fun () ->
-        Debug.print @@ lazy "task_prove";
-        solve_primal ~id:id_primal ~divide_query:false messenger false muclp) in
-    let task_dual = Util.Task.async pool (fun () ->
-        Debug.print @@ lazy "task_disprove";
-        solve_dual ~id:id_dual ~divide_query:false messenger false muclp) in
-    try Util.Task.await_any_promise pool [task_primal; task_dual] >>= function (sol, num_iters) ->
-        Debug.print @@ lazy "task over";
-        Ok (sol, num_iters)
-    with err -> Or_error.of_exn err
-
   let solve_primal_dual_exc muclp = let open Or_error.Monad_infix in
-    pcsp_solver () >>= fun (module PCSPSolver) ->
-    let id_mean = Some 0 in
-    Debug.set_id id_mean;
+    if config.number_of_pairs <> 1 then failwith "not supported";
     Hashtbl.Poly.set send_records ~key:id_primal ~data:0;
     Hashtbl.Poly.set send_records ~key:id_dual ~data:0;
-    preprocess muclp >>= fun muclp_primal ->
-    let arity_map = let open Reducer.DepGraph in
-      let g = transitive_closure @@
-        gen_init_graph (MuCLP.Problem.query_of muclp_primal) (MuCLP.Problem.preds_of muclp_primal)
-      in
+    preprocess ~elim_forall:true ~elim_exists:true ~elim_pvar_args:true muclp >>= fun muclp ->
+    let arity_map =
+      let open Reducer.DepGraph in
+      let g = transitive_closure @@ gen_init_graph (query_of muclp) @@ preds_of muclp in
       let reached_pvs pv =
-        Set.Poly.map ~f:Ident.pvar_to_tvar @@
-        Set.Poly.add (Map.Poly.find_exn g pv).reachable pv
+        Set.Poly.map ~f:Ident.pvar_to_tvar @@ Set.add (Map.Poly.find_exn g pv).reachable pv
       in
-      Debug.print @@ lazy ("deppvar_graph:\n" ^ Reducer.DepGraph.str_of g);
-      Map.Poly.of_alist_exn @@ List.map ~f:(fun (_, pv, params, _) ->
-          Ident.pvar_to_tvar pv, (reached_pvs pv, List.length params)) @@
-      MuCLP.Problem.preds_of muclp_primal
+      Debug.print @@ lazy ("dep_pvars_graph:\n" ^ Reducer.DepGraph.str_of g);
+      Map.Poly.of_alist_exn @@ List.map (preds_of muclp) ~f:(fun (_, pv, params, _) ->
+          Ident.pvar_to_tvar pv, (reached_pvs pv, List.length params))
     in
-    let target_pvars =
-      Set.Poly.of_list @@ List.map ~f:(fun (_, pvar, _, _) -> Ident.pvar_to_tvar pvar) @@
-      MuCLP.Problem.preds_of muclp_primal
-    in
-    Ok (MuCLP.Problem.get_dual muclp_primal) >>= fun muclp_dual ->
-    let gen_partial_info =
-      if not config.gen_extra_partial_sols then
-        Map.Poly.empty, Map.Poly.empty
+    let exc_info =
+      if not config.gen_extra_partial_sols then Some (Map.Poly.empty, Map.Poly.empty)
       else
-        Map.Poly.filter_mapi arity_map ~f:(fun ~key ~data:(_, arity) ->
-            if arity = 0 then None
-            else
-              let tvar = Ident.uninterp key in
-              Option.some @@ Set.Poly.singleton @@
-              PCSP.Params.mk_random_info tvar config.random_ex_bound config.random_ex_size),
-        Map.Poly.map ~f:fst arity_map
+        Some
+          (Map.Poly.filter_mapi arity_map ~f:(fun ~key ~data:(_, arity) ->
+               if arity = 0 then None
+               else
+                 Option.some @@ Set.Poly.singleton @@
+                 PCSP.Params.mk_random_info (Ident.uninterp key)
+                   config.random_ex_bound config.random_ex_size),
+           Map.Poly.map ~f:fst arity_map)
     in
     let arity_map = Map.change_keys arity_map ~f:Ident.uninterp in
     let messenger_primal = Some (Messenger.create 2) in
@@ -277,15 +301,14 @@ module Make (Cfg: Config.ConfigType) = struct
     let pool = Util.Task.setup_pool ~num_additional_domains:2 in
     let task_primal =
       Util.Task.async pool (fun () ->
-          match check ~id:id_primal ~divide_query:true ~gen_partial_info messenger_primal muclp_primal with
-          | Ok r -> Ok r
-          | Error exn -> Error exn)
+          muclp
+          |> check ~primal:true ~id:id_primal ~messenger:messenger_primal ~exc_info)
     in
     let task_dual =
       Util.Task.async pool (fun () ->
-          match check ~id:id_dual ~divide_query:true ~gen_partial_info messenger_dual muclp_dual with
-          | Ok (res, num_iters) -> Ok (flip_solution res, num_iters)
-          | Error exn -> Error exn)
+          get_dual muclp
+          |> check ~primal:false ~id:id_dual ~messenger:messenger_dual ~exc_info
+          >>= (function res, num_iters -> Ok (flip_solution res, num_iters)))
     in
     let sol_cache_primal = Hash_set.Poly.create () in
     let sol_cache_dual = Hash_set.Poly.create () in
@@ -298,17 +321,15 @@ module Make (Cfg: Config.ConfigType) = struct
         match Atomic.get task_dual with
         | Some sol -> sol
         | None ->
-          get_candidate_solution_messages messenger_primal id_mean sol_cache_primal;
-          get_candidate_solution_messages messenger_dual id_mean sol_cache_dual;
-          if Hash_set.is_empty sol_cache_primal && Hash_set.is_empty sol_cache_dual then
-            ignore @@ Core_unix.nanosleep 0.1
+          receive_candidate_solutions messenger_primal id_mean sol_cache_primal;
+          receive_candidate_solutions messenger_dual id_mean sol_cache_dual;
+          if Hash_set.is_empty sol_cache_primal && Hash_set.is_empty sol_cache_dual
+          then ignore @@ Core_unix.nanosleep 0.1
           else begin
-            send_partial_solutions
-              messenger_primal messenger_dual id_mean id_primal id_dual
-              arity_map target_pvars send_history_primal sol_cache_primal;
-            send_partial_solutions
-              messenger_dual messenger_primal id_mean id_dual id_primal
-              arity_map target_pvars send_history_dual sol_cache_dual
+            send_partial_solutions messenger_primal messenger_dual id_mean id_primal id_dual
+              arity_map send_history_primal sol_cache_primal;
+            send_partial_solutions messenger_dual messenger_primal id_mean id_dual id_primal
+              arity_map send_history_dual sol_cache_dual
           end;
           inner ()
     in
@@ -316,261 +337,275 @@ module Make (Cfg: Config.ConfigType) = struct
 
   let resolve_auto muclp mode =
     if Stdlib.(mode = Config.Auto) then
-      if MuCLP.Problem.has_only_forall muclp then begin
-        (if MuCLP.Problem.has_only_nu muclp then
-           Debug.print @@ lazy "vvvv muCLP shape: only forall-nu"
-         else if MuCLP.Problem.has_only_mu muclp then
-           Debug.print @@ lazy "vvvv muCLP shape: only forall-mu"
-         else
-           Debug.print @@ lazy "vvvv muCLP shape: only forall");
+      if has_only_forall muclp then begin
+        (if has_only_nu muclp
+         then Debug.print @@ lazy "vvvv muCLP shape: only forall-nu"
+         else if has_only_mu muclp
+         then Debug.print @@ lazy "vvvv muCLP shape: only forall-mu"
+         else Debug.print @@ lazy "vvvv muCLP shape: only forall");
         Config.Prove
-      end else if MuCLP.Problem.has_only_exists muclp then begin
-        (if MuCLP.Problem.has_only_nu muclp then
-           Debug.print @@ lazy "vvvv muCLP shape: only exists-nu"
-         else if MuCLP.Problem.has_only_mu muclp then
-           Debug.print @@ lazy "vvvv muCLP shape: only exists-mu"
-         else
-           Debug.print @@ lazy "vvvv muCLP shape: only exists");
+      end else if has_only_exists muclp then begin
+        (if has_only_nu muclp
+         then Debug.print @@ lazy "vvvv muCLP shape: only exists-nu"
+         else if has_only_mu muclp
+         then Debug.print @@ lazy "vvvv muCLP shape: only exists-mu"
+         else Debug.print @@ lazy "vvvv muCLP shape: only exists");
         Config.Disprove
       end else begin
-        (if MuCLP.Problem.has_only_nu muclp then
-           Debug.print @@ lazy "vvvv muCLP shape: only nu"
-         else if MuCLP.Problem.has_only_mu muclp then
-           Debug.print @@ lazy "vvvv muCLP shape: only mu"
-         else
-           Debug.print @@ lazy "vvvv muCLP shape: otherwise");
+        (if has_only_nu muclp
+         then Debug.print @@ lazy "vvvv muCLP shape: only nu"
+         else if has_only_mu muclp
+         then Debug.print @@ lazy "vvvv muCLP shape: only mu"
+         else Debug.print @@ lazy "vvvv muCLP shape: otherwise");
         Config.Prove
       end
     else mode
   let solve ?(print_sol=false) muclp = let open Or_error.Monad_infix in
     Debug.print @@ lazy "======== MuVal ========";
     Hashtbl.Poly.clear send_records;
-    preprocess muclp >>= fun muclp ->
-    begin match resolve_auto muclp config.mode with
-      | Config.Auto -> failwith "not reachable here"
-      | Config.Prove ->
-        Debug.print @@ lazy "-=-=-=-= proving -=-=-=-=";
-        solve_primal ~id:(Some 0) ~divide_query:false messenger true muclp
-      | Config.Disprove ->
-        Debug.print @@ lazy "-=-=-=-= disproving -=-=-=-=";
-        solve_dual ~id:(Some 0) ~divide_query:false messenger true muclp
-      | Config.Parallel ->
-        Debug.print @@ lazy "-=-=-=-= proving/disproving -=-=-=-=";
-        solve_primal_dual muclp
-      | Config.ParallelExc ->
-        Debug.print @@ lazy "-=-=-=-= proving/disproving exchange learned clauses -=-=-=-=";
-        solve_primal_dual_exc muclp
-    end >>= (function (sol, num_iters) ->
+    (match resolve_auto muclp config.mode with
+     | Config.Auto -> failwith "not reachable here"
+     | Config.Prove ->
+       Debug.print @@ lazy "-=-=-=-= proving -=-=-=-=";
+       preprocess ~elim_forall:true ~elim_exists:true ~elim_pvar_args:true muclp >>=
+       solve_primal ~messenger:None ~exc_info:None true
+     | Config.Disprove ->
+       Debug.print @@ lazy "-=-=-=-= disproving -=-=-=-=";
+       preprocess ~elim_forall:true ~elim_exists:true ~elim_pvar_args:true muclp >>=
+       solve_dual ~messenger:None ~exc_info:None true
+     | Config.Parallel ->
+       Debug.print @@ lazy "-=-=-=-= proving/disproving -=-=-=-=";
+       Debug.set_id id_mean;
+       preprocess ~id:id_mean ~elim_forall:true ~elim_exists:true ~elim_pvar_args:true muclp
+       >>= solve_primal_dual
+     | Config.ParallelExc ->
+       Debug.print @@ lazy "-=-=-=-= proving/disproving exchange learned clauses -=-=-=-=";
+       Debug.set_id id_mean;
+       preprocess ~id:id_mean ~elim_forall:true ~elim_exists:true ~elim_pvar_args:true muclp
+       >>= solve_primal_dual_exc)
+    >>= (function (sol, num_iters) ->
         Debug.print @@ lazy "=========================";
-        let primal_time = Hashtbl.Poly.find_or_add ~default:(fun _ -> -1) send_records id_primal in
-        let dual_time = Hashtbl.Poly.find_or_add ~default:(fun _ -> -1) send_records id_dual in
         let info =
-          if primal_time >= 0 && dual_time >= 0 then
-            sprintf "%d,%d|%d" num_iters primal_time dual_time
-          else sprintf "%d" num_iters
+          match Hashtbl.Poly.find send_records id_primal,
+                Hashtbl.Poly.find send_records id_dual with
+          | Some primal_num_sent, Some dual_num_sent ->
+            sprintf "%d,%d|%d" num_iters primal_num_sent dual_num_sent
+          | _(*ToDo*) -> sprintf "%d" num_iters
         in
         if print_sol then
           print_endline @@
-          if config.output_iteration then
-            Printf.sprintf "%s,%s" (MuCLP.Problem.str_of_solution sol) info
-          else
-            Printf.sprintf "%s" (MuCLP.Problem.str_of_solution sol);
+          if config.output_iteration
+          then sprintf "%s,%s" (str_of_solution sol) info
+          else sprintf "%s" (str_of_solution sol);
         Or_error.return (sol, num_iters, info))
 
   let solve_pcsp ?(print_sol=false) pcsp =
-    let pvar_eliminator =
-      Ok (PCSat.PvarEliminator.make (PCSat.PvarEliminator.Config.make config.verbose 4 4 true))
+    let (module PvarEliminator : PCSat.PvarEliminator.PvarEliminatorType) =
+      PCSat.PvarEliminator.(make @@ Config.make true config.verbose 4 4 true)
     in
-    let open Or_error.Monad_infix in
-    pvar_eliminator >>= fun (module PvarEliminator : PCSat.PvarEliminator.PvarEliminatorType) ->
     Debug.print @@ lazy "************* converting pfwCSP to muCLP ***************";
     PvarEliminator.solve (fun ?oracle pcsp ->
         ignore oracle;
-        solve ~print_sol:false (MuCLP.Problem.of_chc pcsp) >>= fun (solution, iteration, info) ->
-        let solution =
-          match solution with
-          | MuCLP.Problem.Valid -> PCSP.Problem.Sat (Map.Poly.empty(* ToDo *))
-          | MuCLP.Problem.Invalid -> PCSP.Problem.Unsat
-          | MuCLP.Problem.Unknown -> PCSP.Problem.Unknown
+        let open Or_error.Monad_infix in
+        solve ~print_sol:false (of_chc pcsp) >>= fun (sol, num_iters, info) ->
+        let sol =
+          match sol with
+          | Valid -> PCSP.Problem.Sat (Map.Poly.empty(* ToDo *))
+          | Invalid -> PCSP.Problem.Unsat
+          | Unknown -> PCSP.Problem.Unknown
         in
         if print_sol then print_endline @@
-          if config.output_iteration then
-            Printf.sprintf "%s,%s" (PCSP.Problem.str_of_solution solution) info
-          else
-            Printf.sprintf "%s" (PCSP.Problem.str_of_solution solution);
-        Or_error.return (solution, { PCSatCommon.State.num_cegis_iters = iteration })) pcsp
+          if config.output_iteration
+          then sprintf "%s,%s" (PCSP.Problem.str_of_solution sol) info
+          else sprintf "%s" (PCSP.Problem.str_of_solution sol);
+        Or_error.return (sol, { PCSatCommon.State.num_cegis_iters = num_iters })) pcsp
 
-  let solve_lts ?(print_sol=false) (lts, p) =
-    Debug.print @@ lazy "************* converting LTS to muCLP ***************";
-    Debug.print (lazy ("input LTS:\n" ^ LTS.Problem.str_of_lts lts));
-    let lvs, cps, lts = LTS.Problem.analyze lts in
-    Debug.print (lazy ("simplified LTS:\n" ^ LTS.Problem.str_of_lts lts));
-    match p with
-    | LTS.Problem.Term | LTS.Problem.NonTerm ->
-      let open Or_error.Monad_infix in
-      MuCLP.Problem.of_lts ~live_vars:(Some lvs) ~cut_points:(Some cps) (lts, p)
-      |> solve ~print_sol:false >>= fun (solution, iteration, info) ->
-      if print_sol then print_endline @@
-        if config.output_iteration then
-          Printf.sprintf "%s,%s" (MuCLP.Problem.lts_str_of_solution solution) info
-        else
-          Printf.sprintf "%s" @@ MuCLP.Problem.lts_str_of_solution solution;
-      Or_error.return (solution, iteration)
-    | LTS.Problem.CondTerm ->
-      let muclp = MuCLP.Problem.of_lts ~live_vars:(Some lvs) ~cut_points:(Some cps) (lts, LTS.Problem.Term) in
-      let pre_term, muclp_term =
-        let bounds, phi, _ =
-          if Formula.is_forall muclp.query then Formula.let_forall muclp.query
-          else [], muclp.query, Dummy
-        in
-        let atm, _ = Formula.let_atom phi in
-        let _, sorts, args, _ = Atom.let_pvar_app atm in
-        let senv = Map.Poly.of_alist_exn @@ Logic.of_old_sort_env_list Logic.ExtTerm.of_old_sort bounds in
-        let pre = Formula.mk_atom @@ Atom.mk_pvar_app (Ident.Pvar "PreTerm") sorts args in
-        (senv, pre),
-        MuCLP.Problem.make muclp.preds (Formula.forall bounds @@ Formula.mk_imply pre phi)
+  let solve_interactive muclp =
+    let pre_primal, muclp_primal =
+      let bounds, phi, _ =
+        if Formula.is_forall muclp.query then Formula.let_forall muclp.query
+        else [], muclp.query, Dummy
       in
-      let pre_nonterm, muclp_nonterm =
-        let muclp = MuCLP.Problem.get_dual muclp in
-        let bounds, phi, _ =
-          if Formula.is_exists muclp.query then Formula.let_exists muclp.query
-          else [], muclp.query, Dummy in
-        let atm, _ = Formula.let_atom phi in
-        let _, sorts, args, _ = Atom.let_pvar_app atm in
-        let senv = Map.Poly.of_alist_exn @@ Logic.of_old_sort_env_list Logic.ExtTerm.of_old_sort bounds in
-        let pre = Formula.mk_atom @@ Atom.mk_pvar_app (Ident.Pvar "PreNonTerm") sorts args in
-        (senv, pre),
-        MuCLP.Problem.make muclp.preds (Formula.forall bounds @@ Formula.mk_imply pre phi)
+      let _, sorts, args, _ =
+        try Atom.let_pvar_app @@ fst @@ Formula.let_atom phi
+        with _ -> failwith @@ "unsupported shape of query: " ^ Formula.str_of phi
       in
-      let ord_pvs_term = Formula.pred_sort_env_of @@ snd pre_term in
-      let ord_pvs_nonterm = Formula.pred_sort_env_of @@ snd pre_nonterm in
-      let muclp_nonterm, (fnpvs, fnsenv) =
-        Qelim.elim_exists_in_preds muclp_nonterm Set.Poly.empty
+      let senv =
+        Map.Poly.of_alist_exn @@ Logic.(of_old_sort_env_list ExtTerm.of_old_sort bounds)
       in
-      let pcsp_term =
-        PCSP.Problem.add_non_emptiness (Set.Poly.choose_exn ord_pvs_term) @@
-        pfwcsp_of ~divide_query:false  messenger (Map.Poly.empty, Map.Poly.empty) 
-          (ord_pvs_term(* ToDo *), Set.Poly.empty, Map.Poly.empty) @@
-        muclp_term
+      let pre = Formula.mk_atom @@ Atom.mk_pvar_app (Ident.Pvar "PrePrimal") sorts args in
+      (senv, pre), make muclp.preds @@ Formula.(forall bounds @@ mk_imply pre phi)
+    in
+    let pre_dual, muclp_dual =
+      let muclp = get_dual muclp in
+      let bounds, phi, _ =
+        if Formula.is_exists muclp.query then Formula.let_exists muclp.query
+        else [], muclp.query, Dummy
       in
-      let pcsp_nonterm =
-        PCSP.Problem.add_non_emptiness (Set.Poly.choose_exn ord_pvs_nonterm) @@
-        pfwcsp_of ~divide_query:false messenger (Map.Poly.empty, Map.Poly.empty)
-          (ord_pvs_nonterm(* ToDo *), fnpvs, fnsenv) @@
-        muclp_nonterm
+      let _, sorts, args, _ = Atom.let_pvar_app @@ fst @@ Formula.let_atom phi in
+      let senv =
+        Map.Poly.of_alist_exn @@ Logic.(of_old_sort_env_list ExtTerm.of_old_sort bounds)
       in
-      Debug.print @@ lazy (Printf.sprintf "pfwCSP for Termination:\n%s\n" @@ PCSP.Problem.str_of pcsp_term);
-      Debug.print @@ lazy (Printf.sprintf "pfwCSP for Non-termination:\n%s\n" @@ PCSP.Problem.str_of pcsp_nonterm);
-      let open Or_error.Monad_infix in
-      pcsp_solver () >>= fun pcsp_solver ->
-      let (module PCSPSolver) = pcsp_solver in
-      Out_channel.output_string Out_channel.stdout "timeout in sec: ";
+      let pre = Formula.mk_atom @@ Atom.mk_pvar_app (Ident.Pvar "PreDual") sorts args in
+      (senv, pre), make muclp.preds @@ Formula.(forall bounds @@ mk_imply pre phi)
+    in
+    let ord_pvs_primal = Formula.pred_sort_env_of @@ snd pre_primal in
+    let ord_pvs_dual = Formula.pred_sort_env_of @@ snd pre_dual in
+    let muclp_dual, (fnpvs, fnsenv) = Qelim.elim_exists_in_preds muclp_dual Set.Poly.empty in
+    let pcsp_primal =
+      PCSP.Problem.add_non_emptiness (Set.choose_exn ord_pvs_primal) @@
+      pfwcsp_of ~messenger:None ~exc_info:None (ord_pvs_primal(* ToDo *), (Set.Poly.empty, Map.Poly.empty)) muclp_primal
+    in
+    let pcsp_dual =
+      PCSP.Problem.add_non_emptiness (Set.choose_exn ord_pvs_dual) @@
+      pfwcsp_of ~messenger:None ~exc_info:None (ord_pvs_dual(* ToDo *), (fnpvs, fnsenv)) muclp_dual
+    in
+    Debug.print @@ lazy
+      (sprintf "pfwCSP for Primal Problem:\n%s\n" @@ PCSP.Problem.str_of pcsp_primal);
+    Debug.print @@ lazy
+      (sprintf "pfwCSP for Dual Problem:\n%s\n" @@ PCSP.Problem.str_of pcsp_dual);
+    let open Or_error.Monad_infix in
+    pcsp_solver ~primal:true(*ToDo:dual config is not used*) >>= fun (module PCSPSolver) ->
+    Out_channel.output_string Out_channel.stdout "timeout in sec: ";
+    Out_channel.flush Out_channel.stdout;
+    let timeout =
+      try Some (int_of_string @@ In_channel.input_line_exn In_channel.stdin) with _ -> None
+    in
+    let rec refine primal dual unknown pos neg =
+      Out_channel.output_string Out_channel.stdout "action (primal/dual/unknown/pos/neg/end): ";
       Out_channel.flush Out_channel.stdout;
-      let timeout = try Some (int_of_string @@ In_channel.input_line_exn In_channel.stdin) with _ -> None in
-      let rec refine term nonterm unknown pos neg =
-        Out_channel.output_string Out_channel.stdout "action (term/nonterm/unknown/pos/neg/end): ";
+      match In_channel.input_line_exn In_channel.stdin with
+      | "primal" ->
+        let phi =
+          let pre = Logic.ExtTerm.of_old_formula @@ snd pre_primal in
+          Logic.BoolTerm.and_of
+            [Logic.BoolTerm.imply_of pre @@ Logic.ExtTerm.of_old_formula @@
+             Formula.mk_and unknown (Formula.mk_neg neg);
+             Logic.BoolTerm.imply_of (Logic.ExtTerm.of_old_formula pos) pre]
+        in
+        let pcsp = PCSP.Problem.add_formula (fst pre_primal, phi) pcsp_primal in
+        (match timeout with
+         | None ->
+           let bpvs = Set.Poly.map ord_pvs_primal ~f:(fst >> Ident.pvar_to_tvar) in
+           PCSPSolver.solve ~bpvs pcsp
+         | Some tm ->
+           Timer.enable_timeout tm Fn.id ignore
+             (fun () ->
+                let bpvs = Set.Poly.map ord_pvs_primal ~f:(fst >> Ident.pvar_to_tvar) in
+                PCSPSolver.solve ~bpvs pcsp)
+             (fun _ res -> res)
+             (fun _ -> function Timer.Timeout ->
+                 Or_error.return (PCSP.Problem.Unknown, -1) | e -> raise e))
+        >>= (function
+            | PCSP.Problem.Sat sol, _ ->
+              (*Out_channel.print_endline @@ CandSol.str_of sol;*)
+              let phi =
+                Z3Smt.Z3interface.simplify (get_fenv ()) ~id:None @@ Evaluator.simplify @@
+                Logic.ExtTerm.to_old_formula Map.Poly.empty (fst pre_primal)
+                  Logic.(Term.subst sol @@ ExtTerm.of_old_formula @@ snd pre_primal) []
+              in
+              let primal =
+                Z3Smt.Z3interface.simplify ~id:None (get_fenv ()) @@
+                Evaluator.simplify @@ Formula.or_of [phi; primal]
+              in
+              let unknown =
+                Z3Smt.Z3interface.simplify ~id:None (get_fenv ()) @@
+                Evaluator.simplify @@ Formula.and_of [Formula.mk_neg phi; unknown]
+              in
+              Out_channel.print_endline @@ Formula.str_of primal;
+              if Z3Smt.Z3interface.is_sat ~id:None (get_fenv ()) unknown then
+                refine primal dual unknown (Formula.mk_false ()) (Formula.mk_false ())
+              else begin
+                Out_channel.print_endline "maximality is guaranteed";
+                Or_error.return (Unknown, -1)(*Dummy*)
+              end
+            | Unsat, _ ->
+              if Formula.is_false pos && Formula.is_false neg then begin
+                Out_channel.print_endline "maximally weak precondition for dual property:";
+                Out_channel.print_endline @@ Formula.str_of unknown;
+                Or_error.return (Unknown, -1)(*Dummy*)
+              end else begin
+                Out_channel.print_endline "the specified constraints for positive and negative examples are incorrect";
+                refine primal dual unknown (Formula.mk_false ()) (Formula.mk_false ())
+              end
+            | Unknown, _ ->
+              refine primal dual unknown (Formula.mk_false ()) (Formula.mk_false ())
+            | OutSpace _ , _ -> assert false)
+      | "dual" ->
+        let phi =
+          let pre = Logic.ExtTerm.of_old_formula @@ snd pre_dual in
+          Logic.BoolTerm.and_of
+            [Logic.BoolTerm.imply_of pre @@ Logic.ExtTerm.of_old_formula @@
+             Formula.mk_and unknown (Formula.mk_neg neg);
+             Logic.BoolTerm.imply_of (Logic.ExtTerm.of_old_formula pos) pre]
+        in
+        let pcsp = PCSP.Problem.add_formula (fst pre_dual, phi) pcsp_dual in
+        (match timeout with
+         | None ->
+           let bpvs = Set.Poly.map ord_pvs_dual ~f:(fst >> Ident.pvar_to_tvar) in
+           PCSPSolver.solve ~bpvs pcsp
+         | Some tm ->
+           Timer.enable_timeout tm Fn.id ignore
+             (fun () ->
+                let bpvs = Set.Poly.map ord_pvs_dual ~f:(fst >> Ident.pvar_to_tvar) in
+                PCSPSolver.solve ~bpvs pcsp)
+             (fun _ res -> res)
+             (fun _ -> function Timer.Timeout ->
+                 Or_error.return (PCSP.Problem.Unknown, -1) | e -> raise e))
+        >>= (function
+            | PCSP.Problem.Sat sol, _ ->
+              (*Out_channel.print_endline @@ Ast.CandSol.str_of sol;*)
+              let phi =
+                Z3Smt.Z3interface.simplify ~id:None (get_fenv ()) @@ Evaluator.simplify @@
+                Logic.ExtTerm.to_old_formula Map.Poly.empty (fst pre_dual)
+                  Logic.(Term.subst sol @@ ExtTerm.of_old_formula @@ snd pre_dual) []
+              in
+              let dual =
+                Z3Smt.Z3interface.simplify ~id:None (get_fenv ()) @@
+                Evaluator.simplify @@ Formula.or_of [phi; dual]
+              in
+              let unknown =
+                Z3Smt.Z3interface.simplify ~id:None (get_fenv ()) @@ Evaluator.simplify @@
+                Formula.and_of [Formula.mk_neg phi; unknown]
+              in
+              Out_channel.print_endline @@ Formula.str_of dual;
+              if Z3Smt.Z3interface.is_sat ~id:None (get_fenv ()) unknown then
+                refine primal dual unknown (Formula.mk_false ()) (Formula.mk_false ())
+              else begin
+                Out_channel.print_endline "maximality is guaranteed";
+                Or_error.return (Unknown, -1)(*Dummy*)
+              end
+            | Unsat, _ ->
+              if Formula.is_false pos && Formula.is_false neg then begin
+                Out_channel.print_endline "maximally weak precondition for primal property:";
+                Out_channel.print_endline @@ Formula.str_of unknown;
+                Or_error.return (Unknown, -1)(*Dummy*)
+              end else begin
+                Out_channel.print_endline "the specified constraints for positive and negative examples are incorrect";
+                refine primal dual unknown (Formula.mk_false ()) (Formula.mk_false ())
+              end
+            | Unknown, _ ->
+              refine primal dual unknown (Formula.mk_false ()) (Formula.mk_false ())
+            | OutSpace _, _ -> assert false)
+      | "pos" ->
+        Out_channel.output_string Out_channel.stdout "positive examples: ";
         Out_channel.flush Out_channel.stdout;
-        match In_channel.input_line_exn In_channel.stdin with
-        | "term" ->
-          let phi =
-            let pre = Logic.ExtTerm.of_old_formula @@ snd pre_term in
-            Logic.BoolTerm.and_of
-              [Logic.BoolTerm.imply_of pre (Logic.ExtTerm.of_old_formula (Formula.mk_and unknown (Formula.mk_neg neg)));
-               Logic.BoolTerm.imply_of (Logic.ExtTerm.of_old_formula pos) pre] in
-          let pcsp = PCSP.Problem.add_formula (fst pre_term, phi) pcsp_term in
-          (match timeout with
-           | None -> PCSPSolver.solve ~bpvs:(Set.Poly.map ~f:(fun (Ident.Pvar x, _) -> Ident.Tvar x) ord_pvs_term) pcsp
-           | Some tm ->
-             Timer.enable_timeout tm Fn.id ignore
-               (fun () -> PCSPSolver.solve ~bpvs:(Set.Poly.map ~f:(fun (Ident.Pvar x, _) -> Ident.Tvar x) ord_pvs_term) pcsp)
-               (fun _ res -> res)
-               (fun _ -> function Timer.Timeout -> Or_error.return (PCSP.Problem.Unknown, -1) | e -> raise e))
-          >>= (function
-              | PCSP.Problem.Sat sol, _ ->
-                (*Out_channel.print_endline @@ CandSol.str_of sol;*)
-                let phi =
-                  Z3Smt.Z3interface.simplify fenv ~id:None @@ Evaluator.simplify @@
-                  Logic.ExtTerm.to_old_formula Map.Poly.empty (fst pre_term)
-                    (Logic.Term.subst sol @@ Logic.ExtTerm.of_old_formula @@ snd pre_term) [] in
-                let term = Z3Smt.Z3interface.simplify ~id:None fenv @@ Evaluator.simplify @@ Formula.or_of [phi; term] in
-                let unknown = Z3Smt.Z3interface.simplify ~id:None fenv @@ Evaluator.simplify @@ Formula.and_of [Formula.mk_neg phi; unknown] in
-                Out_channel.print_endline @@ Formula.str_of term;
-                if Z3Smt.Z3interface.is_sat ~id:None fenv unknown then
-                  refine term nonterm unknown (Formula.mk_false ()) (Formula.mk_false ())
-                else begin
-                  Out_channel.print_endline "maximality is guaranteed";
-                  Or_error.return (Unknown, -1)(*Dummy*)
-                end
-              | Unsat, _ ->
-                if Formula.is_false pos && Formula.is_false neg then begin
-                  Out_channel.print_endline "maximally weak precondition for non-termination:";
-                  Out_channel.print_endline @@ Formula.str_of unknown;
-                  Or_error.return (Unknown, -1)(*Dummy*)
-                end else begin
-                  Out_channel.print_endline "the specified constraints for positive and negative examples are incorrect";
-                  refine term nonterm unknown (Formula.mk_false ()) (Formula.mk_false ())
-                end
-              | Unknown, _ -> refine term nonterm unknown (Formula.mk_false ()) (Formula.mk_false ())
-              | OutSpace _ , _ -> assert false)
-        | "nonterm" ->
-          let phi =
-            let pre = Logic.ExtTerm.of_old_formula @@ snd pre_nonterm in
-            Logic.BoolTerm.and_of
-              [Logic.BoolTerm.imply_of pre (Logic.ExtTerm.of_old_formula (Formula.mk_and unknown (Formula.mk_neg neg)));
-               Logic.BoolTerm.imply_of (Logic.ExtTerm.of_old_formula pos) pre] in
-          let pcsp = PCSP.Problem.add_formula (fst pre_nonterm, phi) pcsp_nonterm in
-          (match timeout with
-           | None -> PCSPSolver.solve ~bpvs:(Set.Poly.map ~f:(fun (Ident.Pvar x, _) -> Ident.Tvar x) ord_pvs_nonterm) pcsp
-           | Some tm ->
-             Timer.enable_timeout tm Fn.id ignore
-               (fun () -> PCSPSolver.solve ~bpvs:(Set.Poly.map ~f:(fun (Ident.Pvar x, _) -> Ident.Tvar x) ord_pvs_nonterm) pcsp)
-               (fun _ res -> res)
-               (fun _ -> function Timer.Timeout -> Or_error.return (PCSP.Problem.Unknown, -1) | e -> raise e))
-          >>= (function
-              | PCSP.Problem.Sat sol, _ ->
-                (*Out_channel.print_endline @@ Ast.CandSol.str_of sol;*)
-                let phi =
-                  Z3Smt.Z3interface.simplify ~id:None fenv @@ Evaluator.simplify @@
-                  Logic.ExtTerm.to_old_formula Map.Poly.empty (fst pre_nonterm)
-                    (Logic.Term.subst sol @@ Logic.ExtTerm.of_old_formula @@ snd pre_nonterm) [] in
-                let nonterm = Z3Smt.Z3interface.simplify ~id:None fenv @@ Evaluator.simplify @@ Formula.or_of [phi; nonterm] in
-                let unknown = Z3Smt.Z3interface.simplify ~id:None fenv @@ Evaluator.simplify @@ Formula.and_of [Formula.mk_neg phi; unknown] in
-                Out_channel.print_endline @@ Formula.str_of nonterm;
-                if Z3Smt.Z3interface.is_sat ~id:None fenv unknown then
-                  refine term nonterm unknown (Formula.mk_false ()) (Formula.mk_false ())
-                else begin
-                  Out_channel.print_endline "maximality is guaranteed";
-                  Or_error.return (Unknown, -1)(*Dummy*)
-                end
-              | Unsat, _ ->
-                if Formula.is_false pos && Formula.is_false neg then begin
-                  Out_channel.print_endline "maximally weak precondition for termination:";
-                  Out_channel.print_endline @@ Formula.str_of unknown;
-                  Or_error.return (Unknown, -1)(*Dummy*)
-                end else begin
-                  Out_channel.print_endline "the specified constraints for positive and negative examples are incorrect";
-                  refine term nonterm unknown (Formula.mk_false ()) (Formula.mk_false ())
-                end
-              | Unknown, _ -> refine term nonterm unknown (Formula.mk_false ()) (Formula.mk_false ())
-              | OutSpace _, _ -> assert false)
-        | "pos" ->
-          Out_channel.output_string Out_channel.stdout "positive examples: ";
-          Out_channel.flush Out_channel.stdout;
-          (match MuCLP.Parser.formula_from_string @@ In_channel.input_line_exn In_channel.stdin with
-           | Ok phi -> refine term nonterm unknown (Formula.mk_or pos phi) neg
-           | Error msg -> failwith (Error.to_string_hum msg))
-        | "neg" ->
-          Out_channel.output_string Out_channel.stdout "negative examples: ";
-          Out_channel.flush Out_channel.stdout;
-          (match MuCLP.Parser.formula_from_string @@ In_channel.input_line_exn In_channel.stdin with
-           | Ok phi -> refine term nonterm unknown pos (Formula.mk_or neg phi)
-           | Error msg -> failwith (Error.to_string_hum msg))
-        | "unknown" ->
-          Out_channel.print_endline @@ Formula.str_of unknown;
-          refine term nonterm unknown pos neg
-        | "end" -> Or_error.return (Unknown, -1)(*Dummy*)
-        | _ -> refine term nonterm unknown pos neg
-      in
-      refine (Formula.mk_false ()) (Formula.mk_false ()) (Formula.mk_true ()) (Formula.mk_false ()) (Formula.mk_false ())
-    | LTS.Problem.Safe | LTS.Problem.NonSafe | LTS.Problem.MuCal | LTS.Problem.Rel -> assert false
+        (match MuCLP.Parser.formula_from_string ~print:Debug.print @@
+           In_channel.(input_line_exn stdin) with
+        | Ok phi -> refine primal dual unknown (Formula.mk_or pos phi) neg
+        | Error msg -> failwith (Error.to_string_hum msg))
+      | "neg" ->
+        Out_channel.output_string Out_channel.stdout "negative examples: ";
+        Out_channel.flush Out_channel.stdout;
+        (match MuCLP.Parser.formula_from_string ~print:Debug.print @@
+           In_channel.(input_line_exn stdin) with
+        | Ok phi -> refine primal dual unknown pos (Formula.mk_or neg phi)
+        | Error msg -> failwith (Error.to_string_hum msg))
+      | "unknown" ->
+        Out_channel.print_endline @@ Formula.str_of unknown;
+        refine primal dual unknown pos neg
+      | "end" -> Or_error.return (Unknown, -1)(*Dummy*)
+      | _ -> refine primal dual unknown pos neg
+    in
+    refine (Formula.mk_false ()) (Formula.mk_false ()) (Formula.mk_true ()) (Formula.mk_false ()) (Formula.mk_false ())
 end

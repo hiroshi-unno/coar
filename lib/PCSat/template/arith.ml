@@ -51,8 +51,8 @@ let eq_of sort ts =
 
 let sort_of ts =
   let sorts = Set.Poly.of_list @@ List.map ~f:snd ts in
-  if Set.Poly.mem sorts T_real.SReal then T_real.SReal
-  else if Set.Poly.mem sorts T_int.SInt then T_int.SInt
+  if Set.mem sorts T_real.SReal then T_real.SReal
+  else if Set.mem sorts T_int.SInt then T_int.SInt
   else T_int.SInt (* failwith "no int/real term" *)
 
 let atom_of ?(eq=false) ts =

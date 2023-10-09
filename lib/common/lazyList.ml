@@ -8,7 +8,7 @@ let cons x xs = Cons (x, (fun () -> xs))
 let hd = function Cons (x, _xs) -> x | Nil -> failwith ""
 let tl = function Cons (_x, xs) -> xs () | Nil -> failwith ""
 
-let rec nth n = function 
+let rec nth n = function
   | Cons (x, xs) ->
     if n = 1 then x else nth (n - 1) (xs ())
   | Nil -> failwith ""

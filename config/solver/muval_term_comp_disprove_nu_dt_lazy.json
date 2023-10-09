@@ -3,9 +3,14 @@
     {
         "optimizer": [
             "Filename",
-            "./config/muval/optimizer/default.json"
+            "./config/muval/optimizer/enable.json"
         ],
-        "pcsp_solver": [
+        "number_of_pairs": 1,
+        "pcsp_solver_primal": [
+            "Filename",
+            "./config/solver/pcsat_dt_lazy.json"
+        ],
+        "pcsp_solver_dual": [
             "Filename",
             "./config/solver/pcsat_dt_lazy.json"
         ],

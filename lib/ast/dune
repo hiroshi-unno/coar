@@ -1,3 +1,5 @@
+(menhir (modules rtypeParser))
+(ocamllex (modules rtypeLexer))
 (library
   (name ast)
   (public_name CoAR.ast)
@@ -14,6 +16,7 @@
     propLogic
     logic
     logicOld
+    kind
     evaluator
     normalizer
     typeinf
@@ -22,7 +25,6 @@
     affine
     affineTerm
     arithTerm
-    constDatatype
     clause
     clauseOld
     clauseSet
@@ -31,5 +33,9 @@
     candSolOld
     simpleFormula
     rank
-    rtype)
+    rtype
+    assertion
+    solSpace
+    rtypeLexer
+    rtypeParser)
   (synopsis "AST definitions"))

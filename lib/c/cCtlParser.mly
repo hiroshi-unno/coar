@@ -222,7 +222,7 @@ StatementGeneral:
   | LBLOCK stmts=Statements RBLOCK { stmt_of_statements stmts }
   /* label */
   | ID CORON { Statement.mk_nop () }
-  | DOCHECK LPAREN RPAREN SEMI { Statement.mk_assign "check" (T_int.mk_int (Z.of_int 1)) }
+  | DOCHECK LPAREN RPAREN SEMI { Statement.mk_assign "check" (T_int.mk_int Z.one) }
   | ASSUME LPAREN fml=Formula RPAREN SEMI { Statement.mk_assume fml }
   /* a++; b--; */
   | varname=ID PLUSPLUS SEMI {
@@ -230,14 +230,14 @@ StatementGeneral:
     Statement.mk_assign varname
       (T_int.mk_add
         (Term.mk_var tvar T_int.SInt)
-        (T_int.mk_int (Z.of_int 1)))
+        (T_int.mk_int Z.one))
   }
   | varname=ID MINUSMINUS SEMI {
     let tvar = Ident.Tvar varname in
     Statement.mk_assign varname
       (T_int.mk_sub
         (Term.mk_var tvar T_int.SInt)
-        (T_int.mk_int (Z.of_int 1)))
+        (T_int.mk_int Z.one))
   }
   | funname=ID LPAREN args=Arguements RPAREN SEMI {
     Statement.mk_call_voidfun funname args

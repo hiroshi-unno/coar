@@ -1,9 +1,11 @@
 {
+  open Core
+  open Lexing
+  open Common.Util.LexingHelper
+  open Ast.LogicOld
+
   exception SyntaxError of string
   exception ErrorFormatted of string
-  open Lexing
-  open Ast.LogicOld
-  open Common.Util.LexingHelper
 }
 
 rule main = parse
@@ -54,7 +56,7 @@ rule main = parse
 | '\"'[^'\"']*'\"'
     {
       let str = Lexing.lexeme lexbuf in
-      let str = String.sub str 1 (String.length str - 2) in
+      let str = Stdlib.String.sub str 1 (String.length str - 2) in
       CCtlParser.STRING str
     }
 
@@ -106,7 +108,7 @@ and comment openingpos = parse
 | eof {
     raise
       (ErrorFormatted
-        (Printf.sprintf
+        (sprintf
           "%d:%d:syntax error: unterminated comment."
           openingpos.pos_lnum (openingpos.pos_cnum - openingpos.pos_bol + 1)
         )

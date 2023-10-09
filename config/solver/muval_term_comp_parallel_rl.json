@@ -1,0 +1,34 @@
+[
+    "MuVal",
+    {
+        "optimizer": [
+            "Filename",
+            "./config/muval/optimizer/enable.json"
+        ],
+        "number_of_pairs": 1,
+        "pcsp_solver_primal": [
+            "Filename",
+            "./config/solver/pcsat_rl.json"
+        ],
+        "pcsp_solver_dual": [
+            "Filename",
+            "./config/solver/pcsat_rl.json"
+        ],
+        "qelim": {
+            "mode": [
+                "SkolemPred"
+            ],
+            "verbose": false
+        },
+        "mode": [
+            "Parallel"
+        ],
+        "check_problem": false,
+        "verbose": false,
+        "gen_extra_partial_sols": false,
+        "random_ex_size": 0,
+        "random_ex_bound": 0,
+        "send_lower_bounds": false,
+        "output_iteration": false
+    }
+]

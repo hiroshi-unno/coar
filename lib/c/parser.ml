@@ -1,13 +1,10 @@
 open Core
-open Common
 open Common.Ext
+open Common.Combinator
 open Common.Util.LexingHelper
 open CSyntax
 open Ast
 open Ast.LogicOld
-
-let verbose = false
-module Debug = Debug.Make (val (Debug.Config.(if verbose then enable else disable)))
 
 let rec sub_inits_rep subst res = function
   | [] -> List.rev res
@@ -94,7 +91,7 @@ module ElimFuncall : sig
   val elim_funcall: FunDecl.t list -> Statement.t -> Statement.t
 end = struct
   let mk_labelname funname nxt_label_id =
-    Printf.sprintf "%s#%d" funname nxt_label_id,
+    sprintf "%s#%d" funname nxt_label_id,
     nxt_label_id + 1
 
   let subst_terms subst terms = List.map ~f:(Term.subst subst) terms
@@ -156,7 +153,7 @@ end = struct
       stmt
     else
       failwith @@
-      Printf.sprintf "move_funcall_rep: not implemented: %s" (Statement.string_of stmt)
+      sprintf "move_funcall_rep: not implemented: %s" (Statement.string_of stmt)
 
   (*
     void f(int a, int b) { P; }
@@ -183,7 +180,7 @@ end = struct
           (* arg = Term.Var (_, T_int.SRefInt, _) *)
           let (tvar, _), _ = Term.let_var arg in
           (* if sort <> T_int.SRefInt then
-             failwith @@ Printf.sprintf "sort of (param, arg) = (%s, %s) is not T_int.SRefInt" varname (Term.str_of arg); *)
+             failwith @@ sprintf "sort of (param, arg) = (%s, %s) is not T_int.SRefInt" varname (Term.str_of arg); *)
           let subst =
             Map.Poly.of_alist_exn [Ident.Tvar varname, Term.mk_var tvar T_int.SInt ~info:Dummy]
           in
@@ -277,9 +274,9 @@ end = struct
       nxt_label_id
     else
       failwith @@
-      Printf.sprintf "elim_funcall_rep: not implemented for: %s" (Statement.string_of stmt)
+      sprintf "elim_funcall_rep: not implemented for: %s" (Statement.string_of stmt)
 
-  let move_funcall_tvar_of_count count = Ident.Tvar (Printf.sprintf "#result%d" count), count + 1
+  let move_funcall_tvar_of_count count = Ident.Tvar (sprintf "#result%d" count), count + 1
 
   let rec move_funcall_term_rep ?(gen=Fn.id) count term
     : Term.t * (Statement.t -> Statement.t) * int =
@@ -299,7 +296,7 @@ end = struct
     else if Term.is_var term then
       term, gen, count
     else
-      failwith @@ Printf.sprintf "move_funcall_term_rep: not implemented: %s" (Term.str_of term)
+      failwith @@ sprintf "move_funcall_term_rep: not implemented: %s" (Term.str_of term)
 
   and move_funcall_terms ?(gen=Fn.id) count terms =
     List.fold_left ~init:([], gen, count) (List.rev terms) ~f:(fun (terms, gen, count) term ->
@@ -314,7 +311,7 @@ end = struct
       Atom.mk_app (Predicate.mk_psym psym) args ~info, gen, count
     else if Atom.is_true atom || Atom.is_false atom then atom, gen, count
     else
-      failwith @@ Printf.sprintf "move_funcall_atom_rep: not implemented: %s" (Atom.str_of atom)
+      failwith @@ sprintf "move_funcall_atom_rep: not implemented: %s" (Atom.str_of atom)
 
   let rec move_funcall_formula_rep ?(gen=Fn.id) count fml
     : Formula.t * (Statement.t -> Statement.t) * int =
@@ -332,7 +329,7 @@ end = struct
       let fml, gen, count = move_funcall_formula_rep ~gen count fml in
       Formula.mk_unop unop fml ~info, gen, count
     else
-      failwith @@ Printf.sprintf "move_funcall_formula_rep: not implemented %s" (Formula.str_of fml)
+      failwith @@ sprintf "move_funcall_formula_rep: not implemented %s" (Formula.str_of fml)
 
   let rec move_funcall_rep stmt =
     if Statement.is_assign stmt then
@@ -385,7 +382,7 @@ end = struct
       stmt
     else
       failwith @@
-      Printf.sprintf "move_funcall_rep: not implemented: %s" (Statement.string_of stmt)
+      sprintf "move_funcall_rep: not implemented: %s" (Statement.string_of stmt)
 
   let move_funcall_fundecl fundecl =
     if FunDecl.is_fun_int fundecl then
@@ -464,7 +461,7 @@ end = struct
       renamed_vars
     else if Statement.is_vardecl stmt then
       let varname, sort = Statement.let_vardecl stmt in
-      let new_varname = Printf.sprintf "%s#%d" varname (Map.Poly.length renamed_vars) in
+      let new_varname = sprintf "%s#%d" varname (Map.Poly.length renamed_vars) in
       Statement.mk_nondet_assign new_varname,
       Map.Poly.update renamed_vars (Ident.Tvar varname)
         ~f:(fun _ -> Term.mk_var (Ident.Tvar new_varname) sort ~info:Dummy)
@@ -481,12 +478,12 @@ end = struct
       stmt,
       renamed_vars
     else
-      failwith @@ Printf.sprintf "elim_vardecl_rep: not implemented: %s" (Statement.string_of stmt)
+      failwith @@ sprintf "elim_vardecl_rep: not implemented: %s" (Statement.string_of stmt)
 
   let elim_vardecl stmt = fst @@ elim_vardecl_rep Map.Poly.empty stmt
 end
 
-let parse_cctl_from_lexbuf lexbuf =
+let parse_cctl_from_lexbuf ~print lexbuf =
   try
     let (phi, decls, inits, body), defs, fundecls = CCtlParser.toplevel CCtlLexer.main lexbuf in
     (* a = 3; b = a; -> a = 3; b = 3; *)
@@ -498,30 +495,30 @@ let parse_cctl_from_lexbuf lexbuf =
     let body = Statement.subst def_subst body in
     (* elim all fun callings *)
     let body = ElimFuncall.elim_funcall fundecls body in
-    Debug.print @@ lazy "vvvvvvvvvvvvv Input C Program vvvvvvvvvvvvv";
-    Debug.print @@ lazy (Printf.sprintf "[phi]\n%s\n" (Ctl.string_of phi));
-    Debug.print @@ lazy
-      (Printf.sprintf "[decls]\n%s\n"
+    print @@ lazy "vvvvvvvvvvvvv Input C Program vvvvvvvvvvvvv";
+    print @@ lazy (sprintf "[phi]\n%s\n" (Ctl.string_of phi));
+    print @@ lazy
+      (sprintf "[decls]\n%s\n"
          (String.concat_map_list ~sep:"\n" decls ~f:Declare.string_of));
-    Debug.print @@ lazy
-      (Printf.sprintf "[inits]\n%s\n"
+    print @@ lazy
+      (sprintf "[inits]\n%s\n"
          (String.concat_map_list ~sep:"\n" inits ~f:Init.string_of));
-    Debug.print @@ lazy (Printf.sprintf "[body]\n%s\n" (Statement.string_of body));
-    Debug.print @@ lazy "";
-    Ok (HesOf.hes_of_cctl (phi, decls, inits, body))
+    print @@ lazy (sprintf "[body]\n%s\n" (Statement.string_of body));
+    print @@ lazy "";
+    Ok (HesOf.hes_of_cctl ~print (phi, decls, inits, body))
   with
   | CSyntax.SemanticError error ->
-    Result.fail (Error.of_string (Printf.sprintf "semantic error: %s" error))
+    Result.fail (Error.of_string (sprintf "semantic error: %s" error))
   | CSyntax.SyntaxError error ->
-    Result.fail (Error.of_string (Printf.sprintf "%s: syntax error: %s" (get_position_string lexbuf) error))
+    Result.fail (Error.of_string (sprintf "%s: syntax error: %s" (get_position_string lexbuf) error))
   | CCtlParser.Error ->
-    Result.fail (Error.of_string (Printf.sprintf "%s: syntax error" (get_position_string lexbuf)))
+    Result.fail (Error.of_string (sprintf "%s: syntax error" (get_position_string lexbuf)))
   | CCtlLexer.SyntaxError error ->
-    Result.fail (Error.of_string (Printf.sprintf "%s: syntax error: %s" (get_position_string lexbuf) error))
+    Result.fail (Error.of_string (sprintf "%s: syntax error: %s" (get_position_string lexbuf) error))
   | CCtlLexer.ErrorFormatted error ->
     Result.fail (Error.of_string error)
 
-let parse_cltl_from_lexbuf lexbuf =
+let parse_cltl_from_lexbuf ~print lexbuf =
   try
     let (ltl, decls, inits, body), defs, fundecls = CLtlParser.toplevel CLtlLexer.main lexbuf in
     let fundecls = [
@@ -529,7 +526,7 @@ let parse_cltl_from_lexbuf lexbuf =
         let tvar = Ident.Tvar "x" in
         Statement.of_statements [
           (* *x = x-1 *)
-          Statement.mk_unref_assign "x" (T_int.mk_sub (Term.mk_var tvar T_int.SUnrefInt ~info:Dummy) (T_int.mk_int (Z.of_int 1) ~info:Dummy) ~info:Dummy);
+          Statement.mk_unref_assign "x" (T_int.mk_sub (Term.mk_var tvar T_int.SUnrefInt ~info:Dummy) (T_int.mk_int Z.one ~info:Dummy) ~info:Dummy);
           (* return *x *)
           Statement.mk_return_int (Term.mk_var tvar T_int.SUnrefInt ~info:Dummy)
         ]);
@@ -537,7 +534,7 @@ let parse_cltl_from_lexbuf lexbuf =
         let tvar = Ident.Tvar "x" in
         Statement.of_statements [
           (* *x = x+1 *)
-          Statement.mk_unref_assign "x" (T_int.mk_add (Term.mk_var tvar T_int.SUnrefInt ~info:Dummy) (T_int.mk_int (Z.of_int 1) ~info:Dummy) ~info:Dummy);
+          Statement.mk_unref_assign "x" (T_int.mk_add (Term.mk_var tvar T_int.SUnrefInt ~info:Dummy) (T_int.mk_int Z.one ~info:Dummy) ~info:Dummy);
           (* return *x *)
           Statement.mk_return_int (Term.mk_var tvar T_int.SUnrefInt ~info:Dummy)
         ]);
@@ -560,33 +557,33 @@ let parse_cltl_from_lexbuf lexbuf =
     let inits = sub_inits inits in
     (* dispose #define for inits *)
     let inits = List.map ~f:(Init.subst def_subst) inits in
-    Debug.print @@ lazy "vvvvvvvvvvvvv Input C Program vvvvvvvvvvvvv";
-    Debug.print @@ lazy (Printf.sprintf "[ltl]\n%s\n" (Ltl.string_of ltl));
+    print @@ lazy "vvvvvvvvvvvvv Input C Program vvvvvvvvvvvvv";
+    print @@ lazy (sprintf "[ltl]\n%s\n" (Ltl.string_of ltl));
     (* Debug.print @@ lazy
-       (Printf.sprintf "[decls]\n%s\n"
+       (sprintf "[decls]\n%s\n"
          (String.concat_map_list ~sep:"\n" decls ~f:Declare.string_of)); *)
-    Debug.print @@ lazy
-      (Printf.sprintf "[inits]\n%s\n"
+    print @@ lazy
+      (sprintf "[inits]\n%s\n"
          (String.concat_map_list ~sep:"\n" inits ~f:Init.string_of));
-    Debug.print @@ lazy (Printf.sprintf "[body]\n%s\n" (Statement.string_of body));
-    Debug.print @@ lazy "";
+    print @@ lazy (sprintf "[body]\n%s\n" (Statement.string_of body));
+    print @@ lazy "";
     (* convert the given specification *)
     let ltl = Ltl.simplify_neg ltl in
-    Debug.print @@ lazy (Printf.sprintf "[ltl(neg)]\n%s\n" (Ltl.string_of ltl));
-    let ba = LogicConverter.ba_of_ltl ltl in
-    Debug.print @@ lazy (Printf.sprintf "[ba]\n%s\n" (BuchiAutomaton.string_of ~printer:Formula.str_of ba));
+    print @@ lazy (sprintf "[ltl(neg)]\n%s\n" (Ltl.string_of ltl));
+    let ba = LogicConverter.ba_of_ltl ~print ltl in
+    print @@ lazy (sprintf "[ba]\n%s\n" (BuchiAutomaton.string_of ~printer:Formula.str_of ba));
     let hmes = LogicConverter.hmes_of_ba ba in
-    Debug.print @@ lazy (Printf.sprintf "[hmes]\n%s\n" (HMES.string_of hmes));
-    Ok (HesOf.hes_of_chmes (hmes, decls, inits, body))
+    print @@ lazy (sprintf "[hmes]\n%s\n" (HMES.string_of hmes));
+    Ok (HesOf.hes_of_chmes ~print (hmes, decls, inits, body))
   with
   | CSyntax.SemanticError error ->
-    Result.fail (Error.of_string (Printf.sprintf "semantic error: %s" error))
+    Result.fail (Error.of_string (sprintf "semantic error: %s" error))
   | CSyntax.SyntaxError error ->
-    Result.fail (Error.of_string (Printf.sprintf "%s: syntax error: %s" (get_position_string lexbuf) error))
+    Result.fail (Error.of_string (sprintf "%s: syntax error: %s" (get_position_string lexbuf) error))
   | CLtlParser.Error ->
-    Result.fail (Error.of_string (Printf.sprintf "%s: syntax error" (get_position_string lexbuf)))
+    Result.fail (Error.of_string (sprintf "%s: syntax error" (get_position_string lexbuf)))
   | CLtlLexer.SyntaxError error ->
-    Result.fail (Error.of_string (Printf.sprintf "%s: syntax error: %s" (get_position_string lexbuf) error))
+    Result.fail (Error.of_string (sprintf "%s: syntax error: %s" (get_position_string lexbuf) error))
   | CLtlLexer.ErrorFormatted error ->
     Result.fail (Error.of_string error)
 
@@ -638,7 +635,7 @@ end = struct
          let args = Str.matched_group 2 program in
          let args = if String.equal args "" then [] else String.split_on_chars ~on:[','] args in
          head ^
-         List.fold_left ~init:subst_to (List.zip_exn params args)         
+         List.fold_left ~init:subst_to (List.zip_exn params args)
            ~f:(fun subst_to (param, arg) -> subst_identifier param arg subst_to))
       program
 
@@ -671,9 +668,9 @@ end = struct
                subst_identifier id subst_to program,
                line_number
              else
-               failwith @@ Printf.sprintf "%d: syntax error: %s" line_number line
+               failwith @@ sprintf "%d: syntax error: %s" line_number line
            else
-             failwith @@ Printf.sprintf "unknown preprocess: %s" (type_of_preprocess line))
+             failwith @@ sprintf "unknown preprocess: %s" (type_of_preprocess line))
           ~init:((String.concat_map_list lines ~sep:"\n"
                     ~f:(fun line -> if is_preprocess line then "" else line)),
                  0)
@@ -682,13 +679,11 @@ end = struct
     program
 end
 
-let parse_cltl program =
+let parse_cltl ~print program =
   let program = Preprocess.preprocess program in
-  (*Debug.print @@ lazy "=============== Preprocessed ===============";
-    Debug.print @@ lazy (program ^ "\n");*)
-  program
-  |> Lexing.from_string
-  |> parse_cltl_from_lexbuf
-let parse_cctl str = Lexing.from_string str |> parse_cctl_from_lexbuf
-let from_cltl_file file = parse_cltl @@ read_file file
-let from_cctl_file file = parse_cctl @@ read_file file
+  (*print @@ lazy "=============== Preprocessed ===============";
+    print @@ lazy (program ^ "\n");*)
+  program |> Lexing.from_string |> parse_cltl_from_lexbuf ~print
+let parse_cctl ~print = Lexing.from_string >> parse_cctl_from_lexbuf ~print
+let from_cltl_file ~print file = parse_cltl ~print @@ read_file file
+let from_cctl_file ~print file = parse_cctl ~print @@ read_file file

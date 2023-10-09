@@ -7,11 +7,6 @@ type solution =
   | AssertSol of string * PCSP.Problem.solution * int
   | OptimizeSol of (CHCOpt.Problem.solution * int)
 
-type assertion =
-  | Type of Ast.Rtype.t
-  | FinEff of string Grammar.RegWordExp.t
-  | InfEff of string Grammar.RegWordExp.t
-
 type t = string * ptype
 
 let senv_of = function

@@ -62,7 +62,7 @@ module Make (Cfg: Config.ConfigType) (APCSP: PCSP.Problem.ProblemType) = struct
     let examples = VersionSpace.example_graph_of vs in
     let senv = Logic.to_old_sort_env_map Logic.ExtTerm.to_old_sort @@ PCSP.Problem.senv_of APCSP.problem in
     Debug.print @@ lazy
-      (Printf.sprintf
+      (sprintf
          (if wf then "  synthesizing a well-founded predicate for [%s]:"
           else if fn then "  synthesizing a functional predicate for [%s]:"
           else "  synthesizing a predicate for [%s]:")

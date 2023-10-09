@@ -26,13 +26,12 @@ let rec str_of ?(with_sort = false) = function
   | PVar (tvar, sort) ->
     name_of_tvar tvar ^ if with_sort then " : " ^ Term.str_of_sort sort else ""
   | PTuple pats  ->
-    sprintf "(%s)" @@
-    String.concat_map_list ~sep:", " pats ~f:(str_of ~with_sort)
+    String.paren @@ String.concat_map_list ~sep:", " pats ~f:(str_of ~with_sort)
   | PCons (t, cons_name, pats) ->
     sprintf "%s%s"
-      (if with_sort then "(" ^ cons_name ^ " : " ^ Datatype.str_of t ^ ")" else cons_name) @@
+      (if with_sort then String.paren (cons_name ^ " : " ^ Datatype.str_of t) else cons_name) @@
     if List.is_empty pats then ""
-    else "(" ^ (String.concat_map_list ~sep:", " pats ~f:(str_of ~with_sort)) ^ ")"
+    else String.paren (String.concat_map_list ~sep:", " pats ~f:(str_of ~with_sort))
 let rec tvars_of = function
   | PAny _ -> Set.Poly.empty
   | PVar (tvar, _) -> Set.Poly.singleton tvar

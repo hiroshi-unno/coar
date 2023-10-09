@@ -8,19 +8,19 @@ let find_cycle graph vertiecs = (* graph must be strongly connected *)
   let open Pack.Digraph in
 
   let rec inner stack visited ver =
-    if Set.Poly.mem visited ver then
+    if Set.mem visited ver then
       match List.findi stack ~f:(fun _ v -> Stdlib.(v = ver)) with
       | Some (i, _) ->
         ver :: (List.take stack (i+1))
         |> List.rev
       | None -> assert false
     else
-      let visited = Set.Poly.add visited ver in
+      let visited = Set.add visited ver in
       let nexts = succ graph ver in
       let next = List.hd_exn nexts in
       inner (ver::stack) visited next
   in
-  let start = Set.Poly.choose_exn vertiecs in
+  let start = Set.choose_exn vertiecs in
   inner [] Set.Poly.empty start
 
 (* ToDo: implement Johnson algorithm to find all cycle *)
@@ -31,12 +31,12 @@ let term_map examples = (* size of examples is more than 0 *)
   let open Pack.Digraph in
   let cnt = ref 0 in
   let size =
-    match Set.Poly.find_exn examples ~f:(fun _ -> true) with
+    match Set.find_exn examples ~f:(fun _ -> true) with
     | ((_, _), terms) ->
       let l = List.length terms in
       if l mod 2 = 1 then assert false else l / 2
   in
-  let map = Set.Poly.fold ~f:(fun map -> function
+  let map = Set.fold ~f:(fun map -> function
       | (_, _), terms ->
         let t1 = List.take terms size in
         let t2 = List.drop terms size in
@@ -55,7 +55,7 @@ let gen_graph sample =
   let open Pack.Digraph in
   let node_map, node_map_rev, n, size = term_map sample in
   let graph = create ~size:n () in
-  Set.Poly.iter sample ~f:(fun ((_,_), terms) ->
+  Set.iter sample ~f:(fun ((_,_), terms) ->
       let t1 = List.take terms size in
       let t2 = List.drop terms size in
       let e1 = Map.Poly.find_exn node_map t1 in
@@ -72,7 +72,7 @@ let detect res pvar sorts (graph, components, node_map_rev) =
         let component = Set.Poly.of_list component in
         Set.iter ~f:(fun v ->
             List.iter ~f:(fun s ->
-                if Set.Poly.mem component s
+                if Set.mem component s
                 then add_edge subgraph v s else ()
               ) @@ succ graph v
           ) component;
@@ -95,4 +95,4 @@ let detect res pvar sorts (graph, components, node_map_rev) =
             let neg_examples = Set.Poly.of_list papps in
             let clause =
               PCSatCommon.ExClause.{ positive=Set.Poly.empty; negative=neg_examples } in
-            Set.Poly.add acc clause) ~init:acc) components
+            Set.add acc clause) ~init:acc) components

@@ -177,7 +177,7 @@ end = struct
       (* TODO *)
       mk_nop nxt_stmt
     else
-      failwith @@ Printf.sprintf "LinkedStatement.of_statement_rep: not implemented: %s" @@ Statement.string_of stmt
+      failwith @@ sprintf "LinkedStatement.of_statement_rep: not implemented: %s" @@ Statement.string_of stmt
 
   let of_statement stmt =
     let labels = Statement.get_all_labels stmt in
@@ -245,7 +245,7 @@ end = struct
 
   let string_of_indent n = String.make n ' '
 
-  let string_of_labelid n = Printf.sprintf "L%d" n
+  let string_of_labelid n = sprintf "L%d" n
 
   let rec string_of_stmt_rep ?info used indent stmt =
     let id_opt =
@@ -256,18 +256,18 @@ end = struct
     match id_opt with
     | Some (_, id) ->
       used,
-      Printf.sprintf "%sgoto %s;" (string_of_indent indent) (string_of_labelid id)
+      sprintf "%sgoto %s;" (string_of_indent indent) (string_of_labelid id)
     | None ->
       let id = List.length used + 1 in
       let used = (stmt, id) :: used in
       let prefix =
         match info with
         | None ->
-          Printf.sprintf "%s%s: "
+          sprintf "%s%s: "
             (string_of_indent indent)
             (string_of_labelid id)
         | Some to_s ->
-          Printf.sprintf "%s: // %s\n%s"
+          sprintf "%s: // %s\n%s"
             (string_of_labelid id)
             (to_s stmt)
             (string_of_indent indent)
@@ -278,7 +278,7 @@ end = struct
           let used, t_stmt_str = string_of_stmt_rep ?info used (indent+2) !t_stmt in
           let used, f_stmt_str = string_of_stmt_rep ?info used (indent+2) !f_stmt in
           used,
-          Printf.sprintf "if (%s) {\n%s\n%s}\n%selse {\n%s\n%s}"
+          sprintf "if (%s) {\n%s\n%s}\n%selse {\n%s\n%s}"
             (Formula.str_of cond_fml)
             t_stmt_str
             (string_of_indent indent)
@@ -288,21 +288,21 @@ end = struct
         | ASSIGN (varname, term, nxt_stmt) ->
           let used, nxt_stmt_str = string_of_stmt_rep ?info used indent !nxt_stmt in
           used,
-          Printf.sprintf "%s = %s;\n%s"
+          sprintf "%s = %s;\n%s"
             varname
             (Term.str_of term)
             nxt_stmt_str
         | NONDET_ASSIGN (varname, nxt_stmt) ->
           let used, nxt_stmt_str = string_of_stmt_rep ?info used indent !nxt_stmt in
           used,
-          Printf.sprintf "%s = nondet();\n%s"
+          sprintf "%s = nondet();\n%s"
             varname
             nxt_stmt_str
         | NONDET (stmt1, stmt2) ->
           let used, stmt1_str = string_of_stmt_rep ?info used (indent+2) !stmt1 in
           let used, stmt2_str = string_of_stmt_rep ?info used (indent+2) !stmt2 in
           used,
-          Printf.sprintf "nondet {\n%s\n%s}\n%selse {\n%s\n%s}"
+          sprintf "nondet {\n%s\n%s}\n%selse {\n%s\n%s}"
             stmt1_str
             (string_of_indent indent)
             (string_of_indent indent)
@@ -311,17 +311,17 @@ end = struct
         | ASSUME (fml, nxt_stmt) ->
           let used, nxt_stmt_str = string_of_stmt_rep ?info used indent !nxt_stmt in
           used,
-          Printf.sprintf "assume(%s);\n%s"
+          sprintf "assume(%s);\n%s"
             (Formula.str_of fml)
             nxt_stmt_str
         | NOP nxt_stmt ->
           let used, nxt_stmt_str = string_of_stmt_rep ?info used indent !nxt_stmt in
           used,
-          Printf.sprintf "nop\n%s"
+          sprintf "nop\n%s"
             nxt_stmt_str
         | EXIT ->
           used,
-          Printf.sprintf "exit 0;"
+          sprintf "exit 0;"
       in
       used,
       prefix ^ bodystr

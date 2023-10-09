@@ -7,3 +7,4 @@
     CoAR)
   (preprocess (pps ppx_deriving.std))
   (flags (-cclib -lstdc++)))
+; (flags (-cclib -lstdc++ -cclib -lglpk -cclib -lgurobi)))

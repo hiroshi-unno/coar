@@ -1,7 +1,6 @@
 open Core
-open Common.Combinator
 open Common.Ext
-open Common.Util
+open Common.Combinator
 open Logic
 
 let eqcs_of phi =
@@ -18,17 +17,16 @@ let eqcs_of phi =
           | _ -> Second phi)
   in
   let eqcs' =
-    fix (Set.Poly.of_list eqcs) ~f:(Set.Poly.fold ~init:Set.Poly.empty ~f:(fun eqcs (eqc2, ty2) ->
+    fix (Set.Poly.of_list eqcs) ~f:(Set.fold ~init:Set.Poly.empty ~f:(fun eqcs (eqc2, ty2) ->
         let updated = ref false in
         let eqcs' =
           Set.Poly.map eqcs ~f:(fun (eqc1, ty1) ->
-              if Fn.non Set.Poly.is_empty @@ Set.Poly.inter eqc2 eqc1 then begin
+              if Fn.non Set.is_empty @@ Set.inter eqc2 eqc1 then begin
                 updated := true;
-                Set.Poly.union eqc1 eqc2, ty1
+                Set.union eqc1 eqc2, ty1
               end else (eqc1, ty1))
         in
-        if !updated then eqcs' else Set.Poly.add eqcs (eqc2, ty2)))
-      ~equal:(fun eqcs1 eqcs2 -> Set.Poly.length eqcs1 = Set.Poly.length eqcs2)
+        if !updated then eqcs' else Set.add eqcs (eqc2, ty2))) ~equal:Set.eqlen
   in
   eqcs', phis
 
@@ -36,8 +34,8 @@ let elim_eqcls let_bounds bounds (uni_senv, defs, phi) =
   let eqcs, phis1 = eqcs_of phi in
   let ttsub, phis2 =
     Set.Poly.map eqcs ~f:(fun (eqc, ty) ->
-        let bvs, fvs = Set.Poly.partition_tf ~f:(Map.Poly.mem bounds) eqc in
-        match Set.Poly.to_list bvs, Set.Poly.to_list fvs with
+        let bvs, fvs = Set.partition_tf ~f:(Map.Poly.mem bounds) eqc in
+        match Set.to_list bvs, Set.to_list fvs with
         | [], fv :: fvs' ->
           let tt = Term.mk_var fv in
           List.map fvs' ~f:(fun x -> x, (tt, ty)),
@@ -62,7 +60,7 @@ let elim_eqcls let_bounds bounds (uni_senv, defs, phi) =
               List.map bvs' ~f:(fun x -> BoolTerm.neq_of ty tt (Term.mk_var x))
           end
         | _, _ -> assert false)
-    |> Set.Poly.to_list
+    |> Set.to_list
     |> List.unzip
     |> Pair.map List.concat List.concat
   in
@@ -106,9 +104,7 @@ let elim_consts bounds (uni_senv, defs, phi) =
 
 let reduce (uni_senv, defs, body) =
   let fvs = Set.Poly.union_list @@ List.map ~f:Term.fvs_of @@ body :: defs in
-  Map.Poly.filter_keys uni_senv ~f:(Set.Poly.mem fvs),
-  defs,
-  body
+  Map.Poly.filter_keys uni_senv ~f:(Set.mem fvs), defs, body
 let rec qelim_aux1 let_bounds bounds exi_senv (uni_senv, defs, phi) =
   let simplify (uni_senv, defs, body) =
     let body' =
@@ -129,7 +125,7 @@ let rec qelim_aux1 let_bounds bounds exi_senv (uni_senv, defs, phi) =
   else (uni_senv', defs', phi')
 let rec qelim_aux2 let_bounds bounds exi_senv (uni_senv, defs, phi) =
   let bounds' = Map.force_merge_list [exi_senv; let_bounds; bounds] in
-  let has_no_inter x t = Set.Poly.is_empty @@ Set.Poly.inter (Term.fvs_of t) (Set.Poly.add (Map.key_set let_bounds) x) in
+  let has_no_inter x t = Set.is_empty @@ Set.inter (Term.fvs_of t) (Set.add (Map.key_set let_bounds) x) in
   let res =
     List.find_map (BoolTerm.disjuncts_of phi) ~f:(fun phi ->
         match Term.let_apps @@ BoolTerm.nnf_of phi with
@@ -215,22 +211,18 @@ let rec qelim_aux2 let_bounds bounds exi_senv (uni_senv, defs, phi) =
   match res with
   | Some (x, t)  ->
     let uni_senv' = Map.Poly.remove uni_senv x in
-    let sub =
-      Map.Poly.singleton x @@
-      ExtTerm.simplify_term exi_senv uni_senv' t
-    in
+    let sub = Map.Poly.singleton x @@ ExtTerm.simplify_term exi_senv uni_senv' t in
     (*print_endline @@ sprintf "[qelim_aux2] %s ==> %s" (Ident.name_of_tvar x) (ExtTerm.str_of t');*)
     let phi' =
-      ExtTerm.simplify_formula
-        exi_senv (Map.force_merge let_bounds uni_senv') (Term.subst sub phi)
+      ExtTerm.simplify_formula exi_senv (Map.force_merge let_bounds uni_senv') @@
+      Term.subst sub phi
     in
-    qelim_aux2 let_bounds bounds exi_senv (uni_senv', (*ToDo: simplify*)List.map ~f:(Term.subst sub) defs, phi')
+    qelim_aux2 let_bounds bounds exi_senv @@
+    (uni_senv', (*ToDo: simplify*)List.map ~f:(Term.subst sub) defs, phi')
   | None -> uni_senv, defs, phi
 
-let app_qelim let_bounds bounds exi_senv (uni_senv, defs, phi) =
-  (uni_senv, defs, phi)
-  |> qelim_aux1 let_bounds bounds exi_senv
-  |> qelim_aux2 let_bounds bounds exi_senv
+let app_qelim let_bounds bounds exi_senv =
+  qelim_aux1 let_bounds bounds exi_senv >> qelim_aux2 let_bounds bounds exi_senv
 (** eliminate free variables in [defs] and [phi] that are universlly quantified implicitly *)
 (** @param [bounds] variables that must not be eliminated *)
 (** assume that [phi] is alpha-renamed and let-normalized *)
@@ -242,15 +234,15 @@ let rec qelim ?(let_bounds=Map.Poly.empty) bounds exi_senv (uni_senv, defs, phi)
       | _, [], _ -> assert false
       | uni_senv_body, def' :: defs', body' ->
         let fvs_body = Term.fvs_of body' in
-        if Set.Poly.mem fvs_body var then
+        if Set.mem fvs_body var then
           let uni_senv_body' = Map.Poly.remove uni_senv_body var in
           let uni_senv_def, _, def'' =
             reduce @@
             if BoolTerm.is_bool_sort sort then
               let bounds_def =
                 let senv = Map.force_merge exi_senv uni_senv_body' in
-                Set.Poly.fold
-                  (Set.Poly.diff (Set.Poly.union_list @@ fvs_body :: List.map ~f:Term.fvs_of defs')
+                Set.fold
+                  (Set.diff (Set.Poly.union_list @@ fvs_body :: List.map ~f:Term.fvs_of defs')
                      (Map.key_set let_bounds'))
                   ~init:bounds ~f:(fun acc tvar ->
                       Map.Poly.set ~key:tvar ~data:(Map.Poly.find_exn senv tvar) acc)
@@ -271,8 +263,8 @@ let qelim_old bounds exi_senv (uni_senv, phi) =
 
 (*let rec qelim_clause exi_senv (uni_senv, ps, ns, phi) =
   let senv = Map.force_merge exi_senv uni_senv in
-  let atms = Set.Poly.map (Set.Poly.union ps ns) ~f:(fun t -> ExtTerm.to_old_atom senv t []) in
-  let papp_tvs = List.map ~f:ExtTerm.of_old_sort_bind @@ Set.Poly.to_list @@ Util.Set.concat_map atms ~f:LogicOld.Atom.term_sort_env_of in
+  let atms = Set.Poly.map (Set.union ps ns) ~f:(fun t -> ExtTerm.to_old_atom senv t []) in
+  let papp_tvs = List.map ~f:ExtTerm.of_old_sort_bind @@ Set.to_list @@ Util.Set.concat_map atms ~f:LogicOld.Atom.term_sort_env_of in
   let bounds = (* this is essential for qualifiers extraction *) Map.force_merge (Map.Poly.of_alist_exn papp_tvs) exi_senv in
   let phi' =
     ExtTerm.simplify_formula senv (snd @@ g bounds @@ snd @@ f bounds phi)

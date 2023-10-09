@@ -18,16 +18,13 @@ module Make (Config: Config.ConfigType): SolverType = struct
   let context = Context.create ()
 
   let pvar_eliminator = let open Or_error in
-    ExtFile.unwrap config.pvar_eliminator >>= fun cfg ->
-    Ok (PvarEliminator.make cfg)
+    ExtFile.unwrap config.pvar_eliminator >>= fun cfg -> Ok (PvarEliminator.make cfg)
 
   let coordinator = let open Or_error in
-    ExtFile.unwrap config.coordinator >>= fun cfg ->
-    Ok (Coordinator.make cfg context)
+    ExtFile.unwrap config.coordinator >>= fun cfg -> Ok (Coordinator.make cfg context)
 
   let sol_printer = let open Or_error in
-    ExtFile.unwrap config.sol_printer >>= fun cfg ->
-    Ok (SolPrinter.make cfg)
+    ExtFile.unwrap config.sol_printer >>= fun cfg -> Ok (SolPrinter.make cfg)
 
   let solve ?(bpvs=Set.Poly.empty) ?(filename=None) ?(print_sol=false) pcsp =
     let open Or_error in

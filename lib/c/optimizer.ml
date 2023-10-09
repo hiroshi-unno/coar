@@ -1,14 +1,10 @@
 open Core
-open Common
 open Common.Ext
 open CSyntax
 open Linked
 open Linked.LinkedStatement
 open Ast
 open Ast.LogicOld
-
-let verbose = false
-module Debug = Debug.Make (val (Debug.Config.(if verbose then enable else disable)))
 
 type target = Variables.t * Declare.t list * Init.t list * LinkedStatement.t
 
@@ -129,7 +125,7 @@ end = struct
                 (nxt_stmt := StatementEnv.get !nxt_stmt new_stmts;
                  nxt_stmt :: used)
               else
-                failwith @@ Printf.sprintf "internal error: replace failed:\n%s\n\n" (string_of stmt)))
+                failwith @@ sprintf "internal error: replace failed:\n%s\n\n" (string_of stmt)))
     |> ignore;
     StatementEnv.get query new_stmts
 end
@@ -206,10 +202,10 @@ module ReadGraph = struct
         List.map ~f:fst rgenv
         |> String.concat_map_list ~sep:" " ~f:(fun tvar ->
             let r = rgenv_get tvar (RGENV rgenv) |> rg_get stmt in
-            Printf.sprintf "%s:%d"
+            sprintf "%s:%d"
               (Ident.name_of_tvar tvar)
               (length r))
-        |> Printf.sprintf "[%s]")
+        |> sprintf "[%s]")
       query_stmt
 
   (* max rs1 rs2 *)
@@ -263,37 +259,31 @@ module ReadGraph = struct
     else if Atom.is_true atom || Atom.is_false atom then
       res
     else
-      failwith @@ Printf.sprintf "rc_of_atom_rep: not implemented for: %s" (Atom.str_of atom)
+      failwith @@ sprintf "rc_of_atom_rep: not implemented for: %s" (Atom.str_of atom)
 
   let rec rc_of_formula_rep varname fml res =
-    if Formula.is_atom fml then
-      let atom, _ = Formula.let_atom fml in
+    match fml with
+    | Formula.Atom (atom, _) ->
       rc_of_atom_rep varname atom res
-    else if Formula.is_unop fml then
-      let _, fml', _ = Formula.let_unop fml in
-      rc_of_formula_rep varname fml' res
-    else if Formula.is_binop fml then
-      let _, fml1, fml2, _ = Formula.let_binop fml in
-      rc_of_formula_rep varname fml1 res
-      |> rc_of_formula_rep varname fml2
-    else if Formula.is_bind fml then
-      let _, bounds, fml', _ = Formula.let_bind fml in
+    | Formula.UnaryOp (_, phi, _) ->
+      rc_of_formula_rep varname phi res
+    | Formula.BinaryOp (_, phi1, phi2, _) ->
+      rc_of_formula_rep varname phi1 res
+      |> rc_of_formula_rep varname phi2
+    | Formula.Bind (_, bounds, phi', _) ->
       (* <varname> is in <bounds> *)
-      if List.exists ~f:(fun (tvar, _) -> String.equal (Ident.name_of_tvar tvar) varname) bounds then
-        0
-        (* <varname> is not in <bounds> *)
-      else
-        rc_of_formula_rep varname fml' res
-    else
+      if List.exists ~f:(fun (tvar, _) -> String.equal (Ident.name_of_tvar tvar) varname) bounds then 0 (* <varname> is not in <bounds> *)
+      else rc_of_formula_rep varname phi' res
+    | LetRec (_funcs, _phi, _info) ->
       failwith "rc_of_formula_rep: not implemented"
+    | LetFormula (_var, _sort, def, body, _info) ->
+      rc_of_term_rep varname def res
+      |> rc_of_formula_rep varname body
 
   let of_rc stmt cnt =
-    if cnt = 0 then
-      Never
-    else if cnt = 1 then
-      Once (StatementEnv.init () [stmt, ()])
-    else
-      TwiceOrMore (StatementEnv.init () [stmt, ()])
+    if cnt = 0 then Never
+    else if cnt = 1 then Once (StatementEnv.init () [stmt, ()])
+    else TwiceOrMore (StatementEnv.init () [stmt, ()])
 
   let of_formula varname stmt fml =
     of_rc stmt @@ rc_of_formula_rep varname fml 0
@@ -363,7 +353,7 @@ module ReadGraph = struct
 end
 
 module RemoveAssign : sig
-  val optimize: target -> target
+  val optimize: print:(string lazy_t -> unit) -> target -> target
 end = struct
   let remove_stmt stmt_key stmt_keys (query_stmt_key, new_stmts) =
     match get_next_statements stmt_key with
@@ -391,7 +381,7 @@ end = struct
 
   let is_nondet_term _nondet_tvar _term = (* TODO *)true
   let rec is_nondet_formula nondet_tvar = function
-    | Formula.Atom (atom, _) -> (*ToDo*)Set.Poly.mem (Atom.tvs_of atom) nondet_tvar
+    | Formula.Atom (atom, _) -> (*ToDo*)Set.mem (Atom.tvs_of atom) nondet_tvar
     | UnaryOp (_, phi, _) -> is_nondet_formula nondet_tvar phi
     | BinaryOp (_, phi1, phi2, _) -> is_nondet_formula nondet_tvar phi1 && is_nondet_formula nondet_tvar phi2
     | Bind (_, _bounds, _phi, _) -> (* ToDo *)false
@@ -433,7 +423,7 @@ end = struct
             (* cond 1 *)
             let can_subst =
               Term.tvs_of term
-              |> Set.Poly.is_empty
+              |> Set.is_empty
             in
             if can_subst then
               let using_stmt_keys = StatementEnv.keys using_stmt_keys in
@@ -564,7 +554,7 @@ end = struct
                 if ReadGraph.mem stmt_key rc then
                   if State.mem varname init_state then
                     let term = State.get varname init_state in
-                    assert (Term.tvs_of term |> Set.Poly.is_empty);
+                    assert (Term.tvs_of term |> Set.is_empty);
                     T_LIT term
                   else if check_nondet rc then T_NONDET
                   else T_INVALID
@@ -588,7 +578,7 @@ end = struct
                             && ReadGraph.rg_get !nxt_stmt_key rg
                                |> ReadGraph.mem stmt_key
                           then
-                            if Set.Poly.is_empty @@ Term.tvs_of term
+                            if Set.is_empty @@ Term.tvs_of term
                             then update (T_LIT term)
                             else T_INVALID
                           else value
@@ -607,7 +597,7 @@ end = struct
               in
               match value with
               | T_VALID ->
-                failwith @@ Printf.sprintf "internal error: can't reach the statement:\n%s\n\noriginal:\n%s\n\nvarname: %s\n" (string_of stmt) (string_of stmt_key) varname
+                failwith @@ sprintf "internal error: can't reach the statement:\n%s\n\noriginal:\n%s\n\nvarname: %s\n" (string_of stmt) (string_of stmt_key) varname
               | T_NONDET ->
                 if check_nondet_if tvar stmt then
                   let _, t_stmt, f_stmt = let_if stmt in
@@ -657,12 +647,12 @@ end = struct
       (* already deleted *)
       query_stmt_key, new_stmts
 
-  let sub_assign is_print_for_debug stmts inits spec_fv query_stmt =
+  let sub_assign ~print is_print_for_debug stmts inits spec_fv query_stmt =
     let new_stmts = Util.mk_replacer stmts in
     let prev_env = Util.get_prev_env query_stmt in
     let rgenv = ReadGraph.get_rgenv spec_fv prev_env query_stmt in
     if is_print_for_debug then
-      Debug.print @@ lazy (Printf.sprintf "rgenv:\n%s\n\n" (ReadGraph.string_of_rgenv query_stmt rgenv));
+      print @@ lazy (sprintf "rgenv:\n%s\n\n" (ReadGraph.string_of_rgenv query_stmt rgenv));
     let init_state = State.of_inits inits in
     List.fold ~init:(query_stmt, new_stmts) stmts
       ~f:(fun (query_stmt, new_stmts) stmt ->
@@ -680,13 +670,13 @@ end = struct
     in
     Util.replace_stmt ~query:query_stmt new_stmts
 
-  let optimize_stmt inits spec_fv stmt =
+  let optimize_stmt ~print inits spec_fv stmt =
     let rec rep is_first n stmt =
       if n = 0 then
         stmt
       else
         let stmts = get_all_statements stmt in
-        let stmt = sub_assign is_first stmts inits spec_fv stmt in
+        let stmt = sub_assign ~print is_first stmts inits spec_fv stmt in
         let stmts = get_all_statements stmt in
         remove_unused_assign stmts spec_fv stmt
         |> rep false (n - 1)
@@ -694,8 +684,8 @@ end = struct
     rep false 10 stmt
   (* rep true 10 stmt *)
 
-  let optimize (spec_fv, decls, inits, stmt) =
-    (spec_fv, decls, inits, optimize_stmt inits spec_fv stmt)
+  let optimize ~print (spec_fv, decls, inits, stmt) =
+    (spec_fv, decls, inits, optimize_stmt ~print inits spec_fv stmt)
 end
 
 module RemoveNop : sig
@@ -749,9 +739,9 @@ end = struct
     (spec_fv, decls, inits, optimize_stmt spec_fv stmt)
 end
 
-let optimize spec_fv decls inits stmt =
+let optimize ~print spec_fv decls inits stmt =
   (spec_fv, decls, inits, stmt)
-  |> RemoveAssign.optimize
+  |> RemoveAssign.optimize ~print
   |> RemoveNop.optimize
   |> RemoveTrailingNoValueChanged.optimize
 (* TODO: for assumes *)

@@ -8,25 +8,25 @@ open Ast.Logic
 
 let pos_pvars =
   Set.Poly.map ~f:(fun c ->
-      match Set.Poly.choose @@ Clause.pos_pvars c with
+      match Set.choose @@ Clause.pos_pvars c with
       | None -> assert false
       | Some pvar -> pvar)
 let rec solve exi_senv lbs cs =
   let ps = pos_pvars cs in
   let ready_to_compute_lb c =
-    Set.Poly.for_all ~f:(Map.Poly.mem lbs) @@ Clause.neg_pvars c
+    Set.for_all ~f:(Map.Poly.mem lbs) @@ Clause.neg_pvars c
   in
   let ps_ready =
-    Set.Poly.filter ps ~f:(fun pvar ->
-        Set.Poly.for_all ~f:ready_to_compute_lb @@
-        Set.Poly.filter cs ~f:(Clause.is_definite pvar))
+    Set.filter ps ~f:(fun pvar ->
+        Set.for_all ~f:ready_to_compute_lb @@
+        Set.filter cs ~f:(Clause.is_definite pvar))
   in
   let cs1, cs2 =
-    Set.Poly.partition_tf cs ~f:(fun c ->
-        Set.Poly.exists ps_ready ~f:(fun p -> Clause.is_definite p c))
+    Set.partition_tf cs ~f:(fun c ->
+        Set.exists ps_ready ~f:(fun p -> Clause.is_definite p c))
   in
-  if Set.Poly.is_empty cs1 then
-    if Set.Poly.is_empty cs2 then Ok (Problem.Sat lbs)
+  if Set.is_empty cs1 then
+    if Set.is_empty cs2 then Ok (Problem.Sat lbs)
     else Or_error.error_string "not supported"
   else
     let lbs' =
@@ -41,5 +41,5 @@ let solve pcsp =
   Problem.to_nnf pcsp
   |> Problem.to_cnf
   |> Problem.clauses_of
-  |> Set.Poly.filter ~f:(Fn.non Clause.is_goal)(*ToDo*)
+  |> Set.filter ~f:(Fn.non Clause.is_goal)(*ToDo*)
   |> solve (Problem.senv_of pcsp) Map.Poly.empty

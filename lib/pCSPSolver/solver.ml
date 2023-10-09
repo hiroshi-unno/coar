@@ -56,7 +56,7 @@ module Make (Cfg: Config.ConfigType) : SolverType = struct
           ignore bpvs;
           PCSP.ForwardPropagate.solve pcsp >>= fun sol ->
           if print_sol then begin
-            Out_channel.print_endline @@ Printf.sprintf "%s" (PCSP.Problem.str_of_solution sol);
+            Out_channel.print_endline @@ sprintf "%s" (PCSP.Problem.str_of_solution sol);
             Out_channel.flush stdout
           end;
           Ok (sol, -1)

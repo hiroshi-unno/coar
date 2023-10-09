@@ -38,10 +38,10 @@ let disable_timeout f arg =
   let reset_sigalrm_handler =
     let old_handler =
       let sigalrm_delayed_handler =
-        Caml.Sys.Signal_handle
+        Stdlib.Sys.Signal_handle
           (fun _ -> (* Format.printf "Timeout!@,"; *) sigalrm_catched := true) in
-      Caml.Sys.signal Caml.Sys.sigalrm sigalrm_delayed_handler in
-    fun () -> Caml.Sys.set_signal Caml.Sys.sigalrm old_handler
+      Stdlib.Sys.signal Stdlib.Sys.sigalrm sigalrm_delayed_handler in
+    fun () -> Stdlib.Sys.set_signal Stdlib.Sys.sigalrm old_handler
   in
   try
     let ret = f arg in
@@ -77,13 +77,13 @@ let enable_timeout timeout before after main normal_handler exc_handler =
          let finish =
            let old_handler =
              let sigalrm_handler =
-               Caml.Sys.Signal_handle
+               Stdlib.Sys.Signal_handle
                  (fun _ -> (* Format.printf "Timeout!@,";  *)raise Timeout) in
-             Caml.Sys.signal Caml.Sys.sigalrm sigalrm_handler in
+             Stdlib.Sys.signal Stdlib.Sys.sigalrm sigalrm_handler in
            fun () ->
              ignore @@ Core_unix.alarm 0;
              already_set := false;
-             Caml.Sys.set_signal Caml.Sys.sigalrm old_handler
+             Stdlib.Sys.set_signal Stdlib.Sys.sigalrm old_handler
          in
          start ();
          already_set := true;

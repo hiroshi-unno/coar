@@ -1,18 +1,18 @@
 %{
+  open Core
   open Ast
   open Ast.LogicOld
   open CSyntax
 
   let funname_nondet = "__VERIFIER_nondet_int"
   let stmt_of_statements = Statement.of_statements
-  let formula_of_term term = Formula.mk_atom (T_bool.mk_neq term (T_int.mk_int (Z.of_int 0) ~info:Dummy) ~info:Dummy) ~info:Dummy
-  let term_of_string str = let varname = Printf.sprintf "\"%s\"" str in Term.mk_var (Ident.Tvar varname) T_int.SRefInt ~info:Dummy
+  let formula_of_term term = Formula.mk_atom (T_bool.mk_neq term (T_int.mk_int Z.zero ~info:Dummy) ~info:Dummy) ~info:Dummy
+  let term_of_string str = let varname = sprintf "\"%s\"" str in Term.mk_var (Ident.Tvar varname) T_int.SRefInt ~info:Dummy
   let is_nondet term =
     if Term.is_funcall term then
       let funname, _, _ = Term.let_funcall term in
-      funname = funname_nondet
-    else
-      false
+      Stdlib.(funname = funname_nondet)
+    else false
 %}
 
 %token IF ELSE DO WHILE WHILE_TRUE FOR BREAK RETURN GOTO
@@ -101,7 +101,7 @@ VarDecl:
     | VOID decls=IntVarDecls SEMI
     | VarDeclIntType decls=IntVarDecls SEMI {
       let varnames, stmts = decls in
-      List.map (fun varname -> Declare.mk_int varname) varnames,
+      List.map ~f:(fun varname -> Declare.mk_int varname) varnames,
       match stmts with
         [] -> []
       | stmts -> stmt_of_statements stmts |> Init.of_stmt_exn []
@@ -183,13 +183,9 @@ InitOne:
     let varnames, term = data in
     if is_nondet term then begin
       assert (List.length varnames <= 1);
-      List.map
-        (fun varname -> Init.mk_nondet_assign varname)
-        varnames
+      List.map ~f:(fun varname -> Init.mk_nondet_assign varname) varnames
     end else
-      List.map
-        (fun varname -> Init.mk_assign varname term)
-        varnames
+      List.map ~f:(fun varname -> Init.mk_assign varname term) varnames
   }
   /* | ASSUME LPAREN fml=Formula RPAREN SEMI inits=Init { Init.mk_assume fml :: inits } */
 
@@ -213,7 +209,7 @@ Statement:
       let varname = Statement.varname_of_assign cond_assign_stmt in
       let tvar = Ident.Tvar varname in
       let term = Term.mk_var tvar T_int.SInt ~info:Dummy in
-      let cond_fml = Formula.mk_atom (T_bool.mk_neq term (T_int.mk_int (Z.of_int 0) ~info:Dummy) ~info:Dummy) ~info:Dummy in
+      let cond_fml = Formula.mk_atom (T_bool.mk_neq term (T_int.mk_int Z.zero ~info:Dummy) ~info:Dummy) ~info:Dummy in
       stmt_of_statements [
         cond_assign_stmt;
         Statement.mk_if cond_fml t_stmt (Statement.mk_nop ())
@@ -235,7 +231,7 @@ IfElse:
       let varname = Statement.varname_of_assign cond_assign_stmt in
       let tvar = Ident.Tvar varname in
       let term = Term.mk_var tvar T_int.SInt ~info:Dummy in
-      let cond_fml = Formula.mk_atom (T_bool.mk_neq term (T_int.mk_int (Z.of_int 0) ~info:Dummy) ~info:Dummy) ~info:Dummy in
+      let cond_fml = Formula.mk_atom (T_bool.mk_neq term (T_int.mk_int Z.zero ~info:Dummy) ~info:Dummy) ~info:Dummy in
       fun f_stmt ->
         stmt_of_statements [
           cond_assign_stmt;
@@ -278,7 +274,7 @@ For:
               Statement.mk_assign step_var
                 (T_int.mk_add
                   (Term.mk_var tvar T_int.SInt ~info:Dummy)
-                  (T_int.mk_int (Z.of_int 1) ~info:Dummy)
+                  (T_int.mk_int Z.one ~info:Dummy)
                   ~info:Dummy)
             ])
             (Statement.mk_break ())
@@ -357,7 +353,7 @@ StatementGeneral:
   | VOID decls=IntVarDecls SEMI
   | CONST VOID decls=IntVarDecls SEMI {
       let varnames, stmts = decls in
-      List.map (fun varname -> Statement.mk_vardecl varname T_int.SInt) varnames
+      List.map ~f:(fun varname -> Statement.mk_vardecl varname T_int.SInt) varnames
       @ stmts
       |> stmt_of_statements
     }
@@ -456,8 +452,8 @@ T_intAtom:
   | MINUSMINUS varname=ID { Term.mk_fsym_app (FunCall "#dec") [Term.mk_var (Ident.Tvar varname) T_int.SRefInt ~info:Dummy] ~info:Dummy }
   | PLUSPLUS varname=ID { Term.mk_fsym_app (FunCall "#inc") [Term.mk_var (Ident.Tvar varname) T_int.SRefInt ~info:Dummy] ~info:Dummy }
   /* x--, x++ */
-  | varname=ID MINUSMINUS { T_int.mk_add (Term.mk_fsym_app (FunCall "#dec") [Term.mk_var (Ident.Tvar varname) T_int.SRefInt ~info:Dummy] ~info:Dummy) (T_int.mk_int (Z.of_int 1) ~info:Dummy) ~info:Dummy }
-  | varname=ID PLUSPLUS { T_int.mk_sub (Term.mk_fsym_app (FunCall "#inc") [Term.mk_var (Ident.Tvar varname) T_int.SRefInt ~info:Dummy] ~info:Dummy) (T_int.mk_int (Z.of_int 1) ~info:Dummy) ~info:Dummy }
+  | varname=ID MINUSMINUS { T_int.mk_add (Term.mk_fsym_app (FunCall "#dec") [Term.mk_var (Ident.Tvar varname) T_int.SRefInt ~info:Dummy] ~info:Dummy) (T_int.mk_int Z.one ~info:Dummy) ~info:Dummy }
+  | varname=ID PLUSPLUS { T_int.mk_sub (Term.mk_fsym_app (FunCall "#inc") [Term.mk_var (Ident.Tvar varname) T_int.SRefInt ~info:Dummy] ~info:Dummy) (T_int.mk_int Z.one ~info:Dummy) ~info:Dummy }
   /* "hoge" */
   | str=STRINGL { term_of_string str }
   /* "hoge" "fuga" */

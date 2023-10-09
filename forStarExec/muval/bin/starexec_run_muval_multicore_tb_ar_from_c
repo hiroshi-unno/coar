@@ -2,23 +2,6 @@
 
 export LD_LIBRARY_PATH=./
 INPUT=$(basename $1 ".c")
-./clang -c -emit-llvm -O0 $1 -o ${INPUT}.bc 2>/dev/null
-./llvm2kittel --dump-ll --no-slicing --eager-inline --t2 ${INPUT}.bc >${INPUT}.t2
-
-run() {
-    output=$(./main.exe -c ./config/solver/muval_term_comp_parallel_tb_ar.json -p ltsterm ${INPUT}.t2)
-    ret=$(echo $output | grep "YES\|NO")
-    if [ -z "$ret" ]; then
-        if [ $1 -gt 0 ]; then
-            pkill -9 main 2>/dev/null
-            sleep 0.1
-            run $(expr $1 - 1)
-        else
-            exit
-        fi
-    else
-        echo $ret
-    fi
-}
-
-run 10
+./clang -c -emit-llvm -O0 $1 -o ${INPUT}.bc 2> /dev/null
+./llvm2kittel --dump-ll --no-slicing --eager-inline --t2 ${INPUT}.bc > ${INPUT}.t2
+./main.exe -c ./config/solver/muval_term_comp_parallel_tb_ar.json -p ltsterm ${INPUT}.t2 2> /dev/null

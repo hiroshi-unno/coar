@@ -29,20 +29,14 @@ module Config = struct
       Ok { cfg with strategy = PredicateAbstraction strategy_cfg }
 
   let load_ext_file = function
-    | ExtFile.Filename filename ->
-      begin
-        let open Or_error in
-        try_with (fun () -> Yojson.Safe.from_file filename)
-        >>= fun raw_json ->
-        match of_yojson raw_json with
-        | Ok x ->
-          instantiate_ext_files x >>= fun x ->
-          Ok (ExtFile.Instance x)
-        | Error msg ->
-          error_string @@ Printf.sprintf
-            "Invalid Synthesizer Configuration (%s): %s" filename msg
-      end
-    | Instance x -> Ok (ExtFile.Instance x)
+    | ExtFile.Instance x -> Ok (ExtFile.Instance x)
+    | Filename filename ->
+      let open Or_error in
+      try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
+      match of_yojson raw_json with
+      | Ok x -> instantiate_ext_files x >>= fun x -> Ok (ExtFile.Instance x)
+      | Error msg ->
+        error_string @@ sprintf "Invalid Synthesizer Configuration (%s): %s" filename msg
 
   module type ConfigType = sig val config : t end
 end
@@ -51,24 +45,24 @@ module type SynthesizerType = sig
   val run_phase : int -> State.u -> State.s Or_error.t
 end
 
-module Make (RLCfg: RLConfig.ConfigType) (Cfg: Config.ConfigType) (Problem: PCSP.Problem.ProblemType): SynthesizerType = struct
+module Make (RLCfg: RLConfig.ConfigType) (Cfg: Config.ConfigType) (APCSP: PCSP.Problem.ProblemType): SynthesizerType = struct
   let config = Cfg.config
-  let id = PCSP.Problem.id_of Problem.problem
+  let id = PCSP.Problem.id_of APCSP.problem
 
   module CandidateChecker =
-    CandidateChecker.Make (val (Debug.Config.(if config.verbose then enable else disable))) (Problem)
+    CandidateChecker.Make (val (Debug.Config.(if config.verbose then enable else disable))) (APCSP)
   module Debug = Debug.Make (val Debug.Config.(if config.verbose then enable else disable))
   let _ = Debug.set_id id
   module Synthesizer =
     (val (match config.strategy with
          | Config.Template cfg ->
-           (module TBSynthesizer.Make (RLCfg) (struct let config = cfg end) (Problem)
+           (module TBSynthesizer.Make (RLCfg) (struct let config = cfg end) (APCSP)
               : SynthesizerType)
          | Classification cfg ->
-           (module CBSynthesizer.Make (struct let config = cfg end) (Problem)
+           (module CBSynthesizer.Make (struct let config = cfg end) (APCSP)
               : SynthesizerType)
          | PredicateAbstraction cfg ->
-           (module PASynthesizer.Make (struct let config = cfg end) (Problem)
+           (module PASynthesizer.Make (struct let config = cfg end) (APCSP)
               : SynthesizerType)))
 
   let check_candidates e =
@@ -79,7 +73,7 @@ module Make (RLCfg: RLConfig.ConfigType) (Cfg: Config.ConfigType) (Problem: PCSP
       match ExClauseSet.check_candidates
               ~id
               ~inst:true (VersionSpace.fenv_of vs)
-              (PCSP.Problem.senv_of Problem.problem)
+              (PCSP.Problem.senv_of APCSP.problem)
               (VersionSpace.examples_of vs)
               (List.map ~f:fst cands) with
       | None -> Ok e
@@ -95,18 +89,28 @@ module Make (RLCfg: RLConfig.ConfigType) (Cfg: Config.ConfigType) (Problem: PCSP
 
   let run_phase iters e =
     if RLCfg.config.enable then begin
-      (if RLCfg.config.show_examples then
-         let examples = State.pos_neg_und_examples_of e in
-         Out_channel.print_endline (Printf.sprintf "examples: %s" (Yojson.Safe.to_string @@ VersionSpace.to_yojson examples)));
-      if RLCfg.config.show_elapsed_time then
-        Out_channel.print_endline "begin synthesizer";
+      if RLCfg.config.show_examples then begin
+        RLConfig.lock ();
+        let examples = State.pos_neg_und_examples_of e in
+        Debug.print_stdout @@ lazy
+          (sprintf "examples: %s" @@
+           Yojson.Safe.to_string @@ VersionSpace.to_yojson examples);
+        RLConfig.unlock ()
+      end;
+      if RLCfg.config.show_elapsed_time then begin
+        RLConfig.lock ();
+        Debug.print_stdout @@ lazy "begin synthesizer";
+        RLConfig.unlock ()
+      end;
       let tm = Timer.make () in
-      let open Or_error in
-      let res = Synthesizer.run_phase iters e >>= check_candidates in
-      if RLCfg.config.show_elapsed_time then
-        Out_channel.print_endline (Format.sprintf "end synthesizer: %f" (tm ()));
+      let res = Or_error.(Synthesizer.run_phase iters e >>= check_candidates) in
+      if RLCfg.config.show_elapsed_time then begin
+        RLConfig.lock ();
+        Debug.print_stdout @@ lazy (sprintf "end synthesizer: %f" (tm ()));
+        RLConfig.unlock ()
+      end;
       res
-    end else Synthesizer.run_phase iters e
+    end else Or_error.(Synthesizer.run_phase iters e >>= check_candidates)
 
   let rec refine_cands iters e = let open Or_error.Monad_infix in
     run_phase iters e >>= function

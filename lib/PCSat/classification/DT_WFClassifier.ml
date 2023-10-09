@@ -114,7 +114,7 @@ end = struct
 
   let z_of = List.map ~f:force_int
 
-  let str_of l = "(" ^ (String.concat_map_list ~sep:", " ~f:Term.str_of l) ^ ")"
+  let str_of l = String.paren @@ String.concat_map_list ~sep:", " ~f:Term.str_of l
 end
 
 module TransitionExample : sig
@@ -173,14 +173,13 @@ end = struct
             (Formula.mk_atom (T_int.mk_geq x (T_int.zero ())))
             (Formula.mk_atom (T_int.mk_gt x y))
         in
-        let x_eq_y = Formula.mk_atom (T_bool.mk_eq x y) in
+        let x_eq_y = Formula.eq x y in
         let xy_neg =
           Formula.mk_and
             (Formula.mk_atom (T_int.mk_lt x (T_int.zero ())))
             (Formula.mk_atom (T_int.mk_lt y (T_int.zero ())))
         in
-        let x_eq_y = Formula.mk_or x_eq_y xy_neg in
-        Formula.and_of (x_gt_y :: eq) :: gt' (x_eq_y :: eq) xys
+        Formula.and_of (x_gt_y :: eq) :: gt' (Formula.mk_or x_eq_y xy_neg :: eq) xys
     in
     Formula.or_of (gt' [] (List.zip_exn x y))
 
@@ -193,9 +192,7 @@ end = struct
             (Formula.mk_atom (T_int.mk_geq x (T_int.zero ())))
             (Formula.mk_atom (T_int.mk_gt x y))
         in
-        let x_eq_y = Formula.mk_atom (T_bool.mk_eq x y) in
-        Formula.and_of (x_gt_y :: eq)
-        :: gt_degenerate_negative' (x_eq_y :: eq) xys
+        Formula.and_of (x_gt_y :: eq) :: gt_degenerate_negative' (Formula.eq x y :: eq) xys
     in
     Formula.or_of (gt_degenerate_negative' [] (List.zip_exn x y))
 end
@@ -204,8 +201,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : PCSP.Problem.ProblemType) = struc
   let config = Cfg.config
   let id = PCSP.Problem.id_of APCSP.problem
 
-  module Debug =
-    Debug.Make ((val Debug.Config.(if config.verbose then enable else disable)))
+  module Debug = Debug.Make (val Debug.Config.(if config.verbose then enable else disable))
   let _ = Debug.set_id id
 
   type classifier = sort_env_map * (Ident.pvar * (sort_env_list * Formula.t))
@@ -334,7 +330,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : PCSP.Problem.ProblemType) = struc
       in
       let params_src_tvar = List.map ~f:fst params_src in
       Debug.print
-      @@ lazy (Printf.sprintf "number of input qualifiers: %d" (List.length hs));
+      @@ lazy (sprintf "number of input qualifiers: %d" (List.length hs));
       let table, hs =
         if config.qualifier_reduction then (
           let choose_best_hs l =
@@ -378,7 +374,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : PCSP.Problem.ProblemType) = struc
           let hs = Array.of_list hs in
           Debug.print
           @@ lazy
-            (Printf.sprintf "number of reduced qualifiers: %d"
+            (sprintf "number of reduced qualifiers: %d"
                (Array.length hs));
           (table, hs))
         else
@@ -651,25 +647,20 @@ module Make (Cfg : Config.ConfigType) (APCSP : PCSP.Problem.ProblemType) = struc
       in
       match Z3Smt.Z3interface.max_smt fenv [] soft_constraints with
       | Some (_, model) ->
-        let model = LogicOld.remove_dontcare model |> Map.Poly.of_alist_exn in
+        let model = Map.Poly.of_alist_exn @@ LogicOld.remove_dontcare model in
         let labels =
-          List.map
-            ~f:(fun c ->
-                if Formula.subst model c |> Evaluator.eval then 1. else -1.)
-            t_src_gt_t_dst
+          List.map t_src_gt_t_dst ~f:(fun c ->
+              if Evaluator.eval @@ Formula.subst model c then 1. else -1.)
         in
         let src_label, dst_label =
-          List.zip_exn transition_example_id_list labels
-          |> List.map ~f:(fun ((src, dst), label) ->
-              ((src, label), (dst, label)))
-          |> List.unzip
+          List.unzip @@
+          List.map2_exn transition_example_id_list labels ~f:(fun (src, dst) label ->
+              (src, label), (dst, label))
         in
         let state_label =
-          List.map
-            ~f:(fun (x, label) ->
-                ( Table.get_state_example t x
-                  |> StateExample.z_of |> List.map ~f:Z.to_float,
-                  label ))
+          List.map ~f:(fun (x, label) ->
+              List.map ~f:Z.to_float @@ StateExample.z_of @@ Table.get_state_example t x,
+              label)
             (src_label @ dst_label)
         in
         let compare (x, l) (x', l') =
@@ -677,13 +668,11 @@ module Make (Cfg : Config.ConfigType) (APCSP : PCSP.Problem.ProblemType) = struc
           if x_comp = 0 then Float.compare l l' else x_comp
         in
         let state_label = List.dedup_and_sort ~compare state_label in
-        List.iter
-          ~f:(fun (x, label) ->
-              Debug.print
-              @@ lazy
-                (let x_str = String.concat_map_list ~sep:", " ~f:string_of_float x in
-                 let label_str = string_of_float label in
-                 Printf.sprintf "(%s): %s" x_str label_str))
+        List.iter ~f:(fun (x, label) ->
+            Debug.print @@ lazy
+              (let x_str = String.concat_map_list ~sep:", " ~f:string_of_float x in
+               let label_str = string_of_float label in
+               sprintf "%s: %s" (String.paren x_str) label_str))
           state_label;
         let samples, labels = List.unzip state_label in
         let labels = Array.of_list labels |> Vec.of_array in
@@ -800,7 +789,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : PCSP.Problem.ProblemType) = struc
           let h = halfspace_of_bw approx_bw in
           let params_src_tvar = Table.get_params_src t |> List.map ~f:fst in
           if
-            Set.Poly.for_all state_examples ~f:(fun ex ->
+            Set.for_all state_examples ~f:(fun ex ->
                 let ex_term =
                   Table.get_state_example t ex |> StateExample.term_of
                 in
@@ -953,7 +942,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : PCSP.Problem.ProblemType) = struc
 
     let rec build_dtree lex2wf t (transition_example_id_list, num_max_sat, info)
       =
-      Debug.print @@ lazy (Printf.sprintf "num_max_sat = %d" num_max_sat);
+      Debug.print @@ lazy (sprintf "num_max_sat = %d" num_max_sat);
       List.iter
         ~f:(fun (x, y) ->
             let x_str = Table.get_state_example t x |> StateExample.str_of in
@@ -1204,8 +1193,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : PCSP.Problem.ProblemType) = struc
 
   let rec loop_elimination lex2wf t dt =
     let example_map =
-      List.mapi
-        ~f:(fun i e -> (Printf.sprintf "D%d" i, e))
+      List.mapi ~f:(fun i e -> sprintf "D%d" i, e)
         (Table.get_transition_example_id_list t)
       |> Map.Poly.of_alist_exn
     in
@@ -1272,14 +1260,14 @@ module Make (Cfg : Config.ConfigType) (APCSP : PCSP.Problem.ProblemType) = struc
     let _neg_ex, pneg_ex, pos_ex, ppos_ex = TruthTable.papps_of tt alist in
     (* ToDo: ppos_ex can be non-empty *)
     (* temporarily allow negative examples *)
-    assert (Set.Poly.is_empty pneg_ex && Set.Poly.is_empty ppos_ex);
+    assert (Set.is_empty pneg_ex && Set.is_empty ppos_ex);
     let params_src, _ = split_sort_env params in
     let transition_examples =
       Set.Poly.map ~f:(fun (_, t) -> TransitionExample.of_term t) pos_ex
     in
     if config.eager_halfspace_gen then
-      Table.make_eager params_src (Set.Poly.to_list transition_examples)
-    else Table.make_lazy params_src (Set.Poly.to_list transition_examples)
+      Table.make_eager params_src (Set.to_list transition_examples)
+    else Table.make_lazy params_src (Set.to_list transition_examples)
 
   let rec term_of_dtree t = function
     | Leaf term -> term

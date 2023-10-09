@@ -5,7 +5,7 @@ open Ast.LogicOld
 open PCSatCommon
 
 let make n seeds =
-  Set.Poly.fold ~init:(Set.Poly.singleton (n, [])) seeds ~f:(fun acc (x, _, t) ->
+  Set.fold ~init:(Set.Poly.singleton (n, [])) seeds ~f:(fun acc (x, _, t) ->
       Set.Poly.union_list
         [acc;
          Set.concat_map acc ~f:(fun (n, xts) ->
@@ -18,12 +18,12 @@ let make n seeds =
       let qual =
         Normalizer.normalize @@ Formula.geq left (Evaluator.eval_term right |> Term.of_value)
       in
-      if Set.Poly.is_empty @@ Formula.fvs_of qual then None else Some qual)
+      if Set.is_empty @@ Formula.fvs_of qual then None else Some qual)
 
 let polyhedron_half_spaces_of n sorts examples =
   let params = LogicOld.sort_env_list_of_sorts sorts in
   params,
-  Set.Poly.union
+  Set.union
     (Set.Poly.of_list params
      |> Set.Poly.filter_map ~f:(function
          | (x, T_bool.SBool) -> Some (Term.mk_var x T_bool.SBool)

@@ -3,7 +3,7 @@
   {
     "pvar_eliminator": [
       "Filename",
-      "./config/pcsat/pvar_eliminator/dbg.json"
+      "./config/pcsat/pvar_eliminator/dbg_enable.json"
     ],
     "coordinator": [
       "Filename",

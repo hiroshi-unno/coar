@@ -1,6 +1,6 @@
 opam-version: "2.0"
 name: "CoAR"
-version: "2.0"
+version: "2.1"
 maintainer: "Hiroshi Unno <uhiro@cs.tsukuba.ac.jp>"
 authors: "Hiroshi Unno <uhiro@cs.tsukuba.ac.jp>"
 homepage: "https://github.com/hiroshi-unno/coar"
@@ -12,7 +12,7 @@ pin-depends: [
 ]
 depends: [
   "ocaml"
-  "core" {>= "0.14.0"}
+  "core" {>= "v0.16.0"}
   "core_unix"
   "domainslib"
   "menhir"

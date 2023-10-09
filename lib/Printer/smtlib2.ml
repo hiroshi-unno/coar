@@ -1,16 +1,13 @@
 open Core
-open Common
 open Common.Ext
+open Common.Combinator
 open Ast
 open Ast.LogicOld
 
-let verbose = false
-module Debug = Debug.Make (val Debug.Config.(if verbose then enable else disable))
-let ctx = Z3.mk_context []
-let solver = Z3.Fixedpoint.mk_fixedpoint ctx
-
-let of_pcsp pcsp =
-  (* Debug.print @@ lazy (sprintf "===================== pcsp ====================: \n%s" (PCSP.Problem.str_of pcsp)); *)
+let of_pcsp (*~print*) pcsp =
+  let ctx = Z3.mk_context [] in
+  let solver = Z3.Fixedpoint.mk_fixedpoint ctx in
+  (* print @@ lazy (sprintf "===================== pcsp ====================: \n%s" (PCSP.Problem.str_of pcsp)); *)
   let pcsp = PCSP.Problem.to_cnf @@ PCSP.Problem.to_nnf pcsp in
   let dtenv = Z3Smt.Z3interface.z3_dtenv_of_dtenv ctx @@ PCSP.Problem.dtenv_of pcsp in
   let fenv = PCSP.Problem.fenv_of pcsp in
@@ -18,52 +15,56 @@ let of_pcsp pcsp =
   let query_name, exi_senv =
     try
       let query_name = "__query__" in
-      query_name, Map.Poly.add_exn exi_senv ~key:(Ident.Tvar query_name) ~data:Logic.BoolTerm.SBool
+      query_name,
+      Map.Poly.add_exn exi_senv ~key:(Ident.Tvar query_name) ~data:Logic.BoolTerm.SBool
     with _ ->
     try
       let query_name = "__query__hmm__" in
-      query_name, Map.Poly.add_exn exi_senv ~key:(Ident.Tvar query_name) ~data:Logic.BoolTerm.SBool
+      query_name,
+      Map.Poly.add_exn exi_senv ~key:(Ident.Tvar query_name) ~data:Logic.BoolTerm.SBool
     with _ -> assert false(*ToDo*)
   in
   let penv =
     List.map (Map.Poly.to_alist exi_senv) ~f:(fun (Ident.Tvar name, sort) ->
         let arg_sorts, ret_sort = Logic.Sort.args_ret_of sort in
         assert (Logic.ExtTerm.is_bool_sort ret_sort);
-        let arg_sorts = List.map arg_sorts ~f:(fun s -> Z3Smt.Z3interface.of_sort ctx dtenv @@ Logic.ExtTerm.to_old_sort s) in
+        let arg_sorts = List.map arg_sorts
+            ~f:(Logic.ExtTerm.to_old_sort >> Z3Smt.Z3interface.of_sort ctx dtenv) in
         let symbol = Z3.Symbol.mk_string ctx name in
-        let func_decl = Z3.FuncDecl.mk_func_decl ctx symbol arg_sorts (Z3.Boolean.mk_sort ctx) in
-        (Ident.Pvar name, func_decl))
+        Ident.Pvar name,
+        Z3.FuncDecl.mk_func_decl ctx symbol arg_sorts (Z3.Boolean.mk_sort ctx))
   in
-  List.iter ~f:(fun (_, funcdecl) -> Z3.Fixedpoint.register_relation solver funcdecl) penv;
+  List.iter ~f:(snd >> Z3.Fixedpoint.register_relation solver) penv;
   let exists_query = ref false in
-  Set.Poly.iter (PCSP.Problem.clauses_of pcsp) ~f:(fun (uni_senv, ps, ns, phi) ->
-      let ps =
-        match Set.Poly.length ps with
-        | 0 ->
-          exists_query := true;
-          Set.Poly.singleton (Atom.mk_app (Predicate.mk_var (Ident.Pvar query_name) []) [])
-        | 1 -> Set.Poly.map ps ~f:(fun t -> Logic.ExtTerm.to_old_atom exi_senv uni_senv t [])
-        | _ -> (* z3 does not support head disjunction *)assert false
+  Set.iter (PCSP.Problem.clauses_of pcsp) ~f:(fun (uni_senv, ps, ns, phi) ->
+      let senv, phi =
+        (** assume that [phi] is alpha-renamed *)
+        Formula.elim_let_equivalid @@ Normalizer.normalize_let ~rename:true @@
+        Logic.ExtTerm.to_old_formula exi_senv uni_senv phi []
       in
-      let ns = Set.Poly.map ns ~f:(fun t -> Logic.ExtTerm.to_old_atom exi_senv uni_senv t []) in
       let body =
-        Formula.mk_neg
-          (Logic.ExtTerm.to_old_formula exi_senv uni_senv phi []
-           |> Normalizer.normalize_let |> Formula.equivalent_valid) ::
-        (ns |> Set.Poly.map ~f:Formula.mk_atom |> Set.Poly.to_list)
-        |> Formula.and_of |> Evaluator.simplify
+        Evaluator.simplify @@ Formula.and_of @@
+        Formula.mk_neg phi ::
+        (Set.to_list @@ Set.Poly.map ~f:Formula.mk_atom @@
+         Set.Poly.map ns ~f:(Fn.flip (Logic.ExtTerm.to_old_atom exi_senv uni_senv) []))
       in
       let head =
-        ps |> Set.Poly.map ~f:Formula.mk_atom |> Set.Poly.to_list |> Formula.or_of
+        Formula.or_of @@ Set.to_list @@ Set.Poly.map ~f:Formula.mk_atom @@
+        match Set.length ps with
+        | 0 ->
+          exists_query := true;
+          Set.Poly.singleton (Atom.mk_pvar_app (Ident.Pvar query_name) [] [])
+        | 1 ->
+          Set.Poly.map ps ~f:(Fn.flip (Logic.ExtTerm.to_old_atom exi_senv uni_senv) [])
+        | _ -> (* z3 does not support head disjunction *)assert false
       in
-      let phi' =  Formula.mk_imply body head in
-      let tenv =
-        (** assume that [phi] is alpha-renamed *)
-        let lenv = Logic.Term.let_sort_env_of phi in
-        let uni_senv = Map.force_merge uni_senv lenv in
-        Map.Poly.to_alist uni_senv |> List.map ~f:(fun (x, s) -> x, Logic.ExtTerm.to_old_sort s)
+      let phi' = Formula.mk_imply body head in
+      let senv =
+        Map.Poly.to_alist @@ Map.force_merge
+          (Logic.to_old_sort_env_map Logic.ExtTerm.to_old_sort uni_senv)
+          senv
       in
-      let c = Z3Smt.Z3interface.of_formula ctx tenv penv fenv dtenv phi' in
+      let c = Z3Smt.Z3interface.of_formula ctx senv penv fenv dtenv phi' in
       Z3.Fixedpoint.add_rule solver c None);
   (* set params *)
   let params = Z3.Params.mk_params ctx in
@@ -93,9 +94,11 @@ let of_pcsp pcsp =
   let reg_decl_query_name = Str.regexp @@ sprintf ".*declare-fun.*%s.*" query_name in
   let inputs = List.map inputs ~f:(fun s -> Str.global_replace reg_anno "" s) in
   let inputs = List.map inputs ~f:(fun s -> Str.global_replace reg_decl_query_name "" s) in
-  let inputs = List.map inputs ~f:(fun s -> String.substr_replace_all s ~pattern:query_name ~with_:"false") in
+  let inputs =
+    List.map inputs ~f:(String.substr_replace_all ~pattern:query_name ~with_:"false")
+  in
   let inputs = inputs @ [ !prefix ] in
-  (* let inputs = inputs @ if !exists_query then [ Printf.sprintf "(assert (forall ((M Bool)) (not (%s))))" query_name ] else [] in *)
+  (* let inputs = inputs @ if !exists_query then [ sprintf "(assert (forall ((M Bool)) (not (%s))))" query_name ] else [] in *)
   let inputs = inputs @ [ "(check-sat)" ] in
   (* let inputs = if config.produce_proofs then
       "(set-option :produce-proofs true)" :: inputs @ ["(get-proof)"]

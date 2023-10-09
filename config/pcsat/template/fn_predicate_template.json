@@ -2,7 +2,7 @@
     "verbose": false,
     "number_of_expr": 0,
     "number_of_cond_conj": 1,
-    "depth": 1,
+    "depth": 0,
     "ext": 0,
     "upper_bound_expr_coeff": 1,
     "upper_bound_expr_const": 0,

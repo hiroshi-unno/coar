@@ -60,24 +60,22 @@ end = struct
   let mk_and ?(info=Dummy) t1 t2 = BinaryOp (And, t1, t2, info)
   let mk_or ?(info=Dummy) t1 t2 = BinaryOp (Or, t1, t2, info)
 
-  let and_of ?(info=Dummy) ts =
-    List.fold ~f:(fun acc t -> mk_and acc t ~info) ~init:(mk_true () ~info) ts
+  let and_of ?(info=Dummy) = List.fold ~f:(mk_and ~info) ~init:(mk_true ~info ())
 
-  let or_of ?(info=Dummy) ts =
-    List.fold ~f:(fun acc t -> mk_or acc t ~info) ~init:(mk_false () ~info) ts
+  let or_of ?(info=Dummy) = List.fold ~f:(mk_or ~info) ~init:(mk_false ~info ())
 
   let rec str_of = function
     | True _ -> "True"
     | False _ -> "False"
     | Atom (id, _) -> id
-    | UnaryOp (_, t, _) -> Printf.sprintf "not (%s)" (str_of t)
+    | UnaryOp (_, t, _) -> sprintf "not (%s)" (str_of t)
     | BinaryOp (And, t1, t2, _) ->
-      Printf.sprintf "(%s /\\ %s)" (str_of t1) (str_of t2)
+      String.paren @@ sprintf "%s /\\ %s" (str_of t1) (str_of t2)
     | BinaryOp (Or, t1, t2, _) ->
-      Printf.sprintf "(%s \\/ %s)" (str_of t1) (str_of t2)
+      String.paren @@ sprintf "%s \\/ %s" (str_of t1) (str_of t2)
   let let_atom = function
     | Atom (name, info) -> (name, info)
-    | phi -> failwith @@ Printf.sprintf "%s is not an atom" (str_of phi)
+    | phi -> failwith @@ sprintf "%s is not an atom" (str_of phi)
   let name_of_atom phi = fst @@ let_atom phi
   let bool_of_exn = function
     | True _ -> true | False _ -> false | _ -> failwith "cannot convert into bool."
@@ -104,7 +102,7 @@ end = struct
     | UnaryOp (Neg, Atom (id, Dummy), _) -> [Atom (id, Dummy)]
     | Atom (_, _) | True _ | False _ -> []
     | BinaryOp (Or, phi1, phi2, _) -> neg_atoms_of_clause phi1 @ neg_atoms_of_clause phi2
-    | phi -> failwith @@ Printf.sprintf "The formula %s is not of clause" (str_of phi)
+    | phi -> failwith @@ sprintf "The formula %s is not of clause" (str_of phi)
 
   let rec pos_atoms_of_clause = function
     | UnaryOp (Neg, Atom (_, _), _) | True _ | False _ -> []
@@ -127,7 +125,7 @@ end = struct
     in
     if List.for_all (inner formula) ~f:(Stdlib.(=) true) then true
     else if List.for_all (inner formula) ~f:(Stdlib.(=) false) then false
-    else failwith @@ Printf.sprintf "formula %s cannot be evaluated" @@ str_of formula
+    else failwith @@ sprintf "formula %s cannot be evaluated" @@ str_of formula
   let rec subst map = function
     | True info -> True info | False info -> False info
     | Atom (name, info) ->
@@ -150,7 +148,7 @@ end = struct
       let cls1, cls2 = cnf_of phi1, cnf_of phi2 in
       List.map (List.cartesian_product cls1 cls2)
         ~f:(fun ((ns1, ps1), (ns2, ps2)) -> ns1 @ ns2, ps1 @ ps2)
-    | phi -> failwith @@ Printf.sprintf "fail @ cnf_of %s " @@ str_of phi
+    | phi -> failwith @@ sprintf "fail @ cnf_of %s " @@ str_of phi
   let rec nnf_of = function
     | UnaryOp (Neg, (True Dummy), _) -> False Dummy
     | UnaryOp (Neg, (False Dummy), _) -> True Dummy
@@ -187,7 +185,7 @@ end = struct
     | BinaryOp (And, formula_0, formula_1, _) ->
       let s0, c0 = tseitinize true formula_0 in
       let s1, c1 = tseitinize true formula_1 in
-      if Set.Poly.equal s0 (sfalse true) || Set.Poly.equal s1 (sfalse true) then
+      if Set.equal s0 (sfalse true) || Set.equal s1 (sfalse true) then
         sfalse true, strue true
       else
         let s = sand_cnf [s0; s1] in
@@ -197,25 +195,25 @@ end = struct
         else
           let names, cc =
             Set.unzip @@ Set.Poly.map s ~f:(fun (n, p) ->
-                if Set.Poly.length n = 1 && Set.Poly.is_empty p then
-                  Second (Set.Poly.choose_exn n), strue true
-                else if Set.Poly.length p = 1 && Set.Poly.is_empty n then
-                  First (Set.Poly.choose_exn p), strue true
+                if Set.length n = 1 && Set.is_empty p then
+                  Second (Set.choose_exn n), strue true
+                else if Set.length p = 1 && Set.is_empty n then
+                  First (Set.choose_exn p), strue true
                 else
                   let name = Ident.mk_fresh_pvar () |> function Ident.Pvar name -> name in
                   First name,
-                  Set.Poly.add
-                    (Set.Poly.union
+                  Set.add
+                    (Set.union
                        (Set.Poly.map n ~f:(fun atm -> Set.Poly.empty, Set.Poly.of_list [name; atm]))
                        (Set.Poly.map p ~f:(fun atm -> Set.Poly.singleton atm, Set.Poly.singleton name)))
-                    (Set.Poly.add n name, p)) in
+                    (Set.add n name, p)) in
           let ps, ns = Set.partition_map names ~f:Fn.id in
           Set.Poly.singleton (ns, ps),
-          Set.Poly.union c (Set.concat cc)
+          Set.union c (Set.concat cc)
     | BinaryOp (Or, formula_0, formula_1, _) ->
       let s0, c0 = tseitinize false formula_0 in
       let s1, c1 = tseitinize false formula_1 in
-      if Set.Poly.equal s0 (strue false) || Set.Poly.equal s1 (strue false) then
+      if Set.equal s0 (strue false) || Set.equal s1 (strue false) then
         strue false, strue true
       else
         let s = sor_dnf [s0; s1] in
@@ -223,21 +221,21 @@ end = struct
         if cnf_or_dnf then
           let names, cc =
             Set.unzip @@ Set.Poly.map s ~f:(fun (n, p) ->
-                if Set.Poly.length n = 1 && Set.Poly.is_empty p then
-                  Second (Set.Poly.choose_exn n), strue true
-                else if Set.Poly.length p = 1 && Set.Poly.is_empty n then
-                  First (Set.Poly.choose_exn p), strue true
+                if Set.length n = 1 && Set.is_empty p then
+                  Second (Set.choose_exn n), strue true
+                else if Set.length p = 1 && Set.is_empty n then
+                  First (Set.choose_exn p), strue true
                 else
                   let name = Ident.mk_fresh_pvar () |> function Ident.Pvar name -> name in
                   First name,
-                  Set.Poly.add
-                    (Set.Poly.union
+                  Set.add
+                    (Set.union
                        (Set.Poly.map n ~f:(fun atm -> Set.Poly.of_list [name; atm], Set.Poly.empty))
                        (Set.Poly.map p ~f:(fun atm -> Set.Poly.singleton name, Set.Poly.singleton atm)))
-                    (p, Set.Poly.add n name)) in
+                    (p, Set.add n name)) in
           let ps, ns = Set.partition_map names ~f:Fn.id in
           Set.Poly.singleton (ns, ps),
-          Set.Poly.union c (Set.concat cc)
+          Set.union c (Set.concat cc)
         else
           s, c
   let tseitinize phi = let s, c = tseitinize true phi in sand_cnf [s; c]
@@ -246,6 +244,6 @@ end
 let str_of_model =
   String.concat_map_list ~sep:", " ~f:(function
       | phi, None ->
-        Printf.sprintf "%s -> *" (Formula.str_of phi)
+        sprintf "%s -> *" (Formula.str_of phi)
       | phi, Some value ->
-        Printf.sprintf "%s -> %s" (Formula.str_of phi) (Formula.str_of value))
+        sprintf "%s -> %s" (Formula.str_of phi) (Formula.str_of value))

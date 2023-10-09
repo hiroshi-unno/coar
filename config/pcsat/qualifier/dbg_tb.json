@@ -1,0 +1,17 @@
+{
+    "verbose": true,
+    "domains": [
+        [
+            "Null"
+        ]
+    ],
+    "extract_pcsp": true,
+    "normalize_pcsp": true,
+    "add_bool": true,
+    "add_homogeneous": false,
+    "add_neg": false,
+    "filter_out_neg": true,
+    "filter_out_non_div_mod": false,
+    "filter_out_quantified": true,
+    "reduce": false
+}

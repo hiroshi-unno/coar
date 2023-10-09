@@ -10,9 +10,7 @@
     CoAR.common
     CoAR.Z3Smt)
   (modules
-    invParser
-    invPrinter
-    parser
     printer
+    parser
     problem)
   (synopsis "interface for SyGuS-IF"))
