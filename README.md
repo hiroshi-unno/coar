@@ -209,3 +209,7 @@ dune exec main -- -c ./config/solver/muval_prove_tb_ar.json -p ltsterminter ./be
 1. Hiroshi Unno, Tachio Terauchi, and Eric Koskinen. Constraint-based Relational Verification. CAV 2021.
 
 1. Yuki Satake, Hiroshi Unno, and Hinata Yanagi. Probabilistic Inference for Predicate Constraint Satisfaction. AAAI 2020.
+
+## Acknowledgements
+
+We thank Hiroyuki Katsura and Philippe Heim for reporting bugs in PCSat and MuVal, respectively. We are also grateful to the organizer of termCOMP 2023, Akihisa Yamada, and participants Florian Frohn and Nils Lommen, as thanks to them, we were able to identify a bug in MuVal.
