@@ -76,7 +76,11 @@ The first two files correspond to Table 1 in the paper,
 and the third one corresponds to Table 2 in the paper.
 
 ### Note
-Depending on machine performance, some results may differ from the ones in the paper since they require a lot of resources. For example, the evaluation of `amb-3-SAT.ml` in the "PCSat" configuration may time out, or the evaluation of `distribution-UNSAT.ml` in the "PCSat" configuration may be out of memory (which will show "abort" as the result).
+- Depending on machine performance, some results may differ from the ones in the paper since they require a lot of resources. For example, the evaluation of `amb-3-SAT.ml` in the "PCSat" configuration may time out, or the evaluation of `distribution-SAT.ml` in the "PCSat" configuration may be out of memory (which will show "abort" as the result).
+- You can change some parameters by editing the variables declared at the beginning of the script `exp.sh`:
+  - `timeout`: Time limit in seconds.
+  - `para`: The number of parallel executions. You can disable parallelism by setting this variable to `1`.
+  - `memlimit`: Memory limit in GB. By changing this variable, you can exclude benchmarks that require more than `memlimit` GB of memory. The amount of required memory for each benchmark is based on a measurement of memory usage  performed on our machine, which is listed in `memusage_spacer.csv`, `memusage_pcsat.csv`, and `memusage_cps.csv`.
 
 ## Additional Artifact Description
 - The benchmark program files are located at `<porject root>/benchmarks/OCaml/popl24/arm/` (for Table 1) and `<porject root>/benchmarks/OCaml/popl24/cps/` (for Table 2).

@@ -1,0 +1,15 @@
+./benchmarks/OCaml/popl24/cps/amb-2_CPS_opt.ml, 132844
+./benchmarks/OCaml/popl24/cps/amb-2_CPS.ml, 152084
+./benchmarks/OCaml/popl24/cps/amb-2_DS.ml, 142224
+./benchmarks/OCaml/popl24/cps/choose-easy_CPS_opt.ml, 88276
+./benchmarks/OCaml/popl24/cps/choose-easy_CPS.ml, 96688
+./benchmarks/OCaml/popl24/cps/choose-easy_DS.ml, 91568
+./benchmarks/OCaml/popl24/cps/choose-sum_CPS_opt.ml, 427544
+./benchmarks/OCaml/popl24/cps/choose-sum_CPS.ml, 164936
+./benchmarks/OCaml/popl24/cps/choose-sum_DS.ml, 143556
+./benchmarks/OCaml/popl24/cps/io-read-2_CPS_opt.ml, 138276
+./benchmarks/OCaml/popl24/cps/io-read-2_CPS.ml, 163196
+./benchmarks/OCaml/popl24/cps/io-read-2_DS.ml, 129896
+./benchmarks/OCaml/popl24/cps/simple_CPS_opt.ml, 83108
+./benchmarks/OCaml/popl24/cps/simple_CPS.ml, 84472
+./benchmarks/OCaml/popl24/cps/simple_DS.ml, 83248
