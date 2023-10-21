@@ -224,6 +224,14 @@ let rec apply senv penv dtenv op expr =
   match List.map ~f:(term_of senv penv dtenv) @@ Z3.Expr.get_args expr with
   | e :: es -> List.fold ~init:e es ~f:op
   | _ -> assert false
+and apply_uop senv penv dtenv op expr =
+  match Z3.Expr.get_args expr with
+  | [e1] -> op (term_of senv penv dtenv e1)
+  | _ -> assert false
+and apply_urel senv penv dtenv op expr =
+  match Z3.Expr.get_args expr with
+  | [e1] -> op (term_of senv penv dtenv e1)
+  | _ -> assert false
 and apply_bop senv penv dtenv op expr =
   match Z3.Expr.get_args expr with
   | [e1; e2] -> op (term_of senv penv dtenv e1) (term_of senv penv dtenv e2)
@@ -256,6 +264,12 @@ and term_of
   else if Z3.Arithmetic.is_algebraic_number expr then
     let t, n = parse_root_obj @@ Sexp.of_string @@ Z3.Expr.to_string expr in
     T_real.mk_alge t n
+  else if Z3.Arithmetic.is_uminus expr then
+    apply_uop senv penv dtenv T_int.mk_neg expr
+  else if Z3.Arithmetic.is_int2real expr then
+    apply_uop senv penv dtenv T_real_int.mk_to_real expr
+  else if Z3.Arithmetic.is_real2int expr then
+    apply_uop senv penv dtenv T_real_int.mk_to_int expr
   else if Z3.Arithmetic.is_add expr then
     match sort_of dtenv @@ Z3.Expr.get_sort expr with
     | T_int.SInt -> apply senv penv dtenv T_int.mk_add expr
@@ -306,7 +320,7 @@ and term_of
         List.nth_exn senv @@
         List.length senv - Scanf.sscanf (Z3.Expr.to_string expr) "(:var %d)" Fn.id - 1
       in
-      Debug.print @@ lazy ("[z3:term_of] identifier: " ^ Ident.name_of_tvar tvar);
+      Debug.print @@ lazy ("[z3:term_of] identifier: " ^ Ident.name_of_tvar tvar ^ " : " ^ Term.str_of_sort sort);
       Term.mk_var tvar sort
     with _ -> failwith @@ "[z3:term_of] " ^ Z3.Expr.to_string expr ^ " not found"
     (*else if Z3.Seq.is_string(* ToDo: This seems to break the internal state of Z3 4.12.2 *) (Z3.mk_context [](*ToDo*)) expr then
@@ -421,6 +435,8 @@ and
         (T_bool.of_formula @@ formula_of senv penv dtenv e1)
         (T_bool.of_formula @@ formula_of senv penv dtenv e2)
     | _ -> apply_brel senv penv dtenv T_bool.mk_eq expr
+  else if Z3.Arithmetic.is_real_is_int expr then
+    apply_urel senv penv dtenv T_real_int.mk_is_int expr
   else if Z3.Arithmetic.is_le expr then
     Typeinf.typeinf_atom ~print:Debug.print @@ apply_brel senv penv dtenv T_num.mk_nleq expr
   else if Z3.Arithmetic.is_ge expr then
@@ -832,7 +848,7 @@ and of_var_term ctx env dtenv t =
   | None ->
     find_in_cache ctx env t ~f:(fun cid ->
         let name = Ident.name_of_tvar var in
-        (* Debug.print @@ lazy ("[z3:of_var_term] mk const var " ^ name); *)
+        (* Debug.print @@ lazy ("[z3:of_var_term] mk const var " ^ name ^ " : " ^ Term.str_of_sort sort); *)
         let symbol =
           of_var ctx @@
           Ident.Tvar (sprintf "%s%s%d%s" name cache_divide_str cid
@@ -880,14 +896,14 @@ and of_term ctx
       Z3.Arithmetic.mk_mul ctx [t1; t2]
     | T_int.Div, [t1; t2] ->
       Z3.Arithmetic.mk_div ctx t1 t2
+    | T_real.RDiv, [t1; t2] -> (*ToDo: necessary? *)
+      Z3.Arithmetic.mk_div ctx
+        (if Z3.Arithmetic.is_int t1 then Z3.Arithmetic.Integer.mk_int2real ctx t1 else t1)
+        (if Z3.Arithmetic.is_int t2 then Z3.Arithmetic.Integer.mk_int2real ctx t2 else t2)
     | T_int.Mod, [t1; t2] ->
       Z3.Arithmetic.Integer.mk_mod ctx t1 t2
     | T_int.Rem, [t1; t2] ->
       Z3.Arithmetic.Integer.mk_rem ctx t1 t2
-    | T_real.RDiv, [t1; t2] ->
-      Z3.Arithmetic.mk_div ctx
-        (Z3.Arithmetic.Integer.mk_int2real(*ToDo: remove*) ctx t1)
-        (Z3.Arithmetic.Integer.mk_int2real(*ToDo: remove*) ctx t2)
     | (T_int.Power | T_real.RPower), [t1; t2] ->
       Z3.Arithmetic.mk_power ctx t1 t2
     | FVar (var, _), ts when Map.Poly.mem fenv var ->
@@ -1360,12 +1376,12 @@ let z3_simplify ~id fenv phi =
       Formula.LetFormula (v, sort, def', inner body, info)
     | phi ->
       phi
-      (* |> (fun phi -> print_endline @@ Formula.str_of phi ^ "\n"; phi) *)
+      (* |> (fun phi -> print_endline @@ "before: " ^ Formula.str_of phi ^ "\n"; phi) *)
       |> of_formula_with_z3fenv ctx tenv penv fenv dtenv
       |> Fn.flip Z3.Expr.simplify @@ Some symplify_params
       |> formula_of (List.rev tenv) penv dtenv
       |> Evaluator.simplify
-      (* |> (fun phi -> print_endline @@ Formula.str_of phi ^ "\n"; phi) *)
+      (* |> (fun phi -> print_endline @@ "after: " ^ Formula.str_of phi ^ "\n"; phi) *)
   in
   let ret = inner phi in
   back_instance ~reset:ignore instance_pool id instance;
