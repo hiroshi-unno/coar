@@ -65,7 +65,7 @@ sudo docker build -t coar .
 
 ## Usage
 
-### Predicate Constraint Satisfiability Checking (CHC, $\forall\exists$ CHC, pCSP, and pfwnCSP)
+### Predicate Constraint Satisfiability Checking (CHC, $`\forall\exists`$CHC, pCSP, and pfwnCSP)
 
 ```bash
 dune exec main -- -c ./config/solver/dbg_pcsat_tb_ar.json -p pcsp ./benchmarks/CHC/simple/sum.smt2
@@ -80,10 +80,11 @@ dune exec main -- -c ./config/solver/dbg_pcsat_tb_ar.json -p pcsp ./benchmarks/p
 ### Syntax Guided Synthesis (INV and CLIA)
 
 ```bash
+git submodule update --init benchmarks/sygus-comp/
 dune exec main -- -c ./config/solver/dbg_pcsat_tb_ar.json -p sygus ./benchmarks/sygus-comp/comp/2017/CLIA_Track/fg_max2.sl
 ```
 
-### Fixpoint Logic Validity Checking (muArith and muCLP)
+### Fixpoint Logic Validity Checking (muArith and $`\mu`$CLP)
 
 #### Primal
 
@@ -94,7 +95,7 @@ dune exec main -- -c ./config/solver/dbg_muval_prove_tb_ar.json -p muclp ./bench
 #### Dual
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_muval_disprove_tb_ar.json -p muclp ./benchmarks/muCLP/popl2023mod/sas2019_ctl1.hes
+dune exec main -- -c ./config/solver/dbg_muval_disprove_tb_ar.json -p muclp ./benchmarks/muCLP/popl2023mod/sas2019_ctl2b-invalid.hes
 ```
 
 #### Parallel
@@ -114,6 +115,39 @@ dune exec main -- -c ./config/solver/dbg_muval_parallel_exc_tb_ar.json -p muclp 
 ```bash
 dune exec main -- -c ./config/solver/muval_prove_tb_ar.json -p muclpinter ./benchmarks/muCLP/popl2023mod/sas2019_lines1.hes
 ```
+
+The following is an example of using MuVal to interactively prove that a $`\mu`$CLP query does not hold for all inputs.
+
+```bash
+timeout in sec: 10
+action (primal/dual/unknown/pos/neg/end): dual
+m mod 2 = 0 /\ m <= 0 /\ m - n >= 0 /\ 1 > m - n
+action (primal/dual/unknown/pos/neg/end): pos
+positive examples: m > 0
+action (primal/dual/unknown/pos/neg/end): dual
+m >= 1 \/ m mod 2 = 0 /\ m - n >= 0 /\ 1 > m - n
+action (primal/dual/unknown/pos/neg/end): unknown
+1 > m /\ (0 > m - n \/ m mod 2 != 0 \/ 1 <= m - n)
+action (primal/dual/unknown/pos/neg/end): pos
+positive examples: 1 > m /\ 1 <= m - n
+action (primal/dual/unknown/pos/neg/end): dual
+m >= 1 \/ 0 > n - m \/ m mod 2 = 0 /\ m - n >= 0
+action (primal/dual/unknown/pos/neg/end): unknown
+0 <= n - m /\ 1 > m /\ (m mod 2 != 0 \/ 0 > m - n)
+action (primal/dual/unknown/pos/neg/end): pos
+positive examples: 0 <= n - m /\ 1 > m /\ m mod 2 != 0
+action (primal/dual/unknown/pos/neg/end): dual
+m - n >= 0 \/ m mod 2 != 0 \/ m >= 1
+action (primal/dual/unknown/pos/neg/end): unknown
+m mod 2 = 0 /\ 0 > m - n /\ 1 > m
+action (primal/dual/unknown/pos/neg/end): pos
+positive examples: m mod 2 = 0 /\ 0 > m - n /\ 1 > m
+action (primal/dual/unknown/pos/neg/end): dual
+true
+maximality is guaranteed
+```
+
+Here, the `dual` action lets MuVal infer a precondition under which the query does not hold, but note that MuVal does not necessarily return the *weakest* precondition. Before performing the `dual` action, hints about an input range that should be included in the weakest precondition are provided through the `pos` action. By repeating sets of `pos` and `dual` actions, it is eventually possible to prove that the query does not hold for all inputs.
 
 ### CHC Maximization
 
@@ -149,11 +183,16 @@ dune exec main -- -c ./config/solver/dbg_rcaml_temp_eff_pcsat_tb_ar.json -p ml .
 dune exec main -- -c ./config/solver/dbg_muval_prove_tb_ar.json -p cltl <file>
 ```
 
+Please download and use the benchmark set of [Ultimate LTL Automizer](https://ultimate.informatik.uni-freiburg.de/downloads/ltlautomizer/).
+
 #### CTL Verification
 
 ```bash
 dune exec main -- -c ./config/solver/dbg_muval_prove_tb_ar.json -p cctl <file>
 ```
+
+Please obtain and use the benchmark set from the following paper:
+* Byron Cook and Eric Koskinen. Reasoning about nondeterminism in programs. PLDI 2013.
 
 ### Verification of Labeled Transition Systems
 #### Termination Verification
@@ -172,6 +211,25 @@ dune exec main -- -c ./config/solver/dbg_muval_prove_tb_ar.json -p ltsnterm ./be
 
 ```bash
 dune exec main -- -c ./config/solver/muval_prove_tb_ar.json -p ltsterminter ./benchmarks/LTS/simple/prog2.t2
+```
+
+The following interaction example demonstrates conditional termination analysis, which proves that the program [prog2.c](benchmarks/LTS/simple/prog2.c) terminates when the initial value of the variable `x` is 9 or less, and diverges otherwise.
+
+```bash
+timeout in sec: 10
+action (primal/dual/unknown/pos/neg/end): primal
+v0 <= 8 /\ v0 >= 2
+action (primal/dual/unknown/pos/neg/end): primal
+1 > v0 \/ v0 <= 8 /\ v0 >= 2
+action (primal/dual/unknown/pos/neg/end): primal
+v0 <= 9 /\ v0 > 8 \/ 1 > v0 \/ v0 <= 8 /\ v0 >= 2
+action (primal/dual/unknown/pos/neg/end): dual
+v0 mod 2 != 0 /\ v0 >= 10
+action (primal/dual/unknown/pos/neg/end): dual
+v0 >= 10
+action (primal/dual/unknown/pos/neg/end): primal
+v0 <= 9
+maximality is guaranteed
 ```
 
 ## References
