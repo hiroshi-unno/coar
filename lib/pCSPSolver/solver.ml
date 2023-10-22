@@ -64,7 +64,7 @@ module Make (Cfg: Config.ConfigType) : SolverType = struct
         fun ?bpvs ?(print_sol=false) _ ->
           ignore print_sol;
           ignore bpvs;
-          failwith "config printer need to call print function"
+          error_string "config printer need to call print function"
     else fun ?bpvs ?(print_sol=false) pcsp ->
       ignore bpvs; ignore print_sol;
       print_endline "";
@@ -100,7 +100,10 @@ module Make (Cfg: Config.ConfigType) : SolverType = struct
       print_endline "";
       print_endline @@ PCSP.Problem.str_of @@ PCSP.Problem.normalize_uni_senv pcsp;
       print_endline "";
-      failwith "(co)inductive predicates not supported by the constraint solver"
+      print_endline "constraint solving not supported";
+      print_endline "";
+      Ok (PCSP.Problem.Unknown, -1)
+      (*Or_error.error_string "(co)inductive predicates not supported by the constraint solver"*)
   let solve ?(timeout=None) ?(bpvs=Set.Poly.empty) ?(print_sol=false) ?(preds=Map.Poly.empty) ?(copreds=Map.Poly.empty) pcsp =
     match timeout with
     | Some tm when tm > 0 ->

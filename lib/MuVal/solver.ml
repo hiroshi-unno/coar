@@ -451,12 +451,13 @@ module Make (Cfg: Config.ConfigType) = struct
     in
     let ord_pvs_primal = Formula.pred_sort_env_of @@ snd pre_primal in
     let ord_pvs_dual = Formula.pred_sort_env_of @@ snd pre_dual in
-    let muclp_dual, (fnpvs, fnsenv) = Qelim.elim_exists_in_preds muclp_dual Set.Poly.empty in
     let pcsp_primal =
+      let muclp_primal, (fnpvs, fnsenv) = Qelim.elim_exists_in_preds muclp_primal Set.Poly.empty in
       PCSP.Problem.add_non_emptiness (Set.choose_exn ord_pvs_primal) @@
-      pfwcsp_of ~messenger:None ~exc_info:None (ord_pvs_primal(* ToDo *), (Set.Poly.empty, Map.Poly.empty)) muclp_primal
+      pfwcsp_of ~messenger:None ~exc_info:None (ord_pvs_primal(* ToDo *), (fnpvs, fnsenv)) muclp_primal
     in
     let pcsp_dual =
+      let muclp_dual, (fnpvs, fnsenv) = Qelim.elim_exists_in_preds muclp_dual Set.Poly.empty in
       PCSP.Problem.add_non_emptiness (Set.choose_exn ord_pvs_dual) @@
       pfwcsp_of ~messenger:None ~exc_info:None (ord_pvs_dual(* ToDo *), (fnpvs, fnsenv)) muclp_dual
     in

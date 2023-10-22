@@ -275,7 +275,7 @@ module Make (Cfg : Config.ConfigType) = struct
 
   let encode_exists prefix bounds0 pvars (fnpvs : LogicOld.pred_sort_env_set) fml =
     let rec rep bounds0 pvars fnpvs fml =
-      if Formula.is_atom fml then
+      if Formula.is_quantifier_free fml then
         [], fml, pvars, fnpvs, Map.Poly.empty
       else if Formula.is_and fml || Formula.is_or fml then
         let binop, fml1, fml2, info = Formula.let_binop fml in
@@ -298,7 +298,7 @@ module Make (Cfg : Config.ConfigType) = struct
         else preds, fml, pvars, fnpvs, fnsenv1
       else failwith (Formula.str_of fml ^ " not supported")
     in
-    let preds, fml, _pvars, fnpvs, fnsenv = rep bounds0 pvars fnpvs fml in
+    let preds, fml, _pvars, fnpvs, fnsenv = rep bounds0 pvars fnpvs @@ Formula.nnf_of fml in
     preds, fml, fnpvs, fnsenv
 
   let elim_exists_in_query muclp fnpvs =

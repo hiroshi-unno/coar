@@ -33,6 +33,7 @@ rule main = parse
 | "*" { HESParser.MULT }
 | "/" | "div" { HESParser.DIV }
 | "%" { HESParser.MOD }
+| "mod" { HESParser.MOD }
 | ">=" { HESParser.PREDSYM (T_num.NGeq (Ast.Ident.mk_fresh_svar ())) }
 | ">" { HESParser.PREDSYM (T_num.NGt (Ast.Ident.mk_fresh_svar ())) }
 | "<=" { HESParser.PREDSYM (T_num.NLeq (Ast.Ident.mk_fresh_svar ())) }
