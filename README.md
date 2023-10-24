@@ -118,7 +118,7 @@ dune exec main -- -c ./config/solver/muval_prove_tb_ar.json -p muclpinter ./benc
 
 The following is an example of using MuVal to interactively prove that a $`\mu`$CLP query does not hold for all inputs.
 
-```bash
+```
 timeout in sec: 10
 action (primal/dual/unknown/pos/neg/end): dual
 m mod 2 = 0 /\ m <= 0 /\ m - n >= 0 /\ 1 > m - n
@@ -180,7 +180,7 @@ dune exec main -- -c ./config/solver/dbg_rcaml_temp_eff_pcsat_tb_ar.json -p ml .
 #### LTL Verification
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_muval_prove_tb_ar.json -p cltl <file>
+dune exec main -- -c ./config/solver/dbg_muval_parallel_exc_tb_ar.json -p cltl <file>
 ```
 
 Please download and use the benchmark set of [Ultimate LTL Automizer](https://ultimate.informatik.uni-freiburg.de/downloads/ltlautomizer/).
@@ -188,7 +188,7 @@ Please download and use the benchmark set of [Ultimate LTL Automizer](https://ul
 #### CTL Verification
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_muval_prove_tb_ar.json -p cctl <file>
+dune exec main -- -c ./config/solver/dbg_muval_parallel_exc_tb_ar.json -p cctl <file>
 ```
 
 Please obtain and use the benchmark set from the following paper:
@@ -198,13 +198,13 @@ Please obtain and use the benchmark set from the following paper:
 #### Termination Verification
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_muval_prove_tb_ar.json -p ltsterm ./benchmarks/LTS/simple/test.t2
+dune exec main -- -c ./config/solver/dbg_muval_parallel_exc_tb_ar.json -p ltsterm ./benchmarks/LTS/simple/test.t2
 ```
 
 #### Non-Termination Verification
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_muval_prove_tb_ar.json -p ltsnterm ./benchmarks/LTS/simple/test.t2
+dune exec main -- -c ./config/solver/dbg_muval_parallel_exc_tb_ar.json -p ltsnterm ./benchmarks/LTS/simple/test.t2
 ```
 
 #### Interactive Conditional (Non-)Termination Verification
@@ -215,7 +215,7 @@ dune exec main -- -c ./config/solver/muval_prove_tb_ar.json -p ltsterminter ./be
 
 The following interaction example demonstrates conditional termination analysis, which proves that the program [prog2.c](benchmarks/LTS/simple/prog2.c) terminates when the initial value of the variable `x` is 9 or less, and diverges otherwise.
 
-```bash
+```
 timeout in sec: 10
 action (primal/dual/unknown/pos/neg/end): primal
 v0 <= 8 /\ v0 >= 2
