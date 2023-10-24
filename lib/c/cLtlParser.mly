@@ -420,14 +420,14 @@ T_int:
 
 T_intAddSub:
     t=T_intMultDivMod { t }
-  | t1=T_intMultDivMod ADD t2=T_intAddSub { T_int.mk_add t1 t2 ~info:Dummy }
-  | t1=T_intMultDivMod MINUS t2=T_intAddSub { T_int.mk_sub t1 t2 ~info:Dummy }
+  | t1=T_intAddSub ADD t2=T_intMultDivMod { T_int.mk_add t1 t2 ~info:Dummy }
+  | t1=T_intAddSub MINUS t2=T_intMultDivMod { T_int.mk_sub t1 t2 ~info:Dummy }
 
 T_intMultDivMod:
     t=T_intUnary { t }
-  | t1=T_intUnary ASTERISK t2=T_intMultDivMod { T_int.mk_mult t1 t2 ~info:Dummy }
-  | t1=T_intUnary DIV t2=T_intMultDivMod { T_int.mk_div t1 t2 ~info:Dummy }
-  | t1=T_intUnary MOD t2=T_intMultDivMod { T_int.mk_mod t1 t2 ~info:Dummy }
+  | t1=T_intMultDivMod ASTERISK t2=T_intUnary { T_int.mk_mult t1 t2 ~info:Dummy }
+  | t1=T_intMultDivMod DIV t2=T_intUnary { T_int.mk_div t1 t2 ~info:Dummy }
+  | t1=T_intMultDivMod MOD t2=T_intUnary { T_int.mk_mod t1 t2 ~info:Dummy }
 
 T_intUnary:
     t=T_intParen { t }

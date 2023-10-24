@@ -111,14 +111,14 @@ T_num:
 
 T_numAddSub:
     t=T_numMultDivMod { t }
-  | t1=T_numMultDivMod ADD t2=T_numAddSub { T_num.mk_nadd t1 t2 }
-  | t1=T_numMultDivMod MINUS t2=T_numAddSub { T_num.mk_nsub t1 t2 }
+  | t1=T_numAddSub ADD t2=T_numMultDivMod { T_num.mk_nadd t1 t2 }
+  | t1=T_numAddSub MINUS t2=T_numMultDivMod { T_num.mk_nsub t1 t2 }
 
 T_numMultDivMod:
     t=T_numNeg { t }
-  | t1=T_numNeg MULT t2=T_numMultDivMod { T_num.mk_nmult t1 t2 }
-  | t1=T_numNeg DIV t2=T_numMultDivMod { T_num.mk_ndiv t1 t2 }
-  | t1=T_numNeg MOD t2=T_numMultDivMod { T_num.mk_mod t1 t2 }
+  | t1=T_numMultDivMod MULT t2=T_numNeg { T_num.mk_nmult t1 t2 }
+  | t1=T_numMultDivMod DIV t2=T_numNeg { T_num.mk_ndiv t1 t2 }
+  | t1=T_numMultDivMod MOD t2=T_numNeg { T_num.mk_mod t1 t2 }
 
 T_numNeg:
     t=T_numAtom { t }

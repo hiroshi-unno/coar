@@ -285,14 +285,14 @@ T_int:
 
 T_intAddSub:
     t=T_intMultDivMod { t }
-  | t1=T_intMultDivMod ADD t2=T_intAddSub { T_int.mk_add t1 t2 }
-  | t1=T_intMultDivMod MINUS t2=T_intAddSub { T_int.mk_sub t1 t2 }
+  | t1=T_intAddSub ADD t2=T_intMultDivMod { T_int.mk_add t1 t2 }
+  | t1=T_intAddSub MINUS t2=T_intMultDivMod { T_int.mk_sub t1 t2 }
 
 T_intMultDivMod:
     t=T_intNeg { t }
-  | t1=T_intNeg ASTERISK t2=T_intMultDivMod { T_int.mk_mult t1 t2 }
-  | t1=T_intNeg DIV t2=T_intMultDivMod { T_int.mk_div t1 t2 }
-  | t1=T_intNeg MOD t2=T_intMultDivMod { T_int.mk_mod t1 t2 }
+  | t1=T_intMultDivMod ASTERISK t2=T_intNeg { T_int.mk_mult t1 t2 }
+  | t1=T_intMultDivMod DIV t2=T_intNeg { T_int.mk_div t1 t2 }
+  | t1=T_intMultDivMod MOD t2=T_intNeg { T_int.mk_mod t1 t2 }
 
 T_intNeg:
     t=T_intAtom { t }
