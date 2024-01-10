@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # building fptprove 
-FROM ocaml/opam:ubuntu-22.04-ocaml-5.0 AS builder
+FROM ocaml/opam:ubuntu-22.04-ocaml-5.1 AS builder
 USER opam:opam
 RUN sudo apt update && sudo apt install -y \
         libblas-dev \

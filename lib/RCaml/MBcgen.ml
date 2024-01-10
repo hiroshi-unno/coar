@@ -869,7 +869,7 @@ module Make (Config : Config.ConfigType) = struct
           f#f_const @@ T_string.make str
         | Texp_constant Const_char _ ->
           failwith @@ "[fold_expr] char is unsupported: " ^ str_of_expr expr
-        | Texp_assert e ->
+        | Texp_assert (e, _) ->
           let evar1 = Sort.mk_fresh_evar () in
           let econstrs, oconstrs, next =
             match e.exp_desc with

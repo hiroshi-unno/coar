@@ -7,9 +7,9 @@ Fuga Kawamata, Hiroshi Unno, Taro Sekiyama, and Tachio Terauchi. Answer Refineme
 ## Installation from Source Code
 
 * Install opam2 (see [the official webpage](https://opam.ocaml.org/doc/Install.html)).
-* Install ocaml-5.0.0:
+* Install ocaml-5.1.0:
   ```bash
-  opam switch create 5.0.0
+  opam switch create 5.1.0
   ```
 * Install dune:
   ```bash
@@ -71,7 +71,7 @@ that have almost the same structure as the tables in the paper.
 ```bash
 ./convert.sh
 ```
-This produces three CSV files: `table_spacer.scv`, `table_pcsat.scv`, and `table_cps.scv`.
+This produces three CSV files: `table_spacer.csv`, `table_pcsat.csv`, and `table_cps.csv`.
 The first two files correspond to Table 1 in the paper,
 and the third one corresponds to Table 2 in the paper.
 

@@ -11,7 +11,7 @@ pin-depends: [
   ["libsvm.0.10.0~modified" "git+https://github.com/hiroshi-unno/libsvm-ocaml.git"]
 ]
 depends: [
-  "ocaml"
+  "ocaml" {>= "5.1"}
   "core" {>= "v0.16.0"}
   "core_unix"
   "domainslib"

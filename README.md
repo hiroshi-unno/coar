@@ -8,9 +8,9 @@
 ## Installation from source code
 
 * Install opam2 (see [the official webpage](https://opam.ocaml.org/doc/Install.html)).
-* Install ocaml-5.0.0:
+* Install ocaml-5.1.0:
   ```bash
-  opam switch create 5.0.0
+  opam switch create 5.1.0
   ```
 * Install dune:
   ```bash
