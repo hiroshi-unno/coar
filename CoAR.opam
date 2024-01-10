@@ -20,7 +20,7 @@ depends: [
   "ocaml-compiler-libs"
   "ocamlgraph"
   "zarith" {>= "1.9"}
-  "z3" {>= "4.8.7"}
+  "z3" {>= "4.8.8"}
   "minisat"
   "libsvm" {= "0.10.0~modified"}
 ]

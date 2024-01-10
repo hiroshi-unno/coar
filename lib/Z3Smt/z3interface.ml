@@ -165,6 +165,7 @@ let rec sort_of env s =
   | Z3enums.CHAR_SORT -> failwith "CHAR_SORT not supported"
   | Z3enums.UNKNOWN_SORT ->
     failwith @@ "[z3:sort_of] UNKNOWN_SORT not supported:" ^ Z3.Sort.to_string s
+  | Z3enums.TYPE_VAR -> failwith "TYPE_VAR not supported"
 
 let look_up_func_of_dt dt sort func =
   (* Debug.print @@ lazy (sprintf "look_up_func:%d :%s" (Z3.FuncDecl.get_id func) (Z3.FuncDecl.to_string func)); *)
