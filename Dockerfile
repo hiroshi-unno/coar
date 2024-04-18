@@ -43,5 +43,8 @@ COPY --from=builder /home/opam/.opam/5.1/lib/stublibs/libz3.so /usr/lib/aarch64-
 COPY --from=builder /home/opam/fptprove/_build/default/main.exe /root/fptprove/
 COPY README.md LICENSE CoAR.opam /root/fptprove/
 COPY config /root/fptprove/config
+# Copy ocaml library for ocaml program verification
+COPY --from=builder /home/opam/.opam/5.1/lib/ocaml /home/opam/.opam/5.1/lib/ocaml
 
+ENV PATH="${PATH}:/root/fptprove"
 CMD ["/bin/bash"]
