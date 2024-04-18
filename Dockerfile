@@ -37,7 +37,8 @@ RUN apt update \
  && apt clean \
  && rm -rf /var/lib/apt/lists/*
 # Copy a stub library to call libz3 from a ocaml program
-COPY --from=builder /home/opam/.opam/5.0/lib/stublibs/libz3.so /usr/lib/x86_64-linux-gnu/
+COPY --from=builder /home/opam/.opam/5.1/lib/stublibs/libz3.so /usr/lib/x86_64-linux-gnu/
+COPY --from=builder /home/opam/.opam/5.1/lib/stublibs/libz3.so /usr/lib/aarch64-linux-gnu/
 # Copy fptprove
 COPY --from=builder /home/opam/fptprove/_build/default/main.exe /root/fptprove/
 COPY README.md LICENSE CoAR.opam /root/fptprove/
