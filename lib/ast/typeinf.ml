@@ -46,6 +46,10 @@ let rec cgen_term ~print senv term = let open Term in
       senv, T_int.SInt, Set.Poly.empty
     | FunApp (T_real.Real _, [], _) ->
       senv, T_real.SReal, Set.Poly.empty
+    | FunApp (T_real.Alge _, [t], _) ->
+      let senv, ty, constrs = cgen_term ~print senv t in
+      senv, T_real.SReal,
+      Set.union constrs (Set.Poly.singleton (CEq (ty, T_real.SReal)))
     | FunApp (T_real_int.ToReal, [t], _) ->
       let senv, ty, constrs = cgen_term ~print senv t in
       senv, T_real.SReal,
@@ -67,7 +71,7 @@ let rec cgen_term ~print senv term = let open Term in
       Set.Poly.union_list
         [constrs1; constrs2;
          Set.Poly.of_list [CNum svar; CEq (ty1, Sort.SVar svar); CEq (ty1, ty2)]]
-    | FunApp (T_int.Neg, [t1], _) ->
+    | FunApp ((T_int.Neg | T_int.Abs), [t1], _) ->
       let senv, ty, constrs = cgen_term ~print senv t1 in
       senv, T_int.SInt,
       Set.union constrs (Set.Poly.singleton (CEq (ty, T_int.SInt)))
@@ -78,7 +82,7 @@ let rec cgen_term ~print senv term = let open Term in
       Set.Poly.union_list
         [constrs1; constrs2;
          Set.Poly.of_list [CEq (ty1, T_int.SInt); CEq (ty1, ty2)]]
-    | FunApp (T_real.RNeg, [t1], _) ->
+    | FunApp ((T_real.RNeg | T_real.RAbs), [t1], _) ->
       let senv, ty, constrs = cgen_term ~print senv t1 in
       senv, T_real.SReal,
       Set.union constrs (Set.Poly.singleton (CEq (ty, T_real.SReal)))
@@ -185,8 +189,7 @@ let rec cgen_term ~print senv term = let open Term in
       let senv, ty2, constrs2 = cgen_term ~print senv body in
       senv, ty2,
       Set.Poly.union_list [constrs1; constrs2; Set.Poly.singleton (CEq (ty1, sort))]
-    | _ ->
-      failwith @@ sprintf "inf unknown term:%s" (Term.str_of term)
+    | _ -> failwith @@ sprintf "unknown term:%s" (Term.str_of term)
   in
   print @@ lazy (sprintf "term constrs:%s" @@ str_of_constrs constrs);
   senv, ty, constrs
@@ -343,7 +346,8 @@ and cgen_formula ~print senv phi = let open Formula in
 let sort_of_name ?(rectyps=None) dtenv ?(args=[]) = function
   | "bool"(* | "Bool"*) -> T_bool.SBool
   | "int"(* | "Int"*) -> T_int.SInt
-  | "float"(* | "Real"*) -> T_real.SReal
+  | "float" | "real"(* | "Real"*) -> T_real.SReal
+  | "prop" -> T_real.SReal (*ToDo*)
   | "string" -> T_string.SString
   | "finseq" -> T_sequence.SSequence true
   | "infseq" -> T_sequence.SSequence false

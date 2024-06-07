@@ -107,10 +107,10 @@ let let_type_poly = function
   | RPoly (svs, (_, t, _, _)(*ToDo*)) -> svs, t
   | t -> Set.Poly.empty, t
 
-let tvar_of_val = function
-  | RGeneral (_, _, (x, _)) | RTuple (_, (x, _))
-  | RRef (_, (x, _)) | RArrow (_, _, _, (x, _)) -> x
+let pred_of_val = function
+  | RGeneral (_, _, p) | RTuple (_, p) | RRef (_, p) | RArrow (_, _, _, p) -> p
   | _ -> assert false
+let tvar_of_val = pred_of_val >> fst
 
 (*** computation types *)
 let opsig_of_comp (o, _, _, _) = o
@@ -1144,95 +1144,108 @@ let update_svmap_with_sub ~config dom svmap sub =
         let refine = true(*not config.gen_ref_pred_for_type_vars(*ToDo*)*) in
         let svmap = Map.Poly.empty(*ToDo*) in
         Option.some @@ val_of_sort ~config ~refine ~svmap dom data)
-let rec instantiate_cont ~print ~config dom (sub, svmap) sort = function
+let rec instantiate_cont ~print ~config dom kind_map (sub, svmap) sort = function
   | Pure, Sort.Pure ->
-    Pure, Set.Poly.empty
+    Pure, Set.Poly.empty, kind_map
   | Eff (x, c1, c2), Sort.Eff (o1, s1, e1, o2, s2, e2) ->
     let dom' = dom @ [Term.mk_var x sort, sort] in
-    let c1, cs1 = instantiate_comp ~print ~config dom' (sub, svmap) (c1, (o1, s1, e1)) in
-    let c2, cs2 = instantiate_comp ~print ~config dom (sub, svmap) (c2, (o2, s2, e2)) in
-    Eff (x, c1, c2), Set.union cs1 cs2
-  | Eff (x, c1, c2), Sort.Pure -> Eff (x, c1, c2), Set.Poly.empty
+    let c1, cs1, kind_map = instantiate_comp ~print ~config dom' kind_map (sub, svmap) (c1, (o1, s1, e1)) in
+    let c2, cs2, kind_map = instantiate_comp ~print ~config dom kind_map (sub, svmap) (c2, (o2, s2, e2)) in
+    Eff (x, c1, c2), Set.union cs1 cs2, kind_map
+  | Eff (x, c1, c2), Sort.Pure -> Eff (x, c1, c2), Set.Poly.empty, kind_map
   | s, cont ->
     failwith @@ sprintf "[instantiate_cont] %s and %s"
       (str_of_cont ~config s) (Term.str_of_cont cont)
-and instantiate_opsig ~print ~config dom (sub, svmap) (o, opsig) =
+and instantiate_opsig ~print ~config dom kind_map (sub, svmap) (o, opsig) =
   match opsig with
   | Sort.OpSig (opsig, _(*ToDo*)) ->
     let cs = ref Set.Poly.empty in
+    let kind_map_ref = ref kind_map in
     let o =
       ALMap.mapi o ~f:(fun s t ->
-          let t, constrs =
-            instantiate_val ~print ~config dom (sub, svmap) (t, ALMap.find_exn s opsig)
+          let t, constrs, kind_map =
+            instantiate_val ~print ~config
+              dom !kind_map_ref (sub, svmap) (t, ALMap.find_exn s opsig)
           in
           cs := Set.union !cs constrs;
+          kind_map_ref := kind_map;
           t)
     in
-    o, !cs
+    o, !cs, !kind_map_ref
   | _ -> failwith "[instantiate_opsig]"
-and instantiate_comp ~print ~config dom (sub, svmap) ((o, t, e, s), (opsig, sort, cont)) =
-  let o, constrs1 = instantiate_opsig ~print ~config dom (sub, svmap) (o, opsig) in
-  let t, constrs2 = instantiate_val ~print ~config dom (sub, svmap) (t, sort) in
-  let s, constrs3 = instantiate_cont ~print ~config dom (sub, svmap) (sort_of_val t) (s, cont) in
+and instantiate_comp ~print ~config dom kind_map (sub, svmap) ((o, t, e, s), (opsig, sort, cont)) =
+  let o, constrs1, kind_map = instantiate_opsig ~print ~config dom kind_map (sub, svmap) (o, opsig) in
+  let t, constrs2, kind_map = instantiate_val ~print ~config dom kind_map (sub, svmap) (t, sort) in
+  let s, constrs3, kind_map = instantiate_cont ~print ~config dom kind_map (sub, svmap) (sort_of_val t) (s, cont) in
   (o, t, subst_sorts_temp sub e, s),
-  Set.Poly.union_list [constrs1; constrs2; constrs3]
-and instantiate_val ~print ~config dom (sub, svmap) = function
+  Set.Poly.union_list [constrs1; constrs2; constrs3],
+  kind_map
+and instantiate_val ~print ~config dom kind_map (sub, svmap) = function
   | RGeneral ([], sort, pred), sort' ->
     let sort_inst = Term.subst_sorts_sort sub sort in
+    let sort, sort_inst =
+      if Sort.is_svar sort_inst && not @@ Sort.is_svar sort'(*ToDo*) then sort', sort' else sort, sort_inst
+    in
     let pred = Formula.subst_sorts_pred sub pred in
     if Stdlib.(sort_inst <> sort') && not (eq_dt sort_inst sort') then
       failwith @@ sprintf "[instantiate_val] %s and %s does not match"
         (Term.str_of_sort sort_inst) (Term.str_of_sort sort');
     (match sort with
      | Sort.SVar svar when Map.Poly.mem svmap svar ->
-       conj_pred_val pred (Map.Poly.find_exn svmap svar), Set.Poly.empty
+       conj_pred_val pred (Map.Poly.find_exn svmap svar), Set.Poly.empty, kind_map
      | Sort.SPoly (_svs, _sort) ->
        failwith "instantiation with a type polymorphic type is not supported"
-     | _ -> mk_rbase sort pred, Set.Poly.empty)
+     | _ -> mk_rbase sort(*ToDo: sort_inst?*) pred, Set.Poly.empty, kind_map)
   | RGeneral (params, T_dt.SDT dt, pred), T_dt.SDT dt'
     when String.(dt.name = dt'.name) ->
     let dt = Datatype.subst_sorts sub dt in
     let pred = Formula.subst_sorts_pred sub pred in
     (*print_endline @@ Datatype.str_of dt ^ " and " ^ Datatype.str_of dt';*)
-    let params, constrss =
-      List.unzip @@ List.map2_exn params (Datatype.params_of dt')
-        ~f:(curry @@ instantiate_val ~print ~config dom (sub, svmap))
+    let params, constrss, kind_maps =
+      List.unzip3 @@ List.map2_exn params (Datatype.params_of dt')
+        ~f:(curry @@ instantiate_val ~print ~config dom kind_map (sub, svmap))
     in
-    mk_rdt params dt pred, Set.Poly.union_list constrss
+    mk_rdt params dt pred, Set.Poly.union_list constrss, Map.force_merge_list kind_maps
   | RGeneral (params, T_dt.SUS (name, _), pred), T_dt.SDT dt'
     when String.(name = dt'.name) ->
     let pred = Formula.subst_sorts_pred sub pred in
-    let params, constrss =
-      List.unzip @@ List.map2_exn params (Datatype.params_of dt')
-        ~f:(curry @@ instantiate_val ~print ~config dom (sub, svmap))
+    let params, constrss, kind_maps =
+      List.unzip3 @@ List.map2_exn params (Datatype.params_of dt')
+        ~f:(curry @@ instantiate_val ~print ~config dom kind_map (sub, svmap))
     in
-    mk_rdt params dt' pred, Set.Poly.union_list constrss
+    mk_rdt params dt' pred, Set.Poly.union_list constrss, Map.force_merge_list kind_maps
   | RGeneral (params, T_dt.SUS (name, _), pred), T_dt.SUS (name', sorts)
     when String.(name = name') ->
     let pred = Formula.subst_sorts_pred sub pred in
-    let params, constrss =
-      List.unzip @@ List.map2_exn params sorts
-        ~f:(curry @@ instantiate_val ~print ~config dom (sub, svmap))
+    let params, constrss, kind_maps =
+      List.unzip3 @@ List.map2_exn params sorts
+        ~f:(curry @@ instantiate_val ~print ~config dom kind_map (sub, svmap))
     in
-    mk_rus params name' sorts pred, Set.Poly.union_list constrss
+    mk_rus params name' sorts pred, Set.Poly.union_list constrss, Map.force_merge_list kind_maps
   | RTuple (elems, pred), T_tuple.STuple sorts ->
     let pred = Formula.subst_sorts_pred sub pred in
-    let elems, constrss =
-      List.unzip @@ List.map2_exn elems sorts
-        ~f:(curry @@ instantiate_val ~print ~config dom (sub, svmap))
+    let elems, constrss, kind_maps =
+      List.unzip3 @@ List.map2_exn elems sorts
+        ~f:(curry @@ instantiate_val ~print ~config dom kind_map (sub, svmap))
     in
-    mk_rtuple elems pred, Set.Poly.union_list constrss
+    mk_rtuple elems pred, Set.Poly.union_list constrss, Map.force_merge_list kind_maps
   | RRef (elem, pred), T_ref.SRef sort ->
     let pred = Formula.subst_sorts_pred sub pred in
-    let elem, constrs = instantiate_val ~print ~config dom (sub, svmap) (elem, sort) in
-    mk_rref elem pred, constrs
+    let elem, constrs, kind_map =
+      instantiate_val ~print ~config dom kind_map (sub, svmap) (elem, sort)
+    in
+    mk_rref elem pred, constrs, kind_map
   | RArrow (x, t, c, pred), Sort.SArrow (sort1, full_sort2) ->
     (*assume [full_sort2] matches with c*)
     let pred = Formula.subst_sorts_pred sub pred in
-    let t, constrs1 = instantiate_val ~print ~config dom (sub, svmap) (t, sort1) in
+    let t, constrs1, kind_map =
+      instantiate_val ~print ~config dom kind_map (sub, svmap) (t, sort1)
+    in
     let dom' = dom @ [Term.mk_var x sort1, sort1] in
-    let c, constrs2 = instantiate_comp ~print ~config dom' (sub, svmap) (c, full_sort2) in
-    mk_rarrow x t c pred, Set.union constrs1 constrs2
+    let c, constrs2, kind_map =
+      instantiate_comp ~print ~config dom' kind_map (sub, svmap) (c, full_sort2)
+    in
+    mk_rarrow x t c pred, Set.union constrs1 constrs2, kind_map
   | RForall (penv, constrs, c) as ty0, sort ->
     if ALMap.is_empty (opsig_of_comp c) &&
        (not config.enable_temp_eff || is_pure_temp (temp_of_comp c)) &&
@@ -1242,8 +1255,8 @@ and instantiate_val ~print ~config dom (sub, svmap) = function
            (str_of_val ~config ty0) (Term.str_of_sort sort));
       let penv = Map.Poly.map penv ~f:(List.map ~f:(Term.subst_sorts_sort sub)) in
       let constrs = Set.Poly.map constrs ~f:(Formula.subst_sorts sub) in
-      let t, constrs' =
-        instantiate_val ~print ~config dom (sub, svmap) (val_of_comp c, sort)
+      let t, constrs', kind_map =
+        instantiate_val ~print ~config dom kind_map (sub, svmap) (val_of_comp c, sort)
       in
       let pmap =
         Map.Poly.mapi penv ~f:(fun ~key ~data ->
@@ -1260,34 +1273,32 @@ and instantiate_val ~print ~config dom (sub, svmap) = function
         (sprintf "pvars instantiated type: %s\nconstraints: %s"
            (str_of_val ~config t')
            (Formula.str_of @@ Formula.and_of @@ Set.to_list constrs''));
-      t', constrs''
+      t', constrs'', Map.rename_keys_map (Map.Poly.of_alist_exn @@ List.map ~f:(fun (x, y) -> Ident.pvar_to_tvar x, Ident.pvar_to_tvar y) @@ Map.Poly.to_alist pmap) kind_map
     end else failwith "not supported"
   | RPoly (svs1, c), Sort.SPoly (svs2, sort) (*ToDo: remove this*)
     when Fn.non Set.is_empty @@ Set.inter svs1 svs2 ->
-    instantiate_val ~print ~config dom (sub, svmap)
-      (mk_type_poly ~config (Set.diff svs1 svs2) c,
-       Sort.mk_poly (Set.diff svs2 svs1) sort)
+    instantiate_val ~print ~config dom kind_map (sub, svmap)
+      (mk_type_poly ~config (Set.diff svs1 svs2) c, Sort.mk_poly (Set.diff svs2 svs1) sort)
   | RPoly (svs, c) as ty0, sort0 ->
     if ALMap.is_empty (opsig_of_comp c) &&
        (not config.enable_temp_eff || is_pure_temp (temp_of_comp c)) &&
        is_pure_cont (cont_of_comp c) then begin
       print @@ lazy (sprintf "instantiate %s with %s"
                        (str_of_val ~config ty0) (Term.str_of_sort sort0));
-      let t, constrs =
+      let t, constrs, kind_map =
         let t = val_of_comp c in
         let sub' =
-          Map.Poly.filter_keys ~f:(Set.mem svs) @@
-          tsub_of_val ~config sub (t, sort0)
+          Map.Poly.filter_keys ~f:(Set.mem svs) @@ tsub_of_val ~config sub (t, sort0)
         in
         (*print_endline @@ str_of_sort_subst Term.str_of_sort sub';*)
         let svmap' = update_svmap_with_sub ~config dom svmap sub' in
-        instantiate_val ~print ~config dom (sub', svmap') (t, sort0)
+        instantiate_val ~print ~config dom kind_map (sub', svmap') (t, sort0)
       in
       print @@ lazy
         (sprintf "svars instantiated type: %s\nconstraints: %s"
            (str_of_val ~config t)
            (Formula.str_of @@ Formula.and_of @@ Set.to_list constrs));
-      t, constrs
+      t, constrs, kind_map
     end else failwith "not supported"
   | ty0, sort0 ->
     failwith @@ sprintf "cannot instantiate %s with %s"
@@ -1460,7 +1471,8 @@ let of_binop ~config = function
 let is_fsym = function
   | "Stdlib.+" | "Stdlib.-" | "Stdlib.*" | "Stdlib./"
   | "Stdlib.+." | "Stdlib.-." | "Stdlib.*." | "Stdlib./."
-  | "Stdlib.~-" | "Stdlib.ref" | "Stdlib.!" | "Stdlib.:=" -> true
+  | "Stdlib.~-" | "Stdlib.abs" | "Stdlib.float_of_int" | "Stdlib.int_of_float"
+  | "Stdlib.ref" | "Stdlib.!" | "Stdlib.:=" -> true
   | _ -> false
 let is_psym = function
   | "Stdlib.>" | "Stdlib.<" | "Stdlib.>=" | "Stdlib.<="
@@ -1480,6 +1492,9 @@ let fsym_of_str sort = function
   | "Stdlib.*." -> T_real.RMult
   | "Stdlib./." -> T_real.RDiv
   | "Stdlib.~-" -> T_int.Neg
+  | "Stdlib.abs" -> T_int.Abs
+  | "Stdlib.float_of_int" -> T_real_int.ToReal
+  | "Stdlib.int_of_float" -> T_real_int.ToInt
   | "Stdlib.ref" -> T_ref.Ref sort
   | "Stdlib.!" ->
     T_ref.Deref (match sort with T_ref.SRef sort -> sort | _ ->

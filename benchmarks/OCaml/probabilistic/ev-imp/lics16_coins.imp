@@ -1,0 +1,17 @@
+def coins():
+  var x
+  var y
+
+  prob(1,1):
+    x = 0
+  else:
+    x = 1
+  prob(1,2):
+    y = 0
+  else:
+    y = 1
+
+  if x = y:
+    return 1
+  else
+    return 0

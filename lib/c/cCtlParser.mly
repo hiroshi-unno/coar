@@ -300,7 +300,7 @@ T_intNeg:
 
 T_intAtom:
     LPAREN t=T_int RPAREN { t }
-  | n=INTL { T_int.mk_int (Z.of_int n) }
+  | n=INTL { T_int.from_int n }
   | varname=ID { Term.mk_var (Ident.Tvar varname) T_int.SInt }
 
 /* Ast.LogicOld.T_bool */

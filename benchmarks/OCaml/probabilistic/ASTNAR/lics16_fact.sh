@@ -1,0 +1,1 @@
+ASTNAR "if x then 1 else (if sample - 0.834 then f (x - 1) else f (x - 2)) * x"

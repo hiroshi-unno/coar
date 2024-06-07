@@ -112,7 +112,7 @@ module Make (Cfg: Config.ConfigType): SolverType = struct
             (Logic.to_old_sort_env_map Logic.ExtTerm.to_old_sort uni_senv)
             senv
         in
-        let c = Z3Smt.Z3interface.of_formula ctx senv penv fenv dtenv phi' in
+        let c = Z3Smt.Z3interface.of_formula ~id:None(*ToDo*) ctx senv penv fenv dtenv phi' in
         Z3.Fixedpoint.add_rule solver c None);
     (* set params *)
     let params = Z3.Params.mk_params ctx in

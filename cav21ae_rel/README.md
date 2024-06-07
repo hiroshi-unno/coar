@@ -29,7 +29,7 @@ Hiroshi Unno, Tachio Terauchi, and Eric Koskinen. Constraint-based Relational Ve
 
 Before proceeding, make sure that the following file and directory are in the home directory of the docker container.
 
-- `cav2021rel.pdf`: our paper (downloaded from [here](https://www.cs.tsukuba.ac.jp/~uhiro/papers/cav2021rel.pdf))
+- `cav2021rel.pdf`: our paper (downloaded from [here](https://www.riec.tohoku.ac.jp/~unno/papers/cav2021rel.pdf))
 - `coar`: directory of our artifact
 
 Please run the following command.

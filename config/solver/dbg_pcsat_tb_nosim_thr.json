@@ -1,9 +1,9 @@
 [
   "PCSat",
   {
-    "pvar_eliminator": [
+    "preprocessor": [
       "Filename",
-      "./config/pcsat/pvar_eliminator/dbg_nosim.json"
+      "./config/pcsat/preprocessor/dbg_nosim.json"
     ],
     "coordinator": [
       "Filename",

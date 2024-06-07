@@ -11,12 +11,13 @@ open PCSatCommon
 type qualifier = sort_env_list * Formula.t
 
 module type QualifierType = sig
-  val qualifiers_of: Ident.pvar -> Sort.t list -> (ExAtom.t * int) Set.Poly.t -> sort_env_map * VersionSpace.examples -> qualifier Set.Poly.t
-  val str_of_domain: string
+  val qualifiers_of : Ident.pvar -> Sort.t list -> (ExAtom.t * int) Set.Poly.t -> sort_env_map * VersionSpace.examples -> qualifier Set.Poly.t
+  val str_of_domain : string
 end
 
 module type GeneratorType = sig
   val generate: Ident.pvar -> sort_env_list -> (ExAtom.t * int) Set.Poly.t -> sort_env_map * VersionSpace.examples -> int -> qualifier Set.Poly.t
+  val elim_neg : qualifier Set.Poly.t -> qualifier Set.Poly.t
   val str_of_domain: int -> string
   val num_of_domains: int
 end
@@ -162,8 +163,11 @@ module Make (Cfg : Config.ConfigType) (APCSP: Problem.ProblemType) : GeneratorTy
 
   let neg (params, phi) = params, Normalizer.normalize @@ Evaluator.simplify_neg phi
   let add_neg quals = Set.union quals @@ Set.Poly.map quals ~f:neg
-  let elim_neg = Set.fold ~init:Set.Poly.empty ~f:(fun quals q ->
-      if Set.mem quals (neg q) then quals else Set.add quals q)
+  let elim_neg =
+    if config.filter_out_neg then
+      Set.fold ~init:Set.Poly.empty ~f:(fun quals q ->
+          if Set.mem quals (neg q) then quals else Set.add quals q)
+    else Fn.id
   let add_homogeneous quals =
     Set.union quals @@
     Set.Poly.map quals ~f:(fun (params, phi) -> params, Normalizer.homogenize phi)
@@ -443,7 +447,7 @@ module Make (Cfg : Config.ConfigType) (APCSP: Problem.ProblemType) : GeneratorTy
       in
       Set.union extracted generated
       |> (if config.filter_out_non_div_mod then Set.filter ~f:div_mod_filter else Fn.id)
-      |> (if config.filter_out_neg then elim_neg else Fn.id)
+      |> elim_neg
   (*|> (fun quals -> if config.reduce then Q.reduce_qualifiers quals neg_ex pos_ex else quals)*)
 
   let str_of_domain n =

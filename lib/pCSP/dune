@@ -1,23 +1,22 @@
-(ocamllex (modules LPLexer))
-(menhir (modules LPParser))
+(ocamllex
+ (modules LPLexer))
+
+(menhir
+ (modules LPParser))
 
 (library
-  (name pCSP)
-  (public_name CoAR.pCSP)
-  (preprocess (pps ppx_deriving_yojson))
-  (libraries
-    core
-    CoAR.ast
-    CoAR.common
-    CoAR.SyGuS
-    CoAR.SMT
-    CoAR.LTS
-    CoAR.PLTS)
-  (modules
-    params
-    problem
-    LPParser
-    LPLexer
-    parser
-    forwardPropagate)
-  (synopsis "The definition of pfwnCSP"))
+ (name pCSP)
+ (public_name CoAR.pCSP)
+ (preprocess
+  (pps ppx_deriving_yojson))
+ (libraries
+  core
+  camlzip
+  CoAR.ast
+  CoAR.common
+  CoAR.SyGuS
+  CoAR.SMT
+  CoAR.LTS
+  CoAR.PLTS)
+ (modules params problem LPParser LPLexer parser forwardPropagate)
+ (synopsis "The definition of pfwnCSP"))

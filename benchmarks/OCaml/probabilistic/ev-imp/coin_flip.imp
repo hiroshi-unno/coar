@@ -1,0 +1,9 @@
+def coin():
+  var c
+  c = 0
+
+  prob(1,1):
+    c = coin()
+    return c+1
+  else:
+    return c

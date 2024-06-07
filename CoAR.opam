@@ -1,8 +1,8 @@
 opam-version: "2.0"
 name: "CoAR"
-version: "2.1"
-maintainer: "Hiroshi Unno <uhiro@cs.tsukuba.ac.jp>"
-authors: "Hiroshi Unno <uhiro@cs.tsukuba.ac.jp>"
+version: "3.0"
+maintainer: "Hiroshi Unno <hiroshi.unno@acm.org>"
+authors: "Hiroshi Unno <hiroshi.unno@acm.org>"
 homepage: "https://github.com/hiroshi-unno/coar"
 bug-reports: "https://github.com/hiroshi-unno/coar/issues"
 synopsis: "Collection of Automated Reasoners"
@@ -20,8 +20,9 @@ depends: [
   "ocaml-compiler-libs"
   "ocamlgraph"
   "zarith" {>= "1.9"}
-  "z3" {>= "4.8.8"}
+  "z3" {>= "4.8.8" & < "4.13"}
   "minisat"
   "libsvm" {= "0.10.0~modified"}
+  "camlzip"
 ]
 build: ["dune" "build"]

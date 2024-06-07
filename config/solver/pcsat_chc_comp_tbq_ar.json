@@ -1,0 +1,21 @@
+[
+  "PCSat",
+  {
+    "preprocessor": [
+      "Filename",
+      "./config/pcsat/preprocessor/enable.json"
+    ],
+    "coordinator": [
+      "Filename",
+      "./config/pcsat/coordinator/tbq_ar.json"
+    ],
+    "sol_printer": [
+      "Filename",
+      "./config/pcsat/sol_printer/wo_iter.json"
+    ],
+    "load_oracle_sol": false,
+    "solve_each_query": false,
+    "check_problem": false,
+    "check_solution": false
+  }
+]

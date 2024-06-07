@@ -1,0 +1,12 @@
+def f(x):
+  var c
+  c = 0
+
+  if x = 0:
+    return c
+  else:
+    prob(2,1):
+      c = f(x-1)
+    else:
+      c = f(x+1)
+    return c+1

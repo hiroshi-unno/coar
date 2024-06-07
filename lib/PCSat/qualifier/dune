@@ -1,27 +1,28 @@
 (library
-  (name qualifier)
-  (public_name CoAR.PCSat.qualifier)
-  (preprocess (pps ppx_deriving_yojson))
-  (libraries
-    core
-    yojson
-    libsvm
-    CoAR.ast
-    CoAR.common
-    CoAR.pCSP
-    CoAR.PCSat.common
-    CoAR.PCSat.bf_synthesis)
-  (modules
-    null
-    interval
-    octagon
-    octahedron
-    polyhedron
-    polynomial
-    SVM
-    NN
-    union
-    dtTheory
-    allTheory
-    arrayTheory
-    generator))
+ (name qualifier)
+ (public_name CoAR.PCSat.qualifier)
+ (preprocess
+  (pps ppx_deriving_yojson))
+ (libraries
+  core
+  yojson
+  libsvm
+  CoAR.ast
+  CoAR.common
+  CoAR.pCSP
+  CoAR.PCSat.common
+  CoAR.PCSat.bf_synthesis)
+ (modules
+  null
+  interval
+  octagon
+  octahedron
+  polyhedron
+  polynomial
+  SVM
+  NN
+  union
+  dtTheory
+  allTheory
+  arrayTheory
+  generator))

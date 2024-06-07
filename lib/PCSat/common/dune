@@ -1,24 +1,19 @@
 (library
-  (name PCSatCommon)
-  (public_name CoAR.PCSat.common)
-  (preprocess (pps ppx_deriving_yojson))
-  (libraries
-    core
-    yojson
-    CoAR.ast
-    CoAR.common
-    CoAR.Z3Smt
-    CoAR.pCSP)
-  (modules
-    exAtom
-    exAtomSet
-    exClause
-    exClauseSet
-    clauseGraph
-    hypSpace
-    truthTable
-    context
-    state
-    QDep
-    versionSpace
-    RLConfig))
+ (name PCSatCommon)
+ (public_name CoAR.PCSat.common)
+ (preprocess
+  (pps ppx_deriving_yojson))
+ (libraries core yojson CoAR.ast CoAR.common CoAR.Z3Smt CoAR.pCSP)
+ (modules
+  exAtom
+  exAtomSet
+  exClause
+  exClauseSet
+  clauseGraph
+  hypSpace
+  truthTable
+  context
+  state
+  QDep
+  versionSpace
+  RLConfig))

@@ -1,10 +1,7 @@
 (library
-  (name automaton)
-  (public_name CoAR.automaton)
-  (preprocess (pps ppx_deriving_yojson))
-  (libraries
-    core
-    yojson
-    CoAR.common)
-  (modules
-    treeAutomaton))
+ (name automaton)
+ (public_name CoAR.automaton)
+ (preprocess
+  (pps ppx_deriving_yojson))
+ (libraries core yojson CoAR.common)
+ (modules treeAutomaton))

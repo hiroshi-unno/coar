@@ -7,9 +7,9 @@
         "smt_format": [
             "SMT2"
         ],
-        "pvar_eliminator": [
+        "preprocessor": [
             "Filename",
-            "./config/pcsat/pvar_eliminator/enable.json"
+            "./config/pcsat/preprocessor/enable.json"
         ]
     }
 ]

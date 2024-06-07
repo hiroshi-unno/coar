@@ -1,0 +1,21 @@
+{
+    "verbose": true,
+    "number_of_expr": 1,
+    "number_of_cond_conj": 1,
+    "depth": 0,
+    "ext": 0,
+    "upper_bound_expr_coeff": 1,
+    "upper_bound_expr_const": 0,
+    "expr_seeds": null,
+    "upper_bound_cond_coeff": 1,
+    "upper_bound_cond_const": 0,
+    "cond_seeds": null,
+    "max_number_of_cond_conj": null,
+    "threshold_expr_coeff": null,
+    "threshold_expr_const": null,
+    "threshold_cond_coeff": null,
+    "threshold_cond_const": null,
+    "ignore_bool": true,
+    "enable_lhs_param": true,
+    "fix_shape": true
+}

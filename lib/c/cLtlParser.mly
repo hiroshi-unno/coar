@@ -402,7 +402,7 @@ FormulaAtom:
     atom=Atom { Formula.mk_atom atom ~info:Dummy }
   | LPAREN fml=Formula RPAREN { fml }
   | term=T_intAtom { formula_of_term term }
-  /* | n=INTL { T_int.mk_int (Z.of_int n) ~info:Dummy |> formula_of_term }
+  /* | n=INTL { T_int.from_int n ~info:Dummy |> formula_of_term }
   | varname=ID { Term.mk_var (Ident.Tvar varname) T_int.SInt ~info:Dummy |> formula_of_term } */
 
 /* Ast.LogicOld.Atom.t */
@@ -439,7 +439,7 @@ T_intParen:
   | LPAREN t=T_int RPAREN { t }
 
 T_intAtom:
-    n=INTL { T_int.mk_int (Z.of_int n) ~info:Dummy }
+    n=INTL { T_int.from_int n ~info:Dummy }
   | varname=ID { Term.mk_var (Ident.Tvar varname) T_int.SInt ~info:Dummy }
   | funname=ID LPAREN args=Arguements RPAREN {
     Term.mk_fsym_app (FunCall funname) args ~info:Dummy
@@ -447,7 +447,7 @@ T_intAtom:
   | ADDR varname=ID { Term.mk_var (Ident.Tvar varname) T_int.SRefInt ~info:Dummy }
   | ASTERISK varname=ID { Term.mk_var (Ident.Tvar varname) T_int.SUnrefInt ~info:Dummy }
   /* sizeof(int) -> 4 */
-  | SIZEOF LPAREN INT RPAREN { T_int.mk_int (Z.of_int 4) ~info:Dummy }
+  | SIZEOF LPAREN INT RPAREN { T_int.from_int 4 ~info:Dummy }
   /* --x, ++x */
   | MINUSMINUS varname=ID { Term.mk_fsym_app (FunCall "#dec") [Term.mk_var (Ident.Tvar varname) T_int.SRefInt ~info:Dummy] ~info:Dummy }
   | PLUSPLUS varname=ID { Term.mk_fsym_app (FunCall "#inc") [Term.mk_var (Ident.Tvar varname) T_int.SRefInt ~info:Dummy] ~info:Dummy }

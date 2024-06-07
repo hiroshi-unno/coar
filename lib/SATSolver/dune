@@ -1,16 +1,15 @@
 (library
-  (name SATSolver)
-  (public_name CoAR.SATSolver)
-  (preprocess (pps ppx_deriving_yojson))
-  (libraries
-    core
-    yojson
-    minisat
-    CoAR.common
-    CoAR.ast
-    CoAR.SAT
-    CoAR.Z3Sat
-    CoAR.MINISAT)
-  (modules
-    solver
-    config))
+ (name SATSolver)
+ (public_name CoAR.SATSolver)
+ (preprocess
+  (pps ppx_deriving_yojson))
+ (libraries
+  core
+  yojson
+  minisat
+  CoAR.common
+  CoAR.ast
+  CoAR.SAT
+  CoAR.Z3Sat
+  CoAR.MINISAT)
+ (modules solver config))

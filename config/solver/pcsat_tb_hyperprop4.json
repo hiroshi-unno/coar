@@ -1,9 +1,9 @@
 [
   "PCSat",
   {
-    "pvar_eliminator": [
+    "preprocessor": [
       "Filename",
-      "./config/pcsat/pvar_eliminator/hyperprop.json"
+      "./config/pcsat/preprocessor/hyperprop.json"
     ],
     "coordinator": [
       "Filename",

@@ -7,16 +7,14 @@ open Grammar
 
 let print _ = ()
 
-let sort_of_var _v = Sort.mk_fresh_svar ()
-
-let print_error_information () =
+(*let print_error_information () =
   let st = Parsing.symbol_start_pos () in
   let en = Parsing.symbol_end_pos () in
   print_string ("File \"" ^ st.Lexing.pos_fname);
   Format.printf "\", line %d" st.Lexing.pos_lnum;
   Format.printf ", characters %d-%d:\n"
     (st.Lexing.pos_cnum - st.Lexing.pos_bol)
-    (en.Lexing.pos_cnum - en.Lexing.pos_bol)
+    (en.Lexing.pos_cnum - en.Lexing.pos_bol)*)
 %}
 
 //%token <string> UNKNOWN
@@ -45,7 +43,7 @@ let print_error_information () =
 %token AMP // '&'
 %token VERT // '|'
 
-//%token PROJ
+%token PROJ ABS SQRT ToInt ToReal
 
 %token FORALL EXISTS //MU NU
 %token DOT
@@ -101,18 +99,18 @@ let print_error_information () =
 
 %token EOF
 
-%right prec_tyarrow
+//%right prec_tyarrow
 %nonassoc prec_typair
-%left prec_tyapp
+//%left prec_tyapp
 
 //%right LARROW COLEQ
-%left COMMA
+//%left COMMA
 
 %right IMP
 %left OR VERT
-%left AND AMP
-%right NOT EXC
-%nonassoc FORALL EXISTS //MU NU
+%left AND //AMP
+%right NOT //EXC
+//%nonassoc FORALL EXISTS //MU NU
 
 %left EQUAL NOTEQUAL LT GT LEQ GEQ
 //%left EQEQ
@@ -128,22 +126,23 @@ let print_error_information () =
 %left ADD SUB FADD FSUB
 %left AST DIV FMUL FDIV MOD
 %right unary_minus
+%left prec_app
 %left DOT
 
 %start constraints val_ty_env comp_ty assertions opt_problems
 
-%type <LogicOld.Term.t> term
-%type <LogicOld.Atom.t> atom
-%type <LogicOld.Formula.t> prop
+%type <LogicOld.sort_env_map -> LogicOld.Term.t> term
+%type <LogicOld.sort_env_map -> LogicOld.Atom.t> atom
+%type <LogicOld.sort_env_map -> LogicOld.Formula.t> prop
 
 %type <LogicOld.sort_bind> bind
 %type <LogicOld.sort_env_list> binds
 
-%type <Rtype.t> val_ty
-%type <Rtype.c> comp_ty
-%type <Rtype.o> opsig_ty
-%type <Rtype.o> op_tys
-%type <Rtype.s> cont_eff_ty
+%type <LogicOld.sort_env_map -> Rtype.t> val_ty
+%type <LogicOld.sort_env_map -> Rtype.c> comp_ty
+%type <LogicOld.sort_env_map -> Rtype.o> opsig_ty
+%type <LogicOld.sort_env_map -> Rtype.o> op_tys
+%type <LogicOld.sort_env_map -> Sort.t -> Rtype.s> cont_eff_ty
 
 %type <LogicOld.Formula.t list> constraints
 %type <Rtype.Env.t> val_ty_env
@@ -155,80 +154,100 @@ let print_error_information () =
 
 term:
   | LPAREN term RPAREN { $2 }
-  | IDENT { Term.mk_var (Ident.Tvar $1) @@ sort_of_var @@ Ident.Tvar $1 }
+  | IDENT {
+    let var = Ident.Tvar $1 in
+    fun env -> Term.mk_var var @@ Map.Poly.find_exn env var }
   /* this causes reduce/reduce conflict on RPAREN
-  | BOOL { Term.Bool.make $1 } */
-  | INT { T_int.from_int $1 }
-  | FLOAT { T_real.mk_real @@ Q.of_float $1 }
+  | BOOL { fun _ -> T_bool.make $1 } */
+  | INT { fun _ -> T_int.from_int $1 }
+  | FLOAT { fun _ -> T_real.mk_real @@ Q.of_float $1 }
   | APPLY IDENT LPAREN terms RPAREN {
     let var = Ident.Tvar $2 in
     match Rtype.Env.look_up !Rtype.renv_ref var with
     | Some t ->
       let args, ret = Sort.args_ret_of @@ Rtype.sort_of_val t in
-      Term.mk_fvar_app var (args @ [ret]) $4
+      fun env -> Term.mk_fvar_app var (args @ [ret]) ($4 env)
     | None ->
       match Map.Poly.find (get_fenv ()) var with
       | Some (params, ret_sort, _, _, _) ->
-        Term.mk_fvar_app var (List.map params ~f:snd @ [ret_sort]) $4
+        fun env -> Term.mk_fvar_app var (List.map params ~f:snd @ [ret_sort]) ($4 env)
       | None -> failwith @@ "unbound function variable: " ^ $2
   }
-  | SUB term %prec unary_minus { T_int.mk_neg $2 }
-  | term ADD term { T_int.mk_add $1 $3 }
-  | term SUB term { T_int.mk_sub $1 $3 }
-  | term AST term { T_int.mk_mult $1 $3 }
-  | term DIV term { T_int.mk_div $1 $3 }
-  | term MOD term { T_int.mk_mod $1 $3}
-  | term FADD term { T_real.mk_radd $1 $3 }
-  | term FSUB term { T_real.mk_rsub $1 $3 }
-  | term FMUL term { T_real.mk_rmult $1 $3 }
-  | term FDIV term { T_real.mk_rdiv $1 $3 }
-  (*| LPAREN terms RPAREN {
-    T_tuple.mk_tuple_cons (List.map ~f:Term.sort_of $2) $2
+  | SUB term %prec unary_minus {
+    fun env -> T_num.mk_nneg ($2 env)
   }
+  | term ADD term { fun env -> T_num.mk_nadd ($1 env) ($3 env) }
+  | term SUB term { fun env -> T_num.mk_nsub ($1 env) ($3 env) }
+  | term AST term { fun env -> T_num.mk_nmult ($1 env) ($3 env) }
+  | term DIV term { fun env -> T_num.mk_ndiv ($1 env) ($3 env) }
+  | term MOD term { fun env -> T_int.mk_mod ($1 env) ($3 env) }
+  | FSUB term %prec unary_minus {
+    fun env -> T_real.mk_rneg ($2 env)
+  }
+  | term FADD term { fun env -> T_real.mk_radd ($1 env) ($3 env) }
+  | term FSUB term { fun env -> T_real.mk_rsub ($1 env) ($3 env) }
+  | term FMUL term { fun env -> T_real.mk_rmult ($1 env) ($3 env) }
+  | term FDIV term { fun env -> T_real.mk_rdiv ($1 env) ($3 env) }
+  /*| LPAREN terms RPAREN {
+    fun env ->
+    let ts = $2 env in
+    T_tuple.mk_tuple_cons (List.map ~f:Term.sort_of ts) ts
+  }*/
   | PROJ LPAREN INT COMMA term RPAREN {
-    T_tuple.mk_tuple_sel [](*ToDo*) $5 $3
-  }*)
+    fun env ->
+    let t = $5 env in
+    match Term.sort_of t with
+    | T_tuple.STuple sorts -> T_tuple.mk_tuple_sel sorts t $3
+    | _ -> failwith "type error"
+  }
+  | ABS term %prec prec_app { fun env -> T_int.mk_abs ($2 env) }
+  | SQRT term %prec prec_app { fun env -> T_real.mk_rpower ($2 env) (T_real.mk_real @@ Q.of_float 0.5) }
+  | ToInt term %prec prec_app { fun env -> T_real_int.mk_to_int ($2 env) }
+  | ToReal term %prec prec_app { fun env -> T_real_int.mk_to_real ($2 env) }
   | CONST LPAREN terms RPAREN {
-    if String.($1 = "Tuple") then T_tuple.mk_tuple_cons (List.map ~f:Term.sort_of $3) $3
+    fun env ->
+    let ts = $3 env in
+    if String.($1 = "Tuple")
+    then T_tuple.mk_tuple_cons (List.map ~f:Term.sort_of ts) ts
     else
       match DTEnv.look_up_dt_by_cons_name (get_dtenv ()) $1 with
-      | Some dt -> T_dt.mk_cons dt $1 $3
+      | Some dt -> T_dt.mk_cons dt $1 ts
       | _ -> failwith @@ "undefined constructor: " ^ $1
+  }
+  | CONST {
+    match DTEnv.look_up_dt_by_cons_name (get_dtenv ()) $1 with
+    | Some dt -> fun _ -> T_dt.mk_cons dt $1 []
+    | _ -> failwith @@ "undefined constructor: " ^ $1
   }
   | CONST term {
     match DTEnv.look_up_dt_by_cons_name (get_dtenv ()) $1 with
-    | Some dt -> T_dt.mk_cons dt $1 [$2]
+    | Some dt -> fun env -> T_dt.mk_cons dt $1 [$2 env]
     | _ -> failwith @@ "undefined constructor: " ^ $1
   }
   | term COLCOL term {
     match DTEnv.look_up_dt_by_cons_name (get_dtenv ()) "::" with
-    | Some dt -> T_dt.mk_cons dt "::" [$1; $3]
+    | Some dt -> fun env -> T_dt.mk_cons dt "::" [$1 env; $3 env]
     | _ -> failwith @@ "undefined constructor: " ^ "::"
   }
   | COLCOL LPAREN terms RPAREN {
     match DTEnv.look_up_dt_by_cons_name (get_dtenv ()) "::" with
-    | Some dt -> T_dt.mk_cons dt "::" $3
+    | Some dt -> fun env -> T_dt.mk_cons dt "::" ($3 env)
     | _ -> failwith @@ "undefined constructor: " ^ "::"
-  }
-  | CONST {
-    match DTEnv.look_up_dt_by_cons_name (get_dtenv ()) $1 with
-    | Some dt -> T_dt.mk_cons dt $1 []
-    | _ -> failwith @@ "undefined constructor: " ^ $1
   }
   | ACCESSOR LPAREN term RPAREN {
     let cons_name, n = $1 in
     match DTEnv.look_up_dt_by_cons_name (get_dtenv ()) cons_name with
-    | Some dt -> T_dt.mk_sel_by_cons dt cons_name n $3
+    | Some dt -> fun env -> T_dt.mk_sel_by_cons dt cons_name n ($3 env)
     | None -> failwith @@ "undefined constructor" ^ cons_name
   }
-  | EPSILON {
-    Term.mk_fsym_app T_sequence.SeqEpsilon []
-  }
-  | EVENT LPAREN IDENT RPAREN {
-    Term.mk_fsym_app (T_sequence.SeqSymbol $3) []
-  }
+  | EPSILON { fun _ -> Term.mk_fsym_app T_sequence.SeqEpsilon [] }
+  | EVENT LPAREN IDENT RPAREN { fun _ -> Term.mk_fsym_app (T_sequence.SeqSymbol $3) [] }
   | term PLUSPLUS term {
-    Term.mk_fsym_app (T_sequence.SeqConcat true(*ToDo: fix*)) [$1; $3]
+    fun env ->
+    match Term.sort_of @@ $1 env with
+    | T_sequence.SSequence fin ->
+      Term.mk_fsym_app (T_sequence.SeqConcat fin) [$1 env; $3 env]
+    | _ -> failwith "type error"
   }
   //  | term EQEQ term { T_bool.of_atom @@ T_bool.mk_eq $1 $3 }
   //  | SEMPTY { Term.Set.mk_empty (Type.mk_unknown) }
@@ -249,8 +268,8 @@ term:
   //        [$2]
   //    }
 terms:
-  | term { [$1] }
-  | term COMMA terms { $1 :: $3 }
+  | term { fun env -> [$1 env] }
+  | term COMMA terms { fun env -> $1 env :: $3 env }
 
 // Temporal Effects
 
@@ -286,164 +305,202 @@ eff:
 
 atom:
   | IDENT LPAREN RPAREN /* to avoid reduce/reduce conflict on RPAREN */ {
-    Atom.of_bool_var @@ Ident.Tvar $1
+    fun _ -> Atom.of_bool_var @@ Ident.Tvar $1
   }
-  | BOOL { Atom.mk_bool $1 }
+  | BOOL { fun _ -> Atom.mk_bool $1 }
   | IDENT LPAREN terms RPAREN {
     match Map.Poly.find (get_fenv ()) (Tvar $1) with
     | Some (params, ret_sort, _, _, _) ->
       if Term.is_bool_sort ret_sort then
         let sorts = List.map params ~f:snd in
-        T_bool.mk_eq (Term.mk_fvar_app (Tvar $1) (sorts @ [ret_sort]) $3) @@
+        fun env ->
+        T_bool.mk_eq (Term.mk_fvar_app (Tvar $1) (sorts @ [ret_sort]) ($3 env)) @@
         T_bool.mk_true ()
       else failwith ""
     | None ->
+      fun env ->
+      let ts = $3 env in
       match Map.Poly.find (Rtype.Env.pred_sort_env_of !Rtype.renv_ref) (Pvar $1) with
-      | Some sorts -> Atom.mk_pvar_app (Pvar $1) sorts $3
-      | _ -> Atom.mk_pvar_app (Pvar $1) (List.map $3 ~f:Term.sort_of) $3
+      | Some sorts -> Atom.mk_pvar_app (Pvar $1) sorts ts
+      | _ -> Atom.mk_pvar_app (Pvar $1) (List.map ts ~f:Term.sort_of) ts
   }
-  | atom_or_term EQUAL atom_or_term { T_bool.mk_eq $1 $3 }
-  | atom_or_term NOTEQUAL atom_or_term { T_bool.mk_neq $1 $3 }
-  | term LT term { T_num.mk_nlt $1 $3 }
-  | term GT term { T_num.mk_ngt $1 $3 }
-  | term LEQ term { T_num.mk_nleq $1 $3 }
-  | term GEQ term { T_num.mk_ngeq $1 $3 }
+  | atom_or_term EQUAL atom_or_term { fun env -> T_bool.mk_eq ($1 env) ($3 env) }
+  | atom_or_term NOTEQUAL atom_or_term { fun env -> T_bool.mk_neq ($1 env) ($3 env) }
+  | term LT term { fun env -> T_num.mk_nlt ($1 env) ($3 env) }
+  | term GT term { fun env -> T_num.mk_ngt ($1 env) ($3 env) }
+  | term LEQ term { fun env -> T_num.mk_nleq ($1 env) ($3 env) }
+  | term GEQ term { fun env -> T_num.mk_ngeq ($1 env) ($3 env) }
   | RECOGNIZER LPAREN term RPAREN{
     match DTEnv.look_up_dt_by_cons_name (get_dtenv ()) $1 with
-    | Some dt -> T_dt.mk_is_cons dt $1 $3
+    | Some dt -> fun env -> T_dt.mk_is_cons dt $1 ($3 env)
     | None -> failwith @@ "unknown cons name" ^ $1
   }
   // | term IN term { Formula.Set.mk_mem Type.mk_unknown $1 $3 }
   // | term SUBSET term { Formula.Set.mk_subset Type.mk_unknown $1 $3 }
   | term IN eff {
     let fin, regexp = $3 in
-    Atom.mk_psym_app (T_sequence.SeqInRegExp (fin, regexp)) [$1]
+    fun env -> Atom.mk_psym_app (T_sequence.SeqInRegExp (fin, regexp)) [$1 env]
   }
 atom_or_term:
-  | atom { T_bool.of_atom $1 }
-  | term { $1 }
+  | atom { fun env -> T_bool.of_atom ($1 env) }
+  | term { fun env -> $1 env }
 
 prop:
   | LPAREN prop RPAREN { $2 }
-  | atom { Formula.mk_atom $1 }
-  | NOT prop { Formula.mk_neg $2 }
-  | prop AND prop { Formula.mk_and $1 $3 }
-  | prop OR prop { Formula.mk_or $1 $3 }
-  | prop IMP prop { Formula.mk_imply $1 $3 }
-  | prop IFF prop { Formula.mk_iff $1 $3 }
+  | atom { fun env -> Typeinf.typeinf_formula ~print @@ Formula.mk_atom ($1 env) }
+  | NOT prop { fun env -> Formula.mk_neg ($2 env) }
+  | prop AND prop { fun env -> Formula.mk_and ($1 env) ($3 env) }
+  | prop OR prop { fun env -> Formula.mk_or ($1 env) ($3 env) }
+  | prop IMP prop { fun env -> Formula.mk_imply ($1 env) ($3 env) }
+  | prop IFF prop { fun env -> Formula.mk_iff ($1 env) ($3 env) }
   // | LBRACKET IDENT RBRACKET prop { Formula.box $2 $4 }
   // | LT IDENT GT prop { Formula.diamond $2 $4 }
   // | MU IDENT DOT prop { Formula.mu (Idnt.make $2) $4 }
   // | NU IDENT DOT prop { Formula.nu (Idnt.make $2) $4 }
   | FORALL binds DOT prop {
-    Typeinf.typeinf_formula ~print @@ Formula.forall $2 $4
+    fun env ->
+    let env' = List.fold $2 ~init:env ~f:(fun env (x, s) -> Map.Poly.set env ~key:x ~data:s) in
+    Formula.forall $2 ($4 env')
   }
   | EXISTS binds DOT prop {
-    Typeinf.typeinf_formula ~print @@ Formula.exists $2 $4
+    fun env ->
+    let env' = List.fold $2 ~init:env ~f:(fun env (x, s) -> Map.Poly.set env ~key:x ~data:s) in
+    Formula.exists $2 ($4 env')
   }
   | FORALL DOT prop {
-    Typeinf.typeinf_formula ~print @@ Formula.forall [] $3
+    fun env -> Formula.forall [] ($3 env)
   }
 binds:
   | bind { [$1] }
   | bind binds { $1 :: $2 }
 bind:
   | IDENT COLON val_ty /*ToDo*/  {
-    let tvar, ty = Ident.Tvar $1, $3 in
+    let tvar, ty = Ident.Tvar $1, $3 Map.Poly.empty in
     tvar, Rtype.sort_of_val ty
   }
 
 val_ty:
   | LPAREN val_ty RPAREN { $2 }
   | IDENT {
+    fun _ ->
     Rtype.simple_val_of_sort ~config:!Rtype.cgen_config @@
     Typeinf.sort_of_name (get_dtenv ()) $1
   }
-  | val_ty IDENT %prec prec_tyapp {
+  | val_ty IDENT /*%prec prec_tyapp*/ {
     if String.($2 = "ref") then
-      Rtype.mk_rref $1 (Rtype.mk_fresh_trivial_pred ())
+      fun env -> Rtype.mk_rref ($1 env) (Rtype.mk_fresh_trivial_pred ())
     else
-      Rtype.mk_rcompound [$1] (Typeinf.sort_of_name (get_dtenv ()) $2) @@
+      fun env ->
+      Rtype.mk_rcompound [$1 env] (Typeinf.sort_of_name (get_dtenv ()) $2) @@
       Rtype.mk_fresh_trivial_pred ()
   }
-  | LPAREN val_tys_comma RPAREN IDENT %prec prec_tyapp {
-    Rtype.mk_rcompound $2 (Typeinf.sort_of_name (get_dtenv ()) $4) @@
+  | LPAREN val_tys_comma RPAREN IDENT /*%prec prec_tyapp*/ {
+    fun env ->
+    Rtype.mk_rcompound ($2 env) (Typeinf.sort_of_name (get_dtenv ()) $4) @@
     Rtype.mk_fresh_trivial_pred ()
   }
-  | val_ty ARROW comp_ty %prec prec_tyarrow {
-    Rtype.mk_rarrow (Rtype.tvar_of_val $1) $1 $3 @@ Rtype.mk_fresh_trivial_pred ()
+  | val_ty ARROW comp_ty /*%prec prec_tyarrow*/ {
+    fun env ->
+    let t = $1 env in
+    let x = Rtype.tvar_of_val t in
+    let c = $3 env in
+    Rtype.mk_rarrow x t c @@ Rtype.mk_fresh_trivial_pred ()
   }
-  | LPAREN IDENT COLON val_ty RPAREN ARROW comp_ty %prec prec_tyarrow {
-    Rtype.mk_rarrow (Ident.Tvar $2) $4 $7 @@ Rtype.mk_fresh_trivial_pred ()
+  | LPAREN IDENT COLON val_ty RPAREN ARROW comp_ty /*%prec prec_tyarrow*/ {
+    fun env ->
+    let x = Ident.Tvar $2 in
+    let t = $4 env in
+    let c = $7 (Map.Poly.set env ~key:x ~data:(Rtype.sort_of_val t)) in
+    Rtype.mk_rarrow x t c @@ Rtype.mk_fresh_trivial_pred ()
   }
   | val_tys_ast %prec prec_typair {
-    Rtype.mk_rtuple $1 @@ Rtype.mk_fresh_trivial_pred ()
+    fun env ->
+    Rtype.mk_rtuple ($1 env) @@ Rtype.mk_fresh_trivial_pred ()
   }
   | LBRA IDENT COLON val_ty VERT prop RBRA {
-    Rtype.conj_pred_val (Ident.Tvar $2, $6) $4
+    fun env ->
+    let x = Ident.Tvar $2 in
+    let t = $4 env in
+    Rtype.conj_pred_val (x, $6 (Map.Poly.set env ~key:x ~data:(Rtype.sort_of_val t))) t
   }
 val_tys_comma:
-  | val_ty COMMA val_ty { [$1; $3] }
-  | val_ty COMMA val_tys_comma { $1 :: $3 }
+  | val_ty COMMA val_ty { fun env -> [$1 env; $3 env] }
+  | val_tys_comma COMMA val_ty { fun env -> $1 env @ [$3 env] }
 val_tys_ast:
-  | val_ty AST val_ty { [$1; $3] }
-  | val_ty AST val_tys_ast { $1 :: $3 }
-
-op_tys:
-  | CONST COLON val_ty RBRA { ALMap.singleton $1 $3 }
-  | CONST COLON val_ty COMMA op_tys { ALMap.add_exn ~key:$1 ~data:$3 $5 }
+  | val_ty AST val_ty { fun env -> [$1 env; $3 env] }
+  | val_tys_ast AST val_ty { fun env -> $1 env @ [$3 env] }
 
 opsig_ty:
-  | SEMPTY { ALMap.empty } // SEMPTY has higher precedence than "LBRA RBRA"
-  | LBRA RBRA { ALMap.empty }
-  | LBRA op_tys { $2 }
+  | SEMPTY { fun _ -> ALMap.empty } // SEMPTY has higher precedence than "LBRA RBRA"
+  | LBRA RBRA { fun _ -> ALMap.empty }
+  | LBRA op_tys { fun env -> $2 env }
+op_tys:
+  | CONST COLON val_ty RBRA { fun env -> ALMap.singleton $1 ($3 env) }
+  | CONST COLON val_ty COMMA op_tys {
+    fun env -> ALMap.add_exn ~key:$1 ~data:($3 env) ($5 env)
+  }
 
 cont_eff_ty:
-  | WILDCARD { Rtype.Pure }
+  | WILDCARD { fun _ _ -> Rtype.Pure }
   | comp_ty IMP comp_ty {
-    Rtype.Eff ((Rtype.mk_fresh_tvar_with "x"), $1, $3)
+    fun env _ -> Rtype.Eff ((Rtype.mk_fresh_tvar_with "x"), $1 env, $3 env)
   }
   | LPAREN FORALL IDENT DOT comp_ty RPAREN IMP comp_ty {
-    Rtype.Eff (Ident.Tvar $3, $5, $8)
+    fun env sort ->
+    let x = Ident.Tvar $3 in
+    Rtype.Eff (x, $5 (Map.Poly.set env ~key:x ~data:sort), $8 env)
   }
 
 comp_ty:
   // T
   | val_ty {
-    Rtype.pure_comp_of_val ~config:!Rtype.cgen_config $1
+    fun env -> Rtype.pure_comp_of_val ~config:!Rtype.cgen_config ($1 env)
   }
   // (T & E)
   | LPAREN val_ty AMP IDENT DOT prop COMMA IDENT DOT prop RPAREN {
-    ALMap.empty(*temporary*), $2, ((Ident.Tvar $4, $6), (Ident.Tvar $8, $10)), Rtype.Pure
+    fun env ->
+    let x1 = Ident.Tvar $4 in
+    let x2 = Ident.Tvar $8 in
+    ALMap.empty(*temporary*), $2 env,
+    ((x1, $6 (Map.Poly.set env ~key:x1 ~data:(T_sequence.SSequence true))),
+     (x2, $10 (Map.Poly.set env ~key:x2 ~data:(T_sequence.SSequence false)))),
+    Rtype.Pure
   }
   // (T / S)
   | LPAREN val_ty DIV cont_eff_ty RPAREN {
-    ALMap.empty, $2, Rtype.mk_temp_trivial ()(*temporary*), $4
+    fun env ->
+    let t = $2 env in
+    ALMap.empty, t, Rtype.mk_temp_trivial ()(*temporary*), $4 env (Rtype.sort_of_val t)
   }
   // (sigma |> T / S)
   | LPAREN opsig_ty RTRI val_ty DIV cont_eff_ty RPAREN {
-    $2, $4, Rtype.mk_temp_trivial (), $6
+    fun env ->
+    let t = $4 env in
+    $2 env, t, Rtype.mk_temp_trivial (), $6 env (Rtype.sort_of_val t)
   }
   // (sigma |> T & E / S)
   | LPAREN opsig_ty RTRI val_ty AMP IDENT DOT prop COMMA IDENT DOT prop DIV cont_eff_ty RPAREN {
-    $2, $4, ((Ident.Tvar $6, $8), (Ident.Tvar $10, $12)), $14
+    fun env ->
+    let x1 = Ident.Tvar $6 in
+    let x2 = Ident.Tvar $10 in
+    let t = $4 env in
+    $2 env, t,
+    ((x1, $8 (Map.Poly.set env ~key:x1 ~data:(T_sequence.SSequence true))),
+     (x2, $12 (Map.Poly.set env ~key:x1 ~data:(T_sequence.SSequence false)))),
+    $14 env (Rtype.sort_of_val t)
   }
 
 val_ty_bind:
   | IDENT COLCOL val_ty {
-    Ident.Tvar $1, Rtype.set_sort_val ~print Map.Poly.empty $3
+    Ident.Tvar $1, Rtype.set_sort_val ~print Map.Poly.empty ($3 Map.Poly.empty)
   }
   | CONST COLCOL val_ty {
-    Ident.Tvar $1, Rtype.set_sort_val ~print Map.Poly.empty $3
+    Ident.Tvar $1, Rtype.set_sort_val ~print Map.Poly.empty ($3 Map.Poly.empty)
   }
   | COLCOL COLCOL val_ty {
-    Ident.Tvar "::", Rtype.set_sort_val ~print Map.Poly.empty $3
+    Ident.Tvar "::", Rtype.set_sort_val ~print Map.Poly.empty ($3 Map.Poly.empty)
   }
 val_ty_env:
-  | val_ty_bind {
-    let tvar, ty = $1 in
-    Rtype.Env.singleton_ty tvar @@ Rtype.aconv_val Map.Poly.empty ty
-  }
   | val_ty_bind val_ty_env {
     let tvar, ty = $1 in
     Rtype.Env.set_ty $2 tvar @@ Rtype.aconv_val Map.Poly.empty ty
@@ -463,23 +520,21 @@ space_constrs:
 // Logical Constraints
 
 constraints:
-  | prop { [$1] }
-  | prop SEMICOLON constraints { $1 :: $3 }
+  | prop SEMICOLON constraints { $1 Map.Poly.empty :: $3 }
   | EOF { [] }
 
 // Refinement Type and Temporal Effect Inference
 
 assertions:
-  | assertion { [$1] }
   | assertion assertions { $1 :: $2 }
   | EOF { [] }
-  | error {
+  /*| error {
     print_error_information ();
-    raise (Failure "Syntax error")
-  }
+    failwith "Syntax error"
+  }*/
 assertion:
   | TYPEOF LPAREN IDENT RPAREN SUBTYPE val_ty {
-    Ident.Tvar $3, Assertion.Type (Rtype.aconv_val Map.Poly.empty $6)
+    Ident.Tvar $3, Assertion.Type (Rtype.aconv_val Map.Poly.empty ($6 Map.Poly.empty))
   }
   | FINEFFECTOF LPAREN IDENT RPAREN SUBTYPE eff {
     let fin, regexp = $6 in assert fin;
@@ -504,6 +559,5 @@ opt_pair:
   | IDENT COLON directs COLON space_constrs { Tvar $1, $3, $5 }
   | IDENT COLON COLON space_constrs { Tvar $1, [], $4 }
 opt_problems:
-  | opt_pair { [$1] }
   | opt_pair opt_problems { $1 :: $2 }
   | EOF { [] }

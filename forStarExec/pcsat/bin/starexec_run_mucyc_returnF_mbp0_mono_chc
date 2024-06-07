@@ -1,0 +1,4 @@
+#! /bin/bash
+
+export LD_LIBRARY_PATH=./
+./main.exe -c ./config/solver/mucyc_returnF_mbp0_mono.json -p pcsp $1

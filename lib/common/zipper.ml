@@ -17,7 +17,9 @@ let make nd cs = Node (nd, cs)
 
 let get (Node (nd, _)) = nd
 let children (Node (_, trs)) = trs
-let rec nodes_of_tree (Node (nd, trs)) = nd :: List.concat_map ~f:nodes_of_tree trs
+
+let rec nodes_of_tree (Node (nd, trs)) =
+  nd :: List.concat_map ~f:nodes_of_tree trs
 
 (** {6 Operators for trees} *)
 
@@ -28,10 +30,10 @@ let set (Node (_, trs)) nd = Node (nd, trs)
 let rec nodes_of_path = function
   | Top -> []
   | Path (up, trs1, nd, trs2) ->
-    nodes_of_path up
-    @ List.concat_map ~f:nodes_of_tree trs1
-    @ [nd]
-    @ List.concat_map ~f:nodes_of_tree trs2
+      nodes_of_path up
+      @ List.concat_map ~f:nodes_of_tree trs1
+      @ [ nd ]
+      @ List.concat_map ~f:nodes_of_tree trs2
 
 (** {6 Constructors for zippers} *)
 
@@ -42,14 +44,17 @@ let zipper tr = Loc (tr, Top)
 let up (Loc (tr, p)) =
   match p with
   | Top -> raise @@ Not_found_s (Sexplib0.Sexp.message "" [])
-  | Path (up, trs1, nd, trs2) -> Loc (Node (nd, trs1 @ tr :: trs2), up)
+  | Path (up, trs1, nd, trs2) -> Loc (Node (nd, trs1 @ (tr :: trs2)), up)
+
 let down (Loc (tr, p)) cond =
   match tr with
   | Node (nd, trs) ->
-    let trs1, tr', trs2 =
-      try List.pick (fun tr -> cond (get tr)) trs with Not_found_s _ -> assert false
-    in
-    Loc (tr', Path (p, trs1, nd, trs2))
+      let trs1, tr', trs2 =
+        try List.pick (fun tr -> cond (get tr)) trs
+        with Not_found_s _ -> assert false
+      in
+      Loc (tr', Path (p, trs1, nd, trs2))
+
 let rec root (Loc (tr, p) as l) = match p with Top -> tr | _ -> root (up l)
 let insert_down (Loc (Node (nd, trs), p)) tr = Loc (tr, Path (p, trs, nd, []))
 
@@ -66,15 +71,13 @@ let find_rightmost_leaf tr =
 let find_leaves tr =
   let rec aux (Loc (Node (nd, trs), p) as loc) =
     match trs with
-    | [] -> [loc]
+    | [] -> [ loc ]
     | _ ->
-      List.concat @@
-      List.init (List.length trs)
-        ~f:(fun i ->
-            match List.split_n trs i with
-            | trs1, tr :: trs2 ->
-              aux (Loc (tr, Path (p, trs1, nd, trs2)))
-            | _ -> failwith "")
+        List.concat
+        @@ List.init (List.length trs) ~f:(fun i ->
+               match List.split_n trs i with
+               | trs1, tr :: trs2 -> aux (Loc (tr, Path (p, trs1, nd, trs2)))
+               | _ -> failwith "")
   in
   aux (zipper tr)
 
@@ -88,9 +91,9 @@ let find_leftmost_leaf tr =
 
 let find_all cond tr =
   let rec aux (Loc (Node (nd, trs), _p) as loc) =
-    (if cond nd then [loc] else [])
-    @ (List.concat_map
-         ~f:(fun tr -> aux (down loc (fun nd -> nd = get tr(*@todo*))))
-         trs)
+    (if cond nd then [ loc ] else [])
+    @ List.concat_map
+        ~f:(fun tr -> aux (down loc (fun nd -> nd = get tr (*@todo*))))
+        trs
   in
   aux (zipper tr)

@@ -1,19 +1,13 @@
-(ocamllex (modules lexer))
-(menhir (modules parser))
+(ocamllex
+ (modules lexer))
+
+(menhir
+ (modules parser))
 
 (library
-  (name SMT)
-  (public_name CoAR.SMT)
-  (preprocess (pps ppx_deriving_yojson))
- (libraries
-    core
-    yojson
-    z3
-    CoAR.common
-    CoAR.ast)
-  (modules
-    lexer
-    parser
-    printer
-    smtlib2
-    problem))
+ (name SMT)
+ (public_name CoAR.SMT)
+ (preprocess
+  (pps ppx_deriving_yojson))
+ (libraries core yojson z3 CoAR.common CoAR.ast)
+ (modules lexer parser printer smtlib2 problem))

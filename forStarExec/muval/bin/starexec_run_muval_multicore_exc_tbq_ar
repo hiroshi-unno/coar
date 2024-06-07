@@ -1,0 +1,4 @@
+#! /bin/bash
+
+export LD_LIBRARY_PATH=./
+./main.exe -c ./config/solver/muval_term_comp_parallel_exc_tbq_ar.json -p pltsterm $1 2> /dev/null

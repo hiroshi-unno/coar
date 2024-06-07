@@ -141,7 +141,7 @@ let rec qelim_aux2 let_bounds bounds exi_senv (uni_senv, defs, phi) =
         | TyApp (Con (BoolTerm.Eq, _), BoolTerm.SBool, _), [t; Var (x, _)]
           when not (Map.Poly.mem bounds' x) && has_no_inter x t ->
           Some (x, BoolTerm.neg_of t)
-
+        (* for integers *)
         | TyApp (Con (BoolTerm.Neq, _), _ty, _),
           [App (App (Con (s, _), Var (x, _), _), t1, _); t2]
           when not (Map.Poly.mem bounds' x) &&
@@ -178,6 +178,44 @@ let rec qelim_aux2 let_bounds bounds exi_senv (uni_senv, defs, phi) =
                Stdlib.(s = IntTerm.Sub) &&
                has_no_inter x t1 && has_no_inter x t2 ->
           Some (x, Term.mk_sym_app s [t1; t2])
+        (* for reals *)
+        | TyApp (Con (BoolTerm.Neq, _), _ty, _),
+          [App (App (Con (s, _), Var (x, _), _), t1, _); t2]
+          when not (Map.Poly.mem bounds' x) &&
+               (Stdlib.(s = RealTerm.RAdd) || Stdlib.(s = RealTerm.RSub)) &&
+               has_no_inter x t1 && has_no_inter x t2 ->
+          Some (x, Term.mk_sym_app (RealTerm.neg_sym s) [t2; t1])
+        | TyApp (Con (BoolTerm.Neq, _), _ty, _),
+          [App (App (Con (s, _), t1, _), Var (x, _), _); t2]
+          when not (Map.Poly.mem bounds' x) &&
+               Stdlib.(s = RealTerm.RAdd) &&
+               has_no_inter x t1 && has_no_inter x t2 ->
+          Some (x, Term.mk_sym_app (RealTerm.neg_sym s) [t2; t1])
+        | TyApp (Con (BoolTerm.Neq, _), _ty, _),
+          [App (App (Con (s, _), t1, _), Var (x, _), _); t2]
+          when not (Map.Poly.mem bounds' x) &&
+               Stdlib.(s = RealTerm.RSub) &&
+               has_no_inter x t1 && has_no_inter x t2 ->
+          Some (x, Term.mk_sym_app s [t1; t2])
+        | TyApp (Con (BoolTerm.Neq, _), _ty, _),
+          [t2; App (App (Con (s, _), Var (x, _), _), t1, _)]
+          when not (Map.Poly.mem bounds' x) &&
+               (Stdlib.(s = RealTerm.RAdd) || Stdlib.(s = RealTerm.RSub)) &&
+               has_no_inter x t1 && has_no_inter x t2 ->
+          Some (x, Term.mk_sym_app (RealTerm.neg_sym s) [t2; t1])
+        | TyApp (Con (BoolTerm.Neq, _), _ty, _),
+          [t2; App (App (Con (s, _), t1, _), Var (x, _), _)]
+          when not (Map.Poly.mem bounds' x) &&
+               Stdlib.(s = RealTerm.RAdd) &&
+               has_no_inter x t1 && has_no_inter x t2 ->
+          Some (x, Term.mk_sym_app (RealTerm.neg_sym s) [t2; t1])
+        | TyApp (Con (BoolTerm.Neq, _), _ty, _),
+          [t2; App (App (Con (s, _), t1, _), Var (x, _), _)]
+          when not (Map.Poly.mem bounds' x) &&
+               Stdlib.(s = RealTerm.RSub) &&
+               has_no_inter x t1 && has_no_inter x t2 ->
+          Some (x, Term.mk_sym_app s [t1; t2])
+        (* *)
         | _ -> None)
   in
   let res =

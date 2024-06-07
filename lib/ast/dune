@@ -1,41 +1,41 @@
-(menhir (modules rtypeParser))
-(ocamllex (modules rtypeLexer))
+(menhir
+ (modules rtypeParser))
+
+(ocamllex
+ (modules rtypeLexer))
+
 (library
-  (name ast)
-  (public_name CoAR.ast)
-  (preprocess (pps ppx_deriving.std ppx_deriving_yojson))
-  (libraries
-    core
-    zarith
-    str
-    CoAR.common
-    CoAR.grammar)
-  (modules
-    ident
-    pattern
-    propLogic
-    logic
-    logicOld
-    kind
-    evaluator
-    normalizer
-    typeinf
-    qelim
-    mbp
-    affine
-    affineTerm
-    arithTerm
-    clause
-    clauseOld
-    clauseSet
-    clauseSetOld
-    candSol
-    candSolOld
-    simpleFormula
-    rank
-    rtype
-    assertion
-    solSpace
-    rtypeLexer
-    rtypeParser)
-  (synopsis "AST definitions"))
+ (name ast)
+ (public_name CoAR.ast)
+ (preprocess
+  (pps ppx_deriving.std ppx_deriving_yojson))
+ (libraries core zarith str CoAR.common CoAR.grammar)
+ (modules
+  ident
+  pattern
+  propLogic
+  logic
+  logicOld
+  kind
+  evaluator
+  normalizer
+  typeinf
+  qelim
+  mbp
+  affine
+  affineTerm
+  arithTerm
+  clause
+  clauseOld
+  clauseSet
+  clauseSetOld
+  candSol
+  candSolOld
+  simpleFormula
+  rank
+  rtype
+  assertion
+  solSpace
+  rtypeLexer
+  rtypeParser)
+ (synopsis "AST definitions"))

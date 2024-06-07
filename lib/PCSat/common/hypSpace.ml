@@ -7,5 +7,5 @@ type hspace = {
   quals : Formula.t Set.Poly.t;
   qdeps : (Formula.t, QDep.t) Map.Poly.t;
   terms : Term.t Set.Poly.t;
-  consts : Term.t Set.Poly.t
+  consts : Term.t Set.Poly.t;
 }

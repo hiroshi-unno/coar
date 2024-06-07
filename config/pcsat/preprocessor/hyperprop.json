@@ -1,0 +1,9 @@
+{
+    "enable": true,
+    "verbose": false,
+    "resolution_threshold": 4,
+    "simplification_with_smt": false,
+    "num_elim_bool_vars": 0,
+    "propagate_lb_ub": true,
+    "reduce_pvar_args": true
+}

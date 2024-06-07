@@ -3,6 +3,7 @@ open Ast.LogicOld
 type ptype =
   | PAssertion of PredSubst.t * PredSubst.t * PCSP.Problem.t
   | POptimization of CHCOpt.Problem.t
+
 type solution =
   | AssertSol of string * PCSP.Problem.solution * int
   | OptimizeSol of (CHCOpt.Problem.solution * int)

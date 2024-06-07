@@ -1,0 +1,9 @@
+def rec3(x):
+  prob(1,1):
+    return 1
+  else:
+    var r
+    r = rec3((2 / 3) * (2 / 3) * x) # not supported
+    r = rec3((2 / 3) * x) # not supported
+    r = rec3(x)
+    return 1

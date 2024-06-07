@@ -1,0 +1,23 @@
+(library
+ (name MuCyc)
+ (public_name CoAR.MuCyc)
+ (preprocess
+  (pps ppx_deriving_yojson))
+ (libraries
+  core
+  yojson
+  CoAR.common
+  CoAR.ast
+  CoAR.muCLP
+  CoAR.PCSPSolver
+  CoAR.Z3Smt)
+ (modules
+  config
+  sequent
+  lemma
+  proofTree
+  problem
+  proofSearch
+  relProofSearch
+  solver)
+ (synopsis "A fixpoint logic validity checker based on cyclic-proof search"))

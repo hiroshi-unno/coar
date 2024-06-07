@@ -2,6 +2,7 @@
 
 * RCaml: A refinement type checking and inference tool for OCaml
 * MuVal: A fixpoint logic validity checker based on pfwCSP solving
+* MuCyc: A fixpoint logic validity checker based on cyclic-proof search
 * PCSat: A CHC/pfwnCSP/SyGuS solver based on CEGIS
 * OptPCSat: An optimizing CHC solver based on pfwnCSP solving
 
@@ -31,6 +32,7 @@
   ```
 * Document generation (to `_build/default/_doc/_html`):
   ```bash
+  opam install odoc
   dune build @doc
   ```
 
@@ -47,6 +49,7 @@
 * `z3`
 * `minisat`
 * `libsvm` with some modification (https://github.com/hiroshi-unno/libsvm-ocaml.git)
+* `camlzip`
 
 ### External tools (optional):
 
@@ -68,20 +71,52 @@ sudo docker build -t coar .
 ### Predicate Constraint Satisfiability Checking (CHC, $`\forall\exists`$CHC, pCSP, and pfwnCSP)
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_pcsat_tb_ar.json -p pcsp ./benchmarks/CHC/simple/sum.smt2
+dune exec main -- -c ./config/solver/dbg_pcsat_tbq_ar.json -p pcsp ./benchmarks/CHC/simple/sum.smt2
 ```
 ```bash
-dune exec main -- -c ./config/solver/dbg_pcsat_tb_ar.json -p pcsp ./benchmarks/AECHC/bar.smt2
+dune exec main -- -c ./config/solver/dbg_pcsat_tbq_ar.json -p pcsp ./benchmarks/AECHC/bar.smt2
 ```
 ```bash
-dune exec main -- -c ./config/solver/dbg_pcsat_tb_ar.json -p pcsp ./benchmarks/pfwnCSP/simple/max.clp
+dune exec main -- -c ./config/solver/dbg_pcsat_tbq_ar.json -p pcsp ./benchmarks/pfwnCSP/simple/max.clp
 ```
 
 ### Syntax Guided Synthesis (INV and CLIA)
 
 ```bash
 git submodule update --init benchmarks/sygus-comp/
-dune exec main -- -c ./config/solver/dbg_pcsat_tb_ar.json -p sygus ./benchmarks/sygus-comp/comp/2017/CLIA_Track/fg_max2.sl
+dune exec main -- -c ./config/solver/dbg_pcsat_tbq_ar.json -p sygus ./benchmarks/sygus-comp/comp/2017/CLIA_Track/fg_max2.sl
+```
+
+### CHC Satisfiability Checking via Cyclic-Proof Search and Proof Refinement
+
+#### `Ind(Ret(F, MBP(0)))` Configuration
+
+```bash
+dune exec main -- -c ./config/solver/mucyc_returnF_mbp0_indNF.json -p pcsp ./benchmarks/CHC/simple/sum.smt2
+```
+
+#### `Ind(Yld(T, MBP(1)))` Configuration
+
+```bash
+dune exec main -- -c ./config/solver/mucyc_yieldTT_mbp1_indNF.json -p pcsp ./benchmarks/CHC/simple/sum.smt2
+```
+
+#### `Ret(F, MBP(0))` Configuration
+
+```bash
+dune exec main -- -c ./config/solver/mucyc_returnF_mbp0.json -p pcsp ./benchmarks/CHC/simple/sum.smt2
+```
+
+#### `Yld(T, MBP(1))` Configuration
+
+```bash
+dune exec main -- -c ./config/solver/mucyc_yieldTT_mbp1.json -p pcsp ./benchmarks/CHC/simple/sum.smt2
+```
+
+#### `Solve` Configuration
+
+```bash
+dune exec main -- -c ./config/solver/mucyc.json -p pcsp ./benchmarks/CHC/simple/sum.smt2
 ```
 
 ### Fixpoint Logic Validity Checking (muArith and $`\mu`$CLP)
@@ -89,34 +124,34 @@ dune exec main -- -c ./config/solver/dbg_pcsat_tb_ar.json -p sygus ./benchmarks/
 #### Primal
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_muval_prove_tb_ar.json -p muclp ./benchmarks/muCLP/popl2023mod/sas2019_ctl1.hes
+dune exec main -- -c ./config/solver/dbg_muval_prove_tbq_ar.json -p muclp ./benchmarks/muCLP/popl2023mod/sas2019_ctl1.hes
 ```
 
 #### Dual
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_muval_disprove_tb_ar.json -p muclp ./benchmarks/muCLP/popl2023mod/sas2019_ctl2b-invalid.hes
+dune exec main -- -c ./config/solver/dbg_muval_disprove_tbq_ar.json -p muclp ./benchmarks/muCLP/popl2023mod/sas2019_ctl2b-invalid.hes
 ```
 
 #### Parallel
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_muval_parallel_tb_ar.json -p muclp ./benchmarks/muCLP/popl2023mod/sas2019_ctl1.hes
+dune exec main -- -c ./config/solver/dbg_muval_parallel_tbq_ar.json -p muclp ./benchmarks/muCLP/popl2023mod/sas2019_ctl1.hes
 ```
 
 #### Parallel with Clause Exchange
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_muval_parallel_exc_tb_ar.json -p muclp ./benchmarks/muCLP/popl2023mod/sas2019_ctl1.hes
+dune exec main -- -c ./config/solver/dbg_muval_parallel_exc_tbq_ar.json -p muclp ./benchmarks/muCLP/popl2023mod/sas2019_ctl1.hes
 ```
 
 #### Interactive Conditional
 
 ```bash
-dune exec main -- -c ./config/solver/muval_prove_tb_ar.json -p muclpinter ./benchmarks/muCLP/popl2023mod/sas2019_lines1.hes
+dune exec main -- -c ./config/solver/muval_prove_nonopt_tbq_ar.json -p muclpinter ./benchmarks/muCLP/popl2023mod/sas2019_lines1.hes
 ```
 
-The following is an example of using MuVal to interactively prove that a $`\mu`$CLP query does not hold for all inputs.
+The following is an example of using MuVal to interactively prove that there is no input that satisfies the given $`\mu`$CLP query.
 
 ```
 timeout in sec: 10
@@ -147,12 +182,12 @@ true
 maximality is guaranteed
 ```
 
-Here, the `dual` action lets MuVal infer a precondition under which the query does not hold, but note that MuVal does not necessarily return the *weakest* precondition. Before performing the `dual` action, hints about an input range that should be included in the weakest precondition are provided through the `pos` action. By repeating sets of `pos` and `dual` actions, it is eventually possible to prove that the query does not hold for all inputs.
+Here, the `dual` action lets MuVal infer a precondition under which the query does not hold, but note that MuVal does not necessarily return the *weakest* precondition. Before performing the `dual` action, hints about an input range that should be included in the weakest precondition are provided through the `pos` action. By repeating sets of `pos` and `dual` actions, it is finally proved that there is no input that satisfies the given $`\mu`$CLP query.
 
 ### CHC Maximization
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_optpcsat_nc_tb_ar.json -p chcmax ./benchmarks/CHC/popl2023opt/test2.smt2
+dune exec main -- -c ./config/solver/dbg_optpcsat_nc_tbq_ar.json -p chcmax ./benchmarks/CHC/popl2023opt/test2.smt2
 ```
 
 ### Verification of OCaml Programs
@@ -161,7 +196,7 @@ dune exec main -- -c ./config/solver/dbg_optpcsat_nc_tb_ar.json -p chcmax ./benc
 ##### with PCSat
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_rcaml_pcsat_tb_ar.json -p ml ./benchmarks/OCaml/safety/simple/sum.ml
+dune exec main -- -c ./config/solver/dbg_rcaml_pcsat_tbq_ar.json -p ml ./benchmarks/OCaml/safety/simple/sum.ml
 ```
 
 ##### with Spacer
@@ -173,14 +208,14 @@ dune exec main -- -c ./config/solver/dbg_rcaml_spacer.json -p ml ./benchmarks/OC
 #### Temporal Verification (only for constraint generation)
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_rcaml_temp_eff_pcsat_tb_ar.json -p ml ./benchmarks/OCaml/temporal/sum_term.ml
+dune exec main -- -c ./config/solver/dbg_rcaml_temp_eff_pcsat_tbq_ar.json -p ml ./benchmarks/OCaml/temporal/sum_term.ml
 ```
 
 ### Verification of C Programs
 #### LTL Verification
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_muval_parallel_exc_tb_ar.json -p cltl <file>
+dune exec main -- -c ./config/solver/dbg_muval_parallel_exc_tbq_ar.json -p cltl ./benchmarks/C/cav2015ltl/coolant/coolant_basis_1_safe_sfty.c
 ```
 
 Please download and use the benchmark set of [Ultimate LTL Automizer](https://ultimate.informatik.uni-freiburg.de/downloads/ltlautomizer/).
@@ -188,7 +223,7 @@ Please download and use the benchmark set of [Ultimate LTL Automizer](https://ul
 #### CTL Verification
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_muval_parallel_exc_tb_ar.json -p cctl <file>
+dune exec main -- -c ./config/solver/dbg_muval_parallel_exc_tbq_ar.json -p cctl ./benchmarks/C/pldi2013ctl/industrial/1-acqrel-AGimpAF-succeed.c
 ```
 
 Please obtain and use the benchmark set from the following paper:
@@ -198,19 +233,19 @@ Please obtain and use the benchmark set from the following paper:
 #### Termination Verification
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_muval_parallel_exc_tb_ar.json -p ltsterm ./benchmarks/LTS/simple/test.t2
+dune exec main -- -c ./config/solver/dbg_muval_parallel_exc_tbq_ar.json -p ltsterm ./benchmarks/LTS/simple/test.t2
 ```
 
 #### Non-Termination Verification
 
 ```bash
-dune exec main -- -c ./config/solver/dbg_muval_parallel_exc_tb_ar.json -p ltsnterm ./benchmarks/LTS/simple/test.t2
+dune exec main -- -c ./config/solver/dbg_muval_parallel_exc_tbq_ar.json -p ltsnterm ./benchmarks/LTS/simple/test.t2
 ```
 
 #### Interactive Conditional (Non-)Termination Verification
 
 ```bash
-dune exec main -- -c ./config/solver/muval_prove_tb_ar.json -p ltsterminter ./benchmarks/LTS/simple/prog2.t2
+dune exec main -- -c ./config/solver/muval_prove_tbq_ar.json -p ltsterminter ./benchmarks/LTS/simple/prog2.t2
 ```
 
 The following interaction example demonstrates conditional termination analysis, which proves that the program [prog2.c](benchmarks/LTS/simple/prog2.c) terminates when the initial value of the variable `x` is 9 or less, and diverges otherwise.
@@ -236,6 +271,8 @@ maximality is guaranteed
 
 ### RCaml
 
+1. Satoshi Kura and Hiroshi Unno. Automated Verification of Higher-Order Probabilistic Programs via a Dependent Refinement Type System. ICFP 2024.
+
 1. Fuga Kawamata, Hiroshi Unno, Taro Sekiyama, and Tachio Terauchi. Answer Refinement Modification: Refinement Type System for Algebraic Effects and Handlers. POPL 2024.
 
 1. Taro Sekiyama and Hiroshi Unno. Temporal Verification with Answer-Effect Modification. POPL 2023.
@@ -257,6 +294,14 @@ maximality is guaranteed
 1. Hiroshi Unno, Tachio Terauchi, Yu Gu, and Eric Koskinen. Modular Primal-Dual Fixpoint Logic Solving for Temporal Verification. POPL 2023.
 
 1. Satoshi Kura, Hiroshi Unno, and Ichiro Hasuo. Decision Tree Learning in CEGIS-Based Termination Analysis. CAV 2021.
+
+### MuCyc
+
+1. Takeshi Tsukada and Hiroshi Unno. Inductive Approach to Spacer. PLDI 2024.
+
+1. Takeshi Tsukada and Hiroshi Unno. Software Model-Checking as Cyclic-Proof Search. POPL 2022.
+
+1. Hiroshi Unno, Sho Torii, and Hiroki Sakamoto. Automating Induction for Solving Horn Clauses. CAV 2017.
 
 ### PCSat
 

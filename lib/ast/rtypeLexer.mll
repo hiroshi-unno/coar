@@ -27,10 +27,10 @@ rule token = parse
   | '&' { AMP }
   | '|' { VERT }
   | '!' { EXC }
-  (*| '?' { QUESTION }
+  (*| '?' { QUESTION }*)
   | '$' { APPLY }
 
-  | "mu" { MU }
+  (*| "mu" { MU }
   | "nu" { NU }*)
   | "_forall" { FORALL }
   | "_exists" { EXISTS }
@@ -103,7 +103,11 @@ rule token = parse
 
   | "true" { BOOL true }
   | "false" { BOOL false }
-  (*| "proj"   { PROJ }*)
+  | "$proj" { PROJ }
+  | "abs" { ABS }
+  | "int_of_float" { ToInt }
+  | "float_of_int" { ToReal }
+  | "sqrt" { SQRT }
 
   | digit+ {
     let str = Lexing.lexeme lexbuf in

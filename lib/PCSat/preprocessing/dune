@@ -1,0 +1,7 @@
+(library
+ (name preprocessing)
+ (public_name CoAR.PCSat.preprocessing)
+ (preprocess
+  (pps ppx_deriving_yojson))
+ (libraries core yojson CoAR.pCSP CoAR.SMT CoAR.PCSat.common)
+ (modules preprocessor pvarEliminator dimReducer))

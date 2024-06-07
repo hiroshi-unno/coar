@@ -20,5 +20,7 @@
     "threshold_cond_coeff": null,
     "threshold_cond_const": null,
     "ignore_bool": true,
-    "fix_shape": true
+    "fix_shape": true,
+    "fix_depth_ext": false,
+    "fix_upper_bound": false
 }

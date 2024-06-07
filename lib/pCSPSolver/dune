@@ -1,17 +1,16 @@
 (library
-  (name PCSPSolver)
-  (public_name CoAR.PCSPSolver)
-  (preprocess (pps ppx_deriving_yojson))
-  (libraries
-    core
-    yojson
-    CoAR.common
-    CoAR.ast
-    CoAR.pCSP
-    CoAR.PCSat
-    CoAR.Hoice
-    CoAR.SPACER
-    CoAR.Printer)
-  (modules
-    solver
-    config))
+ (name PCSPSolver)
+ (public_name CoAR.PCSPSolver)
+ (preprocess
+  (pps ppx_deriving_yojson))
+ (libraries
+  core
+  yojson
+  CoAR.common
+  CoAR.ast
+  CoAR.pCSP
+  CoAR.PCSat
+  CoAR.Hoice
+  CoAR.SPACER
+  CoAR.Printer)
+ (modules solver config))

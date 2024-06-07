@@ -1,0 +1,49 @@
+[
+    "MuCyc",
+    {
+        "verbose": true,
+        "simplify": true,
+        "reduce": true,
+        "slice_forward": true,
+        "slice_backward": true,
+        "gen_lemmas_with_ai": false,
+        "gen_determ_conjs": false,
+
+        "pcsp_solver": [
+            "Filename",
+            "./config/solver/spacer_sol.json"
+        ],
+        "refinement_strategy": [
+            "Refine",
+            [
+                "MBP",
+                0
+            ],
+            [
+                "Return",
+                false
+            ]
+        ],
+        "timeout_check_valid": 0,
+        "timeout_prove_each_conj": 3,
+
+        "top_down_search": false,
+        "monotone_trace": false,
+        "induction": null,
+        "query_reuse": false,
+        "counterexample_sharing": null,
+
+        "backup_for_interp": true,
+        "backup_for_mbp": true,
+        "enable_pvar_elim": false,
+        "check_validity": false,
+
+        "ask_pred_app_to_unfold": false,
+        "valid_with_smt_threshold": null,
+        "induct_threshold": null,
+        "enable_apply_threshold": false,
+        "normalize_lemma": false,
+        "check_lemma_lhs": false,
+        "fold_lemmas": false
+    }
+]

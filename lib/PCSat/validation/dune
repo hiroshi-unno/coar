@@ -1,15 +1,15 @@
 (library
-  (name validation)
-  (public_name CoAR.PCSat.validation)
-  (preprocess (pps ppx_deriving_yojson))
-  (libraries
-    core
-    yojson
-    CoAR.ast
-    CoAR.common
-    CoAR.pCSP
-    CoAR.Z3Smt
-    CoAR.QSMT
-    CoAR.PCSat.common)
-  (modules
-    validator))
+ (name validation)
+ (public_name CoAR.PCSat.validation)
+ (preprocess
+  (pps ppx_deriving_yojson))
+ (libraries
+  core
+  yojson
+  CoAR.ast
+  CoAR.common
+  CoAR.pCSP
+  CoAR.Z3Smt
+  CoAR.QSMT
+  CoAR.PCSat.common)
+ (modules validator))

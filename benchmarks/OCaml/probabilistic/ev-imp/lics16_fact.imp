@@ -1,0 +1,12 @@
+def fact(x):
+  var c
+  c = 0
+
+  if x <= 0:
+    return c
+  else:
+    prob(5,1):
+      c = fact(x-1)
+    else:
+      c = fact(x-2)
+    return c+1

@@ -6,6 +6,7 @@ open Common.Combinator
 open Ast
 open Ast.LogicOld
 open MuCLP.Problem
+open Preprocessing
 
 module Make (Cfg: Config.ConfigType) = struct
   let config = Cfg.config
@@ -55,7 +56,7 @@ module Make (Cfg: Config.ConfigType) = struct
       pcsp_solver ~primal >>= fun (module PCSPSolver) ->
       muclp
       |> pfwcsp_of ~id ~messenger ~exc_info (Set.Poly.empty, kindmap)
-      |> PCSP.Problem.map_if_raw ~f:(Set.Poly.map ~f:Logic.Term.refresh)
+      |> PCSP.Problem.map ~f:Logic.Term.refresh
       |> PCSPSolver.solve >>= (function
           | PCSP.Problem.Sat _, num_iters -> Ok (Valid, num_iters)
           | Unsat, num_iters -> Ok (Invalid, num_iters)
@@ -400,11 +401,11 @@ module Make (Cfg: Config.ConfigType) = struct
         Or_error.return (sol, num_iters, info))
 
   let solve_pcsp ?(print_sol=false) pcsp =
-    let (module PvarEliminator : PCSat.PvarEliminator.PvarEliminatorType) =
-      PCSat.PvarEliminator.(make @@ Config.make true config.verbose 4 4 true)
+    let (module Preprocessor : Preprocessor.PreprocessorType) =
+      Preprocessor.(make @@ Config.make true config.verbose 4 4 true)
     in
     Debug.print @@ lazy "************* converting pfwCSP to muCLP ***************";
-    PvarEliminator.solve (fun ?oracle pcsp ->
+    Preprocessor.solve (fun ?oracle pcsp ->
         ignore oracle;
         let open Or_error.Monad_infix in
         solve ~print_sol:false (of_chc pcsp) >>= fun (sol, num_iters, info) ->

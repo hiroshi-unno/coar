@@ -13,6 +13,7 @@
         "extract_terms": false,
         "extract_constants": true,
         "reduce_quals_terms": false,
+        "learn_quals_from_ucores": false,
         "qualifier_generator": [
           "Filename",
           "./config/pcsat/qualifier/dbg_tb.json"
@@ -46,6 +47,14 @@
         "ne_predicate_template": [
           "Filename",
           "./config/pcsat/template/dbg_ne_predicate_template.json"
+        ],
+        "adm_predicate_template": [
+          "Filename",
+          "./config/pcsat/template/dbg_adm_predicate_template.json"
+        ],
+        "integ_predicate_template": [
+          "Filename",
+          "./config/pcsat/template/dbg_integ_predicate_template.json"
         ],
         "int_function_template": [
           "IntFun_Flex",

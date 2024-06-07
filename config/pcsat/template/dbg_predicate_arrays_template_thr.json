@@ -1,0 +1,11 @@
+{
+    "verbose": true,
+    "number_of_disj": 1,
+    "number_of_qpa": 1,
+    "upper_bound_coeff": 1,
+    "upper_bound_const": 0,
+    "seeds": null,
+    "bound_each_coeff": null,
+    "threshold_coeff": null,
+    "threshold_const": 3
+}

@@ -5,14 +5,11 @@ type envs = {
   exi_senv : sort_env_map;
   kind_map : Ast.Kind.map;
   fenv : FunEnv.t;
-  dtenv : DTEnv.t
+  dtenv : DTEnv.t;
 }
-type t = Formula.t
 
-type solution =
-  | Sat of model
-  | Unsat
-  | Unknown
+type t = Formula.t
+type solution = Sat of model | Unsat | Unknown
 
 type incsol =
   | IncSat of model * (t -> incsol)
@@ -21,5 +18,5 @@ type incsol =
 
 let str_of_solution = function
   | Sat model -> "sat\nmodel: " ^ str_of_model model
-  | Unsat     -> "unsat"
-  | Unknown   -> "unknown"
+  | Unsat -> "unsat"
+  | Unknown -> "unknown"

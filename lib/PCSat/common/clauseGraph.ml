@@ -292,7 +292,7 @@ let simplify_with pos neg =
 
 let resolve_one_step ~print mode ((param_senv, (papp: term)), source)
     exi_senv ((uni_senv, c_pos, c_neg, c_phi) as cl, source1) =
-  print @@ lazy ("cl: " ^ Clause.str_of exi_senv cl);
+  print @@ lazy ("input clause: " ^ Clause.str_of exi_senv cl);
   let atm1 =
     LogicOld.Atom.alpha_rename_let @@ ExtTerm.to_old_atom exi_senv param_senv papp []
   in
@@ -302,8 +302,7 @@ let resolve_one_step ~print mode ((param_senv, (papp: term)), source)
    else let _ = print @@ lazy "backward:" in c_pos)
   |> Set.Poly.filter_map ~f:(fun papp' ->
       let atm2 = ExtTerm.to_old_atom exi_senv uni_senv' papp' [] in
-      print @@ lazy ("atm1: " ^ LogicOld.Atom.str_of atm1);
-      print @@ lazy ("atm2: " ^ LogicOld.Atom.str_of atm2);
+      print @@ lazy (LogicOld.Atom.str_of atm2 ^ " |-> " ^ LogicOld.Atom.str_of atm1);
       let open Option.Monad_infix in
       LogicOld.Atom.unify (Map.key_set exi_senv) atm2 atm1 >>= fun theta (*ToDo*) ->
       let theta = Map.Poly.map ~f:ExtTerm.of_old_term theta in
@@ -323,7 +322,7 @@ let resolve_one_step ~print mode ((param_senv, (papp: term)), source)
       in
       let c_phi' = ExtTerm.(simplify_formula exi_senv uni_senv' @@ subst theta c_phi) in
       let cl' = uni_senv', c_pos', c_neg', c_phi' in
-      print @@ lazy ("cl': " ^ Clause.str_of exi_senv cl');
+      print @@ lazy ("substituted clause: " ^ Clause.str_of exi_senv cl');
       Some ((cl', source @ source1),
             Map.Poly.map theta ~f:(Fn.flip (ExtTerm.to_old_term exi_senv uni_senv') [])))
 (* val resolve: Atom.t Set.Poly.t -> Atom.t Set.Poly.t -> t -> t Set.Poly.t *)

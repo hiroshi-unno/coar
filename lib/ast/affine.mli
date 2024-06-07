@@ -1,11 +1,11 @@
 open Core
 
 type t
+
 val make : (Ident.tvar * Z.t) list -> Z.t -> t
 val of_z : Z.t -> t
 val of_var : Ident.tvar -> t
-val ( + ) :
-  t -> t -> t
+val ( + ) : t -> t -> t
 val ( ~- ) : t -> t
 val ( - ) : t -> t -> t
 val mult : Z.t -> t -> t

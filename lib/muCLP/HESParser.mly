@@ -126,7 +126,7 @@ T_numNeg:
 
 T_numAtom:
     LPAREN t=T_num RPAREN { t }
-  | n=INTL { T_int.mk_int (Z.of_int n) }
+  | n=INTL { T_int.from_int n }
   | n=REALL { T_real.mk_real (Q.of_string n) }
   | varname=ID { Term.mk_var (Ident.Tvar varname) @@ Sort.mk_fresh_svar () }
 

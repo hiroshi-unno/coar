@@ -1,14 +1,7 @@
 (library
-  (name Z3Smt)
-  (public_name CoAR.Z3Smt)
-  (preprocess (pps ppx_deriving_yojson))
-  (libraries
-    core
-    z3
-    CoAR.SMT
-    CoAR.ast)
-  (modules
-    z3interface
-    z3interfaceNew
-    config
-    solver))
+ (name Z3Smt)
+ (public_name CoAR.Z3Smt)
+ (preprocess
+  (pps ppx_deriving_yojson))
+ (libraries core z3 CoAR.SMT CoAR.ast)
+ (modules z3interface z3interfaceNew config solver))
