@@ -24,6 +24,5 @@ depends: [
   "minisat"
   "libsvm" {= "0.10.0~modified"}
   "camlzip"
-  "apronext"
 ]
 build: ["dune" "build"]
