@@ -1,0 +1,17 @@
+(library
+ (name EffCaml)
+ (public_name CoAR.EffCaml)
+ (preprocess
+  (pps ppx_deriving_yojson))
+ (libraries
+  core
+  yojson
+  compiler-libs.bytecomp
+  compiler-libs.common
+  CoAR.common
+  CoAR.ast
+  CoAR.automata
+  CoAR.HOMC
+  CoAR.HOMCSolver
+  CoAR.RCaml)
+ (modules config cgen solver))

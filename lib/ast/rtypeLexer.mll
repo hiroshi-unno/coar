@@ -27,7 +27,7 @@ rule token = parse
   | '&' { AMP }
   | '|' { VERT }
   | '!' { EXC }
-  (*| '?' { QUESTION }*)
+  | '?' { QUESTION }
   | '$' { APPLY }
 
   (*| "mu" { MU }
@@ -103,6 +103,8 @@ rule token = parse
 
   | "true" { BOOL true }
   | "false" { BOOL false }
+  | "tt" { TRUE }
+  | "ff" { FALSE }
   | "$proj" { PROJ }
   | "abs" { ABS }
   | "int_of_float" { ToInt }

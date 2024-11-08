@@ -288,9 +288,7 @@ struct
         in
         loop SAT s u f nf
 
-  let rec loseCHC vars s =
-    let merge_map_list = List.fold ~init:Map.Poly.empty ~f:Map.force_merge in
-    function
+  let rec loseCHC vars s = function
     | Atom a -> (BoolTerm.neg_of (A.term_of_atom a), [], Map.Poly.empty, [])
     | And l ->
         let fmls, chc, strategies, params =
@@ -298,7 +296,7 @@ struct
         in
         ( BoolTerm.or_of fmls,
           List.concat chc,
-          merge_map_list strategies,
+          Map.force_merge_list strategies,
           List.concat params )
     | Or l ->
         let fmls, chc, strategies, params =
@@ -306,7 +304,7 @@ struct
         in
         ( BoolTerm.and_of fmls,
           List.concat chc,
-          merge_map_list strategies,
+          Map.force_merge_list strategies,
           List.concat params )
     | Bind (Forall, v, f) ->
         let s' = remove_forall v s in

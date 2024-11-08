@@ -165,7 +165,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
             (Formula.str_of cnstr_of_consts));
     let tmpl =
       Logic.(
-        Term.mk_lambda (of_old_sort_env_list ExtTerm.of_old_sort hspace.params))
+        Term.mk_lambda (of_old_sort_env_list  hspace.params))
       @@ Logic.ExtTerm.of_old_formula tmpl
     in
     ( (DepthExt, tmpl),
@@ -343,8 +343,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
   let _ =
     Debug.print
     @@ lazy
-         ("************* initializing "
-         ^ Ident.name_of_tvar Arg.name
-         ^ " ***************");
+         (sprintf "************* initializing %s ***************"
+            (Ident.name_of_tvar Arg.name));
     Debug.print @@ lazy (str_of ())
 end

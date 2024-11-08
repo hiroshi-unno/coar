@@ -1,0 +1,14 @@
+[
+    "SPACER",
+    {
+        "timeout": null,
+        "use_z3_native_mbp": true,
+        "enable_global_guidance": false,
+        "check_validity": false,
+        "conservative_check": true,
+        "solve_again_if_invalid": true,
+        "solution_needed": false,
+        "cex_needed": true,
+        "verbose": false
+    }
+]

@@ -11,16 +11,17 @@ type t =
 
 type solution =
   | Sat of term_subst_map
-  | Unsat
+  | Unsat of LogicOld.Formula.t option
   | Unknown
   | OutSpace of Ident.tvar list
+  | Timeout
 
 type oracle = CandSolOld.t option
 
 let lts_str_of_solution = function
   | Sat _ -> "YES"
-  | Unsat -> "NO"
-  | Unknown | OutSpace _ -> "MAYBE"
+  | Unsat _ -> "NO"
+  | Unknown | OutSpace _ | Timeout -> "MAYBE"
 
 type bounds = (Ident.tvar, int * (sort_env_map * term)) Map.Poly.t
 
@@ -35,19 +36,14 @@ type Common.Messenger.info +=
   | LowerBounds of bounds
   | UpperBounds of bounds
 
-exception Timeout
-
 module type ProblemType = sig
   val problem : t
 end
 
 let of_formulas ?(params = Params.empty) phis = Raw (phis, params)
 
-let of_old_formulas ?(params = Params.empty) phis =
-  of_formulas ~params
-  @@ Set.Poly.map phis ~f:(fun (senv, phi) ->
-         ( of_old_sort_env_map ExtTerm.of_old_sort senv,
-           ExtTerm.of_old_formula phi ))
+let of_old_formulas ?(params = Params.empty) =
+  Set.Poly.map ~f:ExtTerm.of_old >> of_formulas ~params
 
 let of_clauses ?(params = Params.empty) cs = Cnf (cs, params)
 let params_of = function Raw (_, params) | Cnf (_, params) -> params
@@ -63,6 +59,7 @@ let kindpvs_of_aux pcsp is_kind =
 let fnpvs_of pcsp = kindpvs_of_aux pcsp Kind.is_fn
 let nepvs_of pcsp = kindpvs_of_aux pcsp Kind.is_ne
 let wfpvs_of pcsp = kindpvs_of_aux pcsp Kind.is_wf
+let dwfpvs_of pcsp = kindpvs_of_aux pcsp Kind.is_dwf
 let nwfpvs_of pcsp = kindpvs_of_aux pcsp Kind.is_nwf
 let admpvs_of pcsp = kindpvs_of_aux pcsp Kind.is_adm
 let integpvs_of pcsp = kindpvs_of_aux pcsp Kind.is_integ
@@ -78,6 +75,10 @@ let nepvs_senv_of pcsp =
 let wfpvs_senv_of pcsp =
   let wfpvs = wfpvs_of pcsp in
   Map.Poly.filter_keys (senv_of pcsp) ~f:(Set.mem wfpvs)
+
+let dwfpvs_senv_of pcsp =
+  let dwfpvs = dwfpvs_of pcsp in
+  Map.Poly.filter_keys (senv_of pcsp) ~f:(Set.mem dwfpvs)
 
 let nwfpvs_senv_of pcsp =
   Map.Poly.filter_mapi (senv_of pcsp) ~f:(fun ~key ~data:_ ->
@@ -118,6 +119,7 @@ let id_of pcsp = (params_of pcsp).id
 let is_ord_pred pcsp x =
   Params.is_kind (params_of pcsp) Kind.is_ord x
   &&
+  (*ToDo*)
   match Map.Poly.find (senv_of pcsp) x with
   | None -> false
   | Some s -> BoolTerm.is_bool_sort @@ Sort.ret_of s
@@ -125,6 +127,7 @@ let is_ord_pred pcsp x =
 let is_fn_pred pcsp = Params.is_kind (params_of pcsp) Kind.is_fn
 let is_ne_pred pcsp = Params.is_kind (params_of pcsp) Kind.is_ne
 let is_wf_pred pcsp = Params.is_kind (params_of pcsp) Kind.is_wf
+let is_dwf_pred pcsp = Params.is_kind (params_of pcsp) Kind.is_dwf
 let is_nwf_pred pcsp = Params.is_kind (params_of pcsp) Kind.is_nwf
 let is_adm_pred pcsp = Params.is_kind (params_of pcsp) Kind.is_adm
 
@@ -136,6 +139,7 @@ let is_integ_pred pcsp = Params.is_kind (params_of pcsp) Kind.is_integ
 let is_int_fun pcsp x =
   Params.is_kind (params_of pcsp) Kind.is_int_fun x
   &&
+  (*ToDo*)
   match Map.Poly.find (senv_of pcsp) x with
   | None -> false
   | Some s -> IntTerm.is_int_sort @@ Sort.ret_of s
@@ -143,6 +147,7 @@ let is_int_fun pcsp x =
 let is_regex pcsp x =
   Params.is_kind (params_of pcsp) Kind.is_regex x
   &&
+  (*ToDo*)
   match Map.Poly.find (senv_of pcsp) x with
   | None -> false
   | Some s -> Stdlib.(s = ExtTerm.SRegEx)
@@ -150,49 +155,35 @@ let is_regex pcsp x =
 let clauses_of ?(full_clauses = true) = function
   | Raw _ -> failwith "The pfwCSP is not of CNF @ clauses_of"
   | Cnf (cnf, params) ->
-      Set.union cnf
-      @@ if full_clauses then params.Params.stable_clauses else Set.Poly.empty
-
-let clauses_to_formulas =
-  Set.Poly.map ~f:(fun c -> (Clause.sort_env_of c, Clause.to_formula c))
+      if full_clauses then Set.union cnf params.Params.stable_clauses else cnf
 
 let formulas_of ?(full_clauses = true) = function
   | Raw (phis, params) ->
-      Set.union phis
-      @@
-      if full_clauses then clauses_to_formulas @@ params.Params.stable_clauses
-      else Set.Poly.empty
-  | Cnf (cnf, params) ->
-      Set.union (clauses_to_formulas cnf)
-      @@
-      if full_clauses then clauses_to_formulas @@ params.Params.stable_clauses
-      else Set.Poly.empty
-
-let formula_of ?(full_clauses = true) = function
-  | Raw (phis, params) ->
-      BoolTerm.and_of @@ Set.to_list
-      @@ Set.union (Set.Poly.map ~f:snd phis)
-      @@ Set.Poly.map ~f:Clause.to_formula
+      Set.union phis @@ ClauseSet.to_formulas
       @@ if full_clauses then params.Params.stable_clauses else Set.Poly.empty
   | Cnf (cnf, params) ->
-      ClauseSet.to_formula @@ Set.union cnf
+      Set.union (ClauseSet.to_formulas cnf)
+      @@ ClauseSet.to_formulas
       @@ if full_clauses then params.Params.stable_clauses else Set.Poly.empty
 
-let old_formula_of ?(full_clauses = true) = function
+let formula_of ?(full_clauses = true) pcsp =
+  let senvs, ts = Set.unzip @@ formulas_of ~full_clauses pcsp in
+  ( Map.force_merge_list @@ Set.to_list @@ senvs,
+    BoolTerm.and_of @@ Set.to_list ts )
+
+let old_formulas_of ?(full_clauses = true) = function
   | Raw (phis, params) ->
-      LogicOld.Formula.and_of @@ Set.to_list
-      @@ Set.union
-           (Set.Poly.map
-              ~f:(fun (uni_senv, phi) ->
-                ExtTerm.to_old_formula params.senv uni_senv phi [])
-              phis)
+      Set.union (Set.Poly.map ~f:(ExtTerm.to_old_fml params.senv) phis)
       @@ Set.Poly.map ~f:(Clause.to_old_formula params.senv)
       @@ if full_clauses then params.Params.stable_clauses else Set.Poly.empty
   | Cnf (cnf, params) ->
-      ClauseSetOld.to_formula
+      ClauseSetOld.to_formulas
       @@ ClauseSet.to_old_clause_set params.senv
       @@ Set.union cnf
       @@ if full_clauses then params.Params.stable_clauses else Set.Poly.empty
+
+let old_formula_of ?(full_clauses = true) pcsp =
+  LogicOld.Formula.and_of @@ Set.to_list @@ old_formulas_of ~full_clauses pcsp
 
 let num_constrs pcsp = Set.length @@ formulas_of pcsp
 let num_pvars pcsp = Set.length @@ pvs_of pcsp
@@ -200,11 +191,10 @@ let num_unknowns pcsp = Map.Poly.length @@ senv_of pcsp
 
 let dtenv_of_def pcsp =
   let exi_senv = (params_of pcsp).senv in
-  Set.fold ~init:Map.Poly.empty (formulas_of pcsp)
-    ~f:(fun ret (uni_senv, phi) ->
-      LogicOld.DTEnv.force_merge ret
-      @@ LogicOld.DTEnv.of_formula
-      @@ ExtTerm.to_old_formula exi_senv uni_senv phi [])
+  Set.fold ~init:Map.Poly.empty (formulas_of pcsp) ~f:(fun ret ->
+      ExtTerm.to_old_fml exi_senv
+      >> LogicOld.DTEnv.of_formula
+      >> LogicOld.DTEnv.force_merge ret)
 
 let map_params ~f = function
   | Raw (phis, params) -> Raw (phis, f params)
@@ -240,13 +230,10 @@ let map_if_raw_old ~f pcsp =
   let exi_senv = (params_of pcsp).senv in
   let f =
     Set.Poly.map ~f:(fun (uni_senv, phi) ->
-        ( Map.of_set_exn @@ Map.to_set
-          @@ Map.Poly.map ~f:ExtTerm.to_old_sort uni_senv,
-          ExtTerm.to_old_formula exi_senv uni_senv phi [] ))
+        ( Map.of_set_exn @@ Map.to_set @@ to_old_sort_env_map uni_senv,
+          ExtTerm.to_old_fml exi_senv (uni_senv, phi) ))
     >> f
-    >> Set.Poly.map ~f:(fun (uni_senv, phi) ->
-           ( of_old_sort_env_map ExtTerm.of_old_sort uni_senv,
-             ExtTerm.of_old_formula phi ))
+    >> Set.Poly.map ~f:ExtTerm.of_old
   in
   map_if_raw ~f pcsp
 
@@ -258,13 +245,9 @@ let map_old ~f pcsp =
   let exi_senv = (params_of pcsp).senv in
   let f =
     (fun (uni_senv, phi) ->
-      ( Map.of_set_exn @@ Map.to_set
-        @@ Map.Poly.map ~f:ExtTerm.to_old_sort uni_senv,
-        ExtTerm.to_old_formula exi_senv uni_senv phi [] ))
-    >> f
-    >> fun (uni_senv, phi) ->
-    ( of_old_sort_env_map ExtTerm.of_old_sort uni_senv,
-      ExtTerm.of_old_formula phi )
+      ( Map.of_set_exn @@ Map.to_set @@ to_old_sort_env_map uni_senv,
+        ExtTerm.to_old_fml exi_senv (uni_senv, phi) ))
+    >> f >> ExtTerm.of_old
   in
   map ~f pcsp
 
@@ -286,32 +269,21 @@ let to_yojson pcsp =
   |> pcsp_to_yojson
 
 let str_of pcsp =
-  let str_of_set =
-    Set.to_list >> String.concat_map_list ~sep:"," ~f:Ident.name_of_tvar
-  in
   sprintf
-    "%s\n\n\
-     sort env: %s\n\
-     fnpvs: %s\n\
-     nepvs: %s\n\
-     wfpvs: %s\n\
-     nwfpvs: %s\n\
-     admpvs: %s\n\
-     integpvs: %s\n\
-     sol_space: %s"
+    "%s\n\nsort env: %s\n\ndatatype env:\n%s\n\nfun env:\n%s\n\nsol_space: %s"
     (String.concat_map_set ~sep:"\n" (formulas_of pcsp)
        ~f:(fun (uni_senv, phi) ->
          String.bracket (string_of_int (Map.Poly.length uni_senv))
          ^ " "
          ^ ExtTerm.str_of_formula (params_of pcsp).senv uni_senv phi))
-    (str_of_sort_env_list ExtTerm.str_of_sort
-    @@ Map.Poly.to_alist @@ senv_of pcsp)
-    (str_of_set @@ fnpvs_of pcsp)
-    (str_of_set @@ nepvs_of pcsp)
-    (str_of_set @@ wfpvs_of pcsp)
-    (str_of_set @@ nwfpvs_of pcsp)
-    (str_of_set @@ admpvs_of pcsp)
-    (str_of_set @@ integpvs_of pcsp)
+    (str_of_sort_env_list (fun (s, k) ->
+         ExtTerm.str_of_sort s ^ " @ " ^ Kind.short_str_of k)
+    @@ Map.Poly.to_alist
+    @@ Map.Poly.mapi ~f:(fun ~key ~data ->
+           (data, try kind_of pcsp key with _ -> Kind.Ord (*ToDo*)))
+    @@ senv_of pcsp)
+    (LogicOld.DTEnv.str_of @@ dtenv_of pcsp)
+    (LogicOld.FunEnv.str_of @@ fenv_of pcsp)
     (SolSpace.str_of @@ sol_space_of pcsp)
 (*let str_of_senv pcsp = "sort env: " ^ str_of_sort_env_map ExtTerm.str_of_sort @@ senv_of pcsp*)
 
@@ -326,22 +298,24 @@ let str_of_solution ?(print_witness = false) = function
       if print_witness then
         " where\n" ^ Logic.str_of_term_subst ExtTerm.str_of subst
       else ""
-  | Unsat -> "unsat"
+  | Unsat _ -> "unsat"
   | Unknown -> "unknown"
   | OutSpace pvs ->
       sprintf "out_space: %s"
       @@ String.concat_map_list ~sep:"," pvs ~f:Ident.name_of_tvar
+  | Timeout -> "timeout"
 
 let str_of_sol_with_witness = str_of_solution ~print_witness:true
 let str_of_solution = str_of_solution ~print_witness:false
 
 let str_of_sygus_solution = function
   | Sat sol -> SyGuS.Printer.str_of_solution @@ CandSolOld.of_subst sol
-  | Unsat -> SyGuS.Printer.str_of_unsat ()
+  | Unsat _ -> SyGuS.Printer.str_of_unsat ()
   | Unknown -> SyGuS.Printer.str_of_unknown ()
   | OutSpace pvs ->
       sprintf "out_space: %s"
       @@ String.concat_map_list ~sep:"," pvs ~f:Ident.name_of_tvar
+  | Timeout -> "timeout" (*ToDo*)
 
 (* expand existential quantification over boolean variables *)
 let rec qelim xs body =
@@ -370,14 +344,13 @@ let add_non_emptiness (pvar, sorts) =
             let pvar =
               Ident.Pvar ("FN" ^ Ident.divide_flag ^ Ident.name_of_tvar tvar)
             in
-            ( ( Ident.pvar_to_tvar pvar,
-                Logic.Sort.mk_arrow (ExtTerm.of_old_sort sort) BoolTerm.SBool ),
+            ( ExtTerm.of_old_sort_bind @@ Term.pred_to_sort_bind (pvar, [ sort ]),
               Formula.mk_atom
               @@ Atom.mk_pvar_app pvar [ sort ] [ Term.mk_var tvar sort ] ))
       in
       let phis =
         Set.add phis
-        @@ ( Map.Poly.of_alist_exn @@ List.map ~f:ExtTerm.of_old_sort_bind params,
+        @@ ( Map.Poly.of_alist_exn @@ of_old_sort_env_list params,
              BoolTerm.elim_imp @@ ExtTerm.of_old_formula @@ Evaluator.simplify
              @@ Formula.mk_imply (Formula.and_of @@ List.map pvs ~f:snd)
              @@ qelim bool_params @@ Formula.mk_atom
@@ -400,9 +373,22 @@ let add_formula (senv, phi) = function
       Raw (Set.add phis (senv, BoolTerm.elim_imp phi), params)
   | Cnf (_, _) -> failwith "add_formula"
 
+let add_formulas senv_phis = function
+  | Raw (phis, params) ->
+      Raw
+        ( Set.union phis
+            (Set.Poly.map senv_phis ~f:(fun (senv, phi) ->
+                 (senv, BoolTerm.elim_imp phi))),
+          params )
+  | Cnf (_, _) -> failwith "add_formula"
+
 let add_clause clause = function
   | Raw (_, _) -> failwith "The pfwCSP is not of CNF @ add_clause"
   | Cnf (cnf, params) -> Cnf (Set.add cnf clause, params)
+
+let add_clauses clauses = function
+  | Raw (_, _) -> failwith "The pfwCSP is not of CNF @ add_clauses"
+  | Cnf (cnf, params) -> Cnf (Set.union cnf clauses, params)
 
 let to_nnf = function
   | Raw (phis, params) ->
@@ -431,16 +417,17 @@ let merge_sols _pcsp sols =
   let rec inner sol = function
     | [] -> Sat sol
     | Sat sol' :: sols -> inner (merge sol sol') sols
-    | Unsat :: _sols -> Unsat
+    | Unsat cex :: _sols -> Unsat cex
     | Unknown :: _sols -> Unknown
     | OutSpace pvs :: _sols -> OutSpace pvs
+    | Timeout :: _sols -> Timeout
   in
   inner Map.Poly.empty sols
 
 let extend_sol sol sol' =
   match sol with
   | Sat sol -> Sat (Map.force_merge sol sol')
-  | Unsat | Unknown | OutSpace _ -> sol
+  | Unsat _ | Unknown | OutSpace _ | Timeout -> sol
 (*let nest_subst subst =
   let keys = Map.key_set subst in
   let rec inner subst =
@@ -580,6 +567,60 @@ let sol_of_candidate pcsp (cand : CandSol.t) =
   recover_elimed_params_of_sol (args_record_of pcsp)
   @@ Map.force_merge (sol_for_eliminated_of pcsp) (CandSol.to_subst cand)
 
+(* assume the codomain of subst is pure *)
+let subst ?(bpvs = Set.Poly.empty) ?(elim = true) subst pcsp =
+  let phis = formulas_of pcsp in
+  let params = params_of pcsp in
+  let subst = Map.Poly.filter_keys subst ~f:(Fn.non @@ Set.mem bpvs) in
+  let params' =
+    if elim then
+      {
+        params with
+        Params.senv =
+          Map.Poly.filter_keys params.Params.senv ~f:(Map.Poly.mem subst >> not);
+        Params.kind_map =
+          Map.Poly.filter_keys params.Params.kind_map
+            ~f:(Map.Poly.mem subst >> not);
+      }
+    else { params with Params.sol_for_eliminated = subst }
+  in
+  (*let c = ref 0 in*)
+  let phis =
+    Set.Poly.map phis ~f:(fun (univ_senv, phi) ->
+        (*print_endline @@ string_of_int !c;
+          c := !c + 1;*)
+        (*let fvs = ExtTerm.fvs_of phi in
+          let sub = Map.Poly.filter_keys subst ~f:(Set.mem fvs) in
+          if Map.Poly.is_empty sub then (univ_senv, phi)
+          else*)
+        (univ_senv, ExtTerm.subst subst phi))
+  in
+  of_formulas phis ~params:params'
+  |>
+  if true then Fn.id
+  else
+    map_old ~f:(fun (uni_senv, phi) ->
+        ( uni_senv,
+          Z3Smt.Z3interface.qelim
+            ~id:(id_of pcsp) (*(senv_of pcsp)*)
+            ~fenv:(LogicOld.get_fenv ()) phi ))
+
+let cochc_to_chc pcsp =
+  let senv = senv_of pcsp in
+  let sub =
+    Map.Poly.filter_mapi senv ~f:(fun ~key ~data ->
+        if Kind.is_ord @@ kind_of pcsp key then (
+          let sargs, sret = Sort.args_ret_of data in
+          let params = sort_env_list_of_sorts sargs in
+          let args = List.map params ~f:(fst >> ExtTerm.mk_var) in
+          assert (BoolTerm.is_bool_sort sret);
+          Some
+            (ExtTerm.mk_lambda params @@ BoolTerm.neg_of
+            @@ ExtTerm.mk_var_app key args))
+        else None)
+  in
+  subst ~elim:false (*ToDo*) sub pcsp
+
 let elim_unsat_wf_predicates ~print pcsp =
   let open Logic in
   if Map.Poly.exists (kind_map_of pcsp) ~f:Kind.is_wf then
@@ -616,7 +657,7 @@ let elim_dup_nwf_predicate pcsp =
     let clauses = clauses_of @@ to_cnf @@ to_nnf pcsp in
     Set.iter clauses ~f:(fun (_, ps, ns, _) ->
         Set.iter (Set.union ps ns) ~f:(fun atm ->
-            match Map.Poly.find kind_map @@ fst @@ ExtTerm.let_var_app atm with
+            match Map.Poly.find kind_map @@ ExtTerm.pvar_of_atom atm with
             | Some (Kind.NWF (nwf, (idl, idr)))
               when not @@ Hash_set.Poly.mem visited (nwf.name, idl, idr) ->
                 Hash_set.Poly.add visited (nwf.name, idl, idr);
@@ -630,7 +671,7 @@ let elim_dup_nwf_predicate pcsp =
     let clauses' =
       Set.Poly.filter_map clauses ~f:(fun (uni_senv, ps, ns, phi) ->
           let aux atm =
-            match Map.Poly.find kind_map @@ fst @@ ExtTerm.let_var_app atm with
+            match Map.Poly.find kind_map @@ ExtTerm.pvar_of_atom atm with
             | Some (Kind.NWF (nwf, (idl, idr))) ->
                 Hashtbl.Poly.find_exn id_log (nwf.name, idl) > 1
                 && Hashtbl.Poly.find_exn id_log (nwf.name, idr) > 1
@@ -714,14 +755,14 @@ let elim_dup_fn_predicate pcsp =
 let merge_clauses pcsp =
   let mk_flag =
     Set.to_list
-    >> List.map ~f:(ExtTerm.let_var_app >> fst)
+    >> List.map ~f:ExtTerm.pvar_of_atom
     >> List.sort ~compare:Stdlib.compare
   in
   let sorted_atms =
     Set.to_list
     >> List.sort ~compare:(fun atm1 atm2 ->
-           let p1 = fst @@ ExtTerm.let_var_app atm1 in
-           let p2 = fst @@ ExtTerm.let_var_app atm2 in
+           let p1 = ExtTerm.pvar_of_atom atm1 in
+           let p2 = ExtTerm.pvar_of_atom atm2 in
            Stdlib.compare p1 p2)
   in
   let unify_atm atm1 atm2 =
@@ -786,48 +827,43 @@ let check_valid is_valid pcsp sol =
       (*if not res then
         print_endline @@ sprintf "before: %s\nafter: %s"
           (LogicOld.Formula.str_of @@
-           ExtTerm.to_old_formula (senv_of pcsp) uni_senv phi [])
+           ExtTerm.to_old_fml (senv_of pcsp) (uni_senv, phi))
           (LogicOld.Formula.str_of @@
-           ExtTerm.to_old_formula (senv_of pcsp) uni_senv phi' []);*)
+           ExtTerm.to_old_fml (senv_of pcsp) (uni_senv, phi'));*)
       res)
 
 let make ?(skolem_pred = false) phis (envs : SMT.Problem.envs) =
-  let _uni_senv = Map.Poly.map envs.uni_senv ~f:ExtTerm.of_old_sort in
-  let exi_senv = Map.Poly.map envs.exi_senv ~f:ExtTerm.of_old_sort in
-  let size_fenv =
-    Map.Poly.to_alist envs.dtenv
-    |> List.filter
-         ~f:
-           (snd
-           >> Fn.non LogicOld.Datatype.is_poly
-              (*ToDo: generate size functions for polymorphic datatypes*))
-    |> List.map ~f:(snd >> LogicOld.Datatype.size_fun_of)
-    |> Map.Poly.of_alist_exn
-  in
-  let dummy_sus_senv =
-    Map.Poly.fold envs.dtenv ~init:[] ~f:(fun ~key ~data senv ->
-        if LogicOld.Datatype.is_undef data then
-          ( Ident.Tvar ("dummy_" ^ key),
-            LogicOld.T_dt.SUS (key, LogicOld.Datatype.params_of data) )
-          :: senv
-        else senv)
-  in
+  let _uni_senv = of_old_sort_env_map envs.uni_senv in
+  let exi_senv = of_old_sort_env_map envs.exi_senv in
   let fenv =
+    let size_fenv =
+      Map.Poly.of_alist_exn
+      @@ List.map ~f:LogicOld.Datatype.size_fun_of
+      @@ List.filter (Map.Poly.data envs.dtenv)
+           ~f:
+             (Fn.non
+                LogicOld.Datatype.is_poly
+                (*ToDo: generate size functions for polymorphic datatypes*))
+    in
     Map.force_merge size_fenv
-    @@ Map.Poly.filter envs.fenv ~f:(fun (_, _, _, is_rec, _) -> is_rec)
-    (*ToDo*)
+    @@ Map.Poly.filter envs.fenv ~f:Quintuple.fth (*ToDo*)
   in
+  Map.Poly.iteri envs.dtenv ~f:(fun ~key ~data ->
+      if LogicOld.Datatype.is_undef data then
+        LogicOld.add_dummy_term (*ToDo: unnecessary?*)
+          (Ident.Tvar ("dummy_" ^ key))
+          (LogicOld.T_dt.SUS (key, LogicOld.Datatype.params_of data)));
+  LogicOld.update_dtenv envs.dtenv;
   LogicOld.update_fenv fenv;
-  LogicOld.set_dummy_term_senv dummy_sus_senv;
   let fsenvs, phis =
     List.unzip
     @@ List.rev_map phis ~f:(fun phi ->
            let _, fsenv, phi =
-             LogicOld.Formula.skolemize ~use_fn_pred:skolem_pred
-               ~only_impure:true
-             @@ LogicOld.Formula.nnf_of phi
+             LogicOld.Formula.(
+               skolemize ~use_fn_pred:skolem_pred ~only_impure:true
+               @@ nnf_of phi)
            in
-           let fsenv = of_old_sort_env_map ExtTerm.of_old_sort fsenv in
+           let fsenv = of_old_sort_env_map fsenv in
            let uni_senv =
              Map.of_set_exn
              @@ Set.filter ~f:(fst >> Map.Poly.mem fsenv >> not)
@@ -836,7 +872,9 @@ let make ?(skolem_pred = false) phis (envs : SMT.Problem.envs) =
            in
            (fsenv, (uni_senv, phi)))
   in
-  (*List.iter phis ~f:(fun (_, phi) -> print_endline ("phi: " ^ LogicOld.Formula.str_of phi));*)
+  if false then
+    List.iter phis ~f:(fun (_, phi) ->
+        print_endline ("phi: " ^ LogicOld.Formula.str_of phi));
   let kind_map =
     Kind.add_kinds
       (Set.Poly.union_list @@ List.map fsenvs ~f:Map.key_set)
@@ -898,19 +936,19 @@ let dep_graph_of_chc =
          match Set.to_list ps with
          | [] ->
              Set.fold ~init:g ns ~f:(fun g t ->
-                 let src = Option.return @@ fst @@ Term.let_var_app t in
+                 let src = Option.return @@ Term.pvar_of_atom t in
                  G.add_edge g src None)
          | [ t ] ->
-             let des = Option.return @@ fst @@ Term.let_var_app t in
+             let des = Option.return @@ Term.pvar_of_atom t in
              Set.fold ~init:g ns ~f:(fun g t ->
-                 let src = Option.return @@ fst @@ Term.let_var_app t in
+                 let src = Option.return @@ Term.pvar_of_atom t in
                  G.add_edge g src des)
          | _ ->
              (*ToDo*)
              Set.fold ~init:g ps ~f:(fun g t ->
-                 let des = Option.return @@ fst @@ Term.let_var_app t in
+                 let des = Option.return @@ Term.pvar_of_atom t in
                  Set.fold ~init:g ns ~f:(fun g t ->
-                     let src = Option.return @@ fst @@ Term.let_var_app t in
+                     let src = Option.return @@ Term.pvar_of_atom t in
                      G.add_edge g src des)))
 
 let output_graph = Dot.output_graph

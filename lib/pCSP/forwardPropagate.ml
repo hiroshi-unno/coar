@@ -3,7 +3,7 @@ open Common.Ext
 open Ast
 open Ast.Logic
 
-(** recursion-free CHC solver based on forward propagation *)
+(* recursion-free CHC solver based on forward propagation *)
 (* we assume that CHC is satisfiable and contains no undefined predicate variable *)
 
 let pos_pvars =

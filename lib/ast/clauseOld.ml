@@ -127,8 +127,7 @@ let refresh_pvar_args ((senv, ps, ns, phi) : t) =
   in
   let xss2, nneqss = Set.unzip nres in
   let senv' =
-    Map.force_merge senv @@ Map.of_set_exn
-    @@ Set.Poly.map ~f:Logic.ExtTerm.of_old_sort_bind
+    Map.force_merge senv @@ Map.of_set_exn @@ Logic.of_old_sort_env_set
     @@ Set.concat_map ~f:Set.Poly.of_list (Set.union xss1 xss2)
   in
   ( senv',

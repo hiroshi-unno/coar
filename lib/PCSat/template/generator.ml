@@ -16,8 +16,7 @@ let terms_over terms params =
   List.filter terms ~f:(fun t -> Set.is_subset (Term.tvs_of t) ~of_:vs)
 
 let merge temp_paramss =
-  Map.of_set_exn
-  @@ Set.Poly.map ~f:Logic.ExtTerm.of_old_sort_bind
+  Map.of_set_exn @@ Logic.of_old_sort_env_set
   @@ Set.Poly.union_list temp_paramss
 
 let mk_bounds_of_const_int t lb ub seeds =
@@ -297,11 +296,11 @@ let mk_tsp lbec lbcc beec becc = { lbec; lbcc; beec; becc }
 
 let gen_cond_and_exps_of_fun quals terms template_params template_sub_params ret
     params r_x =
-  let int_real_params = List.filter params ~f:(snd >> Term.is_int_real_sort) in
+  let irb_params = List.filter params ~f:(snd >> Term.is_irb_sort) in
   let txs =
-    List.map ~f:T_real_int.to_int_if_real
-    @@ Term.of_sort_env int_real_params
-    @ List.filter terms ~f:T_real_int.is_sint_sreal
+    List.map ~f:T_irb.to_int_if_rb
+    @@ Term.of_sort_env irb_params
+    @ List.filter terms ~f:T_irb.is_sirb
   in
   let size = List.length txs in
   let gen_params_2d nd =
@@ -586,11 +585,11 @@ let gen_int_fun quals terms template_params template_sub_params ?(ret = None)
     * Formula.t
     * Formula.t
     * Formula.t =
-  let int_real_params = List.filter params ~f:(snd >> Term.is_int_real_sort) in
+  let irb_params = List.filter params ~f:(snd >> Term.is_irb_sort) in
   let txs =
-    List.map ~f:T_real_int.to_int_if_real
-    @@ Term.of_sort_env int_real_params
-    @ List.filter terms ~f:T_real_int.is_sint_sreal
+    List.map ~f:T_irb.to_int_if_rb
+    @@ Term.of_sort_env irb_params
+    @ List.filter terms ~f:T_irb.is_sirb
   in
   let quals, ret_quals =
     List.partition_tf quals ~f:(fun qual ->
@@ -662,8 +661,7 @@ let gen_int_fun quals terms template_params template_sub_params ?(ret = None)
   if nd <= 0 then
     let exp_x = gen_expr 0 (T_int.zero ()) in
     let temp_params =
-      Map.of_set_exn
-      @@ Set.Poly.map ~f:Logic.ExtTerm.of_old_sort_bind expr_params_map
+      Map.of_set_exn @@ Logic.of_old_sort_env_set expr_params_map
     in
     ( temp_params,
       [],
@@ -769,8 +767,7 @@ let gen_int_fun quals terms template_params template_sub_params ?(ret = None)
         @@ List.concat_map ~f:Array.to_list
         @@ Array.to_list dc
       in
-      Map.of_set_exn
-      @@ Set.Poly.map ~f:Logic.ExtTerm.of_old_sort_bind
+      Map.of_set_exn @@ Logic.of_old_sort_env_set
       @@ Set.Poly.union_list
            [
              expr_pos_neg_map;
@@ -803,12 +800,48 @@ let gen_real_fun quals terms template_params template_sub_params ?(ret = None)
   in
   ( temp_params,
     hole_quals_map,
-    T_real_int.mk_to_real exp_x,
+    T_irb.mk_int_to_real exp_x,
     expr_params_bound,
     expr_coeffs_bounds,
     expr_const_bounds,
     cond_coeffs_bounds,
     cond_const_bounds )
+
+let gen_bv_fun quals terms template_params template_sub_params ?(ret = None)
+    params =
+  let ( temp_params,
+        hole_quals_map,
+        exp_x,
+        expr_params_bound,
+        expr_coeffs_bounds,
+        expr_const_bounds,
+        cond_coeffs_bounds,
+        cond_const_bounds ) =
+    gen_int_fun quals terms template_params template_sub_params ~ret params
+  in
+  let size = match ret with Some (_, T_bv.SBV size) -> size | _ -> None in
+  ( temp_params,
+    hole_quals_map,
+    T_irb.mk_int_to_bv ~size exp_x,
+    expr_params_bound,
+    expr_coeffs_bounds,
+    expr_const_bounds,
+    cond_coeffs_bounds,
+    cond_const_bounds )
+
+let gen_array_fun _quals _terms _template_params _template_sub_params
+    ?(ret = None) _params =
+  match ret with
+  | None -> failwith "gen_array_fun"
+  | Some (_, s) -> (*ToDo*)
+      ( Map.Poly.empty,
+        [],
+        Term.mk_dummy s,
+        Formula.mk_true (),
+        Formula.mk_true (),
+        Formula.mk_true (),
+        Formula.mk_true (),
+        Formula.mk_true () )
 
 let gen_prop_fun is_integ quals terms template_params template_sub_params
     ?(ret = None) params :
@@ -820,12 +853,15 @@ let gen_prop_fun is_integ quals terms template_params template_sub_params
     * Formula.t
     * Formula.t
     * Formula.t =
-  let int_real_params = List.filter params ~f:(snd >> Term.is_int_real_sort) in
+  let int_real_params =
+    List.filter params ~f:(fun (_, s) ->
+        Term.is_int_sort s || Term.is_real_sort s)
+  in
   let txs =
     List.map
-      ~f:(fun t -> if T_real.is_sreal t then t else T_real_int.mk_to_real t)
+      ~f:(fun t -> if T_real.is_sreal t then t else T_irb.mk_int_to_real t)
       (Term.of_sort_env int_real_params
-      @ if is_integ then [] else List.filter terms ~f:T_real_int.is_sint_sreal)
+      @ if is_integ then [] else List.filter terms ~f:T_irb.is_sint_sreal)
   in
   let quals =
     List.filter quals ~f:(fun qual ->
@@ -869,17 +905,17 @@ let gen_prop_fun is_integ quals terms template_params template_sub_params
     let r_x i =
       (if is_integ then Fn.id else T_real.mk_rabs ~info:Dummy)
       @@ T_real.mk_rsum
-           (T_real_int.mk_to_real rc.(i).(0))
+           (T_irb.mk_int_to_real rc.(i).(0))
            (List.mapi
               ~f:(fun j t ->
-                T_real.mk_rmult (T_real_int.mk_to_real rc.(i).(j + 1)) t)
+                T_real.mk_rmult (T_irb.mk_int_to_real rc.(i).(j + 1)) t)
               txs)
     in
     let d_x i j =
       T_real.mk_rsum
-        (T_real_int.mk_to_real dc.(i).(j).(0))
+        (T_irb.mk_int_to_real dc.(i).(j).(0))
         (List.mapi ~f:(fun k ->
-             T_real.mk_rmult (T_real_int.mk_to_real dc.(i).(j).(k + 1)))
+             T_real.mk_rmult (T_irb.mk_int_to_real dc.(i).(j).(k + 1)))
         @@ if is_integ then List.initial txs else txs)
     in
     let temp_params_quals, hole_quals_map, exp_x =
@@ -967,8 +1003,7 @@ let gen_prop_fun is_integ quals terms template_params template_sub_params
         @@ List.concat_map ~f:Array.to_list
         @@ Array.to_list dc
       in
-      Map.of_set_exn
-      @@ Set.Poly.map ~f:Logic.ExtTerm.of_old_sort_bind
+      Map.of_set_exn @@ Logic.of_old_sort_env_set
       @@ Set.Poly.union_list
            [
              expr_pos_neg_map;
@@ -1004,10 +1039,14 @@ let gen_fun ignore_bool quals terms template_params template_sub_params
         | None | Some (_, T_int.SInt) -> gen_int_fun ~ret
         | Some (_, T_real.SReal) ->
             if prop then gen_prop_fun is_integ ~ret else gen_real_fun ~ret
+        | Some (_, T_bv.SBV _) -> gen_bv_fun ~ret
+        | Some (_, T_array.SArray _) -> gen_array_fun ~ret
         | Some (_, T_tuple.STuple sorts)
           when prop && List.for_all sorts ~f:Term.is_real_sort ->
             gen_prop_fun is_integ ~ret
-        | Some (_, sort) -> failwith @@ Term.str_of_sort sort ^ " not supported")
+        | Some (_, sort) ->
+            failwith
+            @@ sprintf "[gen_fun] %s not supported" (Term.str_of_sort sort))
           quals terms template_params template_sub_params params
     | (x, sort) :: xs ->
         assert (Term.is_bool_sort sort);
@@ -1077,7 +1116,7 @@ let gen_adm_predicate with_cond ignore_bool enable_lhs_param quals terms
         List.map ps ~f:(fun p ->
             Formula.mk_atom @@ T_int.mk_leq (T_int.zero ()) p),
         List.map2_exn ps xs ~f:(fun p x ->
-            T_real.mk_rmult (T_real_int.mk_to_real p) x) )
+            T_real.mk_rmult (T_irb.mk_int_to_real p) x) )
     else (Map.Poly.empty, [], [], xs)
   in
   let ( temp_paramss,
@@ -1160,7 +1199,7 @@ let gen_integ_predicate ignore_bool enable_lhs_param quals terms template_params
             Formula.mk_atom @@ T_int.mk_leq (T_int.zero ()) p),
         List.map2_exn lhs_params xs ~f:(fun p x ->
             T_real.mk_rmult
-              (T_real_int.mk_to_real
+              (T_irb.mk_int_to_real
                  (*ToDo*) (T_int.mk_add p (T_int.mk_int Z.one)))
               x) )
     else (Map.Poly.empty, [], xs)
@@ -1462,14 +1501,14 @@ let gen_ne_template quals terms (dep, ext, uc, ud) params =
                         coeff_bound_constr,
                         const_bound_constr ))
              in
-             ( List.fold ~init:Map.Poly.empty ~f:Map.force_merge param_senvs,
+             ( Map.force_merge_list param_senvs,
                mk_select_i Formula.Imply i @@ Formula.and_of tmpls,
                mk_select_i Formula.Imply i @@ Formula.and_of scope_constrs,
                mk_select_i Formula.Imply i @@ Formula.and_of coeff_bound_constrs,
                mk_select_i Formula.Imply i @@ Formula.and_of const_bound_constrs
              ))
     in
-    ( List.fold ~init:Map.Poly.empty ~f:Map.force_merge param_senvs,
+    ( Map.force_merge_list param_senvs,
       Formula.and_of tmpls,
       Formula.and_of scope_constrs,
       Formula.and_of coeff_bound_constrs,
@@ -1486,8 +1525,8 @@ let gen_ne_template quals terms (dep, ext, uc, ud) params =
       ]
   in
   let param_senv =
-    Map.Poly.map ~f:Logic.ExtTerm.of_old_sort
-    @@ Map.force_merge param_senv @@ Map.Poly.of_alist_exn @@ Array.to_list
+    Logic.of_old_sort_env_map @@ Map.force_merge param_senv
+    @@ Map.Poly.of_alist_exn @@ Array.to_list
     @@ Array.map bc ~f:(Term.let_var >> fst)
   in
   ( param_senv,
@@ -1503,17 +1542,11 @@ let gen_wf_predicate use_ifte quals _terms (* ToDo: not used *)
     (nl, np, ubrc, ubrd, ndc, ubdc, ubdd, ds)
     (norm_type, lbrc, lbdc, berc, bedc) params =
   assert (List.length params mod 2 = 0);
-  let int_real_params = List.filter params ~f:(snd >> Term.is_int_real_sort) in
-  let size = List.length int_real_params / 2 in
-  let int_real_params_x, int_real_params_y =
-    List.split_n int_real_params size
-  in
-  let txs =
-    List.map ~f:T_real_int.to_int_if_real @@ Term.of_sort_env int_real_params_x
-  in
-  let tys =
-    List.map ~f:T_real_int.to_int_if_real @@ Term.of_sort_env int_real_params_y
-  in
+  let irb_params = List.filter params ~f:(snd >> Term.is_irb_sort) in
+  let size = List.length irb_params / 2 in
+  let irb_params_x, irb_params_y = List.split_n irb_params size in
+  let txs = List.map ~f:T_irb.to_int_if_rb @@ Term.of_sort_env irb_params_x in
+  let tys = List.map ~f:T_irb.to_int_if_rb @@ Term.of_sort_env irb_params_y in
   let gen_params_2d nl np =
     Array.init nl ~f:(fun _i ->
         Array.init np ~f:(fun _j ->
@@ -1798,22 +1831,18 @@ let gen_simplified_wf_predicate quals terms
         else if Set.is_subset tvs ~of_:tys then `Snd t
         else `Trd t)
     @@ size_fun_apps params
-    @ List.filter terms ~f:T_real_int.is_sint_sreal
+    @ List.filter terms ~f:T_irb.is_sirb
   in
   (* ToDo: does not hold for arbitrary terms *)
   assert (List.length x_terms = List.length y_terms);
-  let int_real_params = List.filter params ~f:(snd >> Term.is_int_real_sort) in
-  let size = List.length int_real_params / 2 in
-  let int_real_params_x, int_real_params_y =
-    List.split_n int_real_params size
-  in
+  let irb_params = List.filter params ~f:(snd >> Term.is_irb_sort) in
+  let size = List.length irb_params / 2 in
+  let irb_params_x, irb_params_y = List.split_n irb_params size in
   let txs =
-    List.map ~f:T_real_int.to_int_if_real
-      (x_terms @ Term.of_sort_env int_real_params_x)
+    List.map ~f:T_irb.to_int_if_rb (x_terms @ Term.of_sort_env irb_params_x)
   in
   let tys =
-    List.map ~f:T_real_int.to_int_if_real
-      (y_terms @ Term.of_sort_env int_real_params_y)
+    List.map ~f:T_irb.to_int_if_rb (y_terms @ Term.of_sort_env irb_params_y)
   in
   let size = size + List.length x_terms in
   let np = List.length shp in

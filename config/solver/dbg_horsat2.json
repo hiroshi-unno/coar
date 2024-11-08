@@ -1,0 +1,9 @@
+[
+    "HorSat2",
+    {
+        "verbose": true,
+        "noce": true,
+        "merge": false,
+        "gfp": false
+    }
+]

@@ -1,4 +1,5 @@
 {
     "enable": false,
+    "erase_quantifiers": false,
     "verbose": false
 }

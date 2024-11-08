@@ -50,9 +50,13 @@ let rec int_monomials_of (coeff : Value.t) = function
            (T_int.mk_rem (normalize_term t1) (normalize_term t2))
            1)
         coeff
-  | FunApp (T_real_int.ToInt, [ t1 ], _) ->
+  | FunApp (T_irb.RealToInt, [ t1 ], _) ->
       Map.Poly.singleton
-        (Map.Poly.singleton (T_real_int.mk_to_int (normalize_term t1)) 1)
+        (Map.Poly.singleton (T_irb.mk_real_to_int (normalize_term t1)) 1)
+        coeff
+  | FunApp (T_irb.BVToInt size, [ t1 ], _) ->
+      Map.Poly.singleton
+        (Map.Poly.singleton (T_irb.mk_bv_to_int ~size (normalize_term t1)) 1)
         coeff
   | FunApp (FVar (x, sorts), ts, _) ->
       Map.Poly.singleton
@@ -135,9 +139,9 @@ and real_monomials_of (coeff : Value.t) = function
       Map.Poly.singleton
         (Map.Poly.singleton (T_real.mk_rabs (normalize_term t1)) 1)
         coeff
-  | FunApp (T_real_int.ToReal, [ t1 ], _) ->
+  | FunApp (T_irb.IntToReal, [ t1 ], _) ->
       Map.Poly.singleton
-        (Map.Poly.singleton (T_real_int.mk_to_real (normalize_term t1)) 1)
+        (Map.Poly.singleton (T_irb.mk_int_to_real (normalize_term t1)) 1)
         coeff
   | FunApp (FVar (x, sorts), ts, _) ->
       Map.Poly.singleton
@@ -463,12 +467,12 @@ let rec homogenize = function
 let linear_int_monomials_of coeff term =
   try Linear.to_linear @@ NonLinear.int_simplify @@ int_monomials_of coeff term
   with _ ->
-    failwith @@ "[linear_int_monomials_of] " ^ Term.str_of term
-    ^ " not supported"
+    failwith
+    @@ sprintf "[linear_int_monomials_of] %s not supported" (Term.str_of term)
 
 let linear_real_monomials_of coeff term =
   try
     Linear.to_linear @@ NonLinear.real_simplify @@ real_monomials_of coeff term
   with _ ->
-    failwith @@ "[linear_real_monomials_of] " ^ Term.str_of term
-    ^ " not supported"
+    failwith
+    @@ sprintf "[linear_real_monomials_of] %s not supported" (Term.str_of term)

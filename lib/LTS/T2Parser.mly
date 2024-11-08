@@ -6,15 +6,21 @@
 
 %token START ERROR CUTPOINT FROM TO AT SHADOW
 %token COLON SEMICOLON COMMA
-%token SKIP ASSUME NONDET SUBST
+%token SKIP ASSUME SUBST
+%token INT_TO_REAL REAL_TO_INT
+%token NONDET
+%token CONST_ARRAY SELECT_ARRAY STORE_ARRAY SELECT_TUPLE CONSTR_TUPLE
 %token LPAREN RPAREN
 %token <string> VAR
 %token <int> INT
+%token <char> CHAR
+%token <Q.t> FLOAT
 %token STRING
 %token PLUS MINUS
 %token TIMES DIV MOD
 %token EQ NEQ GEQ GT LEQ LT
 %token AND OR NOT
+%token SHL LSHR ASHR BITOR BITAND
 %token EOF
 
 %left OR
@@ -66,23 +72,41 @@ command:
   | at command_body { $2 }
   | command_body { $1 }
 command_body:
-  | VAR SUBST expr SEMICOLON { Problem.Subst ((Ident.Tvar $1, T_int.SInt), $3) }
+  | VAR SUBST expr SEMICOLON { Problem.Subst ((Ident.Tvar $1, Term.sort_of $3), $3) }
   | ASSUME LPAREN cond RPAREN SEMICOLON { Problem.Assume $3 }
   | SKIP SEMICOLON { Problem.Skip }
 
 expr:
   | MINUS expr %prec UMINUS {
-    if T_int.is_int $2 then T_int.mk_int (Z.neg @@ T_int.let_int $2) else T_int.mk_neg $2
+    if T_num.is_value $2 then T_num.mk_neg_value @@ fst @@ T_num.let_value $2 else T_num.mk_nneg $2
   }
-  | expr PLUS expr { T_int.mk_add $1 $3 }
-  | expr MINUS expr { T_int.mk_sub $1 $3 }
-  | expr TIMES expr { T_int.mk_mult $1 $3 }
-  | expr DIV expr { T_int.mk_div $1 $3 }
-  | expr MOD expr { T_int.mk_mod $1 $3 }
+  | expr PLUS expr { T_num.mk_nadd $1 $3 }
+  | expr MINUS expr { T_num.mk_nsub $1 $3 }
+  | expr TIMES expr { T_num.mk_nmult $1 $3 }
+  | expr DIV expr { T_num.mk_ndiv $1 $3 }
+  | expr MOD expr { T_num.mk_nmod $1 $3 }
+  | SHL LPAREN expr COMMA expr RPAREN { T_bv.mk_bvshl ~size:None $3 $5 }
+  | LSHR LPAREN expr COMMA expr RPAREN { T_bv.mk_bvlshr ~size:None $3 $5 }
+  | ASHR LPAREN expr COMMA expr RPAREN { T_bv.mk_bvashr ~size:None $3 $5 }
+  | BITOR LPAREN expr COMMA expr RPAREN { T_bv.mk_bvor ~size:None $3 $5 }
+  | BITAND LPAREN expr COMMA expr RPAREN { T_bv.mk_bvand ~size:None $3 $5 }
+  | CONST_ARRAY LPAREN expr RPAREN { T_array.mk_const_array T_int.SInt (Term.sort_of $3) $3 }
+  | SELECT_ARRAY LPAREN expr COMMA expr RPAREN { T_array.mk_select T_int.SInt (Sort.mk_fresh_svar ()) $3 $5 }
+  | STORE_ARRAY LPAREN expr COMMA expr COMMA expr RPAREN { T_array.mk_store T_int.SInt (Term.sort_of $7) $3 $5 $7 }
+  | SELECT_TUPLE LPAREN expr COMMA INT COMMA INT RPAREN { T_tuple.mk_tuple_sel (List.init $7 ~f:(fun _ -> Sort.mk_fresh_svar ())) $3 $5 }
+  | CONSTR_TUPLE LPAREN exprs RPAREN { T_tuple.mk_tuple_cons (List.map $3 ~f:Term.sort_of) $3 }
   | LPAREN expr RPAREN { $2 }
-  | INT { T_int.from_int $1 }
-  | VAR { Term.mk_var (Ident.Tvar $1) T_int.SInt }
-  | NONDET LPAREN RPAREN { Term.mk_var (Problem.mk_nondet ()) T_int.SInt}
+  | INT { T_num.mk_value (string_of_int $1) }
+  | CHAR { T_num.mk_value (string_of_int (int_of_char $1)) }
+  | FLOAT { T_real.mk_real $1 }
+  | VAR { Term.mk_var (Ident.Tvar $1) (Sort.mk_fresh_svar ()) }
+  | INT_TO_REAL LPAREN expr RPAREN { T_irb.mk_int_to_real $3 }
+  | REAL_TO_INT LPAREN expr RPAREN { T_irb.mk_real_to_int $3 }
+  | NONDET LPAREN RPAREN { Term.mk_var (Problem.mk_nondet ()) (Sort.mk_fresh_svar ()) }
+
+exprs:
+  | expr { [ $1 ] }
+  | expr COMMA exprs { $1 :: $3 }
 
 cond:
   | LPAREN cond RPAREN { $2 }
@@ -94,7 +118,7 @@ cond:
 atom:
   | expr EQ expr { T_bool.mk_eq $1 $3 }
   | expr NEQ expr { T_bool.mk_neq $1 $3 }
-  | expr GEQ expr { T_int.mk_geq $1 $3 }
-  | expr GT expr { T_int.mk_gt $1 $3 }
-  | expr LEQ expr { T_int.mk_leq $1 $3 }
-  | expr LT expr { T_int.mk_lt $1 $3 }
+  | expr GEQ expr { T_num.mk_ngeq $1 $3 }
+  | expr GT expr { T_num.mk_ngt $1 $3 }
+  | expr LEQ expr { T_num.mk_nleq $1 $3 }
+  | expr LT expr { T_num.mk_nlt $1 $3 }

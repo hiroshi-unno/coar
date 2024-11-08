@@ -3,7 +3,7 @@ open Common.Util
 
 type t =
   | Z3Sat of Z3Sat.Config.t
-  | Minisat of MINISAT.Config.t
+  | MiniSat of MiniSat.Config.t
 [@@deriving yojson]
 
 module type ConfigType = sig
@@ -15,8 +15,8 @@ let instantiate_ext_files =
   function
   | Z3Sat cfg ->
       Z3Sat.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (Z3Sat cfg)
-  | Minisat cfg ->
-      MINISAT.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (Minisat cfg)
+  | MiniSat cfg ->
+      MiniSat.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (MiniSat cfg)
 
 let load_ext_file = function
   | ExtFile.Instance x -> Ok (ExtFile.Instance x)

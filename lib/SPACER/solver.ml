@@ -18,7 +18,11 @@ module Make (Cfg : Config.ConfigType) = struct
       (Z3.Symbol.mk_string ctx "engine")
       (Z3.Symbol.mk_string ctx "spacer");
     (*Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "spacer.use_inductive_generalizer") false;*)
-    if config.solution_needed then (
+    if config.cex_needed then
+      Z3.Params.add_bool params
+        (Z3.Symbol.mk_string ctx "xform.subsumption_checker")
+        false;
+    if config.solution_needed || config.cex_needed then (
       Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "print_answer") true;
       (* xform.slice, xform.inline_linear, and xform.inline_eager need to be disabled to obtain a sound solution from SPACER *)
       Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "xform.slice") false;
@@ -28,17 +32,24 @@ module Make (Cfg : Config.ConfigType) = struct
       Z3.Params.add_bool params
         (Z3.Symbol.mk_string ctx "xform.inline_eager")
         false);
-    (*Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "spacer.gg.concretize") false;
-    Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "spacer.gg.conjecture") false;
-    Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "spacer.gg.subsume") false;
-    Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "spacer.global") false;*)
+    Z3.Params.add_bool params
+      (Z3.Symbol.mk_string ctx "spacer.native_mbp")
+      config.use_z3_native_mbp;
+    if config.enable_global_guidance then
+      Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "spacer.global") true
+    else
+      (*Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "spacer.gg.concretize") false;
+        Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "spacer.gg.conjecture") false;
+        Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "spacer.gg.subsume") false;
+        Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "spacer.global") false;*)
+      ();
     (*Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "xform.elim_term_ite") true;*)
     (*Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "validate") true;*)
     (*Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "print_fixedpoint_extensions") false;*)
     Z3.Fixedpoint.set_parameters solver params;
     solver
 
-  let solve ?(print_sol = false) pcsp =
+  let solve ?(timeout = None) ?(print_sol = false) pcsp =
     (*let module Printer =
       Printer.Solver.Make(struct
         let config = {
@@ -51,9 +62,10 @@ module Make (Cfg : Config.ConfigType) = struct
       print_endline @@ Printer.string_of_pcsp pcsp;*)
     let ctx =
       let options =
-        match config.timeout with
-        | None -> []
-        | Some timeout -> [ ("timeout", string_of_int @@ (timeout * 1000)) ]
+        match (config.timeout, timeout) with
+        | None, None -> []
+        | None, Some timeout | Some timeout, _ ->
+            [ ("timeout", string_of_int @@ (timeout * 1000)) ]
       in
       Z3.mk_context options
     in
@@ -93,7 +105,7 @@ module Make (Cfg : Config.ConfigType) = struct
       |> Set.Poly.filter_map ~f:(fun (uni_senv, ps, ns, phi) ->
              let phi =
                Formula.aconv_tvar
-               @@ Logic.ExtTerm.to_old_formula exi_senv uni_senv phi []
+               @@ Logic.ExtTerm.to_old_fml exi_senv (uni_senv, phi)
              in
              (*print_endline @@ "a: " ^ Formula.str_of phi;*)
              let senv, phi =
@@ -103,8 +115,7 @@ module Make (Cfg : Config.ConfigType) = struct
              in
              (*print_endline @@ "b: " ^ Formula.str_of phi;*)
              let uni_senv =
-               Map.force_merge uni_senv
-               @@ Map.Poly.map ~f:Logic.ExtTerm.of_old_sort senv
+               Map.force_merge uni_senv @@ Logic.of_old_sort_env_map senv
              in
              let body =
                Formula.and_of
@@ -139,7 +150,7 @@ module Make (Cfg : Config.ConfigType) = struct
                Map.Poly.to_alist
                @@ Map.force_merge_list
                     [
-                      Map.Poly.map ~f:Logic.ExtTerm.to_old_sort uni_senv;
+                      Logic.to_old_sort_env_map uni_senv;
                       Map.of_set_exn quantified_senv;
                     ]
              in
@@ -213,11 +224,16 @@ module Make (Cfg : Config.ConfigType) = struct
       Debug.print @@ lazy "********************";
       let solution =
         let rec loop () =
-          match
-            Z3.Fixedpoint.query solver (Z3.Boolean.mk_or ctx @@ Set.to_list qs)
-            (*Z3.Fixedpoint.query_r solver
-                    [List.Assoc.find_exn penv ~equal:Stdlib.(=) (Ident.Pvar query_name)]*)
-          with
+          let res =
+            try
+              Z3.Fixedpoint.query solver
+                (if Set.is_singleton qs then Set.choose_exn qs
+                 else Z3.Boolean.mk_or ctx @@ Set.to_list qs)
+              (*Z3.Fixedpoint.query_r solver
+                      [List.Assoc.find_exn penv ~equal:Stdlib.(=) (Ident.Pvar query_name)]*)
+            with Z3.Error reason -> raise (Z3.Error reason)
+          in
+          match res with
           | Z3.Solver.UNSATISFIABLE -> (
               Debug.print @@ lazy "Unsatisfiable!";
               match Z3.Fixedpoint.get_answer solver with
@@ -226,10 +242,11 @@ module Make (Cfg : Config.ConfigType) = struct
                   let phi =
                     (*Debug.print
                       @@ lazy ("Z3 solution: " ^ Z3.Expr.to_string expr);*)
-                    try Z3Smt.Z3interface.formula_of ctx [] penv dtenv expr
-                    with _ ->
-                      Debug.print @@ lazy "failed conversion";
-                      failwith "conversion"
+                    try Z3Smt.Z3interface.formula_of ctx [] penv dtenv expr with
+                    | Failure err ->
+                        Debug.print @@ lazy ("failed conversion: " ^ err);
+                        failwith "conversion"
+                    | _ -> failwith "conversion"
                   in
                   (*Debug.print @@ lazy ("answer: " ^ Formula.str_of phi);*)
                   let sol =
@@ -248,7 +265,6 @@ module Make (Cfg : Config.ConfigType) = struct
                                  in
                                  ( pvar,
                                    Logic.of_old_sort_env_list
-                                     Logic.ExtTerm.of_old_sort
                                    @@ List.map args ~f:(Term.let_var >> fst) )
                                in
                                Option.return
@@ -280,8 +296,7 @@ module Make (Cfg : Config.ConfigType) = struct
                                Option.return
                                  ( Ident.pvar_to_tvar pvar,
                                    Logic.ExtTerm.mk_lambda
-                                     (Logic.of_old_sort_env_list
-                                        Logic.ExtTerm.of_old_sort params)
+                                     (Logic.of_old_sort_env_list params)
                                      (Logic.ExtTerm.of_old_formula body) )
                              with _ ->
                                failwith @@ "cannot get a solution from Spacer: "
@@ -310,9 +325,9 @@ module Make (Cfg : Config.ConfigType) = struct
                        @@ PCSP.Problem.check_valid
                             (fun uni_senv t ->
                               let phi =
-                                Logic.ExtTerm.to_old_formula
+                                Logic.ExtTerm.to_old_fml
                                   (PCSP.Problem.senv_of pcsp)
-                                  uni_senv t []
+                                  (uni_senv, t)
                               in
                               (*print_endline @@ "checking " ^ Formula.str_of phi;*)
                               try
@@ -328,18 +343,37 @@ module Make (Cfg : Config.ConfigType) = struct
                   then
                     if config.solve_again_if_invalid then (
                       Debug.print
-                      @@ lazy "a solution returned by Spacer is wrong";
+                      @@ lazy "the solution returned by Spacer is wrong";
                       loop ())
-                    else failwith "a solution returned by Spacer is wrong"
+                    else failwith "the solution returned by Spacer is wrong"
                   else PCSP.Problem.Sat sol
-              | None -> failwith "no solution returned by Z3")
-          | Z3.Solver.SATISFIABLE ->
+              | None -> failwith "no solution returned by Spacer")
+          | Z3.Solver.SATISFIABLE -> (
               Debug.print @@ lazy "Satisfiable!";
-              (match Z3.Fixedpoint.get_answer solver with
+              match Z3.Fixedpoint.get_answer solver with
               | Some expr ->
-                  Debug.print @@ lazy ("model: " ^ Z3.Expr.to_string expr)
-              | None -> ());
-              PCSP.Problem.Unsat
+                  Debug.print @@ lazy ("Spacer model: " ^ Z3.Expr.to_string expr);
+                  let phi =
+                    try
+                      let phi =
+                        Z3Smt.Z3interface.formula_of ctx
+                          (Map.Poly.to_alist
+                          @@ Logic.to_old_sort_env_map exi_senv)
+                          penv dtenv expr
+                      in
+                      Debug.print @@ lazy ("model: " ^ Formula.str_of phi);
+                      phi
+                    with
+                    | Failure err ->
+                        Debug.print @@ lazy ("failed conversion: " ^ err);
+                        failwith "conversion"
+                    | Z3.Error reason ->
+                        Debug.print @@ lazy ("Z3 failed conversion: " ^ reason);
+                        failwith "conversion"
+                    | e -> raise e (*failwith "conversion"*)
+                  in
+                  PCSP.Problem.Unsat (Some phi)
+              | None -> PCSP.Problem.Unsat None)
           | Z3.Solver.UNKNOWN -> PCSP.Problem.Unknown
         in
         loop ()
@@ -349,7 +383,7 @@ module Make (Cfg : Config.ConfigType) = struct
       Or_error.return solution
     with Z3.Error reason ->
       if String.(reason = "spacer canceled" || reason = "canceled") then
-        raise PCSP.Problem.Timeout (*ToDo*)
+        Or_error.return PCSP.Problem.Timeout
       else (
         Debug.print @@ lazy (sprintf "Z3 Error: %s" reason);
         Or_error.return PCSP.Problem.Unknown (* Or_error.error_string reason*))

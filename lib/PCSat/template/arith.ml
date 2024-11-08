@@ -28,8 +28,8 @@ let eq = function
 
 let cast = function
   | T_int.SInt, T_int.SInt | T_real.SReal, T_real.SReal -> Fn.id
-  | T_int.SInt, T_real.SReal -> fun t -> T_real_int.mk_to_real t
-  | T_real.SReal, T_int.SInt -> fun t -> T_real_int.mk_to_int t
+  | T_int.SInt, T_real.SReal -> fun t -> T_irb.mk_int_to_real t
+  | T_real.SReal, T_int.SInt -> fun t -> T_irb.mk_real_to_int t
   | sort1, sort2 ->
       failwith
         ("not supported: " ^ Term.str_of_sort sort1 ^ ", "

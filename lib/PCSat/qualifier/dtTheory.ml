@@ -97,5 +97,5 @@ let qualifiers_of sort (terms : (Term.t * Formula.t list) Set.Poly.t) =
               ~f:(fun (phi, qdep) ->
                 Formula.str_of phi ^ " |-> " ^ QDep.str_of qdep)
       in
-      (Set.Poly.of_list @@ Map.Poly.keys qdep_env, qdep_env)
+      (Map.Poly.key_set qdep_env, qdep_env)
   | _ -> (Set.Poly.empty, Map.Poly.empty)

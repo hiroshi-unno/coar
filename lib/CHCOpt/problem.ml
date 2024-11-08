@@ -15,6 +15,7 @@ type solution =
   | OptSat of (tvar, term) Map.Poly.t
   | OptSatInSpace of (tvar, term) Map.Poly.t
   | Skip
+  | Timeout
 
 let is_dup = function DUp -> true | _ -> false
 let is_ddown = function DDown -> true | _ -> false
@@ -91,7 +92,7 @@ let of_pcsp pcsp =
   let delta = PCSP.Problem.senv_of @@ PCSP.Problem.remove_unused_params pcsp in
   let dir_map =
     Map.Poly.filter_map delta ~f:(fun s ->
-        if Ast.Logic.Sort.is_arrow s then Some DUp else None)
+        if Sort.is_arrow s then Some DUp else None)
   in
   let fronts = Map.Poly.empty in
   let priority = topological_sort (Map.Poly.keys dir_map) [] in
@@ -120,7 +121,7 @@ let genc ~is_pos d (fronts : fronts * fronts) delta theta (tvar, sort) : term =
   in
   let pf =
     match Map.Poly.find ((if is_pos then fst else snd) @@ fronts) tvar with
-    | Some term -> ExtTerm.beta_reduction term args
+    | Some term -> ExtTerm.beta_reduction (Term.mk_apps term args)
     | None -> ExtTerm.mk_bool true
   in
   let sol =
@@ -130,7 +131,7 @@ let genc ~is_pos d (fronts : fronts * fronts) delta theta (tvar, sort) : term =
   in
   let ps =
     ExtTerm.simplify_formula delta (Map.Poly.of_alist_exn senv)
-    @@ ExtTerm.beta_reduction sol args
+    @@ ExtTerm.beta_reduction (Term.mk_apps sol args)
   in
   let p = ExtTerm.mk_var_app tvar args in
   let body, head =
@@ -169,10 +170,11 @@ let str_of_solution delta iter = function
       let sol = filter_sol delta sol in
       sprintf "MaxsatInSpace, %d\n%s" iter
       @@ CandSol.str_of @@ CandSol.of_subst delta sol
+  | Timeout -> sprintf "Timeout, %d" iter
 
 let equal_sol sol1 sol2 =
   match (sol1, sol2) with
-  | Unknown, Unknown | Unsat, Unsat | Skip, Skip -> true
+  | Unknown, Unknown | Unsat, Unsat | Skip, Skip | Timeout, Timeout -> true
   | Sat sol1, Sat sol2
   | OptSat sol1, OptSat sol2
   | OptSatInSpace sol1, OptSatInSpace sol2 ->

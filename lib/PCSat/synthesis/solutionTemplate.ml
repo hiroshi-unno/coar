@@ -164,6 +164,7 @@ end
 module type SolutionTemplateType = sig
   (*val initialize : unit -> unit*)
   val synthesize : int -> State.u -> candidate
+  val init_incr : unit -> unit
 end
 
 module Make
@@ -274,7 +275,10 @@ module Make
                             ExtFile.unwrap_or_abort predicate_template
                         end)
                         (M) : Template.Function.Type)
-        else if PCSP.Problem.is_wf_pred APCSP.problem tvar then
+        else if
+          PCSP.Problem.is_wf_pred APCSP.problem tvar
+          || PCSP.Problem.is_dwf_pred APCSP.problem tvar
+        then
           match config.wf_predicate_template with
           | WF wf_predicate_template ->
               (module Template.WFPredicate.Make
@@ -400,7 +404,7 @@ module Make
           (match List.find model ~f:(fun ((x, _), _) -> Stdlib.(x = key)) with
           | None -> ((key, data), None)
           | Some opt -> opt)
-          |> Logic.ExtTerm.remove_dontcare_elem Logic.ExtTerm.to_old_sort
+          |> Logic.ExtTerm.remove_dontcare_elem
              (* ToDo: support parameteric candidate solution and CEGIS(T)*)
           |> snd)
     in
@@ -417,8 +421,7 @@ module Make
                    else
                      let senv =
                        let _, (_, qsenv, _) = List.hd_exn quals in
-                       Logic.of_old_sort_env_list Logic.ExtTerm.of_old_sort
-                         qsenv
+                       Logic.of_old_sort_env_list qsenv
                      in
                      Logic.ExtTerm.simplify_formula Map.Poly.empty
                        (Map.Poly.of_alist_exn senv)
@@ -491,14 +494,14 @@ module Make
                    ( hole,
                      if List.is_empty quals then
                        let senv =
-                         List.map ~f:Logic.ExtTerm.of_old_sort_bind
+                         Logic.of_old_sort_env_list
                          @@ sort_env_list_of_sorts arg_sorts
                        in
                        Logic.Term.mk_lambda senv @@ Logic.BoolTerm.mk_bool true
                      else
                        let senv =
                          let _, (_, qsenv, _) = List.hd_exn quals in
-                         List.map ~f:Logic.ExtTerm.of_old_sort_bind qsenv
+                         Logic.of_old_sort_env_list qsenv
                        in
                        Logic.Term.mk_lambda senv @@ Logic.BoolTerm.and_of
                        @@ List.map quals
@@ -540,14 +543,13 @@ module Make
              ( hole,
                if List.is_empty quals then
                  let senv =
-                   List.map ~f:Logic.ExtTerm.of_old_sort_bind
-                   @@ sort_env_list_of_sorts sorts
+                   Logic.of_old_sort_env_list @@ sort_env_list_of_sorts sorts
                  in
                  Logic.Term.mk_lambda senv @@ Logic.BoolTerm.mk_bool true
                else
                  let senv =
                    let _, (_, qsenv, _) = List.hd_exn quals in
-                   Logic.of_old_sort_env_list Logic.ExtTerm.of_old_sort qsenv
+                   Logic.of_old_sort_env_list qsenv
                  in
                  Logic.Term.mk_lambda senv @@ Logic.BoolTerm.and_of
                  @@ List.map quals
@@ -568,7 +570,7 @@ module Make
                      ( hole,
                        if List.is_empty quals then
                          let senv =
-                           List.map ~f:Logic.ExtTerm.of_old_sort_bind
+                           Logic.of_old_sort_env_list
                            @@ sort_env_list_of_sorts arg_sorts
                          in
                          Logic.Term.mk_lambda senv
@@ -576,8 +578,7 @@ module Make
                        else
                          let senv =
                            let _, (_, qsenv, _) = List.hd_exn quals in
-                           Logic.of_old_sort_env_list Logic.ExtTerm.of_old_sort
-                             qsenv
+                           Logic.of_old_sort_env_list qsenv
                          in
                          let param_senv = ExAtom.params_of atom in
                          Logic.Term.mk_lambda senv @@ Logic.BoolTerm.and_of
@@ -616,10 +617,7 @@ module Make
            (Set.Poly.map clause.ExClause.positive ~f:(f true))
            (Set.Poly.map clause.ExClause.negative ~f:(f false))
     in
-    let param_senv =
-      Logic.of_old_sort_env_map Logic.ExtTerm.of_old_sort
-      @@ ExClause.params_of clause
-    in
+    let param_senv = Logic.of_old_sort_env_map @@ ExClause.params_of clause in
     match config.pex_strategy with
     | Quantify -> Logic.BoolTerm.forall (Map.Poly.to_alist param_senv) phi
     | InstRand num ->
@@ -632,14 +630,13 @@ module Make
           @@ List.init num ~f:(fun k ->
                  let sub =
                    Map.Poly.mapi param_senv ~f:(fun ~key:_ ~data ->
-                       if k = 0 then ExtTerm.mk_dummy ExtTerm.to_old_sort data
+                       if k = 0 then ExtTerm.mk_dummy data
                        else
                          match data with
                          | IntTerm.SInt ->
                              ExtTerm.mk_int (Z.of_int @@ Integer.rand_int ())
                          | BoolTerm.SBool -> BoolTerm.mk_bool @@ Random.bool ()
-                         | _ (*ToDo*) ->
-                             ExtTerm.mk_dummy ExtTerm.to_old_sort data)
+                         | _ (*ToDo*) -> ExtTerm.mk_dummy data)
                  in
                  Term.subst sub phi)
     | InstDefault ->
@@ -647,7 +644,7 @@ module Make
           Map.Poly.mapi param_senv ~f:(fun ~key ~data ->
               match data with
               | Logic.DatatypeTerm.SUS _ -> Logic.Term.mk_var key
-              | _ -> Logic.ExtTerm.mk_dummy Logic.ExtTerm.to_old_sort data)
+              | _ -> Logic.ExtTerm.mk_dummy data)
         in
         Logic.BoolTerm.forall (Map.Poly.to_alist param_senv)
         @@ if Map.Poly.is_empty sub then phi else Logic.Term.subst sub phi
@@ -714,6 +711,7 @@ module Make
     ref (Map.Poly.empty, Map.Poly.empty, Map.Poly.empty, Map.Poly.empty)
 
   let init_incr () =
+    Debug.print @@ lazy "PCSat initialized";
     iters_after_updated := 0;
     ref_key_tvar_update_list_map := Map.Poly.empty;
     ref_key_clause_map := Map.Poly.empty;
@@ -761,10 +759,9 @@ module Make
             Set.filter (ExClause.tvs_of clause) ~f:(Map.Poly.mem templates)
           in
           let constr =
-            cgen_from_pex vs template_map qualifiers_map unknowns clause
-            |> Fn.flip
-                 (Logic.ExtTerm.to_old_formula Map.Poly.empty temp_param_senv)
-                 []
+            ( temp_param_senv,
+              cgen_from_pex vs template_map qualifiers_map unknowns clause )
+            |> Logic.ExtTerm.to_old_fml Map.Poly.empty
             |> Evaluator.simplify
           in
           Debug.print
@@ -795,10 +792,9 @@ module Make
           let key = get_key () in
           let constr =
             let constr =
-              cgen_from_pex vs template_map qualifiers_map unknowns clause
-              |> Fn.flip
-                   (Logic.ExtTerm.to_old_formula Map.Poly.empty temp_param_senv)
-                   []
+              ( temp_param_senv,
+                cgen_from_pex vs template_map qualifiers_map unknowns clause )
+              |> Logic.ExtTerm.to_old_fml Map.Poly.empty
               |> Evaluator.simplify
             in
             if
@@ -860,12 +856,9 @@ module Make
                            ~f:(fun ~key ~data ->
                              assert (Ident.is_parameter key);
                              if Set.mem used_param_senv key then None
-                             else
-                               Some
-                                 (Term.mk_dummy
-                                 @@ Logic.ExtTerm.to_old_sort data)))
-                @@ Logic.ExtTerm.to_old_formula Map.Poly.empty temp_param_senv
-                     cnstr []
+                             else Some (Logic.mk_old_dummy data)))
+                @@ Logic.ExtTerm.to_old_fml Map.Poly.empty
+                     (temp_param_senv, cnstr)
               in
               if RLCfg.config.enable && RLCfg.config.show_unsat_core then (
                 RLConfig.lock ();
@@ -1328,33 +1321,36 @@ module Make
                             match Map.Poly.find cand key with
                             | None -> ()
                             | Some (_s, t) ->
-                                let phi =
-                                  let params = FT.params_of ~tag in
-                                  let uni_senv =
-                                    Map.Poly.map ~f:Logic.ExtTerm.of_old_sort
-                                    @@ Map.Poly.of_alist_exn params
-                                  in
-                                  Logic.ExtTerm.to_old_formula Map.Poly.empty
-                                    uni_senv t
-                                  @@ List.map params
-                                       ~f:(fst >> Logic.ExtTerm.mk_var)
-                                in
                                 let new_quals =
-                                  let pos, neg = Formula.atoms_of phi in
-                                  let pos =
-                                    Set.Poly.map ~f:Formula.mk_atom pos
-                                  in
-                                  let neg =
-                                    Set.Poly.map ~f:Formula.mk_atom neg
-                                  in
-                                  let tag =
-                                    PCSP.Problem.tag_of APCSP.problem key
-                                  in
-                                  Set.union pos neg
-                                  |> Set.Poly.map ~f:(fun q ->
-                                         (FT.params_of ~tag, q))
-                                  |> QualifierGenerator.elim_neg
-                                  |> Set.Poly.map ~f:snd
+                                  try
+                                    let phi =
+                                      let params = FT.params_of ~tag in
+                                      let uni_senv =
+                                        Logic.of_old_sort_env_map
+                                        @@ Map.Poly.of_alist_exn params
+                                      in
+                                      Logic.ExtTerm.to_old_formula
+                                        Map.Poly.empty uni_senv
+                                        t (*ToDo: t may have non-boolean type*)
+                                      @@ List.map params
+                                           ~f:(fst >> Logic.ExtTerm.mk_var)
+                                    in
+                                    let pos, neg = Formula.atoms_of phi in
+                                    let pos =
+                                      Set.Poly.map ~f:Formula.mk_atom pos
+                                    in
+                                    let neg =
+                                      Set.Poly.map ~f:Formula.mk_atom neg
+                                    in
+                                    let tag =
+                                      PCSP.Problem.tag_of APCSP.problem key
+                                    in
+                                    Set.union pos neg
+                                    |> Set.Poly.map ~f:(fun q ->
+                                           (FT.params_of ~tag, q))
+                                    |> QualifierGenerator.elim_neg
+                                    |> Set.Poly.map ~f:snd
+                                  with _ -> Set.Poly.empty
                                 in
                                 if true then
                                   Debug.print

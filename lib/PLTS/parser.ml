@@ -81,7 +81,7 @@ let parse_from_lexbuf ~print lexbuf =
                       | _ -> failwith "")
              in
              Second (ff, args1, args2, res))
-           else failwith @@ f ^ " not supported")
+           else failwith @@ sprintf "%s not supported" f)
   in
   let init =
     match Map.Poly.data inits with

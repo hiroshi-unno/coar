@@ -297,7 +297,7 @@ module Make
       match strategy with
       | Config.SAT -> (
           SatSolver.solve (SAT.Problem.of_prop_formula constr) >>= function
-          | SAT.Problem.Unsat -> Ok None
+          | SAT.Problem.Unsat | SAT.Problem.Unknown (*ToDo*) -> Ok None
           | SAT.Problem.Sat sol -> Ok (Some (of_assignment map sol, true)))
       | Config.ORACLE_SAT s -> (
           match VersionSpace.oracle_of vs with
@@ -320,7 +320,7 @@ module Make
               |> PropLogic.Formula.and_of |> SAT.Problem.of_prop_formula
               |> SatSolver.solve
               >>= function
-              | SAT.Problem.Unsat -> Ok None
+              | SAT.Problem.Unsat | SAT.Problem.Unknown (*ToDo*) -> Ok None
               | SAT.Problem.Sat sol -> Ok (Some (of_assignment map sol, true))))
       | Config.POS_BIASED_SAT | Config.NEG_BIASED_SAT -> (
           let pos_bias = Stdlib.(strategy = Config.POS_BIASED_SAT) in
@@ -334,10 +334,10 @@ module Make
           |> PropLogic.Formula.and_of |> SAT.Problem.of_prop_formula
           |> SatSolver.solve
           >>= function
-          | SAT.Problem.Unsat -> (
+          | SAT.Problem.Unsat | SAT.Problem.Unknown (*ToDo*) -> (
               Debug.print @@ lazy "biased labeling not found";
               SatSolver.solve (SAT.Problem.of_prop_formula constr) >>= function
-              | SAT.Problem.Unsat -> Ok None
+              | SAT.Problem.Unsat | SAT.Problem.Unknown (*ToDo*) -> Ok None
               | SAT.Problem.Sat sol -> Ok (Some (of_assignment map sol, true)))
           | SAT.Problem.Sat sol ->
               Debug.print @@ lazy "biased labeling found";
@@ -363,7 +363,7 @@ module Make
           in
           SatSolver.opt_solve soft (SAT.Problem.of_prop_formula constr)
           >>= function
-          | SAT.Problem.Unsat -> Ok None
+          | SAT.Problem.Unsat | SAT.Problem.Unknown (*ToDo*) -> Ok None
           | SAT.Problem.Sat sol -> Ok (Some (of_assignment map sol, true)))
       | BMI_MAX_SAT
           ( num,
@@ -407,9 +407,7 @@ module Make
                                 (Q.of_float @@ Random.float_range (-.fb) fb)
                           | Logic.BoolTerm.SBool ->
                               Logic.BoolTerm.mk_bool @@ Random.bool ()
-                          | _ (*ToDo*) ->
-                              Logic.ExtTerm.mk_dummy Logic.ExtTerm.to_old_sort
-                                data)
+                          | _ (*ToDo*) -> Logic.ExtTerm.mk_dummy data)
                     in
                     Clause.reduce_sort_map
                     @@ Clause.subst
@@ -481,7 +479,7 @@ module Make
           in
           SatSolver.opt_solve soft (SAT.Problem.of_prop_formula constr)
           >>= function
-          | SAT.Problem.Unsat -> Ok None
+          | SAT.Problem.Unsat | SAT.Problem.Unknown (*ToDo*) -> Ok None
           | SAT.Problem.Sat sol -> Ok (Some (of_assignment map sol, true)))
       | Config.ORACLE_MAX_SAT s -> (
           match VersionSpace.oracle_of vs with
@@ -507,7 +505,7 @@ module Make
               in
               SatSolver.opt_solve soft (SAT.Problem.of_prop_formula constr)
               >>= function
-              | SAT.Problem.Unsat -> Ok None
+              | SAT.Problem.Unsat | SAT.Problem.Unknown (*ToDo*) -> Ok None
               | SAT.Problem.Sat sol -> Ok (Some (of_assignment map sol, true))))
       | Config.POS_BIASED_MAX_SAT (strengthen_bias, w)
       | Config.NEG_BIASED_MAX_SAT (strengthen_bias, w) -> (
@@ -551,7 +549,7 @@ module Make
           in
           SatSolver.opt_solve soft (SAT.Problem.of_prop_formula constr)
           >>= function
-          | SAT.Problem.Unsat -> Ok None
+          | SAT.Problem.Unsat | SAT.Problem.Unknown (*ToDo*) -> Ok None
           | SAT.Problem.Sat sol -> Ok (Some (of_assignment map sol, true)))
       | Config.Mixed ss -> (
           let strategy, sample_examples =

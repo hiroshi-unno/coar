@@ -90,7 +90,7 @@ module Make (Config : Config.ConfigType) = struct
       else Fn.id
     in
     let phi =
-      Logic.ExtTerm.to_old_formula exi_senv uni_senv phi []
+      Logic.ExtTerm.to_old_fml exi_senv (uni_senv, phi)
       (*|> (fun phi -> Debug.print @@ lazy ("orig: " ^ Formula.str_of phi); phi)*)
       |> Normalizer.normalize
       (*|> (fun phi -> Debug.print @@ lazy ("normalized: " ^ Formula.str_of phi); phi)*)
@@ -125,8 +125,7 @@ module Make (Config : Config.ConfigType) = struct
     let ppvs, npvs =
       let clauses =
         Set.Poly.map ~f:(fun (ps, ns, phi) -> (uni_senv, ps, ns, phi))
-        @@ Formula.cnf_of
-             (Logic.to_old_sort_env_map Logic.ExtTerm.to_old_sort exi_senv)
+        @@ Formula.cnf_of (Logic.to_old_sort_env_map exi_senv)
         @@ Formula.and_of phis
       in
       let pvar_count, _ = ClauseSetOld.count_pvar_apps bpvs clauses in
@@ -155,9 +154,7 @@ module Make (Config : Config.ConfigType) = struct
       (* assume that variables defined by uni_senv occur in phi*)
       let fvs =
         (*ToDo*)
-        Formula.cnf_of
-          (Logic.to_old_sort_env_map Logic.ExtTerm.to_old_sort exi_senv)
-          phi
+        Formula.cnf_of (Logic.to_old_sort_env_map exi_senv) phi
         |> Set.concat_map ~f:(fun (_ps, _ns, phi) ->
                (*Set.union (Set.concat_map ~f:Atom.fvs_of @@ Set.union ps ns) @@*)
                Formula.fvs_of phi)
@@ -207,9 +204,6 @@ module Make (Config : Config.ConfigType) = struct
     Debug.print @@ lazy "**************** preprocessing  ****************";
     Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
     Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
-    Debug.print @@ lazy "";
-    Debug.print @@ lazy (FunEnv.str_of @@ PCSP.Problem.fenv_of pcsp);
-    Debug.print @@ lazy (LogicOld.DTEnv.str_of @@ PCSP.Problem.dtenv_of pcsp);
     Debug.print @@ lazy "************************************************";
     let pcsp = PCSP.Problem.normalize pcsp in
     Debug.print @@ lazy "normalized:";
@@ -357,9 +351,6 @@ module Make (Config : Config.ConfigType) = struct
       Debug.print @@ lazy "*********** preprocessed constraints ***********";
       Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
       Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
-      Debug.print @@ lazy "";
-      Debug.print @@ lazy (FunEnv.str_of @@ PCSP.Problem.fenv_of pcsp);
-      Debug.print @@ lazy (LogicOld.DTEnv.str_of @@ PCSP.Problem.dtenv_of pcsp);
       Debug.print @@ lazy "************************************************";
       ( oracle,
         let params = PCSP.Problem.params_of pcsp in
@@ -368,7 +359,8 @@ module Make (Config : Config.ConfigType) = struct
              params with
              PCSP.Params.args_record = param_logs;
              PCSP.Params.sol_for_eliminated =
-               Map.force_merge sol_for_eliminated params.sol_for_eliminated;
+               (try Map.force_merge sol_for_eliminated params.sol_for_eliminated
+                with _ -> (*ToDo*) sol_for_eliminated);
            } )
 
   let solve ?(bpvs = Set.Poly.empty) ?(oracle = None)

@@ -90,7 +90,7 @@ let tvs_of sequent =
      Formula.tvs_of sequent.right_phi ::
      List.map ~f:(fst >> Atom.tvs_of) sequent.left_atms @
      List.map ~f:(fst >> Atom.tvs_of) sequent.right_atms) @@
-  Set.Poly.of_list @@ Map.Poly.keys sequent.eqvars
+  Map.Poly.key_set sequent.eqvars
 (*
   let pvs ent =
     let pvsL ent = List.map ~f:Pva.ident_of (lpvams_of ent |> List.map ~f:fst) in
@@ -149,14 +149,14 @@ let normalize_body seq =
         List.map2_exn args' args ~f:Formula.eq)
   in
   let bounds =
-    Map.Poly.map ~f:Logic.ExtTerm.of_old_sort @@ Map.of_set_exn @@ Set.Poly.union_list @@ List.map ~f:Atom.term_sort_env_of @@
+    Logic.of_old_sort_env_map @@ Map.of_set_exn @@ Set.Poly.union_list @@ List.map ~f:Atom.term_sort_env_of @@
     List.map ~f:fst (left_atms' @ seq.right_atms)
   in
   let phi1 =
     Formula.and_of @@ seq.left_phi :: Formula.negate seq.right_phi :: List.concat eqss
   in
   let uni_senv =
-    Map.Poly.map ~f:Logic.ExtTerm.of_old_sort @@ Map.of_set_exn @@ Formula.term_sort_env_of phi1
+    Logic.of_old_sort_env_map @@ Map.of_set_exn @@ Formula.term_sort_env_of phi1
   in
   (*print_endline @@ "1: " ^ Formula.str_of phi1;*)
   let phi2 = Evaluator.simplify_neg @@ snd @@ Qelim.qelim_old bounds Map.Poly.empty (uni_senv, Evaluator.simplify_neg phi1) in
@@ -169,7 +169,7 @@ let normalize_body seq =
   (*print_endline @@ "4 (" ^ string_of_int n ^ ", " ^ string_of_int s ^ "): " ^ Formula.str_of phi4;*)
   let phi5 =
     (*Normalizer.normalize @@*) Evaluator.simplify @@
-    (*if s * n <= 400(*ToDo*) then Z3Smt.Z3interface.qelim ~id:None (FunEnv.mk_empty ()) phi4
+    (*if s * n <= 400(*ToDo*) then Z3Smt.Z3interface.qelim ~id:None ~fenv:(LogicOld.get_fenv ()) phi4
     else*) phi4
   in
   (*print_endline @@ "5: " ^ Formula.str_of phi5;*)

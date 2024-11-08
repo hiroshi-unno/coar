@@ -3,7 +3,7 @@ open Common.Ext
 open Common.Combinator
 open LogicOld
 
-type t = sort_env_map * pred_subst_set
+type t = sort_env_map (*parameters*) * pred_subst_set
 
 let str_of ((_, cand) : t) : string =
   String.concat_map_set ~sep:"\n" cand
@@ -23,7 +23,7 @@ let of_fundef (Ident.Tvar x, t) : pred_subst_elem =
   let args, t' = Logic.Term.let_lam t in
   let params, map =
     normalize_sort_env_list
-    @@ Logic.to_old_sort_env_list Logic.ExtTerm.to_old_sort args
+    @@ Logic.to_old_sort_env_list  args
   in
   try
     let phi =

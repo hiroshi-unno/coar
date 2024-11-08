@@ -1,0 +1,7 @@
+(library
+ (name TRecS)
+ (public_name CoAR.TRecS)
+ (preprocess
+  (pps ppx_deriving_yojson))
+ (libraries core CoAR.HOMC)
+ (modules config solver))

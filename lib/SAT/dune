@@ -3,5 +3,5 @@
  (public_name CoAR.SAT)
  (preprocess
   (pps ppx_deriving_yojson))
- (libraries core yojson z3 minisat CoAR.common CoAR.ast)
+ (libraries core camlzip yojson CoAR.common CoAR.ast)
  (modules parser problem))

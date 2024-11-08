@@ -18,6 +18,7 @@ type t = {
   mode : mode;
   check_problem : bool;
   output_iteration : bool;
+  output_yes_no : bool;
   verbose : bool;
   gen_extra_partial_sols : bool;
   random_ex_size : int;

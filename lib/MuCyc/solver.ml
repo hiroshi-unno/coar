@@ -57,8 +57,9 @@ module Make (Cfg : Config.ConfigType) = struct
         let sol =
           match sol with
           | MuCLP.Problem.Valid -> PCSP.Problem.Sat Map.Poly.empty (* ToDo *)
-          | MuCLP.Problem.Invalid -> PCSP.Problem.Unsat
+          | MuCLP.Problem.Invalid -> PCSP.Problem.Unsat None (*ToDo*)
           | MuCLP.Problem.Unknown -> PCSP.Problem.Unknown
+          | MuCLP.Problem.Timeout -> PCSP.Problem.Timeout
         in
         if print_sol then print_endline (PCSP.Problem.str_of_solution sol);
         Or_error.return

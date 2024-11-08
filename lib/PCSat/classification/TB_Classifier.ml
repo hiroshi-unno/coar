@@ -188,13 +188,12 @@ struct
                   ( hole,
                     if List.is_empty quals then
                       Logic.Term.mk_lambda
-                        (List.map ~f:Logic.ExtTerm.of_old_sort_bind
+                        (Logic.of_old_sort_env_list
                         @@ sort_env_list_of_sorts sorts)
                       @@ Logic.BoolTerm.mk_bool true
                     else
                       let _, (_, qsenv, _) = List.hd_exn quals in
-                      Logic.Term.mk_lambda
-                        (List.map ~f:Logic.ExtTerm.of_old_sort_bind qsenv)
+                      Logic.Term.mk_lambda (Logic.of_old_sort_env_list qsenv)
                       @@ Logic.BoolTerm.and_of
                       @@ List.map quals ~f:eval_qual ))
               |> Map.Poly.of_alist_exn
@@ -206,8 +205,7 @@ struct
                    (Map.Poly.singleton (Ident.pvar_to_tvar pvar) template)
               |> Logic.Term.subst hole_map
               |> (fun phi ->
-                   Logic.ExtTerm.to_old_formula Map.Poly.empty temp_param_senv
-                     phi [])
+                   Logic.ExtTerm.to_old_fml Map.Poly.empty (temp_param_senv, phi))
               |> if polarity then Evaluator.simplify else Evaluator.simplify_neg
             in
             ( Map.Poly.add_exn key_constr_map ~key ~data:constr,
@@ -238,10 +236,9 @@ struct
                 Map.Poly.filter_mapi temp_param_senv ~f:(fun ~key ~data ->
                     assert (Ident.is_parameter key);
                     if Set.mem used_param_senv key then None
-                    else Some (Term.mk_dummy (Logic.ExtTerm.to_old_sort data)))
+                    else Some (Logic.mk_old_dummy data))
               in
-              Logic.ExtTerm.to_old_formula Map.Poly.empty temp_param_senv cnstr
-                []
+              Logic.ExtTerm.to_old_fml Map.Poly.empty (temp_param_senv, cnstr)
               |> Formula.subst dis_map |> Evaluator.simplify
             in
             ( Map.Poly.add_exn key_constr_map ~key ~data:param_constr,
@@ -267,7 +264,7 @@ struct
                  with
                 | None -> ((key, data), None)
                 | Some opt -> opt)
-                |> Logic.ExtTerm.remove_dontcare_elem Logic.ExtTerm.to_old_sort
+                |> Logic.ExtTerm.remove_dontcare_elem
                    (* ToDo: support parameteric candidate solution and CEGIS(T)*)
                 |> snd)
           in
@@ -276,14 +273,12 @@ struct
             @@ List.map hole_qualifiers_map ~f:(fun (hole, quals) ->
                    ( hole,
                      if List.is_empty quals then
-                       Logic.Term.mk_lambda
-                         (List.map ~f:Logic.ExtTerm.of_old_sort_bind @@ params)
+                       Logic.Term.mk_lambda (Logic.of_old_sort_env_list params)
                        @@ Logic.BoolTerm.mk_bool true
                      else
                        let senv =
                          let _, (_, qsenv, _) = List.hd_exn quals in
-                         Logic.of_old_sort_env_list Logic.ExtTerm.of_old_sort
-                           qsenv
+                         Logic.of_old_sort_env_list qsenv
                        in
                        Template.Generator.gen_from_qualifiers (senv, quals) ))
           in
@@ -294,8 +289,7 @@ struct
           assert (Set.is_empty @@ Logic.ExtTerm.fvs_of phi);
           let phi =
             Logic.ExtTerm.to_old_formula Map.Poly.empty
-              (Map.Poly.of_alist_exn
-              @@ Logic.of_old_sort_env_list Logic.ExtTerm.of_old_sort params)
+              (Map.Poly.of_alist_exn @@ Logic.of_old_sort_env_list params)
               phi
               (List.map ~f:Logic.ExtTerm.of_old_term @@ Term.of_sort_env params)
           in

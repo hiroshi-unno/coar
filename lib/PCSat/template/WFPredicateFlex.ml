@@ -190,10 +190,12 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     in
     Set.concat_map quals ~f:(fun phi ->
         let qual1 =
-          Z3Smt.Z3interface.qelim ~id Arg.fenv @@ Formula.exists params_y phi
+          Z3Smt.Z3interface.qelim ~id ~fenv:Arg.fenv
+          @@ Formula.exists params_y phi
         in
         let qual2 =
-          Z3Smt.Z3interface.qelim ~id Arg.fenv @@ Formula.exists params_x phi
+          Z3Smt.Z3interface.qelim ~id ~fenv:Arg.fenv
+          @@ Formula.exists params_x phi
         in
         Set.union
           (if Formula.is_bind qual1 || Set.is_empty (Formula.fvs_of qual1) then
@@ -264,8 +266,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
             (Ident.name_of_tvar @@ Arg.name)
             (Formula.str_of cnstr_of_disc_const));
     let tmpl =
-      Logic.(
-        Term.mk_lambda (of_old_sort_env_list ExtTerm.of_old_sort hspace.params))
+      Logic.(Term.mk_lambda (of_old_sort_env_list hspace.params))
       @@ Logic.ExtTerm.of_old_formula tmpl
     in
     ( (LexicoPieceConj, tmpl),
@@ -674,8 +675,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
   let _ =
     Debug.print
     @@ lazy
-         ("************* initializing "
-         ^ Ident.name_of_tvar Arg.name
-         ^ " ***************");
+         (sprintf "************* initializing %s ***************"
+            (Ident.name_of_tvar Arg.name));
     Debug.print @@ lazy (str_of ())
 end

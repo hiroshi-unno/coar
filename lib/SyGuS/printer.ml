@@ -10,7 +10,8 @@ let mode = SyGuS_IF1
 let str_of_sort = function
   | T_int.SInt -> "Int"
   | T_bool.SBool -> "Bool"
-  | s -> failwith (Term.str_of_sort s ^ " not supported")
+  | s ->
+      failwith (sprintf "[str_of_sort] %s not supported" (Term.str_of_sort s))
 
 let rec str_of_formula = function
   | Formula.Atom (atom, _) -> str_of_atom atom

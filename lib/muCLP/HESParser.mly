@@ -118,7 +118,7 @@ T_numMultDivMod:
     t=T_numNeg { t }
   | t1=T_numMultDivMod MULT t2=T_numNeg { T_num.mk_nmult t1 t2 }
   | t1=T_numMultDivMod DIV t2=T_numNeg { T_num.mk_ndiv t1 t2 }
-  | t1=T_numMultDivMod MOD t2=T_numNeg { T_num.mk_mod t1 t2 }
+  | t1=T_numMultDivMod MOD t2=T_numNeg { T_int.mk_mod(*ToDo*) t1 t2 }
 
 T_numNeg:
     t=T_numAtom { t }

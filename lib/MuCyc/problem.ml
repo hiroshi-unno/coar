@@ -18,9 +18,7 @@ type solver = t -> MuCLP.Problem.solution * ProofTree.t list
 let make env lemmas defs goals = { env; lemmas; defs; goals }
 
 let of_muclp muclp =
-  let exi_senv =
-    sort_env_map_of_pred_sort_env_map @@ MuCLP.Problem.penv_of muclp
-  in
+  let exi_senv = Term.pred_to_sort_env_map @@ MuCLP.Problem.penv_of muclp in
   let senv, query =
     LogicOld.Formula.rm_quant ~forall:true @@ Formula.aconv_tvar muclp.query
   in
@@ -76,9 +74,7 @@ let apply_as_muclp f problem =
     f @@ to_muclp problem.defs @@ List.map problem.goals ~f:(fun (g, _, _) -> g)
     (*ToDo*)
   in
-  let exi_senv =
-    sort_env_map_of_pred_sort_env_map @@ MuCLP.Problem.penv_of muclp
-  in
+  let exi_senv = Term.pred_to_sort_env_map @@ MuCLP.Problem.penv_of muclp in
   {
     problem with
     defs = MuCLP.Problem.preds_of muclp;

@@ -254,7 +254,10 @@ module LIA = struct
                         Z.(mul (Value.int_of c) (Value.int_of u_val)))
                      (Linear.mk_int_term t);
                  ]
-          | _ -> failwith @@ Predicate.str_of_psym psym ^ " not supported")
+          | _ ->
+              failwith
+              @@ sprintf "[rm_pdiv] %s not supported"
+                   (Predicate.str_of_psym psym))
     in
     (newmodel, newtvar, newterm, pdivs)
 

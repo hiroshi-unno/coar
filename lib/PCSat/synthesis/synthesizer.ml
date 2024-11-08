@@ -56,6 +56,7 @@ end
 
 module type SynthesizerType = sig
   val run_phase : int -> State.u -> State.s Or_error.t
+  val init : unit -> unit
 end
 
 module Make
@@ -96,6 +97,8 @@ module Make
                          let config = cfg
                        end)
                        (APCSP) : SynthesizerType))
+
+  let init () = Synthesizer.init ()
 
   let check_candidates e =
     if config.check_candidates && not config.refine_candidates then (

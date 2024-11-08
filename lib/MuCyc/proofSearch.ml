@@ -27,7 +27,7 @@ let def_of penv defs pvar =
 
 let seq_map_of penv (problem : Problem.t) =
   let exi_senv =
-    sort_env_map_of_pred_sort_env_map @@ Map.Poly.of_alist_exn
+    Term.pred_to_sort_env_map @@ Map.Poly.of_alist_exn
     @@ List.map penv ~f:(fun (pvar, args) -> (pvar, List.map ~f:snd args))
   in
   Map.Poly.of_alist_exn
@@ -76,7 +76,7 @@ let qelim ~config phi =
   let res =
     (*Normalizer.normalize @@*)
     Evaluator.simplify
-    @@ Z3Smt.Z3interface.qelim ~id:None (FunEnv.mk_empty ()) phi
+    @@ Z3Smt.Z3interface.qelim ~id:None ~fenv:(LogicOld.get_fenv ()) phi
   in
   assert ((not config.check_validity) || Formula.is_quantifier_free res);
   res
@@ -138,9 +138,8 @@ let solve ~config penv solve_chc problem (trace1, trace2) =
   in
   let chcs =
     let params =
-      PCSP.Params.make
-      @@ Logic.of_old_sort_env_map Logic.ExtTerm.of_old_sort
-      @@ sort_env_map_of_pred_sort_env_map @@ Map.Poly.of_alist_exn
+      PCSP.Params.make @@ Logic.of_old_sort_env_map @@ Term.pred_to_sort_env_map
+      @@ Map.Poly.of_alist_exn
       @@ List.map (Map.Poly.to_alist pvmap) ~f:(fun ((_, j), pvar) ->
              (pvar, List.map ~f:snd @@ snd @@ List.nth_exn penv j))
     in
@@ -171,7 +170,7 @@ let solve ~config penv solve_chc problem (trace1, trace2) =
                           (tvar_map_of_sort_env_list params params0)
                           phi)) ),
            Map.Poly.empty )
-  | Result.Ok (PCSP.Problem.Unsat, _) -> None
+  | Result.Ok (PCSP.Problem.Unsat _, _) -> None
   | Result.Ok (PCSP.Problem.Unknown, _) ->
       failwith ("CHC solver returned unknown:\n" ^ PCSP.Problem.str_of chcs)
   | _ -> failwith "ProofSearch.solve"
@@ -207,7 +206,7 @@ let interpolate ~config solve_chc args phi1 phi2 =
   | Result.Ok (PCSP.Problem.Sat sol, _) ->
       let psub = Map.of_set_exn @@ snd @@ CandSolOld.of_subst sol in
       Option.return @@ Evaluator.simplify @@ Formula.subst_preds psub pvapp
-  | Result.Ok (PCSP.Problem.Unsat, _) -> None
+  | Result.Ok (PCSP.Problem.Unsat _, _) -> None
   | Result.Ok (PCSP.Problem.Unknown, _) ->
       if config.backup_for_interp then
         let env =
@@ -286,7 +285,7 @@ let get_mbp ~config ~print model0 eliminated0 phi0 =
       let rec preprocess atoms =
         Set.concat_map atoms ~f:(function
           | Atom.App (Predicate.Psym T_bool.Neq, [ t1; t2 ], _)
-            when T_real_int.is_sint_sreal t1 ->
+            when T_irb.is_sint_sreal t1 ->
               Set.Poly.singleton
               @@
               if

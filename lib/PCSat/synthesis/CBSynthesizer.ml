@@ -36,6 +36,7 @@ struct
     Debug.Make ((val Debug.Config.(if config.verbose then enable else disable)))
 
   let _ = Debug.set_id id
+  let init () = () (*ToDo*)
 
   let classifier =
     let open Or_error in
@@ -80,7 +81,7 @@ struct
     in
     let examples = VersionSpace.example_graph_of vs in
     let senv =
-      Logic.to_old_sort_env_map Logic.ExtTerm.to_old_sort
+      Logic.to_old_sort_env_map
       @@ PCSP.Problem.senv_of APCSP.problem
     in
     Debug.print

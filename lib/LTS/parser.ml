@@ -3,7 +3,7 @@ open Common.Util.LexingHelper
 open Common.Combinator
 
 let parse_from_lexbuf lexbuf =
-  try Ok (T2Parser.main T2Lexer.token lexbuf) with
+  try Ok (Problem.typeinf @@ T2Parser.main T2Lexer.token lexbuf) with
   | T2Parser.Error ->
       Result.fail
       @@ Error.of_string

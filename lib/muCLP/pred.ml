@@ -40,10 +40,9 @@ let to_formula (fix, pvar, args, body) =
 
 let sort_env_of_list preds =
   Set.Poly.of_list
+  @@ Logic.of_old_sort_env_list 
   @@ List.map preds ~f:(fun (_, pvar, params, _) ->
-         ( Ident.pvar_to_tvar pvar,
-           Logic.ExtTerm.of_old_sort @@ Sort.mk_fun @@ List.map ~f:snd params
-           @ [ T_bool.SBool ] ))
+         Term.pred_to_sort_bind (pvar, List.map ~f:snd params))
 
 let subst tsub (fix, pvar, args, body) =
   let tsub = Map.remove_keys tsub (List.map ~f:fst args) in

@@ -224,7 +224,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
                Some (Formula.eq t1 t2)
            | phi ->
                let qual =
-                 Z3Smt.Z3interface.qelim ~id Arg.fenv
+                 Z3Smt.Z3interface.qelim ~id ~fenv:Arg.fenv
                  @@ Formula.exists [ List.last_exn params ] phi
                in
                if Formula.is_bind qual || Set.is_empty (Formula.fvs_of qual)
@@ -295,8 +295,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
             (Ident.name_of_tvar @@ Arg.name)
             (Formula.str_of cnstr_of_cond_const));
     let tmpl =
-      Logic.(
-        Term.mk_lambda (of_old_sort_env_list ExtTerm.of_old_sort hspace.params))
+      Logic.(Term.mk_lambda (of_old_sort_env_list hspace.params))
       @@ Logic.ExtTerm.of_old_formula tmpl
     in
     ( (ExprCondConjDepthExt, tmpl),
@@ -736,8 +735,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
   let _ =
     Debug.print
     @@ lazy
-         ("************* initializing "
-         ^ Ident.name_of_tvar Arg.name
-         ^ " ***************");
+         (sprintf "************* initializing %s ***************"
+            (Ident.name_of_tvar Arg.name));
     Debug.print @@ lazy (str_of ())
 end

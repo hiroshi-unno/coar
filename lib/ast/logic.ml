@@ -8,12 +8,9 @@ module Sort = struct
   and e = ..
   and o = ..
 
-  type t +=
-    | SVar of Ident.svar
-    | SArrow of t * (o * t * e)
-    | SForAll of Ident.svar * t
-
-  type e += EVar of Ident.evar | Pure | Eff of o * t * e * o * t * e
+  type c = { op_sig : o; val_type : t; cont_eff : e }
+  type t += SVar of Ident.svar | SArrow of t * c | SForAll of Ident.svar * t
+  type e += EVar of Ident.evar | Pure | Closed | Eff of c * c
 
   type o +=
     | OpSig of
@@ -30,7 +27,15 @@ module Sort = struct
     | OpSig (map, _) -> ALMap.is_empty map
     | _ -> false
 
-  let mk_arrow s1 s2 = SArrow (s1, (empty_closed_opsig, s2, Pure))
+  let is_pure = function Pure -> true | _ -> false
+  let is_closed = function Closed -> true | _ -> false
+  let is_eff = function Eff _ -> true | _ -> false
+  let is_pure_triple c = is_pure c.cont_eff && is_empty_opsig c.op_sig
+  let mk_cont_eff c1 c2 = Eff (c1, c2)
+  let mk_fresh_svar () = SVar (Ident.mk_fresh_svar ())
+
+  let mk_arrow ?(opsig = empty_closed_opsig) ?(cont = Pure) s1 s2 =
+    SArrow (s1, { op_sig = opsig; val_type = s2; cont_eff = cont })
 
   let rec mk_fun = function
     | [ s ] -> s
@@ -42,22 +47,20 @@ module Sort = struct
 
   let rec arity_of = function
     | SVar _ -> assert false
-    | SArrow (_s1, (_, s2, _)) -> 1 + arity_of s2
+    | SArrow (_s, c) -> 1 + arity_of c.val_type
     | SForAll (_, s) -> arity_of s
     | _ -> 0 (* assert false*)
 
-  let rec ret_of = function
-    | SArrow (_s1, (_, s2, _)) -> ret_of s2
-    | sort -> sort
+  let rec ret_of = function SArrow (_s, c) -> ret_of c.val_type | sort -> sort
 
   let rec args_of = function
-    | SArrow (s1, (_, s2, _)) -> s1 :: args_of s2
+    | SArrow (s, c) -> s :: args_of c.val_type
     | _ -> []
 
   let rec args_ret_of = function
-    | SArrow (s1, (_, s2, _)) ->
-        let args, ret = args_ret_of s2 in
-        (s1 :: args, ret)
+    | SArrow (s, c) ->
+        let args, ret = args_ret_of c.val_type in
+        (s :: args, ret)
     | s -> ([], s)
 end
 
@@ -77,34 +80,18 @@ let sort_env_list_of_sorts ?(pre = "") sorts =
   in
   List.map sorts ~f:(fun sort -> (mk_param_ident (), sort))
 
-let str_of_sort_env_list str_of_sort senv =
-  String.concat_map_list ~sep:" " senv ~f:(fun (tvar, sort) ->
+let str_of_sort_env_list str_of_sort =
+  String.concat_map_list ~sep:" " ~f:(fun (tvar, sort) ->
       String.paren
       @@ sprintf "%s: %s" (Ident.name_of_tvar tvar) (str_of_sort sort))
 
-let str_of_sort_env_map str_of_sort senv =
-  String.concat_map_list ~sep:" " (Map.Poly.to_alist senv)
-    ~f:(fun (tvar, sort) ->
-      String.paren
-      @@ sprintf "%s: %s" (Ident.name_of_tvar tvar) (str_of_sort sort))
+let str_of_sort_env_map str_of_sort =
+  Map.Poly.to_alist >> str_of_sort_env_list str_of_sort
 
-let str_of_term_subst str_of_term subst =
-  String.concat_map_list ~sep:"\n" (Map.Poly.to_alist subst)
-    ~f:(fun (tvar, term) ->
-      sprintf "%s |-> %s" (Ident.name_of_tvar tvar) (str_of_term term))
-
-let of_old_sort_env_list of_old_sort =
-  List.map ~f:(fun (x, s) -> (x, of_old_sort s))
-
-let of_old_sort_env_map of_old_sort = Map.Poly.map ~f:of_old_sort
-
-let to_old_sort_env_list to_old_sort =
-  List.map ~f:(fun (x, s) -> (x, to_old_sort s))
-
-let to_old_sort_env_map to_old_sort = Map.Poly.map ~f:to_old_sort
-
-let to_old_dummies to_old_sort =
-  Map.Poly.map ~f:(to_old_sort >> LogicOld.Term.mk_dummy)
+let str_of_term_subst str_of_term =
+  Map.Poly.to_alist
+  >> String.concat_map_list ~sep:"\n" ~f:(fun (tvar, term) ->
+         sprintf "%s |-> %s" (Ident.name_of_tvar tvar) (str_of_term term))
 
 type sym = ..
 type termlit = ..
@@ -137,8 +124,9 @@ type model_elem = sort_bind * term option
 type model = model_elem list
 
 module type TermType = sig
-  val open_arity_of_sym : (sym -> Sort.t) -> sym -> int
   (** Sorts *)
+
+  val open_arity_of_sym : (sym -> Sort.t) -> sym -> int
 
   val open_sort_of :
     (sym -> Sort.t) ->
@@ -151,18 +139,18 @@ module type TermType = sig
   val arity_of_sym : sym -> int
   val sort_of_sym : sym -> Sort.t
 
-  val open_str_of_sort : (Sort.t -> string) -> Sort.t -> string
   (** Printing *)
 
+  val open_str_of_sort : (Sort.t -> string) -> Sort.t -> string
   val open_str_of : (Sort.t -> string) -> (sym -> string) -> term -> string
   val str_of_sym : sym -> string
   val str_of_termlit : termlit -> string
   val str_of_sort : Sort.t -> string
   val str_of : term -> string
 
-  val mk_var : Ident.tvar -> term
   (** Construction *)
 
+  val mk_var : Ident.tvar -> term
   val mk_con : sym -> term
   val mk_app : term -> term -> term
   val mk_apps : term -> term list -> term
@@ -175,9 +163,9 @@ module type TermType = sig
   val mk_tylam : Ident.svar -> term -> term
   val mk_lambda : sort_env_list -> term -> term
 
-  val let_var : term -> Ident.tvar * info
   (** Destruction *)
 
+  val let_var : term -> Ident.tvar * info
   val let_con : term -> sym * info
   val let_app : term -> term * term * info
   val let_apps : term -> term * term list
@@ -189,17 +177,21 @@ module type TermType = sig
   val let_tylam : term -> Ident.svar * term * info
   val let_lam : term -> sort_env_list * term
 
-  val rename : Ident.tvar_map -> term -> term
   (** Substitution *)
 
-  val subst : term_subst_map -> term -> term
-  val beta_reduction : term -> term list -> term
+  val rename : Ident.tvar_map -> term -> term
+
+  val subst :
+    ?beta_red:bool -> term_subst_map -> ?next:(term -> term) -> term -> term
+
+  val beta_reduction : ?next:(term -> term) -> term -> term
   val refresh : sort_env_map * term -> sort_env_map * term
   val unify : term -> term -> term_subst_map option
 
+  (** Evaluation *)
+
   val open_assert_sort_check :
     (Sort.t -> termlit -> unit) -> Sort.t -> termlit -> unit
-  (** Evaluation *)
 
   val open_eval :
     (sym -> termlit) ->
@@ -214,9 +206,9 @@ module type TermType = sig
   val eval_sym : sym -> termlit
   val eval : (sym, Sort.t) Map.Poly.t -> term -> termlit
 
-  val is_var : term -> bool
   (** Observation *)
 
+  val is_var : term -> bool
   val is_con : term -> bool
   val is_app : term -> bool
   val is_lam : term -> bool
@@ -241,12 +233,14 @@ module type TermType = sig
 
   val let_env_of : ?map:term_subst_map -> term -> term_subst_map
 
-  val reduce_sort_map : sort_env_map * term -> sort_env_map * term
   (** Transformation *)
+
+  val reduce_sort_map : sort_env_map * term -> sort_env_map * term
 end
 
 module Term : TermType = struct
   (** Sorts *)
+
   let open_arity_of_sym sort_of_sym sym = Sort.arity_of @@ sort_of_sym sym
 
   let rec open_sort_of sort_of_sym subst_sort var_env = function
@@ -259,9 +253,8 @@ module Term : TermType = struct
           ( open_sort_of sort_of_sym subst_sort var_env t1,
             open_sort_of sort_of_sym subst_sort var_env t2 )
         with
-        | Sort.SArrow (s11, (o, s12, Sort.Pure)), s2 when Sort.is_empty_opsig o
-          ->
-            if Stdlib.(s11 = s2) then s12 else (*ToDo*) s12
+        | Sort.SArrow (s11, c), s2 when Sort.is_pure_triple c ->
+            if Stdlib.(s11 = s2) then c.val_type else (*ToDo*) c.val_type
         | _ -> failwith "The sort of App is unmached")
     | Bin (bind, tvar, sort, term, _) -> (
         match bind with
@@ -291,6 +284,7 @@ module Term : TermType = struct
   let arity_of_sym = open_arity_of_sym sort_of_sym
 
   (** Printing *)
+
   let str_of_binder = function
     | Mu -> "Mu"
     | Nu -> "Nu"
@@ -323,16 +317,16 @@ module Term : TermType = struct
           (String.paren @@ open_str_of str_of_sort str_of_sym term)
 
   let rec open_str_of_sort str_of_sort = function
-    | Sort.SArrow (s1, (o, s2, Sort.Pure)) ->
+    | Sort.SArrow (s, c) when Sort.is_pure c.cont_eff ->
         sprintf "%s -> %s%s"
-          (open_str_of_sort str_of_sort s1)
-          (if Sort.is_empty_opsig o then "" else "_ |> ")
-          (open_str_of_sort str_of_sort s2)
-    | Sort.SArrow (s1, (o, s2, Sort.Eff _)) ->
+          (open_str_of_sort str_of_sort s)
+          (if Sort.is_empty_opsig c.op_sig then "" else "_ |> ")
+          (open_str_of_sort str_of_sort c.val_type)
+    | Sort.SArrow (s, c) when Sort.is_eff c.cont_eff ->
         sprintf "%s -> %s%s / _"
-          (open_str_of_sort str_of_sort s1)
-          (if Sort.is_empty_opsig o then "" else "_ |> ")
-          (open_str_of_sort str_of_sort s2)
+          (open_str_of_sort str_of_sort s)
+          (if Sort.is_empty_opsig c.op_sig then "" else "_ |> ")
+          (open_str_of_sort str_of_sort c.val_type)
     | Sort.SVar (Ident.Svar s) -> s
     | Sort.SForAll (Ident.Svar v, s) ->
         String.paren
@@ -345,6 +339,7 @@ module Term : TermType = struct
   let str_of = open_str_of str_of_sort str_of_sym
 
   (** Construction *)
+
   let info_id_count = ref 0
 
   (*let get_info_id () = incr info_id_count; !info_id_count*)
@@ -384,8 +379,8 @@ module Term : TermType = struct
     List.fold_right args ~init:term ~f:(uncurry @@ mk_bind Lambda)
 
   (** Destruction *)
-  let let_var = function Var (var, info) -> (var, info) | _ -> assert false
 
+  let let_var = function Var (var, info) -> (var, info) | _ -> assert false
   let let_con = function Con (sym, info) -> (sym, info) | _ -> assert false
 
   let let_app = function
@@ -430,8 +425,8 @@ module Term : TermType = struct
     aux []
 
   (** Observation *)
-  let is_var = function Var (_, _) -> true | _ -> false
 
+  let is_var = function Var (_, _) -> true | _ -> false
   let is_con = function Con (_, _) -> true | _ -> false
   let is_app = function App (_, _, _) -> true | _ -> false
   let is_lam = function Bin (Lambda, _, _, _, _) -> true | _ -> false
@@ -492,12 +487,14 @@ module Term : TermType = struct
         ast_size term + 1
 
   (** Construction *)
+
   let mk_binds binder bounds body =
     let ftv = fvs_of body in
     List.filter bounds ~f:(fst >> Set.mem ftv)
     |> List.fold_right ~init:body ~f:(uncurry (mk_bind binder))
 
   (** Substitution *)
+
   let rec rename map = function
     | Var (var, info) -> (
         match Map.Poly.find map var with
@@ -512,44 +509,40 @@ module Term : TermType = struct
     | TyApp (term, sort, info) -> TyApp (rename map term, sort, info)
     | TyLam (svar, term, info) -> TyLam (svar, rename map term, info)
 
-  let rec subst env = function
+  let rec subst ?(beta_red = true) env ?(next = Fn.id) = function
     | Var (var, info) -> (
+        next
+        @@
         match Map.Poly.find env var with None -> Var (var, info) | Some t -> t)
     | Bin (bind, var, sort, term, info) ->
         let var' = Ident.mk_fresh_tvar () in
-        let env' =
-          Map.Poly.add_exn (Map.Poly.remove env var) ~key:var
-            ~data:(mk_var var')
-        in
-        Bin (bind, var', sort, subst env' term, info)
+        subst ~beta_red env
+          (rename (Map.Poly.singleton var var') term)
+          ~next:(fun t -> next @@ Bin (bind, var', sort, t, info))
     | Let (var, sort, t1, t2, info) ->
-        let var' = Ident.mk_fresh_tvar () in
-        let env' =
-          Map.Poly.add_exn (Map.Poly.remove env var) ~key:var
-            ~data:(mk_var var')
-        in
-        Let (var', sort, subst env t1, subst env' t2, info)
+        subst ~beta_red env t1 ~next:(fun t1 ->
+            let var' = Ident.mk_fresh_tvar () in
+            subst ~beta_red env
+              (rename (Map.Poly.singleton var var') t2)
+              ~next:(fun t2 -> next @@ Let (var', sort, t1, t2, info)))
     | App (t1, t2, info) ->
-        beta_reduction_aux [] (App (subst env t1, subst env t2, info))
-    (*beta_reduction (subst env t1) [subst env t2]*)
-    | TyApp (term, sort, info) -> TyApp (subst env term, sort, info)
-    | TyLam (svar, term, info) -> TyLam (svar, subst env term, info)
-    | t -> t
+        subst ~beta_red env t1 ~next:(fun t1 ->
+            subst ~beta_red env t2 ~next:(fun t2 ->
+                (if beta_red then beta_reduction ~next else next)
+                @@ App (t1, t2, info)))
+    | TyApp (term, sort, info) ->
+        subst ~beta_red env term ~next:(fun t -> next @@ TyApp (t, sort, info))
+    | TyLam (svar, term, info) ->
+        subst ~beta_red env term ~next:(fun t -> next @@ TyLam (svar, t, info))
+    | t -> next t
 
-  and beta_reduction_aux args = function
-    | App (t1, t2, _) -> beta_reduction_aux (t2 :: args) t1
-    | t -> beta_reduction t args
-
-  and beta_reduction term args =
-    let rec aux env term args =
-      match (term, args) with
-      | Bin (Lambda, var, _sort, term', _), arg :: args' ->
-          aux (Map.Poly.add_exn env ~key:var ~data:arg) term' args'
-      | _, [] -> if Map.Poly.is_empty env then term else subst env term
-      | _, _ ->
-          mk_apps (if Map.Poly.is_empty env then term else subst env term) args
-    in
-    aux Map.Poly.empty term args
+  and beta_reduction ?(next = Fn.id) = function
+    | App (fn, arg, info) ->
+        beta_reduction fn ~next:(function
+          | Bin (Lambda, var, _sort, term', _) ->
+              subst (Map.Poly.singleton var arg) term' ~next
+          | t -> next @@ App (t, arg, info))
+    | t -> next t
 
   let refresh (senv, t) =
     let map = Map.Poly.map senv ~f:(fun _ -> Ident.mk_fresh_tvar ()) in
@@ -576,6 +569,7 @@ module Term : TermType = struct
     | _ -> None
 
   (** Evaluation *)
+
   let open_assert_sort_check assert_sort_check_of sort = function
     | FunLit _ -> (
         match sort with Sort.SArrow (_, _) -> () | _ -> assert false)
@@ -612,6 +606,7 @@ module Term : TermType = struct
   (* assume that term is let-normalized and alpha-renamed *)
 
   (** Observation *)
+
   let rec let_sort_env_of = function
     | Let (v, s, _, b, _) ->
         Map.Poly.add_exn ~key:v ~data:s @@ let_sort_env_of b
@@ -624,6 +619,7 @@ module Term : TermType = struct
     | _ -> Map.Poly.empty
 
   (** Transformation *)
+
   let reduce_sort_map (senv, t) =
     (Map.Poly.filter_keys senv ~f:(Set.mem @@ fvs_of t), t)
 end
@@ -647,9 +643,9 @@ module type BoolTermType = sig
   type Sort.t += SBool
   type termlit += BoolLit of bool
 
-  val mk_bool : bool -> term
   (** Construction *)
 
+  val mk_bool : bool -> term
   val mk_and : unit -> term
   val mk_or : unit -> term
   val mk_not : unit -> term
@@ -678,9 +674,9 @@ module type BoolTermType = sig
 
   val let_not : term -> term
 
-  val is_bool : term -> bool
   (** Observation *)
 
+  val is_bool : term -> bool
   val is_bool_sort : Sort.t -> bool
   val is_true : term -> bool
   val is_false : term -> bool
@@ -689,12 +685,13 @@ module type BoolTermType = sig
   val conjuncts_of : term -> term list
   val disjuncts_of : term -> term list
 
+  (** Transformation *)
+
   val cnf_of :
     sort_env_map ->
     sort_env_map ->
     term ->
     (term Set.Poly.t * term Set.Poly.t * term) Set.Poly.t
-  (** Transformation *)
 
   val nnf_of : term -> term
   val elim_imp : term -> term
@@ -720,8 +717,8 @@ module BoolTerm : BoolTermType = struct
   type termlit += BoolLit of bool
 
   (** Sorts *)
-  let bb = Sort.mk_arrow SBool SBool
 
+  let bb = Sort.mk_arrow SBool SBool
   let bbb = Sort.mk_arrow SBool bb
 
   let sym_sort_map =
@@ -761,6 +758,7 @@ module BoolTerm : BoolTermType = struct
   let arity_of_sym = Term.open_arity_of_sym sort_of_sym
 
   (** Printing *)
+
   let str_of_sym = function
     | True -> "True"
     | False -> "False"
@@ -788,8 +786,8 @@ module BoolTerm : BoolTermType = struct
   let str_of = open_str_of str_of_sort str_of_sym
 
   (** Construction *)
-  let mk_bool b = if b then mk_con True else mk_con False
 
+  let mk_bool b = if b then mk_con True else mk_con False
   let mk_and () = mk_con And
   let mk_or () = mk_con Or
   let mk_not () = mk_con Not
@@ -846,12 +844,13 @@ module BoolTerm : BoolTermType = struct
   let exists = mk_binds Exists
 
   (** Destruction *)
+
   let let_not t =
     match let_app t with Con (Not, _), t, _ -> t | _, _, _ -> assert false
 
   (** Evaluation *)
-  let is_termlit = function BoolLit _ -> true | _ -> false
 
+  let is_termlit = function BoolLit _ -> true | _ -> false
   let of_termlit = function BoolLit b -> mk_bool b | _ -> assert false
 
   let assert_sort_check_of_theory sort lit =
@@ -941,6 +940,7 @@ module BoolTerm : BoolTermType = struct
   let eval = open_eval eval_sym of_termlit
 
   (** Observation *)
+
   let is_bool term =
     if is_con term then
       let sym, _ = let_con term in
@@ -1006,6 +1006,7 @@ module BoolTerm : BoolTermType = struct
     | t -> [ t ]
 
   (** Transformation *)
+
   let insert_let var sort def info term =
     if Set.mem (fvs_of term) var then
       let var' = Ident.mk_fresh_tvar () in
@@ -1210,56 +1211,83 @@ end
 module type IntTermType = sig
   include TermType
 
-  type sym += Int of Z.t | Add | Sub | Mult | Div | Mod | Neg | Abs | Rem
+  type sym +=
+    | Int of Z.t
+    | Neg
+    | Abs
+    | Add
+    | Sub
+    | Mult
+    | Div
+    | Mod
+    | Rem
+    | Power
+
   type Sort.t += SInt
   type termlit += IntLit of Z.t
 
-  val zero : unit -> term
   (** Construction *)
 
+  val zero : unit -> term
   val one : unit -> term
   val mk_int : Z.t -> term
   val mk_from_int : int -> term
+  val mk_neg : unit -> term
+  val mk_abs : unit -> term
   val mk_add : unit -> term
   val mk_sub : unit -> term
   val mk_mult : unit -> term
   val mk_div : unit -> term
   val mk_mod : unit -> term
-  val mk_neg : unit -> term
-  val mk_abs : unit -> term
   val mk_rem : unit -> term
+  val mk_power : unit -> term
   val sum : term list -> term
   val prod : term list -> term
 
-  val is_int_sort : Sort.t -> bool
   (** Observation *)
 
-  val neg_sym : sym -> sym
+  val is_int_sort : Sort.t -> bool
+
   (** Evalaution *)
+
+  val neg_sym : sym -> sym
 end
 
 module IntTerm : IntTermType = struct
   include Term
 
-  type sym += Int of Z.t | Add | Sub | Mult | Div | Mod | Neg | Abs | Rem
+  type sym +=
+    | Int of Z.t
+    | Neg
+    | Abs
+    | Add
+    | Sub
+    | Mult
+    | Div
+    | Mod
+    | Rem
+    | Power
+
   type Sort.t += SInt
   type termlit += IntLit of Z.t
 
   (** Sorts *)
-  let ii = Sort.mk_arrow SInt SInt
 
+  let ii = Sort.mk_arrow SInt SInt
   let iii = Sort.mk_arrow SInt ii
 
   let sym_sort_map =
     Map.Poly.of_alist_exn
       [
+        (Neg, ii);
+        (Abs, ii);
         (Add, iii);
         (Sub, iii);
         (Mult, iii);
         (Div, iii);
         (Mod, iii);
-        (Neg, ii);
-        (Abs, ii);
+        (Rem, iii);
+        (Power, iii);
       ]
 
   let sort_of_sym = function
@@ -1269,16 +1297,18 @@ module IntTerm : IntTermType = struct
   let arity_of_sym = Term.open_arity_of_sym sort_of_sym
 
   (** Printing *)
+
   let str_of_sym = function
     | Int n -> sprintf "Int %s" @@ Z.to_string n
+    | Neg -> "Neg"
+    | Abs -> "Abs"
     | Add -> "Add"
     | Sub -> "Sub"
     | Mult -> "Mult"
     | Div -> "Div"
     | Mod -> "Mod"
-    | Neg -> "Neg"
-    | Abs -> "Abs"
     | Rem -> "Rem"
+    | Power -> "Power"
     | _ -> failwith "IntTerm.str_of_sym"
 
   let str_of_termlit = function IntLit n -> Z.to_string n | _ -> assert false
@@ -1291,19 +1321,20 @@ module IntTerm : IntTermType = struct
   let str_of = open_str_of str_of_sort str_of_sym
 
   (** Construction *)
-  let zero () = mk_con (Int Z.zero)
 
+  let zero () = mk_con (Int Z.zero)
   let one () = mk_con (Int Z.one)
   let mk_int n = mk_con (Int n)
   let mk_from_int n = mk_con (Int (Z.of_int n))
+  let mk_neg () = mk_con Neg
+  let mk_abs () = mk_con Abs
   let mk_add () = mk_con Add
   let mk_sub () = mk_con Sub
   let mk_mult () = mk_con Mult
   let mk_div () = mk_con Div
   let mk_mod () = mk_con Mod
-  let mk_neg () = mk_con Neg
-  let mk_abs () = mk_con Abs
   let mk_rem () = mk_con Rem
+  let mk_power () = mk_con Power
 
   let sum = function
     | [] -> zero ()
@@ -1316,9 +1347,11 @@ module IntTerm : IntTermType = struct
         List.fold ~init:t ts ~f:(fun t1 t2 -> mk_apps (mk_mult ()) [ t1; t2 ])
 
   (** Observation *)
+
   let is_int_sort = function SInt -> true | _ -> false
 
   (** Evaluation *)
+
   let neg_sym = function
     | Add -> Sub
     | Sub -> Add
@@ -1336,6 +1369,10 @@ module IntTerm : IntTermType = struct
 
   let eval_sym = function
     | Int n -> IntLit n
+    | Neg ->
+        FunLit (function IntLit x -> IntLit (Z.neg x) | _ -> assert false)
+    | Abs ->
+        FunLit (function IntLit x -> IntLit (Z.abs x) | _ -> assert false)
     | Add ->
         FunLit
           (function
@@ -1371,10 +1408,7 @@ module IntTerm : IntTermType = struct
               FunLit
                 (function IntLit y -> IntLit Z.(x mod y) | _ -> assert false)
           | _ -> assert false)
-    | Neg ->
-        FunLit (function IntLit x -> IntLit (Z.neg x) | _ -> assert false)
-    | Abs ->
-        FunLit (function IntLit x -> IntLit (Z.abs x) | _ -> assert false)
+    | Rem | Power -> failwith "not implemented"
     | _ -> assert false
 
   let eval = open_eval eval_sym of_termlit
@@ -1383,51 +1417,52 @@ end
 module type RealTermType = sig
   include TermType
 
-  type sym += Real of Q.t | RAdd | RSub | RMult | RDiv | RNeg | RAbs | RPower
+  type sym += Real of Q.t | RNeg | RAbs | RAdd | RSub | RMult | RDiv | RPower
   type Sort.t += SReal
   type termlit += RealLit of Q.t
 
-  val rzero : unit -> term
   (** Construction *)
 
+  val rzero : unit -> term
   val rone : unit -> term
   val mk_real : Q.t -> term
   val mk_from_float : float -> term
+  val mk_rneg : unit -> term
+  val mk_rabs : unit -> term
   val mk_radd : unit -> term
   val mk_rsub : unit -> term
   val mk_rmult : unit -> term
   val mk_rdiv : unit -> term
-  val mk_rneg : unit -> term
-  val mk_rabs : unit -> term
   val mk_rpower : unit -> term
   val sum : term list -> term
   val prod : term list -> term
 
-  val neg_sym : sym -> sym
   (** Evaluation *)
+
+  val neg_sym : sym -> sym
 end
 
 module RealTerm : RealTermType = struct
   include Term
 
-  type sym += Real of Q.t | RAdd | RSub | RMult | RDiv | RNeg | RAbs | RPower
+  type sym += Real of Q.t | RNeg | RAbs | RAdd | RSub | RMult | RDiv | RPower
   type Sort.t += SReal
   type termlit += RealLit of Q.t
 
   (** Sorts *)
-  let rr = Sort.mk_arrow SReal SReal
 
+  let rr = Sort.mk_arrow SReal SReal
   let rrr = Sort.mk_arrow SReal rr
 
   let sym_sort_map =
     Map.Poly.of_alist_exn
       [
+        (RNeg, rr);
+        (RAbs, rr);
         (RAdd, rrr);
         (RSub, rrr);
         (RMult, rrr);
         (RDiv, rrr);
-        (RNeg, rr);
-        (RAbs, rr);
         (RPower, rrr);
       ]
 
@@ -1438,14 +1473,15 @@ module RealTerm : RealTermType = struct
   let arity_of_sym = Term.open_arity_of_sym sort_of_sym
 
   (** Printing *)
+
   let str_of_sym = function
     | Real r -> sprintf "Real %s" @@ Q.to_string r
+    | RNeg -> "Neg"
+    | RAbs -> "Abs"
     | RAdd -> "Add"
     | RSub -> "Sub"
     | RMult -> "Mult"
     | RDiv -> "Div"
-    | RNeg -> "Neg"
-    | RAbs -> "Abs"
     | RPower -> "Power"
     | _ -> failwith "RealTerm.str_of_sym"
 
@@ -1459,17 +1495,17 @@ module RealTerm : RealTermType = struct
   let str_of = open_str_of str_of_sort str_of_sym
 
   (** Construction *)
-  let rzero () = mk_con (Real Q.zero)
 
+  let rzero () = mk_con (Real Q.zero)
   let rone () = mk_con (Real Q.one)
   let mk_real r = mk_con (Real r)
   let mk_from_float r = mk_con (Real (Q.of_float r))
+  let mk_rneg () = mk_con RNeg
+  let mk_rabs () = mk_con RAbs
   let mk_radd () = mk_con RAdd
   let mk_rsub () = mk_con RSub
   let mk_rmult () = mk_con RMult
   let mk_rdiv () = mk_con RDiv
-  let mk_rneg () = mk_con RNeg
-  let mk_rabs () = mk_con RAbs
   let mk_rpower () = mk_con RPower
 
   let sum = function
@@ -1483,8 +1519,8 @@ module RealTerm : RealTermType = struct
         List.fold ~init:t ts ~f:(fun t1 t2 -> mk_apps (mk_rmult ()) [ t1; t2 ])
 
   (** Evaluation *)
-  let is_termlit = function RealLit _ -> true | _ -> false
 
+  let is_termlit = function RealLit _ -> true | _ -> false
   let of_termlit = function RealLit r -> mk_real r | _ -> assert false
 
   let assert_sort_check_of_theory sort lit =
@@ -1494,6 +1530,10 @@ module RealTerm : RealTermType = struct
 
   let eval_sym = function
     | Real r -> RealLit r
+    | RNeg ->
+        FunLit (function RealLit x -> RealLit (Q.neg x) | _ -> assert false)
+    | RAbs ->
+        FunLit (function RealLit x -> RealLit (Q.abs x) | _ -> assert false)
     | RAdd ->
         FunLit
           (function
@@ -1522,11 +1562,7 @@ module RealTerm : RealTermType = struct
               FunLit
                 (function RealLit y -> RealLit Q.(x / y) | _ -> assert false)
           | _ -> assert false)
-    | RNeg ->
-        FunLit (function RealLit x -> RealLit (Q.neg x) | _ -> assert false)
-    | RAbs ->
-        FunLit (function RealLit x -> RealLit (Q.abs x) | _ -> assert false)
-    | RPower -> assert false
+    | RPower -> failwith "not implemented"
     | _ -> assert false
 
   let eval = open_eval eval_sym of_termlit
@@ -1539,47 +1575,212 @@ module RealTerm : RealTermType = struct
     | fsym -> failwith @@ sprintf "[RealTerm.neg_sym] %s" (str_of_sym fsym)
 end
 
-module type RealIntTermType = sig
-  include RealTermType
-  include IntTermType
+module type BVTermType = sig
+  include TermType
 
-  type sym += ToReal | ToInt
+  type size = (int (* bits *) * bool (* signed *)) option
 
-  val mk_to_real : unit -> term
-  (** Construction *)
+  type sym +=
+    | BVNum of size * Z.t
+    | BVNeg of size
+    | BVSHL of size
+    | BVLSHR of size
+    | BVASHR of size
+    | BVOr of size
+    | BVAnd of size
+    | BVAdd of size
+    | BVSub of size
+    | BVMult of size
+    | BVDiv of size
+    | BVMod of size
+    | BVRem of size
 
-  val mk_to_int : unit -> term
-end
-
-module RealIntTerm : RealIntTermType = struct
-  include RealTerm
-  include IntTerm
-
-  type sym += ToReal | ToInt
-
-  (** Sorts *)
-  let ri = Sort.mk_arrow SReal SInt
-
-  let ir = Sort.mk_arrow SInt SReal
-  let sym_sort_map = Map.Poly.of_alist_exn [ (ToReal, ir); (ToInt, ri) ]
-
-  let sort_of_sym sym =
-    try Map.Poly.find_exn sym_sort_map sym
-    with _ -> (
-      try RealTerm.sort_of_sym sym
-      with _ -> (
-        try IntTerm.sort_of_sym sym
-        with _ -> failwith "RealIntTerm.sort_of_sym"))
+  type Sort.t += SBV of size
 
   (** Printing *)
+
+  val str_of_size : size -> string
+
+  (** Construction *)
+
+  val mk_bvnum : size:size -> Z.t -> term
+  val mk_bvneg : size:size -> term
+  val mk_bvadd : size:size -> term
+  val mk_bvsub : size:size -> term
+  val mk_bvmult : size:size -> term
+  val mk_bvdiv : size:size -> term
+  val mk_bvmod : size:size -> term
+  val mk_bvrem : size:size -> term
+  val mk_bvshl : size:size -> term
+  val mk_bvlshr : size:size -> term
+  val mk_bvashr : size:size -> term
+  val mk_bvor : size:size -> term
+  val mk_bvand : size:size -> term
+
+  (** Observation *)
+
+  val bits_of : size -> int
+  val signed_of : size -> bool
+  val is_bv_sort : Sort.t -> bool
+end
+
+module BVTerm : BVTermType = struct
+  include Term
+
+  type size = (int (* bits *) * bool (* signed *)) option
+
+  type sym +=
+    | BVNum of size * Z.t
+    | BVNeg of size
+    | BVSHL of size
+    | BVLSHR of size
+    | BVASHR of size
+    | BVOr of size
+    | BVAnd of size
+    | BVAdd of size
+    | BVSub of size
+    | BVMult of size
+    | BVDiv of size
+    | BVMod of size
+    | BVRem of size
+
+  type Sort.t += SBV of size
+
+  (** Sorts *)
+
+  let sort_of_sym = function
+    | BVNum (size, _) -> SBV size
+    | BVNeg size -> Sort.mk_arrow (SBV size) (SBV size)
+    | BVSHL size
+    | BVLSHR size
+    | BVASHR size
+    | BVOr size
+    | BVAnd size
+    | BVAdd size
+    | BVSub size
+    | BVMult size
+    | BVDiv size
+    | BVMod size
+    | BVRem size ->
+        Sort.mk_arrow (SBV size) (Sort.mk_arrow (SBV size) (SBV size))
+    | _ -> failwith "BVTerm.sort_of_sym"
+
+  let arity_of_sym = Term.open_arity_of_sym sort_of_sym
+
+  (** Printing *)
+
+  let str_of_size = function
+    | None -> "N/A"
+    | Some (bits, signed) -> sprintf "%d, %s" bits (Bool.string_of signed)
+
   let str_of_sym = function
-    | ToReal -> "ToReal"
-    | ToInt -> "ToInt"
+    | BVNum (_size, n) -> sprintf "Int %s" @@ Z.to_string n
+    | BVNeg _size -> "BVNeg"
+    | BVSHL _size -> "BVSHL"
+    | BVLSHR _size -> "BVLSHR"
+    | BVASHR _size -> "BVASHR"
+    | BVOr _size -> "BVOr"
+    | BVAnd _size -> "BVAnd"
+    | BVAdd _size -> "BVAdd"
+    | BVSub _size -> "BVSub"
+    | BVMult _size -> "BVMult"
+    | BVDiv _size -> "BVDiv"
+    | BVMod _size -> "BVMod"
+    | BVRem _size -> "BVRem"
+    | _ -> failwith "BVTerm.str_of_sym"
+
+  let str_of_sort_theory = function
+    | SBV _ -> "bv"
+    | _ -> failwith "unknown sort in BVTerm.str_of_sort_theory"
+
+  let str_of_sort = open_str_of_sort str_of_sort_theory
+  let str_of = open_str_of str_of_sort str_of_sym
+
+  (** Construction *)
+
+  let mk_bvnum ~size n = mk_con (BVNum (size, n))
+  let mk_bvneg ~size = mk_con (BVNeg size)
+  let mk_bvadd ~size = mk_con (BVAdd size)
+  let mk_bvsub ~size = mk_con (BVSub size)
+  let mk_bvmult ~size = mk_con (BVMult size)
+  let mk_bvdiv ~size = mk_con (BVDiv size)
+  let mk_bvmod ~size = mk_con (BVMod size)
+  let mk_bvrem ~size = mk_con (BVRem size)
+  let mk_bvshl ~size = mk_con (BVSHL size)
+  let mk_bvlshr ~size = mk_con (BVLSHR size)
+  let mk_bvashr ~size = mk_con (BVASHR size)
+  let mk_bvor ~size = mk_con (BVOr size)
+  let mk_bvand ~size = mk_con (BVAnd size)
+
+  (** Observation *)
+
+  let bits_of = function None -> 32 (*ToDo*) | Some (bits, _) -> bits
+  let signed_of = function None -> true (*ToDo*) | Some (_, signed) -> signed
+  let is_bv_sort = function SBV _ -> true | _ -> false
+end
+
+module type IRBTermType = sig
+  include IntTermType
+  include RealTermType
+  include BVTermType
+
+  type sym += IntToReal | RealToInt | IntToBV of size | BVToInt of size
+
+  (** Construction *)
+
+  val mk_int_to_real : unit -> term
+  val mk_real_to_int : unit -> term
+  val mk_int_to_bv : size:size -> term
+  val mk_bv_to_int : size:size -> term
+end
+
+module IRBTerm : IRBTermType = struct
+  include IntTerm
+  include RealTerm
+  include BVTerm
+
+  type sym += IntToReal | RealToInt | IntToBV of size | BVToInt of size
+
+  (** Sorts *)
+
+  let ri = Sort.mk_arrow SReal SInt
+  let ir = Sort.mk_arrow SInt SReal
+
+  let sym_sort_map =
+    Map.force_merge_list
+      [
+        Map.Poly.of_alist_exn [ (IntToReal, ir); (RealToInt, ri) ];
+        IntTerm.sym_sort_map;
+        RealTerm.sym_sort_map;
+        BVTerm.sym_sort_map;
+      ]
+
+  let sort_of_sym = function
+    | IntToBV size -> Sort.mk_arrow SInt (SBV size)
+    | BVToInt size -> Sort.mk_arrow (SBV size) SInt
     | sym -> (
-        try RealTerm.str_of_sym sym
+        try Map.Poly.find_exn sym_sort_map sym
         with _ -> (
-          try IntTerm.str_of_sym sym
-          with _ -> failwith "RealIntTerm.str_of_sym"))
+          try IntTerm.sort_of_sym sym
+          with _ -> (
+            try RealTerm.sort_of_sym sym
+            with _ -> (
+              try BVTerm.sort_of_sym sym
+              with _ -> failwith "IRBTerm.sort_of_sym"))))
+
+  (** Printing *)
+
+  let str_of_sym = function
+    | IntToReal -> "IntToReal"
+    | RealToInt -> "RealToInt"
+    | IntToBV _ -> "IntToBV"
+    | BVToInt _ -> "BVToInt"
+    | sym -> (
+        try IntTerm.str_of_sym sym
+        with _ -> (
+          try RealTerm.str_of_sym sym
+          with _ -> (
+            try BVTerm.str_of_sym sym with _ -> failwith "IRBTerm.str_of_sym")))
 
   let str_of_termlit = function
     | IntLit n -> Z.to_string n
@@ -1589,39 +1790,43 @@ module RealIntTerm : RealIntTermType = struct
   let str_of_sort_theory = function
     | SInt -> "int"
     | SReal -> "real"
-    | _ -> failwith "unknown sort RealIntTerm.str_of_sort_theory"
+    | SBV size -> sprintf "bv(%s)" (BVTerm.str_of_size size)
+    | _ -> failwith "unknown sort IRBTerm.str_of_sort_theory"
 
   let str_of_sort = open_str_of_sort str_of_sort_theory
   let str_of = open_str_of str_of_sort str_of_sym
 
   (** Construction *)
-  let mk_to_real () = mk_con ToReal
 
-  let mk_to_int () = mk_con ToInt
+  let mk_int_to_real () = mk_con IntToReal
+  let mk_real_to_int () = mk_con RealToInt
+  let mk_int_to_bv ~size = mk_con (IntToBV size)
+  let mk_bv_to_int ~size = mk_con (BVToInt size)
 
   (** Evalaution *)
-  let is_termlit lit = RealTerm.is_termlit lit || IntTerm.is_termlit lit
+
+  let is_termlit lit = IntTerm.is_termlit lit || RealTerm.is_termlit lit
 
   let of_termlit lit =
-    if RealTerm.is_termlit lit then RealTerm.of_termlit lit
-    else if IntTerm.is_termlit lit then IntTerm.of_termlit lit
+    if IntTerm.is_termlit lit then IntTerm.of_termlit lit
+    else if RealTerm.is_termlit lit then RealTerm.of_termlit lit
     else assert false
 
   let assert_sort_check_of_theory sort lit =
     match (sort, lit) with
-    | SReal, RealLit _ -> ()
     | SInt, IntLit _ -> ()
+    | SReal, RealLit _ -> ()
     | _ -> assert false
 
   let assert_sort_check = open_assert_sort_check assert_sort_check_of_theory
 
   let eval_sym = function
-    | ToReal ->
-        FunLit
-          (function IntLit x -> RealLit (Q.of_bigint x) | _ -> assert false)
-    | ToInt ->
+    | RealToInt ->
         FunLit
           (function RealLit x -> IntLit (Q.to_bigint x) | _ -> assert false)
+    | IntToReal ->
+        FunLit
+          (function IntLit x -> RealLit (Q.of_bigint x) | _ -> assert false)
     | sym ->
         if Map.Poly.mem RealTerm.sym_sort_map sym then RealTerm.eval_sym sym
         else if Map.Poly.mem IntTerm.sym_sort_map sym then IntTerm.eval_sym sym
@@ -1636,24 +1841,25 @@ module type TupleTermType = sig
   type Sort.t += STuple of Sort.t list
   type sym += TupleCons of Sort.t list | TupleSel of Sort.t list * int
 
-  val mk_stuple : Sort.t list -> Sort.t
   (** Sorts *)
 
+  val mk_stuple : Sort.t list -> Sort.t
   val let_stuple : Sort.t -> Sort.t list
 
-  val mk_tuple_cons : Sort.t list -> term
   (** Construction *)
 
+  val mk_tuple_cons : Sort.t list -> term
   val mk_tuple_sel : Sort.t list -> int -> term
   val tuple_of : Sort.t list -> term list -> term
   val tuple_sel_of : Sort.t list -> term -> int -> term
 
-  val let_tuple : term -> term list
   (** Destruction *)
 
-  val is_tuple_cons : term -> bool
+  val let_tuple : term -> term list
+
   (** Observation *)
 
+  val is_tuple_cons : term -> bool
   val is_tuple_sel : term -> bool
 end
 
@@ -1664,6 +1870,7 @@ module TupleTerm : TupleTermType = struct
   type sym += TupleCons of Sort.t list | TupleSel of Sort.t list * int
 
   (** Sorts *)
+
   let sort_of_sym = function
     | TupleCons sorts -> Sort.mk_fun (sorts @ [ STuple sorts ])
     | TupleSel (sorts, i) -> Sort.mk_fun (sorts @ [ List.nth_exn sorts i ])
@@ -1673,22 +1880,25 @@ module TupleTerm : TupleTermType = struct
   let let_stuple = function STuple sorts -> sorts | _ -> assert false
 
   (** Printing *)
+
   let str_of_sym = function
     | TupleCons _ -> sprintf "tuple"
     | TupleSel (_, i) -> sprintf "tuple.%d" i
     | _ -> failwith "TupleTerm.str_of_sym"
 
   (** Construction *)
-  let mk_tuple_cons sorts = Term.mk_con (TupleCons sorts)
 
+  let mk_tuple_cons sorts = Term.mk_con (TupleCons sorts)
   let mk_tuple_sel sorts i = Term.mk_con (TupleSel (sorts, i))
   let tuple_of sorts ts = Term.mk_apps (mk_tuple_cons sorts) ts
   let tuple_sel_of sorts term i = Term.mk_apps (mk_tuple_sel sorts i) [ term ]
 
   (** Destruction *)
+
   let let_tuple t = Term.let_apps t |> snd
 
   (** Observation *)
+
   let is_tuple_cons = function
     | App (Con (TupleCons _, _), _, _) -> true
     | _ -> false
@@ -1704,9 +1914,9 @@ module type RefTermType = sig
   type Sort.t += SRef of Sort.t
   type sym += Ref of Sort.t | Deref of Sort.t | Update of Sort.t
 
-  val mk_ref : Sort.t -> term
   (** Construction *)
 
+  val mk_ref : Sort.t -> term
   val mk_deref : Sort.t -> term
   val mk_update : Sort.t -> term
 end
@@ -1718,8 +1928,8 @@ module RefTerm : RefTermType = struct
   type sym += Ref of Sort.t | Deref of Sort.t | Update of Sort.t
 
   (** Construction *)
-  let mk_ref sort = Term.mk_con (Ref sort)
 
+  let mk_ref sort = Term.mk_con (Ref sort)
   let mk_deref sort = Term.mk_con (Deref sort)
   let mk_update sort = Term.mk_con (Update sort)
 end
@@ -1732,18 +1942,18 @@ module type DatatypeType = sig
   type dt = { name : string; params : Sort.t list; conses : cons list }
   type t = { name : string; dts : dt list; flag : flag }
 
-  val mk_dt : string -> Sort.t list -> dt
   (** Construction *)
 
+  val mk_dt : string -> Sort.t list -> dt
   val make : string -> dt list -> flag -> t
   val mk_uninterpreted_datatype : ?numeral:int -> string -> t
   (* val mk_cons : ?sels:sel list -> string -> cons
      val mk_sel : string -> Sort.t -> sel
      val mk_insel : string -> string -> sel *)
 
-  val name_of_sel : sel -> string
   (** Observation *)
 
+  val name_of_sel : sel -> string
   val sels_of_cons : cons -> sel list
   val name_of_cons : cons -> string
   val name_of_dt : dt -> string
@@ -1770,16 +1980,16 @@ module type DatatypeType = sig
   val is_cons : func -> bool
   val is_sel : func -> bool
 
-  val str_of_sel : sel -> string
   (** Printing *)
 
+  val str_of_sel : sel -> string
   val str_of_cons : cons -> string
   val str_of_flag : flag -> string
   val str_of : t -> string
 
-  val update_name : t -> string -> t
   (** Transformation *)
 
+  val update_name : t -> string -> t
   val update_dts : dt list -> dt -> dt list
   val update_dt : t -> dt -> t
   val update_params : t -> Sort.t list -> t
@@ -1790,9 +2000,9 @@ module type DatatypeType = sig
   val subst_sorts :
     (Ident.svar * Sort.t -> Sort.t -> Sort.t) -> Ident.svar * Sort.t -> dt -> dt
 
-  val sort_of_sel : t -> sel -> Sort.t
   (** Observation *)
 
+  val sort_of_sel : t -> sel -> Sort.t
   val sorts_of_cons_args : t -> cons -> Sort.t list
   val is_finite : t -> bool
   val is_singleton : Sort.t -> bool
@@ -1801,9 +2011,9 @@ module type DatatypeType = sig
   val fsym_of_func : t -> func -> sym
   val look_up_base_cons : t -> cons option
 
-  val of_old_flag : LogicOld.Datatype.flag -> flag
   (** Conversion *)
 
+  val of_old_flag : LogicOld.Datatype.flag -> flag
   val of_old_sel : (LogicOld.Sort.t -> Sort.t) -> LogicOld.Datatype.sel -> sel
 
   val of_old_cons :
@@ -1837,22 +2047,24 @@ module type DatatypeTermType = sig
 
   type Sort.t += SDT of dt | SUS of string * Sort.t list
 
-  val is_dt : Sort.t -> bool
   (** Sorts *)
 
+  val is_dt : Sort.t -> bool
   val is_finite_dt : ?his:Sort.t list -> Sort.t -> bool
   val is_codt : Sort.t -> bool
   val is_undef : Sort.t -> bool
 
-  val mk_sel : dt -> string -> term
   (** Construction *)
 
+  val mk_sel : dt -> string -> term
   val mk_cons : dt -> string -> term
-  val mk_dummy : (Sort.t -> term) -> Sort.t -> term
 
-  val is_cons : term -> bool
+  val mk_dummy :
+    (Sort.t -> term) -> (Sort.t -> LogicOld.Sort.t) -> Sort.t -> term
+
   (** Observation *)
 
+  val is_cons : term -> bool
   val is_sel : term -> bool
   val sels_of_cons : sym -> dtsel list
 end
@@ -1866,20 +2078,18 @@ module rec Datatype : DatatypeType = struct
   type t = { name : string; dts : dt list; flag : flag }
 
   (** Construction *)
-  let mk_dt name params = { name; params; conses = [] }
 
+  let mk_dt name params = { name; params; conses = [] }
   let make name dts flag = { name; dts; flag }
 
   let mk_uninterpreted_datatype ?(numeral = 0) name =
-    let rec aux numeral =
-      if numeral = 0 then []
-      else Sort.SVar (Ident.mk_fresh_svar ()) :: aux (numeral - 1)
-    in
-    make name [ mk_dt name @@ aux numeral ] Undef
+    make name
+      [ mk_dt name @@ List.init numeral ~f:(fun _ -> Sort.mk_fresh_svar ()) ]
+      Undef
 
   (** Observation *)
-  let name_of_sel = function Sel (name, _) | InSel (name, _, _) -> name
 
+  let name_of_sel = function Sel (name, _) | InSel (name, _, _) -> name
   let sels_of_cons (cons : cons) = cons.sels
   let name_of_cons (cons : cons) = cons.name
   let name_of_dt (dt : dt) = dt.name
@@ -1937,29 +2147,31 @@ module rec Datatype : DatatypeType = struct
   let is_sel = function FSel _ -> true | _ -> false
 
   (** Printing *)
+
   let str_of_sel = function
-    | Sel (name, ret_sort) -> sprintf "%s:%s" name (Term.str_of_sort ret_sort)
+    | Sel (name, ret_sort) -> sprintf "%s : %s" name (Term.str_of_sort ret_sort)
     | InSel (name, ret_name, params) ->
-        String.concat ~sep:"_"
-        @@ (sprintf "%s:%s" name ret_name :: List.map params ~f:Term.str_of_sort)
+        sprintf "%s : %s" name
+        @@ full_name_of_dt Term.str_of_sort
+        @@ mk_dt ret_name params
 
   let str_of_cons cons =
-    let name = name_of_cons cons in
-    let sels = sels_of_cons cons in
-    String.concat ~sep:" " @@ (name :: List.map sels ~f:str_of_sel)
+    sprintf "%s (%s)" (name_of_cons cons)
+    @@ String.concat ~sep:", " @@ List.map ~f:str_of_sel @@ sels_of_cons cons
 
   let str_of_flag = function
-    | FCodt -> "codt"
-    | FDt -> "dt"
-    | Undef -> "undef"
+    | FDt -> "data"
+    | FCodt -> "codata"
+    | Undef -> "extern"
     | Alias _ -> "alias"
 
   let str_of t =
     match flag_of t with
-    | Undef -> "u'" ^ name_of t
-    | Alias s -> sprintf "%s(%s)" (name_of t) (Term.str_of_sort s)
+    | Undef -> sprintf "data %s" (name_of t)
+    | Alias s -> sprintf "data %s = %s" (name_of t) (Term.str_of_sort s)
     | flag ->
-        sprintf "%s where [%s]" (full_name_of Term.str_of_sort t)
+        sprintf "%s %s where [%s]" (str_of_flag flag)
+          (full_name_of Term.str_of_sort t)
         @@ String.concat_map_list ~sep:" and " (dts_of t) ~f:(fun dt ->
                sprintf "%s %s = %s" (str_of_flag flag)
                  (full_name_of_dt Term.str_of_sort dt)
@@ -1968,6 +2180,7 @@ module rec Datatype : DatatypeType = struct
                @@ conses_of_dt dt)
 
   (** Transformation *)
+
   let update_name t name = { t with name }
 
   let rec update_dts dts dt =
@@ -2046,6 +2259,7 @@ module rec Datatype : DatatypeType = struct
     }
 
   (** Observation *)
+
   let sort_of_sel t = function
     | Sel (_, sort) -> sort
     | InSel (_, ret_name, params) -> (
@@ -2123,12 +2337,13 @@ module rec Datatype : DatatypeType = struct
   (*let fresh_of t =
     let dts' =
       List.map (dts_of t) ~f:(fun dt ->
-          let params' = List.map (params_of_dt dt) ~f:(function Sort.SVar _ -> Sort.SVar (Ident.mk_fresh_svar ()) | arg -> arg) in
+          let params' = List.map (params_of_dt dt) ~f:(function Sort.SVar _ -> Sort.mk_fresh_svar () | arg -> arg) in
           snd @@ update_dt_params t dt params' [])
     in
     { t with dts = dts' }*)
 
   (** Conversion *)
+
   let rec of_old_flag = function
     | LogicOld.Datatype.FDt -> FDt
     | LogicOld.Datatype.FCodt -> FCodt
@@ -2211,18 +2426,21 @@ and DatatypeTerm :
   type Sort.t += SDT of Datatype.t | SUS of string * Sort.t list
 
   (** Sorts *)
+
   let sort_of_sym = function
     | DTSel (_, dt, sort) -> Sort.mk_arrow (SDT dt) sort
     | DTCons (_, sorts, dt) -> Sort.mk_fun @@ sorts @ [ SDT dt ]
     | _ -> failwith "DatatypeTerm.sort_of_sym"
 
   (** Printing *)
+
   let str_of_sym = function
     | DTSel (name, _, _) -> name
     | DTCons (name, _, _) -> name
     | _ -> failwith "DatatypeTerm.str_of_sym"
 
   (** Construction *)
+
   let mk_cons dt name =
     match Datatype.look_up_cons dt name with
     | Some cons -> Term.mk_con @@ Datatype.fsym_of_cons dt cons
@@ -2233,7 +2451,7 @@ and DatatypeTerm :
     | Some sel -> Term.mk_con @@ Datatype.fsym_of_sel dt sel
     | _ -> failwith @@ "unknown sel :" ^ name
 
-  let mk_dummy f = function
+  let mk_dummy f to_old_sort = function
     | SDT dt when Datatype.is_dt dt -> (
         match Datatype.look_up_base_cons dt with
         | Some cons ->
@@ -2241,12 +2459,15 @@ and DatatypeTerm :
             @@ List.map ~f
             @@ Datatype.sorts_of_cons_args dt cons
         | None -> assert false)
-    | SUS (name, _) -> mk_var @@ Ident.Tvar ("dummy_" ^ name)
+    | SUS (name, _) as sort ->
+        let name = "dummy_" ^ name in
+        LogicOld.add_dummy_term (Ident.Tvar name) @@ to_old_sort sort;
+        mk_var @@ Ident.Tvar name
     | sort -> f sort
 
   (** Observation *)
-  let is_dt = function SDT dt -> Datatype.is_dt dt | _ -> false
 
+  let is_dt = function SDT dt -> Datatype.is_dt dt | _ -> false
   let is_codt = function SDT dt -> Datatype.is_dt dt | _ -> false
   let is_undef = function SUS (_, _) -> true | _ -> false
 
@@ -2281,15 +2502,15 @@ module type ArrayTermType = sig
 
   type Sort.t += SArray of Sort.t * Sort.t
 
-  val index_sort_of : Sort.t -> Sort.t
   (** Sorts *)
 
+  val index_sort_of : Sort.t -> Sort.t
   val elem_sort_of : Sort.t -> Sort.t
   val is_array_sort : Sort.t -> bool
 
-  val mk_array_sort : Sort.t -> Sort.t -> Sort.t
   (** Construction *)
 
+  val mk_array_sort : Sort.t -> Sort.t -> Sort.t
   val mk_select : Sort.t -> Sort.t -> term
   val mk_store : Sort.t -> Sort.t -> term
   val mk_const_array : Sort.t -> Sort.t -> term
@@ -2306,6 +2527,7 @@ module ArrayTerm : ArrayTermType = struct
   type Sort.t += SArray of Sort.t * Sort.t
 
   (** Sorts *)
+
   let sort_of_sym = function
     | AStore (s1, s2) ->
         Sort.mk_fun [ SArray (s1, s2); s1; s2; SArray (s1, s2) ]
@@ -2324,6 +2546,7 @@ module ArrayTerm : ArrayTermType = struct
   let is_array_sort = function SArray _ -> true | _ -> false
 
   (** Printing *)
+
   let str_of_sym = function
     | AStore _ -> "store"
     | ASelect _ -> "select"
@@ -2331,8 +2554,8 @@ module ArrayTerm : ArrayTermType = struct
     | _ -> failwith "ArrayTerm.str_of_sym"
 
   (** Construction *)
-  let mk_array_sort s1 s2 = SArray (s1, s2)
 
+  let mk_array_sort s1 s2 = SArray (s1, s2)
   let mk_select s1 s2 = Term.mk_con (ASelect (s1, s2))
   let mk_store s1 s2 = Term.mk_con (AStore (s1, s2))
   let mk_const_array s1 s2 = Term.mk_con (AConst (s1, s2))
@@ -2344,11 +2567,13 @@ module type StringTermType = sig
   type Sort.t += SString
   type sym += StrConst of string
 
-  val make : string -> term
   (** Construction *)
 
-  val let_string_const : term -> string * info
+  val make : string -> term
+
   (** Destruction *)
+
+  val let_string_const : term -> string * info
 end
 
 module StringTerm : StringTermType = struct
@@ -2358,19 +2583,23 @@ module StringTerm : StringTermType = struct
   type sym += StrConst of string
 
   (** Sorts *)
+
   let sort_of_sym = function
     | StrConst _ -> SString
     | _ -> failwith "StringTerm.sort_of_sym"
 
   (** Printing *)
+
   let str_of_sym = function
     | StrConst str -> sprintf "\"%s\"" str
     | _ -> failwith "StringTerm.str_of_sym"
 
   (** Construction *)
+
   let make str = Term.mk_sym_app (StrConst str) []
 
   (** Destruction *)
+
   let let_string_const = function
     | Con (StrConst str, info) -> (str, info)
     | _ -> assert false
@@ -2402,6 +2631,7 @@ module SequenceTerm : SequenceTermType = struct
     | SeqRightQuotient of bool (* the first argument must be finite *)
 
   (** Sorts *)
+
   let sort_of_sym = function
     | SeqEpsilon -> SSequence true
     | SeqSymbol _ev -> SSequence true
@@ -2411,6 +2641,7 @@ module SequenceTerm : SequenceTermType = struct
     | _ -> failwith "SequenceTerm.sort_of_sym"
 
   (** Printing *)
+
   let str_of_sym = function
     | SeqEpsilon -> "eps"
     | SeqSymbol ev -> ev
@@ -2438,8 +2669,9 @@ module type RegexTermType = sig
     | RegUnion
     | RegInter
 
-  val is_regex_sort : Sort.t -> bool
   (** Observation *)
+
+  val is_regex_sort : Sort.t -> bool
 end
 
 module RegexTerm : RegexTermType = struct
@@ -2461,6 +2693,7 @@ module RegexTerm : RegexTermType = struct
     | RegInter
 
   (** Printing *)
+
   let str_of_sym = function
     | RegEmpty -> "empty"
     | RegFull -> "full"
@@ -2476,12 +2709,13 @@ module RegexTerm : RegexTermType = struct
     | _ -> failwith "RegexTermType.str_of_sym"
 
   (** Observation *)
+
   let is_regex_sort = function SRegEx -> true | _ -> false
 end
 
 module type ExtTermType = sig
   include BoolTermType
-  include RealIntTermType
+  include IRBTermType
   include TupleTermType
   include RefTermType
   include DatatypeTermType
@@ -2513,7 +2747,8 @@ module type ExtTermType = sig
     | StrInRegExp
     | NotStrInRegExp
 
-  val mk_dummy : (Sort.t -> LogicOld.Sort.t) -> Sort.t -> term
+  val mk_dummy : Sort.t -> term
+
   (** Construction *)
 
   val mk_leq : unit -> term
@@ -2535,19 +2770,19 @@ module type ExtTermType = sig
   val gt_of : term -> term -> term
   val random_term_of : int -> Sort.t -> term
 
-  val remove_dontcare_elem :
-    (Sort.t -> LogicOld.Sort.t) -> model_elem -> term_bind
   (** Models *)
 
-  val remove_dontcare : (Sort.t -> LogicOld.Sort.t) -> model -> term_bind list
-
+  val remove_dontcare_elem : model_elem -> term_bind
+  val remove_dontcare : model -> term_bind list
   val svs_of_sym : sym -> Ident.svar Set.Poly.t
+
   (** Observation*)
 
   val svs_of_sort : Sort.t -> Ident.svar Set.Poly.t
   val sort_of : sort_env_map -> term -> Sort.t
-
   val of_old_sort : LogicOld.Sort.t -> Sort.t
+  val of_old_sort_list : LogicOld.Sort.t list -> Sort.t list
+
   (** Conversion *)
 
   val of_old_sort_bind : Ident.tvar * LogicOld.Sort.t -> sort_bind
@@ -2557,6 +2792,7 @@ module type ExtTermType = sig
   val of_old_term : LogicOld.Term.t -> term
   val of_old_atom : LogicOld.Atom.t -> term
   val of_old_formula : LogicOld.Formula.t -> term
+  val of_old : LogicOld.sort_env_map * LogicOld.Formula.t -> sort_env_map * term
 
   val to_old_term :
     sort_env_map -> sort_env_map -> term -> term list -> LogicOld.Term.t
@@ -2567,15 +2803,18 @@ module type ExtTermType = sig
   val to_old_formula :
     sort_env_map -> sort_env_map -> term -> term list -> LogicOld.Formula.t
 
+  val to_old_fml : sort_env_map -> sort_env_map * term -> LogicOld.Formula.t
+
   val to_old_subst :
     sort_env_map -> sort_env_map -> term_subst_map -> LogicOld.TermSubst.t
 
   val str_of_formula : sort_env_map -> sort_env_map -> term -> string
+
   (** Printing *)
 
   val str_of_term : sort_env_map -> sort_env_map -> term -> string
-
   val simplify_formula : sort_env_map -> sort_env_map -> term -> term
+
   (** Transformation *)
 
   val simplify_term : sort_env_map -> sort_env_map -> term -> term
@@ -2588,7 +2827,7 @@ module ExtTerm :
      and type dtsel := Datatype.sel
      and type flag := Datatype.flag = struct
   include BoolTerm
-  include RealIntTerm
+  include IRBTerm
   include TupleTerm
   include RefTerm
   include DatatypeTerm
@@ -2608,6 +2847,10 @@ module ExtTerm :
     | RGeq
     | RLt
     | RGt
+    | BVLeq of size
+    | BVGeq of size
+    | BVLt of size
+    | BVGt of size
     | IsInt
     | IsTuple of Sort.t list
     | NotIsTuple of Sort.t list
@@ -2621,14 +2864,13 @@ module ExtTerm :
     | NotStrInRegExp
 
   (** Sorts *)
-  let iib = Sort.mk_arrow SInt @@ Sort.mk_arrow SInt SBool
 
+  let iib = Sort.mk_arrow SInt @@ Sort.mk_arrow SInt SBool
   let rrb = Sort.mk_arrow SReal @@ Sort.mk_arrow SReal SBool
   let rb = Sort.mk_arrow SReal SBool
 
   let sym_sort_map =
-    Map.force_merge
-      (Map.force_merge RealIntTerm.sym_sort_map BoolTerm.sym_sort_map)
+    Map.force_merge (Map.force_merge IRBTerm.sym_sort_map BoolTerm.sym_sort_map)
     @@ Map.Poly.of_alist_exn
     @@ [
          (Leq, iib);
@@ -2645,6 +2887,8 @@ module ExtTerm :
        ]
 
   let sort_of_sym = function
+    | BVLeq size | BVGeq size | BVLt size | BVGt size ->
+        Sort.mk_arrow (SBV size) @@ Sort.mk_arrow (SBV size) SBool
     | IsTuple sorts | NotIsTuple sorts ->
         Sort.mk_arrow (TupleTerm.STuple sorts) BoolTerm.SBool
     | IsCons (_, dt) | NotIsCons (_, dt) ->
@@ -2663,7 +2907,7 @@ module ExtTerm :
         with _ -> (
           try BoolTerm.sort_of_sym sym
           with _ -> (
-            try RealIntTerm.sort_of_sym sym
+            try IRBTerm.sort_of_sym sym
             with _ -> (
               try TupleTerm.sort_of_sym sym
               with _ -> (
@@ -2680,11 +2924,10 @@ module ExtTerm :
 
   let rec svs_of_sort = function
     | Sort.SVar svar -> Set.Poly.singleton svar
-    | Sort.SArrow (s1, (o, s2, c)) ->
-        Set.Poly.union_list
-          [ svs_of_sort s1; svs_of_opsig o; svs_of_sort s2; svs_of_cont c ]
+    | Sort.SArrow (s, c) -> Set.union (svs_of_sort s) (svs_of_triple c)
     | Sort.SForAll (svar, s1) -> Set.remove (svs_of_sort s1) svar
-    | SBool | SInt | SReal | SString | SSequence _ | SRegEx -> Set.Poly.empty
+    | SBool | SInt | SReal | SBV _ | SString | SSequence _ | SRegEx ->
+        Set.Poly.empty
     | STuple sorts -> Set.Poly.union_list @@ List.map sorts ~f:svs_of_sort
     | SRef sort -> svs_of_sort sort
     | SDT dt ->
@@ -2695,17 +2938,8 @@ module ExtTerm :
     | _ -> failwith "[ExtTerm.svs_of_sort] unknown sort"
 
   and svs_of_cont = function
-    | Sort.EVar _ | Sort.Pure -> Set.Poly.empty
-    | Sort.Eff (o1, s1, e1, o2, s2, e2) ->
-        Set.Poly.union_list
-          [
-            svs_of_opsig o1;
-            svs_of_sort s1;
-            svs_of_cont e1;
-            svs_of_opsig o2;
-            svs_of_sort s2;
-            svs_of_cont e2;
-          ]
+    | Sort.EVar _ | Sort.Pure | Sort.Closed -> Set.Poly.empty
+    | Sort.Eff (c1, c2) -> Set.union (svs_of_triple c1) (svs_of_triple c2)
     | _ -> failwith "[svs_of_cont]"
 
   and svs_of_opsig = function
@@ -2713,38 +2947,35 @@ module ExtTerm :
         Set.Poly.union_list @@ List.map ~f:snd @@ ALMap.map opmap ~f:svs_of_sort
     | _ -> failwith "[svs_of_opsig]"
 
+  and svs_of_triple c =
+    Set.Poly.union_list
+      [ svs_of_opsig c.op_sig; svs_of_sort c.val_type; svs_of_cont c.cont_eff ]
+
   let rec subst_sorts_cont (svar, sort) = function
-    | Sort.EVar x -> Sort.EVar x
-    | Sort.Pure -> Sort.Pure
-    | Sort.Eff (o1, s1, e1, o2, s2, e2) ->
-        Sort.Eff
-          ( subst_sorts_opsig (svar, sort) o1,
-            subst_sorts_sort (svar, sort) s1,
-            subst_sorts_cont (svar, sort) e1,
-            subst_sorts_opsig (svar, sort) o2,
-            subst_sorts_sort (svar, sort) s2,
-            subst_sorts_cont (svar, sort) e2 )
+    | (Sort.EVar _ | Sort.Pure | Sort.Closed) as e -> e
+    | Sort.Eff (c1, c2) ->
+        Sort.mk_cont_eff
+          (subst_sorts_triple (svar, sort) c1)
+          (subst_sorts_triple (svar, sort) c2)
     | _ -> failwith "[subst_sorts_cont]"
 
   and subst_sorts_sort (svar, sort) = function
     | Sort.SVar v when Stdlib.(v = svar) -> sort
-    | Sort.SArrow (s1, (o, s2, e)) ->
+    | Sort.SArrow (s, c) ->
         Sort.SArrow
-          ( subst_sorts_sort (svar, sort) s1,
-            ( subst_sorts_opsig (svar, sort) o,
-              subst_sorts_sort (svar, sort) s2,
-              subst_sorts_cont (svar, sort) e ) )
+          (subst_sorts_sort (svar, sort) s, subst_sorts_triple (svar, sort) c)
     | Sort.SForAll (svar', s1) ->
         if Stdlib.(svar' = svar) then Sort.SForAll (svar', s1)
         else Sort.SForAll (svar', subst_sorts_sort (svar, sort) s1)
-    | (SBool | SInt | SReal | SString | SSequence _ | SRegEx) as sort -> sort
+    | (SBool | SInt | SReal | SBV _ | SString | SSequence _ | SRegEx) as sort ->
+        sort
     | STuple sorts -> STuple (List.map ~f:(subst_sorts_sort (svar, sort)) sorts)
     | SRef s -> SRef (subst_sorts_sort (svar, sort) s)
     | SDT t ->
-        let dt =
-          Datatype.subst_sorts subst_sorts_sort (svar, sort) (Datatype.dt_of t)
-        in
-        SDT (Datatype.update_dt t dt)
+        SDT
+          (Datatype.update_dt t
+          @@ Datatype.subst_sorts subst_sorts_sort (svar, sort)
+               (Datatype.dt_of t))
     | SUS (name, sorts) ->
         SUS (name, List.map ~f:(subst_sorts_sort (svar, sort)) sorts)
     | SArray (s1, s2) ->
@@ -2757,11 +2988,19 @@ module ExtTerm :
         Sort.OpSig (ALMap.map opmap ~f:(subst_sorts_sort (svar, sort)), r)
     | _ -> failwith "[subst_sorts_opsig]"
 
+  and subst_sorts_triple (svar, sort) c =
+    {
+      op_sig = subst_sorts_opsig (svar, sort) c.op_sig;
+      val_type = subst_sorts_sort (svar, sort) c.val_type;
+      cont_eff = subst_sorts_cont (svar, sort) c.cont_eff;
+    }
+
   let svs_of_sym sym = svs_of_sort @@ sort_of_sym sym
   let arity_of_sym = Term.open_arity_of_sym sort_of_sym
   let sort_of = Term.open_sort_of sort_of_sym subst_sorts_sort
 
   (** Printing *)
+
   let str_of_sym = function
     | Leq -> "Leq"
     | Geq -> "Geq"
@@ -2773,6 +3012,10 @@ module ExtTerm :
     | RGeq -> "RGeq"
     | RLt -> "RLt"
     | RGt -> "RGt"
+    | BVLeq _ -> "BVLeq"
+    | BVGeq _ -> "BVGeq"
+    | BVLt _ -> "BVLt"
+    | BVGt _ -> "BVGt"
     | IsInt -> "IsInt"
     | IsTuple sorts ->
         sprintf "is_tuple(%s)"
@@ -2793,7 +3036,7 @@ module ExtTerm :
     | sym -> (
         try BoolTerm.str_of_sym sym
         with _ -> (
-          try RealIntTerm.str_of_sym sym
+          try IRBTerm.str_of_sym sym
           with _ -> (
             try TupleTerm.str_of_sym sym
             with _ -> (
@@ -2817,17 +3060,18 @@ module ExtTerm :
 
   let rec str_of_sort_theory = function
     | Sort.SVar (Ident.Svar svar) -> sprintf "'%s" svar
-    | Sort.SArrow (s1, (o, s2, c)) ->
+    | Sort.SArrow (s, c) ->
         sprintf "%s%s -> %s%s"
-          (if Sort.is_empty_opsig o then "" else "_ |> ")
-          ((if Sort.is_arrow s1 || ArrayTerm.is_array_sort s1 then String.paren
+          (if Sort.is_empty_opsig c.op_sig then "" else "_ |> ")
+          ((if Sort.is_arrow s || ArrayTerm.is_array_sort s then String.paren
             else Fn.id)
-          @@ open_str_of_sort str_of_sort_theory s1)
-          (open_str_of_sort str_of_sort_theory s2)
-          (if Stdlib.(c = Sort.Pure) then "" else " / _")
+          @@ open_str_of_sort str_of_sort_theory s)
+          (open_str_of_sort str_of_sort_theory c.val_type)
+          (if Sort.is_pure c.cont_eff then "" else " / _")
     | SBool -> "bool"
     | SInt -> "int"
     | SReal -> "real"
+    | SBV _ -> "bv"
     | STuple sorts ->
         String.paren
         @@ String.concat_map_list ~sep:" * " sorts
@@ -2860,21 +3104,22 @@ module ExtTerm :
   let str_of = open_str_of str_of_sort str_of_sym
 
   (** Evaluation *)
+
   let is_termlit = function
     | BoolTerm.BoolLit _ | IntTerm.IntLit _ | RealTerm.RealLit _ -> true
     | _ -> false
 
   let of_termlit lit =
     if BoolTerm.is_termlit lit then BoolTerm.of_termlit lit
-    else if RealTerm.is_termlit lit then RealTerm.of_termlit lit
     else if IntTerm.is_termlit lit then IntTerm.of_termlit lit
+    else if RealTerm.is_termlit lit then RealTerm.of_termlit lit
     else assert false
 
   let assert_sort_check_of_theory sort lit =
     match (sort, lit) with
     | SBool, BoolLit _ -> ()
-    | SReal, RealLit _ -> ()
     | SInt, IntLit _ -> ()
+    | SReal, RealLit _ -> ()
     | _ -> assert false
 
   let assert_sort_check = open_assert_sort_check assert_sort_check_of_theory
@@ -2965,37 +3210,12 @@ module ExtTerm :
           | _ -> assert false)
     | sym ->
         if Map.Poly.mem BoolTerm.sym_sort_map sym then BoolTerm.eval_sym sym
-        else if Map.Poly.mem RealIntTerm.sym_sort_map sym then
-          RealIntTerm.eval_sym sym
+        else if Map.Poly.mem IRBTerm.sym_sort_map sym then IRBTerm.eval_sym sym
         else assert false
 
   let eval = open_eval eval_sym of_termlit
 
   (** Construction *)
-  let rec mk_dummy to_old_sort = function
-    | Sort.SArrow _ as sort ->
-        let name =
-          "dummy_arrow(" ^ (LogicOld.Term.str_of_sort @@ to_old_sort sort) ^ ")"
-        in
-        LogicOld.Term.add_dummy_term (Ident.Tvar name) @@ to_old_sort sort;
-        mk_var (Ident.Tvar name)
-    | Sort.SVar (Ident.Svar name) ->
-        mk_var (Ident.Tvar ("dummy_" ^ name)) (*ToDo*)
-    | SBool -> BoolTerm.mk_bool false
-    | SInt -> IntTerm.zero ()
-    | SReal -> RealTerm.rzero ()
-    | STuple sorts ->
-        mk_apps (mk_tuple_cons sorts)
-        @@ List.map sorts ~f:(mk_dummy to_old_sort)
-    | SRef sort -> mk_apps (mk_ref sort) [ mk_dummy to_old_sort sort ]
-    | (SDT _ | SUS _) as sort ->
-        DatatypeTerm.mk_dummy (mk_dummy to_old_sort) sort
-    | SArray (s1, s2) -> mk_app (mk_const_array s1 s2) (mk_dummy to_old_sort s2)
-    | SString -> mk_con @@ StrConst ""
-    | SSequence true -> mk_con SeqEpsilon
-    | SSequence false -> failwith "SSequence false"
-    | SRegEx -> mk_con RegEmpty
-    | _ -> failwith @@ "unknown sort"
 
   let mk_leq () = mk_con Leq
   let mk_geq () = mk_con Geq
@@ -3007,6 +3227,10 @@ module ExtTerm :
   let mk_rgeq () = mk_con RGeq
   let mk_rlt () = mk_con RLt
   let mk_rgt () = mk_con RGt
+  let mk_bvleq ~size = mk_con (BVLeq size)
+  let mk_bvgeq ~size = mk_con (BVGeq size)
+  let mk_bvlt ~size = mk_con (BVLt size)
+  let mk_bvgt ~size = mk_con (BVGt size)
   let mk_isint () = mk_con IsInt
   let mk_int_ite () = mk_ite SInt
   let mk_real_ite () = mk_ite SReal
@@ -3023,36 +3247,23 @@ module ExtTerm :
   let lt_of t1 t2 = mk_apps (mk_lt ()) [ t1; t2 ]
   let gt_of t1 t2 = mk_apps (mk_gt ()) [ t1; t2 ]
 
-  (** Models *)
-  let remove_dontcare_elem to_old_sort ((x, s), v) =
-    match v with None -> (x, mk_dummy to_old_sort s) | Some term -> (x, term)
-
-  let remove_dontcare to_old_sort =
-    List.map ~f:(remove_dontcare_elem to_old_sort)
-
   (** Conversion *)
 
   let rec of_old_cont = function
     | LogicOld.Sort.EVar x -> Sort.EVar x
     | LogicOld.Sort.Pure -> Sort.Pure
-    | LogicOld.Sort.Eff (o1, s1, e1, o2, s2, e2) ->
-        Sort.Eff
-          ( of_old_opsig o1,
-            of_old_sort s1,
-            of_old_cont e1,
-            of_old_opsig o2,
-            of_old_sort s2,
-            of_old_cont e2 )
+    | LogicOld.Sort.Closed -> Sort.Closed
+    | LogicOld.Sort.Eff (c1, c2) ->
+        Sort.mk_cont_eff (of_old_triple c1) (of_old_triple c2)
     | _ -> failwith "[of_old_cont]"
 
   and of_old_sort = function
     | LogicOld.Sort.SVar svar -> Sort.SVar svar
-    | LogicOld.Sort.SArrow (s1, (o, s2, e)) ->
-        Sort.SArrow
-          (of_old_sort s1, (of_old_opsig o, of_old_sort s2, of_old_cont e))
+    | LogicOld.Sort.SArrow (s, c) -> Sort.SArrow (of_old_sort s, of_old_triple c)
     | LogicOld.T_bool.SBool -> SBool
     | LogicOld.T_int.SInt -> SInt
     | LogicOld.T_real.SReal -> SReal
+    | LogicOld.T_bv.SBV size -> SBV size
     | LogicOld.T_tuple.STuple sorts -> STuple (List.map sorts ~f:of_old_sort)
     | LogicOld.T_ref.SRef sort -> SRef (of_old_sort sort)
     | LogicOld.T_dt.SDT dt -> SDT (Datatype.of_old of_old_sort dt)
@@ -3069,6 +3280,14 @@ module ExtTerm :
         Sort.OpSig (ALMap.map opmap ~f:of_old_sort, rv)
     | _ -> failwith "[of_old_opsig]"
 
+  and of_old_triple c =
+    {
+      op_sig = of_old_opsig c.op_sig;
+      val_type = of_old_sort c.val_type;
+      cont_eff = of_old_cont c.cont_eff;
+    }
+
+  let of_old_sort_list = List.map ~f:of_old_sort
   let of_old_sort_bind (x, s) = (x, of_old_sort s)
   let of_old_sort_env = List.map ~f:of_old_sort_bind
   let of_unop = function LogicOld.Formula.Not -> mk_not ()
@@ -3086,35 +3305,54 @@ module ExtTerm :
     | LogicOld.T_bool.Formula phi, [] -> of_old_formula phi
     | LogicOld.T_bool.IfThenElse, [ _; sort; _ ] -> mk_ite sort
     | LogicOld.T_int.Int n, [] -> mk_int n
+    | LogicOld.T_int.Neg, [ _ ] -> mk_neg ()
+    | LogicOld.T_int.Abs, [ _ ] -> mk_abs ()
     | LogicOld.T_int.Add, [ _; _ ] -> mk_add ()
     | LogicOld.T_int.Sub, [ _; _ ] -> mk_sub ()
     | LogicOld.T_int.Mult, [ _; _ ] -> mk_mult ()
     | LogicOld.T_int.Div, [ _; _ ] -> mk_div ()
     | LogicOld.T_int.Mod, [ _; _ ] -> mk_mod ()
-    | LogicOld.T_int.Neg, [ _ ] -> mk_neg ()
-    | LogicOld.T_int.Abs, [ _ ] -> mk_abs ()
     | LogicOld.T_int.Rem, [ _; _ ] -> mk_rem ()
+    | LogicOld.T_int.Power, [ _; _ ] -> mk_power ()
     | LogicOld.T_real.Real r, [] -> mk_real r
+    | LogicOld.T_real.RNeg, [ _ ] -> mk_rneg ()
+    | LogicOld.T_real.RAbs, [ _ ] -> mk_rabs ()
     | LogicOld.T_real.RAdd, [ _; _ ] -> mk_radd ()
     | LogicOld.T_real.RSub, [ _; _ ] -> mk_rsub ()
     | LogicOld.T_real.RMult, [ _; _ ] -> mk_rmult ()
     | LogicOld.T_real.RDiv, [ _; _ ] -> mk_rdiv ()
-    | LogicOld.T_real.RNeg, [ _ ] -> mk_rneg ()
-    | LogicOld.T_real.RAbs, [ _ ] -> mk_rabs ()
     | LogicOld.T_real.RPower, [ _; _ ] -> mk_rpower ()
-    | LogicOld.T_real_int.ToReal, [ _ ] -> mk_to_real ()
-    | LogicOld.T_real_int.ToInt, [ _ ] -> mk_to_int ()
-    (*| LogicOld.T_num.Value (_v, _svar), [] -> failwith "of_old_fun_sym"
+    | LogicOld.T_bv.BVNum (size, n), [] -> mk_bvnum ~size n
+    | LogicOld.T_bv.BVNeg size, [ _ ] -> mk_bvneg ~size
+    | LogicOld.T_bv.BVAdd size, [ _; _ ] -> mk_bvadd ~size
+    | LogicOld.T_bv.BVSub size, [ _; _ ] -> mk_bvsub ~size
+    | LogicOld.T_bv.BVMult size, [ _; _ ] -> mk_bvmult ~size
+    | LogicOld.T_bv.BVDiv size, [ _; _ ] -> mk_bvdiv ~size
+    | LogicOld.T_bv.BVMod size, [ _; _ ] -> mk_bvmod ~size
+    | LogicOld.T_bv.BVRem size, [ _; _ ] -> mk_bvrem ~size
+    | LogicOld.T_bv.BVSHL size, [ _; _ ] -> mk_bvshl ~size
+    | LogicOld.T_bv.BVLSHR size, [ _; _ ] -> mk_bvlshr ~size
+    | LogicOld.T_bv.BVASHR size, [ _; _ ] -> mk_bvashr ~size
+    | LogicOld.T_bv.BVOr size, [ _; _ ] -> mk_bvor ~size
+    | LogicOld.T_bv.BVAnd size, [ _; _ ] -> mk_bvand ~size
+    | LogicOld.T_irb.IntToReal, [ _ ] -> mk_int_to_real ()
+    | LogicOld.T_irb.RealToInt, [ _ ] -> mk_real_to_int ()
+    | LogicOld.T_irb.IntToBV size, [ _ ] -> mk_int_to_bv ~size
+    | LogicOld.T_irb.BVToInt size, [ _ ] -> mk_bv_to_int ~size
+    (*| LogicOld.T_num.NNeg svar, [_] -> failwith "of_old_fun_sym"
+      | LogicOld.T_num.Value (_, svar), [] -> failwith "of_old_fun_sym"
       | LogicOld.T_num.NAdd svar, [_; _] -> failwith "of_old_fun_sym"
       | LogicOld.T_num.NSub svar, [_; _] -> failwith "of_old_fun_sym"
       | LogicOld.T_num.NMult svar, [_; _] -> failwith "of_old_fun_sym"
       | LogicOld.T_num.NDiv svar, [_; _] -> failwith "of_old_fun_sym"
+      | LogicOld.T_num.NMod svar, [_; _] -> failwith "of_old_fun_sym"
+      | LogicOld.T_num.NRem svar, [_; _] -> failwith "of_old_fun_sym"
       | LogicOld.T_num.NPower svar, [_; _] -> failwith "of_old_fun_sym"
-      | LogicOld.T_num.NNeg svar, [_] -> failwith "of_old_fun_sym"*)
+    *)
     | LogicOld.T_tuple.TupleCons sorts, _ ->
-        mk_tuple_cons (List.map ~f:of_old_sort sorts)
+        mk_tuple_cons (of_old_sort_list sorts)
     | LogicOld.T_tuple.TupleSel (sorts, i), _ ->
-        mk_tuple_sel (List.map ~f:of_old_sort sorts) i
+        mk_tuple_sel (of_old_sort_list sorts) i
     | LogicOld.T_ref.Ref sort, [ _ ] -> mk_ref (of_old_sort sort)
     | LogicOld.T_ref.Deref sort, [ _ ] -> mk_deref (of_old_sort sort)
     | LogicOld.T_ref.Update sort, [ _; _ ] -> mk_update (of_old_sort sort)
@@ -3148,7 +3386,9 @@ module ExtTerm :
     | LogicOld.T_regex.RegUnion, _ -> mk_con RegUnion
     | LogicOld.T_regex.RegInter, _ -> mk_con RegInter
     | _ ->
-        failwith @@ sprintf "%s not supported" (LogicOld.Term.str_of_funsym sym)
+        failwith
+        @@ sprintf "[Logic.of_old_fun_sym] %s not supported"
+             (LogicOld.Term.str_of_funsym sym)
 
   and of_old_pred_sym sym sargs =
     match (sym, sargs) with
@@ -3164,17 +3404,20 @@ module ExtTerm :
     | LogicOld.T_real.RGeq, [ _; _ ] -> mk_rgeq ()
     | LogicOld.T_real.RLt, [ _; _ ] -> mk_rlt ()
     | LogicOld.T_real.RGt, [ _; _ ] -> mk_rgt ()
-    | LogicOld.T_real_int.IsInt, [ _ ] -> mk_isint ()
+    | LogicOld.T_bv.BVLeq size, [ _; _ ] -> mk_bvleq ~size
+    | LogicOld.T_bv.BVGeq size, [ _; _ ] -> mk_bvgeq ~size
+    | LogicOld.T_bv.BVLt size, [ _; _ ] -> mk_bvlt ~size
+    | LogicOld.T_bv.BVGt size, [ _; _ ] -> mk_bvgt ~size
+    | LogicOld.T_irb.IsInt, [ _ ] -> mk_isint ()
     | LogicOld.T_num.NLeq svar, [ _; _ ] ->
         mk_tyapp (mk_con Leq) (Sort.SVar svar)
     | LogicOld.T_num.NGeq svar, [ _; _ ] ->
         mk_tyapp (mk_con Geq) (Sort.SVar svar)
     | LogicOld.T_num.NLt svar, [ _; _ ] -> mk_tyapp (mk_con Lt) (Sort.SVar svar)
     | LogicOld.T_num.NGt svar, [ _; _ ] -> mk_tyapp (mk_con Gt) (Sort.SVar svar)
-    | LogicOld.T_tuple.IsTuple sorts, _ ->
-        mk_is_tuple (List.map ~f:of_old_sort sorts)
+    | LogicOld.T_tuple.IsTuple sorts, _ -> mk_is_tuple (of_old_sort_list sorts)
     | LogicOld.T_tuple.NotIsTuple sorts, _ ->
-        mk_is_not_tuple (List.map ~f:of_old_sort sorts)
+        mk_is_not_tuple (of_old_sort_list sorts)
     | LogicOld.T_dt.IsCons (name, dt), _ ->
         mk_is_cons name (Datatype.of_old of_old_sort dt)
     | LogicOld.T_dt.NotIsCons (name, dt), _ ->
@@ -3189,7 +3432,8 @@ module ExtTerm :
     | LogicOld.T_regex.StrInRegExp, [ _ ] -> Term.mk_con StrInRegExp
     | LogicOld.T_regex.NotStrInRegExp, [ _ ] -> Term.mk_con NotStrInRegExp
     | _ ->
-        failwith @@ sprintf "%s not supported"
+        failwith
+        @@ sprintf "[Logic.of_old_pred_sym] %s not supported"
         @@ LogicOld.Predicate.str_of_psym sym
 
   and of_old_term = function
@@ -3219,41 +3463,37 @@ module ExtTerm :
     | LogicOld.Formula.BinaryOp (binop, p1, p2, _) ->
         mk_app (mk_app (of_binop binop) (of_old_formula p1)) (of_old_formula p2)
     | LogicOld.Formula.Bind (bind, args, phi, _) ->
-        let phi = of_old_formula phi in
         let bind =
           match bind with
           | LogicOld.Formula.Forall -> Forall
           | LogicOld.Formula.Exists -> Exists
           | LogicOld.Formula.Random _ -> failwith "unimplemented"
         in
-        List.fold_right ~init:phi args ~f:(fun (tvar, sort) ->
+        List.fold_right ~init:(of_old_formula phi) args ~f:(fun (tvar, sort) ->
             mk_bind bind tvar (of_old_sort sort))
     | LogicOld.Formula.LetRec _ ->
         failwith "conversion of letrec is not implemented yet"
     | LogicOld.Formula.LetFormula (var, sort, def, body, _) ->
         mk_let var (of_old_sort sort) (of_old_term def) (of_old_formula body)
 
+  let of_old (uni_senv, phi) =
+    (Map.Poly.map ~f:of_old_sort uni_senv, of_old_formula phi)
+
   let rec to_old_cont = function
     | Sort.EVar x -> LogicOld.Sort.EVar x
     | Sort.Pure -> LogicOld.Sort.Pure
-    | Sort.Eff (o1, s1, e1, o2, s2, e2) ->
-        LogicOld.Sort.Eff
-          ( to_old_opsig o1,
-            to_old_sort s1,
-            to_old_cont e1,
-            to_old_opsig o2,
-            to_old_sort s2,
-            to_old_cont e2 )
+    | Sort.Closed -> LogicOld.Sort.Closed
+    | Sort.Eff (c1, c2) ->
+        LogicOld.Sort.mk_cont_eff (to_old_triple c1) (to_old_triple c2)
     | _ -> failwith "to_old_cont"
 
   and to_old_sort = function
     | Sort.SVar svar -> LogicOld.Sort.SVar svar
-    | Sort.SArrow (s1, (o, s2, e)) ->
-        LogicOld.Sort.SArrow
-          (to_old_sort s1, (to_old_opsig o, to_old_sort s2, to_old_cont e))
+    | Sort.SArrow (s, c) -> LogicOld.Sort.SArrow (to_old_sort s, to_old_triple c)
     | SBool -> LogicOld.T_bool.SBool
     | SInt -> LogicOld.T_int.SInt
     | SReal -> LogicOld.T_real.SReal
+    | SBV size -> LogicOld.T_bv.SBV size
     | STuple sorts -> LogicOld.T_tuple.STuple (List.map sorts ~f:to_old_sort)
     | SRef sort -> LogicOld.T_ref.SRef (to_old_sort sort)
     | SDT dt -> LogicOld.T_dt.SDT (Datatype.to_old to_old_sort dt)
@@ -3268,6 +3508,13 @@ module ExtTerm :
     | Sort.OpSig (opmap, rv) ->
         LogicOld.Sort.OpSig (ALMap.map opmap ~f:to_old_sort, rv)
     | _ -> failwith "of_old_opsig"
+
+  and to_old_triple c =
+    {
+      op_sig = to_old_opsig c.op_sig;
+      val_type = to_old_sort c.val_type;
+      cont_eff = to_old_cont c.cont_eff;
+    }
 
   let to_old_sort_bind (x, s) = (x, to_old_sort s)
 
@@ -3286,24 +3533,40 @@ module ExtTerm :
   let to_old_fun_sym = function
     | IfThenElse -> LogicOld.T_bool.IfThenElse |> Option.some
     | Int n -> LogicOld.T_int.Int n |> Option.some
+    | Neg -> LogicOld.T_int.Neg |> Option.some
+    | Abs -> LogicOld.T_int.Abs |> Option.some
     | Add -> LogicOld.T_int.Add |> Option.some
     | Sub -> LogicOld.T_int.Sub |> Option.some
     | Mult -> LogicOld.T_int.Mult |> Option.some
     | Div -> LogicOld.T_int.Div |> Option.some
     | Mod -> LogicOld.T_int.Mod |> Option.some
-    | Neg -> LogicOld.T_int.Neg |> Option.some
-    | Abs -> LogicOld.T_int.Abs |> Option.some
     | Rem -> LogicOld.T_int.Rem |> Option.some
+    | Power -> LogicOld.T_int.Power |> Option.some
     | Real r -> LogicOld.T_real.Real r |> Option.some
+    | RNeg -> LogicOld.T_real.RNeg |> Option.some
+    | RAbs -> LogicOld.T_real.RAbs |> Option.some
     | RAdd -> LogicOld.T_real.RAdd |> Option.some
     | RSub -> LogicOld.T_real.RSub |> Option.some
     | RMult -> LogicOld.T_real.RMult |> Option.some
     | RDiv -> LogicOld.T_real.RDiv |> Option.some
-    | RNeg -> LogicOld.T_real.RNeg |> Option.some
-    | RAbs -> LogicOld.T_real.RAbs |> Option.some
     | RPower -> LogicOld.T_real.RPower |> Option.some
-    | ToReal -> LogicOld.T_real_int.ToReal |> Option.some
-    | ToInt -> LogicOld.T_real_int.ToInt |> Option.some
+    | BVNum (size, n) -> LogicOld.T_bv.BVNum (size, n) |> Option.some
+    | BVNeg size -> LogicOld.T_bv.BVNeg size |> Option.some
+    | BVSHL size -> LogicOld.T_bv.BVSHL size |> Option.some
+    | BVLSHR size -> LogicOld.T_bv.BVLSHR size |> Option.some
+    | BVASHR size -> LogicOld.T_bv.BVASHR size |> Option.some
+    | BVOr size -> LogicOld.T_bv.BVOr size |> Option.some
+    | BVAnd size -> LogicOld.T_bv.BVAnd size |> Option.some
+    | BVAdd size -> LogicOld.T_bv.BVAdd size |> Option.some
+    | BVSub size -> LogicOld.T_bv.BVSub size |> Option.some
+    | BVMult size -> LogicOld.T_bv.BVMult size |> Option.some
+    | BVDiv size -> LogicOld.T_bv.BVDiv size |> Option.some
+    | BVMod size -> LogicOld.T_bv.BVMod size |> Option.some
+    | BVRem size -> LogicOld.T_bv.BVRem size |> Option.some
+    | IntToReal -> LogicOld.T_irb.IntToReal |> Option.some
+    | RealToInt -> LogicOld.T_irb.RealToInt |> Option.some
+    | IntToBV size -> LogicOld.T_irb.IntToBV size |> Option.some
+    | BVToInt size -> LogicOld.T_irb.BVToInt size |> Option.some
     | TupleCons sorts ->
         LogicOld.T_tuple.TupleCons (List.map sorts ~f:to_old_sort)
         |> Option.some
@@ -3361,7 +3624,11 @@ module ExtTerm :
     | RGeq -> LogicOld.T_real.RGeq |> Option.some
     | RLt -> LogicOld.T_real.RLt |> Option.some
     | RGt -> LogicOld.T_real.RGt |> Option.some
-    | IsInt -> LogicOld.T_real_int.IsInt |> Option.some
+    | BVLeq size -> LogicOld.T_bv.BVLeq size |> Option.some
+    | BVGeq size -> LogicOld.T_bv.BVGeq size |> Option.some
+    | BVLt size -> LogicOld.T_bv.BVLt size |> Option.some
+    | BVGt size -> LogicOld.T_bv.BVGt size |> Option.some
+    | IsInt -> LogicOld.T_irb.IsInt |> Option.some
     | IsTuple sorts ->
         LogicOld.T_tuple.IsTuple (List.map ~f:to_old_sort sorts) |> Option.some
     | NotIsTuple sorts ->
@@ -3386,9 +3653,6 @@ module ExtTerm :
   let rec to_old_term exi_senv uni_senv term args =
     match (term, args) with
     | Var (tvar, _), args ->
-        let args' =
-          List.map args ~f:(Fn.flip (to_old_term exi_senv uni_senv) [])
-        in
         let sort =
           match Map.Poly.find exi_senv tvar with
           | Some sort -> to_old_sort sort
@@ -3396,28 +3660,39 @@ module ExtTerm :
               match Map.Poly.find uni_senv tvar with
               | Some sort -> to_old_sort sort
               | None -> (
-                  match
-                    List.Assoc.find
-                      (LogicOld.get_dummy_term_senv ())
-                      ~equal:Stdlib.( = ) tvar
-                  with
+                  let dum_senv = LogicOld.get_dummy_term_senv () in
+                  match List.Assoc.find dum_senv ~equal:Stdlib.( = ) tvar with
                   | Some sort -> sort
                   | None -> (
-                      match Map.Poly.find (LogicOld.get_fenv ()) tvar with
+                      let fenv = LogicOld.get_fenv () in
+                      match Map.Poly.find fenv tvar with
                       | Some (params, sret, _, _, _) ->
                           LogicOld.Sort.mk_fun
                             (List.map params ~f:snd @ [ sret ])
                       | None ->
+                          print_endline @@ sprintf "exi_senv: %s"
+                          @@ str_of_sort_env_map str_of_sort exi_senv;
+                          print_endline @@ sprintf "uni_senv: %s"
+                          @@ str_of_sort_env_map str_of_sort uni_senv;
+                          print_endline @@ sprintf "dum_senv: %s"
+                          @@ LogicOld.str_of_sort_env_list
+                               LogicOld.Term.str_of_sort dum_senv;
+                          print_endline @@ sprintf "fenv: %s"
+                          @@ LogicOld.FunEnv.str_of fenv;
                           failwith
                           @@ sprintf "[to_old_term] %s is not bound"
                           @@ Ident.name_of_tvar tvar)))
         in
-        let sargs, sret = LogicOld.Sort.args_ret_of sort in
         if List.is_empty args then LogicOld.Term.mk_var tvar sort
-        else if LogicOld.Term.is_bool_sort sret then
-          LogicOld.T_bool.of_atom
-          @@ LogicOld.Atom.mk_pvar_app (Ident.tvar_to_pvar tvar) sargs args'
-        else LogicOld.Term.mk_fvar_app tvar (sargs @ [ sret ]) args'
+        else
+          let args' =
+            List.map args ~f:(Fn.flip (to_old_term exi_senv uni_senv) [])
+          in
+          let sargs, sret = LogicOld.Sort.args_ret_of sort in
+          if LogicOld.Term.is_bool_sort sret then
+            LogicOld.T_bool.of_atom
+            @@ LogicOld.Atom.mk_pvar_app (Ident.tvar_to_pvar tvar) sargs args'
+          else LogicOld.Term.mk_fvar_app tvar (sargs @ [ sret ]) args'
     | Con (sym, _), args -> (
         match to_old_fun_sym sym with
         | Some old_sym ->
@@ -3503,21 +3778,30 @@ module ExtTerm :
         | Some sort ->
             let sargs, sret = Sort.args_ret_of sort in
             assert (BoolTerm.is_bool_sort sret);
-            let pred =
-              LogicOld.Predicate.mk_var (Ident.Pvar name)
-                (List.map ~f:to_old_sort sargs)
-            in
-            LogicOld.Atom.mk_app pred args'
+            LogicOld.Atom.mk_pvar_app (Ident.Pvar name)
+              (List.map ~f:to_old_sort sargs)
+              args'
         | None -> (
             match Map.Poly.find uni_senv tvar with
             | Some sort ->
                 if Fn.non List.is_empty args then
-                  failwith
-                  @@ sprintf "%s(%s)" (Ident.name_of_tvar tvar)
-                       (String.concat_map_list ~sep:"," args ~f:str_of);
-                assert (BoolTerm.is_bool_sort sort);
-                LogicOld.Atom.of_bool_term
-                @@ LogicOld.Term.mk_var tvar (to_old_sort sort)
+                  if true then (
+                    (*ToDo*)
+                    let sargs, sret = Sort.args_ret_of sort in
+                    assert (List.length sargs = List.length args');
+                    assert (BoolTerm.is_bool_sort sret);
+                    LogicOld.Atom.of_bool_term
+                    @@ LogicOld.Term.mk_fvar_app tvar
+                         (List.map ~f:to_old_sort sargs)
+                         args')
+                  else
+                    failwith
+                    @@ sprintf "%s(%s)" (Ident.name_of_tvar tvar)
+                         (String.concat_map_list ~sep:"," args ~f:str_of)
+                else (
+                  assert (BoolTerm.is_bool_sort sort);
+                  LogicOld.Atom.of_bool_term
+                  @@ LogicOld.Term.mk_var tvar (to_old_sort sort))
             | None -> (
                 match Map.Poly.find (LogicOld.get_fenv ()) tvar with
                 | Some (params, sret, _, _, _) ->
@@ -3652,6 +3936,7 @@ module ExtTerm :
       | TyApp (Con ((Eq | Neq | IfThenElse), _), (SBool | Sort.SVar _), _) ->
           next @@ LogicOld.Formula.mk_atom
           @@ to_old_atom exi_senv uni_senv term args
+      | TyApp (Con (IfThenElse, _), sort, _) -> failwith @@ str_of_sort sort
       | TyApp (term, _sort, _) (* ToDo: use [sort] *) ->
           aux uni_senv term args ~next
       | Let (var, sort, def, body, _) ->
@@ -3669,10 +3954,41 @@ module ExtTerm :
     in
     aux uni_senv term args ~next:Fn.id
 
+  let to_old_fml exi_senv (uni_senv, term) =
+    to_old_formula exi_senv uni_senv term []
+
   let to_old_subst exi_senv uni_senv =
     Map.Poly.map ~f:(Fn.flip (to_old_term exi_senv uni_senv) [])
 
   (** Construction *)
+
+  let rec mk_dummy = function
+    | Sort.SVar (Ident.Svar name) as sort ->
+        let name = "dummy_" ^ name (*ToDo*) in
+        LogicOld.add_dummy_term (Ident.Tvar name) @@ to_old_sort sort;
+        mk_var (Ident.Tvar name)
+    | Sort.SArrow _ as sort ->
+        let name =
+          sprintf "dummy_arrow(%s)"
+            (LogicOld.Term.str_of_sort @@ to_old_sort sort)
+        in
+        LogicOld.add_dummy_term (Ident.Tvar name) @@ to_old_sort sort;
+        mk_var (Ident.Tvar name)
+    | SBool -> BoolTerm.mk_bool false
+    | SInt -> IntTerm.zero ()
+    | SReal -> RealTerm.rzero ()
+    | SBV size -> BVTerm.mk_bvnum ~size Z.zero
+    | STuple sorts ->
+        mk_apps (mk_tuple_cons sorts) @@ List.map sorts ~f:mk_dummy
+    | SRef sort -> mk_apps (mk_ref sort) [ mk_dummy sort ]
+    | (SDT _ | SUS _) as sort -> DatatypeTerm.mk_dummy mk_dummy to_old_sort sort
+    | SArray (s1, s2) -> mk_app (mk_const_array s1 s2) (mk_dummy s2)
+    | SString -> mk_con @@ StrConst ""
+    | SSequence true -> mk_con SeqEpsilon
+    | SSequence false -> failwith "SSequence false"
+    | SRegEx -> mk_con RegEmpty
+    | _ -> failwith @@ "unknown sort"
+
   let random_term_of bound = function
     | IntTerm.SInt ->
         mk_int @@ Z.of_int @@ (Random.int ((2 * bound) + 1) - bound)
@@ -3680,12 +3996,20 @@ module ExtTerm :
         let fb = float_of_int bound in
         mk_real @@ Q.of_float @@ Random.float_range (-.fb) fb
     | BoolTerm.SBool -> mk_bool @@ Random.bool ()
-    | data (*ToDo*) -> mk_dummy to_old_sort data
+    | data (*ToDo*) -> mk_dummy data
+
+  (** Models *)
+
+  let remove_dontcare_elem ((x, s), v) =
+    match v with None -> (x, mk_dummy s) | Some term -> (x, term)
+
+  let remove_dontcare = List.map ~f:remove_dontcare_elem
 
   (** Printing *)
+
   let str_of_formula exi_senv uni_senv term =
     LogicOld.Formula.str_of @@ Evaluator.simplify
-    @@ to_old_formula exi_senv uni_senv term []
+    @@ to_old_fml exi_senv (uni_senv, term)
 
   let str_of_term exi_senv uni_senv term =
     LogicOld.Term.str_of @@ Evaluator.simplify_term
@@ -3699,11 +4023,10 @@ module ExtTerm :
       let uni_senv =
         Map.force_merge uni_senv (Map.Poly.of_alist_exn param_senv)
       in
-      let t = to_old_formula exi_senv uni_senv phi [] in
-      t |> Evaluator.simplify |> of_old_formula |> mk_lambda param_senv
+      to_old_fml exi_senv (uni_senv, phi)
+      |> Evaluator.simplify |> of_old_formula |> mk_lambda param_senv
     with _ ->
-      to_old_formula exi_senv uni_senv t []
-      |> Evaluator.simplify |> of_old_formula
+      to_old_fml exi_senv (uni_senv, t) |> Evaluator.simplify |> of_old_formula
 
   let simplify_term exi_senv uni_senv t =
     try
@@ -3711,9 +4034,17 @@ module ExtTerm :
       let uni_senv =
         Map.force_merge uni_senv (Map.Poly.of_alist_exn param_senv)
       in
-      let t = to_old_term exi_senv uni_senv phi [] in
-      t |> Evaluator.simplify_term |> of_old_term |> mk_lambda param_senv
+      to_old_term exi_senv uni_senv phi []
+      |> Evaluator.simplify_term |> of_old_term |> mk_lambda param_senv
     with _ ->
       to_old_term exi_senv uni_senv t []
       |> Evaluator.simplify_term |> of_old_term
 end
+
+let of_old_sort_env_list = List.map ~f:ExtTerm.of_old_sort_bind
+let of_old_sort_env_map = Map.Poly.map ~f:ExtTerm.of_old_sort
+let of_old_sort_env_set = Set.Poly.map ~f:ExtTerm.of_old_sort_bind
+let to_old_sort_env_list = List.map ~f:ExtTerm.to_old_sort_bind
+let to_old_sort_env_map = Map.Poly.map ~f:ExtTerm.to_old_sort
+let mk_old_dummy = ExtTerm.to_old_sort >> LogicOld.Term.mk_dummy
+let to_old_dummies = Map.Poly.map ~f:mk_old_dummy

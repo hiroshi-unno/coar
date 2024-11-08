@@ -37,8 +37,8 @@ module BoolTerm : TermType = struct
     | "or" -> mk_or () |> Option.some
     | "=>" -> mk_imply () |> Option.some
     | "xor" -> mk_xor () |> Option.some
-    | "=" -> mk_eq (Sort.SVar (Ident.mk_fresh_svar ())) |> Option.some
-    | "ite" -> mk_ite (Sort.SVar (Ident.mk_fresh_svar ())) |> Option.some
+    | "=" -> mk_eq (Sort.mk_fresh_svar ()) |> Option.some
+    | "ite" -> mk_ite (Sort.mk_fresh_svar ()) |> Option.some
     | _ -> None
 end
 
@@ -68,7 +68,7 @@ module IntTerm : TermType = struct
           mk_int (Z.of_string text)
           |> Option.some (* assume that the text can be converted into bigint *)
         with Invalid_argument err ->
-          failwith ("[term_of_op] " ^ op ^ " not supported\n" ^ err))
+          failwith (sprintf "[term_of_op] %s not supported\n%s" op err))
 end
 
 module ExtTerm : TermType = struct
@@ -181,8 +181,9 @@ end = struct
             match Map.Poly.find fenv (Ident.Tvar op) with
             | Some term ->
                 (* if the term is an interpreted variable, substitute it  *)
-                beta_reduction term
-                  (List.map args ~f:(parse_term problem fenv venv))
+                beta_reduction
+                  (mk_apps term
+                     (List.map args ~f:(parse_term problem fenv venv)))
             | None -> (
                 match op with
                 | "+" -> sum (List.map ~f:(parse_term problem fenv venv) args)
@@ -238,7 +239,7 @@ end = struct
             match Map.Poly.find fenv (Ident.Tvar var) with
             | Some term ->
                 (* if the term is an interpreted variable, substitute it  *)
-                beta_reduction term []
+                beta_reduction term
             | None -> (
                 match Term.term_of_op var [] with
                 | Some term -> term (* nullary term *)
@@ -269,9 +270,9 @@ end = struct
     (* p2 => p5 *)
     let var_list, var_list' =
       let rec sub acc = function
-        | Sort.SArrow (s1, (o, s2, Sort.Pure)) when Sort.is_empty_opsig o ->
-            sub ((get_var (), s1) :: acc) s2
-        | Sort.SArrow (_, (_, _, _)) -> failwith "sub"
+        | Sort.SArrow (s, c) when Sort.is_pure_triple c ->
+            sub ((get_var (), s) :: acc) c.val_type
+        | Sort.SArrow (_, _) -> failwith "sub"
         | _ -> List.rev acc
       in
       (sub [] sort_of_inv_f, sub [] sort_of_inv_f)

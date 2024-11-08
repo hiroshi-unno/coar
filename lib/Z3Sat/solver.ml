@@ -2,10 +2,14 @@ open Core
 open Common
 
 module type SolverType = sig
-  type result = (SAT.Problem.solution, Error.t) Result.t
+  val solve :
+    ?print_sol:bool -> SAT.Problem.t -> SAT.Problem.solution Or_error.t
 
-  val solve : ?print_sol:bool -> SAT.Problem.t -> result
-  val opt_solve : ?print_sol:bool -> SAT.Problem.soft -> SAT.Problem.t -> result
+  val opt_solve :
+    ?print_sol:bool ->
+    SAT.Problem.soft ->
+    SAT.Problem.t ->
+    SAT.Problem.solution Or_error.t
 end
 
 module Make (Config : Config.ConfigType) : SolverType = struct
@@ -13,8 +17,6 @@ module Make (Config : Config.ConfigType) : SolverType = struct
 
   module Debug =
     Debug.Make ((val Debug.Config.(if config.verbose then enable else disable)))
-
-  type result = (SAT.Problem.solution, Error.t) Result.t
 
   let solve ?(print_sol = false) cnf =
     let solution =

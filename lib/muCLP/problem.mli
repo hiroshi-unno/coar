@@ -4,9 +4,7 @@ open Ast.LogicOld
 
 type query = Formula.t
 type t = { preds : Pred.t list; query : query }
-type solution = Valid | Invalid | Unknown
-
-exception Timeout
+type solution = Valid | Invalid | Unknown | Timeout
 
 val make : Pred.t list -> query -> t
 val flip_solution : solution -> solution
@@ -37,6 +35,8 @@ val complete_psort : pred_sort_env_map -> t -> t
 val simplify : t -> t
 val get_dual : t -> t
 val get_greatest_approx : t -> t
+val typeinf : print:(string lazy_t -> unit) -> t -> t
+val of_chc : ?only_pos:bool -> PCSP.Problem.t -> t
 
 val of_lts :
   ?live_vars:(string -> sort_env_set) option ->
@@ -44,5 +44,4 @@ val of_lts :
   LTS.Problem.t ->
   t
 
-val of_chc : ?only_pos:bool -> PCSP.Problem.t -> t
 val check_problem : t -> t

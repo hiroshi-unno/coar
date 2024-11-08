@@ -2,15 +2,11 @@ open Core
 (* open Common.Util *)
 
 module type SmtSolverType = sig
-  type result = (SMT.Problem.solution, Error.t) Result.t
-
-  val solve : SMT.Problem.t -> result
+  val solve : SMT.Problem.t -> SMT.Problem.solution Or_error.t
 end
 
 module Make (Cfg : Config.ConfigType) = struct
   let config = Cfg.config
-
-  type result = (SMT.Problem.solution, Error.t) Result.t
 
   let solve =
     match config with

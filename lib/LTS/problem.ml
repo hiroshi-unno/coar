@@ -13,9 +13,9 @@ let mk_nondet () =
   Ident.Tvar (nondet_prefix ^ string_of_int !nondet_count)
 
 type lts =
-  string option (*start*)
-  * string option (*error*)
-  * string option (*cutpoint*)
+  string option (* start *)
+  * string option (* error *)
+  * string option (* cutpoint *)
   * transition list
 
 and transition = string * command * string
@@ -34,7 +34,7 @@ let seq = function
   | [] -> Skip
   | c :: cs -> List.fold_left ~init:c cs ~f:(fun c1 c2 -> Seq (c1, c2))
 
-let seq cs = seq @@ List.filter cs ~f:(Stdlib.( <> ) Skip)
+let seq = List.filter ~f:(Stdlib.( <> ) Skip) >> seq
 
 let choice = function
   | [] -> assert false
@@ -44,9 +44,11 @@ let subst = List.map2_exn ~f:(fun arg term -> Subst (arg, term))
 
 let commands_of_formula ~print args rel =
   let rel =
-    let rel = Typeinf.typeinf_formula ~print ~instantiate_num_to_int:true rel in
+    let rel =
+      Typeinf.typeinf_formula ~print ~instantiate_num_to_int:true (*ToDo*) rel
+    in
     if Formula.is_quantifier_free rel then rel
-    else Z3Smt.Z3interface.qelim ~id:None (LogicOld.get_fenv ()) rel
+    else Z3Smt.Z3interface.qelim ~id:None ~fenv:(LogicOld.get_fenv ()) rel
   in
   let args_set = Set.Poly.of_list @@ List.map ~f:fst args in
   let phis_cond, phis_rest =
@@ -90,11 +92,11 @@ let commands_of_formula ~print args rel =
           @@ Set.to_list sub'
         in
         let subst =
-          Map.Poly.of_alist_exn @@ List.map ~f:(fun ((x, _), t) -> (x, t)) sub'
+          Map.Poly.of_alist_exn @@ List.map sub' ~f:(fun ((x, _), t) -> (x, t))
         in
         loop
           ( Set.union sub @@ Set.Poly.of_list sub',
-            Set.Poly.map ~f:(Formula.subst subst) phis_rest',
+            Set.Poly.map phis_rest' ~f:(Formula.subst subst),
             Set.union phis_cond
             @@ Set.Poly.map ~f:(Formula.subst subst)
             @@ Set.Poly.union_list phiss_rest )
@@ -106,7 +108,7 @@ let commands_of_formula ~print args rel =
   Assume (Formula.and_of @@ Set.to_list phis_cond)
   :: List.map args ~f:(fun arg ->
          if Map.Poly.mem sub arg then Subst (arg, Map.Poly.find_exn sub arg)
-         else Subst (arg, Term.mk_var (mk_nondet ()) T_int.SInt))
+         else Subst (arg, Term.mk_var (mk_nondet ()) (snd arg)))
   @ [ Assume phi_rest ]
 
 let rec term_sort_env_of_command = function
@@ -121,6 +123,60 @@ let term_sort_env_of_transition (_, c, _) = term_sort_env_of_command c
 let term_sort_env_of (_, _, _, trs) =
   Set.Poly.union_list @@ List.map ~f:term_sort_env_of_transition trs
 
+let rec tvs_of_command = function
+  | Skip -> Set.Poly.empty
+  | Assume atm -> Formula.tvs_of atm
+  | Subst ((x, _s), t) -> Set.add (Term.tvs_of t) x
+  | Seq (c1, c2) | Choice (c1, c2) ->
+      Set.union (tvs_of_command c1) (tvs_of_command c2)
+
+let tvs_of_transition (_, c, _) = tvs_of_command c
+
+let tvs_of (_, _, _, trs) =
+  Set.Poly.union_list @@ List.map ~f:tvs_of_transition trs
+
+let rec cgen_command map = function
+  | Skip -> Set.Poly.empty
+  | Assume atm -> snd @@ Typeinf.cgen_formula ~print:(fun _ -> ()) map atm
+  | Subst ((x, s), t) -> (
+      let _, s', constrs = Typeinf.cgen_term ~print:(fun _ -> ()) map t in
+      match Map.Poly.find map x with
+      | None -> Set.add constrs (Typeinf.CEq (s, s'))
+      | Some s'' ->
+          Set.add (Set.add constrs (Typeinf.CEq (s, s'))) (Typeinf.CEq (s, s''))
+      )
+  | Seq (c1, c2) | Choice (c1, c2) ->
+      Set.union (cgen_command map c1) (cgen_command map c2)
+
+let cgen_transition map (_, c, _) = cgen_command map c
+
+let rec subst_sorts_command map = function
+  | Skip -> Skip
+  | Assume atm -> Assume (Formula.subst_sorts map atm)
+  | Subst ((x, s), t) ->
+      Subst ((x, Term.subst_sorts_sort map s), Term.subst_sorts map t)
+  | Seq (c1, c2) -> Seq (subst_sorts_command map c1, subst_sorts_command map c2)
+  | Choice (c1, c2) ->
+      Choice (subst_sorts_command map c1, subst_sorts_command map c2)
+
+let subst_sorts_trans map (f, c, t) = (f, subst_sorts_command map c, t)
+
+let typeinf (s, e, c, trans) =
+  let map =
+    Map.of_set_exn
+    @@ Set.Poly.map
+         (tvs_of (s, e, c, trans))
+         ~f:(fun x -> (x, Sort.mk_fresh_svar ()))
+  in
+  let constrs =
+    Set.Poly.union_list @@ List.map ~f:(cgen_transition map) trans
+  in
+  let nums, map = Typeinf.solve ~print:(fun _ -> ()) constrs in
+  let map =
+    Typeinf.elim_nums ~to_sus:false ~instantiate_num_to_int:true nums map
+  in
+  (s, e, c, List.map trans ~f:(subst_sorts_trans map))
+
 let rec is_effect_free = function
   | Skip | Assume _ -> true
   | Subst ((_, _), t) ->
@@ -132,8 +188,12 @@ let rec str_of_command = function
   | Skip -> "skip;\n"
   | Assume atom ->
       sprintf "assume(%s);\n" (LogicOld.Formula.str_of ~priority:20 atom)
-  | Subst ((x, _sort), t) ->
-      sprintf "%s := %s;\n" (Ident.name_of_tvar x) (LogicOld.Term.str_of t)
+  | Subst ((x, sort), t) ->
+      if true then
+        sprintf "%s := %s;\n" (Ident.name_of_tvar x) (LogicOld.Term.str_of t)
+      else
+        sprintf "%s : %s := %s;\n" (Ident.name_of_tvar x)
+          (Term.str_of_sort sort) (LogicOld.Term.str_of t)
   | Seq (c1, c2) -> str_of_command c1 ^ str_of_command c2
   | Choice (c1, c2) ->
       "(\n" ^ str_of_command c1 ^ ") || (\n" ^ str_of_command c2 ^ ");\n"
@@ -160,18 +220,21 @@ let used_vars c =
     | Skip -> env
     | Assume phi ->
         let env' =
-          Set.filter (Formula.term_sort_env_of phi) ~f:(fun (x, _) ->
-              not
-              @@ String.is_prefix ~prefix:nondet_prefix
-              @@ Ident.name_of_tvar x)
+          Set.filter
+            (Formula.term_sort_env_of phi)
+            ~f:
+              (fst >> Ident.name_of_tvar
+              >> String.is_prefix ~prefix:nondet_prefix
+              >> not)
         in
         Set.union env' env
     | Subst ((x, _), t) ->
         let env' =
-          Set.filter (Term.term_sort_env_of t) ~f:(fun (x, _) ->
-              not
-              @@ String.is_prefix ~prefix:nondet_prefix
-              @@ Ident.name_of_tvar x)
+          Set.filter (Term.term_sort_env_of t)
+            ~f:
+              (fst >> Ident.name_of_tvar
+              >> String.is_prefix ~prefix:nondet_prefix
+              >> not)
         in
         Set.union env' (Set.filter env ~f:(fun (y, _) -> Stdlib.(x <> y)))
     | Seq (c1, c2) -> aux (aux env c2) c1
@@ -183,7 +246,7 @@ let defined_vars c =
   let rec aux env = function
     | Skip -> env
     | Assume _ -> env
-    | Subst ((x, s), _) -> Set.add env (x, s)
+    | Subst ((x, _), _) -> Set.add env x
     | Seq (c1, c2) -> aux (aux env c2) c1
     | Choice (c1, c2) -> Set.inter (aux env c1) (aux env c2)
   in
@@ -218,7 +281,7 @@ let graph_of (trans : transition list) =
   g
 
 let of_graph cfa : transition list =
-  G.fold_edges_e (fun (f, c, t) trans -> (f, c, t) :: trans) cfa []
+  G.fold_edges_e (fun tr trans -> tr :: trans) cfa []
 
 exception Found_Edges of G.edge list
 
@@ -234,7 +297,7 @@ let contract_edges ~print cfa =
   | Found_Edges [] -> assert false
   | Found_Edges ((s, _, d) :: _ as es) ->
       print @@ lazy (sprintf "eliminating edge (%s, %s)" s d);
-      let c = choice @@ List.map es ~f:(fun (_, c, _) -> c) in
+      let c = choice @@ List.map es ~f:snd3 in
       G.remove_edge cfa s d;
       G.add_edge_e cfa (s, c, d);
       true
@@ -249,7 +312,7 @@ let contract_vertex_1_1 ~print s cfa =
           String.(s = v)
           (* ignore start node *)
           || Fn.non List.is_empty
-             @@ G.find_all_edges cfa v v (*ignore vertex with a self-loop*)
+             @@ G.find_all_edges cfa v v (* ignore vertex with a self-loop *)
         then ()
         else
           match (G.pred_e cfa v, G.succ_e cfa v) with
@@ -273,7 +336,7 @@ let contract_vertex_1_n ~print s cfa =
           String.(s = v)
           (* ignore start node *)
           || Fn.non List.is_empty
-             @@ G.find_all_edges cfa v v (*ignore vertex with a self-loop*)
+             @@ G.find_all_edges cfa v v (* ignore vertex with a self-loop *)
         then ()
         else
           match (G.pred_e cfa v, G.succ_e cfa v) with
@@ -336,9 +399,9 @@ module LiveVariables =
       let join = Set.union
 
       let analyze (_, c, _) env =
-        let def = Set.Poly.map ~f:fst @@ defined_vars c in
+        let def = defined_vars c in
         let use = used_vars c in
-        Set.union use (Set.filter env ~f:(fun (x, _) -> not @@ Set.mem def x))
+        Set.union use (Set.filter env ~f:(fst >> Set.mem def >> not))
     end)
 
 let rec cut_points_of g res =
@@ -387,7 +450,7 @@ let rec cut_points_of g res =
   else res
 
 let analyze ~print ((s, e, c, trans) as lts) =
-  print @@ lazy "************* converting LTS to muCLP ***************";
+  print @@ lazy "************* simplifying LTS ***************";
   print @@ lazy (sprintf "input LTS:\n%s" @@ str_of_lts lts);
   match s with
   | None -> ((fun _ -> Set.Poly.empty), Set.Poly.empty, (s, e, c, trans))

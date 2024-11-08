@@ -48,11 +48,13 @@ let of_params ~print uni_senv sexps dtenv =
   List.rev sexps
   |> List.fold ~init:(uni_senv, Map.Poly.empty) ~f:(fun (uni_senv, acc) ->
        function
-       | Sexp.List [ Sexp.Atom name; sort ] ->
-           ( Map.Poly.add_exn uni_senv ~key:(Ident.Tvar name)
-               ~data:(sort_of_sexp ~print dtenv sort),
-             Map.Poly.add_exn acc ~key:(Ident.Tvar name)
-               ~data:(sort_of_sexp ~print dtenv sort) )
+       | Sexp.List [ Sexp.Atom name; sort ] -> (
+           try
+             ( Map.Poly.add_exn uni_senv ~key:(Ident.Tvar name)
+                 ~data:(sort_of_sexp ~print dtenv sort),
+               Map.Poly.add_exn acc ~key:(Ident.Tvar name)
+                 ~data:(sort_of_sexp ~print dtenv sort) )
+           with _ -> failwith @@ name ^ " is already bound")
        | t -> failwith @@ "invalid param: " ^ Sexp.to_string t)
 
 let is_con = function
@@ -69,7 +71,7 @@ let of_con = function
 let is_pred_sym1 = function "is_int" -> true | _ -> false
 
 let of_pred_sym1 = function
-  | "is_int" -> T_real_int.mk_is_int
+  | "is_int" -> T_irb.mk_is_int
   | op -> failwith @@ "parse error : unknown pred sym " ^ op
 
 let is_fun_sym1 = function
@@ -80,8 +82,8 @@ let is_fun_sym1 = function
 
 let of_fun_sym1 = function
   | "-" -> T_num.mk_nneg
-  | "to_real" -> T_real_int.mk_to_real
-  | "to_int" -> T_real_int.mk_to_int
+  | "to_real" -> T_irb.mk_int_to_real
+  | "to_int" -> T_irb.mk_real_to_int
   | "str.to.re" -> T_regex.mk_str_to_re
   | "re.comp" -> T_regex.mk_complement
   | "re.*" -> T_regex.mk_star
@@ -114,8 +116,8 @@ let of_fun_sym2 = function
   | "*" -> T_num.mk_nmult
   | "/" -> T_real.mk_rdiv
   | "div" -> T_int.mk_div
-  | "mod" -> T_int.mk_mod
-  | "rem" -> T_int.mk_rem
+  | "mod" -> T_num.mk_nmod
+  | "rem" -> T_num.mk_nrem
   | "^" -> T_num.mk_npower
   | "re.++" -> T_regex.mk_concat
   | "re.union" -> T_regex.mk_union
@@ -255,7 +257,7 @@ let rec of_formula ~print ~inline (envs : Problem.envs) phi =
       of_formula ~print ~inline envs t
   (* predicate variable application *)
   | Sexp.List (Sexp.Atom name :: args) -> (
-      print @@ lazy (sprintf "[formula] precicate %s" name);
+      print @@ lazy (sprintf "[formula] predicate %s" name);
       let args = List.map args ~f:(of_term ~print ~inline envs) in
       match Map.Poly.find envs.exi_senv (Ident.Tvar name) with
       | Some sort ->
@@ -539,15 +541,17 @@ let mk_dt_cons ~print dtenv dt dts = function
   | Sexp.List (Sexp.Atom name :: sels) ->
       Datatype.mk_cons name
         ~sels:(List.map sels ~f:(mk_dt_sel ~print dtenv dt dts))
-  | sexp -> failwith @@ Sexp.to_string sexp
+  | sexp -> failwith @@ sprintf "[mk_dt_cons] %s" (Sexp.to_string sexp)
 
 let mk_new_datatypes ~print dtenv dts funcs flag =
   let datatypes =
     List.map2_exn funcs dts ~f:(fun func -> function
       | Sexp.List [ Sexp.Atom name; Sexp.Atom "0" ] -> Datatype.mk_dt name []
-      | Sexp.List [ Sexp.Atom name; Sexp.Atom _ ] -> (
+      | Sexp.List [ Sexp.Atom name; Sexp.Atom n ] -> (
           match func with
+          | Sexp.List (Sexp.Atom "par" :: Sexp.List args :: _)
           | Sexp.List (Sexp.List [ Sexp.Atom "par"; Sexp.List args ] :: _) ->
+              assert (List.length args = int_of_string n);
               Datatype.mk_dt name
               @@ List.map args ~f:(function
                    | Sexp.Atom name -> Sort.SVar (Ident.Svar name)
@@ -557,10 +561,11 @@ let mk_new_datatypes ~print dtenv dts funcs flag =
   in
   let datatypes =
     List.map2_exn datatypes funcs ~f:(fun dt -> function
+      | Sexp.List [ Sexp.Atom "par"; Sexp.List _; Sexp.List conses ]
       | Sexp.List (Sexp.List [ Sexp.Atom "par"; Sexp.List _ ] :: conses)
       | Sexp.List conses ->
           let conses =
-            List.fold_left conses ~init:[] ~f:(fun conses cons ->
+            List.fold_left ~init:[] conses ~f:(fun conses cons ->
                 mk_dt_cons ~print dtenv dt datatypes cons :: conses)
           in
           { dt with conses }
@@ -643,7 +648,7 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
         List.fold_left ~init:envs.dtenv ~f:DTEnv.update_dt
         @@ mk_old_datatypes ~print envs.dtenv dts Datatype.FDt args
       in
-      print @@ lazy (DTEnv.str_of dtenv');
+      print @@ lazy (sprintf "datatype env:\n%s" @@ DTEnv.str_of dtenv');
       toplevel ~print ~inline acc { envs with dtenv = dtenv' } es
   | Sexp.List [ Sexp.Atom "declare-datatypes"; Sexp.List dts; Sexp.List funcs ]
     :: es ->
@@ -651,7 +656,7 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
         List.fold_left ~init:envs.dtenv ~f:DTEnv.update_dt
         @@ mk_new_datatypes ~print envs.dtenv dts funcs Datatype.FDt
       in
-      print @@ lazy (DTEnv.str_of dtenv');
+      print @@ lazy (sprintf "datatype env:\n%s" @@ DTEnv.str_of dtenv');
       toplevel ~print ~inline acc { envs with dtenv = dtenv' } es
   | Sexp.List [ Sexp.Atom "declare-codatatypes"; Sexp.List args; Sexp.List dts ]
     :: es
@@ -660,7 +665,7 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
         List.fold_left ~init:envs.dtenv ~f:DTEnv.update_dt
         @@ mk_old_datatypes ~print envs.dtenv dts Datatype.FCodt args
       in
-      print @@ lazy (DTEnv.str_of dtenv');
+      print @@ lazy (sprintf "datatype env:\n%s" @@ DTEnv.str_of dtenv');
       toplevel ~print ~inline acc { envs with dtenv = dtenv' } es
   | Sexp.List
       [ Sexp.Atom "declare-codatatypes"; Sexp.List dts; Sexp.List funcs ]
@@ -669,7 +674,7 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
         List.fold_left ~init:envs.dtenv ~f:DTEnv.update_dt
         @@ mk_new_datatypes ~print envs.dtenv dts funcs Datatype.FCodt
       in
-      print @@ lazy (DTEnv.str_of dtenv');
+      print @@ lazy (sprintf "datatype env:\n%s" @@ DTEnv.str_of dtenv');
       toplevel ~print ~inline acc { envs with dtenv = dtenv' } es
   | Sexp.List
       [

@@ -55,10 +55,10 @@ end = struct
   let mk_or ?(info = Dummy) t1 t2 = BinaryOp (Or, t1, t2, info)
 
   let and_of ?(info = Dummy) =
-    List.fold ~f:(mk_and ~info) ~init:(mk_true ~info ())
+    List.fold ~init:(mk_true ~info ()) ~f:(mk_and ~info)
 
   let or_of ?(info = Dummy) =
-    List.fold ~f:(mk_or ~info) ~init:(mk_false ~info ())
+    List.fold ~init:(mk_false ~info ()) ~f:(mk_or ~info)
 
   let rec str_of = function
     | True _ -> "True"
@@ -96,9 +96,9 @@ end = struct
     else
       match phi2 with
       | True _ | False _ | Atom (_, _) -> false
-      | UnaryOp (_, phi2', _) -> occurs_in phi1 phi2'
-      | BinaryOp (_, phi', phi'', _) ->
-          occurs_in phi1 phi' || occurs_in phi1 phi''
+      | UnaryOp (_, phi21, _) -> occurs_in phi1 phi21
+      | BinaryOp (_, phi21, phi22, _) ->
+          occurs_in phi1 phi21 || occurs_in phi1 phi22
 
   let rec neg_atoms_of_clause = function
     | UnaryOp (Neg, Atom (id, Dummy), _) -> [ Atom (id, Dummy) ]
@@ -116,19 +116,19 @@ end = struct
 
   let eval formula =
     let rec inner = function
-      | True _ -> [ true ]
-      | False _ -> [ false ]
-      | Atom _ -> [ true; false ]
-      | UnaryOp (Neg, phi, _) -> List.map ~f:(fun tf -> not tf) @@ inner phi
+      | True _ -> Set.Poly.singleton true
+      | False _ -> Set.Poly.singleton false
+      | Atom _ -> Set.Poly.of_list [ true; false ]
+      | UnaryOp (Neg, phi, _) -> Set.Poly.map (inner phi) ~f:not
       | BinaryOp (And, phi1, phi2, _) ->
-          List.concat_map (inner phi1) ~f:(fun tf ->
-              List.map (inner phi2) ~f:(Stdlib.( && ) tf))
+          Set.concat_map (inner phi1) ~f:(fun tf ->
+              Set.Poly.map (inner phi2) ~f:(( && ) tf))
       | BinaryOp (Or, phi1, phi2, _) ->
-          List.concat_map (inner phi1) ~f:(fun tf ->
-              List.map (inner phi2) ~f:(Stdlib.( || ) tf))
+          Set.concat_map (inner phi1) ~f:(fun tf ->
+              Set.Poly.map (inner phi2) ~f:(( || ) tf))
     in
-    if List.for_all (inner formula) ~f:(Stdlib.( = ) true) then true
-    else if List.for_all (inner formula) ~f:(Stdlib.( = ) false) then false
+    if Set.for_all (inner formula) ~f:(Stdlib.( = ) true) then true
+    else if Set.for_all (inner formula) ~f:(Stdlib.( = ) false) then false
     else failwith @@ sprintf "formula %s cannot be evaluated" @@ str_of formula
 
   let rec subst map = function
@@ -151,9 +151,8 @@ end = struct
     | UnaryOp (Neg, UnaryOp (Neg, phi, _), _) -> cnf_of phi
     | BinaryOp (And, phi1, phi2, _) -> cnf_of phi1 @ cnf_of phi2
     | BinaryOp (Or, phi1, phi2, _) ->
-        let cls1, cls2 = (cnf_of phi1, cnf_of phi2) in
-        List.map (List.cartesian_product cls1 cls2)
-          ~f:(fun ((ns1, ps1), (ns2, ps2)) -> (ns1 @ ns2, ps1 @ ps2))
+        List.cartesian_product (cnf_of phi1) (cnf_of phi2)
+        |> List.map ~f:(fun ((ns1, ps1), (ns2, ps2)) -> (ns1 @ ns2, ps1 @ ps2))
     | phi -> failwith @@ sprintf "fail @ cnf_of %s " @@ str_of phi
 
   let rec nnf_of = function
@@ -161,17 +160,17 @@ end = struct
     | UnaryOp (Neg, False Dummy, _) -> True Dummy
     | UnaryOp (Neg, UnaryOp (Neg, phi, _), _) -> nnf_of phi
     | UnaryOp (Neg, BinaryOp (And, phi1, phi2, _), _) ->
-        let phi1', phi2' =
-          ( nnf_of (UnaryOp (Neg, phi1, Dummy)),
-            nnf_of (UnaryOp (Neg, phi2, Dummy)) )
-        in
-        BinaryOp (Or, phi1', phi2', Dummy)
+        BinaryOp
+          ( Or,
+            nnf_of (UnaryOp (Neg, phi1, Dummy)),
+            nnf_of (UnaryOp (Neg, phi2, Dummy)),
+            Dummy )
     | UnaryOp (Neg, BinaryOp (Or, phi1, phi2, _), _) ->
-        let phi1', phi2' =
-          ( nnf_of (UnaryOp (Neg, phi1, Dummy)),
-            nnf_of (UnaryOp (Neg, phi2, Dummy)) )
-        in
-        BinaryOp (And, phi1', phi2', Dummy)
+        BinaryOp
+          ( And,
+            nnf_of (UnaryOp (Neg, phi1, Dummy)),
+            nnf_of (UnaryOp (Neg, phi2, Dummy)),
+            Dummy )
     | BinaryOp (And, phi1, phi2, _) ->
         BinaryOp (And, nnf_of phi1, nnf_of phi2, Dummy)
     | BinaryOp (Or, phi1, phi2, _) ->
@@ -191,8 +190,8 @@ end = struct
   let snegatom name =
     Set.Poly.singleton (Set.Poly.singleton name, Set.Poly.empty)
 
-  let sand_cnf ss = Set.Poly.union_list ss
-  let sor_dnf ss = Set.Poly.union_list ss
+  let sand_cnf = Set.Poly.union_list
+  let sor_dnf = Set.Poly.union_list
 
   let rec tseitinize cnf_or_dnf = function
     | True _ | UnaryOp (Neg, False _, _) -> (strue cnf_or_dnf, strue true)

@@ -59,6 +59,7 @@ module type ArgType = sig
   val name : Ident.tvar
   val sorts : Sort.t list
   val fenv : LogicOld.FunEnv.t
+  val sol_space : SolSpace.t
   val id : int option
 end
 
@@ -199,15 +200,21 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
 
   let str_of () =
     sprintf
-      ("number of cases : %d\n" ^^ "number of condition conjuncts : %d\n"
-     ^^ "depth : %d\n" ^^ "ext : %d\n"
+      ("number of cases (max: %s) : %d\n"
+     ^^ "number of condition conjuncts (max: %s) : %d\n"
+     ^^ "depth (max: %s) : %d\n" ^^ "ext : %d\n"
      ^^ "upper bound of the sum of the abs of expression coefficients : %s\n"
      ^^ "upper bound of the abs of expression constant : %s\n"
      ^^ "seeds of expressions : %s\n"
      ^^ "upper bound of the sum of the abs of condition coefficients : %s\n"
      ^^ "upper bound of the abs of condition constant : %s\n"
      ^^ "seeds of conditions : %s")
-      !param.nd !param.nc !param.depth !param.ext
+      (SolSpace.str_of_tvar_and_flag Arg.name SolSpace.ND Arg.sol_space)
+      !param.nd
+      (SolSpace.str_of_tvar_and_flag Arg.name SolSpace.NC Arg.sol_space)
+      !param.nc
+      (SolSpace.str_of_tvar_and_flag Arg.name SolSpace.Depth Arg.sol_space)
+      !param.depth !param.ext
       (match !param.ubec with None -> "N/A" | Some ubec -> Z.to_string ubec)
       (match !param.ubed with None -> "N/A" | Some ubed -> Z.to_string ubed)
       (String.concat_set ~sep:"," @@ Set.Poly.map !param.es ~f:Z.to_string)
@@ -215,7 +222,10 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
       (match !param.ubcd with None -> "N/A" | Some ubcd -> Z.to_string ubcd)
       (String.concat_set ~sep:"," @@ Set.Poly.map !param.cs ~f:Z.to_string)
 
-  let in_space () = true (* TODO *)
+  let in_space () =
+    SolSpace.in_space Arg.name SolSpace.ND !param.nd Arg.sol_space
+    && SolSpace.in_space Arg.name SolSpace.NC !param.nc Arg.sol_space
+    && SolSpace.in_space Arg.name SolSpace.Depth !param.depth Arg.sol_space
 
   let adjust_quals ~tag quals =
     let params = params_of ~tag in
@@ -232,7 +242,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
                Some (Formula.eq t1 t2)
            | phi ->
                let qual =
-                 Z3Smt.Z3interface.qelim ~id Arg.fenv
+                 Z3Smt.Z3interface.qelim ~id ~fenv:Arg.fenv
                  @@ Formula.exists [ List.last_exn params ] phi
                in
                if Formula.is_bind qual || Set.is_empty (Formula.fvs_of qual)
@@ -305,8 +315,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
             (Ident.name_of_tvar @@ Arg.name)
             (Formula.str_of cnstr_of_cond_const));
     let tmpl =
-      Logic.(
-        Term.mk_lambda (of_old_sort_env_list ExtTerm.of_old_sort hspace.params))
+      Logic.(Term.mk_lambda (of_old_sort_env_list hspace.params))
       @@ Logic.ExtTerm.of_old_formula tmpl
     in
     ( (ExprCondConjDepthExt, tmpl),
@@ -617,20 +626,31 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     if (param.depth + param.ext) mod 2 = 0 then increase_depth (param, actions)
     else increase_ext (param, actions)
 
+  let try_then f g =
+    let res = f () in
+    let backup = !param in
+    param := fst res;
+    if in_space () then (
+      param := backup;
+      res)
+    else g ()
+
   let increase_expr_cond_conj_depth_ext (param, actions) =
+    let f () = increase_expr (param, actions) in
+    let g () = increase_cond_conj (param, actions) in
     if
       List.exists Arg.sorts ~f:(fun s ->
           Term.is_dt_sort s || Term.is_array_sort s)
       && param.nd * param.nc > Integer.pow (param.depth + 1) 3
-    then increase_depth_ext (param, actions)
+    then (*ToDo: try_then*) increase_depth_ext (param, actions)
     else if
       (param.nd + param.nc) mod 2 = 0
       ||
       match config.max_number_of_cond_conj with
       | None -> false
       | Some max -> param.nc >= max
-    then increase_expr (param, actions)
-    else increase_cond_conj (param, actions)
+    then try_then f g
+    else try_then g f
 
   let rec inner param_actions = function
     | [] -> param_actions
@@ -732,8 +752,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
   let _ =
     Debug.print
     @@ lazy
-         ("************* initializing "
-         ^ Ident.name_of_tvar Arg.name
-         ^ " ***************");
+         (sprintf "************* initializing %s ***************"
+            (Ident.name_of_tvar Arg.name));
     Debug.print @@ lazy (str_of ())
 end

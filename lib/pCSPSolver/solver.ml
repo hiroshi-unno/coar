@@ -43,7 +43,7 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
     | Config.Hoice cfg -> SHoice (Hoice.Solver.make cfg)
     | Config.Printer cfg -> SPrinter (Printer.Solver.make cfg)
 
-  let solve ~preds ~copreds =
+  let solve ?(timeout = None) ~preds ~copreds =
     if Map.Poly.is_empty preds && Map.Poly.is_empty copreds then (
       let open Or_error in
       match solver with
@@ -58,7 +58,7 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
           let module SPACER = SPACER.Solver.Make (Cfg) in
           fun ?bpvs ?(print_sol = false) pcsp ->
             ignore bpvs;
-            SPACER.solve ~print_sol pcsp >>= fun sol -> Ok (sol, -1)
+            SPACER.solve ~timeout ~print_sol pcsp >>= fun sol -> Ok (sol, -1)
       | SHoice (module Hoice) ->
           fun ?bpvs ?(print_sol = false) pcsp ->
             ignore bpvs;
@@ -128,10 +128,10 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
     match timeout with
     | Some tm when tm > 0 ->
         Timer.enable_timeout tm Fn.id ignore
-          (fun () -> solve ~bpvs ~print_sol ~preds ~copreds pcsp)
+          (fun () -> solve ~timeout ~bpvs ~print_sol ~preds ~copreds pcsp)
           (fun _ res -> res)
           (fun _ -> function
-            | Timer.Timeout -> Ok (PCSP.Problem.Unknown, -1)
+            | Timer.Timeout -> Ok (PCSP.Problem.Timeout, -1)
             | e -> raise e)
     | _ -> solve ~bpvs ~print_sol ~preds ~copreds pcsp
 

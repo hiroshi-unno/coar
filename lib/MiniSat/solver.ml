@@ -1,11 +1,12 @@
 open Core
 open Minisat
 open Common
+open Common.Combinator
 
 module type SolverType = sig
-  type result = (SAT.Problem.solution, Error.t) Result.t
+  val solve :
+    ?print_sol:bool -> SAT.Problem.t -> SAT.Problem.solution Or_error.t
 
-  val solve : ?print_sol:bool -> SAT.Problem.t -> result
   val incremental_solve : ?print_sol:bool -> SAT.Problem.t -> SAT.Problem.incsol
 end
 
@@ -15,13 +16,11 @@ module Make (Config : Config.ConfigType) : SolverType = struct
   module Debug =
     Debug.Make ((val Debug.Config.(if config.verbose then enable else disable)))
 
-  type result = (SAT.Problem.solution, Error.t) Result.t
-
   let rec check_sat ?(print_sol = false) ?(solver = create ())
       ?(lits = Hashtbl.Poly.create ~size:0 ~growth_allowed:true ()) cnf =
     Minisat.set_verbose solver 0;
     let cnt = ref 1 in
-    List.iter (SAT.Problem.to_list cnf) ~f:(fun (negatives, positives) ->
+    List.iter (SAT.Problem.clauses_of cnf) ~f:(fun (negatives, positives) ->
         let mk_lit_sub =
           List.iter ~f:(fun var ->
               if Hashtbl.Poly.mem lits var then ()
@@ -34,18 +33,12 @@ module Make (Config : Config.ConfigType) : SolverType = struct
         mk_lit_sub positives);
     let solution =
       try
-        List.iter
-          ~f:(fun (negatives, positives) ->
+        List.iter (SAT.Problem.clauses_of cnf) ~f:(fun (negatives, positives) ->
             let clause =
-              List.map
-                ~f:(fun neg -> Lit.neg @@ Hashtbl.Poly.find_exn lits neg)
-                negatives
-              @ List.map
-                  ~f:(fun pos -> Hashtbl.Poly.find_exn lits pos)
-                  positives
+              List.map negatives ~f:(Hashtbl.Poly.find_exn lits >> Lit.neg)
+              @ List.map positives ~f:(Hashtbl.Poly.find_exn lits)
             in
-            add_clause_l solver clause)
-          (SAT.Problem.to_list cnf);
+            add_clause_l solver clause);
         Minisat.solve solver;
         let assignment =
           Hashtbl.Poly.fold lits ~init:[] ~f:(fun ~key:var ~data:lit acc ->
@@ -78,6 +71,7 @@ module Make (Config : Config.ConfigType) : SolverType = struct
     match check_sat ~print_sol cnf with
     | SAT.Problem.IncSat (assigns, _) -> Ok (SAT.Problem.Sat assigns)
     | SAT.Problem.IncUnsat -> Ok SAT.Problem.Unsat
+    | SAT.Problem.IncUnknown -> Ok SAT.Problem.Unknown
 
   let incremental_solve ?(print_sol = false) cnf = check_sat ~print_sol cnf
 end

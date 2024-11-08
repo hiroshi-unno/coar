@@ -1,13 +1,17 @@
 open Core
 open Common.Util
 
-type t = { dim_reduction : bool; verbose : bool } [@@deriving yojson]
+type t = { verbose : bool; solver : HOMCSolver.Config.t ext_file }
+[@@deriving yojson]
 
 module type ConfigType = sig
   val config : t
 end
 
-let instantiate_ext_files cfg = Ok cfg
+let instantiate_ext_files cfg =
+  let open Or_error in
+  HOMCSolver.Config.load_ext_file cfg.solver >>= fun solver ->
+  Ok { cfg with solver }
 
 let load_ext_file = function
   | ExtFile.Instance x -> Ok (ExtFile.Instance x)
@@ -18,4 +22,4 @@ let load_ext_file = function
       | Ok x -> instantiate_ext_files x >>= fun x -> Ok (ExtFile.Instance x)
       | Error msg ->
           error_string
-          @@ sprintf "Invalid MINISAT Configuration (%s): %s" filename msg)
+          @@ sprintf "Invalid EffCaml Configuration (%s): %s" filename msg)

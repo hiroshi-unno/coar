@@ -11,5 +11,5 @@
   CoAR.ast
   CoAR.SAT
   CoAR.Z3Sat
-  CoAR.MINISAT)
+  CoAR.MiniSat)
  (modules solver config))

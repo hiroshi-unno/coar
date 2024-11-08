@@ -93,17 +93,17 @@ let to_old_atom = function
       else if Formula.is_false phi then Some (Map.Poly.empty, Atom.mk_false ())
       else None (*ToDo*)
   | PApp ((pvar, sorts), terms) ->
-      Some (Map.Poly.empty, Atom.mk_app (Predicate.mk_var pvar sorts) terms)
+      Some (Map.Poly.empty, Atom.mk_pvar_app pvar sorts terms)
   | PPApp ((param_senv, phi), ((pvar, sorts), terms)) ->
       if Formula.is_true phi then
-        Some (param_senv, Atom.mk_app (Predicate.mk_var pvar sorts) terms)
+        Some (param_senv, Atom.mk_pvar_app pvar sorts terms)
       else None (*ToDo*)
 
 let to_old_atom_with_phi = function
   | FCon (_, phi) when Fn.non Formula.is_true phi -> (phi, None)
   | PPApp ((param_senv, phi), ((pvar, sorts), terms))
     when Fn.non Formula.is_true phi ->
-      (phi, Some (param_senv, Atom.mk_app (Predicate.mk_var pvar sorts) terms))
+      (phi, Some (param_senv, Atom.mk_pvar_app pvar sorts terms))
   | atm -> (Formula.mk_true (), to_old_atom atm)
 
 let to_atom atm =

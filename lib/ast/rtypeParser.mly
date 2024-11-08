@@ -28,6 +28,8 @@ let print _ = ()
 %token <string * int> ACCESSOR
 //%token <string * string> SIZE
 
+%token TRUE FALSE
+
 //%token TEMPLATE
 %token MAXIMIZE
 %token MINIMIZE
@@ -75,7 +77,7 @@ let print _ = ()
 //%token RBRACKET
 %token APPLY
 
-//%token QUESTION
+%token QUESTION
 
 //%token LABRA
 //%token RABRA
@@ -129,11 +131,12 @@ let print _ = ()
 %left prec_app
 %left DOT
 
-%start constraints val_ty_env comp_ty assertions opt_problems
+%start constraints val_ty_env comp_ty assertions opt_problems formula
 
 %type <LogicOld.sort_env_map -> LogicOld.Term.t> term
 %type <LogicOld.sort_env_map -> LogicOld.Atom.t> atom
 %type <LogicOld.sort_env_map -> LogicOld.Formula.t> prop
+%type <LogicOld.Formula.t> formula
 
 %type <LogicOld.sort_bind> bind
 %type <LogicOld.sort_env_list> binds
@@ -141,7 +144,6 @@ let print _ = ()
 %type <LogicOld.sort_env_map -> Rtype.t> val_ty
 %type <LogicOld.sort_env_map -> Rtype.c> comp_ty
 %type <LogicOld.sort_env_map -> Rtype.o> opsig_ty
-%type <LogicOld.sort_env_map -> Rtype.o> op_tys
 %type <LogicOld.sort_env_map -> Sort.t -> Rtype.s> cont_eff_ty
 
 %type <LogicOld.Formula.t list> constraints
@@ -154,11 +156,16 @@ let print _ = ()
 
 term:
   | LPAREN term RPAREN { $2 }
+  | VERT prop VERT { fun env -> T_bool.of_formula @@ $2 env }
   | IDENT {
     let var = Ident.Tvar $1 in
-    fun env -> Term.mk_var var @@ Map.Poly.find_exn env var }
+    fun env ->
+      Term.mk_var var @@ try Map.Poly.find_exn env var with Core.Not_found_s _ -> Sort.mk_fresh_svar ()
+    (*failwith @@ (Ident.name_of_tvar var) ^ " not found"*) }
   /* this causes reduce/reduce conflict on RPAREN
   | BOOL { fun _ -> T_bool.make $1 } */
+  | TRUE { fun _ -> T_bool.make true }
+  | FALSE { fun _ -> T_bool.make false }
   | INT { fun _ -> T_int.from_int $1 }
   | FLOAT { fun _ -> T_real.mk_real @@ Q.of_float $1 }
   | APPLY IDENT LPAREN terms RPAREN {
@@ -173,17 +180,17 @@ term:
         fun env -> Term.mk_fvar_app var (List.map params ~f:snd @ [ret_sort]) ($4 env)
       | None -> failwith @@ "unbound function variable: " ^ $2
   }
-  | SUB term %prec unary_minus {
-    fun env -> T_num.mk_nneg ($2 env)
-  }
+  | SUB term %prec unary_minus { fun env -> T_num.mk_nneg ($2 env) }
+  | FSUB term %prec unary_minus { fun env -> T_real.mk_rneg ($2 env) }
+  | ABS term %prec prec_app { fun env -> T_int.mk_abs ($2 env) }
+  | SQRT term %prec prec_app { fun env -> T_real.mk_rpower ($2 env) (T_real.mk_real @@ Q.of_float 0.5) }
+  | ToInt term %prec prec_app { fun env -> T_irb.mk_real_to_int ($2 env) }
+  | ToReal term %prec prec_app { fun env -> T_irb.mk_int_to_real ($2 env) }
   | term ADD term { fun env -> T_num.mk_nadd ($1 env) ($3 env) }
   | term SUB term { fun env -> T_num.mk_nsub ($1 env) ($3 env) }
   | term AST term { fun env -> T_num.mk_nmult ($1 env) ($3 env) }
   | term DIV term { fun env -> T_num.mk_ndiv ($1 env) ($3 env) }
-  | term MOD term { fun env -> T_int.mk_mod ($1 env) ($3 env) }
-  | FSUB term %prec unary_minus {
-    fun env -> T_real.mk_rneg ($2 env)
-  }
+  | term MOD term { fun env -> T_num.mk_nmod ($1 env) ($3 env) }
   | term FADD term { fun env -> T_real.mk_radd ($1 env) ($3 env) }
   | term FSUB term { fun env -> T_real.mk_rsub ($1 env) ($3 env) }
   | term FMUL term { fun env -> T_real.mk_rmult ($1 env) ($3 env) }
@@ -200,10 +207,6 @@ term:
     | T_tuple.STuple sorts -> T_tuple.mk_tuple_sel sorts t $3
     | _ -> failwith "type error"
   }
-  | ABS term %prec prec_app { fun env -> T_int.mk_abs ($2 env) }
-  | SQRT term %prec prec_app { fun env -> T_real.mk_rpower ($2 env) (T_real.mk_real @@ Q.of_float 0.5) }
-  | ToInt term %prec prec_app { fun env -> T_real_int.mk_to_int ($2 env) }
-  | ToReal term %prec prec_app { fun env -> T_real_int.mk_to_real ($2 env) }
   | CONST LPAREN terms RPAREN {
     fun env ->
     let ts = $3 env in
@@ -308,6 +311,8 @@ atom:
     fun _ -> Atom.of_bool_var @@ Ident.Tvar $1
   }
   | BOOL { fun _ -> Atom.mk_bool $1 }
+  | TRUE LPAREN RPAREN { fun _ -> Atom.mk_bool true }
+  | FALSE LPAREN RPAREN { fun _ -> Atom.mk_bool false }
   | IDENT LPAREN terms RPAREN {
     match Map.Poly.find (get_fenv ()) (Tvar $1) with
     | Some (params, ret_sort, _, _, _) ->
@@ -379,6 +384,9 @@ bind:
     tvar, Rtype.sort_of_val ty
   }
 
+formula:
+  | prop EOF { $1 Map.Poly.empty }
+
 val_ty:
   | LPAREN val_ty RPAREN { $2 }
   | IDENT {
@@ -431,9 +439,9 @@ val_tys_ast:
   | val_tys_ast AST val_ty { fun env -> $1 env @ [$3 env] }
 
 opsig_ty:
-  | SEMPTY { fun _ -> ALMap.empty } // SEMPTY has higher precedence than "LBRA RBRA"
-  | LBRA RBRA { fun _ -> ALMap.empty }
-  | LBRA op_tys { fun env -> $2 env }
+  | SEMPTY { fun _ -> (ALMap.empty, None) } // SEMPTY has higher precedence than "LBRA RBRA"
+  | LBRA RBRA { fun _ -> (ALMap.empty, None) }
+  | LBRA op_tys { fun env -> ($2 env, None) }
 op_tys:
   | CONST COLON val_ty RBRA { fun env -> ALMap.singleton $1 ($3 env) }
   | CONST COLON val_ty COMMA op_tys {
@@ -442,6 +450,7 @@ op_tys:
 
 cont_eff_ty:
   | WILDCARD { fun _ _ -> Rtype.Pure }
+  | QUESTION { fun _ _ -> Rtype.EVar (Ident.mk_fresh_evar ()) }
   | comp_ty IMP comp_ty {
     fun env _ -> Rtype.Eff ((Rtype.mk_fresh_tvar_with "x"), $1 env, $3 env)
   }
@@ -456,27 +465,41 @@ comp_ty:
   | val_ty {
     fun env -> Rtype.pure_comp_of_val ~config:!Rtype.cgen_config ($1 env)
   }
+  | QUESTION {
+    fun _ ->
+    { op_sig = ALMap.empty, Some (Ident.mk_fresh_rvar ());
+      val_type = Rtype.simple_val_of_sort ~config:!Rtype.cgen_config (Sort.mk_fresh_svar ());
+      temp_eff = ((Ident.mk_fresh_tvar (), Formula.mk_true ()), (Ident.mk_fresh_tvar (), Formula.mk_true ()));
+      cont_eff = Rtype.EVar (Ident.mk_fresh_evar ()) }
+  }
   // (T & E)
   | LPAREN val_ty AMP IDENT DOT prop COMMA IDENT DOT prop RPAREN {
     fun env ->
     let x1 = Ident.Tvar $4 in
     let x2 = Ident.Tvar $8 in
-    ALMap.empty(*temporary*), $2 env,
-    ((x1, $6 (Map.Poly.set env ~key:x1 ~data:(T_sequence.SSequence true))),
-     (x2, $10 (Map.Poly.set env ~key:x2 ~data:(T_sequence.SSequence false)))),
-    Rtype.Pure
+    { op_sig = ALMap.empty(*temporary*), None;
+      val_type = $2 env;
+      temp_eff = ((x1, $6 (Map.Poly.set env ~key:x1 ~data:(T_sequence.SSequence true))),
+                  (x2, $10 (Map.Poly.set env ~key:x2 ~data:(T_sequence.SSequence false))));
+      cont_eff = Rtype.Pure }
   }
   // (T / S)
   | LPAREN val_ty DIV cont_eff_ty RPAREN {
     fun env ->
     let t = $2 env in
-    ALMap.empty, t, Rtype.mk_temp_trivial ()(*temporary*), $4 env (Rtype.sort_of_val t)
+    { op_sig = ALMap.empty, None;
+      val_type = t;
+      temp_eff = Rtype.mk_temp_trivial ()(*temporary*);
+      cont_eff = $4 env (Rtype.sort_of_val t) }
   }
   // (sigma |> T / S)
   | LPAREN opsig_ty RTRI val_ty DIV cont_eff_ty RPAREN {
     fun env ->
     let t = $4 env in
-    $2 env, t, Rtype.mk_temp_trivial (), $6 env (Rtype.sort_of_val t)
+    { op_sig = $2 env;
+      val_type = t;
+      temp_eff = Rtype.mk_temp_trivial ();
+      cont_eff = $6 env (Rtype.sort_of_val t) }
   }
   // (sigma |> T & E / S)
   | LPAREN opsig_ty RTRI val_ty AMP IDENT DOT prop COMMA IDENT DOT prop DIV cont_eff_ty RPAREN {
@@ -484,10 +507,12 @@ comp_ty:
     let x1 = Ident.Tvar $6 in
     let x2 = Ident.Tvar $10 in
     let t = $4 env in
-    $2 env, t,
-    ((x1, $8 (Map.Poly.set env ~key:x1 ~data:(T_sequence.SSequence true))),
-     (x2, $12 (Map.Poly.set env ~key:x1 ~data:(T_sequence.SSequence false)))),
-    $14 env (Rtype.sort_of_val t)
+    { op_sig = $2 env;
+      val_type = t;
+      temp_eff =
+        ((x1, $8 (Map.Poly.set env ~key:x1 ~data:(T_sequence.SSequence true))),
+         (x2, $12 (Map.Poly.set env ~key:x1 ~data:(T_sequence.SSequence false))));
+      cont_eff = $14 env (Rtype.sort_of_val t) }
   }
 
 val_ty_bind:

@@ -27,4 +27,5 @@ end
 module Make (Cfg : Config.ConfigType) (Problem : PCSP.Problem.ProblemType) =
 struct
   let run_phase _ _ = Or_error.unimplemented "PASynthesizer.run_phase"
+  let init () = () (*ToDo*)
 end

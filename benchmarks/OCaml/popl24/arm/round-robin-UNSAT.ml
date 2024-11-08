@@ -25,7 +25,7 @@ let pop_opt (q: (unit -> unit) list ref) =
 (* from https://github.com/matijapretnar/eff/blob/master/examples/threads.eff *)
 
 let[@annot_MB "
-  (unit -> ({Yield: s1, Spawn: s2} |> unit / s => s)) -> unit
+  (unit -> ({Yield: s1, Spawn: unit -> ({Yield: s1} |> unit / ss => ss) -> s2} |> unit / s => s)) -> unit
 "] round_robin body =
   let q = ref [] in
   let enqueue t = push t q in

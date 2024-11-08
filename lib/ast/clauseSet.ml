@@ -49,6 +49,8 @@ let has_only_pure = Set.for_all ~f:Clause.has_only_pure
 let to_formula clauses (*ToDo: rename*) =
   BoolTerm.and_of @@ Set.to_list @@ Set.Poly.map clauses ~f:Clause.to_formula
 
+let to_formulas clauses = Set.Poly.map ~f:Clause.to_senv_formula clauses
+
 let of_formulas exi_senv phis =
   Set.concat_map phis ~f:(fun (uni_senv, phi) ->
       Set.Poly.map ~f:(fun (ps, ns, phi) -> (uni_senv, ps, ns, phi))

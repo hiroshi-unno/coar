@@ -74,9 +74,9 @@ module Make
     !pcsp'
 
   let old_formula_of_sol senv args sol =
-    let sol = ExtTerm.beta_reduction sol args in
+    let sol = ExtTerm.beta_reduction (Term.mk_apps sol args) in
     (* Debug.print_log ~tag:(name_of_tvar p) @@ ExtTerm.str_of sol; *)
-    ExtTerm.to_old_formula Map.Poly.empty (Map.Poly.of_alist_exn senv) sol []
+    ExtTerm.to_old_fml Map.Poly.empty (Map.Poly.of_alist_exn senv, sol)
 
   let equiv_old_sol_of (p : tvar) (sol : term) =
     match Hashtbl.Poly.find old_theta p with
@@ -105,9 +105,9 @@ module Make
         let senv, _ = ExtTerm.let_lam sol in
         let args = List.map ~f:(fst >> ExtTerm.mk_var) senv in
         let fenv = LogicOld.get_fenv () in
-        let sol = ExtTerm.beta_reduction sol args in
+        let sol = ExtTerm.beta_reduction (Term.mk_apps sol args) in
         (* Debug.print_log ~tag:(name_of_tvar p) @@ ExtTerm.str_of sol; *)
-        ExtTerm.to_old_formula delta (Map.Poly.of_alist_exn senv) sol []
+        ExtTerm.to_old_fml delta (Map.Poly.of_alist_exn senv, sol)
         (* |> (fun phi -> Debug.print_log ~tag:"1" @@ LogicOld.Formula.str_of phi; phi) *)
         |> Evaluator.simplify
         |> Normalizer.normalize
@@ -137,8 +137,7 @@ module Make
   let _qelim ~id delta phi =
     let open LogicOld in
     let clauses =
-      Formula.cnf_of (Map.Poly.map delta ~f:ExtTerm.to_old_sort)
-      @@ Formula.nnf_of phi
+      Formula.cnf_of (to_old_sort_env_map delta) @@ Formula.nnf_of phi
     in
     Set.Poly.map clauses ~f:(fun (ps, ns, pure_phi) ->
         let tvs = Set.concat_map ~f:Atom.tvs_of @@ Set.union ps ns in
@@ -149,7 +148,7 @@ module Make
         in
         let pure_phi =
           Formula.mk_forall sort_env pure_phi
-          |> Z3Smt.Z3interface.qelim ~id (LogicOld.get_fenv ())
+          |> Z3Smt.Z3interface.qelim ~id ~fenv:(LogicOld.get_fenv ())
           |> fun phi ->
           Debug.print_log ~tag:"qelimed" @@ lazy (Formula.str_of phi);
           if Formula.is_bind phi then pure_phi else phi
@@ -157,26 +156,12 @@ module Make
         snd @@ ClauseOld.to_formula (Map.Poly.empty, ps, ns, pure_phi))
     |> Set.to_list |> Formula.and_of
 
-  let subst_pcsp ?(bpvs = Set.Poly.empty) subst priority pcsp =
-    let phis = PCSP.Problem.formulas_of pcsp in
-    let params = PCSP.Problem.params_of pcsp in
-    let subst = Map.Poly.filter_keys subst ~f:(Fn.non @@ Set.mem bpvs) in
-    let params' = { params with PCSP.Params.sol_for_eliminated = subst } in
-    let phis =
-      Set.Poly.map phis ~f:(fun (param_senv, phi) ->
-          (param_senv, ExtTerm.subst subst phi))
-    in
-    PCSP.Problem.of_formulas phis ~params:params'
-    (* |> PCSP.Problem.map_old ~f:(fun (env, phi) -> env, qelim ~id:(PCSP.Problem.id_of pcsp) (PCSP.Problem.senv_of pcsp) phi) *)
-    |> preprocessor priority
-
   let extend_pcsp_with (messenger, id) pcsp delta c nepvs =
     let delta = Map.force_merge nepvs delta in
     let params =
       let params = PCSP.Problem.params_of pcsp in
       let kind_map =
-        params.kind_map
-        |> Kind.add_kinds (Set.Poly.of_list @@ Map.Poly.keys nepvs) Kind.NE
+        params.kind_map |> Kind.add_kinds (Map.Poly.key_set nepvs) Kind.NE
       in
       PCSP.Params.make ~dtenv:params.dtenv ~kind_map ~fenv:params.fenv
         ~sol_space:params.sol_space ~id
@@ -185,12 +170,11 @@ module Make
     c |> ExtTerm.nnf_of
     |> ExtTerm.cnf_of delta Map.Poly.empty
     |> Set.Poly.map ~f:(fun (_, _, phi) ->
-           let phi = ExtTerm.to_old_formula delta Map.Poly.empty phi [] in
            let uni_senv, _, phi =
-             LogicOld.Formula.skolemize ~use_fn_pred:false ~only_impure:true phi
+             LogicOld.Formula.skolemize ~use_fn_pred:false ~only_impure:true
+             @@ ExtTerm.to_old_fml delta (Map.Poly.empty, phi)
            in
-           ( Logic.of_old_sort_env_map ExtTerm.of_old_sort uni_senv,
-             ExtTerm.of_old_formula phi ))
+           ExtTerm.of_old (uni_senv, phi))
     |> Set.union @@ PCSP.Problem.formulas_of pcsp
     |> PCSP.Problem.of_formulas ~params
 
@@ -209,7 +193,9 @@ module Make
     in
     let pcsp =
       if not only_simple then
-        subst_pcsp ~bpvs:(Set.Poly.singleton pvar) theta priority pcsp
+        PCSP.Problem.subst ~bpvs:(Set.Poly.singleton pvar) ~elim:false theta
+          pcsp
+        |> preprocessor priority
       else pcsp
     in
     let res =
@@ -251,7 +237,7 @@ module Make
         theta
     in
     let phi =
-      ExtTerm.to_old_formula (Map.force_merge delta nepvs) Map.Poly.empty c []
+      ExtTerm.to_old_fml (Map.force_merge delta nepvs) (Map.Poly.empty, c)
     in
     let bpvs =
       Map.Poly.keys nepvs @ full_priority
@@ -284,9 +270,10 @@ module Make
          @@ String.concat_map_list ~sep:"," priority ~f:name_of_tvar);
     let sol =
       match Solver.solve ~bpvs pcsp' with
-      | Ok (PCSP.Problem.Unsat, _) -> CHCOpt.Problem.OptSat theta
+      | Ok (PCSP.Problem.Unsat _, _) -> CHCOpt.Problem.OptSat theta
       | Ok (PCSP.Problem.Unknown, _) -> CHCOpt.Problem.Unknown
       | Ok (PCSP.Problem.OutSpace _, _) -> CHCOpt.Problem.OptSatInSpace theta
+      | Ok (PCSP.Problem.Timeout, _) -> CHCOpt.Problem.Timeout
       | Ok (PCSP.Problem.Sat theta', _) ->
           let theta' =
             Map.key_set delta
@@ -488,7 +475,7 @@ module Make
                    (not
                       (List.for_all pvs ~f:(fun (v, _) ->
                            List.exists priority ~f:(Stdlib.( = ) v))))
-                   || (Set.length ns <= 1 && Logic.ExtTerm.is_bool phi)
+                   || (Set.length ns <= 1 && ExtTerm.is_bool phi)
                  then None
                  else
                    let pne =
@@ -572,9 +559,10 @@ module Make
       | Some sol -> Ok (PCSP.Problem.Sat sol, 0 (*dummy*))
     in
     match init_sol with
-    | Ok (PCSP.Problem.Unsat, _) -> (CHCOpt.Problem.Unsat, 0)
+    | Ok (PCSP.Problem.Unsat _, _) -> (CHCOpt.Problem.Unsat, 0)
     | Ok (PCSP.Problem.Unknown, _) -> (CHCOpt.Problem.Unknown, 0)
     | Ok (PCSP.Problem.OutSpace _, _) -> (CHCOpt.Problem.Unknown, 0 (*ToDo*))
+    | Ok (PCSP.Problem.Timeout, _) -> (CHCOpt.Problem.Timeout, 0)
     | Ok (PCSP.Problem.Sat theta, _) ->
         let src_pcsp =
           if config.improve_current then src_pcsp_wo_side_conds else src_pcsp
@@ -618,9 +606,12 @@ module Make
                     Solver.reset ();
                     let improved = Set.add improved p in
                     let pcsp =
-                      pcsp
-                      (*let optimized_sol = Map.Poly.filter_keys theta ~f:(Set.mem improved) in
-                        subst_pcsp optimized_sol priority pcsp*)
+                      if true then pcsp
+                      else
+                        PCSP.Problem.subst ~elim:false
+                          (Map.Poly.filter_keys theta ~f:(Set.mem improved))
+                          pcsp
+                        |> preprocessor priority
                     in
                     inner
                       (match res with

@@ -30,6 +30,7 @@ let to_old_formula exi_senv (uni_senv, ps, ns, phi) =
 let lift exi_senv f = of_old_clause @@ f @@ to_old_clause exi_senv
 let unlift exi_senv f = to_old_clause exi_senv @@ f @@ of_old_clause
 let sort_env_of ((senv, _, _, _) : t) = senv
+let to_senv_formula c = (sort_env_of c, to_formula c)
 
 let svs_of ((_, ps, ns, phi) : t) =
   Set.Poly.union_list
@@ -271,6 +272,12 @@ let fvs_new (_, ps, ns, phi) =
 let reduce_sort_map (senv, ps, ns, phi) =
   let ftvs = fvs_new (senv, ps, ns, phi) in
   (Map.Poly.filter_keys senv ~f:(Set.mem ftvs), ps, ns, phi)
+
+let rename ren ((uni_senv, ps, ns, phi) : t) =
+  ( uni_senv,
+    Set.Poly.map ~f:(BoolTerm.rename ren) ps,
+    Set.Poly.map ~f:(BoolTerm.rename ren) ns,
+    phi )
 
 let subst exi_senv sub ((uni_senv, ps, ns, phi) : t) : t =
   let ps1, ps2 =

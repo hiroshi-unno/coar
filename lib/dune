@@ -6,8 +6,10 @@
  (libraries
   core
   CoAR.Z3Sat
-  CoAR.MINISAT
+  CoAR.MiniSat
   CoAR.Z3Smt
+  CoAR.TRecS
+  CoAR.HorSat2
   CoAR.SPACER
   CoAR.Hoice
   CoAR.SyGuS
@@ -15,6 +17,7 @@
   CoAR.MuVal
   CoAR.MuCyc
   CoAR.Printer
-  CoAR.c
-  CoAR.RCaml)
+  CoAR.RCaml
+  CoAR.EffCaml
+  CoAR.c)
  (modules solver))

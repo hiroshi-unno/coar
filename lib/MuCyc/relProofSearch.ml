@@ -41,7 +41,7 @@ let lookup (defs : MuCLP.Pred.t list) (atm, _) =
   | Some (Mu, fargs, body) ->
     let tsub = Map.Poly.of_alist_exn @@ List.zip_exn (List.map ~f:fst fargs) aargs in
     let exi_senv =
-      sort_env_map_of_pred_sort_env_map @@
+      Term.pred_to_sort_env_map @@
       MuCLP.Pred.pred_sort_env_map_of_list Map.Poly.empty defs
     in
     Option.return @@ Set.to_list @@
@@ -236,7 +236,7 @@ let rec apply_defs ~print preds_senv (atms, phi) hatm = function
                     >> Formula.exists exists_vars
                     >> (fun phi ->
                         snd @@ Qelim.qelim_old Map.Poly.empty preds_senv @@
-                        (Logic.of_old_sort_env_map Logic.ExtTerm.of_old_sort @@
+                        (Logic.of_old_sort_env_map @@
                          Map.of_set_exn @@ Formula.term_sort_env_of phi, phi))
                     >> Formula.mk_imply phi
                     >> Z3Smt.Z3interface.is_valid ~id:None (FunEnv.mk_empty ()))

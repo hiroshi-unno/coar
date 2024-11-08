@@ -630,7 +630,7 @@ end = struct
   let atom_of = function
     | True _ -> Atom.mk_true () ~info:Dummy
     | False _ -> Atom.mk_false () ~info:Dummy
-    | Pvar pvar -> Atom.mk_app (Predicate.mk_var pvar []) [] ~info:Dummy
+    | Pvar pvar -> Atom.mk_pvar_app pvar [] [] ~info:Dummy
     | PredApp (sym, args) ->
         Atom.mk_app (Predicate.mk_psym sym) args ~info:Dummy
 

@@ -10,9 +10,7 @@ module Debug = Debug.Make ((val Debug.Config.disable))
 
 type query = Formula.t
 type t = { preds : Pred.t list; query : query }
-type solution = Valid | Invalid | Unknown
-
-exception Timeout
+type solution = Valid | Invalid | Unknown | Timeout
 
 let make preds query = { preds; query }
 let flip_solution = function Valid -> Invalid | Invalid -> Valid | x -> x
@@ -21,11 +19,12 @@ let str_of_solution = function
   | Valid -> "valid"
   | Invalid -> "invalid"
   | Unknown -> "unknown"
+  | Timeout -> "timeout"
 
 let lts_str_of_solution = function
   | Valid -> "YES"
   | Invalid -> "NO"
-  | Unknown -> "MAYBE"
+  | Unknown | Timeout -> "MAYBE"
 
 let preds_of muclp = muclp.preds
 let query_of muclp = muclp.query
@@ -102,12 +101,11 @@ let rec of_formula_with_env preds env used_pvars bound_tvars =
           in
           (fml', preds, used_pvars)
       | App (Var (pvar, sorts), args, info') ->
-          let new_pred =
-            Predicate.mk_var
-              (List.Assoc.find_exn ~equal:Stdlib.( = ) env pvar)
-              sorts
-          in
-          ( Formula.mk_atom (Atom.mk_app new_pred args ~info:info') ~info,
+          ( Formula.mk_atom
+              (Atom.mk_pvar_app
+                 (List.Assoc.find_exn ~equal:Stdlib.( = ) env pvar)
+                 sorts args ~info:info')
+              ~info,
             preds,
             used_pvars )
       | _ -> (fml, preds, used_pvars))
@@ -179,8 +177,7 @@ let has_only_exists muclp =
       let _, fml_left, fml_right, _ = Formula.let_binop fml in
       check fml_left && check fml_right
     else if Formula.is_forall fml then false
-    else if Formula.is_exists fml then
-      check @@ Triple.snd @@ Formula.let_exists fml
+    else if Formula.is_exists fml then check @@ snd3 @@ Formula.let_exists fml
     else failwith "not implemented"
     (*Debug.print @@ lazy (sprintf "not implemented for: %s" @@ Formula.str_of fml)*)
   in
@@ -193,8 +190,7 @@ let has_only_forall muclp =
     else if Formula.is_and fml || Formula.is_or fml then
       let _, fml_left, fml_right, _ = Formula.let_binop fml in
       check fml_left && check fml_right
-    else if Formula.is_forall fml then
-      check @@ Triple.snd @@ Formula.let_forall fml
+    else if Formula.is_forall fml then check @@ snd3 @@ Formula.let_forall fml
     else if Formula.is_exists fml then false
     else failwith "not implemented"
   in
@@ -293,7 +289,7 @@ let rename_args group =
           match Set.to_list ps with
           | [ Atom.App (Predicate.Var (p, _), args, _) ] ->
               ( Map.force_merge uni_senv @@ Map.of_list_exn
-                @@ List.map ~f:(Pair.map_snd Logic.ExtTerm.of_old_sort) new_vars,
+                @@ Logic.of_old_sort_env_list new_vars,
                 Some (p, new_vars),
                 ns,
                 Formula.and_of
@@ -301,6 +297,21 @@ let rename_args group =
                    :: List.map2_exn args args' ~f:Formula.eq )
           | _ -> assert false)
   | _ -> assert false
+
+let typeinf ~print muclp =
+  (* ToDo: infer types of mutually recursive predicates *)
+  {
+    preds =
+      List.map muclp.preds ~f:(fun (fix, pvar, args, phi) ->
+          let args, phi, _ =
+            Formula.mk_forall args phi
+            |> Typeinf.typeinf_formula ~print ~instantiate_num_to_int:true
+            |> Formula.let_forall
+          in
+          (fix, pvar, args, phi));
+    query =
+      Typeinf.typeinf_formula ~print ~instantiate_num_to_int:true muclp.query;
+  }
 
 let of_chc ?(only_pos = true) chc =
   let chc = chc |> PCSP.Problem.to_nnf |> PCSP.Problem.to_cnf in
@@ -344,8 +355,7 @@ let of_chc ?(only_pos = true) chc =
                           (senv, Evaluator.simplify_neg phi)
                    in
                    let unbound =
-                     Map.to_alist
-                     @@ Logic.to_old_sort_env_map Logic.ExtTerm.to_old_sort
+                     Map.to_alist @@ Logic.to_old_sort_env_map
                      @@ Map.Poly.filter_keys senv
                           ~f:(Fn.non @@ List.Assoc.mem ~equal:Stdlib.( = ) args)
                    in
@@ -374,8 +384,7 @@ let of_chc ?(only_pos = true) chc =
                       (senv, Evaluator.simplify_neg phi)
                in
                let unbound =
-                 List.map ~f:(fun (x, s) -> (x, Logic.ExtTerm.to_old_sort s))
-                 @@ Map.Poly.to_alist senv
+                 Logic.to_old_sort_env_list @@ Map.Poly.to_alist senv
                in
                Formula.exists unbound phi)
     | _ -> assert false
@@ -472,10 +481,8 @@ let rec of_lts ?(live_vars = None) ?(cut_points = None) = function
       | Some start ->
           let undef_preds =
             Set.diff
-              (Set.add
-                 (Set.Poly.of_list @@ List.map transitions ~f:Triple.trd)
-                 start)
-              (Set.Poly.of_list @@ List.map transitions ~f:Triple.fst)
+              (Set.add (Set.Poly.of_list @@ List.map transitions ~f:trd3) start)
+              (Set.Poly.of_list @@ List.map transitions ~f:fst3)
             |> Set.Poly.map ~f:(fun from ->
                    Pred.make Predicate.Fix (pvar_of from) (tenv_of from)
                      (Formula.mk_true ()))
@@ -488,6 +495,8 @@ let rec of_lts ?(live_vars = None) ?(cut_points = None) = function
             @@ Atom.mk_pvar_app (pvar_of start) (List.map ~f:snd tenv)
                  (Term.of_sort_env tenv)
           in
+          (*typeinf ~print:Debug.print
+            @@*)
           make (preds_mu @ preds_nu @ undef_preds) query)
   | lts, LTS.Problem.NonTerm ->
       get_dual @@ of_lts ~live_vars ~cut_points (lts, LTS.Problem.Term)

@@ -32,13 +32,11 @@ struct
     let clause, uni_senv =
       let senv, phi = ExClause.to_old_formula cl in
       ( Logic.ExtTerm.of_old_formula phi,
-        Logic.of_old_sort_env_map Logic.ExtTerm.of_old_sort senv )
+        Logic.of_old_sort_env_map senv )
     in
     let sub = CandSol.to_subst (params_senv, cand) in
     let phi =
-      Logic.ExtTerm.to_old_formula exi_senv uni_senv
-        (Logic.Term.subst sub clause)
-        []
+      Logic.ExtTerm.to_old_fml exi_senv (uni_senv, Logic.Term.subst sub clause)
     in
     let phi = LogicOld.UTermEnv.subst_formula uenv @@ Evaluator.simplify phi in
     match check_clause ~id ~smt_timeout phi with

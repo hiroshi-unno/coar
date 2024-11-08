@@ -42,6 +42,8 @@ struct
       end)
       (APCSP)
 
+  let init () = MSolutionTemplate.init_incr ()
+
   let run_phase num_iters examples =
     let open State.Monad_infix in
     Ok (State.lift examples) >>=? fun vs _ ->

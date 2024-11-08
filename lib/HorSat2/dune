@@ -1,0 +1,7 @@
+(library
+ (name HorSat2)
+ (public_name CoAR.HorSat2)
+ (preprocess
+  (pps ppx_deriving_yojson))
+ (libraries core CoAR.HOMC)
+ (modules config solver))

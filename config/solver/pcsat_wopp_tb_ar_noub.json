@@ -1,0 +1,21 @@
+[
+  "PCSat",
+  {
+    "preprocessor": [
+      "Filename",
+      "./config/pcsat/preprocessor/disable.json"
+    ],
+    "coordinator": [
+      "Filename",
+      "./config/pcsat/coordinator/tb_ar_noub.json"
+    ],
+    "sol_printer": [
+      "Filename",
+      "./config/pcsat/sol_printer/enable.json"
+    ],
+    "load_oracle_sol": false,
+    "solve_each_query": false,
+    "check_problem": false,
+    "check_solution": false
+  }
+]

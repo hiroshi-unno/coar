@@ -98,12 +98,12 @@ let logpr_judgement (J(dcs, gamma, ent)) =
 let pr_judgement_tex (J(dcs, gamma, ent)) =
   Format.printf "@.\\begin{matrix}@.";
   Format.printf "\\left[phi\\right]:\\\\ @,";
-  Format.printf "%a" HCCS.pr_tex dcs;
+  HCCS.pr_tex Format.std_formatter dcs;
   Format.printf "@.\\end{matrix}@.";
 
   Format.printf "@.\\begin{matrix}@.";
   Format.printf "@.\\left[Gamma\\right]:\\\\  @,";
-  Format.printf "%a" Lemma.pr_tex gamma;
+  Lemma.pr_tex Format.std_formatter gamma;
   Format.printf "@.\\end{matrix}@.";
   Format.printf "@.\\begin{matrix}@.";
   Format.printf "\\left[A\\right]:\\\\ @,";
@@ -111,7 +111,7 @@ let pr_judgement_tex (J(dcs, gamma, ent)) =
 
   Format.printf "@.\\begin{matrix}@.";
   Format.printf "@.\\left[h\\right]:\\\\ @,";
-  Format.printf "%a" Lemma.pr_tex dcs;
+  Lemma.pr_tex Format.std_formatter dcs;
   Format.printf "@.\\end{matrix}@."
 
 let rec pr depth = function
@@ -242,14 +242,14 @@ let pr_all_tex =
 
 let rec pr_outline ppf pt =
   match pt with
-  | Node(_, t)       -> Format.fprintf ppf "%a" pr_outline t
+  | Node(_, t)       -> pr_outline tppf
   | Fold(_, t)       -> Format.fprintf ppf "@[<v 3>Fold@;%a@]" pr_outline t
   | Apply(_, t)   -> Format.fprintf ppf "@[<v 3>Apply@;%a@]" pr_outline t
   | Valid _          -> Format.fprintf ppf "Valid"
   | InValid _        -> Format.fprintf ppf "InValid"
-  | Induct(_, _, t)  -> Format.fprintf ppf "%a" pr_outline t (* Omit Induct *)
+  | Induct(_, _, t)  -> pr_outline t ppf (* Omit Induct *)
   | Unfold(_, tl) ->
-    let pr_branch ppf pt = Format.fprintf ppf "%a" pr_outline pt in
+    let pr_branch ppf pt = pr_outline pt ppf in
     Format.fprintf ppf "@[<v 3>Unfold@;%a@]" (List.pr pr_branch "@;") tl
   (*| Failure s -> Format.printf "Failure (%a)" String.pr s*)
   | Abort _           -> Format.fprintf ppf "Abort"

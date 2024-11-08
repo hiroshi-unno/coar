@@ -222,15 +222,14 @@ module Make (Config : Config.ConfigType) :
         |> List.append init_clauses |> List.unzip3
         |> fun (exi_senvs, kind_maps, phis) ->
         let uni_senvs, phis = List.unzip phis in
-        ( List.fold exi_senvs ~init:exi_senv ~f:Map.force_merge,
+        ( Map.force_merge_list (exi_senv :: exi_senvs),
           Map.force_merge_list kind_maps,
-          List.fold uni_senvs ~init:uni_senv
-            ~f:
-              (Map.force_merge ~catch_dup:(fun (key, data1, data2) ->
-                   print_endline
-                   @@ sprintf "%s : %s != %s" (name_of_tvar key)
-                        (ExtTerm.str_of_sort data1)
-                        (ExtTerm.str_of_sort data2))),
+          Map.force_merge_list (uni_senv :: uni_senvs)
+            ~catch_dup:(fun (key, data1, data2) ->
+              print_endline
+              @@ sprintf "%s : %s != %s" (name_of_tvar key)
+                   (ExtTerm.str_of_sort data1)
+                   (ExtTerm.str_of_sort data2)),
           phis )
     in
     let exi_senv, phis =
@@ -301,7 +300,7 @@ module Make (Config : Config.ConfigType) :
       let p_sol = Map.Poly.find_exn theta p in
       let _, _, dom_p = Map.Poly.find_exn idx_map p in
       ExtTerm.imply_of
-        (ExtTerm.beta_reduction p_sol w)
+        (ExtTerm.beta_reduction (Term.mk_apps p_sol w))
         (ExtTerm.mk_var_app dom_p w)
       |> (fun constr ->
            Debug.print_log ~tag:"goal"

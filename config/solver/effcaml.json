@@ -1,0 +1,10 @@
+[
+    "EffCaml",
+    {
+        "verbose": false,
+        "solver": [
+            "Filename",
+            "./config/solver/horsat2_ce.json"
+        ]
+    }
+]

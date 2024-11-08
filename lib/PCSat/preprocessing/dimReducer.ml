@@ -356,17 +356,14 @@ module Make (Verbose : Debug.Config.ConfigType) = struct
             (* note that phis may contain variables with the same name but different types *)
             let senvs, phis = Set.unzip inp in
             let senv =
-              Map.of_set_exn
-              @@ Set.Poly.map ~f:Logic.ExtTerm.of_old_sort_bind
+              Map.of_set_exn @@ Logic.of_old_sort_env_set
               @@ Set.concat_map ~f:Set.of_map senvs
             in
             (* Debug.print @@ lazy (sprintf "[before elim pcsp args] senv: %s" (Logic.str_of_sort_env_list Logic.ExtTerm.str_of_sort (Map.Poly.to_alist senv))); *)
             Set.concat_map phis
               ~f:
                 (Formula.cnf_of (*ToDo*)
-                   Logic.(
-                     to_old_sort_env_map ExtTerm.to_old_sort
-                     @@ PCSP.Problem.senv_of pcsp))
+                   Logic.(to_old_sort_env_map @@ PCSP.Problem.senv_of pcsp))
             |> elim_args param_logs bpvs fnpvs !penv
             |> (fun (penv', cls) ->
                  penv := penv';
@@ -374,7 +371,7 @@ module Make (Verbose : Debug.Config.ConfigType) = struct
             |> Set.Poly.map ~f:(fun (ps, ns, phi) ->
                    let senv, phi = ClauseOld.to_formula (senv, ps, ns, phi) in
                    (* Debug.print @@ lazy (sprintf "[after elim pcsp args] senv: %s" (Logic.str_of_sort_env_list Logic.ExtTerm.str_of_sort (Map.Poly.to_alist senv))); *)
-                   (Map.Poly.map ~f:Logic.ExtTerm.to_old_sort senv, phi)))
+                   (Logic.to_old_sort_env_map senv, phi)))
       in
       PCSP.Problem.update_params pcsp
         { (PCSP.Problem.params_of pcsp) with senv = !penv }

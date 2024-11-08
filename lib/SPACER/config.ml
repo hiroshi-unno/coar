@@ -3,10 +3,13 @@ open Common.Util
 
 type t = {
   timeout : int option;
+  use_z3_native_mbp : bool;
+  enable_global_guidance : bool;
   check_validity : bool;
   conservative_check : bool;
   solve_again_if_invalid : bool;
   solution_needed : bool;
+  cex_needed : bool;
   verbose : bool;
 }
 [@@deriving yojson]

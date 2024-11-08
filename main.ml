@@ -6,6 +6,7 @@ open Common.Combinator
 type problem =
   | PSAT  (** SAT Solving *)
   | PSMT  (** SMT Solving *)
+  | PHOMC  (** Higher-Order Model Checking *)
   | PSyGuS  (** SyGyS Inv/CLIA *)
   | PPCSP  (** pfwnCSP Satifiability Checking *)
   | PCHCMax  (** CHC Maximization *)
@@ -35,6 +36,7 @@ let problem =
       problem |> String.lowercase |> function
       | "sat" -> return PSAT
       | "smt" -> return PSMT
+      | "homc" -> return PHOMC
       | "sygus" -> return PSyGuS
       | "chc" | "pcsp" | "pfwcsp" | "pfwncsp" -> return PPCSP
       | "chcmax" -> return PCHCMax
@@ -54,7 +56,7 @@ let problem =
       | "ml" -> return POCaml
       | _ -> failwith (sprintf "invalid problem: %s" problem))
 
-let default_config_file = "./config/solver/muval_parallel_exc_tb_ar.json"
+let default_config_file = "./config/solver/muval_parallel_exc_tbq_ar.json"
 
 let cmd =
   Command.basic_spec ~summary:""
@@ -72,22 +74,22 @@ let cmd =
            ~aliases:[ "-p" ]
            ~doc:
              "choose problem \
-              [SAT/SMT/CHC/pCSP/pfwCSP/pfwnCSP/SyGuS/CHCMax/muCLP/muCLPInter/CLTL/CCTL/LTSsafe/LTSnsafe/LTSterm/LTSnterm/LTSmucal/LTSrel/LTStermInter/PLTSterm/PLTSnterm/ML] \
+              [SAT/SMT/HOMC/SyGuS/CHC/pCSP/pfwCSP/pfwnCSP/CHCMax/muCLP/muCLPInter/CLTL/CCTL/LTSsafe/LTSnsafe/LTSterm/LTSnterm/LTSmucal/LTSrel/LTStermInter/PLTSterm/PLTSnterm/ML] \
               (default: muCLP)"
       +> flag "--verbose" no_arg (* this option is obsolete *)
            ~aliases:[ "-v" ] ~doc:"enable verbose mode")
 
 let load_solver_config prblm solver =
-  match Solver.Config.load_config solver with
+  let open Solver.Config in
+  match load_config solver with
   | Error err -> Error err
   | Ok cfg -> (
       Or_error.return
       @@
       match cfg with
-      | Solver.Config.MuVal _
-        when Stdlib.(prblm = PMuCLPInter || prblm = PLTSTermInter) ->
+      | MuVal _ when Stdlib.(prblm = PMuCLPInter || prblm = PLTSTermInter) ->
           cfg
-      | (Solver.Config.MuVal _ | Solver.Config.MuCyc _ | Solver.Config.Printer _)
+      | (MuVal _ | MuCyc _ | Printer _)
         when Stdlib.(
                prblm = PSyGuS || prblm = PPCSP || prblm = PMuCLP
                || prblm = PCLTL || prblm = PCCTL || prblm = PLTSSafe
@@ -95,14 +97,14 @@ let load_solver_config prblm solver =
                || prblm = PLTSMuCal || prblm = PLTSRel || prblm = PPLTSTerm
                || prblm = PPLTSNTerm) ->
           cfg
-      | (Solver.Config.PCSat _ | Solver.Config.SPACER _ | Solver.Config.Hoice _)
+      | (PCSat _ | SPACER _ | Hoice _)
         when Stdlib.(prblm = PPCSP || prblm = PSyGuS) ->
           cfg
-      | Solver.Config.OptPCSat _ when Stdlib.(prblm = PCHCMax) -> cfg
-      | Solver.Config.RCaml _ when Stdlib.(prblm = POCaml) -> cfg
-      | (Solver.Config.Minisat _ | Solver.Config.Z3Sat _ | Solver.Config.Z3Smt _)
-        when Stdlib.(prblm = PSMT) ->
-          cfg
+      | OptPCSat _ when Stdlib.(prblm = PCHCMax) -> cfg
+      | (RCaml _ | EffCaml _) when Stdlib.(prblm = POCaml) -> cfg
+      | (MiniSat _ | Z3Sat _) when Stdlib.(prblm = PSAT) -> cfg
+      | Z3Smt _ when Stdlib.(prblm = PSMT) -> cfg
+      | (TRecS _ | HorSat2 _) when Stdlib.(prblm = PHOMC) -> cfg
       | _ ->
           failwith
           @@ sprintf "The specified solver does not support the problem %s"
@@ -110,7 +112,8 @@ let load_solver_config prblm solver =
 
 let load_sat filename =
   match snd (Filename.split_extension filename) with
-  | Some ("dimacs" | "cnf") -> Ok (SAT.Parser.from_dimacs_file filename)
+  | Some ("dimacs" | "cnf") -> Ok (SAT.Problem.from_dimacs_file filename)
+  | Some "gz" (*ToDo*) -> Ok (SAT.Problem.from_gzipped_dimacs_file filename)
   | _ -> Or_error.unimplemented "load_sat"
 
 let load_smt ~print filename =
@@ -119,17 +122,26 @@ let load_smt ~print filename =
       Ok (SMT.Smtlib2.from_smt2_file ~print ~inline:true (*ToDo*) filename)
   | _ -> Or_error.unimplemented "load_smt"
 
-let load_pcsp ~print filename =
+let load_homc ~print filename =
   match snd (Filename.split_extension filename) with
-  | Some "smt2" ->
+  | Some ("hrs" | "hors") -> Ok (HOMC.Problem.from_hors_file ~print filename)
+  | Some ("hmtt" | "ehmtt") -> Ok (HOMC.Problem.from_ehmtt_file ~print filename)
+  | _ -> Or_error.unimplemented "load_homc"
+
+let load_pcsp ~print filename =
+  match Filename.split_extension filename with
+  | _, Some "smt2" ->
       Ok
         (PCSP.Parser.from_smt2_file ~print ~inline:true (*ToDo*)
            ~skolem_pred:true filename)
-  | Some "gz" (*ToDo*) ->
+  | fn, Some "gz"
+    when match Filename.split_extension fn with
+         | _, Some "smt2" -> true
+         | _ -> false ->
       Ok
         (PCSP.Parser.from_gzipped_smt2_file ~print ~inline:true (*ToDo*)
            ~skolem_pred:true filename)
-  | Some "clp" -> Ok (PCSP.Parser.from_clp_file filename)
+  | _, Some "clp" -> Ok (PCSP.Parser.from_clp_file filename)
   | _ -> Or_error.unimplemented "load_pcsp"
 
 let load_sygus filename =
@@ -146,7 +158,7 @@ let load_chcmax ~print filename =
 
 let load_muclp ~print filename =
   match snd (Filename.split_extension filename) with
-  | Some "hes" -> MuCLP.Parser.from_file ~print filename
+  | Some "hes" -> MuCLP.Parser.muclp_from_file ~print filename
   | _ -> Or_error.unimplemented "load_muclp"
 
 let load_cltl ~print filename =
@@ -187,6 +199,7 @@ let main filename solver problem verbose () =
       match problem with
       | PSAT -> load_sat filename >>= Solver.solve_sat
       | PSMT -> load_smt ~print:Debug.print filename >>= Solver.solve_smt
+      | PHOMC -> load_homc ~print:Debug.print filename >>= Solver.solve_homc
       | PSyGuS ->
           load_sygus filename >>= Solver.solve_sygus ~filename:(Some filename)
       | PPCSP ->

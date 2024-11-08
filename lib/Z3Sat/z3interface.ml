@@ -31,7 +31,7 @@ let rec aux_of_cnf ctx acc = function
   | c :: tl -> aux_of_cnf ctx (of_clause ctx c :: acc) tl
   | [] -> acc
 
-let of_cnf ctx cnf = aux_of_cnf ctx [] (SAT.Problem.to_list cnf)
+let of_cnf ctx cnf = aux_of_cnf ctx [] (SAT.Problem.clauses_of cnf)
 
 let solution_of_model model =
   let decls = Z3.Model.get_decls model in

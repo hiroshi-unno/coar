@@ -1,0 +1,14 @@
+(library
+ (name HOMCSolver)
+ (public_name CoAR.HOMCSolver)
+ (preprocess
+  (pps ppx_deriving_yojson))
+ (libraries
+  core
+  yojson
+  CoAR.common
+  CoAR.ast
+  CoAR.HOMC
+  CoAR.TRecS
+  CoAR.HorSat2)
+ (modules solver config))

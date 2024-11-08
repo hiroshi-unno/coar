@@ -42,11 +42,8 @@ let resolve_one_step_all positive negative =
 
 (* val has_only_pure : t Set.Poly.t -> bool *)
 let has_only_pure = Set.for_all ~f:ClauseOld.has_only_pure
-
-let to_formula cls =
-  cls
-  |> Set.Poly.map ~f:(ClauseOld.to_formula >> snd)
-  |> Set.to_list |> Formula.and_of
+let to_formulas cls = Set.Poly.map cls ~f:(ClauseOld.to_formula >> snd)
+let to_formula cls = cls |> to_formulas |> Set.to_list |> Formula.and_of
 
 let of_formulas exi_senv phis : t =
   Set.concat_map phis ~f:(fun (uni_senv, phi) ->

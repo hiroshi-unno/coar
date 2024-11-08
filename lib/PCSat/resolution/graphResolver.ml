@@ -109,8 +109,7 @@ end = struct
       let srcs = List.concat srcs in
       let phi =
         Formula.and_of
-        @@ Formula.mk_neg
-             (Logic.ExtTerm.to_old_formula exi_senv uni_senv c_phi [])
+        @@ Formula.mk_neg (Logic.ExtTerm.to_old_fml exi_senv (uni_senv, c_phi))
            :: eqs
       in
       let fvs = Formula.term_sort_env_of phi in
@@ -160,8 +159,7 @@ end = struct
     ClauseGraph.resolve_one_step_all
       ~print:(fun _ -> () (*Debug.print*))
       (Set.Poly.singleton
-         ( ( Map.Poly.map param_senv ~f:Logic.ExtTerm.of_old_sort,
-             Logic.ExtTerm.of_old_atom atm ),
+         ( (Logic.of_old_sort_env_map param_senv, Logic.ExtTerm.of_old_atom atm),
            source ))
       Set.Poly.empty exi_senv cs
     |> Set.find_map ~f:(fun (c, sub) ->
@@ -177,8 +175,7 @@ end = struct
       ~print:(fun _ -> () (*Debug.print*))
       Set.Poly.empty
       (Set.Poly.singleton
-         ( ( Map.Poly.map param_senv ~f:Logic.ExtTerm.of_old_sort,
-             Logic.ExtTerm.of_old_atom atm ),
+         ( (Logic.of_old_sort_env_map param_senv, Logic.ExtTerm.of_old_atom atm),
            source ))
       exi_senv cs
     |> Set.find_map ~f:(fun (c, sub) ->
@@ -274,9 +271,7 @@ end = struct
           match (Set.to_list pos, Set.to_list neg) with
           | [ atm ], [] | [], [ atm ] ->
               let atm = Logic.ExtTerm.to_old_atom exi_senv uni_senv atm [] in
-              let pure =
-                Logic.ExtTerm.to_old_formula exi_senv uni_senv pure []
-              in
+              let pure = Logic.ExtTerm.to_old_fml exi_senv (uni_senv, pure) in
               let tvs = Set.union (Atom.tvs_of atm) (Formula.tvs_of pure) in
               let fnvs = Set.inter tvs (Map.key_set exi_senv) in
               (* if Set.exists (Set.Poly.union_list [Formula.pvs_of pure;Atom.pvs_of atm] |> Set.Poly.map ~f:Ident.pvar_to_tvar) ~f:(PCSP.Problem.is_ne_pred APCSP.problem) || true then
@@ -330,9 +325,7 @@ end = struct
                       (dpos, Set.add dneg (cl, src @ source), und))
               else (* with function variables *) (dpos, dneg, und)
           | [], [] -> (
-              let pure =
-                Logic.ExtTerm.to_old_formula exi_senv uni_senv pure []
-              in
+              let pure = Logic.ExtTerm.to_old_fml exi_senv (uni_senv, pure) in
               let tvs = Formula.tvs_of pure in
               let fnvs = Set.inter tvs (Map.key_set exi_senv) in
               if Set.is_empty fnvs then

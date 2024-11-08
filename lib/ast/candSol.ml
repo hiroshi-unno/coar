@@ -1,5 +1,6 @@
 open Core
 open Common.Ext
+open Common.Combinator
 open Logic
 
 type t = sort_env_map (*parameters*) * pred_subst_set
@@ -15,29 +16,12 @@ let make cand : t =
         ((tvar, sort), phi)) )
 
 let of_old_bind (Ident.Pvar n, (args, phi)) =
-  let args_new =
-    List.map args ~f:(fun (tvar, sort) -> (tvar, ExtTerm.of_old_sort sort))
-  in
+  let args_new = of_old_sort_env_list args in
   let sort = Sort.mk_fun @@ List.map args_new ~f:snd @ [ ExtTerm.SBool ] in
   ((Ident.Tvar n, sort), Term.mk_lambda args_new @@ ExtTerm.of_old_formula phi)
 
 let of_old ((params_senv, cand) : CandSolOld.t) : t =
-  ( of_old_sort_env_map ExtTerm.of_old_sort params_senv,
-    Set.Poly.map cand ~f:of_old_bind )
-
-let to_old_bind ((Ident.Tvar n, _sort), term) =
-  let args, term' = Term.let_lam term in
-  let phi =
-    ExtTerm.to_old_formula Map.Poly.empty (Map.of_list_exn args) term' []
-  in
-  (Ident.Pvar n, (List.map args ~f:(Pair.map_snd @@ ExtTerm.to_old_sort), phi))
-
-let to_old ((params_senv, cand) : t) : CandSolOld.t =
-  ( to_old_sort_env_map ExtTerm.to_old_sort params_senv,
-    Set.Poly.map cand ~f:to_old_bind )
-
-let to_subst (_params_senv, cand) : term_subst_map =
-  Map.of_set_exn @@ Set.Poly.map cand ~f:(fun ((tvar, _), term) -> (tvar, term))
+  (of_old_sort_env_map params_senv, Set.Poly.map cand ~f:of_old_bind)
 
 let of_subst params_senv theta : t =
   ( params_senv,
@@ -45,6 +29,19 @@ let of_subst params_senv theta : t =
     @@ List.map ~f:(fun (var, term) ->
            ((var, Map.Poly.find_exn params_senv var), term))
     @@ Map.Poly.to_alist theta )
+
+let to_old_bind ((Ident.Tvar n, _sort), term) =
+  let args, term' = Term.let_lam term in
+  let phi =
+    ExtTerm.to_old_formula Map.Poly.empty (Map.of_list_exn args) term' []
+  in
+  (Ident.Pvar n, (to_old_sort_env_list args, phi))
+
+let to_old ((params_senv, cand) : t) : CandSolOld.t =
+  (to_old_sort_env_map params_senv, Set.Poly.map cand ~f:to_old_bind)
+
+let to_subst (_params_senv, cand) : term_subst_map =
+  Map.of_set_exn @@ Set.Poly.map cand ~f:(fun ((tvar, _), term) -> (tvar, term))
 
 let simplify (params_senv, cand) : t =
   ( params_senv,
@@ -62,10 +59,9 @@ let str_of (params_senv, cand) : string =
     ~f:(fun ((Ident.Tvar tvar, _sort), term) ->
       let params, term' = Term.let_lam term in
       let params', map =
-        LogicOld.normalize_sort_env_list
-        @@ to_old_sort_env_list ExtTerm.to_old_sort params
+        LogicOld.normalize_sort_env_list @@ to_old_sort_env_list params
       in
-      let params' = of_old_sort_env_list ExtTerm.of_old_sort params' in
+      let params' = of_old_sort_env_list params' in
       (*ExtTerm.str_of term'*)
       let str_term' =
         let senv = Map.force_merge params_senv @@ Map.of_list_exn params in
@@ -94,11 +90,9 @@ let to_yojson (params_senv, cand) =
                 let params, term' = Term.let_lam term in
                 let params', map =
                   LogicOld.normalize_sort_env_list
-                  @@ to_old_sort_env_list ExtTerm.to_old_sort params
+                  @@ to_old_sort_env_list params
                 in
-                let params' =
-                  of_old_sort_env_list ExtTerm.of_old_sort params'
-                in
+                let params' = of_old_sort_env_list params' in
                 (*ExtTerm.str_of term'*)
                 let str_term' =
                   let senv =
@@ -177,5 +171,5 @@ let generalize (_psenv, cand) =
            ( x,
              Logic.IntTerm.SInt
              (*ToDo: support non-integer parameters for candidate solution*) ))
-    @@ Set.concat_map cand ~f:(fun (_, t) -> Logic.Term.fvs_of t),
+    @@ Set.concat_map cand ~f:(snd >> Logic.Term.fvs_of),
     cand )

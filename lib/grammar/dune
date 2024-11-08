@@ -9,5 +9,5 @@
  (public_name CoAR.grammar)
  (preprocess
   (pps ppx_deriving_yojson))
- (libraries core yojson CoAR.common CoAR.automaton)
+ (libraries core yojson CoAR.common CoAR.automata)
  (modules regWordExp regTreeExp regTreeExpLexer regTreeExpParser))

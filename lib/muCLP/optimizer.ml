@@ -7,7 +7,8 @@ open Ast
 open Ast.LogicOld
 
 module Config = struct
-  type t = { enable : bool; verbose : bool } [@@deriving yojson]
+  type t = { enable : bool; erase_quantifiers : bool; verbose : bool }
+  [@@deriving yojson]
 
   module type ConfigType = sig
     val config : t
@@ -200,7 +201,9 @@ module Make (Config : Config.ConfigType) = struct
             _ ) ->
           Set.Poly.empty
       | FunApp (T_int.Neg, [ a ], _) -> adj_vars_of_term a
-      | term -> failwith @@ sprintf "unknown operation: %s" (Term.str_of term)
+      | term ->
+          if true then (*ToDo*) Set.Poly.empty
+          else failwith @@ sprintf "unknown operation: %s" (Term.str_of term)
 
     let check_separatable avfvs =
       let avfvs = Array.of_list avfvs in
@@ -817,6 +820,20 @@ module Make (Config : Config.ConfigType) = struct
                 ConstReal (Q.( * ) x y)
             | T_real.RDiv, [ ConstReal x; ConstReal y ] ->
                 ConstReal (Q.( / ) x y)
+            | T_bv.BVNum (_size, _), []
+            | T_bv.BVNeg _size, [ _ ]
+            | T_bv.BVAdd _size, [ _; _ ]
+            | T_bv.BVSub _size, [ _; _ ]
+            | T_bv.BVMult _size, [ _; _ ]
+            | T_bv.BVDiv _size, [ _; _ ]
+            | T_bv.BVMod _size, [ _; _ ]
+            | T_bv.BVRem _size, [ _; _ ]
+            | T_bv.BVSHL _size, [ _; _ ]
+            | T_bv.BVLSHR _size, [ _; _ ]
+            | T_bv.BVASHR _size, [ _; _ ]
+            | T_bv.BVOr _size, [ _; _ ]
+            | T_bv.BVAnd _size, [ _; _ ] ->
+                NonConst (*ToDo*)
             | _ ->
                 failwith @@ "EraseConstVariables.vt_of_term: illegal funapp "
                 ^ Term.str_of_funsym funsym)
@@ -847,7 +864,10 @@ module Make (Config : Config.ConfigType) = struct
                ~f:(fun (consts, nonconsts) (arg, tvar') ->
                  let ftv = Term.tvs_of arg in
                  if Set.is_empty ftv then
-                   ((pvar', tvar', value_of_const_term arg) :: consts, nonconsts)
+                   try
+                     ( (pvar', tvar', value_of_const_term arg) :: consts,
+                       nonconsts )
+                   with _ -> (*ToDo*) (consts, nonconsts)
                  else if Set.is_empty @@ Set.diff ftv arg_tvars then (
                    Set.iter (Set.inter ftv arg_tvars) ~f:(fun tvar ->
                        let pt = (pvar, tvar) in
@@ -1005,7 +1025,9 @@ module Make (Config : Config.ConfigType) = struct
       (*|> (fun muclp -> Debug.print @@ lazy ("optimized: " ^ Problem.str_of muclp); muclp)*)
       |> InlineExtension.optimize
       (*|> (fun muclp -> Debug.print @@ lazy ("\ninlined: " ^ Problem.str_of muclp); muclp)*)
-      |> EraseQuantifiers.optimize ~elim_forall ~elim_exists
+      |> (if config.erase_quantifiers then
+            EraseQuantifiers.optimize ~elim_forall ~elim_exists
+          else Fn.id)
       (*|> (fun muclp -> Debug.print @@ lazy ("\nqelimed: " ^ Problem.str_of muclp); muclp)*)
       |> EraseUnreachedPredicates.optimize
       |> (if elim_pvar_args then EraseConstVariables.optimize else Fn.id)

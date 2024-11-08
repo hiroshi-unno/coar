@@ -1,6 +1,7 @@
 # CoAR: Collection of Automated Reasoners
 
-* RCaml: A refinement type checking and inference tool for OCaml
+* RCaml: A refinement type checking and inference tool for OCaml and HFL
+* EffCaml: A transformation-based verifier for effectful OCaml programs
 * MuVal: A fixpoint logic validity checker based on pfwCSP solving
 * MuCyc: A fixpoint logic validity checker based on cyclic-proof search
 * PCSat: A CHC/pfwnCSP/SyGuS solver based on CEGIS
@@ -55,14 +56,15 @@
 
 - `hoice` (https://github.com/hopv/hoice)
 - `clang` (https://clang.llvm.org/)
-- `llvm2kittel` (https://github.com/gyggg/llvm2kittel)
+- `llvm2kittel` (https://github.com/gyggg/llvm2kittel/tree/kou)
 - `ltl3ba` (https://sourceforge.net/projects/ltl3ba/)
+- `horsat2` (https://github.com/hopv/horsat2)
 
 ## Installation with Docker
 
 ```bash
 docker pull docker.io/library/ubuntu:22.04
-docker pull docker.io/ocaml/opam:ubuntu-22.04-ocaml-5.0
+docker pull docker.io/ocaml/opam:ubuntu-22.04-ocaml-5.2
 sudo docker build -t coar .
 ```
 
@@ -85,6 +87,12 @@ dune exec main -- -c ./config/solver/dbg_pcsat_tbq_ar.json -p pcsp ./benchmarks/
 ```bash
 git submodule update --init benchmarks/sygus-comp/
 dune exec main -- -c ./config/solver/dbg_pcsat_tbq_ar.json -p sygus ./benchmarks/sygus-comp/comp/2017/CLIA_Track/fg_max2.sl
+```
+
+### Regular Expression Synthesis
+
+```bash
+dune exec main -- -c ./config/solver/dbg_pcsat_tbq_ar.json -p pcsp ./benchmarks/SyGuS/regex/ex1.smt2
 ```
 
 ### CHC Satisfiability Checking via Cyclic-Proof Search and Proof Refinement
@@ -190,7 +198,7 @@ Here, the `dual` action lets MuVal infer a precondition under which the query do
 dune exec main -- -c ./config/solver/dbg_optpcsat_nc_tbq_ar.json -p chcmax ./benchmarks/CHC/popl2023opt/test2.smt2
 ```
 
-### Verification of OCaml Programs
+### Verification of OCaml Programs via Refinement Type Inference using RCaml
 
 #### Safety Verification
 ##### with PCSat
@@ -211,8 +219,18 @@ dune exec main -- -c ./config/solver/dbg_rcaml_spacer.json -p ml ./benchmarks/OC
 dune exec main -- -c ./config/solver/dbg_rcaml_temp_eff_pcsat_tbq_ar.json -p ml ./benchmarks/OCaml/temporal/sum_term.ml
 ```
 
+### Verification of OCaml Programs via Higher-Order Model Checking using EffCaml
+
+Build `horsat2` and place it in the current directory.
+
+```bash
+dune exec main -- -c ./config/solver/dbg_effcaml.json -p ml ./benchmarks/OCaml/oopsla24/mutable_set_not_b_false_UNSAT.ml
+```
+
 ### Verification of C Programs
 #### LTL Verification
+
+Build `ltl3ba` and place it in the current directory.
 
 ```bash
 dune exec main -- -c ./config/solver/dbg_muval_parallel_exc_tbq_ar.json -p cltl ./benchmarks/C/cav2015ltl/coolant/coolant_basis_1_safe_sfty.c
@@ -271,6 +289,8 @@ maximality is guaranteed
 
 ### RCaml
 
+1. Taro Sekiyama and Hiroshi Unno. Algebraic Temporal Effects: Temporal Verification of Recursively Typed Higher-Order Programs. POPL 2025.
+
 1. Satoshi Kura and Hiroshi Unno. Automated Verification of Higher-Order Probabilistic Programs via a Dependent Refinement Type System. ICFP 2024.
 
 1. Fuga Kawamata, Hiroshi Unno, Taro Sekiyama, and Tachio Terauchi. Answer Refinement Modification: Refinement Type System for Algebraic Effects and Handlers. POPL 2024.
@@ -288,6 +308,10 @@ maximality is guaranteed
 1. Hiroshi Unno and Naoki Kobayashi. Dependent Type Inference with Interpolants. PPDP 2009.
 
 1. Hiroshi Unno and Naoki Kobayashi. On-Demand Refinement of Dependent Types. FLOPS 2008.
+
+### EffCaml
+
+1. Taro Sekiyama and Hiroshi Unno. Higher-Order Model Checking of Effect-Handling Programs with Answer-Type Modification. OOPSLA 2024.
 
 ### MuVal
 

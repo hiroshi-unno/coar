@@ -1,0 +1,80 @@
+{
+  "strategy": [
+    "Template",
+    {
+      "verbose": false,
+      "generalize": false,
+      "solution_template": {
+        "update_strategy": [
+          "UnsatCore"
+        ],
+        "smt_timeout": null,
+        "extract_qualifiers": true,
+        "extract_terms": false,
+        "extract_constants": true,
+        "reduce_quals_terms": false,
+        "learn_quals_from_ucores": false,
+        "qualifier_generator": [
+          "Filename",
+          "./config/pcsat/qualifier/tb.json"
+        ],
+        "pex_strategy": [
+          "InstDefault"
+        ],
+        "sync_threshold": null,
+        "restart_threshold": null,
+        "predicate_template": [
+          "DNF",
+          [
+            "Filename",
+            "./config/pcsat/template/predicate_dnf_template_noub.json"
+          ]
+        ],
+        "wf_predicate_template": [
+          "WF",
+          [
+            "Filename",
+            "./config/pcsat/template/wf_predicate_template_noub.json"
+          ]
+        ],
+        "fn_predicate_template": [
+          "FN",
+          [
+            "Filename",
+            "./config/pcsat/template/fn_predicate_template_noub.json"
+          ]
+        ],
+        "ne_predicate_template": [
+          "Filename",
+          "./config/pcsat/template/ne_predicate_template.json"
+        ],
+        "adm_predicate_template": [
+          "Filename",
+          "./config/pcsat/template/adm_predicate_template.json"
+        ],
+        "integ_predicate_template": [
+          "Filename",
+          "./config/pcsat/template/integ_predicate_template.json"
+        ],
+        "int_function_template": [
+          "IntFun",
+          [
+            "Filename",
+            "./config/pcsat/template/int_function_template.json"
+          ]
+        ],
+        "regex_template": [
+          "RegEx",
+          [
+            "Filename",
+            "./config/pcsat/template/regex_template.json"
+          ]
+        ],
+        "verbose": false
+      }
+    }
+  ],
+  "check_candidates": false,
+  "refine_candidates": false,
+  "verbose": false
+}

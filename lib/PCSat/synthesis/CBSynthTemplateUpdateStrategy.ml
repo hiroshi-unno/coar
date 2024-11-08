@@ -21,9 +21,9 @@ struct
             let (module FT : Template.Function.Type) =
               Map.Poly.find_exn template_modules f
             in
-            Logic.ExtTerm.to_old_formula
+            Logic.ExtTerm.to_old_fml
               (PCSP.Problem.senv_of APCSP.problem)
-              Map.Poly.empty term []
+              (Map.Poly.empty, term)
             |> FT.update_with_solution)
     | _ -> assert false
 end

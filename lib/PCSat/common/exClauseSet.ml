@@ -43,8 +43,7 @@ let of_model exi_senv pex (senv, phi) (* clause*) model : t =
     |> Evaluator.simplify
     |> Normalizer.normalize*)
   (*|> (fun phi -> print_endline @@ sprintf "[of_model] after :%s" (Formula.str_of phi); phi)*)
-  |> Formula.cnf_of
-       (Logic.to_old_sort_env_map Logic.ExtTerm.to_old_sort exi_senv)
+  |> Formula.cnf_of (Logic.to_old_sort_env_map exi_senv)
   |> Set.Poly.filter_map ~f:(uncurry3 @@ ExClause.make exi_senv)
   |> Set.Poly.map ~f:(ExClause.normalize_params (Map.key_set exi_senv))
 
@@ -149,26 +148,21 @@ let check_candidates ?(inst = true) ~id fenv exi_senv (sample : t)
   let constrs =
     Set.Poly.map sample ~f:(fun cl ->
         let senv, phi = ExClause.to_old_formula cl in
-        ( cl,
-          Logic.of_old_sort_env_map Logic.ExtTerm.of_old_sort senv,
-          Logic.ExtTerm.of_old_formula phi ))
+        (cl, Logic.of_old_sort_env_map senv, Logic.ExtTerm.of_old_formula phi))
   in
   List.find_map cands ~f:(fun cand ->
       let sub = CandSol.to_subst cand in
-      let psenv = Set.Poly.of_list @@ Map.Poly.keys @@ fst cand in
+      let psenv = Map.Poly.key_set @@ fst cand in
       let cex =
         Set.find constrs ~f:(fun (_, uni_senv, phi) ->
             let phi =
-              Logic.ExtTerm.to_old_formula exi_senv uni_senv
-                (Logic.Term.subst sub phi) []
+              Logic.ExtTerm.to_old_fml exi_senv
+                (uni_senv, Logic.Term.subst sub phi)
             in
             let phi =
               LogicOld.Formula.forall (LogicOld.get_dummy_term_senv ())
               @@
-              let bounds =
-                Map.to_alist
-                @@ Logic.to_old_sort_env_map Logic.ExtTerm.to_old_sort uni_senv
-              in
+              let bounds = Map.to_alist @@ Logic.to_old_sort_env_map uni_senv in
               (if inst then
                  LogicOld.Formula.subst
                    (Map.Poly.of_alist_exn

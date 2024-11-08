@@ -76,6 +76,7 @@ let mk_fresh_svar () =
 
 let name_of_svar (Svar name) = name
 let svar_compare (Svar var1) (Svar var2) = String.compare var1 var2
+let svar_equal (Svar var1) (Svar var2) = String.equal var1 var2
 
 (** Effect variables *)
 
@@ -89,6 +90,7 @@ let mk_fresh_evar () =
 
 let name_of_evar (Evar name) = name
 let evar_compare (Evar var1) (Evar var2) = String.compare var1 var2
+let evar_equal (Evar var1) (Evar var2) = String.equal var1 var2
 
 (** row variables *)
 
@@ -102,6 +104,7 @@ let mk_fresh_rvar () =
 
 let name_of_rvar (Rvar name) = name
 let rvar_compare (Rvar var1) (Rvar var2) = String.compare var1 var2
+let rvar_equal (Rvar var1) (Rvar var2) = String.equal var1 var2
 
 (** Predicate variables *)
 

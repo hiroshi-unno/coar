@@ -146,9 +146,9 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
       (String.concat_set ~sep:"," @@ Set.Poly.map !param.s ~f:Z.to_string)
 
   let in_space () =
-    SolSpace.in_space Arg.name SolSpace.Depth !param.depth Arg.sol_space
+    SolSpace.in_space Arg.name SolSpace.ND !param.nd Arg.sol_space
     && SolSpace.in_space Arg.name SolSpace.NC !param.nc Arg.sol_space
-    && SolSpace.in_space Arg.name SolSpace.ND !param.nd Arg.sol_space
+    && SolSpace.in_space Arg.name SolSpace.Depth !param.depth Arg.sol_space
 
   let adjust_quals ~tag quals =
     ignore tag;
@@ -208,7 +208,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     let qual_qdeps_env = Generator.qual_env_of_hole_map hole_qualifiers_map in
     let tmpl =
       Logic.(
-        Term.mk_lambda (of_old_sort_env_list ExtTerm.of_old_sort hspace.params))
+        Term.mk_lambda (of_old_sort_env_list  hspace.params))
       @@ Logic.ExtTerm.of_old_formula tmpl
     in
     ( (DepthDisjConj, tmpl),
@@ -394,26 +394,36 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
          ^ "***************");
     ({ param with ubd = init.ubd }, actions @ [ "init_const" ])
 
-  let increase_depth_disj_conj (param, actions) =
+  let try_then f g =
+    let res = f () in
+    let backup = !param in
+    param := fst res;
+    if in_space () then (
+      param := backup;
+      res)
+    else g ()
+
+  let increase_depth_disj_conj (param0, actions) =
+    let f, g =
+      if config.disj_first then
+        ( (fun () -> increase_disj (param0, actions)),
+          fun () -> increase_conj (param0, actions) )
+      else
+        ( (fun () -> increase_conj (param0, actions)),
+          fun () -> increase_disj (param0, actions) )
+    in
     if
       List.exists Arg.sorts ~f:(fun s ->
           Term.is_dt_sort s || Term.is_array_sort s)
-      && param.nd * param.nc > Integer.pow (param.depth + 1) 3
-      && SolSpace.in_space Arg.name SolSpace.Depth param.depth Arg.sol_space
-    then increase_depth @@ init_conj @@ init_disj (param, actions)
-    else if config.disj_first then
-      if
-        (param.nd + param.nc - 2) mod config.incr_interval
-        < config.incr_interval - 1
-        && SolSpace.in_space Arg.name SolSpace.ND param.depth Arg.sol_space
-      then increase_disj (param, actions)
-      else increase_conj (param, actions)
+      && param0.nd * param0.nc > Integer.pow (param0.depth + 1) 3
+    then
+      (*ToDo: try_then*)
+      increase_depth @@ init_conj @@ init_disj (param0, actions)
     else if
-      (param.nd + param.nc - 2) mod config.incr_interval
+      (param0.nd + param0.nc - 2) mod config.incr_interval
       < config.incr_interval - 1
-      && SolSpace.in_space Arg.name SolSpace.NC param.depth Arg.sol_space
-    then increase_conj (param, actions)
-    else increase_disj (param, actions)
+    then try_then f g
+    else try_then g f
 
   let rec inner param_actions = function
     | [] -> param_actions
@@ -557,8 +567,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
   let _ =
     Debug.print
     @@ lazy
-         ("************* initializing "
-         ^ Ident.name_of_tvar Arg.name
-         ^ " ***************");
+         (sprintf "************* initializing %s ***************"
+            (Ident.name_of_tvar Arg.name));
     Debug.print @@ lazy (str_of ())
 end

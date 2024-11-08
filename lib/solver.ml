@@ -4,9 +4,12 @@ module Config = struct
   type t =
     (* SAT solvers *)
     | Z3Sat of Z3Sat.Config.t  (** configuration of Z3Sat *)
-    | Minisat of MINISAT.Config.t  (** configuration of Minisat *)
+    | MiniSat of MiniSat.Config.t  (** configuration of MiniSat *)
     (* SMT solvers *)
     | Z3Smt of Z3Smt.Config.t  (** configuration of Z3Smt *)
+    (* HOMC solvers *)
+    | TRecS of TRecS.Config.t  (** configuration of TRecS *)
+    | HorSat2 of HorSat2.Config.t  (** configuration of HorSat2 *)
     (* CHC/pCSP/pfwCSP solvers *)
     | PCSat of PCSat.Config.t  (** configuration of PCSat *)
     | SPACER of SPACER.Config.t  (** configuration of SPACER *)
@@ -18,6 +21,8 @@ module Config = struct
     | MuCyc of MuCyc.Config.t  (** configuration of MuCyc *)
     (* Refinement Type Inference and Checking Tools for OCaml *)
     | RCaml of RCaml.Config.t  (** configuration of RCaml *)
+    (* Verifier of effectful OCaml programs based on CPS transformation *)
+    | EffCaml of EffCaml.Config.t  (** configuration of EffCaml *)
     (* printers *)
     | Printer of Printer.Config.t
   [@@deriving yojson]
@@ -31,10 +36,14 @@ module Config = struct
     function
     | Z3Sat cfg ->
         Z3Sat.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (Z3Sat cfg)
-    | Minisat cfg ->
-        MINISAT.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (Minisat cfg)
+    | MiniSat cfg ->
+        MiniSat.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (MiniSat cfg)
     | Z3Smt cfg ->
         Z3Smt.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (Z3Smt cfg)
+    | TRecS cfg ->
+        TRecS.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (TRecS cfg)
+    | HorSat2 cfg ->
+        HorSat2.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (HorSat2 cfg)
     | PCSat cfg ->
         PCSat.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (PCSat cfg)
     | SPACER cfg ->
@@ -50,6 +59,8 @@ module Config = struct
         MuCyc.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (MuCyc cfg)
     | RCaml cfg ->
         RCaml.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (RCaml cfg)
+    | EffCaml cfg ->
+        EffCaml.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (EffCaml cfg)
     | Printer cfg ->
         Printer.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (Printer cfg)
 
@@ -66,6 +77,7 @@ end
 module type SolverType = sig
   val solve_sat : SAT.Problem.t -> unit Or_error.t
   val solve_smt : SMT.Problem.t -> unit Or_error.t
+  val solve_homc : HOMC.Problem.t -> unit Or_error.t
 
   val solve_sygus :
     ?filename:string option ->
@@ -106,11 +118,11 @@ module Make (Config : Config.ConfigType) : SolverType = struct
           let config = cfg
         end) in
         Z3Sat.solve ~print_sol:true cnf >>= fun _ -> Ok ()
-    | Minisat cfg ->
-        let module MINISAT = MINISAT.Solver.Make (struct
+    | MiniSat cfg ->
+        let module MiniSat = MiniSat.Solver.Make (struct
           let config = cfg
         end) in
-        MINISAT.solve ~print_sol:true cnf >>= fun _ -> Ok ()
+        MiniSat.solve ~print_sol:true cnf >>= fun _ -> Ok ()
     | _ -> Or_error.unimplemented "Solver.solve_sat"
 
   let solve_smt phi =
@@ -121,6 +133,20 @@ module Make (Config : Config.ConfigType) : SolverType = struct
         end) in
         Z3Smt.solve ~print_sol:true phi >>= fun _ -> Ok ()
     | _ -> Or_error.unimplemented "Solver.solve_smt"
+
+  let solve_homc cnf =
+    match Config.config with
+    | TRecS cfg ->
+        let module TRecS = TRecS.Solver.Make (struct
+          let config = cfg
+        end) in
+        TRecS.solve ~print_sol:true cnf >>= fun _ -> Ok ()
+    | HorSat2 cfg ->
+        let module HorSat2 = HorSat2.Solver.Make (struct
+          let config = cfg
+        end) in
+        HorSat2.solve ~print_sol:true cnf >>= fun _ -> Ok ()
+    | _ -> Or_error.unimplemented "Solver.solve_homc"
 
   let solve_sygus ?(filename = None) sygus =
     let pcsp = PCSP.Problem.of_sygus sygus in
@@ -249,6 +275,7 @@ module Make (Config : Config.ConfigType) : SolverType = struct
     | MuVal _ | MuCyc _ -> (
         let muclp =
           let lvs, cps, lts = LTS.Problem.analyze ~print lts in
+          print @@ lazy "************* converting LTS to muCLP ***************";
           MuCLP.Problem.of_lts ~live_vars:(Some lvs) ~cut_points:(Some cps)
             (lts, mode)
         in
@@ -281,6 +308,7 @@ module Make (Config : Config.ConfigType) : SolverType = struct
     | MuVal cfg ->
         let muclp =
           let lvs, cps, lts = LTS.Problem.analyze ~print lts in
+          print @@ lazy "************* converting LTS to muCLP ***************";
           MuCLP.Problem.of_lts ~live_vars:(Some lvs) ~cut_points:(Some cps)
             (lts, LTS.Problem.Term)
         in
@@ -303,6 +331,7 @@ module Make (Config : Config.ConfigType) : SolverType = struct
     | MuVal _ | MuCyc _ -> (
         let muclp =
           let lvs, cps, lts = LTS.Problem.analyze ~print lts in
+          print @@ lazy "************* converting LTS to muCLP ***************";
           MuCLP.Problem.of_lts ~live_vars:(Some lvs) ~cut_points:(Some cps)
             (lts, mode)
         in
@@ -337,5 +366,10 @@ module Make (Config : Config.ConfigType) : SolverType = struct
           let config = cfg
         end) in
         RCaml.solve_from_file ~print_sol:true filename >>= fun _ -> Ok ()
+    | EffCaml cfg ->
+        let module EffCaml = EffCaml.Solver.Make (struct
+          let config = cfg
+        end) in
+        EffCaml.solve_from_file ~print_sol:true filename >>= fun _ -> Ok ()
     | _ -> Or_error.unimplemented "Solver.solve_ml"
 end

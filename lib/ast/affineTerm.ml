@@ -3,10 +3,10 @@ open Common.Ext
 open LogicOld
 
 let is_affine term =
-  Set.for_all ~f:(function
-    | T_int.Add | T_int.Sub | T_int.Neg | T_int.Mult | T_int.Int _ -> true
+  Set.for_all (Term.funsyms_of term) ~f:(function
+    | T_int.Int _ | T_int.Neg | T_int.Add | T_int.Sub | T_int.Mult ->
+        true (*ToDo*)
     | _ -> false)
-  @@ Term.funsyms_of term
 
 let coeff_of is_v t =
   let ret = ref None in

@@ -3,7 +3,7 @@ open Ext
 
 type t = int array
 
-let make n = Array.init n ~f:(fun _ -> -1)
+let make n = Array.init n ~f:(Fn.const (-1))
 
 let rec root x uf =
   let y = uf.(x) in
@@ -28,18 +28,17 @@ let union_set x y uf =
     uf
 
 let find_class x uf =
-  let l = List.init (Array.length uf) ~f:Fn.id in
-  List.filter ~f:(fun y -> find_set x y uf) l
+  List.filter ~f:(fun y -> find_set x y uf)
+  @@ List.init (Array.length uf) ~f:Fn.id
 
 let all_classes uf =
-  let l = List.init (Array.length uf) ~f:Fn.id in
   let rec aux acc = function
     | [] -> acc
     | x :: rest ->
-        let a, b = List.partition_tf ~f:(fun y -> find_set x y uf) rest in
+        let a, b = List.partition_tf rest ~f:(fun y -> find_set x y uf) in
         aux ((x :: a) :: acc) b
   in
-  aux [] l
+  aux [] @@ List.init (Array.length uf) ~f:Fn.id
 
 let print uf =
   Format.printf "uf:@.{";
@@ -47,8 +46,7 @@ let print uf =
   Format.printf "}@."
 
 let print_class uf =
-  List.iter ~f:(fun l ->
+  List.iter (all_classes uf) ~f:(fun l ->
       Format.printf "{";
-      List.iter ~f:(Format.printf "%d,") l;
+      List.iter l ~f:(Format.printf "%d,");
       Format.printf "}@.")
-  @@ all_classes uf

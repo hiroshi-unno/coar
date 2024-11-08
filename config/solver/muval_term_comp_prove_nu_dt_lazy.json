@@ -26,6 +26,7 @@
         ],
         "check_problem": false,
         "verbose": false,
-        "output_iteration": false
+        "output_iteration": false,
+        "output_yes_no": true
     }
 ]

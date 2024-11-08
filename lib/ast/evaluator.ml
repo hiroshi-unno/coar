@@ -32,9 +32,9 @@ let rec eval_term ?(env = Map.Poly.empty) =
               "a conditional expression must be evaluated to a boolean value")
   | FunApp (T_int.Int i, [], _) -> Value.Int i
   | FunApp (T_real.Real r, [], _) -> Value.Real r
-  | FunApp (T_real_int.ToInt, [ FunApp (T_real.Real r, [], _) ], _) ->
+  | FunApp (T_irb.RealToInt, [ FunApp (T_real.Real r, [], _) ], _) ->
       Value.Int (Q.to_bigint r (* ToDo: conforms to the semantics of smtlib? *))
-  | FunApp (T_real_int.ToReal, [ FunApp (T_int.Int i, [], _) ], _) ->
+  | FunApp (T_irb.IntToReal, [ FunApp (T_int.Int i, [], _) ], _) ->
       Value.Real (Q.of_bigint i)
   | FunApp ((T_int.Neg | T_real.RNeg), [ t1 ], _) ->
       Value.neg (eval_term ~env t1)

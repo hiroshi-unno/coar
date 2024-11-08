@@ -180,8 +180,8 @@ let add_learned_clause id t (uni_senv, ps, ns, phi) =
   | Some (uni_senv1, ps1, ns1, phi1) ->
       let uni_senv' = Map.force_merge uni_senv uni_senv1 in
       let phi' =
-        Logic.ExtTerm.and_of [ phi1; phi ]
-        |> Fn.flip (Logic.ExtTerm.to_old_formula Map.Poly.empty uni_senv') []
+        (uni_senv', Logic.ExtTerm.and_of [ phi1; phi ])
+        |> Logic.ExtTerm.to_old_fml Map.Poly.empty
         |> Evaluator.simplify
         |> Z3Smt.Z3interface.z3_simplify ~id (LogicOld.get_fenv ())
         |> Logic.ExtTerm.of_old_formula
@@ -204,8 +204,8 @@ let add_lower_bound t (key, term) =
         Logic.ExtTerm.mk_lambda params
         @@ Logic.ExtTerm.or_of
              [
-               Logic.ExtTerm.beta_reduction term args;
-               Logic.ExtTerm.beta_reduction old_term args;
+               Logic.ExtTerm.beta_reduction (Logic.Term.mk_apps term args);
+               Logic.ExtTerm.beta_reduction (Logic.Term.mk_apps old_term args);
              ])
 
 let add_upper_bound t (key, term) =
@@ -220,8 +220,8 @@ let add_upper_bound t (key, term) =
         Logic.ExtTerm.mk_lambda params
         @@ Logic.ExtTerm.and_of
              [
-               Logic.ExtTerm.beta_reduction term args;
-               Logic.ExtTerm.beta_reduction old_term args;
+               Logic.ExtTerm.beta_reduction (Logic.Term.mk_apps term args);
+               Logic.ExtTerm.beta_reduction (Logic.Term.mk_apps old_term args);
              ])
 
 let add_bound_as_learned_clause ~print id pfwcsp vs pvar
@@ -244,9 +244,10 @@ let add_bound_as_learned_clause ~print id pfwcsp vs pvar
               (Ident.Tvar (sprintf "x%d" (i + 1)), s))
         in
         let term =
-          Logic.ExtTerm.beta_reduction term
-          @@ List.map ~f:(fst >> Logic.ExtTerm.mk_var)
-          @@ List.drop pred_params (List.length pred_params - arity)
+          Logic.ExtTerm.beta_reduction
+            (Logic.Term.mk_apps term
+            @@ List.map ~f:(fst >> Logic.ExtTerm.mk_var)
+            @@ List.drop pred_params (List.length pred_params - arity))
         in
         let aux_params =
           List.filter_mapi pred_params ~f:(fun i (v, s) ->

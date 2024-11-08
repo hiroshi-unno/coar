@@ -234,7 +234,7 @@ let rec formula_of = function
   | BotNode () -> Formula.mk_false ()
   | CondNode (psym, args) -> Formula.mk_atom @@ Atom.mk_psym_app psym args
   | AppNode (pvar, args) ->
-      let sorts = List.map args ~f:(fun _ -> T_int.SInt (*ToDo*)) in
+      let sorts = List.map args ~f:Term.sort_of in
       Formula.mk_atom @@ Atom.mk_pvar_app pvar sorts args
 
 let rec neg = function

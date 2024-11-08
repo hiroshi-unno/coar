@@ -1,0 +1,13 @@
+(menhir
+ (modules parser))
+
+(ocamllex
+ (modules lexer))
+
+(library
+ (name HOMC)
+ (public_name CoAR.HOMC)
+ (preprocess
+  (pps ppx_deriving_yojson))
+ (libraries core yojson CoAR.common CoAR.ast CoAR.automata)
+ (modules RSFD refType lexer parser EHMTT typeSystem reducer problem))
