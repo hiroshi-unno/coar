@@ -153,7 +153,7 @@ module Make (Config : Config.ConfigType) = struct
                          Map.Poly.of_alist_exn
                          @@ List.zip_exn (List.map ~f:fst args') args
                        in
-                       Formula.subst subst body)
+                       Formula.subst subst @@ Formula.aconv_tvar body)
                      else Formula.mk_atom atm
                  | atm -> Formula.mk_atom atm)
              in

@@ -152,7 +152,7 @@ let mk_bind_with_filter binder bounds fml =
 let update_bounds bounds bounds' =
   let ht = Hashtbl.Poly.create ~size:1234 () in
   List.iter
-    ~f:(fun (tvar, sort) -> Hashtbl.Poly.add_exn ht ~key:tvar ~data:sort)
+    ~f:(fun (tvar, sort) -> Hashtbl.Poly.update ht tvar ~f:(fun _old_sort -> sort))
     (bounds @ bounds');
   Hashtbl.Poly.to_alist ht
 
