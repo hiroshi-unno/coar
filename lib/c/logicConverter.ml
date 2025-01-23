@@ -111,4 +111,4 @@ let hmes_of_ba ba =
       ~init:[]
       (List.init states ~f:Fn.id)
   in
-  HMES.mk_hmes (nu_preds @ mu_preds) (hmespvar_of_state initial_state)
+  HMES.mk_hmes (mu_preds @ nu_preds) (hmespvar_of_state initial_state)
