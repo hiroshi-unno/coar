@@ -632,10 +632,12 @@ module Make (Config : Config.ConfigType) = struct
         else assert false
       in
       let erase_quantifiers fml =
-        let fml = SimpleFormula.of_formula fml in
-        Debug.print
-        @@ lazy (sprintf "erase_quantifiers: " ^ SimpleFormula.string_of fml);
-        erase_quantifiers_rep fml |> SimpleFormula.formula_of
+        try
+          let fml = SimpleFormula.of_formula @@ Formula.nnf_of fml in
+          Debug.print
+          @@ lazy (sprintf "erase_quantifiers: " ^ SimpleFormula.string_of fml);
+          erase_quantifiers_rep fml |> SimpleFormula.formula_of
+        with _ -> fml
       in
       (* init queue *)
       Array.iter preds ~f:(Pred.pvar_of >> Queue.enqueue queue);
