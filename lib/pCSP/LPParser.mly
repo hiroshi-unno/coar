@@ -60,11 +60,11 @@ atom:
   | atom AND atom { Formula.mk_and $1 $3 }
   | atom OR atom { Formula.mk_or $1 $3 }
   | term EQ term { Formula.eq $1 $3 }
-  | term NOTEQ term { Formula.mk_atom (T_bool.mk_neq $1 $3) }
-  | term GT term { Formula.mk_atom (T_int.mk_gt $1 $3) }
-  | term LT term { Formula.mk_atom (T_int.mk_lt $1 $3) }
-  | term GEQ term { Formula.mk_atom (T_int.mk_geq $1 $3) }
-  | term LEQ term { Formula.mk_atom (T_int.mk_leq $1 $3) }
+  | term NOTEQ term { Formula.neq $1 $3 }
+  | term GT term { Formula.gt $1 $3 }
+  | term LT term { Formula.lt $1 $3 }
+  | term GEQ term { Formula.geq $1 $3 }
+  | term LEQ term { Formula.leq $1 $3 }
   | TOP { Formula.mk_true () }
   | BOT { Formula.mk_false () }
   | VAR { Formula.mk_atom (Atom.of_bool_var (Ident.Tvar $1) )}
@@ -91,10 +91,10 @@ term:
  | INT { T_int.mk_int $1 }
  | MINUS term %prec UMINUS { T_int.mk_neg $2 }
  | term PLUS term { T_int.mk_add $1 $3 }
- | term TIMES term { T_int.mk_mult $1 $3 }
+ | term TIMES term { T_int.mk_mul $1 $3 }
  | term MINUS term { T_int.mk_sub $1 $3 }
- | term DIV term { T_int.mk_div $1 $3 }
- | term MOD term { T_int.mk_mod $1 $3 }
+ | term DIV term { T_int.mk_div Value.Euclidean $1 $3 }
+ | term MOD term { T_int.mk_rem Value.Euclidean $1 $3 }
 
 terms : separated_list(COMMA, term) { $1 }
 

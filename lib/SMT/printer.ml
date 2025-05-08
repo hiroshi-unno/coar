@@ -45,8 +45,7 @@ let rec sexp_of_formula = function
       Sexp.List [ Sexp.Atom binder; params; phi ]
   | LetRec (bounded, phi, _) ->
       let bounded =
-        List.map bounded ~f:(fun (fp, pvar, params, phi) ->
-            sexp_of_pred @@ Predicate.Fixpoint (fp, pvar, params, phi))
+        List.map bounded ~f:(fun def -> sexp_of_pred @@ Predicate.Fixpoint def)
       in
       let phi = sexp_of_formula phi in
       Sexp.List [ Sexp.Atom "letrec"; Sexp.List bounded; phi ]
@@ -88,9 +87,9 @@ and sexp_of_fun_sym = function
   | T_int.Int n -> Sexp.List [ Sexp.Atom "integer"; Sexp.Atom (Z.to_string n) ]
   | T_int.Add -> Sexp.Atom "add"
   | T_int.Sub -> Sexp.Atom "sub"
-  | T_int.Mult -> Sexp.Atom "mult"
-  | T_int.Div -> Sexp.Atom "div"
-  | T_int.Mod -> Sexp.Atom "mod"
+  | T_int.Mul -> Sexp.Atom "mult" (*ToDo*)
+  | T_int.Div _ (*ToDo*) -> Sexp.Atom "div"
+  | T_int.Rem _ (*ToDo*) -> Sexp.Atom "mod" (*ToDo*)
   | T_int.Neg -> Sexp.Atom "neg"
   | _ -> failwith "invalid function symbol"
 
@@ -110,11 +109,14 @@ and sexp_of_pred = function
       in
       Sexp.List [ Sexp.Atom ident; Sexp.List sorts ]
   | Psym sym -> sexp_of_pred_sym sym
-  | Fixpoint (fp, Ident.Pvar ident, params, phi) ->
-      let fp = str_of_fop fp in
-      let params = sexp_of_params params in
-      let phi = sexp_of_formula phi in
-      Sexp.List [ Sexp.Atom fp; Sexp.Atom ident; params; phi ]
+  | Fixpoint def ->
+      Sexp.List
+        [
+          Sexp.Atom (str_of_fop def.kind);
+          Sexp.Atom (Ident.name_of_pvar def.name);
+          sexp_of_params def.args;
+          sexp_of_formula def.body;
+        ]
 
 let str_of_formula phi = Sexp.to_string_hum (sexp_of_formula phi)
 let str_of_pred pred = Sexp.to_string_hum (sexp_of_pred pred)

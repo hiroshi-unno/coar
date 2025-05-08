@@ -4,7 +4,7 @@ open Common.Ext
 open Common.Util
 open Ast
 open Ast.LogicOld
-open PCSatCommon.HypSpace
+open Ast.HypSpace
 open Function
 
 module Config = struct
@@ -115,7 +115,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
 
   let update_hspace ~tag hspace =
     ignore tag;
-    Qualifier.AllTheory.qualifiers_of ~fenv:Arg.fenv !param.depth hspace
+    qualifiers_of ~fenv:Arg.fenv !param.depth hspace
 
   let gen_template ~tag ~ucore hspace =
     ignore tag;
@@ -127,56 +127,56 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
           if Formula.is_eq phi then Some phi else None)
     in
     let params = params_of ~tag in
-    let ( temp_params,
-          tmpl,
-          ne_constr,
-          scope_constr,
-          cnstr_of_coeffs,
-          cnstr_of_consts ) =
-      Generator.gen_ne_template (Set.to_list quals) (Set.to_list hspace.terms)
-        (!param.depth, !param.ext, !param.ubc, !param.ubd)
+    let template =
+      Templ.gen_ne_template
+        {
+          terms = Set.to_list hspace.terms;
+          quals = Set.to_list quals;
+          dep = !param.depth;
+          ext = !param.ext;
+          ubc = !param.ubc;
+          ubd = !param.ubd;
+        }
         params
     in
-    let hole_qualifiers_map = [] in
     Debug.print
     @@ lazy
          (sprintf "[%s] predicate template:\n  %s"
             (Ident.name_of_tvar @@ Arg.name)
-            (Formula.str_of tmpl));
+            (Formula.str_of template.pred));
     Debug.print
     @@ lazy
          (sprintf "[%s] ne_constr:\n  %s"
             (Ident.name_of_tvar @@ Arg.name)
-            (Formula.str_of ne_constr));
+            (Formula.str_of template.ne_constr));
     Debug.print
     @@ lazy
          (sprintf "[%s] scope_constr:\n  %s"
             (Ident.name_of_tvar @@ Arg.name)
-            (Formula.str_of scope_constr));
+            (Formula.str_of template.scope_constr));
     Debug.print
     @@ lazy
-         (sprintf "[%s] cnstr_of_coeffs:\n  %s"
+         (sprintf "[%s] coeffs_bounds:\n  %s"
             (Ident.name_of_tvar @@ Arg.name)
-            (Formula.str_of cnstr_of_coeffs));
+            (Formula.str_of template.coeffs_bounds));
     Debug.print
     @@ lazy
-         (sprintf "[%s] cnstr_of_consts:\n  %s"
+         (sprintf "[%s] consts_bounds:\n  %s"
             (Ident.name_of_tvar @@ Arg.name)
-            (Formula.str_of cnstr_of_consts));
-    let tmpl =
-      Logic.(
-        Term.mk_lambda (of_old_sort_env_list  hspace.params))
-      @@ Logic.ExtTerm.of_old_formula tmpl
+            (Formula.str_of template.consts_bounds));
+    let pred =
+      Logic.(Term.mk_lambda (of_old_sort_env_list hspace.params))
+      @@ Logic.ExtTerm.of_old_formula template.pred
     in
-    ( (DepthExt, tmpl),
+    ( (DepthExt, pred),
       [
-        (Dummy, Logic.ExtTerm.of_old_formula ne_constr);
-        (Dummy, Logic.ExtTerm.of_old_formula scope_constr);
-        (Coeff, Logic.ExtTerm.of_old_formula cnstr_of_coeffs);
-        (Const, Logic.ExtTerm.of_old_formula cnstr_of_consts);
+        (Dummy, Logic.ExtTerm.of_old_formula template.ne_constr);
+        (Dummy, Logic.ExtTerm.of_old_formula template.scope_constr);
+        (Coeff, Logic.ExtTerm.of_old_formula template.coeffs_bounds);
+        (Const, Logic.ExtTerm.of_old_formula template.consts_bounds);
       ],
-      temp_params,
-      hole_qualifiers_map )
+      template.templ_params,
+      template.hole_quals_map )
 
   let restart (_param, actions) =
     Debug.print
@@ -300,7 +300,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
   let rec inner param_actions = function
     | [] -> param_actions
     | DepthExt :: labels -> inner (increase_depth_ext param_actions) labels
-    | (NeInt | QDep | Dummy) :: labels -> inner param_actions labels
+    | (NeInt | QualDep | Dummy) :: labels -> inner param_actions labels
     | Coeff :: labels -> inner (increase_coeff param_actions) labels
     | Const :: labels -> inner (increase_const param_actions) labels
     | TimeOut :: _labels -> param_actions (* z3 may unexpectedly time out*)

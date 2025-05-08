@@ -1,5 +1,6 @@
 open Core
 open Common.Ext
+open Common.Combinator
 open Automata
 
 (** Regular tree expressions *)
@@ -115,9 +116,7 @@ let add wl wl' t =
   | Symbol id -> (id, wl)
   | _ -> (
       try
-        let id, _ =
-          List.find_exn (wl @ wl') ~f:(fun (_id, t') -> Stdlib.(t = t'))
-        in
+        let id, _ = List.find_exn (wl @ wl') ~f:(snd >> Stdlib.( = ) t) in
         (id, wl)
       with Not_found_s _ ->
         let id = gen_nt () in

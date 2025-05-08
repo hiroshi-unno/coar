@@ -1,0 +1,77 @@
+%BEGING
+S -> Forall91 ZeroBBB.
+Forall91 p -> and (S90 p) (if (IsMaxBBB p) tt (Forall91 (SuccBBB p))).
+S90 p -> Forall89 p ZeroBBB.
+Forall89 p pc1 -> and (S88 p pc1) (if (IsMaxBBB pc1) tt (Forall89 p (SuccBBB pc1))).
+S88 p pc1 -> Forall87 p pc1 ZeroBBB.
+Forall87 p pc1 pc2 -> and (S86 p pc1 pc2) (if (IsMaxBBB pc2) tt (Forall87 p pc1 (SuccBBB pc2))).
+S86 p pc1 pc2 -> imply (and (and (and (and (S65 p pc1 pc2 tt) (S65 p pc1 pc2 ff)) (and (S66 p pc1 pc2 tt) (S66 p pc1 pc2 ff))) (Forall73 p pc1 pc2 ZeroBBB)) (and (and (and (S75 p pc1 pc2 tt) (S75 p pc1 pc2 ff)) (and (S76 p pc1 pc2 tt) (S76 p pc1 pc2 ff))) (Forall83 p pc1 pc2 ZeroBBB))) (and (S85 p pc1 pc2 tt) (S85 p pc1 pc2 ff)).
+S65 p pc1 pc2 x -> and (S64 p pc1 pc2 x tt) (S64 p pc1 pc2 x ff).
+S64 p pc1 pc2 x y -> imply (p x y) (pc1 x y).
+S66 p pc1 pc2 x -> pc1 x x.
+Forall73 p pc1 pc2 q -> and (S72 p pc1 pc2 q) (if (IsMaxBBB q) tt (Forall73 p pc1 pc2 (SuccBBB q))).
+S72 p pc1 pc2 q -> imply (and (and (S68 p pc1 pc2 q tt) (S68 p pc1 pc2 q ff)) (and (S69 p pc1 pc2 q tt) (S69 p pc1 pc2 q ff))) (and (S71 p pc1 pc2 q tt) (S71 p pc1 pc2 q ff)).
+S68 p pc1 pc2 q x -> and (S67 p pc1 pc2 q x tt) (S67 p pc1 pc2 q x ff).
+S67 p pc1 pc2 q x y -> imply (p x y) (q x y).
+S69 p pc1 pc2 q x -> q x x.
+S71 p pc1 pc2 q x -> and (S70 p pc1 pc2 q x tt) (S70 p pc1 pc2 q x ff).
+S70 p pc1 pc2 q x y -> imply (pc1 x y) (q x y).
+S75 p pc1 pc2 x -> and (S74 p pc1 pc2 x tt) (S74 p pc1 pc2 x ff).
+S74 p pc1 pc2 x y -> imply (p x y) (pc2 x y).
+S76 p pc1 pc2 x -> pc2 x x.
+Forall83 p pc1 pc2 q -> and (S82 p pc1 pc2 q) (if (IsMaxBBB q) tt (Forall83 p pc1 pc2 (SuccBBB q))).
+S82 p pc1 pc2 q -> imply (and (and (S78 p pc1 pc2 q tt) (S78 p pc1 pc2 q ff)) (and (S79 p pc1 pc2 q tt) (S79 p pc1 pc2 q ff))) (and (S81 p pc1 pc2 q tt) (S81 p pc1 pc2 q ff)).
+S78 p pc1 pc2 q x -> and (S77 p pc1 pc2 q x tt) (S77 p pc1 pc2 q x ff).
+S77 p pc1 pc2 q x y -> imply (p x y) (q x y).
+S79 p pc1 pc2 q x -> q x x.
+S81 p pc1 pc2 q x -> and (S80 p pc1 pc2 q x tt) (S80 p pc1 pc2 q x ff).
+S80 p pc1 pc2 q x y -> imply (pc2 x y) (q x y).
+S85 p pc1 pc2 x -> and (S84 p pc1 pc2 x tt) (S84 p pc1 pc2 x ff).
+S84 p pc1 pc2 x y -> iff (pc1 x y) (pc2 x y).
+ZeroBBB x1 x2 -> ff.
+IsMaxBBB x -> and (IsMaxBB (x tt)) (IsMaxBB (x ff)).
+SuccBBB x x1 x2 -> if (IsMaxBB (x ff)) (if x1 (SuccBB (x x1) x2) (ZeroBB x2)) (if x1 (x x1 x2) (SuccBB (x x1) x2)).
+CompareBBB x y z lt eq gt -> if (IsMaxB z) eq (CompareBBB x y (SuccB z) lt (CompareBB (x z) (y z) ZeroB lt eq gt) gt).
+ZeroBB x1 -> ff.
+IsMaxBB x -> and (IsMaxB (x tt)) (IsMaxB (x ff)).
+SuccBB x x1 -> if (IsMaxB (x ff)) (if x1 (SuccB (x x1)) ZeroB) (if x1 (x x1) (SuccB (x x1))).
+CompareBB x y z lt eq gt -> if (IsMaxB z) eq (CompareBB x y (SuccB z) lt (CompareB (x z) (y z) lt eq gt) gt).
+ZeroB -> ff.
+IsMaxB x -> x.
+SuccB x -> tt.
+CompareB x y lt eq gt -> if x (if y eq gt) (if y lt eq).
+%ENDG
+
+%BEGINR
+tt -> 0.
+ff -> 0.
+not -> 1.
+and -> 2.
+or -> 2.
+imply -> 2.
+iff -> 2.
+xor -> 2.
+if -> 3.
+%ENDR
+
+%BEGINATA
+qT tt -> true.
+qT ff -> false.
+qT not -> (1,qF).
+qT and -> (1,qT) /\ (2,qT).
+qT or -> (1,qT) \/ (2,qT).
+qT imply -> (1,qF) \/ (2,qT).
+qT iff -> (1,qT) /\ (2,qT) \/ (1,qF) /\ (2,qF).
+qT xor -> (1,qT) /\ (2,qF) \/ (1,qF) /\ (2,qT).
+qT if -> (1,qT) /\ (2,qT) \/ (1,qF) /\ (3,qT).
+qF tt -> false.
+qF ff -> true.
+qF not -> (1,qT).
+qF and -> (1,qF) \/ (2,qF).
+qF or -> (1,qF) /\ (2,qF).
+qF imply -> (1,qT) /\ (2,qF).
+qF iff -> (1,qT) /\ (2,qF) \/ (1,qF) /\ (2,qT).
+qF xor -> (1,qT) /\ (2,qT) \/ (1,qF) /\ (2,qF).
+qF if -> (1,qT) /\ (2,qF) \/ (1,qF) /\ (3,qF).
+%ENDATA
+

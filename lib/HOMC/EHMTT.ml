@@ -221,8 +221,7 @@ let rec pr_aux b ppf = function
       if b then Format.fprintf ppf "(";
       let pr_ ppf (id', (ids, t)) =
         Format.fprintf ppf "%s => %a"
-          (String.concat ~sep:" "
-             (List.map ~f:Ident.name_of_tvar @@ (id' :: ids)))
+          (String.concat_map_list ~sep:" " ~f:Ident.name_of_tvar (id' :: ids))
           (pr_aux false) t
       in
       Format.fprintf ppf "case %s of %a" (Ident.name_of_tvar id)
@@ -475,7 +474,7 @@ and beta_term (q, tm, idx) term =
   (*  Format.eprintf "Term: %a\n" Term.pr tm; *)
   let cs = coerces term in
   let ec (_, t, _) = elim_coerce (q, tm, idx) t in
-  if List.exists cs ~f:(fun (_, _, idx') -> idx = idx') then
+  if List.exists cs ~f:(Triple.trd >> ( = ) idx) then
     let t1 = alpha tm in
     let t2s = List.map ~f:ec cs in
     (*    let t2 = elim_coerce (q,tm,idx) tm in *)

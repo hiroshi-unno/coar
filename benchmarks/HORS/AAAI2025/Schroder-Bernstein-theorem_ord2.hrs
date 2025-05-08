@@ -1,0 +1,66 @@
+%BEGING
+S -> Forall57 ZeroBB.
+Forall57 dom -> and (S56 dom) (if (IsMaxBB dom) tt (Forall57 (SuccBB dom))).
+S56 dom -> Forall55 dom ZeroBB.
+Forall55 dom cod -> and (S54 dom cod) (if (IsMaxBB cod) tt (Forall55 dom (SuccBB cod))).
+S54 dom cod -> imply (and (Exists41 dom cod ZeroBB) (Exists46 dom cod ZeroBB)) (Exists53 dom cod ZeroBB).
+Exists41 dom cod f -> or (S40 dom cod f) (if (IsMaxBB f) ff (Exists41 dom cod (SuccBB f))).
+S40 dom cod f -> and (S39 dom cod f tt) (S39 dom cod f ff).
+S39 dom cod f x -> and (S38 dom cod f x tt) (S38 dom cod f x ff).
+S38 dom cod f x y -> and (S37 dom cod f x y tt) (S37 dom cod f x y ff).
+S37 dom cod f x y z -> imply (and (and (and (dom y) (dom z)) (iff (f y) x)) (iff (f z) x)) (and (cod x) (iff y z)).
+Exists46 dom cod g -> or (S45 dom cod g) (if (IsMaxBB g) ff (Exists46 dom cod (SuccBB g))).
+S45 dom cod g -> and (S44 dom cod g tt) (S44 dom cod g ff).
+S44 dom cod g x -> and (S43 dom cod g x tt) (S43 dom cod g x ff).
+S43 dom cod g x y -> and (S42 dom cod g x y tt) (S42 dom cod g x y ff).
+S42 dom cod g x y z -> imply (and (and (and (cod y) (cod z)) (iff (g y) x)) (iff (g z) x)) (and (dom x) (iff y z)).
+Exists53 dom cod h -> or (S52 dom cod h) (if (IsMaxBB h) ff (Exists53 dom cod (SuccBB h))).
+S52 dom cod h -> and (and (S49 dom cod h tt) (S49 dom cod h ff)) (and (S51 dom cod h tt) (S51 dom cod h ff)).
+S49 dom cod h x -> and (S48 dom cod h x tt) (S48 dom cod h x ff).
+S48 dom cod h x y -> and (S47 dom cod h x y tt) (S47 dom cod h x y ff).
+S47 dom cod h x y z -> imply (and (and (and (dom y) (dom z)) (iff (h y) x)) (iff (h z) x)) (and (cod x) (iff y z)).
+S51 dom cod h x -> imply (cod x) (or (S50 dom cod h x tt) (S50 dom cod h x ff)).
+S50 dom cod h x y -> and (dom y) (iff (h y) (iff x tt)).
+ZeroBB x1 -> ff.
+IsMaxBB x -> and (IsMaxB (x tt)) (IsMaxB (x ff)).
+SuccBB x x1 -> if (IsMaxB (x ff)) (if x1 (SuccB (x x1)) ZeroB) (if x1 (x x1) (SuccB (x x1))).
+CompareBB x y z lt eq gt -> if (IsMaxB z) eq (CompareBB x y (SuccB z) lt (CompareB (x z) (y z) lt eq gt) gt).
+ZeroB -> ff.
+IsMaxB x -> x.
+SuccB x -> tt.
+CompareB x y lt eq gt -> if x (if y eq gt) (if y lt eq).
+%ENDG
+
+%BEGINR
+tt -> 0.
+ff -> 0.
+not -> 1.
+and -> 2.
+or -> 2.
+imply -> 2.
+iff -> 2.
+xor -> 2.
+if -> 3.
+%ENDR
+
+%BEGINATA
+qT tt -> true.
+qT ff -> false.
+qT not -> (1,qF).
+qT and -> (1,qT) /\ (2,qT).
+qT or -> (1,qT) \/ (2,qT).
+qT imply -> (1,qF) \/ (2,qT).
+qT iff -> (1,qT) /\ (2,qT) \/ (1,qF) /\ (2,qF).
+qT xor -> (1,qT) /\ (2,qF) \/ (1,qF) /\ (2,qT).
+qT if -> (1,qT) /\ (2,qT) \/ (1,qF) /\ (3,qT).
+qF tt -> false.
+qF ff -> true.
+qF not -> (1,qT).
+qF and -> (1,qF) \/ (2,qF).
+qF or -> (1,qF) /\ (2,qF).
+qF imply -> (1,qT) /\ (2,qF).
+qF iff -> (1,qT) /\ (2,qF) \/ (1,qF) /\ (2,qT).
+qF xor -> (1,qT) /\ (2,qT) \/ (1,qF) /\ (2,qF).
+qF if -> (1,qT) /\ (2,qF) \/ (1,qF) /\ (3,qF).
+%ENDATA
+

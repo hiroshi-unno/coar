@@ -1,0 +1,1 @@
+_forall f : bool -> bool. _forall x : bool. _forall y : bool. _forall z : bool. ((f(x) = y && f(x) = z) => y = z)

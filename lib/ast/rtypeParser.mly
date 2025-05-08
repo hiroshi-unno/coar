@@ -149,8 +149,8 @@ let print _ = ()
 %type <LogicOld.Formula.t list> constraints
 %type <Rtype.Env.t> val_ty_env
 
-%type <(Ident.tvar * Assertion.t) list> assertions
-%type <(Ident.tvar * (Ident.tvar * Assertion.direction) list * (Ident.tvar * SolSpace.space_flag * int) list) list> opt_problems
+%type <(Ident.tvar * Rtype.Assertion.kind) list> assertions
+%type <(Ident.tvar * (Ident.tvar * Rtype.Assertion.direction) list * (Ident.tvar * SolSpace.space_flag * int) list) list> opt_problems
 
 %%
 
@@ -172,12 +172,13 @@ term:
     let var = Ident.Tvar $2 in
     match Rtype.Env.look_up !Rtype.renv_ref var with
     | Some t ->
-      let args, ret = Sort.args_ret_of @@ Rtype.sort_of_val t in
-      fun env -> Term.mk_fvar_app var (args @ [ret]) ($4 env)
+      let sargs, sret = Sort.args_ret_of @@ Rtype.sort_of_val t in
+      fun env -> Term.mk_fvar_app var sargs sret ($4 env)
     | None ->
       match Map.Poly.find (get_fenv ()) var with
-      | Some (params, ret_sort, _, _, _) ->
-        fun env -> Term.mk_fvar_app var (List.map params ~f:snd @ [ret_sort]) ($4 env)
+      | Some (senv, sret, _, _, _) ->
+        let sargs = List.map senv ~f:snd in
+        fun env -> Term.mk_fvar_app var sargs sret ($4 env)
       | None -> failwith @@ "unbound function variable: " ^ $2
   }
   | SUB term %prec unary_minus { fun env -> T_num.mk_nneg ($2 env) }
@@ -188,12 +189,12 @@ term:
   | ToReal term %prec prec_app { fun env -> T_irb.mk_int_to_real ($2 env) }
   | term ADD term { fun env -> T_num.mk_nadd ($1 env) ($3 env) }
   | term SUB term { fun env -> T_num.mk_nsub ($1 env) ($3 env) }
-  | term AST term { fun env -> T_num.mk_nmult ($1 env) ($3 env) }
-  | term DIV term { fun env -> T_num.mk_ndiv ($1 env) ($3 env) }
-  | term MOD term { fun env -> T_num.mk_nmod ($1 env) ($3 env) }
+  | term AST term { fun env -> T_num.mk_nmul ($1 env) ($3 env) }
+  | term DIV term { fun env -> T_num.mk_ndiv Value.Euclidean ($1 env) ($3 env) }
+  | term MOD term { fun env -> T_num.mk_nrem Value.Euclidean ($1 env) ($3 env) }
   | term FADD term { fun env -> T_real.mk_radd ($1 env) ($3 env) }
   | term FSUB term { fun env -> T_real.mk_rsub ($1 env) ($3 env) }
-  | term FMUL term { fun env -> T_real.mk_rmult ($1 env) ($3 env) }
+  | term FMUL term { fun env -> T_real.mk_rmul ($1 env) ($3 env) }
   | term FDIV term { fun env -> T_real.mk_rdiv ($1 env) ($3 env) }
   /*| LPAREN terms RPAREN {
     fun env ->
@@ -315,11 +316,11 @@ atom:
   | FALSE LPAREN RPAREN { fun _ -> Atom.mk_bool false }
   | IDENT LPAREN terms RPAREN {
     match Map.Poly.find (get_fenv ()) (Tvar $1) with
-    | Some (params, ret_sort, _, _, _) ->
-      if Term.is_bool_sort ret_sort then
-        let sorts = List.map params ~f:snd in
+    | Some (senv, sret, _, _, _) ->
+      if Term.is_bool_sort sret then
+        let sargs = List.map senv ~f:snd in
         fun env ->
-        T_bool.mk_eq (Term.mk_fvar_app (Tvar $1) (sorts @ [ret_sort]) ($3 env)) @@
+        T_bool.mk_eq (Term.mk_fvar_app (Tvar $1) sargs sret ($3 env)) @@
         T_bool.mk_true ()
       else failwith ""
     | None ->
@@ -559,22 +560,22 @@ assertions:
   }*/
 assertion:
   | TYPEOF LPAREN IDENT RPAREN SUBTYPE val_ty {
-    Ident.Tvar $3, Assertion.Type (Rtype.aconv_val Map.Poly.empty ($6 Map.Poly.empty))
+    Ident.Tvar $3, Rtype.Assertion.Type (Rtype.aconv_val Map.Poly.empty ($6 Map.Poly.empty))
   }
   | FINEFFECTOF LPAREN IDENT RPAREN SUBTYPE eff {
     let fin, regexp = $6 in assert fin;
-    Ident.Tvar $3, Assertion.FinEff regexp
+    Ident.Tvar $3, Rtype.Assertion.FinEff regexp
   }
   | INFEFFECTOF LPAREN IDENT RPAREN SUBTYPE eff {
     let fin, regexp = $6 in assert (not fin);
-    Ident.Tvar $3, Assertion.InfEff regexp
+    Ident.Tvar $3, Rtype.Assertion.InfEff regexp
   }
 
 // Refinement Type Optimization
 
 direct:
-  | MAXIMIZE LPAREN IDENT RPAREN { Tvar $3, Assertion.DUp }
-  | MINIMIZE LPAREN IDENT RPAREN { Tvar $3, Assertion.DDown }
+  | MAXIMIZE LPAREN IDENT RPAREN { Tvar $3, Rtype.Assertion.DUp }
+  | MINIMIZE LPAREN IDENT RPAREN { Tvar $3, Rtype.Assertion.DDown }
 directs:
   | direct { [$1] }
   | direct COMMA directs { $1 :: $3 }

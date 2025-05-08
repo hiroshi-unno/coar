@@ -140,13 +140,13 @@ let receive_all_infos_with messenger my_id ~filter =
           Hash_set.add received my_id;
           if Hash_set.length received < messenger.max_client - 1 then
             send messenger @@ Broadcast (src_id, received, info);
-          inner (i - 1) @@ ((src_id, info) :: infos)
+          inner (i - 1) ((src_id, info) :: infos)
       | Some (Request (src_id, dst_id, info))
         when Stdlib.(my_id = dst_id) && filter info ->
-          inner (i - 1) @@ ((src_id, info) :: infos)
+          inner (i - 1) ((src_id, info) :: infos)
       | Some (Response (src_id, dst_id, info))
         when Stdlib.(my_id = dst_id) && filter info ->
-          inner (i - 1) @@ ((src_id, info) :: infos)
+          inner (i - 1) ((src_id, info) :: infos)
       | Some msg ->
           send messenger msg;
           inner (i - 1) infos

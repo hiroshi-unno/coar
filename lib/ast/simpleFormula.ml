@@ -151,9 +151,16 @@ let mk_bind_with_filter binder bounds fml =
 *)
 let update_bounds bounds bounds' =
   let ht = Hashtbl.Poly.create ~size:1234 () in
-  List.iter
-    ~f:(fun (tvar, sort) -> Hashtbl.Poly.update ht tvar ~f:(fun _old_sort -> sort))
-    (bounds @ bounds');
+  List.iter (bounds @ bounds') ~f:(fun (tvar, sort) ->
+      if true then Hashtbl.Poly.update ht tvar ~f:(fun _old_sort -> sort)
+      else
+        try Hashtbl.Poly.add_exn ht ~key:tvar ~data:sort
+        with _ ->
+          if Stdlib.( <> ) (Hashtbl.Poly.find_exn ht tvar) sort then
+            failwith
+            @@ sprintf "update_bounds: %s, %s"
+                 (str_of_sort_env_list Term.str_of_sort bounds)
+                 (str_of_sort_env_list Term.str_of_sort bounds'));
   Hashtbl.Poly.to_alist ht
 
 (*
@@ -221,7 +228,7 @@ let rec of_formula_rep = function
       failwith
       @@ sprintf "[SimpleFormula.of_formula_rep] LetFormula not supported"
 
-let of_formula fml = of_formula_rep fml |> simplify
+let of_formula = of_formula_rep >> simplify
 
 let rec formula_of = function
   | AndNode fmls -> Formula.and_of (List.map ~f:formula_of fmls)
@@ -246,8 +253,9 @@ let rec neg = function
   | BotNode () -> TopNode ()
   | CondNode (psym, args) ->
       let psym =
-        Evaluator.simplify_pred_neg (Predicate.mk_psym psym)
-        |> Predicate.let_psym
+        match Evaluator.simplify_pred_neg (Predicate.mk_psym psym) with
+        | None -> failwith "[neg]"
+        | Some neg_psym -> Predicate.let_psym neg_psym
       in
       CondNode (psym, args)
   | AppNode _ -> raise (Invalid_argument "pvar is included")

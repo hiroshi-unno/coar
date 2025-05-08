@@ -6,7 +6,11 @@ type info = { num_cegis_iters : int }
 type output = PCSP.Problem.solution * info
 
 let merge_infos infos =
-  { num_cegis_iters = List.fold ~init:0 ~f:(+) (List.map infos ~f:(fun info -> info.num_cegis_iters)) }
+  {
+    num_cegis_iters =
+      List.fold ~init:0 ~f:( + )
+        (List.map infos ~f:(fun info -> info.num_cegis_iters));
+  }
 
 type _ t =
   | Sat of CandSol.t
@@ -15,9 +19,10 @@ type _ t =
   | OutSpace of Ident.tvar list
   | Continue : VersionSpace.t * 'a -> (VersionSpace.t * 'a) t
 
-(** with solution *)
+(* with solution *)
 type s = (VersionSpace.t * (CandSol.t * CandSol.tag) list) t
-(** without solution *)
+
+(* without solution *)
 type u = (VersionSpace.t * unit) t
 
 let lift : u -> s = function
@@ -26,15 +31,15 @@ let lift : u -> s = function
   | Unsat -> Unsat
   | OutSpace ps -> OutSpace ps
   | Timeout -> Timeout
+
 let discard : s -> u = function
   | Continue (vs, _) -> Continue (vs, ())
   | Sat cand_sol -> Sat cand_sol
   | Unsat -> Unsat
   | OutSpace ps -> OutSpace ps
   | Timeout -> Timeout
-let is_end = function
-  | Continue _ -> false
-  | _ -> true
+
+let is_end = function Continue _ -> false | _ -> true
 
 let map ~f = function
   | Continue (vs, a) -> Continue (VersionSpace.map ~f vs, a)
@@ -42,6 +47,7 @@ let map ~f = function
   | Unsat -> Unsat
   | OutSpace ps -> OutSpace ps
   | Timeout -> Timeout
+
 let bind x f =
   match x with
   | Continue (vs, a) -> f vs a
@@ -49,17 +55,19 @@ let bind x f =
   | Unsat -> Unsat
   | OutSpace ps -> OutSpace ps
   | Timeout -> Timeout
+
 let bind_may_err x f =
   let open Or_error in
   x >>= function
   | Continue (vs, a) -> f vs a >>= fun res -> Ok res
   | Sat sol -> Ok (Sat sol)
-  | Unsat -> Ok (Unsat)
+  | Unsat -> Ok Unsat
   | OutSpace ps -> Ok (OutSpace ps)
   | Timeout -> Ok Timeout
+
 module Monad_infix = struct
-  let (>>=) = bind
-  let (>>=?) = bind_may_err
+  let ( >>= ) = bind
+  let ( >>=? ) = bind_may_err
 end
 
 (*let init ?(oracle = None) = Continue (VersionSpace.init oracle, ())*)
@@ -74,7 +82,7 @@ let pos_neg_und_examples_of = function
 
 let labelings_of = function
   | Sat _ | Unsat | Timeout | OutSpace _ -> assert false
-  | Continue (vs, _) -> VersionSpace.labelings_of vs
+  | Continue (vs, _) -> vs.labelings
 
 let candidates_of = function
   | Sat _ | Unsat | Timeout | OutSpace _ -> assert false
@@ -88,12 +96,15 @@ let of_version_space vs = Continue (vs, ())
 
 let of_pos_neg_und_examples vs examples =
   let vs' =
-    vs |> VersionSpace.set_pos_neg_und_examples examples
-    |> VersionSpace.set_labelings [Map.Poly.empty(*ToDo*), false(*ToDo*)] in
+    vs
+    |> VersionSpace.set_pos_neg_und_examples examples
+    |> VersionSpace.set_labelings [ (Map.Poly.empty (*ToDo*), false (*ToDo*)) ]
+  in
   Continue (vs', ())
 
 let of_examples vs examples =
   VersionSpace.add_examples vs examples;
-  let vs' = VersionSpace.set_labelings [Map.Poly.empty(*ToDo*), false(*ToDo*)] vs in
+  let vs' =
+    VersionSpace.set_labelings [ (Map.Poly.empty (*ToDo*), false (*ToDo*)) ] vs
+  in
   Continue (vs', ())
-

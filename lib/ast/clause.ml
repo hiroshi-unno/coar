@@ -14,18 +14,16 @@ let of_old_clause (uni_senv, pos, neg, phi) =
 
 let to_old_clause exi_senv (uni_senv, pos, neg, phi) =
   ( uni_senv,
-    Set.Poly.map pos ~f:(Fn.flip (ExtTerm.to_old_atom exi_senv uni_senv) []),
-    Set.Poly.map neg ~f:(Fn.flip (ExtTerm.to_old_atom exi_senv uni_senv) []),
-    ExtTerm.to_old_formula exi_senv uni_senv phi [] )
+    Set.Poly.map pos ~f:(ExtTerm.to_old_atm exi_senv uni_senv),
+    Set.Poly.map neg ~f:(ExtTerm.to_old_atm exi_senv uni_senv),
+    ExtTerm.to_old_fml exi_senv uni_senv phi )
 
 let to_formula ((_, ps, ns, phi) : t) =
   BoolTerm.or_of
-  @@ (phi :: (Set.to_list @@ Set.union ps @@ Set.Poly.map ~f:BoolTerm.neg_of ns))
+    (phi :: (Set.to_list @@ Set.union ps @@ Set.Poly.map ~f:BoolTerm.neg_of ns))
 
 let to_old_formula exi_senv (uni_senv, ps, ns, phi) =
-  ExtTerm.to_old_formula exi_senv uni_senv
-    (to_formula (uni_senv, ps, ns, phi))
-    []
+  ExtTerm.to_old_fml exi_senv uni_senv (to_formula (uni_senv, ps, ns, phi))
 
 let lift exi_senv f = of_old_clause @@ f @@ to_old_clause exi_senv
 let unlift exi_senv f = to_old_clause exi_senv @@ f @@ of_old_clause
@@ -89,11 +87,11 @@ let pred_of_definite exi_senv (uni_senv, pos, neg, phi) =
       let map = Map.of_list_exn env in
       let _, _, phi' =
         Qelim.qelim map exi_senv
-        @@ ( Map.force_merge map uni_senv,
-             [],
-             BoolTerm.or_of @@ (phi :: neqs)
-             @ List.map ~f:BoolTerm.neg_of
-             @@ Set.to_list neg )
+          ( Map.force_merge map uni_senv,
+            [],
+            BoolTerm.or_of @@ (phi :: neqs)
+            @ List.map ~f:BoolTerm.neg_of
+            @@ Set.to_list neg )
       in
       ( tvar,
         ( env,
@@ -117,9 +115,9 @@ let pred_of_co_definite exi_senv (uni_senv, pos, neg, phi) =
       let map = Map.of_list_exn env in
       let _, _, phi' =
         Qelim.qelim map exi_senv
-        @@ ( Map.force_merge map uni_senv,
-             [],
-             BoolTerm.or_of @@ (phi :: neqs) @ Set.to_list pos )
+          ( Map.force_merge map uni_senv,
+            [],
+            BoolTerm.or_of @@ (phi :: neqs) @ Set.to_list pos )
       in
       (tvar, (env, BoolTerm.forall (Map.Poly.to_alist uni_senv) phi'))
 
@@ -143,7 +141,7 @@ let resolve_one_step ~print mode (param_senv, (papp : term)) exi_senv
   print @@ lazy ("cl: " ^ str_of exi_senv cl);
   let atm1 =
     LogicOld.Atom.alpha_rename_let
-    @@ ExtTerm.to_old_atom exi_senv param_senv papp []
+    @@ ExtTerm.to_old_atm exi_senv param_senv papp
   in
   let uni_senv' = Map.force_merge uni_senv param_senv in
   (if Stdlib.(mode = `Forward) then
@@ -153,7 +151,7 @@ let resolve_one_step ~print mode (param_senv, (papp : term)) exi_senv
      let _ = print @@ lazy "backward:" in
      c_pos)
   |> Set.Poly.filter_map ~f:(fun papp' ->
-         let atm2 = ExtTerm.to_old_atom exi_senv uni_senv' papp' [] in
+         let atm2 = ExtTerm.to_old_atm exi_senv uni_senv' papp' in
          print @@ lazy ("atm1: " ^ LogicOld.Atom.str_of atm1);
          print @@ lazy ("atm2: " ^ LogicOld.Atom.str_of atm2);
          let open Option.Monad_infix in
@@ -166,7 +164,7 @@ let resolve_one_step ~print mode (param_senv, (papp : term)) exi_senv
               else c_pos)
              ~f:
                (ExtTerm.subst theta
-               >> Fn.flip (ExtTerm.to_old_atom exi_senv uni_senv') []
+               >> ExtTerm.to_old_atm exi_senv uni_senv'
                >> Normalizer.normalize_let_atom >> Normalizer.normalize
                >> ExtTerm.of_old_formula)
          in
@@ -175,21 +173,18 @@ let resolve_one_step ~print mode (param_senv, (papp : term)) exi_senv
              (if Stdlib.(mode = `Forward) then Set.remove c_neg papp' else c_neg)
              ~f:
                (ExtTerm.subst theta
-               >> Fn.flip (ExtTerm.to_old_atom exi_senv uni_senv') []
+               >> ExtTerm.to_old_atm exi_senv uni_senv'
                >> Normalizer.normalize_let_atom >> Normalizer.normalize
                >> ExtTerm.of_old_formula)
          in
          let c_phi' =
-           ExtTerm.subst theta c_phi
-           |> Fn.flip (ExtTerm.to_old_formula exi_senv uni_senv') []
+           ExtTerm.to_old_fml exi_senv uni_senv' (ExtTerm.subst theta c_phi)
            |> Evaluator.simplify |> ExtTerm.of_old_formula
          in
          let cl' = (uni_senv', c_pos', c_neg', c_phi') in
          print @@ lazy ("cl': " ^ str_of exi_senv cl');
          Some
-           ( cl',
-             Map.Poly.map theta
-               ~f:(Fn.flip (ExtTerm.to_old_term exi_senv uni_senv') []) ))
+           (cl', Map.Poly.map theta ~f:(ExtTerm.to_old_trm exi_senv uni_senv')))
 
 (* val resolve: Atom.t Set.Poly.t -> Atom.t Set.Poly.t -> t -> t Set.Poly.t *)
 let resolve_one_step_all ~print positive negative exi_senv (c : t) =

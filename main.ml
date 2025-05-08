@@ -4,7 +4,9 @@ open Common
 open Common.Combinator
 
 type problem =
-  | PSAT  (** SAT Solving *)
+  | PSAT  (** Boolean SAT Solving *)
+  | PDQSAT  (** Boolean QSAT/DQSAT Solving *)
+  | PHOSAT  (** Boolean HOSAT Solving *)
   | PSMT  (** SMT Solving *)
   | PHOMC  (** Higher-Order Model Checking *)
   | PSyGuS  (** SyGyS Inv/CLIA *)
@@ -12,6 +14,7 @@ type problem =
   | PCHCMax  (** CHC Maximization *)
   | PMuCLP  (** muCLP Validity Checking *)
   | PMuCLPInter  (** Interactive Conditional muCLP Validity Checking *)
+  | PProbMuCLP  (** Probabilistic muCLP Validity Checking *)
   | PCLTL  (** LTL Verification of C Programs *)
   | PCCTL  (** CTL Verification of C Programs *)
   | PLTSSafe  (** Safety Verification of Labeled Transition Systems *)
@@ -22,7 +25,8 @@ type problem =
       (** Modal mu-Calculus Model Checking of Labeled Transition Systems *)
   | PLTSRel  (** Relational Verification of Labeled Transition Systems *)
   | PLTSTermInter
-      (** Interactive Conditional (Non-)Termination Analysis of Labeled Transition Systems *)
+      (** Interactive Conditional (Non-)Termination Analysis of Labeled
+          Transition Systems *)
   | PPLTSTerm
       (** Termination Verification of Pushdown Labeled Transition Systems *)
   | PPLTSNTerm
@@ -35,6 +39,8 @@ let problem =
       let open Or_error in
       problem |> String.lowercase |> function
       | "sat" -> return PSAT
+      | "qsat" | "dqsat" -> return PDQSAT
+      | "hosat" -> return PHOSAT
       | "smt" -> return PSMT
       | "homc" -> return PHOMC
       | "sygus" -> return PSyGuS
@@ -42,6 +48,7 @@ let problem =
       | "chcmax" -> return PCHCMax
       | "muclp" -> return PMuCLP
       | "muclpinter" | "muclp-inter" -> return PMuCLPInter
+      | "probmuclp" | "prob-muclp" -> return PProbMuCLP
       | "cltl" | "c-ltl" -> return PCLTL
       | "cctl" | "c-ctl" -> return PCCTL
       | "ltssafe" | "lts-safe" -> return PLTSSafe
@@ -74,7 +81,7 @@ let cmd =
            ~aliases:[ "-p" ]
            ~doc:
              "choose problem \
-              [SAT/SMT/HOMC/SyGuS/CHC/pCSP/pfwCSP/pfwnCSP/CHCMax/muCLP/muCLPInter/CLTL/CCTL/LTSsafe/LTSnsafe/LTSterm/LTSnterm/LTSmucal/LTSrel/LTStermInter/PLTSterm/PLTSnterm/ML] \
+              [SAT/QSAT/DQSAT/HOSAT/SMT/HOMC/SyGuS/CHC/pCSP/pfwCSP/pfwnCSP/CHCMax/muCLP/muCLPInter/probMuCLP/CLTL/CCTL/LTSsafe/LTSnsafe/LTSterm/LTSnterm/LTSmucal/LTSrel/LTStermInter/PLTSterm/PLTSnterm/ML] \
               (default: muCLP)"
       +> flag "--verbose" no_arg (* this option is obsolete *)
            ~aliases:[ "-v" ] ~doc:"enable verbose mode")
@@ -89,6 +96,7 @@ let load_solver_config prblm solver =
       match cfg with
       | MuVal _ when Stdlib.(prblm = PMuCLPInter || prblm = PLTSTermInter) ->
           cfg
+      | MuVal _ when Stdlib.(prblm = PProbMuCLP) -> cfg
       | (MuVal _ | MuCyc _ | Printer _)
         when Stdlib.(
                prblm = PSyGuS || prblm = PPCSP || prblm = PMuCLP
@@ -97,24 +105,47 @@ let load_solver_config prblm solver =
                || prblm = PLTSMuCal || prblm = PLTSRel || prblm = PPLTSTerm
                || prblm = PPLTSNTerm) ->
           cfg
-      | (PCSat _ | SPACER _ | Hoice _)
+      | (PCSat _ | SPACER _ | Hoice _ | PolyQEnt _)
         when Stdlib.(prblm = PPCSP || prblm = PSyGuS) ->
           cfg
       | OptPCSat _ when Stdlib.(prblm = PCHCMax) -> cfg
       | (RCaml _ | EffCaml _) when Stdlib.(prblm = POCaml) -> cfg
       | (MiniSat _ | Z3Sat _) when Stdlib.(prblm = PSAT) -> cfg
+      | (HOMCSat _ | Printer _)
+        when Stdlib.(prblm = PSAT || prblm = PDQSAT || prblm = PHOSAT) ->
+          cfg
       | Z3Smt _ when Stdlib.(prblm = PSMT) -> cfg
-      | (TRecS _ | HorSat2 _) when Stdlib.(prblm = PHOMC) -> cfg
+      | (TRecS _ | HorSat2 _ | Printer _) when Stdlib.(prblm = PHOMC) -> cfg
       | _ ->
           failwith
           @@ sprintf "The specified solver does not support the problem %s"
                (show_problem prblm))
 
 let load_sat filename =
-  match snd (Filename.split_extension filename) with
-  | Some ("dimacs" | "cnf") -> Ok (SAT.Problem.from_dimacs_file filename)
-  | Some "gz" (*ToDo*) -> Ok (SAT.Problem.from_gzipped_dimacs_file filename)
+  match Filename.split_extension filename with
+  | _, Some ("dimacs" | "cnf") -> Ok (SAT.Problem.from_dimacs_file filename)
+  | fn, Some "gz"
+    when match Filename.split_extension fn with
+         | _, Some ("dimacs" | "cnf") -> true
+         | _ -> false ->
+      Ok (SAT.Problem.from_gzipped_dimacs_file filename)
   | _ -> Or_error.unimplemented "load_sat"
+
+let load_dqsat filename =
+  match Filename.split_extension filename with
+  | _, Some ("qdimacs" | "dqdimacs") ->
+      Ok (DQSAT.Problem.from_dqdimacs_file filename)
+  | fn, Some "gz"
+    when match Filename.split_extension fn with
+         | _, Some ("qdimacs" | "dqdimacs") -> true
+         | _ -> false ->
+      Ok (DQSAT.Problem.from_gzipped_dqdimacs_file filename)
+  | _ -> Or_error.unimplemented "load_dqsat"
+
+let load_hosat filename =
+  match snd (Filename.split_extension filename) with
+  | Some "hosat" -> Ok (HOSAT.Problem.from_hosat_file filename)
+  | _ -> Or_error.unimplemented "load_hosat"
 
 let load_smt ~print filename =
   match snd (Filename.split_extension filename) with
@@ -158,8 +189,13 @@ let load_chcmax ~print filename =
 
 let load_muclp ~print filename =
   match snd (Filename.split_extension filename) with
-  | Some "hes" -> MuCLP.Parser.muclp_from_file ~print filename
+  | Some "hes" -> MuCLP.Util.from_file ~print filename
   | _ -> Or_error.unimplemented "load_muclp"
+
+let load_prob_muclp ~print filename =
+  match snd (Filename.split_extension filename) with
+  | Some "phes" -> ProbMuCLP.Util.from_file ~print filename
+  | _ -> Or_error.unimplemented "load_prob_muclp"
 
 let load_cltl ~print filename =
   match snd (Filename.split_extension filename) with
@@ -198,6 +234,8 @@ let main filename solver problem verbose () =
            @@ show_problem problem);
       match problem with
       | PSAT -> load_sat filename >>= Solver.solve_sat
+      | PDQSAT -> load_dqsat filename >>= Solver.solve_dqsat
+      | PHOSAT -> load_hosat filename >>= Solver.solve_hosat
       | PSMT -> load_smt ~print:Debug.print filename >>= Solver.solve_smt
       | PHOMC -> load_homc ~print:Debug.print filename >>= Solver.solve_homc
       | PSyGuS ->
@@ -212,6 +250,9 @@ let main filename solver problem verbose () =
       | PMuCLPInter ->
           load_muclp ~print:Debug.print filename
           >>= Solver.solve_muclp_interactive
+      | PProbMuCLP ->
+          load_prob_muclp ~print:Debug.print filename
+          >>= Solver.solve_prob_muclp
       | PCLTL -> load_cltl ~print:Debug.print filename >>= Solver.solve_muclp
       | PCCTL -> load_cctl ~print:Debug.print filename >>= Solver.solve_muclp
       | PLTSSafe ->

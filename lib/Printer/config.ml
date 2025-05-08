@@ -2,13 +2,17 @@ open Core
 open Common.Util
 open Preprocessing
 
-type lts_format = MuCLP | PCSP [@@deriving yojson]
+type sat_format = String | HOMC [@@deriving yojson]
 type smt_format = String | SMT2 [@@deriving yojson]
+type lts_format = MuCLP | PCSP [@@deriving yojson]
 
 type t = {
   preprocessor : Preprocessor.Config.t ext_file;
-  lts_format : lts_format;
+  homc_sat : HOMCSat.Config.t;
+  sat_format : sat_format;
   smt_format : smt_format;
+  lts_format : lts_format;
+  add_missing_forall : bool;
 }
 [@@deriving yojson]
 
@@ -19,7 +23,8 @@ end
 let instantiate_ext_files cfg =
   let open Or_error in
   Preprocessor.Config.load_ext_file cfg.preprocessor >>= fun preprocessor ->
-  Ok { cfg with preprocessor }
+  HOMCSat.Config.instantiate_ext_files cfg.homc_sat >>= fun homc_sat ->
+  Ok { cfg with preprocessor; homc_sat }
 
 let load_ext_file = function
   | ExtFile.Instance x -> Ok (ExtFile.Instance x)

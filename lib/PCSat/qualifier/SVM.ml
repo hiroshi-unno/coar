@@ -74,10 +74,10 @@ let rec classify approx_level csvm params pos_examples neg_examples =
           List.fold ~init:(T_int.mk_int b)
             ~f:(fun sum ((tvar, sort), c) ->
               T_int.mk_add sum
-                (T_int.mk_mult (T_int.mk_int c) (Term.mk_var tvar sort)))
+                (T_int.mk_mul (T_int.mk_int c) (Term.mk_var tvar sort)))
             (List.zip_exn params w)
         in
-        Formula.mk_atom (T_int.mk_geq t (T_int.zero ()))
+        Formula.geq t (T_int.zero ())
       else
         let weights =
           [ (1, 1. /. float_of_int n_pos); (-1, 1. /. float_of_int n_neg) ]
@@ -120,9 +120,9 @@ let rec classify approx_level csvm params pos_examples neg_examples =
             Map.Poly.fold w ~init:(T_int.mk_int b)
               ~f:(fun ~key:tvar ~data:c t ->
                 T_int.mk_add t
-                  (T_int.mk_mult (T_int.mk_int c) (Term.mk_var tvar T_int.SInt)))
+                  (T_int.mk_mul (T_int.mk_int c) (Term.mk_var tvar T_int.SInt)))
           in
-          Formula.mk_atom (T_int.mk_geq t (T_int.zero ()))
+          Formula.geq t (T_int.zero ())
         in
         let exact_w = Map.Poly.map ~f:Q.of_float w in
         let exact_b = Q.of_float b in
@@ -231,26 +231,20 @@ struct
     let pos_examples =
       Set.Poly.filter_map labeled_atoms ~f:(fun (atom, label) ->
           if TruthTable.label_pos = label then
-            match ExAtom.instantiate atom with
-            | ExAtom.PApp (_, terms) -> Some terms
-            | ExAtom.PPApp (_, (_, terms)) -> Some terms
-            | _ -> None
+            ExAtom.args_of @@ ExAtom.instantiate atom
           else None)
     in
     let neg_examples =
       Set.Poly.filter_map labeled_atoms ~f:(fun (atom, label) ->
           if TruthTable.label_neg = label then
-            match ExAtom.instantiate atom with
-            | ExAtom.PApp (_, terms) -> Some terms
-            | ExAtom.PPApp (_, (_, terms)) -> Some terms
-            | _ -> None
+            ExAtom.args_of @@ ExAtom.instantiate atom
           else None)
     in
     let params, quals =
       svm_half_spaces_of Config.approx_level Config.csvm sorts pos_examples
         neg_examples
     in
-    Set.Poly.map ~f:(fun qual -> (params, Normalizer.normalize qual)) quals
+    Set.Poly.map quals ~f:(fun qual -> (params, Normalizer.normalize qual))
 
   let str_of_domain =
     "SVM with approx_level="

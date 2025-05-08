@@ -1,0 +1,5 @@
+_exists p : bool -> bool -> bool -> bool -> bool.
+(
+not (_forall x1 : bool. _forall x2 : bool. _forall y1 : bool. _forall y2 : bool. (p(x1, x2, y1, y2) => p(y1, y2, x1, x2))) &&
+not (_forall x1 : bool. _forall x2 : bool. _forall y1 : bool. _forall y2 : bool. ((p(x1, x2, y1, y2) && p(y1, y2, x1, x2)) => x1 = y1 && x2 = y2))
+)

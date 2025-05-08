@@ -1,10 +1,10 @@
 open Core
 open Ast
 open PCSatCommon
-open HypSpace
+open Ast.HypSpace
 
 type parameter_update_type = ..
-type parameter_update_type += TimeOut | QDep
+type parameter_update_type += TimeOut | QualDep
 
 module type Type = sig
   val name_of : unit -> Ident.tvar
@@ -47,9 +47,9 @@ module type Type = sig
   val sync : int -> unit
 end
 
-let qdep_constr_of (qdeps : (LogicOld.Formula.t, QDep.t) Map.Poly.t) env =
-  ( QDep,
-    Map.map qdeps ~f:(PCSatCommon.QDep.condition_of env)
+let qdep_constr_of (qdeps : (LogicOld.Formula.t, QualDep.t) Map.Poly.t) env =
+  ( QualDep,
+    Map.map qdeps ~f:(QualDep.condition_of env)
     (* TODO: not empty map *)
     |> Map.Poly.to_alist
     |> List.unzip |> snd |> LogicOld.Formula.and_of

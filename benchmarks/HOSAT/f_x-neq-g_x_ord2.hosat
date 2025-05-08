@@ -1,0 +1,1 @@
+_forall f : bool -> bool. _exists g : bool -> bool. _forall x : bool. (f(x) <> g(x))

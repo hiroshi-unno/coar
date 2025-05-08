@@ -1,0 +1,9 @@
+_forall p : bool -> bool -> bool. _exists pc : bool -> bool -> bool. (
+    (_forall x : bool. _forall y : bool. (p(x, y) => pc(x, y))) &&
+    (_forall x : bool. _forall y : bool. (pc(x, y) => pc(y, x))) &&
+    (_forall q : bool -> bool -> bool. (
+        ((_forall x : bool. _forall y : bool. (p(x, y) => q(x, y))) &&
+         (_forall x : bool. _forall y : bool. (q(x, y) => q(y, x)))) =>
+        (_forall x : bool. _forall y : bool. (pc(x, y) => q(x, y)))
+    ))
+)

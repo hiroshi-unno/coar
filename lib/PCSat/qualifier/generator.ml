@@ -43,7 +43,7 @@ module Config = struct
     | Octahedron
     | Polyhedron of int
     | Polynomial
-    | SVM of int (*approx_level*) * float (*csvm*)
+    | SVM of int (* approx_level *) * float (* csvm *)
     | NN of
         int (* dummy parameter for neural network guided qualifier generation *)
     | Union of domain list
@@ -53,7 +53,7 @@ module Config = struct
     verbose : bool;
     domains : domain list;
     extract_pcsp : bool;  (** extract qualifiers from pfwCSP *)
-    normalize_pcsp : bool;  (** normalize pfwCSP for better extraction *)
+    normalize_pcsp : bool;  (** normalize pfwCSP to enhance extraction *)
     add_bool : bool;  (** add qualifiers for boolean variables *)
     add_homogeneous : bool;  (** add homogeneous qualifiers *)
     add_neg : bool;  (** add negation of qualifiers *)
@@ -89,14 +89,15 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
     Debug.Make ((val Debug.Config.(if config.verbose then enable else disable)))
 
   let _ = Debug.set_id id
+  let print_log = false
 
   let pcsp =
     if config.normalize_pcsp then (
       Debug.print @@ lazy "normalizing pfwCSP for qualifiers extraction";
       let cls =
-        Problem.clauses_of APCSP.problem
-        |> Set.Poly.map
-             ~f:(Clause.refresh_pvar_args (Problem.senv_of APCSP.problem))
+        Set.Poly.map
+          (Problem.clauses_of APCSP.problem)
+          ~f:(Clause.refresh_pvar_args (Problem.senv_of APCSP.problem))
       in
       (* normalization is essential for qualifiers extraction *)
       let count = ref 0 in
@@ -112,19 +113,19 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
             Normalizer.normalize_let
             @@ Logic.ExtTerm.to_old_fml
                  (Problem.senv_of APCSP.problem)
-                 (uni_senv, phi)
+                 uni_senv phi
           in
           let uni_senv =
-            (*Map.force_merge (Logic.Term.let_sort_env_of @@ Logic.ExtTerm.of_old_formula phi)*)
+            (* Map.force_merge (Logic.Term.let_sort_env_of @@ Logic.ExtTerm.of_old_formula phi) *)
             uni_senv
           in
           let phi =
             Logic.ExtTerm.of_old_formula
-            (*Z3Smt.Z3interface.simplify (Problem.fenv_of APCSP.problem) @@*)
+            (* Z3Smt.Z3interface.simplify (Problem.fenv_of APCSP.problem) @@ *)
             @@ Evaluator.simplify
-            @@ (*Formula.elim_ite @@*)
-               (*Formula.elim_let_equivalid @@*)
-               (*Formula.elim_let*) phi
+            @@ (* Formula.elim_ite @@
+                  Formula.elim_let_equivalid @@
+                  Formula.elim_let *) phi
           in
           let senv = Map.force_merge (Problem.senv_of APCSP.problem) uni_senv in
           let bounds =
@@ -150,27 +151,33 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
                      let fvs_atm = Logic.Term.fvs_of atm in
                      if Set.is_empty @@ Set.inter fvs_phi fvs_atm then
                        LogicOld.Formula.mk_false ()
-                     else
-                       (*print_endline ("before QE: " ^ Formula.str_of @@ Logic.ExtTerm.to_old_fml (Problem.senv_of APCSP.problem) (uni_senv, phi));
-                         Out_channel.flush stdout;*)
+                     else (
+                       if print_log then (
+                         print_endline
+                           (sprintf "before QE: %s" @@ Formula.str_of
+                           @@ Logic.ExtTerm.to_old_fml
+                                (Problem.senv_of APCSP.problem)
+                                uni_senv phi);
+                         Out_channel.flush stdout);
                        let uni_senv', _, phi' =
                          let bounds =
                            Map.of_set_exn
-                           @@ Set.Poly.map
-                                ~f:(fun x -> (x, Map.Poly.find_exn senv x))
-                                fvs_atm
+                           @@ Set.Poly.map fvs_atm ~f:(fun x ->
+                                  (x, Map.Poly.find_exn senv x))
                          in
                          Qelim.qelim bounds
                            (Problem.senv_of APCSP.problem)
                            (uni_senv, [], phi)
                        in
-                       (*print_endline "after QE";*)
+                       if print_log then print_endline "after QE";
                        LogicOld.Formula.alpha_rename_let
                        @@ Logic.ExtTerm.to_old_fml
                             (Problem.senv_of APCSP.problem)
-                            (uni_senv', phi')) ))
+                            uni_senv' phi')) ))
       |> Problem.of_clauses ~params:(Problem.params_of APCSP.problem)
-      (*|> (fun pcsp -> print_endline (Problem.str_of pcsp); pcsp)*))
+      |> fun pcsp ->
+      if print_log then print_endline (Problem.str_of pcsp);
+      pcsp)
     else APCSP.problem
 
   let rec module_of_domain = function
@@ -215,19 +222,58 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
     @@ Set.Poly.map quals ~f:(fun (params, phi) ->
            (params, Normalizer.homogenize phi))
 
+  (* let rec mk_let_to_cond conds bvs fvs tvs lenv =
+     let lenv' =
+       Map.Poly.filteri lenv ~f:(fun ~key ~data ->
+           Set.mem fvs (key, Term.sort_of data))
+     in
+     let conds' =
+       Map.Poly.to_alist lenv'
+       |> List.map ~f:(fun (var, def) ->
+              Formula.eq (Term.mk_var var (Term.sort_of def)) def)
+     in
+     let tvs' =
+       Set.union tvs
+         (Set.Poly.union_list @@ List.map conds' ~f:Formula.sort_env_of)
+     in
+     let fvs' = Set.diff tvs' bvs in
+     let conds' = Set.union conds (Set.Poly.of_list conds') in
+     if Set.length fvs = Set.length fvs' then
+       (tvs', fvs, Set.to_list conds' |> Formula.and_of)
+     else mk_let_to_cond conds' bvs fvs' tvs' lenv *)
+
+  let qelim_quals =
+    List.map ~f:(fun (pa, quals) ->
+        Debug.print
+        @@ lazy
+             (sprintf "eliminating quantifiers in qualifiers for %s"
+                (Ident.name_of_pvar pa));
+        ( pa,
+          Set.fold quals ~init:Set.Poly.empty ~f:(fun acc (ids, phi) ->
+              if false then
+                Debug.print
+                @@ lazy ("qualifier before qelim: " ^ Formula.str_of phi);
+              let fenv = Problem.fenv_of pcsp in
+              let phi' =
+                (*Normalizer.normalize @@ Evaluator.simplify @@*)
+                Z3Smt.Z3interface.qelim ~timeout:(Some 1000)
+                  ~id:(Problem.id_of pcsp) ~fenv phi
+              in
+              if false then
+                Debug.print
+                @@ lazy ("qualifier after qelim: " ^ Formula.str_of phi');
+              if config.filter_out_quantified && Formula.is_bind (*ToDo*) phi'
+              then acc
+              else
+                Set.union acc
+                @@ Set.Poly.map ~f:(fun atm ->
+                       (ids (*ToDo*), Formula.mk_atom atm))
+                @@ uncurry Set.union @@ Formula.atoms_of phi') ))
+
   let extract pcsp =
-    (*let rec mk_let_to_cond conds bvs fvs tvs lenv =
-      let lenv' = Map.Poly.filteri lenv ~f:(fun ~key ~data -> Set.mem fvs (key, Term.sort_of data)) in
-      let conds' = Map.Poly.to_alist lenv' |> List.map ~f:(fun (var, def) -> Formula.eq (Term.mk_var var (Term.sort_of def)) def)  in
-      let tvs' = Set.union tvs (Set.Poly.union_list @@ List.map conds' ~f:(Formula.sort_env_of)) in
-      let fvs' = Set.diff tvs' bvs in
-      let conds' = Set.union conds (Set.Poly.of_list conds') in
-      if Set.length fvs = Set.length fvs' then tvs', fvs, Set.to_list conds' |> Formula.and_of
-      else mk_let_to_cond conds' bvs fvs' tvs' lenv
-      in*)
     let cls =
       Set.Poly.map (Problem.formulas_of pcsp)
-        ~f:(Logic.ExtTerm.to_old_fml (Problem.senv_of pcsp))
+        ~f:(uncurry2 @@ Logic.ExtTerm.to_old_fml (Problem.senv_of pcsp))
     in
     let count = ref 0 in
     Set.fold cls ~init:Set.Poly.empty ~f:(fun acc phi ->
@@ -237,7 +283,8 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
              (sprintf "extracting from %s clause (out of %d)"
                 (Ordinal.string_of @@ Ordinal.make !count)
                 (Set.length cls));
-        (* print_endline @@ "[extract phi] " ^ Formula.str_of phi; *)
+        if print_log then
+          print_endline @@ sprintf "extract phi: %s" @@ Formula.str_of phi;
         let atomics, pos_papps, neg_papps =
           Formula.psym_pvar_apps_of ~simplifier:Evaluator.simplify phi
         in
@@ -250,17 +297,25 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
         let bvs =
           Set.Poly.union_list @@ List.map ~f:snd @@ pos_papp_tvs @ neg_papp_tvs
         in
-        (* print_endline @@ "[bvs] " ^ (String.concat_set ~sep:", " (List.map bvs ~f:(fun (v, _) -> Ident.name_of_tvar v))); *)
-        (*(* assume that [phi] is alpha-renamed *)
-          let lenv = Formula.let_env_of phi in*)
+        if print_log then
+          print_endline @@ sprintf "bvs: %s"
+          @@ String.concat_map_set ~sep:", " bvs ~f:(fst >> Ident.name_of_tvar);
+        (* (* assume that [phi] is alpha-renamed *)
+           let lenv = Formula.let_env_of phi in *)
         List.fold atomics ~init:acc ~f:(fun acc atomic ->
-            (* print_endline @@ "[extract atom] " ^ Atom.str_of atomic; *)
             let tvs = Atom.sort_env_of atomic in
-            (* print_endline @@ "[tvs] " ^ (String.concat_set ~sep:", " (List.map tvs ~f:(fun (v, _) -> Ident.name_of_tvar v))); *)
+            if print_log then (
+              print_endline @@ sprintf "extract atom: %s" @@ Atom.str_of atomic;
+              print_endline @@ sprintf "tvs: %s"
+              @@ String.concat_map_set ~sep:", " tvs
+                   ~f:(fst >> Ident.name_of_tvar));
             let fvs = Set.diff tvs bvs in
-            (* let tvs, fvs, cond = mk_let_to_cond Set.Poly.empty bvs fvs tvs lenv in *)
-            (* print_endline @@ "[fvs] " ^ (String.concat_set ~sep:", " (List.map fvs ~f:(fun (v, _) -> Ident.name_of_tvar v))); *)
-            (* print_endline @@ "[cond] " ^ (Formula.str_of cond); *)
+            (* let tvs, fvs, cond =
+                 mk_let_to_cond Set.Poly.empty bvs fvs tvs lenv
+               in
+               print_endline @@ "fvs: "
+               ^ String.concat_map_set ~sep:", " fvs ~f:(fst >> Ident.name_of_tvar);
+               print_endline @@ "cond: " ^ Formula.str_of cond; *)
             if
               Fn.non Set.is_empty
               @@ Set.inter (Set.Poly.map ~f:fst tvs)
@@ -273,36 +328,62 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
                 List.fold pos_papp_tvs ~init:acc ~f:(fun acc (pa, pftv) ->
                     if
                       Set.is_subset tvs ~of_:(Set.union pftv fvs)
-                      (*&& (Set.is_empty fvs || match atomic with Atom.App (_, [t; _], _) -> Fn.non Term.is_bool_sort (Term.sort_of t) | _ -> false)*)
-                    then
-                      (*let _ = print_endline @@ "pos" ^ string_of_int @@ Atom.ast_size atomic in
-                        let _ = print_endline @@ "[atomic] " ^ (Atom.str_of atomic) in*)
+                      && Set.is_empty
+                         @@ Set.inter (Set.Poly.map ~f:fst fvs)
+                              (Set.concat_map (Atom.div_rem_of atomic)
+                                 ~f:(fun (t1, t2) ->
+                                   Set.union (Term.fvs_of t1) (Term.fvs_of t2)))
+                    then (
+                      if print_log then
+                        print_endline
+                        @@ sprintf "pos atom (%d): %s" (Atom.ast_size atomic)
+                        @@ Atom.str_of atomic;
                       let atm =
-                        Formula.aconv_tvar
+                        let cnt = ref 0 in
+                        Formula.aconv_tvar_norm (fun () ->
+                            cnt := !cnt + 1;
+                            Ident.Tvar ("#q" ^ string_of_int !cnt))
                         @@ Formula.exists (Set.to_list fvs)
                         @@ Evaluator.simplify (*Formula.mk_and cond @@*)
-                        @@ Formula.mk_atom @@ Atom.negate atomic
+                        @@ Formula.mk_atom
+                        @@
+                        match Atom.negate atomic with
+                        | None -> failwith "[extract]"
+                        | Some neg_atom -> neg_atom
                       in
-                      (*Debug.print @@ lazy ("exi atomic: " ^ Formula.str_of atm);*)
-                      Set.add acc (pa, atm)
+                      if print_log then
+                        Debug.print
+                        @@ lazy (sprintf "exi atomic: %s" @@ Formula.str_of atm);
+                      Set.add acc (pa, atm))
                     else acc)
               in
               List.fold neg_papp_tvs ~init:acc ~f:(fun acc (pa, pftv) ->
                   if
                     Set.is_subset tvs ~of_:(Set.union pftv fvs)
-                    (*&& (Set.is_empty fvs || match atomic with Atom.App (_, [t; _], _) -> Fn.non Term.is_bool_sort (Term.sort_of t) | _ -> false)*)
-                  then
-                    (*let _ = print_endline @@ "neg" ^ string_of_int @@ Atom.ast_size atomic in
-                      let _ = print_endline @@ "[atomic] " ^ (Atom.str_of atomic) in*)
+                    && Set.is_empty
+                       @@ Set.inter (Set.Poly.map ~f:fst fvs)
+                            (Set.concat_map (Atom.div_rem_of atomic)
+                               ~f:(fun (t1, t2) ->
+                                 Set.union (Term.fvs_of t1) (Term.fvs_of t2)))
+                  then (
+                    if print_log then
+                      print_endline
+                      @@ sprintf "neg atom (%d): %s" (Atom.ast_size atomic)
+                      @@ Atom.str_of atomic;
                     let atm =
-                      Formula.aconv_tvar
+                      let cnt = ref 0 in
+                      Formula.aconv_tvar_norm (fun () ->
+                          cnt := !cnt + 1;
+                          Ident.Tvar ("#q" ^ string_of_int !cnt))
                       @@ Formula.forall (Set.to_list fvs)
                       @@ Evaluator.simplify
                       @@ (*Formula.mk_imply cond @@*)
                       Formula.mk_atom atomic
                     in
-                    (*Debug.print @@ lazy ("uni atomic: " ^ Formula.str_of atm);*)
-                    Set.add acc (pa, atm)
+                    if print_log then
+                      Debug.print
+                      @@ lazy (sprintf "uni atomic: %s" @@ Formula.str_of atm);
+                    Set.add acc (pa, atm))
                   else acc)))
     |> Set.group_by ~equiv:(fun (pa1, _) (pa2, _) ->
            Ident.pvar_equal (Atom.pvar_of pa1) (Atom.pvar_of pa2))
@@ -310,32 +391,22 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
            let pvar, sorts =
              match Set.choose lst with
              | None -> failwith "each group must contains at least one term"
-             | Some (Atom.App (Predicate.Var (pvar, sorts), _, _), _) ->
-                 (pvar, sorts)
+             | Some (Atom.App (Predicate.Var (pv, ss), _, _), _) -> (pv, ss)
              | Some (_, _) -> assert false
            in
            let params = sort_env_list_of_sorts sorts in
-           let bool_quals =
-             if config.add_bool then
-               Set.Poly.filter_map (Set.Poly.of_list params) ~f:(fun (x, s) ->
-                   if Term.is_bool_sort s then
-                     Some (Set.Poly.empty, Formula.of_bool_var x)
-                   else None)
-             else Set.Poly.empty
-           in
            let extracted_quals =
-             let terms = Term.of_sort_env params in
              Set.Poly.filter_map lst ~f:(function
-               | Atom.App (_, terms', _), atomic -> (
-                   (* assume here that elements of terms' are distinct variables
+               | Atom.App (_, args, _), atomic -> (
+                   (* args are assumed to be distinct variables
                       ohterwise no qualifier is extracted *)
                    try
                      let tvars =
-                       List.map terms' ~f:(function
+                       List.map args ~f:(function
                          | Term.Var (x, _, _) -> x
                          | term ->
                              failwith
-                             @@ sprintf "invalid term: %s @ Generator.extract"
+                             @@ sprintf "[Generator.extract] invalid term: %s"
                                   (Term.str_of term))
                      in
                      let ids =
@@ -346,53 +417,47 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
                        Set.Poly.map (Formula.tvs_of atomic)
                          ~f:(Map.Poly.find_exn t_index_map)
                      in
-                     (*Debug.print @@ lazy ("qualifier before sub: " ^ Formula.str_of atomic);*)
+                     if print_log then
+                       Debug.print
+                       @@ lazy
+                            (sprintf "qualifier before sub: %s"
+                            @@ Formula.str_of atomic);
                      let phi =
                        let tsub =
-                         Map.Poly.of_alist_exn @@ List.zip_exn tvars terms
+                         Map.Poly.of_alist_exn
+                         @@ List.zip_exn tvars (Term.of_sort_env params)
                        in
                        Normalizer.normalize @@ Evaluator.simplify
                        @@ Formula.subst tsub atomic
                      in
-                     (*Debug.print @@ lazy ("qualifier after sub: " ^ Formula.str_of phi);*)
+                     if print_log then
+                       Debug.print
+                       @@ lazy
+                            (sprintf "qualifier after sub: %s"
+                            @@ Formula.str_of phi);
                      if Set.is_empty @@ Formula.fvs_of phi then None
                      else Some (ids, phi)
                    with _ -> None)
                | atom, _ ->
                    failwith
-                   @@ sprintf "fail with %s @ Generator.extract"
+                   @@ sprintf "[Generator.extract] fail with %s"
                         (Atom.str_of ~priority:20 atom))
            in
-           (pvar, Set.union bool_quals extracted_quals))
-    |> List.map ~f:(fun (pa, quals) ->
-           Debug.print
-           @@ lazy
-                (sprintf "eliminating quantifiers in qualifiers for %s"
-                   (Ident.name_of_pvar pa));
-           ( pa,
-             Set.Poly.filter_map ~f:(fun (ids, phi) ->
-                 if config.filter_out_quantified && Formula.is_bind phi then
-                   None
-                 else Some (ids, phi))
-             @@ Set.fold quals ~init:Set.Poly.empty ~f:(fun acc (ids, phi) ->
-                    (*Debug.print @@ lazy ("qualifier before qelim: " ^ Formula.str_of phi);*)
-                    let phi' =
-                      (*Normalizer.normalize @@ Evaluator.simplify @@*)
-                      Z3Smt.Z3interface.qelim ~id:(Problem.id_of pcsp)
-                        ~fenv:(Problem.fenv_of pcsp) phi
-                    in
-                    (*Debug.print @@ lazy ("qualifier after qelim: " ^ Formula.str_of phi');*)
-                    if (*ToDo*) Formula.is_bind phi' then acc
-                    else
-                      Set.union acc
-                      @@ Set.Poly.map ~f:(fun atm ->
-                             (ids (*ToDo*), Formula.mk_atom atm))
-                      @@ uncurry Set.union @@ Formula.atoms_of phi') ))
+           ( pvar,
+             Set.union extracted_quals
+               (if config.add_bool then
+                  Set.Poly.filter_map (Set.Poly.of_list params)
+                    ~f:(fun (x, s) ->
+                      if Term.is_bool_sort s then
+                        Some (Set.Poly.empty, Formula.of_bool_var x)
+                      else None)
+                else Set.Poly.empty) ))
+    |> qelim_quals
 
   let qualifier_propagation
       (quals_map :
         (Ident.pvar, (int Set.Poly.t * Formula.t) Set.Poly.t) Map.Poly.t) =
-    let open Logic in
+    let open Ast.Logic in
     (* find ids in args1 and args2 of same args between args1 and args2 *)
     let rec same_args_id_of args1 args2 id1 =
       match args1 with
@@ -410,7 +475,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
     let pairs =
       let cls = Problem.clauses_of APCSP.problem in
       let count = ref 0 in
-      Set.fold cls ~init:Set.Poly.empty ~f:(fun acc (_uni_senv, ps, ns, _) ->
+      Set.fold cls ~init:Set.Poly.empty ~f:(fun acc (uni_senv, ps, ns, _) ->
           count := !count + 1;
           let atms = Set.union ps ns in
           Debug.print
@@ -421,8 +486,18 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
                   (Ordinal.string_of @@ Ordinal.make !count)
                   (Set.length cls) (Set.length atms));
           Set.fold_distinct_pairs atms ~init:acc ~f:(fun acc atm1 atm2 ->
-              (*Debug.print @@ lazy
-                (sprintf "comparing %s and %s" (Atom.str_of @@ ExtTerm.to_old_atom (Problem.senv_of APCSP.problem) uni_senv atm1 []) (Atom.str_of @@ ExtTerm.to_old_atom (Problem.senv_of APCSP.problem) uni_senv atm2 []));*)
+              if print_log then
+                Debug.print
+                @@ lazy
+                     (sprintf "comparing %s and %s"
+                        (Atom.str_of
+                        @@ ExtTerm.to_old_atm
+                             (Problem.senv_of APCSP.problem)
+                             uni_senv atm1)
+                        (Atom.str_of
+                        @@ ExtTerm.to_old_atm
+                             (Problem.senv_of APCSP.problem)
+                             uni_senv atm2));
               let pvar1, args1 = ExtTerm.let_var_app atm1 in
               let pvar2, args2 = ExtTerm.let_var_app atm2 in
               if Stdlib.(pvar1 = pvar2) then acc
@@ -486,22 +561,25 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
                             Set.Poly.singleton @@ Formula.rename sub1 qual
                           in
                           Set.Poly.map ~f:(fun q ->
-                              (*Debug.print @@ lazy ("qual: " ^ Formula.str_of q);*)
+                              if print_log then
+                                Debug.print
+                                @@ lazy (sprintf "qual: %s" @@ Formula.str_of q);
                               (ids1_set, q))
                           @@ Map.Poly.fold sub2 ~init ~f:(fun ~key ~data acc ->
-                                 (*Debug.print @@ lazy
-                                   (sprintf "  %s -> %s"
-                                      (Ident.name_of_tvar key)
-                                      (String.concat_map_set data ~sep:"," ~f:Ident.name_of_tvar));*)
+                                 if print_log then
+                                   Debug.print
+                                   @@ lazy
+                                        (sprintf "  %s -> %s"
+                                           (Ident.name_of_tvar key)
+                                           (String.concat_map_set data ~sep:","
+                                              ~f:Ident.name_of_tvar));
                                  if
                                    Set.exists ids
                                      ~f:(x_i >> Ident.tvar_equal key)
                                  then
                                    Set.concat_map data ~f:(fun x ->
-                                       Set.Poly.map acc
-                                         ~f:
-                                           (Formula.rename
-                                              (Map.Poly.singleton key x)))
+                                       let ren = Map.Poly.singleton key x in
+                                       Set.Poly.map acc ~f:(Formula.rename ren))
                                  else acc)
                         else Set.Poly.empty)
                   in
@@ -524,9 +602,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
                           processed,
                           work )))
       in
-      if
-        Map.Poly.for_all quals_map' ~f:(fun (added, _, _) -> Set.is_empty added)
-      then
+      if Map.Poly.for_all quals_map' ~f:(Triple.fst >> Set.is_empty) then
         Map.Poly.map quals_map' ~f:(fun (_, processed, work) ->
             Set.union processed work)
       else
@@ -551,17 +627,17 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
       in
       Debug.print @@ lazy "*** propagating qualifiers";
       let propagated =
-        if true then qualifier_propagation extracted else extracted
+        Map.Poly.map ~f:elim_neg
+        @@ if true then qualifier_propagation extracted else extracted
       in
       Debug.print @@ lazy "done";
       propagated)
     else Map.Poly.empty
 
   let div_mod_filter (_, phi) =
-    Fn.non Set.is_empty
-    @@ Set.inter
-         (Set.Poly.of_list [ T_int.Mod; T_int.Div ])
-         (Set.filter ~f:(Fn.non Term.is_fvar_sym) @@ Formula.funsyms_of phi)
+    Set.exists (Formula.funsyms_of phi) ~f:(function
+      | T_int.(Div _ | Rem _) -> true
+      | _ -> false)
 
   let generate pvar params labeled_atoms examples n =
     match List.nth domains n with
@@ -571,8 +647,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
           Map.Poly.find extracted_qualifiers pvar
           |> Option.value ~default:Set.Poly.empty
           (* |> Set.filter ~f:(fun phi ->
-             let fvs = Formula.fvs_of phi in
-             not @@ Set.exists fvs ~f:(fun tvar ->
+             not @@ Set.exists (Formula.fvs_of phi) ~f:(fun tvar ->
                 not @@ List.exists params ~f:(fun (tvar1, _) -> Stdlib.(tvar = tvar1)))) *)
           |> Set.Poly.map ~f:(fun (_, phi) -> (params, phi))
           |> if config.add_neg then add_neg else Fn.id
@@ -584,6 +659,8 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
         Set.union extracted generated
         |> (if config.filter_out_non_div_mod then Set.filter ~f:div_mod_filter
             else Fn.id)
+        |> Set.Poly.map ~f:(fun (params, phi) ->
+               (params, Normalizer.normalize @@ Evaluator.simplify_neg phi))
         |> elim_neg
   (*|> (fun quals -> if config.reduce then Q.reduce_qualifiers quals neg_ex pos_ex else quals)*)
 

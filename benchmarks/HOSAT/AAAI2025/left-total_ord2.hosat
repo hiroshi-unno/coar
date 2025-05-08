@@ -1,0 +1,1 @@
+_forall f : bool -> bool. _forall x : bool. _exists y : bool. (f(x) = y ())

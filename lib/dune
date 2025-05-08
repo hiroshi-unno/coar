@@ -7,11 +7,13 @@
   core
   CoAR.Z3Sat
   CoAR.MiniSat
+  CoAR.HOMCSat
   CoAR.Z3Smt
   CoAR.TRecS
   CoAR.HorSat2
   CoAR.SPACER
   CoAR.Hoice
+  CoAR.PolyQEnt
   CoAR.SyGuS
   CoAR.PCSat
   CoAR.MuVal

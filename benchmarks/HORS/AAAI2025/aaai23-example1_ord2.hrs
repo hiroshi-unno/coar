@@ -1,0 +1,56 @@
+%BEGING
+S -> Forall28 ZeroBBB.
+Forall28 g -> and (S27 g) (if (IsMaxBBB g) tt (Forall28 (SuccBBB g))).
+S27 g -> Exists26 g ZeroBBB.
+Exists26 g f -> or (S25 g f) (if (IsMaxBBB f) ff (Exists26 g (SuccBBB f))).
+S25 g f -> and (S24 g f tt) (S24 g f ff).
+S24 g f x1 -> or (S23 g f x1 tt) (S23 g f x1 ff).
+S23 g f x1 x2 -> and (S22 g f x1 x2 tt) (S22 g f x1 x2 ff).
+S22 g f x1 x2 x3 -> and (or (or (or (or (g x1 x2) (f x1 x3)) (not (iff x1 tt))) (not (iff x2 tt))) (iff x3 tt)) (or (g x1 x2) (not (f x1 x3))).
+ZeroBBB x1 x2 -> ff.
+IsMaxBBB x -> and (IsMaxBB (x tt)) (IsMaxBB (x ff)).
+SuccBBB x x1 x2 -> if (IsMaxBB (x ff)) (if x1 (SuccBB (x x1) x2) (ZeroBB x2)) (if x1 (x x1 x2) (SuccBB (x x1) x2)).
+CompareBBB x y z lt eq gt -> if (IsMaxB z) eq (CompareBBB x y (SuccB z) lt (CompareBB (x z) (y z) ZeroB lt eq gt) gt).
+ZeroBB x1 -> ff.
+IsMaxBB x -> and (IsMaxB (x tt)) (IsMaxB (x ff)).
+SuccBB x x1 -> if (IsMaxB (x ff)) (if x1 (SuccB (x x1)) ZeroB) (if x1 (x x1) (SuccB (x x1))).
+CompareBB x y z lt eq gt -> if (IsMaxB z) eq (CompareBB x y (SuccB z) lt (CompareB (x z) (y z) lt eq gt) gt).
+ZeroB -> ff.
+IsMaxB x -> x.
+SuccB x -> tt.
+CompareB x y lt eq gt -> if x (if y eq gt) (if y lt eq).
+%ENDG
+
+%BEGINR
+tt -> 0.
+ff -> 0.
+not -> 1.
+and -> 2.
+or -> 2.
+imply -> 2.
+iff -> 2.
+xor -> 2.
+if -> 3.
+%ENDR
+
+%BEGINATA
+qT tt -> true.
+qT ff -> false.
+qT not -> (1,qF).
+qT and -> (1,qT) /\ (2,qT).
+qT or -> (1,qT) \/ (2,qT).
+qT imply -> (1,qF) \/ (2,qT).
+qT iff -> (1,qT) /\ (2,qT) \/ (1,qF) /\ (2,qF).
+qT xor -> (1,qT) /\ (2,qF) \/ (1,qF) /\ (2,qT).
+qT if -> (1,qT) /\ (2,qT) \/ (1,qF) /\ (3,qT).
+qF tt -> false.
+qF ff -> true.
+qF not -> (1,qT).
+qF and -> (1,qF) \/ (2,qF).
+qF or -> (1,qF) /\ (2,qF).
+qF imply -> (1,qT) /\ (2,qF).
+qF iff -> (1,qT) /\ (2,qF) \/ (1,qF) /\ (2,qT).
+qF xor -> (1,qT) /\ (2,qT) \/ (1,qF) /\ (2,qF).
+qF if -> (1,qT) /\ (2,qF) \/ (1,qF) /\ (3,qF).
+%ENDATA
+

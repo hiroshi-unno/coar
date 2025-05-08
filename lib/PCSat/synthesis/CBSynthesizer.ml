@@ -73,16 +73,15 @@ struct
     let fn = PCSP.Problem.is_fn_pred APCSP.problem tvar in
     let name = Ident.name_of_tvar tvar in
     let pvar = Ident.Pvar name in
-    let table = VersionSpace.truth_table_of vs in
+    let table = vs.VersionSpace.truth_table in
     let labeling =
       match Map.Poly.find labeling pvar with
       | None -> Map.Poly.empty
       | Some labeling -> labeling
     in
-    let examples = VersionSpace.example_graph_of vs in
+    let examples = vs.examples in
     let senv =
-      Logic.to_old_sort_env_map
-      @@ PCSP.Problem.senv_of APCSP.problem
+      Logic.to_old_sort_env_map @@ PCSP.Problem.senv_of APCSP.problem
     in
     Debug.print
     @@ lazy
@@ -112,7 +111,7 @@ struct
   let run_phase _iters e =
     let open State.Monad_infix in
     Ok (State.lift e) >>=? fun vs _ ->
-    let labelings = VersionSpace.labelings_of vs in
+    let labelings = vs.labelings in
     let open Debug in
     print @@ lazy "********************************************";
     print @@ lazy "***** Classification Based Synthesizer *****";

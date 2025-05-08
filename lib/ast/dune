@@ -9,33 +9,47 @@
  (public_name CoAR.ast)
  (preprocess
   (pps ppx_deriving.std ppx_deriving_yojson))
- (libraries core zarith str CoAR.common CoAR.grammar)
+ (libraries core yojson zarith str ocamlgraph CoAR.common CoAR.grammar)
  (modules
   ident
+  value
   pattern
   propLogic
   logic
   logicOld
-  kind
-  evaluator
-  normalizer
+  simpleFormula
   typeinf
-  qelim
-  mbp
   affine
   affineTerm
-  arithTerm
+  polyTerm
+  evaluator
+  normalizer
+  mbp
+  qelim
+  stratSynth
+  generator
+  mcmc
+  templ
+  qualDep
+  qual
+  qualDT
+  qualArr
+  rank
+  exAtom
+  exAtomSet
   clause
   clauseOld
   clauseSet
   clauseSetOld
+  clauseGraph
+  exClause
+  exClauseSet
+  kind
+  solSpace
+  hypSpace
   candSol
   candSolOld
-  simpleFormula
-  rank
   rtype
-  assertion
-  solSpace
   rtypeLexer
   rtypeParser)
  (synopsis "AST definitions"))

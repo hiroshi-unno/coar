@@ -1,15 +1,27 @@
 [
     "Printer",
     {
-        "lts_format": [
-            "MuCLP"
+        "preprocessor": [
+            "Filename",
+            "./config/pcsat/preprocessor/enable.json"
+        ],
+        "homc_sat": {
+            "verbose": false,
+            "solver": [
+                "Filename",
+                "./config/solver/horsat2.json"
+            ],
+            "encode_bool_ops": false
+        },
+        "sat_format": [
+            "HOMC"
         ],
         "smt_format": [
             "SMT2"
         ],
-        "preprocessor": [
-            "Filename",
-            "./config/pcsat/preprocessor/enable.json"
-        ]
+        "lts_format": [
+            "MuCLP"
+        ],
+        "add_missing_forall": false
     }
 ]

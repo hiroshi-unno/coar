@@ -218,12 +218,12 @@ module type TermType = sig
   val is_tylam : term -> bool
 
   val svs_of :
-    (sym -> Ident.svar Set.Poly.t) ->
-    (Sort.t -> Ident.svar Set.Poly.t) ->
+    (sym -> Ident.svar_set) ->
+    (Sort.t -> Ident.svar_set) ->
     term ->
-    Ident.svar Set.Poly.t
+    Ident.svar_set
 
-  val fvs_of : term -> Ident.tvar Set.Poly.t
+  val fvs_of : term -> Ident.tvar_set
   val pvar_of_atom : term -> Ident.tvar
   val ast_size : term -> int
 
@@ -482,9 +482,9 @@ module Term : TermType = struct
 
   let rec ast_size = function
     | Var (_, _) | Con (_, _) -> 1
-    | App (t1, t2, _) | Let (_, _, t1, t2, _) -> ast_size t1 + ast_size t2 + 1
+    | App (t1, t2, _) | Let (_, _, t1, t2, _) -> 1 + ast_size t1 + ast_size t2
     | Bin (_, _, _, term, _) | TyApp (term, _, _) | TyLam (_, term, _) ->
-        ast_size term + 1
+        1 + ast_size term
 
   (** Construction *)
 
@@ -883,7 +883,8 @@ module BoolTerm : BoolTermType = struct
           | BoolLit x ->
               FunLit
                 (function
-                | BoolLit y -> BoolLit ((not x) || y) | _ -> assert false)
+                | BoolLit y -> BoolLit ((not x) || y)
+                | _ -> assert false)
           | _ -> assert false)
     | Iff ->
         FunLit
@@ -891,7 +892,8 @@ module BoolTerm : BoolTermType = struct
           | BoolLit x ->
               FunLit
                 (function
-                | BoolLit y -> BoolLit Stdlib.(x = y) | _ -> assert false)
+                | BoolLit y -> BoolLit Stdlib.(x = y)
+                | _ -> assert false)
           | _ -> assert false)
     | Xor ->
         FunLit
@@ -899,7 +901,8 @@ module BoolTerm : BoolTermType = struct
           | BoolLit x ->
               FunLit
                 (function
-                | BoolLit y -> BoolLit Stdlib.(x <> y) | _ -> assert false)
+                | BoolLit y -> BoolLit Stdlib.(x <> y)
+                | _ -> assert false)
           | _ -> assert false)
     | IfThenElse ->
         SFunLit
@@ -1116,8 +1119,7 @@ module BoolTerm : BoolTermType = struct
                   |> Set.partition_tf ~f:(fun (ps, ns, _) ->
                          Set.is_empty ps && Set.is_empty ns)
                   |> Pair.map
-                       (Set.Poly.map ~f:(fun (_, _, phis) ->
-                            or_of @@ Set.to_list phis))
+                       (Set.Poly.map ~f:(Triple.trd >> Set.to_list >> or_of))
                        Fn.id
                 in
                 if Set.is_empty phis then k cls
@@ -1137,8 +1139,7 @@ module BoolTerm : BoolTermType = struct
                          Set.union ns1 ns2,
                          Set.union phis1 phis2 ))))
     | Let (var, sort, def, body, info) ->
-        let senv' = Map.Poly.set senv ~key:var ~data:sort in
-        aux exi_senv senv' body (fun res ->
+        aux exi_senv (Map.Poly.set senv ~key:var ~data:sort) body (fun res ->
             k
             @@ Set.Poly.map res ~f:(fun (ps, ns, phis) ->
                    ( Set.Poly.map ~f:(insert_let_var_app var sort def info) ps,
@@ -1194,13 +1195,8 @@ module BoolTerm : BoolTermType = struct
   let rec elim_imp = function
     | App (App (Con (Imply, _), t1, _), t2, _) ->
         (* t1 => t2 -> (not t1) or t2 *)
-        let t1' = elim_imp t1 |> neg_of in
-        let t2' = elim_imp t2 in
-        mk_apps (mk_or ()) [ t1'; t2' ]
-    | App (t1, t2, _) ->
-        let t1' = elim_imp t1 in
-        let t2' = elim_imp t2 in
-        mk_app t1' t2'
+        mk_apps (mk_or ()) [ neg_of (elim_imp t1); elim_imp t2 ]
+    | App (t1, t2, _) -> mk_app (elim_imp t1) (elim_imp t2)
     | Bin (b, x, s, t, _) -> mk_bind b x s (elim_imp t)
     | Let (x, s, t1, t2, _) -> mk_let x s (elim_imp t1) (elim_imp t2)
     | TyApp (t, s, _) -> mk_tyapp (elim_imp t) s
@@ -1217,10 +1213,9 @@ module type IntTermType = sig
     | Abs
     | Add
     | Sub
-    | Mult
-    | Div
-    | Mod
-    | Rem
+    | Mul
+    | Div of Value.modulo
+    | Rem of Value.modulo
     | Power
 
   type Sort.t += SInt
@@ -1236,10 +1231,9 @@ module type IntTermType = sig
   val mk_abs : unit -> term
   val mk_add : unit -> term
   val mk_sub : unit -> term
-  val mk_mult : unit -> term
-  val mk_div : unit -> term
-  val mk_mod : unit -> term
-  val mk_rem : unit -> term
+  val mk_mul : unit -> term
+  val mk_div : Value.modulo -> term
+  val mk_rem : Value.modulo -> term
   val mk_power : unit -> term
   val sum : term list -> term
   val prod : term list -> term
@@ -1262,10 +1256,9 @@ module IntTerm : IntTermType = struct
     | Abs
     | Add
     | Sub
-    | Mult
-    | Div
-    | Mod
-    | Rem
+    | Mul
+    | Div of Value.modulo
+    | Rem of Value.modulo
     | Power
 
   type Sort.t += SInt
@@ -1283,10 +1276,11 @@ module IntTerm : IntTermType = struct
         (Abs, ii);
         (Add, iii);
         (Sub, iii);
-        (Mult, iii);
-        (Div, iii);
-        (Mod, iii);
-        (Rem, iii);
+        (Mul, iii);
+        (Div Euclidean, iii);
+        (Div Truncated, iii);
+        (Rem Euclidean, iii);
+        (Rem Truncated, iii);
         (Power, iii);
       ]
 
@@ -1304,10 +1298,9 @@ module IntTerm : IntTermType = struct
     | Abs -> "Abs"
     | Add -> "Add"
     | Sub -> "Sub"
-    | Mult -> "Mult"
-    | Div -> "Div"
-    | Mod -> "Mod"
-    | Rem -> "Rem"
+    | Mul -> "Mul"
+    | Div _ -> "Div"
+    | Rem _ -> "Rem"
     | Power -> "Power"
     | _ -> failwith "IntTerm.str_of_sym"
 
@@ -1330,10 +1323,9 @@ module IntTerm : IntTermType = struct
   let mk_abs () = mk_con Abs
   let mk_add () = mk_con Add
   let mk_sub () = mk_con Sub
-  let mk_mult () = mk_con Mult
-  let mk_div () = mk_con Div
-  let mk_mod () = mk_con Mod
-  let mk_rem () = mk_con Rem
+  let mk_mul () = mk_con Mul
+  let mk_div m = mk_con (Div m)
+  let mk_rem m = mk_con (Rem m)
   let mk_power () = mk_con Power
 
   let sum = function
@@ -1344,7 +1336,7 @@ module IntTerm : IntTermType = struct
   let prod = function
     | [] -> one ()
     | t :: ts ->
-        List.fold ~init:t ts ~f:(fun t1 t2 -> mk_apps (mk_mult ()) [ t1; t2 ])
+        List.fold ~init:t ts ~f:(fun t1 t2 -> mk_apps (mk_mul ()) [ t1; t2 ])
 
   (** Observation *)
 
@@ -1355,8 +1347,6 @@ module IntTerm : IntTermType = struct
   let neg_sym = function
     | Add -> Sub
     | Sub -> Add
-    | Mult -> Div
-    | Div -> Mult
     | fsym -> failwith @@ sprintf "[IntTerm.neg_sym] %s" (str_of_sym fsym)
 
   let is_termlit = function IntLit _ -> true | _ -> false
@@ -1387,28 +1377,32 @@ module IntTerm : IntTermType = struct
               FunLit
                 (function IntLit y -> IntLit Z.(x - y) | _ -> assert false)
           | _ -> assert false)
-    | Mult ->
+    | Mul ->
         FunLit
           (function
           | IntLit x ->
               FunLit
                 (function IntLit y -> IntLit Z.(x * y) | _ -> assert false)
           | _ -> assert false)
-    | Div ->
+    | Div m ->
         FunLit
           (function
           | IntLit x ->
               FunLit
-                (function IntLit y -> IntLit Z.(x / y) | _ -> assert false)
+                (function
+                | IntLit y -> IntLit (Value.div_of m x y)
+                | _ -> assert false)
           | _ -> assert false)
-    | Mod ->
+    | Rem m ->
         FunLit
           (function
           | IntLit x ->
               FunLit
-                (function IntLit y -> IntLit Z.(x mod y) | _ -> assert false)
+                (function
+                | IntLit y -> IntLit (Value.rem_of m x y)
+                | _ -> assert false)
           | _ -> assert false)
-    | Rem | Power -> failwith "not implemented"
+    | Power -> failwith "not implemented"
     | _ -> assert false
 
   let eval = open_eval eval_sym of_termlit
@@ -1417,7 +1411,7 @@ end
 module type RealTermType = sig
   include TermType
 
-  type sym += Real of Q.t | RNeg | RAbs | RAdd | RSub | RMult | RDiv | RPower
+  type sym += Real of Q.t | RNeg | RAbs | RAdd | RSub | RMul | RDiv | RPower
   type Sort.t += SReal
   type termlit += RealLit of Q.t
 
@@ -1431,12 +1425,15 @@ module type RealTermType = sig
   val mk_rabs : unit -> term
   val mk_radd : unit -> term
   val mk_rsub : unit -> term
-  val mk_rmult : unit -> term
+  val mk_rmul : unit -> term
   val mk_rdiv : unit -> term
   val mk_rpower : unit -> term
   val sum : term list -> term
   val prod : term list -> term
 
+  (** Observation *)
+
+  val is_real_sort : Sort.t -> bool
   (** Evaluation *)
 
   val neg_sym : sym -> sym
@@ -1445,7 +1442,7 @@ end
 module RealTerm : RealTermType = struct
   include Term
 
-  type sym += Real of Q.t | RNeg | RAbs | RAdd | RSub | RMult | RDiv | RPower
+  type sym += Real of Q.t | RNeg | RAbs | RAdd | RSub | RMul | RDiv | RPower
   type Sort.t += SReal
   type termlit += RealLit of Q.t
 
@@ -1461,7 +1458,7 @@ module RealTerm : RealTermType = struct
         (RAbs, rr);
         (RAdd, rrr);
         (RSub, rrr);
-        (RMult, rrr);
+        (RMul, rrr);
         (RDiv, rrr);
         (RPower, rrr);
       ]
@@ -1480,7 +1477,7 @@ module RealTerm : RealTermType = struct
     | RAbs -> "Abs"
     | RAdd -> "Add"
     | RSub -> "Sub"
-    | RMult -> "Mult"
+    | RMul -> "Mul"
     | RDiv -> "Div"
     | RPower -> "Power"
     | _ -> failwith "RealTerm.str_of_sym"
@@ -1504,7 +1501,7 @@ module RealTerm : RealTermType = struct
   let mk_rabs () = mk_con RAbs
   let mk_radd () = mk_con RAdd
   let mk_rsub () = mk_con RSub
-  let mk_rmult () = mk_con RMult
+  let mk_rmul () = mk_con RMul
   let mk_rdiv () = mk_con RDiv
   let mk_rpower () = mk_con RPower
 
@@ -1516,7 +1513,11 @@ module RealTerm : RealTermType = struct
   let prod = function
     | [] -> rone ()
     | t :: ts ->
-        List.fold ~init:t ts ~f:(fun t1 t2 -> mk_apps (mk_rmult ()) [ t1; t2 ])
+        List.fold ~init:t ts ~f:(fun t1 t2 -> mk_apps (mk_rmul ()) [ t1; t2 ])
+
+  (** Observation *)
+
+  let is_real_sort = function SReal -> true | _ -> false
 
   (** Evaluation *)
 
@@ -1548,7 +1549,7 @@ module RealTerm : RealTermType = struct
               FunLit
                 (function RealLit y -> RealLit Q.(x - y) | _ -> assert false)
           | _ -> assert false)
-    | RMult ->
+    | RMul ->
         FunLit
           (function
           | RealLit x ->
@@ -1570,19 +1571,20 @@ module RealTerm : RealTermType = struct
   let neg_sym = function
     | RAdd -> RSub
     | RSub -> RAdd
-    | RMult -> RDiv
-    | RDiv -> RMult
     | fsym -> failwith @@ sprintf "[RealTerm.neg_sym] %s" (str_of_sym fsym)
 end
 
 module type BVTermType = sig
   include TermType
 
-  type size = (int (* bits *) * bool (* signed *)) option
+  type size = int (* bits *) option
+  type signed = bool (* signed/unsigned *) option
 
   type sym +=
     | BVNum of size * Z.t
     | BVNeg of size
+    | BVSEXT of int * int
+    | BVZEXT of int * int
     | BVSHL of size
     | BVLSHR of size
     | BVASHR of size
@@ -1590,27 +1592,28 @@ module type BVTermType = sig
     | BVAnd of size
     | BVAdd of size
     | BVSub of size
-    | BVMult of size
-    | BVDiv of size
-    | BVMod of size
-    | BVRem of size
+    | BVMul of size
+    | BVDiv of size * signed
+    | BVRem of size * signed
 
   type Sort.t += SBV of size
 
   (** Printing *)
 
   val str_of_size : size -> string
+  val str_of_signed : signed -> string
 
   (** Construction *)
 
   val mk_bvnum : size:size -> Z.t -> term
   val mk_bvneg : size:size -> term
+  val mk_bvsext : int -> int -> term
+  val mk_bvzext : int -> int -> term
   val mk_bvadd : size:size -> term
   val mk_bvsub : size:size -> term
-  val mk_bvmult : size:size -> term
-  val mk_bvdiv : size:size -> term
-  val mk_bvmod : size:size -> term
-  val mk_bvrem : size:size -> term
+  val mk_bvmul : size:size -> term
+  val mk_bvdiv : size:size -> signed:signed -> term
+  val mk_bvrem : size:size -> signed:signed -> term
   val mk_bvshl : size:size -> term
   val mk_bvlshr : size:size -> term
   val mk_bvashr : size:size -> term
@@ -1620,18 +1623,21 @@ module type BVTermType = sig
   (** Observation *)
 
   val bits_of : size -> int
-  val signed_of : size -> bool
+  val signed_of : signed -> bool
   val is_bv_sort : Sort.t -> bool
 end
 
 module BVTerm : BVTermType = struct
   include Term
 
-  type size = (int (* bits *) * bool (* signed *)) option
+  type size = int (* bits *) option
+  type signed = bool (* signed/unsigned *) option
 
   type sym +=
     | BVNum of size * Z.t
     | BVNeg of size
+    | BVSEXT of int * int
+    | BVZEXT of int * int
     | BVSHL of size
     | BVLSHR of size
     | BVASHR of size
@@ -1639,10 +1645,9 @@ module BVTerm : BVTermType = struct
     | BVAnd of size
     | BVAdd of size
     | BVSub of size
-    | BVMult of size
-    | BVDiv of size
-    | BVMod of size
-    | BVRem of size
+    | BVMul of size
+    | BVDiv of size * signed
+    | BVRem of size * signed
 
   type Sort.t += SBV of size
 
@@ -1651,6 +1656,8 @@ module BVTerm : BVTermType = struct
   let sort_of_sym = function
     | BVNum (size, _) -> SBV size
     | BVNeg size -> Sort.mk_arrow (SBV size) (SBV size)
+    | BVSEXT (from, to_) | BVZEXT (from, to_) ->
+        Sort.mk_arrow (SBV (Some from)) (SBV (Some to_))
     | BVSHL size
     | BVLSHR size
     | BVASHR size
@@ -1658,10 +1665,9 @@ module BVTerm : BVTermType = struct
     | BVAnd size
     | BVAdd size
     | BVSub size
-    | BVMult size
-    | BVDiv size
-    | BVMod size
-    | BVRem size ->
+    | BVMul size
+    | BVDiv (size, _)
+    | BVRem (size, _) ->
         Sort.mk_arrow (SBV size) (Sort.mk_arrow (SBV size) (SBV size))
     | _ -> failwith "BVTerm.sort_of_sym"
 
@@ -1669,13 +1675,17 @@ module BVTerm : BVTermType = struct
 
   (** Printing *)
 
-  let str_of_size = function
+  let str_of_size = function None -> "N/A" | Some bits -> sprintf "%d" bits
+
+  let str_of_signed = function
     | None -> "N/A"
-    | Some (bits, signed) -> sprintf "%d, %s" bits (Bool.string_of signed)
+    | Some signed -> if signed then "s" else "u"
 
   let str_of_sym = function
     | BVNum (_size, n) -> sprintf "Int %s" @@ Z.to_string n
     | BVNeg _size -> "BVNeg"
+    | BVSEXT _ -> "BVSEXT"
+    | BVZEXT _ -> "BVZEXT"
     | BVSHL _size -> "BVSHL"
     | BVLSHR _size -> "BVLSHR"
     | BVASHR _size -> "BVASHR"
@@ -1683,10 +1693,9 @@ module BVTerm : BVTermType = struct
     | BVAnd _size -> "BVAnd"
     | BVAdd _size -> "BVAdd"
     | BVSub _size -> "BVSub"
-    | BVMult _size -> "BVMult"
-    | BVDiv _size -> "BVDiv"
-    | BVMod _size -> "BVMod"
-    | BVRem _size -> "BVRem"
+    | BVMul _size -> "BVMul"
+    | BVDiv (_size, _signed) -> "BVDiv"
+    | BVRem (_size, _signed) -> "BVRem"
     | _ -> failwith "BVTerm.str_of_sym"
 
   let str_of_sort_theory = function
@@ -1700,12 +1709,13 @@ module BVTerm : BVTermType = struct
 
   let mk_bvnum ~size n = mk_con (BVNum (size, n))
   let mk_bvneg ~size = mk_con (BVNeg size)
+  let mk_bvsext from to_ = mk_con (BVSEXT (from, to_))
+  let mk_bvzext from to_ = mk_con (BVZEXT (from, to_))
   let mk_bvadd ~size = mk_con (BVAdd size)
   let mk_bvsub ~size = mk_con (BVSub size)
-  let mk_bvmult ~size = mk_con (BVMult size)
-  let mk_bvdiv ~size = mk_con (BVDiv size)
-  let mk_bvmod ~size = mk_con (BVMod size)
-  let mk_bvrem ~size = mk_con (BVRem size)
+  let mk_bvmul ~size = mk_con (BVMul size)
+  let mk_bvdiv ~size ~signed = mk_con (BVDiv (size, signed))
+  let mk_bvrem ~size ~signed = mk_con (BVRem (size, signed))
   let mk_bvshl ~size = mk_con (BVSHL size)
   let mk_bvlshr ~size = mk_con (BVLSHR size)
   let mk_bvashr ~size = mk_con (BVASHR size)
@@ -1714,8 +1724,8 @@ module BVTerm : BVTermType = struct
 
   (** Observation *)
 
-  let bits_of = function None -> 32 (*ToDo*) | Some (bits, _) -> bits
-  let signed_of = function None -> true (*ToDo*) | Some (_, signed) -> signed
+  let bits_of = function None -> 32 (*ToDo*) | Some bits -> bits
+  let signed_of = function None -> true (*ToDo*) | Some signed -> signed
   let is_bv_sort = function SBV _ -> true | _ -> false
 end
 
@@ -1724,14 +1734,14 @@ module type IRBTermType = sig
   include RealTermType
   include BVTermType
 
-  type sym += IntToReal | RealToInt | IntToBV of size | BVToInt of size
+  type sym += IntToReal | RealToInt | IntToBV of size | BVToInt of size * signed
 
   (** Construction *)
 
   val mk_int_to_real : unit -> term
   val mk_real_to_int : unit -> term
   val mk_int_to_bv : size:size -> term
-  val mk_bv_to_int : size:size -> term
+  val mk_bv_to_int : size:size -> signed:signed -> term
 end
 
 module IRBTerm : IRBTermType = struct
@@ -1739,7 +1749,7 @@ module IRBTerm : IRBTermType = struct
   include RealTerm
   include BVTerm
 
-  type sym += IntToReal | RealToInt | IntToBV of size | BVToInt of size
+  type sym += IntToReal | RealToInt | IntToBV of size | BVToInt of size * signed
 
   (** Sorts *)
 
@@ -1757,7 +1767,7 @@ module IRBTerm : IRBTermType = struct
 
   let sort_of_sym = function
     | IntToBV size -> Sort.mk_arrow SInt (SBV size)
-    | BVToInt size -> Sort.mk_arrow (SBV size) SInt
+    | BVToInt (size, _) -> Sort.mk_arrow (SBV size) SInt
     | sym -> (
         try Map.Poly.find_exn sym_sort_map sym
         with _ -> (
@@ -1790,7 +1800,7 @@ module IRBTerm : IRBTermType = struct
   let str_of_sort_theory = function
     | SInt -> "int"
     | SReal -> "real"
-    | SBV size -> sprintf "bv(%s)" (BVTerm.str_of_size size)
+    | SBV size -> sprintf "bv%s" (BVTerm.str_of_size size)
     | _ -> failwith "unknown sort IRBTerm.str_of_sort_theory"
 
   let str_of_sort = open_str_of_sort str_of_sort_theory
@@ -1801,7 +1811,7 @@ module IRBTerm : IRBTermType = struct
   let mk_int_to_real () = mk_con IntToReal
   let mk_real_to_int () = mk_con RealToInt
   let mk_int_to_bv ~size = mk_con (IntToBV size)
-  let mk_bv_to_int ~size = mk_con (BVToInt size)
+  let mk_bv_to_int ~size ~signed = mk_con (BVToInt (size, signed))
 
   (** Evalaution *)
 
@@ -2157,7 +2167,8 @@ module rec Datatype : DatatypeType = struct
 
   let str_of_cons cons =
     sprintf "%s (%s)" (name_of_cons cons)
-    @@ String.concat ~sep:", " @@ List.map ~f:str_of_sel @@ sels_of_cons cons
+    @@ String.concat_map_list ~sep:", " ~f:str_of_sel
+    @@ sels_of_cons cons
 
   let str_of_flag = function
     | FDt -> "data"
@@ -2774,11 +2785,11 @@ module type ExtTermType = sig
 
   val remove_dontcare_elem : model_elem -> term_bind
   val remove_dontcare : model -> term_bind list
-  val svs_of_sym : sym -> Ident.svar Set.Poly.t
+  val svs_of_sym : sym -> Ident.svar_set
 
   (** Observation*)
 
-  val svs_of_sort : Sort.t -> Ident.svar Set.Poly.t
+  val svs_of_sort : Sort.t -> Ident.svar_set
   val sort_of : sort_env_map -> term -> Sort.t
   val of_old_sort : LogicOld.Sort.t -> Sort.t
   val of_old_sort_list : LogicOld.Sort.t list -> Sort.t list
@@ -2797,13 +2808,17 @@ module type ExtTermType = sig
   val to_old_term :
     sort_env_map -> sort_env_map -> term -> term list -> LogicOld.Term.t
 
+  val to_old_trm : sort_env_map -> sort_env_map -> term -> LogicOld.Term.t
+
   val to_old_atom :
     sort_env_map -> sort_env_map -> term -> term list -> LogicOld.Atom.t
+
+  val to_old_atm : sort_env_map -> sort_env_map -> term -> LogicOld.Atom.t
 
   val to_old_formula :
     sort_env_map -> sort_env_map -> term -> term list -> LogicOld.Formula.t
 
-  val to_old_fml : sort_env_map -> sort_env_map * term -> LogicOld.Formula.t
+  val to_old_fml : sort_env_map -> sort_env_map -> term -> LogicOld.Formula.t
 
   val to_old_subst :
     sort_env_map -> sort_env_map -> term_subst_map -> LogicOld.TermSubst.t
@@ -2847,10 +2862,10 @@ module ExtTerm :
     | RGeq
     | RLt
     | RGt
-    | BVLeq of size
-    | BVGeq of size
-    | BVLt of size
-    | BVGt of size
+    | BVLeq of size * signed
+    | BVGeq of size * signed
+    | BVLt of size * signed
+    | BVGt of size * signed
     | IsInt
     | IsTuple of Sort.t list
     | NotIsTuple of Sort.t list
@@ -2872,22 +2887,25 @@ module ExtTerm :
   let sym_sort_map =
     Map.force_merge (Map.force_merge IRBTerm.sym_sort_map BoolTerm.sym_sort_map)
     @@ Map.Poly.of_alist_exn
-    @@ [
-         (Leq, iib);
-         (Geq, iib);
-         (Lt, iib);
-         (Gt, iib);
-         (PDiv, iib);
-         (NotPDiv, iib);
-         (RLeq, rrb);
-         (RGeq, rrb);
-         (RLt, rrb);
-         (RGt, rrb);
-         (IsInt, rb);
-       ]
+         [
+           (Leq, iib);
+           (Geq, iib);
+           (Lt, iib);
+           (Gt, iib);
+           (PDiv, iib);
+           (NotPDiv, iib);
+           (RLeq, rrb);
+           (RGeq, rrb);
+           (RLt, rrb);
+           (RGt, rrb);
+           (IsInt, rb);
+         ]
 
   let sort_of_sym = function
-    | BVLeq size | BVGeq size | BVLt size | BVGt size ->
+    | BVLeq (size, _signed)
+    | BVGeq (size, _signed)
+    | BVLt (size, _signed)
+    | BVGt (size, _signed) ->
         Sort.mk_arrow (SBV size) @@ Sort.mk_arrow (SBV size) SBool
     | IsTuple sorts | NotIsTuple sorts ->
         Sort.mk_arrow (TupleTerm.STuple sorts) BoolTerm.SBool
@@ -2928,17 +2946,17 @@ module ExtTerm :
     | Sort.SForAll (svar, s1) -> Set.remove (svs_of_sort s1) svar
     | SBool | SInt | SReal | SBV _ | SString | SSequence _ | SRegEx ->
         Set.Poly.empty
+    | SArray (s1, s2) ->
+        Set.Poly.union_list @@ List.map [ s1; s2 ] ~f:svs_of_sort
     | STuple sorts -> Set.Poly.union_list @@ List.map sorts ~f:svs_of_sort
-    | SRef sort -> svs_of_sort sort
     | SDT dt ->
         Set.Poly.union_list @@ List.map (Datatype.params_of dt) ~f:svs_of_sort
     | SUS (_, sorts) -> Set.Poly.union_list @@ List.map sorts ~f:svs_of_sort
-    | SArray (s1, s2) ->
-        Set.Poly.union_list @@ List.map [ s1; s2 ] ~f:svs_of_sort
+    | SRef sort -> svs_of_sort sort
     | _ -> failwith "[ExtTerm.svs_of_sort] unknown sort"
 
   and svs_of_cont = function
-    | Sort.EVar _ | Sort.Pure | Sort.Closed -> Set.Poly.empty
+    | Sort.(EVar _ | Pure | Closed) -> Set.Poly.empty
     | Sort.Eff (c1, c2) -> Set.union (svs_of_triple c1) (svs_of_triple c2)
     | _ -> failwith "[svs_of_cont]"
 
@@ -2952,7 +2970,7 @@ module ExtTerm :
       [ svs_of_opsig c.op_sig; svs_of_sort c.val_type; svs_of_cont c.cont_eff ]
 
   let rec subst_sorts_cont (svar, sort) = function
-    | (Sort.EVar _ | Sort.Pure | Sort.Closed) as e -> e
+    | Sort.(EVar _ | Pure | Closed) as e -> e
     | Sort.Eff (c1, c2) ->
         Sort.mk_cont_eff
           (subst_sorts_triple (svar, sort) c1)
@@ -2969,8 +2987,10 @@ module ExtTerm :
         else Sort.SForAll (svar', subst_sorts_sort (svar, sort) s1)
     | (SBool | SInt | SReal | SBV _ | SString | SSequence _ | SRegEx) as sort ->
         sort
+    | SArray (s1, s2) ->
+        SArray
+          (subst_sorts_sort (svar, sort) s1, subst_sorts_sort (svar, sort) s2)
     | STuple sorts -> STuple (List.map ~f:(subst_sorts_sort (svar, sort)) sorts)
-    | SRef s -> SRef (subst_sorts_sort (svar, sort) s)
     | SDT t ->
         SDT
           (Datatype.update_dt t
@@ -2978,9 +2998,7 @@ module ExtTerm :
                (Datatype.dt_of t))
     | SUS (name, sorts) ->
         SUS (name, List.map ~f:(subst_sorts_sort (svar, sort)) sorts)
-    | SArray (s1, s2) ->
-        SArray
-          (subst_sorts_sort (svar, sort) s1, subst_sorts_sort (svar, sort) s2)
+    | SRef s -> SRef (subst_sorts_sort (svar, sort) s)
     | _ -> sort (*failwith "[subst_sorts_sort]"*)
 
   and subst_sorts_opsig (svar, sort) = function
@@ -3072,13 +3090,20 @@ module ExtTerm :
     | SInt -> "int"
     | SReal -> "real"
     | SBV _ -> "bv"
+    | SString -> "string"
+    | SSequence true -> "fin_sequence"
+    | SSequence false -> "inf_sequence"
+    | SRegEx -> "regex"
+    | SArray (s1, s2) ->
+        sprintf "%s ->> %s"
+          ((if Sort.is_arrow s1 || ArrayTerm.is_array_sort s1 then String.paren
+            else Fn.id)
+          @@ open_str_of_sort str_of_sort_theory s1)
+          (open_str_of_sort str_of_sort_theory s2)
     | STuple sorts ->
         String.paren
         @@ String.concat_map_list ~sep:" * " sorts
              ~f:(open_str_of_sort str_of_sort_theory)
-    | SRef sort ->
-        sprintf "%s ref"
-          (String.paren @@ open_str_of_sort str_of_sort_theory sort)
     | SDT dt -> Datatype.full_name_of (open_str_of_sort str_of_sort_theory) dt
     | SUS (name, params) ->
         if List.is_empty params then name
@@ -3088,16 +3113,9 @@ module ExtTerm :
             @@ String.concat_map_list ~sep:", " params
                  ~f:(open_str_of_sort str_of_sort_theory))
             name
-    | SArray (s1, s2) ->
-        sprintf "%s ->> %s"
-          ((if Sort.is_arrow s1 || ArrayTerm.is_array_sort s1 then String.paren
-            else Fn.id)
-          @@ open_str_of_sort str_of_sort_theory s1)
-          (open_str_of_sort str_of_sort_theory s2)
-    | SString -> "string"
-    | SSequence true -> "fin_sequence"
-    | SSequence false -> "inf_sequence"
-    | SRegEx -> "regex"
+    | SRef sort ->
+        sprintf "%s ref"
+          (String.paren @@ open_str_of_sort str_of_sort_theory sort)
     | _ -> failwith "[ExtTerm.str_of_sort_theory] unknown sort"
 
   let str_of_sort = open_str_of_sort str_of_sort_theory
@@ -3131,7 +3149,8 @@ module ExtTerm :
           | IntLit x ->
               FunLit
                 (function
-                | IntLit y -> BoolLit Z.Compare.(x <= y) | _ -> assert false)
+                | IntLit y -> BoolLit Z.Compare.(x <= y)
+                | _ -> assert false)
           | _ -> assert false)
     | Geq ->
         FunLit
@@ -3139,7 +3158,8 @@ module ExtTerm :
           | IntLit x ->
               FunLit
                 (function
-                | IntLit y -> BoolLit Z.Compare.(x >= y) | _ -> assert false)
+                | IntLit y -> BoolLit Z.Compare.(x >= y)
+                | _ -> assert false)
           | _ -> assert false)
     | Lt ->
         FunLit
@@ -3147,7 +3167,8 @@ module ExtTerm :
           | IntLit x ->
               FunLit
                 (function
-                | IntLit y -> BoolLit Z.Compare.(x < y) | _ -> assert false)
+                | IntLit y -> BoolLit Z.Compare.(x < y)
+                | _ -> assert false)
           | _ -> assert false)
     | Gt ->
         FunLit
@@ -3155,7 +3176,8 @@ module ExtTerm :
           | IntLit x ->
               FunLit
                 (function
-                | IntLit y -> BoolLit Z.Compare.(x > y) | _ -> assert false)
+                | IntLit y -> BoolLit Z.Compare.(x > y)
+                | _ -> assert false)
           | _ -> assert false)
     | PDiv ->
         FunLit
@@ -3163,7 +3185,7 @@ module ExtTerm :
           | IntLit x ->
               FunLit
                 (function
-                | IntLit y -> BoolLit Z.Compare.(Z.(x mod y) = Z.zero)
+                | IntLit y -> BoolLit Z.Compare.(Z.(erem x y) = Z.zero)
                 | _ -> assert false)
           | _ -> assert false)
     | NotPDiv ->
@@ -3172,7 +3194,7 @@ module ExtTerm :
           | IntLit x ->
               FunLit
                 (function
-                | IntLit y -> BoolLit Z.Compare.(Z.(x mod y) <> Z.zero)
+                | IntLit y -> BoolLit Z.Compare.(Z.(erem x y) <> Z.zero)
                 | _ -> assert false)
           | _ -> assert false)
     | RLeq ->
@@ -3227,10 +3249,10 @@ module ExtTerm :
   let mk_rgeq () = mk_con RGeq
   let mk_rlt () = mk_con RLt
   let mk_rgt () = mk_con RGt
-  let mk_bvleq ~size = mk_con (BVLeq size)
-  let mk_bvgeq ~size = mk_con (BVGeq size)
-  let mk_bvlt ~size = mk_con (BVLt size)
-  let mk_bvgt ~size = mk_con (BVGt size)
+  let mk_bvleq ~size ~signed = mk_con (BVLeq (size, signed))
+  let mk_bvgeq ~size ~signed = mk_con (BVGeq (size, signed))
+  let mk_bvlt ~size ~signed = mk_con (BVLt (size, signed))
+  let mk_bvgt ~size ~signed = mk_con (BVGt (size, signed))
   let mk_isint () = mk_con IsInt
   let mk_int_ite () = mk_ite SInt
   let mk_real_ite () = mk_ite SReal
@@ -3264,14 +3286,14 @@ module ExtTerm :
     | LogicOld.T_int.SInt -> SInt
     | LogicOld.T_real.SReal -> SReal
     | LogicOld.T_bv.SBV size -> SBV size
-    | LogicOld.T_tuple.STuple sorts -> STuple (List.map sorts ~f:of_old_sort)
-    | LogicOld.T_ref.SRef sort -> SRef (of_old_sort sort)
-    | LogicOld.T_dt.SDT dt -> SDT (Datatype.of_old of_old_sort dt)
-    | LogicOld.T_dt.SUS (name, args) -> SUS (name, List.map args ~f:of_old_sort)
-    | LogicOld.T_array.SArray (s1, s2) -> SArray (of_old_sort s1, of_old_sort s2)
     | LogicOld.T_string.SString -> SString
     | LogicOld.T_sequence.SSequence fin -> SSequence fin
     | LogicOld.T_regex.SRegEx -> SRegEx
+    | LogicOld.T_array.SArray (s1, s2) -> SArray (of_old_sort s1, of_old_sort s2)
+    | LogicOld.T_tuple.STuple sorts -> STuple (List.map sorts ~f:of_old_sort)
+    | LogicOld.T_dt.SDT dt -> SDT (Datatype.of_old of_old_sort dt)
+    | LogicOld.T_dt.SUS (name, args) -> SUS (name, List.map args ~f:of_old_sort)
+    | LogicOld.T_ref.SRef sort -> SRef (of_old_sort sort)
     | sort ->
         failwith @@ "unsupported old sort: " ^ LogicOld.Term.str_of_sort sort
 
@@ -3301,7 +3323,7 @@ module ExtTerm :
 
   let rec of_old_fun_sym sym sargs =
     match (sym, sargs) with
-    | LogicOld.FVar (x, _sorts), _ -> mk_var x
+    | LogicOld.FVar (x, _, _), _ -> mk_var x
     | LogicOld.T_bool.Formula phi, [] -> of_old_formula phi
     | LogicOld.T_bool.IfThenElse, [ _; sort; _ ] -> mk_ite sort
     | LogicOld.T_int.Int n, [] -> mk_int n
@@ -3309,27 +3331,27 @@ module ExtTerm :
     | LogicOld.T_int.Abs, [ _ ] -> mk_abs ()
     | LogicOld.T_int.Add, [ _; _ ] -> mk_add ()
     | LogicOld.T_int.Sub, [ _; _ ] -> mk_sub ()
-    | LogicOld.T_int.Mult, [ _; _ ] -> mk_mult ()
-    | LogicOld.T_int.Div, [ _; _ ] -> mk_div ()
-    | LogicOld.T_int.Mod, [ _; _ ] -> mk_mod ()
-    | LogicOld.T_int.Rem, [ _; _ ] -> mk_rem ()
+    | LogicOld.T_int.Mul, [ _; _ ] -> mk_mul ()
+    | LogicOld.T_int.Div m, [ _; _ ] -> mk_div m
+    | LogicOld.T_int.Rem m, [ _; _ ] -> mk_rem m
     | LogicOld.T_int.Power, [ _; _ ] -> mk_power ()
     | LogicOld.T_real.Real r, [] -> mk_real r
     | LogicOld.T_real.RNeg, [ _ ] -> mk_rneg ()
     | LogicOld.T_real.RAbs, [ _ ] -> mk_rabs ()
     | LogicOld.T_real.RAdd, [ _; _ ] -> mk_radd ()
     | LogicOld.T_real.RSub, [ _; _ ] -> mk_rsub ()
-    | LogicOld.T_real.RMult, [ _; _ ] -> mk_rmult ()
+    | LogicOld.T_real.RMul, [ _; _ ] -> mk_rmul ()
     | LogicOld.T_real.RDiv, [ _; _ ] -> mk_rdiv ()
     | LogicOld.T_real.RPower, [ _; _ ] -> mk_rpower ()
     | LogicOld.T_bv.BVNum (size, n), [] -> mk_bvnum ~size n
     | LogicOld.T_bv.BVNeg size, [ _ ] -> mk_bvneg ~size
+    | LogicOld.T_bv.BVSEXT (from, to_), [ _ ] -> mk_bvsext from to_
+    | LogicOld.T_bv.BVZEXT (from, to_), [ _ ] -> mk_bvzext from to_
     | LogicOld.T_bv.BVAdd size, [ _; _ ] -> mk_bvadd ~size
     | LogicOld.T_bv.BVSub size, [ _; _ ] -> mk_bvsub ~size
-    | LogicOld.T_bv.BVMult size, [ _; _ ] -> mk_bvmult ~size
-    | LogicOld.T_bv.BVDiv size, [ _; _ ] -> mk_bvdiv ~size
-    | LogicOld.T_bv.BVMod size, [ _; _ ] -> mk_bvmod ~size
-    | LogicOld.T_bv.BVRem size, [ _; _ ] -> mk_bvrem ~size
+    | LogicOld.T_bv.BVMul size, [ _; _ ] -> mk_bvmul ~size
+    | LogicOld.T_bv.BVDiv (size, signed), [ _; _ ] -> mk_bvdiv ~size ~signed
+    | LogicOld.T_bv.BVRem (size, signed), [ _; _ ] -> mk_bvrem ~size ~signed
     | LogicOld.T_bv.BVSHL size, [ _; _ ] -> mk_bvshl ~size
     | LogicOld.T_bv.BVLSHR size, [ _; _ ] -> mk_bvlshr ~size
     | LogicOld.T_bv.BVASHR size, [ _; _ ] -> mk_bvashr ~size
@@ -3338,34 +3360,17 @@ module ExtTerm :
     | LogicOld.T_irb.IntToReal, [ _ ] -> mk_int_to_real ()
     | LogicOld.T_irb.RealToInt, [ _ ] -> mk_real_to_int ()
     | LogicOld.T_irb.IntToBV size, [ _ ] -> mk_int_to_bv ~size
-    | LogicOld.T_irb.BVToInt size, [ _ ] -> mk_bv_to_int ~size
+    | LogicOld.T_irb.BVToInt (size, signed), [ _ ] -> mk_bv_to_int ~size ~signed
     (*| LogicOld.T_num.NNeg svar, [_] -> failwith "of_old_fun_sym"
+      | LogicOld.T_num.NSEXT _, [_] -> failwith "of_old_fun_sym"
       | LogicOld.T_num.Value (_, svar), [] -> failwith "of_old_fun_sym"
       | LogicOld.T_num.NAdd svar, [_; _] -> failwith "of_old_fun_sym"
       | LogicOld.T_num.NSub svar, [_; _] -> failwith "of_old_fun_sym"
-      | LogicOld.T_num.NMult svar, [_; _] -> failwith "of_old_fun_sym"
+      | LogicOld.T_num.NMul svar, [_; _] -> failwith "of_old_fun_sym"
       | LogicOld.T_num.NDiv svar, [_; _] -> failwith "of_old_fun_sym"
-      | LogicOld.T_num.NMod svar, [_; _] -> failwith "of_old_fun_sym"
       | LogicOld.T_num.NRem svar, [_; _] -> failwith "of_old_fun_sym"
       | LogicOld.T_num.NPower svar, [_; _] -> failwith "of_old_fun_sym"
     *)
-    | LogicOld.T_tuple.TupleCons sorts, _ ->
-        mk_tuple_cons (of_old_sort_list sorts)
-    | LogicOld.T_tuple.TupleSel (sorts, i), _ ->
-        mk_tuple_sel (of_old_sort_list sorts) i
-    | LogicOld.T_ref.Ref sort, [ _ ] -> mk_ref (of_old_sort sort)
-    | LogicOld.T_ref.Deref sort, [ _ ] -> mk_deref (of_old_sort sort)
-    | LogicOld.T_ref.Update sort, [ _; _ ] -> mk_update (of_old_sort sort)
-    | LogicOld.T_dt.DTCons (name, _, dt), _ ->
-        mk_cons (Datatype.of_old of_old_sort dt) name
-    | LogicOld.T_dt.DTSel (name, dt, _), _ ->
-        mk_sel (Datatype.of_old of_old_sort dt) name
-    | LogicOld.T_array.AStore (s1, s2), _ ->
-        mk_store (of_old_sort s1) (of_old_sort s2)
-    | LogicOld.T_array.ASelect (s1, s2), _ ->
-        mk_select (of_old_sort s1) (of_old_sort s2)
-    | LogicOld.T_array.AConst (s1, s2), _ ->
-        mk_const_array (of_old_sort s1) (of_old_sort s2)
     | LogicOld.T_string.StrConst str, _ -> mk_con @@ StrConst str
     | LogicOld.T_sequence.SeqEpsilon, _ -> mk_con SeqEpsilon
     | LogicOld.T_sequence.SeqSymbol ev, _ -> mk_con @@ SeqSymbol ev
@@ -3385,6 +3390,23 @@ module ExtTerm :
     | LogicOld.T_regex.RegConcat, _ -> mk_con RegConcat
     | LogicOld.T_regex.RegUnion, _ -> mk_con RegUnion
     | LogicOld.T_regex.RegInter, _ -> mk_con RegInter
+    | LogicOld.T_array.AStore (s1, s2), _ ->
+        mk_store (of_old_sort s1) (of_old_sort s2)
+    | LogicOld.T_array.ASelect (s1, s2), _ ->
+        mk_select (of_old_sort s1) (of_old_sort s2)
+    | LogicOld.T_array.AConst (s1, s2), _ ->
+        mk_const_array (of_old_sort s1) (of_old_sort s2)
+    | LogicOld.T_tuple.TupleCons sorts, _ ->
+        mk_tuple_cons (of_old_sort_list sorts)
+    | LogicOld.T_tuple.TupleSel (sorts, i), _ ->
+        mk_tuple_sel (of_old_sort_list sorts) i
+    | LogicOld.T_dt.DTCons (name, _, dt), _ ->
+        mk_cons (Datatype.of_old of_old_sort dt) name
+    | LogicOld.T_dt.DTSel (name, dt, _), _ ->
+        mk_sel (Datatype.of_old of_old_sort dt) name
+    | LogicOld.T_ref.Ref sort, [ _ ] -> mk_ref (of_old_sort sort)
+    | LogicOld.T_ref.Deref sort, [ _ ] -> mk_deref (of_old_sort sort)
+    | LogicOld.T_ref.Update sort, [ _; _ ] -> mk_update (of_old_sort sort)
     | _ ->
         failwith
         @@ sprintf "[Logic.of_old_fun_sym] %s not supported"
@@ -3404,10 +3426,10 @@ module ExtTerm :
     | LogicOld.T_real.RGeq, [ _; _ ] -> mk_rgeq ()
     | LogicOld.T_real.RLt, [ _; _ ] -> mk_rlt ()
     | LogicOld.T_real.RGt, [ _; _ ] -> mk_rgt ()
-    | LogicOld.T_bv.BVLeq size, [ _; _ ] -> mk_bvleq ~size
-    | LogicOld.T_bv.BVGeq size, [ _; _ ] -> mk_bvgeq ~size
-    | LogicOld.T_bv.BVLt size, [ _; _ ] -> mk_bvlt ~size
-    | LogicOld.T_bv.BVGt size, [ _; _ ] -> mk_bvgt ~size
+    | LogicOld.T_bv.BVLeq (size, signed), [ _; _ ] -> mk_bvleq ~size ~signed
+    | LogicOld.T_bv.BVGeq (size, signed), [ _; _ ] -> mk_bvgeq ~size ~signed
+    | LogicOld.T_bv.BVLt (size, signed), [ _; _ ] -> mk_bvlt ~size ~signed
+    | LogicOld.T_bv.BVGt (size, signed), [ _; _ ] -> mk_bvgt ~size ~signed
     | LogicOld.T_irb.IsInt, [ _ ] -> mk_isint ()
     | LogicOld.T_num.NLeq svar, [ _; _ ] ->
         mk_tyapp (mk_con Leq) (Sort.SVar svar)
@@ -3415,13 +3437,6 @@ module ExtTerm :
         mk_tyapp (mk_con Geq) (Sort.SVar svar)
     | LogicOld.T_num.NLt svar, [ _; _ ] -> mk_tyapp (mk_con Lt) (Sort.SVar svar)
     | LogicOld.T_num.NGt svar, [ _; _ ] -> mk_tyapp (mk_con Gt) (Sort.SVar svar)
-    | LogicOld.T_tuple.IsTuple sorts, _ -> mk_is_tuple (of_old_sort_list sorts)
-    | LogicOld.T_tuple.NotIsTuple sorts, _ ->
-        mk_is_not_tuple (of_old_sort_list sorts)
-    | LogicOld.T_dt.IsCons (name, dt), _ ->
-        mk_is_cons name (Datatype.of_old of_old_sort dt)
-    | LogicOld.T_dt.NotIsCons (name, dt), _ ->
-        mk_is_not_cons name (Datatype.of_old of_old_sort dt)
     | LogicOld.T_sequence.IsPrefix fin, [ _; _ ] -> Term.mk_con @@ IsPrefix fin
     | LogicOld.T_sequence.NotIsPrefix fin, [ _; _ ] ->
         Term.mk_con @@ NotIsPrefix fin
@@ -3431,6 +3446,13 @@ module ExtTerm :
         Term.mk_con @@ NotSeqInRegExp (fin, regexp)
     | LogicOld.T_regex.StrInRegExp, [ _ ] -> Term.mk_con StrInRegExp
     | LogicOld.T_regex.NotStrInRegExp, [ _ ] -> Term.mk_con NotStrInRegExp
+    | LogicOld.T_tuple.IsTuple sorts, _ -> mk_is_tuple (of_old_sort_list sorts)
+    | LogicOld.T_tuple.NotIsTuple sorts, _ ->
+        mk_is_not_tuple (of_old_sort_list sorts)
+    | LogicOld.T_dt.IsCons (name, dt), _ ->
+        mk_is_cons name (Datatype.of_old of_old_sort dt)
+    | LogicOld.T_dt.NotIsCons (name, dt), _ ->
+        mk_is_not_cons name (Datatype.of_old of_old_sort dt)
     | _ ->
         failwith
         @@ sprintf "[Logic.of_old_pred_sym] %s not supported"
@@ -3453,7 +3475,7 @@ module ExtTerm :
     | LogicOld.Atom.App (LogicOld.Predicate.Psym psym, args, _) ->
         let sargs = List.map args ~f:(LogicOld.Term.sort_of >> of_old_sort) in
         mk_apps (of_old_pred_sym psym sargs) (List.map ~f:of_old_term args)
-    | LogicOld.Atom.App (LogicOld.Predicate.Fixpoint (_, _, _, _), _, _) ->
+    | LogicOld.Atom.App (LogicOld.Predicate.Fixpoint _, _, _) ->
         failwith "conversion of fixpoint is not implemented yet"
 
   and of_old_formula = function
@@ -3494,14 +3516,14 @@ module ExtTerm :
     | SInt -> LogicOld.T_int.SInt
     | SReal -> LogicOld.T_real.SReal
     | SBV size -> LogicOld.T_bv.SBV size
-    | STuple sorts -> LogicOld.T_tuple.STuple (List.map sorts ~f:to_old_sort)
-    | SRef sort -> LogicOld.T_ref.SRef (to_old_sort sort)
-    | SDT dt -> LogicOld.T_dt.SDT (Datatype.to_old to_old_sort dt)
-    | SUS (name, args) -> LogicOld.T_dt.SUS (name, List.map args ~f:to_old_sort)
-    | SArray (s1, s2) -> LogicOld.T_array.SArray (to_old_sort s1, to_old_sort s2)
     | SString -> LogicOld.T_string.SString
     | SSequence fin -> LogicOld.T_sequence.SSequence fin
     | SRegEx -> LogicOld.T_regex.SRegEx
+    | SArray (s1, s2) -> LogicOld.T_array.SArray (to_old_sort s1, to_old_sort s2)
+    | STuple sorts -> LogicOld.T_tuple.STuple (List.map sorts ~f:to_old_sort)
+    | SDT dt -> LogicOld.T_dt.SDT (Datatype.to_old to_old_sort dt)
+    | SUS (name, args) -> LogicOld.T_dt.SUS (name, List.map args ~f:to_old_sort)
+    | SRef sort -> LogicOld.T_ref.SRef (to_old_sort sort)
     | _ -> failwith "unknown sort"
 
   and to_old_opsig = function
@@ -3537,21 +3559,22 @@ module ExtTerm :
     | Abs -> LogicOld.T_int.Abs |> Option.some
     | Add -> LogicOld.T_int.Add |> Option.some
     | Sub -> LogicOld.T_int.Sub |> Option.some
-    | Mult -> LogicOld.T_int.Mult |> Option.some
-    | Div -> LogicOld.T_int.Div |> Option.some
-    | Mod -> LogicOld.T_int.Mod |> Option.some
-    | Rem -> LogicOld.T_int.Rem |> Option.some
+    | Mul -> LogicOld.T_int.Mul |> Option.some
+    | Div m -> LogicOld.T_int.Div m |> Option.some
+    | Rem m -> LogicOld.T_int.Rem m |> Option.some
     | Power -> LogicOld.T_int.Power |> Option.some
     | Real r -> LogicOld.T_real.Real r |> Option.some
     | RNeg -> LogicOld.T_real.RNeg |> Option.some
     | RAbs -> LogicOld.T_real.RAbs |> Option.some
     | RAdd -> LogicOld.T_real.RAdd |> Option.some
     | RSub -> LogicOld.T_real.RSub |> Option.some
-    | RMult -> LogicOld.T_real.RMult |> Option.some
+    | RMul -> LogicOld.T_real.RMul |> Option.some
     | RDiv -> LogicOld.T_real.RDiv |> Option.some
     | RPower -> LogicOld.T_real.RPower |> Option.some
     | BVNum (size, n) -> LogicOld.T_bv.BVNum (size, n) |> Option.some
     | BVNeg size -> LogicOld.T_bv.BVNeg size |> Option.some
+    | BVSEXT (from, to_) -> LogicOld.T_bv.BVSEXT (from, to_) |> Option.some
+    | BVZEXT (from, to_) -> LogicOld.T_bv.BVZEXT (from, to_) |> Option.some
     | BVSHL size -> LogicOld.T_bv.BVSHL size |> Option.some
     | BVLSHR size -> LogicOld.T_bv.BVLSHR size |> Option.some
     | BVASHR size -> LogicOld.T_bv.BVASHR size |> Option.some
@@ -3559,37 +3582,14 @@ module ExtTerm :
     | BVAnd size -> LogicOld.T_bv.BVAnd size |> Option.some
     | BVAdd size -> LogicOld.T_bv.BVAdd size |> Option.some
     | BVSub size -> LogicOld.T_bv.BVSub size |> Option.some
-    | BVMult size -> LogicOld.T_bv.BVMult size |> Option.some
-    | BVDiv size -> LogicOld.T_bv.BVDiv size |> Option.some
-    | BVMod size -> LogicOld.T_bv.BVMod size |> Option.some
-    | BVRem size -> LogicOld.T_bv.BVRem size |> Option.some
+    | BVMul size -> LogicOld.T_bv.BVMul size |> Option.some
+    | BVDiv (size, signed) -> LogicOld.T_bv.BVDiv (size, signed) |> Option.some
+    | BVRem (size, signed) -> LogicOld.T_bv.BVRem (size, signed) |> Option.some
     | IntToReal -> LogicOld.T_irb.IntToReal |> Option.some
     | RealToInt -> LogicOld.T_irb.RealToInt |> Option.some
     | IntToBV size -> LogicOld.T_irb.IntToBV size |> Option.some
-    | BVToInt size -> LogicOld.T_irb.BVToInt size |> Option.some
-    | TupleCons sorts ->
-        LogicOld.T_tuple.TupleCons (List.map sorts ~f:to_old_sort)
-        |> Option.some
-    | TupleSel (sorts, i) ->
-        LogicOld.T_tuple.TupleSel (List.map sorts ~f:to_old_sort, i)
-        |> Option.some
-    | Ref sort -> LogicOld.T_ref.Ref (to_old_sort sort) |> Option.some
-    | Deref sort -> LogicOld.T_ref.Deref (to_old_sort sort) |> Option.some
-    | Update sort -> LogicOld.T_ref.Update (to_old_sort sort) |> Option.some
-    | DTCons (name, sorts, dt) ->
-        LogicOld.T_dt.DTCons
-          (name, List.map sorts ~f:to_old_sort, Datatype.to_old to_old_sort dt)
-        |> Option.some
-    | DTSel (name, dt, sort) ->
-        LogicOld.T_dt.DTSel
-          (name, Datatype.to_old to_old_sort dt, to_old_sort sort)
-        |> Option.some
-    | AStore (s1, s2) ->
-        LogicOld.T_array.AStore (to_old_sort s1, to_old_sort s2) |> Option.some
-    | ASelect (s1, s2) ->
-        LogicOld.T_array.ASelect (to_old_sort s1, to_old_sort s2) |> Option.some
-    | AConst (s1, s2) ->
-        LogicOld.T_array.AConst (to_old_sort s1, to_old_sort s2) |> Option.some
+    | BVToInt (size, signed) ->
+        LogicOld.T_irb.BVToInt (size, signed) |> Option.some
     | StrConst str -> LogicOld.T_string.StrConst str |> Option.some
     | SeqEpsilon -> LogicOld.T_sequence.SeqEpsilon |> Option.some
     | SeqSymbol ev -> LogicOld.T_sequence.SeqSymbol ev |> Option.some
@@ -3609,6 +3609,29 @@ module ExtTerm :
     | RegConcat -> LogicOld.T_regex.RegConcat |> Option.some
     | RegUnion -> LogicOld.T_regex.RegUnion |> Option.some
     | RegInter -> LogicOld.T_regex.RegInter |> Option.some
+    | AStore (s1, s2) ->
+        LogicOld.T_array.AStore (to_old_sort s1, to_old_sort s2) |> Option.some
+    | ASelect (s1, s2) ->
+        LogicOld.T_array.ASelect (to_old_sort s1, to_old_sort s2) |> Option.some
+    | AConst (s1, s2) ->
+        LogicOld.T_array.AConst (to_old_sort s1, to_old_sort s2) |> Option.some
+    | TupleCons sorts ->
+        LogicOld.T_tuple.TupleCons (List.map sorts ~f:to_old_sort)
+        |> Option.some
+    | TupleSel (sorts, i) ->
+        LogicOld.T_tuple.TupleSel (List.map sorts ~f:to_old_sort, i)
+        |> Option.some
+    | DTCons (name, sorts, dt) ->
+        LogicOld.T_dt.DTCons
+          (name, List.map sorts ~f:to_old_sort, Datatype.to_old to_old_sort dt)
+        |> Option.some
+    | DTSel (name, dt, sort) ->
+        LogicOld.T_dt.DTSel
+          (name, Datatype.to_old to_old_sort dt, to_old_sort sort)
+        |> Option.some
+    | Ref sort -> LogicOld.T_ref.Ref (to_old_sort sort) |> Option.some
+    | Deref sort -> LogicOld.T_ref.Deref (to_old_sort sort) |> Option.some
+    | Update sort -> LogicOld.T_ref.Update (to_old_sort sort) |> Option.some
     | _ -> None
 
   let to_old_pred_sym = function
@@ -3624,11 +3647,19 @@ module ExtTerm :
     | RGeq -> LogicOld.T_real.RGeq |> Option.some
     | RLt -> LogicOld.T_real.RLt |> Option.some
     | RGt -> LogicOld.T_real.RGt |> Option.some
-    | BVLeq size -> LogicOld.T_bv.BVLeq size |> Option.some
-    | BVGeq size -> LogicOld.T_bv.BVGeq size |> Option.some
-    | BVLt size -> LogicOld.T_bv.BVLt size |> Option.some
-    | BVGt size -> LogicOld.T_bv.BVGt size |> Option.some
+    | BVLeq (size, signed) -> LogicOld.T_bv.BVLeq (size, signed) |> Option.some
+    | BVGeq (size, signed) -> LogicOld.T_bv.BVGeq (size, signed) |> Option.some
+    | BVLt (size, signed) -> LogicOld.T_bv.BVLt (size, signed) |> Option.some
+    | BVGt (size, signed) -> LogicOld.T_bv.BVGt (size, signed) |> Option.some
     | IsInt -> LogicOld.T_irb.IsInt |> Option.some
+    | IsPrefix fin -> LogicOld.T_sequence.IsPrefix fin |> Option.some
+    | NotIsPrefix fin -> LogicOld.T_sequence.NotIsPrefix fin |> Option.some
+    | SeqInRegExp (fin, regexp) ->
+        LogicOld.T_sequence.SeqInRegExp (fin, regexp) |> Option.some
+    | NotSeqInRegExp (fin, regexp) ->
+        LogicOld.T_sequence.NotSeqInRegExp (fin, regexp) |> Option.some
+    | StrInRegExp -> LogicOld.T_regex.StrInRegExp |> Option.some
+    | NotStrInRegExp -> LogicOld.T_regex.NotStrInRegExp |> Option.some
     | IsTuple sorts ->
         LogicOld.T_tuple.IsTuple (List.map ~f:to_old_sort sorts) |> Option.some
     | NotIsTuple sorts ->
@@ -3640,14 +3671,6 @@ module ExtTerm :
     | NotIsCons (name, dt) ->
         LogicOld.T_dt.NotIsCons (name, Datatype.to_old to_old_sort dt)
         |> Option.some
-    | IsPrefix fin -> LogicOld.T_sequence.IsPrefix fin |> Option.some
-    | NotIsPrefix fin -> LogicOld.T_sequence.NotIsPrefix fin |> Option.some
-    | SeqInRegExp (fin, regexp) ->
-        LogicOld.T_sequence.SeqInRegExp (fin, regexp) |> Option.some
-    | NotSeqInRegExp (fin, regexp) ->
-        LogicOld.T_sequence.NotSeqInRegExp (fin, regexp) |> Option.some
-    | StrInRegExp -> LogicOld.T_regex.StrInRegExp |> Option.some
-    | NotStrInRegExp -> LogicOld.T_regex.NotStrInRegExp |> Option.some
     | _ -> None
 
   let rec to_old_term exi_senv uni_senv term args =
@@ -3685,19 +3708,17 @@ module ExtTerm :
         in
         if List.is_empty args then LogicOld.Term.mk_var tvar sort
         else
-          let args' =
-            List.map args ~f:(Fn.flip (to_old_term exi_senv uni_senv) [])
-          in
+          let args' = List.map args ~f:(to_old_trm exi_senv uni_senv) in
           let sargs, sret = LogicOld.Sort.args_ret_of sort in
           if LogicOld.Term.is_bool_sort sret then
             LogicOld.T_bool.of_atom
             @@ LogicOld.Atom.mk_pvar_app (Ident.tvar_to_pvar tvar) sargs args'
-          else LogicOld.Term.mk_fvar_app tvar (sargs @ [ sret ]) args'
+          else LogicOld.Term.mk_fvar_app tvar sargs sret args'
     | Con (sym, _), args -> (
         match to_old_fun_sym sym with
         | Some old_sym ->
             LogicOld.Term.mk_fsym_app old_sym
-            @@ List.map args ~f:(Fn.flip (to_old_term exi_senv uni_senv) [])
+            @@ List.map args ~f:(to_old_trm exi_senv uni_senv)
         | None ->
             LogicOld.T_bool.of_formula
               (to_old_formula exi_senv uni_senv term args))
@@ -3710,13 +3731,13 @@ module ExtTerm :
           args'
     | Let (var, sort, def, body, _), args ->
         LogicOld.Term.mk_let_term var (to_old_sort sort)
-          (to_old_term exi_senv uni_senv def [])
+          (to_old_trm exi_senv uni_senv def)
           (to_old_term exi_senv
              (Map.Poly.set uni_senv ~key:var ~data:sort)
              body args)
     | TyApp (Con (((Eq | Neq) as op), _), _, _), [ t1; t2 ] ->
-        let t1' = to_old_term exi_senv uni_senv t1 [] in
-        let t2' = to_old_term exi_senv uni_senv t2 [] in
+        let t1' = to_old_trm exi_senv uni_senv t1 in
+        let t2' = to_old_trm exi_senv uni_senv t2 in
         LogicOld.T_bool.(
           of_atom @@ (if Stdlib.(op = Eq) then mk_eq else mk_neq) t1' t2')
     | ( TyApp (Con (IfThenElse, _), (SBool | Sort.SVar _), _),
@@ -3724,7 +3745,7 @@ module ExtTerm :
       when BoolTerm.is_bool_sort
              (sort_of (Map.force_merge exi_senv uni_senv) t2) ->
         let t1' =
-          LogicOld.T_bool.of_formula (to_old_formula exi_senv uni_senv t1 [])
+          LogicOld.T_bool.of_formula (to_old_fml exi_senv uni_senv t1)
         in
         let t2' =
           LogicOld.T_bool.of_formula (to_old_formula exi_senv uni_senv t2 args)
@@ -3735,29 +3756,29 @@ module ExtTerm :
         LogicOld.T_bool.mk_if_then_else t1' t2' t3'
     | TyApp (Con (IfThenElse, _), _, _), t1 :: t2 :: t3 :: args ->
         let t1' =
-          LogicOld.T_bool.of_formula (to_old_formula exi_senv uni_senv t1 [])
+          LogicOld.T_bool.of_formula (to_old_fml exi_senv uni_senv t1)
         in
         let t2' = to_old_term exi_senv uni_senv t2 args in
         let t3' = to_old_term exi_senv uni_senv t3 args in
         LogicOld.T_bool.mk_if_then_else t1' t2' t3'
     | TyApp (Con (Leq, _), Sort.SVar svar, _), [ t1; t2 ] ->
-        let t1' = to_old_term exi_senv uni_senv t1 [] in
-        let t2' = to_old_term exi_senv uni_senv t2 [] in
+        let t1' = to_old_trm exi_senv uni_senv t1 in
+        let t2' = to_old_trm exi_senv uni_senv t2 in
         LogicOld.(
           T_bool.of_atom @@ Atom.mk_psym_app (T_num.NLeq svar) [ t1'; t2' ])
     | TyApp (Con (Geq, _), Sort.SVar svar, _), [ t1; t2 ] ->
-        let t1' = to_old_term exi_senv uni_senv t1 [] in
-        let t2' = to_old_term exi_senv uni_senv t2 [] in
+        let t1' = to_old_trm exi_senv uni_senv t1 in
+        let t2' = to_old_trm exi_senv uni_senv t2 in
         LogicOld.(
           T_bool.of_atom @@ Atom.mk_psym_app (T_num.NGeq svar) [ t1'; t2' ])
     | TyApp (Con (Lt, _), Sort.SVar svar, _), [ t1; t2 ] ->
-        let t1' = to_old_term exi_senv uni_senv t1 [] in
-        let t2' = to_old_term exi_senv uni_senv t2 [] in
+        let t1' = to_old_trm exi_senv uni_senv t1 in
+        let t2' = to_old_trm exi_senv uni_senv t2 in
         LogicOld.(
           T_bool.of_atom @@ Atom.mk_psym_app (T_num.NLt svar) [ t1'; t2' ])
     | TyApp (Con (Gt, _), Sort.SVar svar, _), [ t1; t2 ] ->
-        let t1' = to_old_term exi_senv uni_senv t1 [] in
-        let t2' = to_old_term exi_senv uni_senv t2 [] in
+        let t1' = to_old_trm exi_senv uni_senv t1 in
+        let t2' = to_old_trm exi_senv uni_senv t2 in
         LogicOld.(
           T_bool.of_atom @@ Atom.mk_psym_app (T_num.NGt svar) [ t1'; t2' ])
     (*| TyApp (t, _sort, _), args (* ToDo: use [sort] *) ->
@@ -3768,12 +3789,12 @@ module ExtTerm :
         @@ sprintf "[to_old_term] unknown term: %s(%s)" (str_of term)
              (String.concat_map_list ~sep:"," args ~f:str_of)
 
+  and to_old_trm exi_senv uni_senv term = to_old_term exi_senv uni_senv term []
+
   and to_old_atom exi_senv uni_senv term args =
     match (term, args) with
     | Var ((Ident.Tvar name as tvar), _), args -> (
-        let args' =
-          List.map args ~f:(Fn.flip (to_old_term exi_senv uni_senv) [])
-        in
+        let args' = List.map args ~f:(to_old_trm exi_senv uni_senv) in
         match Map.Poly.find exi_senv tvar with
         | Some sort ->
             let sargs, sret = Sort.args_ret_of sort in
@@ -3793,7 +3814,7 @@ module ExtTerm :
                     LogicOld.Atom.of_bool_term
                     @@ LogicOld.Term.mk_fvar_app tvar
                          (List.map ~f:to_old_sort sargs)
-                         args')
+                         (to_old_sort sret) args')
                   else
                     failwith
                     @@ sprintf "%s(%s)" (Ident.name_of_tvar tvar)
@@ -3808,7 +3829,7 @@ module ExtTerm :
                     assert (LogicOld.Term.is_bool_sort sret);
                     let sargs = List.map params ~f:snd in
                     LogicOld.Atom.of_bool_term
-                    @@ LogicOld.Term.mk_fvar_app tvar (sargs @ [ sret ]) args'
+                    @@ LogicOld.Term.mk_fvar_app tvar sargs sret args'
                 | None ->
                     print_endline @@ sprintf "exi_senv: %s"
                     @@ str_of_sort_env_map str_of_sort exi_senv;
@@ -3822,7 +3843,7 @@ module ExtTerm :
     | Con (DTSel (name, dt, _), _), [ arg ] ->
         LogicOld.Atom.of_bool_term
         @@ LogicOld.T_dt.mk_sel (Datatype.to_old to_old_sort dt) name
-        @@ to_old_term exi_senv uni_senv arg []
+        @@ to_old_trm exi_senv uni_senv arg
     | (Con (sym, _) as term), args ->
         let pred =
           match to_old_pred_sym sym with
@@ -3832,7 +3853,7 @@ module ExtTerm :
                 (sprintf "[to_old_atom] unknown pred. symbol: %s" @@ str_of term)
         in
         LogicOld.Atom.mk_app pred
-        @@ List.map args ~f:(Fn.flip (to_old_term exi_senv uni_senv) [])
+        @@ List.map args ~f:(to_old_trm exi_senv uni_senv)
     | App (t1, t2, _), args -> to_old_atom exi_senv uni_senv t1 (t2 :: args)
     | Bin (Lambda, _, _, _, _), [] ->
         failwith "[to_old_atom] partial application not supported"
@@ -3841,35 +3862,27 @@ module ExtTerm :
           (subst (Map.Poly.singleton tvar arg) t)
           args'
     | Let (var, sort, def, body, _), args ->
-        let sort' = to_old_sort sort in
-        let def' = to_old_term exi_senv uni_senv def [] in
-        let body' =
-          to_old_atom exi_senv
-            (Map.Poly.set uni_senv ~key:var ~data:sort)
-            body args
-        in
-        LogicOld.Atom.insert_let_pvar_app var sort' def' LogicOld.Dummy
-          (* ToDo *) body'
+        LogicOld.Atom.insert_let_pvar_app var (to_old_sort sort)
+          (to_old_trm exi_senv uni_senv def)
+          LogicOld.Dummy
+        (* ToDo *)
+        @@ to_old_atom exi_senv
+             (Map.Poly.set uni_senv ~key:var ~data:sort)
+             body args
     | TyApp (Con (((Eq | Neq) as op), _), _, _), [ t1; t2 ] ->
-        let t1' = to_old_term exi_senv uni_senv t1 [] in
-        let t2' = to_old_term exi_senv uni_senv t2 [] in
         LogicOld.(if Stdlib.(op = Eq) then T_bool.mk_eq else T_bool.mk_neq)
-          t1' t2'
+          (to_old_trm exi_senv uni_senv t1)
+          (to_old_trm exi_senv uni_senv t2)
     | ( TyApp (Con (IfThenElse, _), (SBool | Sort.SVar _), _),
         t1 :: t2 :: t3 :: args )
       when BoolTerm.is_bool_sort
              (sort_of (Map.force_merge exi_senv uni_senv) t2) ->
-        let t1' =
-          LogicOld.T_bool.of_formula (to_old_formula exi_senv uni_senv t1 [])
-        in
-        let t2' =
-          LogicOld.T_bool.of_formula (to_old_formula exi_senv uni_senv t2 args)
-        in
-        let t3' =
-          LogicOld.T_bool.of_formula (to_old_formula exi_senv uni_senv t3 args)
-        in
         LogicOld.Atom.of_bool_term
-        @@ LogicOld.T_bool.mk_if_then_else t1' t2' t3'
+        @@ LogicOld.T_bool.(
+             mk_if_then_else
+               (of_formula (to_old_fml exi_senv uni_senv t1))
+               (of_formula (to_old_formula exi_senv uni_senv t2 args))
+               (of_formula (to_old_formula exi_senv uni_senv t3 args)))
     (*LogicOld.Formula.mk_or
       (LogicOld.Formula.mk_and t1' t2')
       (LogicOld.Formula.mk_and (LogicOld.Formula.mk_neg t1') t3')*)
@@ -3879,6 +3892,8 @@ module ExtTerm :
         failwith
         @@ sprintf "[to_old_atom] unknown term: %s(%s)" (str_of term)
              (String.concat_map_list ~sep:"," args ~f:str_of)
+
+  and to_old_atm exi_senv uni_senv term = to_old_atom exi_senv uni_senv term []
 
   and to_old_formula exi_senv uni_senv term args =
     let rec aux uni_senv term args ~next =
@@ -3940,7 +3955,7 @@ module ExtTerm :
       | TyApp (term, _sort, _) (* ToDo: use [sort] *) ->
           aux uni_senv term args ~next
       | Let (var, sort, def, body, _) ->
-          let def = to_old_term exi_senv uni_senv def [] in
+          let def = to_old_trm exi_senv uni_senv def in
           aux
             (Map.Poly.set uni_senv ~key:var ~data:sort)
             body args
@@ -3954,17 +3969,20 @@ module ExtTerm :
     in
     aux uni_senv term args ~next:Fn.id
 
-  let to_old_fml exi_senv (uni_senv, term) =
+  and to_old_fml exi_senv uni_senv term =
     to_old_formula exi_senv uni_senv term []
 
   let to_old_subst exi_senv uni_senv =
-    Map.Poly.map ~f:(Fn.flip (to_old_term exi_senv uni_senv) [])
+    Map.Poly.map ~f:(to_old_trm exi_senv uni_senv)
 
   (** Construction *)
 
   let rec mk_dummy = function
     | Sort.SVar (Ident.Svar name) as sort ->
-        let name = "dummy_" ^ name (*ToDo*) in
+        let name =
+          "dummy_" ^ name
+          (*ToDo*)
+        in
         LogicOld.add_dummy_term (Ident.Tvar name) @@ to_old_sort sort;
         mk_var (Ident.Tvar name)
     | Sort.SArrow _ as sort ->
@@ -3978,24 +3996,23 @@ module ExtTerm :
     | SInt -> IntTerm.zero ()
     | SReal -> RealTerm.rzero ()
     | SBV size -> BVTerm.mk_bvnum ~size Z.zero
-    | STuple sorts ->
-        mk_apps (mk_tuple_cons sorts) @@ List.map sorts ~f:mk_dummy
-    | SRef sort -> mk_apps (mk_ref sort) [ mk_dummy sort ]
-    | (SDT _ | SUS _) as sort -> DatatypeTerm.mk_dummy mk_dummy to_old_sort sort
-    | SArray (s1, s2) -> mk_app (mk_const_array s1 s2) (mk_dummy s2)
     | SString -> mk_con @@ StrConst ""
     | SSequence true -> mk_con SeqEpsilon
     | SSequence false -> failwith "SSequence false"
     | SRegEx -> mk_con RegEmpty
+    | SArray (s1, s2) -> mk_app (mk_const_array s1 s2) (mk_dummy s2)
+    | STuple sorts ->
+        mk_apps (mk_tuple_cons sorts) @@ List.map sorts ~f:mk_dummy
+    | (SDT _ | SUS _) as sort -> DatatypeTerm.mk_dummy mk_dummy to_old_sort sort
+    | SRef sort -> mk_app (mk_ref sort) @@ mk_dummy sort
     | _ -> failwith @@ "unknown sort"
 
   let random_term_of bound = function
-    | IntTerm.SInt ->
-        mk_int @@ Z.of_int @@ (Random.int ((2 * bound) + 1) - bound)
+    | BoolTerm.SBool -> mk_bool @@ Random.bool ()
+    | IntTerm.SInt -> mk_int @@ Z.of_int (Random.int ((2 * bound) + 1) - bound)
     | RealTerm.SReal ->
         let fb = float_of_int bound in
         mk_real @@ Q.of_float @@ Random.float_range (-.fb) fb
-    | BoolTerm.SBool -> mk_bool @@ Random.bool ()
     | data (*ToDo*) -> mk_dummy data
 
   (** Models *)
@@ -4009,11 +4026,11 @@ module ExtTerm :
 
   let str_of_formula exi_senv uni_senv term =
     LogicOld.Formula.str_of @@ Evaluator.simplify
-    @@ to_old_fml exi_senv (uni_senv, term)
+    @@ to_old_fml exi_senv uni_senv term
 
   let str_of_term exi_senv uni_senv term =
     LogicOld.Term.str_of @@ Evaluator.simplify_term
-    @@ to_old_term exi_senv uni_senv term []
+    @@ to_old_trm exi_senv uni_senv term
 
   (** Transformation *)
 
@@ -4023,10 +4040,10 @@ module ExtTerm :
       let uni_senv =
         Map.force_merge uni_senv (Map.Poly.of_alist_exn param_senv)
       in
-      to_old_fml exi_senv (uni_senv, phi)
+      to_old_fml exi_senv uni_senv phi
       |> Evaluator.simplify |> of_old_formula |> mk_lambda param_senv
     with _ ->
-      to_old_fml exi_senv (uni_senv, t) |> Evaluator.simplify |> of_old_formula
+      to_old_fml exi_senv uni_senv t |> Evaluator.simplify |> of_old_formula
 
   let simplify_term exi_senv uni_senv t =
     try
@@ -4034,11 +4051,10 @@ module ExtTerm :
       let uni_senv =
         Map.force_merge uni_senv (Map.Poly.of_alist_exn param_senv)
       in
-      to_old_term exi_senv uni_senv phi []
+      to_old_trm exi_senv uni_senv phi
       |> Evaluator.simplify_term |> of_old_term |> mk_lambda param_senv
     with _ ->
-      to_old_term exi_senv uni_senv t []
-      |> Evaluator.simplify_term |> of_old_term
+      to_old_trm exi_senv uni_senv t |> Evaluator.simplify_term |> of_old_term
 end
 
 let of_old_sort_env_list = List.map ~f:ExtTerm.of_old_sort_bind

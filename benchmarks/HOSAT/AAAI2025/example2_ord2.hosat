@@ -1,0 +1,2 @@
+_forall f : bool -> bool. _exists g : bool -> bool. _exists z : bool.
+(f(|g(z)|) <=> z ())

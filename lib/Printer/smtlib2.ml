@@ -4,7 +4,7 @@ open Common.Combinator
 open Ast
 open Ast.LogicOld
 
-let of_pcsp ~id (*~print*) pcsp =
+let of_pcsp ~id ?(add_missing_forall = false) (*~print*) pcsp =
   let ctx = Z3.mk_context [] in
   let solver = Z3.Fixedpoint.mk_fixedpoint ctx in
   (* print @@ lazy (sprintf "===================== pcsp ====================: \n%s" (PCSP.Problem.str_of pcsp)); *)
@@ -31,15 +31,24 @@ let of_pcsp ~id (*~print*) pcsp =
   let penv =
     List.map (Map.Poly.to_alist exi_senv) ~f:(fun (Ident.Tvar name, sort) ->
         let arg_sorts, ret_sort = Logic.Sort.args_ret_of sort in
-        assert (Logic.ExtTerm.is_bool_sort ret_sort);
-        let arg_sorts =
-          List.map arg_sorts
-            ~f:(Logic.ExtTerm.to_old_sort >> Z3Smt.Z3interface.of_sort ctx dtenv)
-        in
-        let symbol = Z3.Symbol.mk_string ctx name in
-        ( Ident.Pvar name,
-          Z3.FuncDecl.mk_func_decl ctx symbol arg_sorts (Z3.Boolean.mk_sort ctx)
-        ))
+        if Logic.ExtTerm.is_bool_sort ret_sort then
+          let arg_sorts =
+            List.map arg_sorts
+              ~f:
+                (Logic.ExtTerm.to_old_sort
+                >> Z3Smt.Z3interface.of_sort ctx dtenv)
+          in
+          let symbol = Z3.Symbol.mk_string ctx name in
+          ( Ident.Pvar name,
+            Z3.FuncDecl.mk_func_decl ctx symbol arg_sorts
+              (Z3.Boolean.mk_sort ctx) )
+          (* else if Logic.ExtTerm.is_real_sort ret_sort then (
+             assert (List.is_empty arg_sorts);
+             let symbol = Z3.Symbol.mk_string ctx name in
+             ( Ident.Pvar name,
+               Z3.FuncDecl.mk_const_decl ctx symbol
+                 (Z3.Arithmetic.Real.mk_sort ctx) )) *)
+        else assert false)
   in
   List.iter ~f:(snd >> Z3.Fixedpoint.register_relation solver) penv;
   let exists_query = ref false in
@@ -48,17 +57,17 @@ let of_pcsp ~id (*~print*) pcsp =
         (* assume that [phi] is alpha-renamed *)
         Formula.elim_let_equivalid
         @@ Normalizer.normalize_let ~rename:true
-        @@ Logic.ExtTerm.to_old_fml exi_senv (uni_senv, phi)
+        @@ Logic.ExtTerm.to_old_fml exi_senv uni_senv phi
       in
       let body =
         Evaluator.simplify @@ Formula.and_of
         @@ Formula.mk_neg phi
            :: (Set.to_list
               @@ Set.Poly.map ~f:Formula.mk_atom
-              @@ Set.Poly.map ns
-                   ~f:(Fn.flip (Logic.ExtTerm.to_old_atom exi_senv uni_senv) [])
+              @@ Set.Poly.map ns ~f:(Logic.ExtTerm.to_old_atm exi_senv uni_senv)
               )
       in
+
       let head =
         Formula.or_of @@ Set.to_list
         @@ Set.Poly.map ~f:Formula.mk_atom
@@ -67,9 +76,7 @@ let of_pcsp ~id (*~print*) pcsp =
         | 0 ->
             exists_query := true;
             Set.Poly.singleton (Atom.mk_pvar_app (Ident.Pvar query_name) [] [])
-        | 1 ->
-            Set.Poly.map ps
-              ~f:(Fn.flip (Logic.ExtTerm.to_old_atom exi_senv uni_senv) [])
+        | 1 -> Set.Poly.map ps ~f:(Logic.ExtTerm.to_old_atm exi_senv uni_senv)
         | _ -> failwith "z3 does not support head disjunction"
       in
       let phi' = Formula.mk_imply body head in
@@ -87,33 +94,47 @@ let of_pcsp ~id (*~print*) pcsp =
   Z3.Fixedpoint.set_parameters solver params;
   (* make smt string *)
   let prefix = ref "" in
+  let lines =
+    Z3.Fixedpoint.to_string solver |> String.split_on_chars ~on:[ '\n' ]
+  in
   let inputs =
     let reg_assert = Str.regexp "^(assert \\(.*\\)$" in
     let reg_forall = Str.regexp "^(forall " in
-    Z3.Fixedpoint.to_string solver
-    |> String.split_on_chars ~on:[ '\n' ]
-    |> List.map ~f:(fun line ->
-           if Str.string_match reg_assert line 0 then
-             let matched_str = Str.matched_group 1 line in
-             let line' = !prefix in
-             line'
-             ^
-             if not @@ Str.string_match reg_forall matched_str 0 then (
-               prefix := ")\n";
-               "(assert (forall () " ^ matched_str)
-             else (
-               prefix := "";
-               line)
-           else line)
+    List.map lines ~f:(fun line ->
+        if Str.string_match reg_assert line 0 then
+          let matched_str = Str.matched_group 1 line in
+          let line' = !prefix in
+          line'
+          ^
+          if
+            add_missing_forall
+            && (not @@ Str.string_match reg_forall matched_str 0)
+          then (
+            prefix := ")\n";
+            "(assert (forall () " ^ matched_str)
+          else (
+            prefix := "";
+            line)
+        else line)
   in
-  let reg_anno = Str.regexp "(! \\| :weight.*[0-9])" in
-  let reg_decl_query_name =
-    Str.regexp @@ sprintf ".*declare-fun.*%s.*" query_name
-  in
-  let inputs = List.map inputs ~f:(fun s -> Str.global_replace reg_anno "" s) in
   let inputs =
+    let reg_anno = Str.regexp "(! \\| :weight.*[0-9])" in
+    List.map inputs ~f:(fun s -> Str.global_replace reg_anno "" s)
+  in
+  let inputs =
+    let reg_decl_query_name =
+      Str.regexp @@ sprintf ".*declare-fun.*%s.*" query_name
+    in
     List.map inputs ~f:(fun s -> Str.global_replace reg_decl_query_name "" s)
   in
+  (* let inputs =
+       let reg_decl_const_name = Str.regexp "(declare-fun \\(.*\\) () Real)" in
+       (* for PQEs *)
+       List.map inputs ~f:(fun line ->
+           if Str.string_match reg_decl_const_name line 0 then
+             sprintf "(declare-const %s Real)" @@ Str.matched_group 1 line
+           else line)
+     in *)
   let inputs =
     List.map inputs
       ~f:(String.substr_replace_all ~pattern:query_name ~with_:"false")

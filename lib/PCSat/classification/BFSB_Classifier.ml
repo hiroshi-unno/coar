@@ -2,6 +2,7 @@ open Core
 open Common
 open Common.Ext
 open Common.Util
+open Common.Combinator
 open Ast
 open Ast.LogicOld
 open PCSatCommon
@@ -128,14 +129,12 @@ struct
                %s:@ %s@]"
               (Ordinal.string_of @@ Ordinal.make n)
               (Set.length quals) (G.str_of_domain n)
-              (String.concat_set ~sep:", "
-              @@ Set.Poly.map quals ~f:(fun (_, phi) -> Formula.str_of phi)));
+              (String.concat_map_set ~sep:", " quals ~f:(snd >> Formula.str_of)));
       TruthTable.update_map_with_qualifiers ~id table fenv qdeps pvar
         (params, Set.Poly.map ~f:snd quals);
       let tt = TruthTable.get_table table pvar in
       let qlist =
-        Set.Poly.map quals ~f:(fun (_, phi) ->
-            TruthTable.index_of_qual ~id tt fenv qdeps phi)
+        Set.Poly.map quals ~f:(snd >> TruthTable.index_of_qual ~id tt fenv qdeps)
         |>
         match config.qual_order with
         | Rank -> Rank.sort_indices tt.TruthTable.qarr

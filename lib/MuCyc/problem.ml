@@ -77,12 +77,12 @@ let apply_as_muclp f problem =
   let exi_senv = Term.pred_to_sort_env_map @@ MuCLP.Problem.penv_of muclp in
   {
     problem with
-    defs = MuCLP.Problem.preds_of muclp;
+    defs = muclp.preds;
     goals =
       List.map ~f:(fun g -> (g, None (*ToDo*), true (*ToDo*)))
       @@ Set.to_list
       @@ Sequent.of_formula exi_senv
-      @@ MuCLP.Problem.query_of muclp;
+      @@ muclp.query;
   }
 
 let simplify problem =

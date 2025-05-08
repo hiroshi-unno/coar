@@ -21,8 +21,8 @@ module Priority = struct
   let append_power = eq_neq_lt_leq_gt_geq + 2
   let cons = append_power + 2
   let add_sub = cons + 2
-  let mult_div_mod = add_sub + 2
-  let neg_deref = mult_div_mod + 2
+  let mul_div_mod = add_sub + 2
+  let neg_deref = mul_div_mod + 2
   let fun_app = neg_deref + 2
   let bracket = fun_app + 2
   let highest = bracket + 2
@@ -32,83 +32,13 @@ module Priority = struct
     else inner_str
 end
 
-module Value = struct
-  type t = Bool of bool | Int of Z.t | Real of Q.t
-
-  let neg = function
-    | Int i -> Int (Z.neg i)
-    | Real r -> Real (Q.neg r)
-    | Bool _ -> failwith "[Value.neg] type error"
-
-  let abs = function
-    | Int i -> Int (Z.abs i)
-    | Real r -> Real (Q.abs r)
-    | Bool _ -> failwith "[Value.abs] type error"
-
-  let compare opi opr ?(opb = fun _ _ -> assert false) t1 t2 =
-    match (t1, t2) with
-    | Int i1, Int i2 -> opi i1 i2
-    | Real r1, Real r2 -> opr r1 r2
-    | Bool b1, Bool b2 -> opb b1 b2
-    | Int i, Real r -> opr (Q.of_bigint i) r
-    | Real r, Int i -> opr r (Q.of_bigint i)
-    | _ -> failwith "[Value.compare] type error"
-
-  let bop opi opr ?(opb = fun _ _ -> assert false) t1 t2 =
-    match (t1, t2) with
-    | Int i1, Int i2 -> Int (opi i1 i2)
-    | Real r1, Real r2 -> Real (opr r1 r2)
-    | Bool b1, Bool b2 -> Bool (opb b1 b2)
-    | Int i, Real r -> Real (opr (Q.of_bigint i) r)
-    | Real r, Int i -> Real (opr r (Q.of_bigint i))
-    | _ -> failwith "[Value.app_op] type error"
-
-  let add = bop Z.( + ) Q.( + )
-  let sub = bop Z.( - ) Q.( - )
-  let mult = bop Z.( * ) Q.( * )
-  let div = bop Z.ediv Q.( / )
-
-  let bmod =
-    bop Z.erem (fun _a _b ->
-        assert
-          false (*Q.of_float @@ Float.mod_float (Q.to_float a) (Q.to_float b)*))
-
-  let pow =
-    bop
-      (fun n1 n2 -> Z.pow n1 (Z.to_int (*ToDo*) n2))
-      (fun _ _ ->
-        failwith "Value.pow for real numbers not implemented" (*ToDo*))
-
-  let ite cond_ then_ else_ =
-    match cond_ with
-    | Bool true -> then_
-    | Bool false -> else_
-    | _ -> failwith "[Value.ite] type error"
-
-  let str_of = function
-    | Bool b -> string_of_bool b
-    | Int n -> Z.to_string n
-    | Real r -> Q.to_string r
-
-  let bool_of = function Bool b -> b | _ -> assert false
-  let int_of = function Int n -> n | _ -> assert false
-  let real_of = function Real r -> r | _ -> assert false
-  let is_true = function Bool b -> b | _ -> false
-  let is_false = function Bool b -> not b | _ -> false
-end
-
 module Sort = struct
   type t = ..
   and e = ..
   and o = ..
 
   type c = { op_sig : o; val_type : t; cont_eff : e }
-
-  type t +=
-    | SVar of Ident.svar
-    | SArrow of t * c
-    | SPoly of Ident.svar Set.Poly.t * t
-
+  type t += SVar of Ident.svar | SArrow of t * c | SPoly of Ident.svar_set * t
   type e += EVar of Ident.evar | Pure | Closed | Eff of c * c
 
   type o +=
@@ -301,6 +231,8 @@ let update_sort_subst subst_sorts_sort smap svar sort =
 let mk_fresh_sort_env_list =
   List.map ~f:(fun sort -> (Ident.mk_fresh_tvar (), sort))
 
+let mk_fresh_sort_env_list_norm next = List.map ~f:(fun sort -> (next (), sort))
+
 (* val sort_env_list_of_sorts: ?pre:string -> Sort.t list -> sort_env_list *)
 let sort_env_list_of_sorts ?(pre = "") sorts =
   let param_ident_count = ref 0 in
@@ -310,27 +242,32 @@ let sort_env_list_of_sorts ?(pre = "") sorts =
   in
   List.map sorts ~f:(fun sort -> (mk_param_ident (), sort))
 
-(* val tvar_map_of_sort_env_list : sort_env_list -> sort_env_list -> Ident.tvar_map *)
-let tvar_map_of_sort_env_list senv1 senv2 =
+(* val ren_of_sort_env_list : sort_env_list -> sort_env_list -> Ident.tvar_map *)
+let ren_of_sort_env_list senv1 senv2 =
   Map.Poly.of_alist_exn
   @@ List.map2_exn senv1 senv2 ~f:(fun (x1, _) (x2, _) -> (x1, x2))
 
 (*val refresh_sort_env_list : sort_env_list -> sort_env_list * Ident.tvar_map*)
 let refresh_sort_env_list senv =
   let senv' = mk_fresh_sort_env_list @@ List.map ~f:snd senv in
-  let rename = tvar_map_of_sort_env_list senv senv' in
+  let rename = ren_of_sort_env_list senv senv' in
+  (senv', rename)
+
+let refresh_sort_env_list_norm next senv =
+  let senv' = mk_fresh_sort_env_list_norm next @@ List.map ~f:snd senv in
+  let rename = ren_of_sort_env_list senv senv' in
   (senv', rename)
 
 (*val normalize_sort_env_list : sort_env_list -> sort_env_list * Ident.tvar_map*)
 let normalize_sort_env_list senv =
   let senv' = sort_env_list_of_sorts @@ List.map ~f:snd senv in
-  let rename = tvar_map_of_sort_env_list senv senv' in
+  let rename = ren_of_sort_env_list senv senv' in
   (senv', rename)
 
 type info = ..
 type info += Dummy
 type fun_sym = ..
-type fun_sym += FunCall of string | FVar of Ident.tvar * Sort.t list
+type fun_sym += FunCall of string | FVar of Ident.tvar * Sort.t list * Sort.t
 type pred_sym = ..
 
 let defined_fvars : Ident.tvar Hash_set.Poly.t = Hash_set.Poly.create ()
@@ -341,6 +278,7 @@ module Type = struct
     type formula
     type termSubst
     type predSubst
+    type funcSubst
     type dtenv
 
     type t =
@@ -358,6 +296,7 @@ module Type = struct
     val is_int_ref_sort : Sort.t -> bool
     val is_real_sort : Sort.t -> bool
     val is_bv_sort : Sort.t -> bool
+    val is_ir_sort : Sort.t -> bool
     val is_irb_sort : Sort.t -> bool
     val is_dt_sort : Sort.t -> bool
     val is_array_sort : Sort.t -> bool
@@ -372,30 +311,30 @@ module Type = struct
     val str_of_opsig : Sort.o -> string
     val short_name_of_sort : Sort.t -> string
     val sorts_of_sort : Sort.t -> Sort.t Set.Poly.t
-    val svs_of_cont : Sort.e -> Ident.svar Set.Poly.t
-    val svs_of_sort : Sort.t -> Ident.svar Set.Poly.t
-    val svs_of_opsig : Sort.o -> Ident.svar Set.Poly.t
-    val svs_of_triple : Sort.c -> Ident.svar Set.Poly.t
-    val polar_svs_of_cont : pos:bool -> Sort.e -> Ident.svar Set.Poly.t
-    val polar_svs_of_sort : pos:bool -> Sort.t -> Ident.svar Set.Poly.t
-    val polar_svs_of_opsig : pos:bool -> Sort.o -> Ident.svar Set.Poly.t
-    val polar_svs_of_triple : pos:bool -> Sort.c -> Ident.svar Set.Poly.t
-    val evs_of_cont : Sort.e -> Ident.evar Set.Poly.t
-    val evs_of_sort : Sort.t -> Ident.evar Set.Poly.t
-    val evs_of_opsig : Sort.o -> Ident.evar Set.Poly.t
-    val evs_of_triple : Sort.c -> Ident.evar Set.Poly.t
-    val polar_evs_of_cont : pos:bool -> Sort.e -> Ident.evar Set.Poly.t
-    val polar_evs_of_sort : pos:bool -> Sort.t -> Ident.evar Set.Poly.t
-    val polar_evs_of_opsig : pos:bool -> Sort.o -> Ident.evar Set.Poly.t
-    val polar_evs_of_triple : pos:bool -> Sort.c -> Ident.evar Set.Poly.t
-    val rvs_of_cont : Sort.e -> Ident.rvar Set.Poly.t
-    val rvs_of_sort : Sort.t -> Ident.rvar Set.Poly.t
-    val rvs_of_opsig : Sort.o -> Ident.rvar Set.Poly.t
-    val rvs_of_triple : Sort.c -> Ident.rvar Set.Poly.t
-    val polar_rvs_of_cont : pos:bool -> Sort.e -> Ident.rvar Set.Poly.t
-    val polar_rvs_of_sort : pos:bool -> Sort.t -> Ident.rvar Set.Poly.t
-    val polar_rvs_of_opsig : pos:bool -> Sort.o -> Ident.rvar Set.Poly.t
-    val polar_rvs_of_triple : pos:bool -> Sort.c -> Ident.rvar Set.Poly.t
+    val svs_of_cont : Sort.e -> Ident.svar_set
+    val svs_of_sort : Sort.t -> Ident.svar_set
+    val svs_of_opsig : Sort.o -> Ident.svar_set
+    val svs_of_triple : Sort.c -> Ident.svar_set
+    val polar_svs_of_cont : pos:bool -> Sort.e -> Ident.svar_set
+    val polar_svs_of_sort : pos:bool -> Sort.t -> Ident.svar_set
+    val polar_svs_of_opsig : pos:bool -> Sort.o -> Ident.svar_set
+    val polar_svs_of_triple : pos:bool -> Sort.c -> Ident.svar_set
+    val evs_of_cont : Sort.e -> Ident.evar_set
+    val evs_of_sort : Sort.t -> Ident.evar_set
+    val evs_of_opsig : Sort.o -> Ident.evar_set
+    val evs_of_triple : Sort.c -> Ident.evar_set
+    val polar_evs_of_cont : pos:bool -> Sort.e -> Ident.evar_set
+    val polar_evs_of_sort : pos:bool -> Sort.t -> Ident.evar_set
+    val polar_evs_of_opsig : pos:bool -> Sort.o -> Ident.evar_set
+    val polar_evs_of_triple : pos:bool -> Sort.c -> Ident.evar_set
+    val rvs_of_cont : Sort.e -> Ident.rvar_set
+    val rvs_of_sort : Sort.t -> Ident.rvar_set
+    val rvs_of_opsig : Sort.o -> Ident.rvar_set
+    val rvs_of_triple : Sort.c -> Ident.rvar_set
+    val polar_rvs_of_cont : pos:bool -> Sort.e -> Ident.rvar_set
+    val polar_rvs_of_sort : pos:bool -> Sort.t -> Ident.rvar_set
+    val polar_rvs_of_opsig : pos:bool -> Sort.o -> Ident.rvar_set
+    val polar_rvs_of_triple : pos:bool -> Sort.c -> Ident.rvar_set
     val elim_pure_cont : Sort.e -> Sort.e
     val elim_pure_opsig : Sort.o -> Sort.o
     val elim_pure_val_type : Sort.t -> Sort.t
@@ -434,7 +373,13 @@ module Type = struct
     val mk_var : ?info:info -> Ident.tvar -> Sort.t -> t
     val mk_fresh_var : Sort.t -> t
     val mk_fsym_app : ?info:info -> fun_sym -> t list -> t
-    val mk_fvar_app : ?info:info -> Ident.tvar -> Sort.t list -> t list -> t
+
+    val mk_fvar_app :
+      ?info:info -> Ident.tvar -> Sort.t list -> Sort.t -> t list -> t
+
+    val fvar_app_of_senv :
+      ?info:info -> Ident.tvar -> sort_env_list -> Sort.t -> t
+
     val mk_let_term : ?info:info -> Ident.tvar -> Sort.t -> t -> t -> t
     val mk_dummy : Sort.t -> t
     val of_value : Value.t -> t
@@ -444,7 +389,7 @@ module Type = struct
 
     val let_var : t -> sort_bind * info
     val let_app : t -> fun_sym * t list * info
-    val let_fvar_app : t -> Ident.tvar * Sort.t list * t list * info
+    val let_fvar_app : t -> Ident.tvar * Sort.t list * Sort.t * t list * info
     val let_funcall : t -> string * t list * info
     val let_let_term : t -> Ident.tvar * Sort.t * t * t * info
 
@@ -457,7 +402,7 @@ module Type = struct
     val subst_sorts_fun_sym : sort_subst -> fun_sym -> fun_sym
     val subst_conts_fun_sym : eff_subst -> fun_sym -> fun_sym
     val subst_opsigs_fun_sym : opsig_subst -> fun_sym -> fun_sym
-    val neg_fsym : fun_sym -> fun_sym
+    val negate_fsym : fun_sym -> fun_sym
 
     (** Morphism *)
 
@@ -491,18 +436,19 @@ module Type = struct
     val is_uninterpreted_term : t -> bool
     val is_let_free : t -> bool
     val is_quantifier_free : t -> bool
-    val tvs_of : t -> Ident.tvar Set.Poly.t
-    val pvs_of : t -> Ident.pvar Set.Poly.t
-    val fvs_of : t -> Ident.tvar Set.Poly.t
-    val svs_of : t -> Ident.svar Set.Poly.t
-    val term_sort_env_of : ?bvs:Ident.tvar Set.Poly.t -> t -> sort_env_set
-    val pred_sort_env_of : ?bpvs:Ident.pvar Set.Poly.t -> t -> pred_sort_env_set
-    val sort_env_of : ?bpvs:Ident.pvar Set.Poly.t -> t -> sort_env_set
+    val tvs_of : t -> Ident.tvar_set
+    val pvs_of : t -> Ident.pvar_set
+    val fvs_of : t -> Ident.tvar_set
+    val svs_of : t -> Ident.svar_set
+    val term_sort_env_of : ?bvs:Ident.tvar_set -> t -> sort_env_set
+    val pred_sort_env_of : ?bpvs:Ident.pvar_set -> t -> pred_sort_env_set
+    val sort_env_of : ?bpvs:Ident.pvar_set -> t -> sort_env_set
     val value_of : t -> Value.t
     val funsyms_of : t -> fun_sym Set.Poly.t
     val predsyms_of : t -> pred_sym Set.Poly.t
     val fvar_apps_of : t -> t Set.Poly.t
-    val pathexps_of : ?bvs:Ident.tvar Set.Poly.t -> t -> t Set.Poly.t
+    val number_of_quantifiers : t -> int
+    val pathexps_of : ?bvs:Ident.tvar_set -> t -> t Set.Poly.t
     val filtered_terms_of : f:(t -> bool) -> t -> t Set.Poly.t
     val atoms_of : ?pos:bool -> t -> atom Set.Poly.t * atom Set.Poly.t
     val body_of_let : t -> t
@@ -516,8 +462,7 @@ module Type = struct
       ?map:(Ident.tvar, int) Map.Poly.t -> Ident.tvar -> t -> int
 
     val sort_of : t -> Sort.t
-    val find_div_mod_list : t list -> (t * t) Set.Poly.t
-    val find_div_mod : t -> (t * t) Set.Poly.t
+    val div_rem_of : t -> (t * t) Set.Poly.t
 
     (** Substitution *)
 
@@ -532,10 +477,12 @@ module Type = struct
     val replace_let_body : t -> t -> t
     val subst : termSubst -> t -> t
     val subst_preds : predSubst -> t -> t
+    val subst_funcs : funcSubst -> t -> t
     val subst_sorts : sort_subst -> t -> t
     val subst_conts : eff_subst -> t -> t
     val subst_opsigs : opsig_subst -> t -> t
     val aconv_tvar : t -> t
+    val aconv_tvar_norm : (unit -> Ident.tvar) -> t -> t
     val aconv_pvar : t -> t
 
     (** Observation *)
@@ -551,11 +498,8 @@ module Type = struct
 
     val elim_neq : t -> t
     val elim_ite : t -> (formula * t) list
-    val elim_pvars : Ident.tvar Set.Poly.t -> t -> t
-
-    val elim_let_with_unknowns :
-      ?map:termSubst -> Ident.tvar Set.Poly.t -> t -> t
-
+    val elim_pvars : Ident.tvar_set -> t -> t
+    val elim_let_with_unknowns : ?map:termSubst -> Ident.tvar_set -> t -> t
     val elim_let : ?map:termSubst -> t -> t
     val instantiate_div0_mod0 : t -> t
     val extend_pred_params : Ident.pvar -> sort_env_list -> t -> t
@@ -565,19 +509,16 @@ module Type = struct
 
     (** Unification and Pattern Matching *)
 
-    val unify : Ident.tvar Set.Poly.t -> t -> t -> termSubst option
-    val pattern_match : Ident.tvar Set.Poly.t -> t -> t -> termSubst option
+    val unify : Ident.tvar_set -> t -> t -> termSubst option
+    val pattern_match : Ident.tvar_set -> t -> t -> termSubst option
   end
 
   module type PredicateType = sig
     type fixpoint = Mu | Nu | Fix
     type formula
+    type formula_def
     type term
-
-    type t =
-      | Var of pred_bind
-      | Psym of pred_sym
-      | Fixpoint of fixpoint * Ident.pvar * sort_env_list * formula
+    type t = Var of pred_bind | Psym of pred_sym | Fixpoint of formula_def
 
     (** Construction *)
 
@@ -589,7 +530,7 @@ module Type = struct
 
     val let_var : t -> pred_bind
     val let_psym : t -> pred_sym
-    val let_fix : t -> fixpoint * Ident.pvar * sort_env_list * formula
+    val let_fix : t -> formula_def
 
     (** Fixpoint Operators *)
 
@@ -598,6 +539,10 @@ module Type = struct
 
     (** Predicate Symbols *)
 
+    val is_flippable_psym : pred_sym -> bool
+    val is_negatable_psym : pred_sym -> bool
+    val is_included_psym : pred_sym -> pred_sym -> bool
+    val flip_psym : pred_sym -> pred_sym
     val negate_psym : pred_sym -> pred_sym
     val str_of_psym : pred_sym -> string
 
@@ -611,13 +556,13 @@ module Type = struct
     val is_psym : t -> bool
     val is_fix : t -> bool
     val is_infix_psym : pred_sym -> bool
-    val tvs_of : t -> Ident.tvar Set.Poly.t
-    val pvs_of : t -> Ident.pvar Set.Poly.t
-    val fvs_of : t -> Ident.tvar Set.Poly.t
-    val svs_of : t -> Ident.svar Set.Poly.t
-    val term_sort_env_of : ?bvs:Ident.tvar Set.Poly.t -> t -> sort_env_set
-    val pred_sort_env_of : ?bpvs:Ident.pvar Set.Poly.t -> t -> pred_sort_env_set
-    val sort_env_of : ?bpvs:Ident.pvar Set.Poly.t -> t -> sort_env_set
+    val tvs_of : t -> Ident.tvar_set
+    val pvs_of : t -> Ident.pvar_set
+    val fvs_of : t -> Ident.tvar_set
+    val svs_of : t -> Ident.svar_set
+    val term_sort_env_of : ?bvs:Ident.tvar_set -> t -> sort_env_set
+    val pred_sort_env_of : ?bpvs:Ident.pvar_set -> t -> pred_sort_env_set
+    val sort_env_of : ?bpvs:Ident.pvar_set -> t -> sort_env_set
     val terms_of : t -> term Set.Poly.t
     val fvar_apps_of : t -> term Set.Poly.t
     val nesting_level : t -> int
@@ -638,11 +583,12 @@ module Type = struct
     val subst_conts : eff_subst -> t -> t
     val subst_opsigs : opsig_subst -> t -> t
     val aconv_tvar : t -> t
+    val aconv_tvar_norm : (unit -> Ident.tvar) -> t -> t
     val aconv_pvar : t -> t
 
     (** Transformation *)
 
-    val negate : ?negate_formula:(formula -> formula) -> t -> t
+    val negate : ?negate_formula:(formula -> formula) -> t -> t option
     val complete_psort : pred_sort_env_map -> t -> t
     val extend_pred_params : Ident.pvar -> sort_env_list -> t -> t
   end
@@ -652,6 +598,7 @@ module Type = struct
     type term
     type termSubst
     type predSubst
+    type funcSubst
     type formula
 
     type t =
@@ -703,18 +650,18 @@ module Type = struct
     val is_pvar_app_of : Ident.pvar -> t -> bool
     val is_let_free : t -> bool
     val is_quantifier_free : t -> bool
-    val tvs_of : t -> Ident.tvar Set.Poly.t
-    val pvs_of : t -> Ident.pvar Set.Poly.t
-    val fvs_of : t -> Ident.tvar Set.Poly.t
-    val svs_of : t -> Ident.svar Set.Poly.t
-    val term_sort_env_of : ?bvs:Ident.tvar Set.Poly.t -> t -> sort_env_set
-    val pred_sort_env_of : ?bpvs:Ident.pvar Set.Poly.t -> t -> pred_sort_env_set
-    val sort_env_of : ?bpvs:Ident.pvar Set.Poly.t -> t -> sort_env_set
+    val tvs_of : t -> Ident.tvar_set
+    val pvs_of : t -> Ident.pvar_set
+    val fvs_of : t -> Ident.tvar_set
+    val svs_of : t -> Ident.svar_set
+    val term_sort_env_of : ?bvs:Ident.tvar_set -> t -> sort_env_set
+    val pred_sort_env_of : ?bpvs:Ident.pvar_set -> t -> pred_sort_env_set
+    val sort_env_of : ?bpvs:Ident.pvar_set -> t -> sort_env_set
     val occur : Ident.pvar -> t -> bool
     val atoms_of : ?pos:bool -> t -> t Set.Poly.t * t Set.Poly.t
     val funsyms_of : t -> fun_sym Set.Poly.t
     val predsyms_of : t -> pred_sym Set.Poly.t
-    val pathexps_of : ?bvs:Ident.tvar Set.Poly.t -> t -> term Set.Poly.t
+    val pathexps_of : ?bvs:Ident.tvar_set -> t -> term Set.Poly.t
     val filtered_terms_of : f:(term -> bool) -> t -> term Set.Poly.t
     val terms_of : t -> term Set.Poly.t
     val fvar_apps_of : t -> term Set.Poly.t
@@ -732,7 +679,7 @@ module Type = struct
 
     val let_env_of : ?map:termSubst -> t -> termSubst
     val let_sort_env_of : ?map:sort_env_map -> t -> sort_env_map
-    val find_div_mod : t -> (term * term) Set.Poly.t
+    val div_rem_of : t -> (term * term) Set.Poly.t
 
     (** Substitution *)
 
@@ -746,19 +693,22 @@ module Type = struct
     val refresh_tvar : sort_env_map * t -> sort_env_map * t
     val subst : termSubst -> t -> t
     val subst_preds : predSubst -> t -> formula
+    val subst_funcs : funcSubst -> t -> t
     val subst_neg : Ident.pvar -> t -> t
     val subst_sorts : sort_subst -> t -> t
     val subst_conts : eff_subst -> t -> t
     val subst_opsigs : opsig_subst -> t -> t
     val aconv_tvar : t -> t
+    val aconv_tvar_norm : (unit -> Ident.tvar) -> t -> t
     val aconv_pvar : t -> t
 
     (** Transformation *)
 
-    val negate : ?negate_formula:(formula -> formula) -> t -> t
+    val negate : ?negate_formula:(formula -> formula) -> t -> t option
     val complete_psort : pred_sort_env_map -> t -> t
     val elim_neq : t -> formula
     val elim_ite : t -> formula
+    val elim_ite_prob : (formula -> formula) -> t -> formula Set.Poly.t
     val instantiate_div0_mod0 : t -> t
 
     val replace_div_mod :
@@ -769,8 +719,8 @@ module Type = struct
 
     (** Unification and Pattern Matching *)
 
-    val unify : Ident.tvar Set.Poly.t -> t -> t -> termSubst option
-    val pattern_match : Ident.tvar Set.Poly.t -> t -> t -> termSubst option
+    val unify : Ident.tvar_set -> t -> t -> termSubst option
+    val pattern_match : Ident.tvar_set -> t -> t -> termSubst option
   end
 
   module type FormulaType = sig
@@ -780,6 +730,7 @@ module Type = struct
     type predicate_fixpoint
     type termSubst
     type predSubst
+    type funcSubst
     type unop = Not
     type binop = And | Or | Imply | Iff | Xor
     type binder = Forall | Exists | Random of rand
@@ -789,9 +740,15 @@ module Type = struct
       | UnaryOp of unop * t * info
       | BinaryOp of binop * t * t * info
       | Bind of binder * sort_env_list * t * info
-      | LetRec of
-          (predicate_fixpoint * Ident.pvar * sort_env_list * t) list * t * info
+      | LetRec of t def list * t * info
       | LetFormula of Ident.tvar * Sort.t * term * t * info
+
+    and 'a def = {
+      kind : predicate_fixpoint;
+      name : Ident.pvar;
+      args : sort_env_list;
+      body : 'a;
+    }
 
     (** Sorts *)
 
@@ -828,13 +785,7 @@ module Type = struct
     val mk_random : ?info:info -> rand -> sort_env_list -> t -> t
     val mk_randoms : (Ident.tvar * rand) list -> t -> t
     val mk_let_formula : ?info:info -> Ident.tvar -> Sort.t -> term -> t -> t
-
-    val mk_letrec :
-      ?info:info ->
-      (predicate_fixpoint * Ident.pvar * sort_env_list * t) list ->
-      t ->
-      t
-
+    val mk_letrec : ?info:info -> t def list -> t -> t
     val mk_false : ?info:info -> unit -> t
     val mk_true : ?info:info -> unit -> t
     val mk_bool : bool -> t
@@ -851,6 +802,7 @@ module Type = struct
     val leq : term -> term -> t
     val lt : term -> term -> t
     val eq : term -> term -> t
+    val eqs : term list -> t list
     val neq : term -> term -> t
     val mk_range : term -> Z.t -> Z.t -> t list
     val mk_range_opt : term -> Z.t option -> Z.t option -> t list
@@ -874,22 +826,18 @@ module Type = struct
     val let_exists : t -> sort_env_list * t * info
     val let_forall_or_formula : t -> sort_env_list * t * info
     val let_exists_or_formula : t -> sort_env_list * t * info
-
-    val let_letrec :
-      t -> (predicate_fixpoint * Ident.pvar * sort_env_list * t) list * t * info
-
+    val let_letrec : t -> t def list * t * info
     val body_of_let : t -> t
 
     (** Morphism *)
+
+    val map_funcs : f:('a -> 'b) -> 'a def list -> 'b def list
 
     val fold :
       f:
         < fatom : atom -> 'a
         ; fbind : binder -> sort_env_list -> 'a -> 'a
-        ; fletrec :
-            (predicate_fixpoint * Ident.pvar * sort_env_list * 'a) list ->
-            'a ->
-            'a
+        ; fletrec : 'a def list -> 'a -> 'a
         ; fnot : 'a -> 'a
         ; fand : 'a -> 'a -> 'a
         ; for_ : 'a -> 'a -> 'a
@@ -932,20 +880,20 @@ module Type = struct
     val is_let_formula : t -> bool
     val is_let_free : t -> bool
     val is_quantifier_free : t -> bool
-    val tvs_of : t -> Ident.tvar Set.Poly.t
-    val pvs_of : t -> Ident.pvar Set.Poly.t
-    val fvs_of : t -> Ident.tvar Set.Poly.t
-    val svs_of : t -> Ident.svar Set.Poly.t
-    val term_sort_env_of : ?bvs:Ident.tvar Set.Poly.t -> t -> sort_env_set
-    val pred_sort_env_of : ?bpvs:Ident.pvar Set.Poly.t -> t -> pred_sort_env_set
-    val sort_env_of : ?bpvs:Ident.pvar Set.Poly.t -> t -> sort_env_set
+    val tvs_of : t -> Ident.tvar_set
+    val pvs_of : t -> Ident.pvar_set
+    val fvs_of : t -> Ident.tvar_set
+    val svs_of : t -> Ident.svar_set
+    val term_sort_env_of : ?bvs:Ident.tvar_set -> t -> sort_env_set
+    val pred_sort_env_of : ?bpvs:Ident.pvar_set -> t -> pred_sort_env_set
+    val sort_env_of : ?bpvs:Ident.pvar_set -> t -> sort_env_set
     val conjuncts_of : t -> t Set.Poly.t
     val conjuncts_list_of : t -> t list
     val disjuncts_of : t -> t Set.Poly.t
     val disjuncts_list_of : t -> t list
     val funsyms_of : t -> fun_sym Set.Poly.t
     val predsyms_of : t -> pred_sym Set.Poly.t
-    val pathexps_of : ?bvs:Ident.tvar Set.Poly.t -> t -> term Set.Poly.t
+    val pathexps_of : ?bvs:Ident.tvar_set -> t -> term Set.Poly.t
     val terms_of : t -> term Set.Poly.t
     val fvar_apps_of : t -> term Set.Poly.t
     val filtered_terms_of : f:(term -> bool) -> t -> term Set.Poly.t
@@ -955,7 +903,7 @@ module Type = struct
 
     val let_env_of : ?map:termSubst -> t -> termSubst
     val let_sort_env_of : ?map:sort_env_map -> t -> sort_env_map
-    val find_div_mod : t -> (term * term) Set.Poly.t
+    val div_rem_of : t -> (term * term) Set.Poly.t
     val nesting_level : t -> int
     val number_of_quantifiers : t -> int
 
@@ -976,7 +924,7 @@ module Type = struct
     val bind_fvs : binder -> t -> t
     val bind_fvs_with_forall : t -> t
     val bind_fvs_with_exists : t -> t
-    val quantify_except : ?exists:bool -> Ident.tvar Set.Poly.t -> t -> int * t
+    val quantify_except : ?exists:bool -> Ident.tvar_set -> t -> int * t
 
     (** Substitution *)
 
@@ -988,13 +936,15 @@ module Type = struct
 
     val alpha_rename_let : ?map:Ident.tvar_map -> t -> t
     val refresh_tvar : sort_env_map * t -> sort_env_map * t
-    val refresh_except : Ident.tvar Set.Poly.t -> t -> sort_env_map * t
+    val refresh_except : Ident.tvar_set -> t -> sort_env_map * t
     val replace_let_body : t -> t -> t
     val replace_let_term_body : term -> t -> t
     val subst : termSubst -> t -> t
     val subst_preds : predSubst -> t -> t
+    val subst_funcs : funcSubst -> t -> t
     val subst_neg : Ident.pvar -> t -> t
     val aconv_tvar : t -> t
+    val aconv_tvar_norm : (unit -> Ident.tvar) -> t -> t
     val aconv_pvar : t -> t
     val subst_sorts : sort_subst -> t -> t
     val subst_conts : eff_subst -> t -> t
@@ -1015,11 +965,8 @@ module Type = struct
     val move_quantifiers_to_front : t -> t
     val elim_neq : t -> t
     val elim_ite : t -> t
-    val elim_pvars : Ident.tvar Set.Poly.t -> t -> t
-
-    val elim_let_with_unknowns :
-      ?map:termSubst -> Ident.tvar Set.Poly.t -> t -> t
-
+    val elim_pvars : Ident.tvar_set -> t -> t
+    val elim_let_with_unknowns : ?map:termSubst -> Ident.tvar_set -> t -> t
     val elim_let : ?map:termSubst -> t -> t
     val elim_unused_bounds : t -> t
     val elim_let_equisat : t -> sort_env_map * t
@@ -1085,7 +1032,7 @@ module Type = struct
     val mk_eqs : term list -> atom list
     val mk_if_then_else : ?info:info -> term -> term -> term -> term
     val ifte : ?info:info -> formula -> term -> term -> term
-    val neg : term -> term
+    val negate : term -> term
 
     (** Destruction *)
 
@@ -1108,13 +1055,13 @@ module Type = struct
     type fun_sym +=
       | Int of Z.t
       | Neg
+      | Nop
       | Abs
       | Add
       | Sub
-      | Mult
-      | Div
-      | Mod
-      | Rem
+      | Mul
+      | Div of Value.modulo
+      | Rem of Value.modulo
       | Power
 
     type pred_sym += Leq | Geq | Lt | Gt | PDiv | NotPDiv
@@ -1131,10 +1078,9 @@ module Type = struct
     val mk_abs : ?info:info -> iterm -> iterm
     val mk_add : ?info:info -> iterm -> iterm -> iterm
     val mk_sub : ?info:info -> iterm -> iterm -> iterm
-    val mk_mult : ?info:info -> iterm -> iterm -> iterm
-    val mk_div : ?info:info -> iterm -> iterm -> iterm
-    val mk_mod : ?info:info -> iterm -> iterm -> iterm
-    val mk_rem : ?info:info -> iterm -> iterm -> iterm
+    val mk_mul : ?info:info -> iterm -> iterm -> iterm
+    val mk_div : ?info:info -> Value.modulo -> iterm -> iterm -> iterm
+    val mk_rem : ?info:info -> Value.modulo -> iterm -> iterm -> iterm
     val mk_power : ?info:info -> iterm -> iterm -> iterm
     val mk_min : ?info:info -> iterm -> iterm -> iterm
     val mk_max : ?info:info -> iterm -> iterm -> iterm
@@ -1156,10 +1102,9 @@ module Type = struct
     val let_abs : iterm -> iterm * info
     val let_add : iterm -> iterm * iterm * info
     val let_sub : iterm -> iterm * iterm * info
-    val let_mult : iterm -> iterm * iterm * info
-    val let_div : iterm -> iterm * iterm * info
-    val let_mod : iterm -> iterm * iterm * info
-    val let_rem : iterm -> iterm * iterm * info
+    val let_mul : iterm -> iterm * iterm * info
+    val let_div : iterm -> Value.modulo * iterm * iterm * info
+    val let_rem : iterm -> Value.modulo * iterm * iterm * info
     val let_power : iterm -> iterm * iterm * info
     val let_leq : iatom -> iterm * iterm * info
     val let_geq : iatom -> iterm * iterm * info
@@ -1179,9 +1124,8 @@ module Type = struct
     val is_abs : iterm -> bool
     val is_add : iterm -> bool
     val is_sub : iterm -> bool
-    val is_mult : iterm -> bool
+    val is_mul : iterm -> bool
     val is_div : iterm -> bool
-    val is_mod : iterm -> bool
     val is_rem : iterm -> bool
     val is_power : iterm -> bool
     val is_leq : iatom -> bool
@@ -1203,7 +1147,7 @@ module Type = struct
       | RAbs
       | RAdd
       | RSub
-      | RMult
+      | RMul
       | RDiv
       | RPower
 
@@ -1220,7 +1164,7 @@ module Type = struct
     val mk_rabs : ?info:info -> rterm -> rterm
     val mk_radd : ?info:info -> rterm -> rterm -> rterm
     val mk_rsub : ?info:info -> rterm -> rterm -> rterm
-    val mk_rmult : ?info:info -> rterm -> rterm -> rterm
+    val mk_rmul : ?info:info -> rterm -> rterm -> rterm
     val mk_rdiv : ?info:info -> rterm -> rterm -> rterm
     val mk_rpower : ?info:info -> rterm -> rterm -> rterm
     val mk_rmin : ?info:info -> rterm -> rterm -> rterm
@@ -1242,7 +1186,7 @@ module Type = struct
     val let_rabs : rterm -> rterm * info
     val let_radd : rterm -> rterm * rterm * info
     val let_rsub : rterm -> rterm * rterm * info
-    val let_rmult : rterm -> rterm * rterm * info
+    val let_rmul : rterm -> rterm * rterm * info
     val let_rdiv : rterm -> rterm * rterm * info
     val let_rpower : rterm -> rterm * rterm * info
     val let_rleq : ratom -> rterm * rterm * info
@@ -1262,7 +1206,7 @@ module Type = struct
     val is_rabs : rterm -> bool
     val is_radd : rterm -> bool
     val is_rsub : rterm -> bool
-    val is_rmult : rterm -> bool
+    val is_rmul : rterm -> bool
     val is_rdiv : rterm -> bool
     val is_rpower : rterm -> bool
     val is_rleq : ratom -> bool
@@ -1274,11 +1218,14 @@ module Type = struct
   module type T_bvType = sig
     type bvterm
     type bvatom
-    type size = (int (* bits *) * bool (* signed *)) option
+    type size = int (* bits *) option
+    type signed = bool (* signed/unsigned *) option
 
     type fun_sym +=
       | BVNum of size * Z.t
       | BVNeg of size
+      | BVSEXT of int * int
+      | BVZEXT of int * int
       | BVSHL of size
       | BVLSHR of size
       | BVASHR of size
@@ -1286,68 +1233,88 @@ module Type = struct
       | BVAnd of size
       | BVAdd of size
       | BVSub of size
-      | BVMult of size
-      | BVDiv of size
-      | BVMod of size
-      | BVRem of size
+      | BVMul of size
+      | BVDiv of size * signed
+      | BVRem of size * signed
 
-    type pred_sym += BVLeq of size | BVGeq of size | BVLt of size | BVGt of size
+    type pred_sym +=
+      | BVLeq of size * signed
+      | BVGeq of size * signed
+      | BVLt of size * signed
+      | BVGt of size * signed
+
     type Sort.t += SBV of size
 
     (** Construction *)
 
     val mk_bvnum : ?info:info -> size:size -> Z.t -> bvterm
     val mk_bvneg : ?info:info -> size:size -> bvterm -> bvterm
+    val mk_bvsext : ?info:info -> int -> int -> bvterm -> bvterm
+    val mk_bvzext : ?info:info -> int -> int -> bvterm -> bvterm
     val mk_bvadd : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
     val mk_bvsub : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
-    val mk_bvmult : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
-    val mk_bvdiv : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
-    val mk_bvmod : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
-    val mk_bvrem : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
+    val mk_bvmul : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
+
+    val mk_bvdiv :
+      ?info:info -> size:size -> signed:signed -> bvterm -> bvterm -> bvterm
+
+    val mk_bvrem :
+      ?info:info -> size:size -> signed:signed -> bvterm -> bvterm -> bvterm
+
     val mk_bvshl : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
     val mk_bvlshr : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
     val mk_bvashr : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
     val mk_bvor : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
     val mk_bvand : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
-    val mk_bvleq : ?info:info -> size:size -> bvterm -> bvterm -> bvatom
-    val mk_bvgeq : ?info:info -> size:size -> bvterm -> bvterm -> bvatom
-    val mk_bvlt : ?info:info -> size:size -> bvterm -> bvterm -> bvatom
-    val mk_bvgt : ?info:info -> size:size -> bvterm -> bvterm -> bvatom
+
+    val mk_bvleq :
+      ?info:info -> size:size -> signed:signed -> bvterm -> bvterm -> bvatom
+
+    val mk_bvgeq :
+      ?info:info -> size:size -> signed:signed -> bvterm -> bvterm -> bvatom
+
+    val mk_bvlt :
+      ?info:info -> size:size -> signed:signed -> bvterm -> bvterm -> bvatom
+
+    val mk_bvgt :
+      ?info:info -> size:size -> signed:signed -> bvterm -> bvterm -> bvatom
 
     (** Destruction *)
 
     val let_bv : bvterm -> size * Z.t
     val let_bvneg : bvterm -> size * bvterm * info
+    val let_bvsext : bvterm -> int * int * bvterm * info
+    val let_bvzext : bvterm -> int * int * bvterm * info
     val let_bvadd : bvterm -> size * bvterm * bvterm * info
     val let_bvsub : bvterm -> size * bvterm * bvterm * info
-    val let_bvmult : bvterm -> size * bvterm * bvterm * info
-    val let_bvdiv : bvterm -> size * bvterm * bvterm * info
-    val let_bvmod : bvterm -> size * bvterm * bvterm * info
-    val let_bvrem : bvterm -> size * bvterm * bvterm * info
+    val let_bvmul : bvterm -> size * bvterm * bvterm * info
+    val let_bvdiv : bvterm -> size * signed * bvterm * bvterm * info
+    val let_bvrem : bvterm -> size * signed * bvterm * bvterm * info
     val let_bvshl : bvterm -> size * bvterm * bvterm * info
     val let_bvlshr : bvterm -> size * bvterm * bvterm * info
     val let_bvashr : bvterm -> size * bvterm * bvterm * info
     val let_bvor : bvterm -> size * bvterm * bvterm * info
     val let_bvand : bvterm -> size * bvterm * bvterm * info
-    val let_bvleq : bvatom -> size * bvterm * bvterm * info
-    val let_bvgeq : bvatom -> size * bvterm * bvterm * info
-    val let_bvlt : bvatom -> size * bvterm * bvterm * info
-    val let_bvgt : bvatom -> size * bvterm * bvterm * info
+    val let_bvleq : bvatom -> size * signed * bvterm * bvterm * info
+    val let_bvgeq : bvatom -> size * signed * bvterm * bvterm * info
+    val let_bvlt : bvatom -> size * signed * bvterm * bvterm * info
+    val let_bvgt : bvatom -> size * signed * bvterm * bvterm * info
 
     (** Observation *)
 
     val bits_of : size -> int
-    val signed_of : size -> bool
+    val signed_of : signed -> bool
     val is_bv_fsym : fun_sym -> bool
     val is_bv_psym : pred_sym -> bool
     val is_sbv : bvterm -> bool
     val is_bv : bvterm -> bool
     val is_bvneg : bvterm -> bool
+    val is_bvsext : bvterm -> bool
+    val is_bvzext : bvterm -> bool
     val is_bvadd : bvterm -> bool
     val is_bvsub : bvterm -> bool
-    val is_bvmult : bvterm -> bool
+    val is_bvmul : bvterm -> bool
     val is_bvdiv : bvterm -> bool
-    val is_bvmod : bvterm -> bool
     val is_bvrem : bvterm -> bool
     val is_bvshl : bvterm -> bool
     val is_bvlshr : bvterm -> bool
@@ -1359,6 +1326,7 @@ module Type = struct
     val is_bvlt : bvatom -> bool
     val is_bvgt : bvatom -> bool
     val str_of_size : size -> string
+    val str_of_signed : signed -> string
   end
 
   module type T_irbType = sig
@@ -1368,7 +1336,14 @@ module Type = struct
 
     type term
     type atom
-    type fun_sym += IntToReal | RealToInt | IntToBV of size | BVToInt of size
+    type formula
+
+    type fun_sym +=
+      | IntToReal
+      | RealToInt
+      | IntToBV of size
+      | BVToInt of size * signed
+
     type pred_sym += IsInt
 
     (** Construction *)
@@ -1376,9 +1351,10 @@ module Type = struct
     val mk_int_to_real : ?info:info -> term -> term
     val mk_real_to_int : ?info:info -> term -> term
     val mk_int_to_bv : ?info:info -> size:size -> term -> term
-    val mk_bv_to_int : ?info:info -> size:size -> term -> term
+    val mk_bv_to_int : ?info:info -> size:size -> signed:signed -> term -> term
     val mk_is_int : ?info:info -> term -> atom
     val to_int_if_rb : term -> term
+    val to_real_if_int : term -> term
 
     (** Destruction *)
 
@@ -1395,9 +1371,17 @@ module Type = struct
     val let_int_to_real : term -> term * info
     val let_real_to_int : term -> term * info
     val let_int_to_bv : term -> size * term * info
-    val let_bv_to_int : term -> size * term * info
+    val let_bv_to_int : term -> size * signed * term * info
     val let_is_int : atom -> term * info
     val origin_of : Sort.t list -> term list
+
+    (* *)
+    val sort_of : (term * Sort.t) list -> Sort.t
+    val eq_of : Sort.t -> (term * Sort.t) list -> (term list * term) * atom
+    val ineq_of : Sort.t -> (term * Sort.t) list -> (term list * term) * atom
+
+    val conj_with_bool_of :
+      (term * Sort.t) list -> (term list * term) list * formula
   end
 
   module type T_numType = sig
@@ -1407,12 +1391,12 @@ module Type = struct
     type fun_sym +=
       | Value of string * Ident.svar
       | NNeg of Ident.svar
+      | NSEXT of int * Ident.svar * int * Ident.svar
       | NAdd of Ident.svar
       | NSub of Ident.svar
-      | NMult of Ident.svar
-      | NDiv of Ident.svar
-      | NMod of Ident.svar
-      | NRem of Ident.svar
+      | NMul of Ident.svar
+      | NDiv of Ident.svar * Value.modulo
+      | NRem of Ident.svar * Value.modulo
       | NPower of Ident.svar
 
     type pred_sym +=
@@ -1427,14 +1411,14 @@ module Type = struct
 
     val mk_value : ?info:info -> string -> term
     val mk_neg_value : ?info:info -> string -> term
+    val mk_nneg : ?info:info -> term -> term
+    val mk_nsext : ?info:info -> int -> int -> term -> term
     val mk_nadd : ?info:info -> term -> term -> term
     val mk_nsub : ?info:info -> term -> term -> term
-    val mk_nmult : ?info:info -> term -> term -> term
-    val mk_ndiv : ?info:info -> term -> term -> term
-    val mk_nmod : ?info:info -> term -> term -> term
-    val mk_nrem : ?info:info -> term -> term -> term
+    val mk_nmul : ?info:info -> term -> term -> term
+    val mk_ndiv : ?info:info -> Value.modulo -> term -> term -> term
+    val mk_nrem : ?info:info -> Value.modulo -> term -> term -> term
     val mk_npower : ?info:info -> term -> term -> term
-    val mk_nneg : ?info:info -> term -> term
     val mk_ngeq : ?info:info -> term -> term -> atom
     val mk_nleq : ?info:info -> term -> term -> atom
     val mk_ngt : ?info:info -> term -> term -> atom
@@ -1443,14 +1427,14 @@ module Type = struct
     (** Destruction *)
 
     val let_value : term -> string * info
+    val let_nneg : term -> term * info
+    val let_nsext : term -> int * int * term * info
     val let_nadd : term -> term * term * info
     val let_nsub : term -> term * term * info
-    val let_nmult : term -> term * term * info
+    val let_nmul : term -> term * term * info
     val let_ndiv : term -> term * term * info
-    val let_nmod : term -> term * term * info
     val let_nrem : term -> term * term * info
     val let_npower : term -> term * term * info
-    val let_nneg : term -> term * info
     val let_ngeq : atom -> term * term * info
     val let_nleq : atom -> term * term * info
     val let_ngt : atom -> term * term * info
@@ -1458,14 +1442,14 @@ module Type = struct
 
     (** Observation *)
 
+    val is_nneg : term -> bool
+    val is_nsext : term -> bool
     val is_nadd : term -> bool
     val is_nsub : term -> bool
-    val is_nmult : term -> bool
+    val is_nmul : term -> bool
     val is_ndiv : term -> bool
-    val is_nmod : term -> bool
     val is_nrem : term -> bool
     val is_npower : term -> bool
-    val is_nneg : term -> bool
     val is_ngeq : atom -> bool
     val is_nleq : atom -> bool
     val is_ngt : atom -> bool
@@ -1474,7 +1458,7 @@ module Type = struct
 
     (** Function Symbols *)
 
-    val fsym_of_num_fsym : fun_sym -> Sort.t -> fun_sym
+    val fsym_of_num_fsym : fun_sym -> Sort.t list -> fun_sym
     val psym_of_num_psym : pred_sym -> Sort.t -> pred_sym
   end
 
@@ -1657,9 +1641,9 @@ module Type = struct
     val full_name_of : t -> string
     val short_name_of : t -> string
     val sort_of : t -> Sort.t
-    val svs_of : t -> Ident.svar Set.Poly.t
-    val evs_of : t -> Ident.evar Set.Poly.t
-    val rvs_of : t -> Ident.rvar Set.Poly.t
+    val svs_of : t -> Ident.svar_set
+    val evs_of : t -> Ident.evar_set
+    val rvs_of : t -> Ident.rvar_set
     val pat_match_sort : t -> t -> opsig_subst * sort_subst * eff_subst
     val is_dt : t -> bool
     val is_codt : t -> bool
@@ -1818,11 +1802,17 @@ module Type = struct
     type t = (Ident.tvar, term) Map.Poly.t
 
     val str_of : t -> string
+    val make : name:string -> (Ident.tvar * Sort.t) list -> term list -> t
   end
 
   module type PredSubstType = sig
     type formula
     type t = (Ident.pvar, sort_env_list * formula) Map.Poly.t
+  end
+
+  module type FuncSubstType = sig
+    type term
+    type t = (Ident.tvar, sort_env_list * term) Map.Poly.t
   end
 
   module type FunEnvType = sig
@@ -1907,6 +1897,7 @@ module rec Term :
      and type formula := Formula.t
      and type termSubst := TermSubst.t
      and type predSubst := PredSubst.t
+     and type funcSubst := FuncSubst.t
      and type dtenv := DTEnv.t) = struct
   type t =
     | Var of Ident.tvar * Sort.t * info
@@ -1930,6 +1921,7 @@ module rec Term :
   let is_int_ref_sort = Stdlib.( = ) T_int.SRefInt
   let is_real_sort = Stdlib.( = ) T_real.SReal
   let is_bv_sort = function T_bv.SBV _ -> true | _ -> false
+  let is_ir_sort s = is_int_sort s || is_real_sort s
   let is_irb_sort s = is_int_sort s || is_real_sort s || is_bv_sort s
   let is_dt_sort s = match s with T_dt.SDT _ -> true | _ -> false
   let is_array_sort = function T_array.SArray _ -> true | _ -> false
@@ -1940,18 +1932,19 @@ module rec Term :
     | Sort.SVar svar -> Ident.svar_equal sv svar
     | Sort.SArrow (s, c) -> occurs sv s || occurs_triple sv c
     | Sort.SPoly (svs, s) -> (not (Set.mem svs sv)) && occurs sv s
-    | T_bool.SBool | T_int.SInt | T_int.SRefInt | T_real.SReal
-    | T_string.SString | T_sequence.SSequence _ | T_regex.SRegEx ->
+    | T_bool.SBool | T_int.SInt | T_real.SReal | T_bv.SBV _ | T_string.SString
+    | T_sequence.SSequence _ | T_regex.SRegEx ->
         false
+    | T_array.SArray (s1, s2) -> occurs sv s1 || occurs sv s2
     | T_tuple.STuple sorts -> List.exists sorts ~f:(occurs sv)
-    | T_ref.SRef sort -> occurs sv sort
     | T_dt.SDT dt -> List.exists (Datatype.params_of dt (*ToDo*)) ~f:(occurs sv)
     | T_dt.SUS (_, sorts) -> List.exists sorts ~f:(occurs sv)
-    | T_array.SArray (s1, s2) -> occurs sv s1 || occurs sv s2
+    | T_int.SRefInt -> false
+    | T_ref.SRef sort -> occurs sv sort
     | _ -> failwith "[occurs] unknown sort"
 
   and occurs_cont sv = function
-    | Sort.EVar _ | Sort.Pure | Sort.Closed -> false
+    | Sort.(EVar _ | Pure | Closed) -> false
     | Sort.Eff (c1, c2) -> occurs_triple sv c1 || occurs_triple sv c2
     | _ -> failwith "occurs_cont"
 
@@ -1995,12 +1988,20 @@ module rec Term :
             (str_of_sort s)
     | T_bool.SBool -> "bool"
     | T_int.SInt -> "int"
-    | T_int.SRefInt -> "int*"
     | T_real.SReal -> "real"
-    | T_bv.SBV size -> sprintf "bv(%s)" (T_bv.str_of_size size)
+    | T_bv.SBV size -> sprintf "bv%s" (T_bv.str_of_size size)
+    | T_string.SString -> "string"
+    | T_sequence.SSequence true -> "fin_sequence"
+    | T_sequence.SSequence false -> "inf_sequence"
+    | T_regex.SRegEx -> "regex"
+    | T_array.SArray (s1, s2) ->
+        sprintf "%s ->> %s"
+          (if Sort.is_arrow s1 || Term.is_array_sort s1 then
+             String.paren @@ str_of_sort s1
+           else str_of_sort s1)
+          (str_of_sort s2)
     | T_tuple.STuple sorts ->
         String.paren @@ String.concat_map_list ~sep:" * " sorts ~f:str_of_sort
-    | T_ref.SRef s -> String.paren (str_of_sort s) ^ " ref"
     | T_dt.SDT t -> (*Datatype.str_of t*) Datatype.full_name_of t
     | T_dt.SUS (name, args) ->
         if List.is_empty args then name
@@ -2009,16 +2010,8 @@ module rec Term :
             (String.paren
             @@ String.concat_map_list ~sep:", " args ~f:Term.str_of_sort)
             name
-    | T_array.SArray (s1, s2) ->
-        sprintf "%s ->> %s"
-          (if Sort.is_arrow s1 || Term.is_array_sort s1 then
-             String.paren @@ str_of_sort s1
-           else str_of_sort s1)
-          (str_of_sort s2)
-    | T_string.SString -> "string"
-    | T_sequence.SSequence true -> "fin_sequence"
-    | T_sequence.SSequence false -> "inf_sequence"
-    | T_regex.SRegEx -> "regex"
+    | T_int.SRefInt -> "int*"
+    | T_ref.SRef s -> String.paren (str_of_sort s) ^ " ref"
     | _ -> failwith "[str_of_sort] unknown sort"
 
   and str_of_cont = function
@@ -2066,22 +2059,22 @@ module rec Term :
             (short_name_of_sort s)
     | T_bool.SBool -> "b"
     | T_int.SInt -> "i"
-    | T_int.SRefInt -> "i*"
     | T_real.SReal -> "r"
     | T_bv.SBV _ -> "bv"
-    | T_tuple.STuple sorts -> String.concat_map_list sorts ~f:short_name_of_sort
-    | T_ref.SRef sort -> "&" ^ short_name_of_sort sort
-    | T_dt.SDT dt -> Datatype.short_name_of dt
-    | T_dt.SUS (name, _) -> "us_" ^ name
+    | T_string.SString -> "s"
+    | T_sequence.SSequence true -> "fseq"
+    | T_sequence.SSequence false -> "iseq"
+    | T_regex.SRegEx -> "re"
     | T_array.SArray (s1, s2) ->
         sprintf "%s>>%s"
           (if Term.is_array_sort s1 then String.paren @@ short_name_of_sort s1
            else short_name_of_sort s1)
           (str_of_sort s2)
-    | T_string.SString -> "s"
-    | T_sequence.SSequence true -> "fseq"
-    | T_sequence.SSequence false -> "iseq"
-    | T_regex.SRegEx -> "re"
+    | T_tuple.STuple sorts -> String.concat_map_list sorts ~f:short_name_of_sort
+    | T_dt.SDT dt -> Datatype.short_name_of dt
+    | T_dt.SUS (name, _) -> "us_" ^ name
+    | T_int.SRefInt -> "i*"
+    | T_ref.SRef sort -> "&" ^ short_name_of_sort sort
     | _ -> failwith "[short_name_of_sort] unknown sort"
 
   let sorts_of_sort sort =
@@ -2090,19 +2083,19 @@ module rec Term :
       else
         let visited' = Set.add visited sort in
         match sort with
+        | T_array.SArray (s1, s2) -> inner (inner visited s1) s2
         | T_tuple.STuple sorts -> List.fold sorts ~init:visited' ~f:inner
-        | T_ref.SRef sort -> inner visited' sort
         | T_dt.SDT dt ->
             Datatype.conses_of dt
             |> List.concat_map ~f:(Datatype.sorts_of_cons dt)
             |> List.fold ~init:visited' ~f:inner
-        | T_array.SArray (s1, s2) -> inner (inner visited s1) s2
+        | T_ref.SRef sort -> inner visited' sort
         | _ -> visited'
     in
     inner Set.Poly.empty sort
 
   let rec svs_of_cont = function
-    | Sort.EVar _ | Sort.Pure | Sort.Closed -> Set.Poly.empty
+    | Sort.(EVar _ | Pure | Closed) -> Set.Poly.empty
     | Sort.Eff (c1, c2) -> Set.union (svs_of_triple c1) (svs_of_triple c2)
     | _ -> failwith "[svs_of_cont]"
 
@@ -2110,15 +2103,16 @@ module rec Term :
     | Sort.SVar svar -> Set.Poly.singleton svar
     | Sort.SArrow (s, c) -> Set.union (svs_of_sort s) (svs_of_triple c)
     | Sort.SPoly (svs, s) -> Set.diff (svs_of_sort s) svs
-    | T_bool.SBool | T_int.SInt | T_int.SRefInt | T_real.SReal
-    | T_string.SString | T_sequence.SSequence _ | T_regex.SRegEx ->
+    | T_bool.SBool | T_int.SInt | T_real.SReal | T_bv.SBV _ | T_string.SString
+    | T_sequence.SSequence _ | T_regex.SRegEx ->
         Set.Poly.empty
+    | T_array.SArray (s1, s2) -> Set.union (svs_of_sort s1) (svs_of_sort s2)
     | T_tuple.STuple sorts ->
         Set.Poly.union_list (List.map ~f:svs_of_sort sorts)
-    | T_ref.SRef sort -> svs_of_sort sort
     | T_dt.SDT dt -> Datatype.svs_of dt
     | T_dt.SUS (_, sorts) -> Set.Poly.union_list (List.map ~f:svs_of_sort sorts)
-    | T_array.SArray (s1, s2) -> Set.union (svs_of_sort s1) (svs_of_sort s2)
+    | T_int.SRefInt -> Set.Poly.empty
+    | T_ref.SRef sort -> svs_of_sort sort
     | _ -> failwith "[svs_of_sort] unknown sort"
 
   and svs_of_opsig = function
@@ -2131,7 +2125,7 @@ module rec Term :
       [ svs_of_opsig c.op_sig; svs_of_sort c.val_type; svs_of_cont c.cont_eff ]
 
   let rec polar_svs_of_cont ~pos = function
-    | Sort.EVar _ | Sort.Pure | Sort.Closed -> Set.Poly.empty
+    | Sort.(EVar _ | Pure | Closed) -> Set.Poly.empty
     | Sort.Eff (c1, c2) ->
         Set.union
           (polar_svs_of_triple ~pos:(not pos) c1)
@@ -2145,19 +2139,20 @@ module rec Term :
           (polar_svs_of_sort ~pos:(not pos) s)
           (polar_svs_of_triple ~pos c)
     | Sort.SPoly (svs, s) -> Set.diff (polar_svs_of_sort ~pos s) svs
-    | T_bool.SBool | T_int.SInt | T_int.SRefInt | T_real.SReal
-    | T_string.SString | T_sequence.SSequence _ | T_regex.SRegEx ->
+    | T_bool.SBool | T_int.SInt | T_real.SReal | T_bv.SBV _ | T_string.SString
+    | T_sequence.SSequence _ | T_regex.SRegEx ->
         Set.Poly.empty
-    | T_tuple.STuple sorts ->
-        Set.Poly.union_list (List.map ~f:(polar_svs_of_sort ~pos) sorts)
-    | T_ref.SRef sort -> svs_of_sort (*ToDo*) sort
-    | T_dt.SDT dt -> Datatype.svs_of (*ToDo*) dt
-    | T_dt.SUS (_, sorts) ->
-        Set.Poly.union_list (List.map ~f:svs_of_sort (*ToDo*) sorts)
     | T_array.SArray (s1, s2) ->
         Set.union
           (polar_svs_of_sort ~pos:(not pos) s1)
           (polar_svs_of_sort ~pos s2)
+    | T_tuple.STuple sorts ->
+        Set.Poly.union_list (List.map ~f:(polar_svs_of_sort ~pos) sorts)
+    | T_dt.SDT dt -> Datatype.svs_of (*ToDo*) dt
+    | T_dt.SUS (_, sorts) ->
+        Set.Poly.union_list (List.map ~f:svs_of_sort (*ToDo*) sorts)
+    | T_int.SRefInt -> Set.Poly.empty
+    | T_ref.SRef sort -> svs_of_sort (*ToDo*) sort
     | _ -> failwith "[polar_svs_of_sort] unknown sort"
 
   and polar_svs_of_opsig ~pos = function
@@ -2185,15 +2180,16 @@ module rec Term :
     | Sort.SVar _ -> Set.Poly.empty
     | Sort.SArrow (s, c) -> Set.union (evs_of_sort s) (evs_of_triple c)
     | Sort.SPoly (_, s) -> evs_of_sort s
-    | T_bool.SBool | T_int.SInt | T_int.SRefInt | T_real.SReal
-    | T_string.SString | T_sequence.SSequence _ | T_regex.SRegEx ->
+    | T_bool.SBool | T_int.SInt | T_real.SReal | T_bv.SBV _ | T_string.SString
+    | T_sequence.SSequence _ | T_regex.SRegEx ->
         Set.Poly.empty
+    | T_array.SArray (s1, s2) -> Set.union (evs_of_sort s1) (evs_of_sort s2)
     | T_tuple.STuple sorts ->
         Set.Poly.union_list (List.map ~f:evs_of_sort sorts)
-    | T_ref.SRef sort -> evs_of_sort sort
     | T_dt.SDT dt -> Datatype.evs_of dt
     | T_dt.SUS (_, sorts) -> Set.Poly.union_list (List.map ~f:evs_of_sort sorts)
-    | T_array.SArray (s1, s2) -> Set.union (evs_of_sort s1) (evs_of_sort s2)
+    | T_int.SRefInt -> Set.Poly.empty
+    | T_ref.SRef sort -> evs_of_sort sort
     | _ -> failwith "[evs_of_sort] unknown sort"
 
   and evs_of_opsig = function
@@ -2221,19 +2217,20 @@ module rec Term :
           (polar_evs_of_sort ~pos:(not pos) s)
           (polar_evs_of_triple ~pos c)
     | Sort.SPoly (_, s) -> polar_evs_of_sort ~pos s
-    | T_bool.SBool | T_int.SInt | T_int.SRefInt | T_real.SReal
-    | T_string.SString | T_sequence.SSequence _ | T_regex.SRegEx ->
+    | T_bool.SBool | T_int.SInt | T_real.SReal | T_bv.SBV _ | T_string.SString
+    | T_sequence.SSequence _ | T_regex.SRegEx ->
         Set.Poly.empty
-    | T_tuple.STuple sorts ->
-        Set.Poly.union_list (List.map ~f:(polar_evs_of_sort ~pos) sorts)
-    | T_ref.SRef sort -> evs_of_sort (*ToDo*) sort
-    | T_dt.SDT dt -> Datatype.evs_of (*ToDo*) dt
-    | T_dt.SUS (_, sorts) ->
-        Set.Poly.union_list (List.map ~f:evs_of_sort (*ToDo*) sorts)
     | T_array.SArray (s1, s2) ->
         Set.union
           (polar_evs_of_sort ~pos:(not pos) s1)
           (polar_evs_of_sort ~pos s2)
+    | T_tuple.STuple sorts ->
+        Set.Poly.union_list (List.map ~f:(polar_evs_of_sort ~pos) sorts)
+    | T_dt.SDT dt -> Datatype.evs_of (*ToDo*) dt
+    | T_dt.SUS (_, sorts) ->
+        Set.Poly.union_list (List.map ~f:evs_of_sort (*ToDo*) sorts)
+    | T_int.SRefInt -> Set.Poly.empty
+    | T_ref.SRef sort -> evs_of_sort (*ToDo*) sort
     | _ -> failwith "[polar_evs_of_sort] unknown sort"
 
   and polar_evs_of_opsig ~pos = function
@@ -2252,7 +2249,7 @@ module rec Term :
       ]
 
   let rec rvs_of_cont = function
-    | Sort.EVar _ | Sort.Pure | Sort.Closed -> Set.Poly.empty
+    | Sort.(EVar _ | Pure | Closed) -> Set.Poly.empty
     | Sort.Eff (c1, c2) -> Set.union (rvs_of_triple c1) (rvs_of_triple c2)
     | _ -> failwith "[rvs_of_cont]"
 
@@ -2260,15 +2257,16 @@ module rec Term :
     | Sort.SVar _ -> Set.Poly.empty
     | Sort.SArrow (s, c) -> Set.union (rvs_of_sort s) (rvs_of_triple c)
     | Sort.SPoly (_, s) -> rvs_of_sort s
-    | T_bool.SBool | T_int.SInt | T_int.SRefInt | T_real.SReal
-    | T_string.SString | T_sequence.SSequence _ | T_regex.SRegEx ->
+    | T_bool.SBool | T_int.SInt | T_real.SReal | T_bv.SBV _ | T_string.SString
+    | T_sequence.SSequence _ | T_regex.SRegEx ->
         Set.Poly.empty
+    | T_array.SArray (s1, s2) -> Set.union (rvs_of_sort s1) (rvs_of_sort s2)
     | T_tuple.STuple sorts ->
         Set.Poly.union_list (List.map ~f:rvs_of_sort sorts)
-    | T_ref.SRef sort -> rvs_of_sort sort
     | T_dt.SDT dt -> Datatype.rvs_of dt
     | T_dt.SUS (_, sorts) -> Set.Poly.union_list (List.map ~f:rvs_of_sort sorts)
-    | T_array.SArray (s1, s2) -> Set.union (rvs_of_sort s1) (rvs_of_sort s2)
+    | T_int.SRefInt -> Set.Poly.empty
+    | T_ref.SRef sort -> rvs_of_sort sort
     | _ -> failwith "[rvs_of_sort] unknown sort"
 
   and rvs_of_opsig = function
@@ -2285,7 +2283,7 @@ module rec Term :
       [ rvs_of_opsig c.op_sig; rvs_of_sort c.val_type; rvs_of_cont c.cont_eff ]
 
   let rec polar_rvs_of_cont ~pos = function
-    | Sort.EVar _ | Sort.Pure | Sort.Closed -> Set.Poly.empty
+    | Sort.(EVar _ | Pure | Closed) -> Set.Poly.empty
     | Sort.Eff (c1, c2) ->
         Set.union
           (polar_rvs_of_triple ~pos:(not pos) c1)
@@ -2299,19 +2297,20 @@ module rec Term :
           (polar_rvs_of_sort ~pos:(not pos) s)
           (polar_rvs_of_triple ~pos c)
     | Sort.SPoly (_, s) -> polar_rvs_of_sort ~pos s
-    | T_bool.SBool | T_int.SInt | T_int.SRefInt | T_real.SReal
-    | T_string.SString | T_sequence.SSequence _ | T_regex.SRegEx ->
+    | T_bool.SBool | T_int.SInt | T_real.SReal | T_bv.SBV _ | T_string.SString
+    | T_sequence.SSequence _ | T_regex.SRegEx ->
         Set.Poly.empty
-    | T_tuple.STuple sorts ->
-        Set.Poly.union_list (List.map ~f:(polar_rvs_of_sort ~pos) sorts)
-    | T_ref.SRef sort -> rvs_of_sort (*ToDo*) sort
-    | T_dt.SDT dt -> Datatype.rvs_of (*ToDo*) dt
-    | T_dt.SUS (_, sorts) ->
-        Set.Poly.union_list (List.map ~f:rvs_of_sort (*ToDo*) sorts)
     | T_array.SArray (s1, s2) ->
         Set.union
           (polar_rvs_of_sort ~pos:(not pos) s1)
           (polar_rvs_of_sort ~pos s2)
+    | T_tuple.STuple sorts ->
+        Set.Poly.union_list (List.map ~f:(polar_rvs_of_sort ~pos) sorts)
+    | T_dt.SDT dt -> Datatype.rvs_of (*ToDo*) dt
+    | T_dt.SUS (_, sorts) ->
+        Set.Poly.union_list (List.map ~f:rvs_of_sort (*ToDo*) sorts)
+    | T_int.SRefInt -> Set.Poly.empty
+    | T_ref.SRef sort -> rvs_of_sort (*ToDo*) sort
     | _ -> failwith "[polar_rvs_of_sort] unknown sort"
 
   and polar_rvs_of_opsig ~pos = function
@@ -2380,21 +2379,23 @@ module rec Term :
       }
 
   and elim_pure_val_type = function
-    | ( Sort.SVar _ | T_bool.SBool | T_int.SInt | T_int.SRefInt | T_real.SReal
-      | T_string.SString | T_sequence.SSequence _ | T_regex.SRegEx ) as s ->
-        s
+    | Sort.SVar sv -> Sort.SVar sv
     | Sort.SArrow (s, c) ->
         Sort.SArrow (elim_pure_val_type s, elim_pure_comp_type c)
     | Sort.SPoly (svs, s) -> Sort.SPoly (svs, elim_pure_val_type s)
+    | ( T_bool.SBool | T_int.SInt | T_real.SReal | T_bv.SBV _ | T_string.SString
+      | T_sequence.SSequence _ | T_regex.SRegEx ) as s ->
+        s
+    | T_array.SArray (s1, s2) ->
+        T_array.SArray (elim_pure_val_type s1, elim_pure_val_type s2)
     | T_tuple.STuple sorts ->
         T_tuple.STuple (List.map ~f:elim_pure_val_type sorts)
-    | T_ref.SRef sort -> T_ref.SRef (elim_pure_val_type sort)
     | T_dt.SDT t ->
         T_dt.SDT (Datatype.update_dt t (elim_pure_dt (Datatype.dt_of t)))
     | T_dt.SUS (str, sorts) ->
         T_dt.SUS (str, List.map ~f:elim_pure_val_type sorts)
-    | T_array.SArray (s1, s2) ->
-        T_array.SArray (elim_pure_val_type s1, elim_pure_val_type s2)
+    | T_int.SRefInt -> T_int.SRefInt
+    | T_ref.SRef sort -> T_ref.SRef (elim_pure_val_type sort)
     | _ -> failwith "[elim_pure_val_type] unknown sort"
 
   let rec subst_sorts_sort map = function
@@ -2402,26 +2403,26 @@ module rec Term :
         match Map.Poly.find map svar with Some s -> s | None -> Sort.SVar svar)
     | Sort.SArrow (s, c) ->
         Sort.SArrow (subst_sorts_sort map s, subst_sorts_triple map c)
+    | Sort.SPoly (svs, s) ->
+        Sort.SPoly (svs, subst_sorts_sort (Map.remove_keys_set map svs) s)
+    (* | T_string.SString ->
+       T_string.SString (*T_dt.SUS ("string", [])*)
+       | T_sequence.SSequence true ->
+       T_sequence.SSequence true(*T_dt.SUS ("fin_sequence", [])*)
+       | T_sequence.SSequence false ->
+       T_sequence.SSequence false(*T_dt.SUS ("inf_sequence", [])*) *)
+    | T_array.SArray (s1, s2) ->
+        T_array.SArray (subst_sorts_sort map s1, subst_sorts_sort map s2)
     | T_tuple.STuple sorts ->
         T_tuple.STuple (List.map sorts ~f:(subst_sorts_sort map))
-    | T_ref.SRef sort -> T_ref.SRef (subst_sorts_sort map sort)
     | T_dt.SDT dt -> T_dt.SDT (Datatype.subst_sorts map dt)
     | T_dt.SUS (name, args) ->
         T_dt.SUS (name, List.map args ~f:(subst_sorts_sort map))
-    | T_array.SArray (s1, s2) ->
-        T_array.SArray (subst_sorts_sort map s1, subst_sorts_sort map s2)
-    (*| T_string.SString ->
-      T_string.SString (*T_dt.SUS ("string", [])*)
-      | T_sequence.SSequence true ->
-      T_sequence.SSequence true(*T_dt.SUS ("fin_sequence", [])*)
-      | T_sequence.SSequence false ->
-      T_sequence.SSequence false(*T_dt.SUS ("inf_sequence", [])*)*)
-    | Sort.SPoly (svs, s) ->
-        Sort.SPoly (svs, subst_sorts_sort (Map.remove_keys_set map svs) s)
+    | T_ref.SRef sort -> T_ref.SRef (subst_sorts_sort map sort)
     | sort (*ToDo*) -> sort (*failwith "subst_sorts_sort"*)
 
   and subst_sorts_cont map = function
-    | (Sort.EVar _ | Sort.Pure | Sort.Closed) as e -> e
+    | Sort.(EVar _ | Pure | Closed) as e -> e
     | Sort.Eff (c1, c2) ->
         Sort.mk_cont_eff (subst_sorts_triple map c1) (subst_sorts_triple map c2)
     | _ -> failwith "subst_sorts_cont"
@@ -2442,12 +2443,12 @@ module rec Term :
     | Sort.SVar svar -> Sort.SVar svar
     | Sort.SArrow (s, c) ->
         Sort.SArrow (subst_conts_sort map s, subst_conts_triple map c)
-    | T_tuple.STuple sorts ->
-        T_tuple.STuple (List.map sorts ~f:(subst_conts_sort map))
-    | T_ref.SRef sort -> T_ref.SRef (subst_conts_sort map sort)
-    | T_dt.SDT dt -> T_dt.SDT (Datatype.subst_conts map dt)
     | T_array.SArray (s1, s2) ->
         T_array.SArray (subst_conts_sort map s1, subst_conts_sort map s2)
+    | T_tuple.STuple sorts ->
+        T_tuple.STuple (List.map sorts ~f:(subst_conts_sort map))
+    | T_dt.SDT dt -> T_dt.SDT (Datatype.subst_conts map dt)
+    | T_ref.SRef sort -> T_ref.SRef (subst_conts_sort map sort)
     | sort -> sort (*failwith "subst_conts_sort"*)
 
   and subst_conts_cont map = function
@@ -2475,16 +2476,16 @@ module rec Term :
     | Sort.SVar svar -> Sort.SVar svar
     | Sort.SArrow (s, c) ->
         Sort.SArrow (subst_opsigs_sort map s, subst_opsigs_triple map c)
-    | T_tuple.STuple sorts ->
-        T_tuple.STuple (List.map sorts ~f:(subst_opsigs_sort map))
-    | T_ref.SRef sort -> T_ref.SRef (subst_opsigs_sort map sort)
-    | T_dt.SDT dt -> T_dt.SDT (Datatype.subst_opsigs map dt)
     | T_array.SArray (s1, s2) ->
         T_array.SArray (subst_opsigs_sort map s1, subst_opsigs_sort map s2)
+    | T_tuple.STuple sorts ->
+        T_tuple.STuple (List.map sorts ~f:(subst_opsigs_sort map))
+    | T_dt.SDT dt -> T_dt.SDT (Datatype.subst_opsigs map dt)
+    | T_ref.SRef sort -> T_ref.SRef (subst_opsigs_sort map sort)
     | sort -> sort (*failwith "subst_opsigs_sort"*)
 
   and subst_opsigs_cont map = function
-    | (Sort.EVar _ | Sort.Pure | Sort.Closed) as e -> e
+    | Sort.(EVar _ | Pure | Closed) as e -> e
     | Sort.Eff (c1, c2) ->
         Sort.mk_cont_eff
           (subst_opsigs_triple map c1)
@@ -2543,21 +2544,22 @@ module rec Term :
         Sort.SArrow
           (fresh_conts_sort s, Sort.mk_fresh_triple_from_sort c.val_type)
     | Sort.SPoly (svs, s) -> Sort.SPoly (svs, s)
-    | ( T_bool.SBool | T_int.SInt | T_int.SRefInt | T_real.SReal
-      | T_string.SString | T_sequence.SSequence _ | T_regex.SRegEx ) as s ->
+    | ( T_bool.SBool | T_int.SInt | T_real.SReal | T_bv.SBV _ | T_string.SString
+      | T_sequence.SSequence _ | T_regex.SRegEx ) as s ->
         s
+    | T_array.SArray (s1, s2) ->
+        T_array.SArray (fresh_conts_sort s1, fresh_conts_sort s2)
     | T_tuple.STuple sorts ->
         T_tuple.STuple (List.map ~f:fresh_conts_sort sorts)
-    | T_ref.SRef sort -> T_ref.SRef (fresh_conts_sort sort)
     | T_dt.SDT dt -> T_dt.SDT (Datatype.fresh_conts_sort dt)
     | T_dt.SUS (name, sorts) ->
         T_dt.SUS (name, List.map ~f:fresh_conts_sort sorts)
-    | T_array.SArray (s1, s2) ->
-        T_array.SArray (fresh_conts_sort s1, fresh_conts_sort s2)
+    | T_int.SRefInt -> T_int.SRefInt
+    | T_ref.SRef sort -> T_ref.SRef (fresh_conts_sort sort)
     | _ -> failwith "[fresh_conts_sort] unknown sort"
 
   let rec fresh_rvs_cont = function
-    | (Sort.EVar _ | Sort.Pure | Sort.Closed) as e -> e
+    | Sort.(EVar _ | Pure | Closed) as e -> e
     | Sort.Eff (c1, c2) ->
         Sort.mk_cont_eff (fresh_rvs_triple c1) (fresh_rvs_triple c2)
     | _ -> failwith "fresh_rvs_cont"
@@ -2566,15 +2568,16 @@ module rec Term :
     | Sort.SVar _ as s -> s
     | Sort.SArrow (s, c) -> Sort.SArrow (fresh_rvs_sort s, fresh_rvs_triple c)
     | Sort.SPoly (svs, s) -> Sort.SPoly (svs, fresh_rvs_sort s)
-    | ( T_bool.SBool | T_int.SInt | T_int.SRefInt | T_real.SReal
-      | T_string.SString | T_sequence.SSequence _ | T_regex.SRegEx ) as s ->
+    | ( T_bool.SBool | T_int.SInt | T_real.SReal | T_bv.SBV _ | T_string.SString
+      | T_sequence.SSequence _ | T_regex.SRegEx ) as s ->
         s
-    | T_tuple.STuple sorts -> T_tuple.STuple (List.map ~f:fresh_rvs_sort sorts)
-    | T_ref.SRef sort -> T_ref.SRef (fresh_rvs_sort sort)
-    | T_dt.SDT dt -> T_dt.SDT (Datatype.fresh_rvs_sort dt)
-    | T_dt.SUS (name, sorts) -> T_dt.SUS (name, List.map ~f:fresh_rvs_sort sorts)
     | T_array.SArray (s1, s2) ->
         T_array.SArray (fresh_rvs_sort s1, fresh_rvs_sort s2)
+    | T_tuple.STuple sorts -> T_tuple.STuple (List.map ~f:fresh_rvs_sort sorts)
+    | T_dt.SDT dt -> T_dt.SDT (Datatype.fresh_rvs_sort dt)
+    | T_dt.SUS (name, sorts) -> T_dt.SUS (name, List.map ~f:fresh_rvs_sort sorts)
+    | T_int.SRefInt -> T_int.SRefInt
+    | T_ref.SRef sort -> T_ref.SRef (fresh_rvs_sort sort)
     | _ -> failwith "[fresh_rvs_sort] unknown sort"
 
   and fresh_rvs_opsig = function
@@ -2605,6 +2608,14 @@ module rec Term :
             Map.force_merge emap1 emap2 )
       | Sort.SPoly (svs1, s1), Sort.SPoly (svs2, s2) when Set.equal svs1 svs2 ->
           pat_match_sort s1 s2
+      | T_array.SArray (s11, s12), T_array.SArray (s21, s22) ->
+          let omaps, smaps, emaps =
+            List.unzip3
+            @@ List.map2_exn [ s11; s12 ] [ s21; s22 ] ~f:pat_match_sort
+          in
+          ( Map.force_merge_list omaps,
+            Map.force_merge_list smaps,
+            Map.force_merge_list emaps )
       | T_tuple.STuple sorts1, T_tuple.STuple sorts2 ->
           let omaps, smaps, emaps =
             List.unzip3 @@ List.map2_exn sorts1 sorts2 ~f:pat_match_sort
@@ -2612,7 +2623,6 @@ module rec Term :
           ( Map.force_merge_list omaps,
             Map.force_merge_list smaps,
             Map.force_merge_list emaps )
-      | T_ref.SRef sort1, T_ref.SRef sort2 -> pat_match_sort sort1 sort2
       | T_dt.SDT dt1, T_dt.SDT dt2 -> Datatype.pat_match_sort dt1 dt2
       | T_dt.SUS (name1, sorts1), T_dt.SUS (name2, sorts2)
         when String.(name1 = name2) ->
@@ -2638,14 +2648,7 @@ module rec Term :
           ( Map.force_merge_list omaps,
             Map.force_merge_list smaps,
             Map.force_merge_list emaps )
-      | T_array.SArray (s11, s12), T_array.SArray (s21, s22) ->
-          let omaps, smaps, emaps =
-            List.unzip3
-            @@ List.map2_exn [ s11; s12 ] [ s21; s22 ] ~f:pat_match_sort
-          in
-          ( Map.force_merge_list omaps,
-            Map.force_merge_list smaps,
-            Map.force_merge_list emaps )
+      | T_ref.SRef sort1, T_ref.SRef sort2 -> pat_match_sort sort1 sort2
       | _ ->
           failwith
             (sprintf "[pat_match_sort] %s and %s does not match"
@@ -2693,14 +2696,17 @@ module rec Term :
             let omaps, smaps, emaps =
               List.unzip3 @@ List.map boths ~f:(snd >> uncurry pat_match_sort)
             in
-            ( Map.force_merge_list @@ (omap :: omaps),
+            ( Map.force_merge_list (omap :: omaps),
               Map.force_merge_list smaps,
               Map.force_merge_list emaps )
           else failwith "[pat_match_opsig @ 4]"
       | _ -> failwith "[pat_match_opsig @ 5]"
 
   and pat_match_triple c1 c2 =
-    let omap1, smap1, emap1 = pat_match_opsig c1.op_sig c2.op_sig (*ToDo*) in
+    let omap1, smap1, emap1 =
+      pat_match_opsig c1.op_sig c2.op_sig
+      (*ToDo*)
+    in
     let omap2, smap2, emap2 = pat_match_sort c1.val_type c2.val_type in
     let omap3, smap3, emap3 = pat_match_cont c1.cont_eff c2.cont_eff in
     ( Map.force_merge_list [ omap1; omap2; omap3 ],
@@ -2713,15 +2719,21 @@ module rec Term :
   let mk_fresh_var = mk_var (Ident.mk_fresh_tvar ())
   let mk_fsym_app ?(info = Dummy) sym ts = FunApp (sym, ts, info)
 
-  let mk_fvar_app ?(info = Dummy) tvar sorts ts =
-    FunApp (FVar (tvar, sorts), ts, info)
+  let mk_fvar_app ?(info = Dummy) tvar sargs sret ts =
+    FunApp (FVar (tvar, sargs, sret), ts, info)
+
+  let fvar_app_of_senv ?(info = Dummy) tvar senv sort =
+    mk_fvar_app ~info tvar (List.map ~f:snd senv) sort (Term.of_sort_env senv)
 
   let mk_let_term ?(info = Dummy) tvar sort def body =
     LetTerm (tvar, sort, def, body, info)
 
   let rec mk_dummy = function
     | Sort.SVar (Ident.Svar name) as sort ->
-        let name = "dummy_" ^ name (*ToDo*) in
+        let name =
+          "dummy_" ^ name
+          (*ToDo*)
+        in
         add_dummy_term (Ident.Tvar name) sort;
         Term.mk_var (Ident.Tvar name) sort
     | Sort.SArrow _ as sort ->
@@ -2732,15 +2744,17 @@ module rec Term :
     | T_int.SInt -> T_int.zero ()
     | T_real.SReal -> T_real.rzero ()
     | T_bv.SBV size -> T_bv.mk_bvnum ~size Z.zero
-    | T_ref.SRef sort -> T_ref.mk_ref sort @@ mk_dummy sort
-    | T_array.SArray (s1, s2) -> T_array.mk_const_array s1 s2 @@ mk_dummy s2
-    | T_tuple.STuple sorts ->
-        T_tuple.mk_tuple_cons sorts @@ List.map ~f:mk_dummy sorts
-    | (T_dt.SDT _ | T_dt.SUS (_, _)) as sort -> T_dt.mk_dummy sort
     | T_string.SString -> mk_fsym_app (T_string.StrConst "") []
     | T_sequence.SSequence true -> T_sequence.mk_eps ()
     | T_sequence.SSequence false ->
         failwith "[mk_dummy] 'SSequence false' not supported"
+    | T_regex.SRegEx -> T_regex.mk_empty ()
+    | T_array.SArray (s1, s2) -> T_array.mk_const_array s1 s2 @@ mk_dummy s2
+    | T_tuple.STuple sorts ->
+        T_tuple.mk_tuple_cons sorts @@ List.map ~f:mk_dummy sorts
+    | (T_dt.SDT _ | T_dt.SUS (_, _)) as sort -> T_dt.mk_dummy sort
+    | T_int.SRefInt -> failwith "[mk_dummy] 'SRefInt' not supported"
+    | T_ref.SRef sort -> T_ref.mk_ref sort @@ mk_dummy sort
     | s -> failwith @@ "[mk_dummy] not supported: " ^ str_of_sort s
 
   let of_value = function
@@ -2757,7 +2771,7 @@ module rec Term :
     | FunApp
         ( T_bool.Formula
             (Formula.Atom
-              (Atom.App (Predicate.Var (Ident.Pvar var, []), [], _), _)),
+               (Atom.App (Predicate.Var (Ident.Pvar var, []), [], _), _)),
           _,
           info ) ->
         ((Ident.Tvar var, T_bool.SBool), info)
@@ -2768,7 +2782,7 @@ module rec Term :
     | _ -> assert false
 
   let let_fvar_app = function
-    | FunApp (FVar (var, sorts), ts, info) -> (var, sorts, ts, info)
+    | FunApp (FVar (var, sargs, sret), ts, info) -> (var, sargs, sret, ts, info)
     | _ -> assert false
 
   let let_funcall = function
@@ -2781,19 +2795,23 @@ module rec Term :
 
   (** Function Symbols *)
 
-  let is_fvar_sym = function FVar (_, _) -> true | _ -> false
+  let is_fvar_sym = function FVar (_, _, _) -> true | _ -> false
 
   let str_of_funsym = function
-    | FVar (x, _sorts) -> Ident.name_of_tvar x
+    | FVar (x, _, _) -> Ident.name_of_tvar x
+    | T_bool.Formula phi -> sprintf "Formula(%s)" @@ Formula.str_of phi
+    | T_bool.IfThenElse -> "ite"
     | T_int.Int n -> Z.to_string n
     | T_int.Neg -> "-"
+    | T_int.Nop -> "nop"
     | T_int.Abs -> "abs"
     | T_int.Add -> "+"
     | T_int.Sub -> "-"
-    | T_int.Mult -> "*"
-    | T_int.Div -> "div"
-    | T_int.Mod -> "mod"
-    | T_int.Rem -> "rem"
+    | T_int.Mul -> "*"
+    | T_int.Div Euclidean -> "ediv"
+    | T_int.Div _ -> "div"
+    | T_int.Rem Euclidean -> "erem"
+    | T_int.Rem _ -> "rem"
     | T_int.Power -> "^"
     | T_real.Real r -> Q.to_string r
     | T_real.Alge n -> "alge@" ^ string_of_int n
@@ -2801,68 +2819,50 @@ module rec Term :
     | T_real.RAbs -> "abs."
     | T_real.RAdd -> "+."
     | T_real.RSub -> "-."
-    | T_real.RMult -> "*."
+    | T_real.RMul -> "*."
     | T_real.RDiv -> "/."
     | T_real.RPower -> "^."
     | T_bv.BVNum (_size, n) -> Z.to_string n
-    | T_bv.BVNeg _size -> "-_bv"
-    | T_bv.BVAdd _size -> "+_bv"
-    | T_bv.BVSub _size -> "-_bv"
-    | T_bv.BVMult _size -> "*_bv"
-    | T_bv.BVDiv _size -> "div_bv"
-    | T_bv.BVMod _size -> "mod_bv"
-    | T_bv.BVRem _size -> "rem_bv"
-    | T_bv.BVSHL _size -> "shl"
-    | T_bv.BVLSHR _size -> "lshr"
-    | T_bv.BVASHR _size -> "ashr"
-    | T_bv.BVOr _size -> "or"
-    | T_bv.BVAnd _size -> "and"
+    | T_bv.BVNeg size -> sprintf "neg%s" (T_bv.str_of_size size)
+    | T_bv.BVSEXT (from, to_) -> sprintf "sext%d>%d" from to_
+    | T_bv.BVZEXT (from, to_) -> sprintf "zext%d>%d" from to_
+    | T_bv.BVAdd size -> sprintf "add%s" (T_bv.str_of_size size)
+    | T_bv.BVSub size -> sprintf "sub%s" (T_bv.str_of_size size)
+    | T_bv.BVMul size -> sprintf "mul%s" (T_bv.str_of_size size)
+    | T_bv.BVDiv (size, signed) ->
+        sprintf "%sdiv%s" (T_bv.str_of_signed signed) (T_bv.str_of_size size)
+    | T_bv.BVRem (size, signed) ->
+        sprintf "%srem%s" (T_bv.str_of_signed signed) (T_bv.str_of_size size)
+    | T_bv.BVSHL size -> sprintf "shl%s" (T_bv.str_of_size size)
+    | T_bv.BVLSHR size -> sprintf "lshr%s" (T_bv.str_of_size size)
+    | T_bv.BVASHR size -> sprintf "ashr%s" (T_bv.str_of_size size)
+    | T_bv.BVOr size -> sprintf "or%s" (T_bv.str_of_size size)
+    | T_bv.BVAnd size -> sprintf "and%s" (T_bv.str_of_size size)
     | T_irb.IntToReal -> "int_to_real"
     | T_irb.RealToInt -> "real_to_int"
     | T_irb.IntToBV _ -> "int_to_bv"
     | T_irb.BVToInt _ -> "bv_to_int"
     | T_num.Value (v, svar) ->
         sprintf "value(%s:%s)" v (Ident.name_of_svar svar)
-    | T_num.NNeg _svar ->
-        if true then "'-" else sprintf "-_%s" (Ident.name_of_svar _svar)
-    | T_num.NAdd _svar ->
-        if true then "'+" else sprintf "+_%s" (Ident.name_of_svar _svar)
-    | T_num.NSub _svar ->
-        if true then "'-" else sprintf "-_%s" (Ident.name_of_svar _svar)
-    | T_num.NMult _svar ->
-        if true then "'*" else sprintf "*_%s" (Ident.name_of_svar _svar)
-    | T_num.NDiv _svar ->
-        if true then "'/" else sprintf "/_%s" (Ident.name_of_svar _svar)
-    | T_num.NMod _svar ->
-        if true then "'mod" else sprintf "mod_%s" (Ident.name_of_svar _svar)
-    | T_num.NRem _svar ->
-        if true then "'rem" else sprintf "rem_%s" (Ident.name_of_svar _svar)
-    | T_num.NPower _svar ->
-        if true then "'^" else sprintf "^_%s" (Ident.name_of_svar _svar)
-    | T_bool.Formula phi -> sprintf "Formula(%s)" @@ Formula.str_of phi
-    | T_bool.IfThenElse -> "ite"
-    | T_tuple.TupleCons _ -> "t_cons"
-    | T_tuple.TupleSel (_, i) -> sprintf "t_sel.%d" i
-    | T_ref.Ref sort -> sprintf "ref(%s)" (short_name_of_sort sort)
-    | T_ref.Deref sort -> sprintf "deref(%s)" (short_name_of_sort sort)
-    | T_ref.Update sort -> sprintf "update(%s)" (short_name_of_sort sort)
-    | T_dt.DTCons (name, args, dt) ->
-        if true then sprintf "%s" name
+    | T_num.NNeg svar ->
+        if true then "'-" else sprintf "-_%s" (Ident.name_of_svar svar)
+    | T_num.NSEXT (from, svar1, to_, svar2) ->
+        if true then "'sext"
         else
-          sprintf "[%s:%s]" name
-            (List.fold_left args ~init:(short_name_of_sort @@ T_dt.SDT dt)
-               ~f:(fun ret arg -> short_name_of_sort arg ^ "->" ^ ret))
-    | T_dt.DTSel (name, dt, ret_sort) ->
-        if true then sprintf "%s" name
-        else
-          sprintf "[%s:%s -> %s]" name
-            (short_name_of_sort @@ T_dt.SDT dt)
-            (short_name_of_sort ret_sort)
-    | T_array.ASelect _ -> "select"
-    | T_array.AStore _ -> "store"
-    | T_array.AConst (s1, s2) ->
-        if true then "const"
-        else sprintf "const_array[%s>>%s]" (str_of_sort s1) (str_of_sort s2)
+          sprintf "sext_%d:%s>%d:%s" from (Ident.name_of_svar svar1) to_
+            (Ident.name_of_svar svar2)
+    | T_num.NAdd svar ->
+        if true then "'+" else sprintf "+_%s" (Ident.name_of_svar svar)
+    | T_num.NSub svar ->
+        if true then "'-" else sprintf "-_%s" (Ident.name_of_svar svar)
+    | T_num.NMul svar ->
+        if true then "'*" else sprintf "*_%s" (Ident.name_of_svar svar)
+    | T_num.NDiv (svar, _m) ->
+        if true then "'/" else sprintf "/_%s" (Ident.name_of_svar svar)
+    | T_num.NRem (svar, _m) ->
+        if true then "'rem" else sprintf "rem_%s" (Ident.name_of_svar svar)
+    | T_num.NPower svar ->
+        if true then "'^" else sprintf "^_%s" (Ident.name_of_svar svar)
     | T_string.StrConst str -> sprintf "\"%s\"" str
     | T_sequence.SeqEpsilon -> "eps"
     | T_sequence.SeqSymbol ev -> ev
@@ -2883,13 +2883,35 @@ module rec Term :
     | T_regex.RegConcat -> "concat"
     | T_regex.RegUnion -> "union"
     | T_regex.RegInter -> "inter"
+    | T_array.ASelect _ -> "select"
+    | T_array.AStore _ -> "store"
+    | T_array.AConst (s1, s2) ->
+        if true then "const"
+        else sprintf "const_array[%s>>%s]" (str_of_sort s1) (str_of_sort s2)
+    | T_tuple.TupleCons _ -> "t_cons"
+    | T_tuple.TupleSel (_, i) -> sprintf "t_sel.%d" i
+    | T_dt.DTCons (name, args, dt) ->
+        if true then sprintf "%s" name
+        else
+          sprintf "[%s:%s]" name
+            (List.fold_left args ~init:(short_name_of_sort @@ T_dt.SDT dt)
+               ~f:(fun ret arg -> short_name_of_sort arg ^ "->" ^ ret))
+    | T_dt.DTSel (name, dt, ret_sort) ->
+        if true then sprintf "%s" name
+        else
+          sprintf "[%s:%s -> %s]" name
+            (short_name_of_sort @@ T_dt.SDT dt)
+            (short_name_of_sort ret_sort)
+    | T_ref.Ref sort -> sprintf "ref(%s)" (short_name_of_sort sort)
+    | T_ref.Deref sort -> sprintf "deref(%s)" (short_name_of_sort sort)
+    | T_ref.Update sort -> sprintf "update(%s)" (short_name_of_sort sort)
     | _ -> failwith "[str_of_funsym] unknown function symbol"
 
   let rename_fun_sym map = function
-    | FVar (var', sorts) as fsym -> (
+    | FVar (var', sargs, sret) as fsym -> (
         match Map.Poly.find map var' with
         | None -> fsym
-        | Some var -> FVar (var, sorts))
+        | Some var -> FVar (var, sargs, sret))
     | T_bool.Formula phi -> T_bool.Formula (Formula.rename map phi)
     | fsym -> fsym
 
@@ -2903,19 +2925,18 @@ module rec Term :
 
   let alpha_rename_let_fun_sym ?(map = Map.Poly.empty) = function
     | T_bool.Formula phi -> T_bool.Formula (Formula.alpha_rename_let ~map phi)
-    | FVar (var, sorts) ->
-        FVar
-          ((match Map.Poly.find map var with Some v -> v | None -> var), sorts)
+    | FVar (var, sargs, sret) as fsym -> (
+        match Map.Poly.find map var with
+        | Some v -> FVar (v, sargs, sret)
+        | None -> fsym)
     | fsym -> fsym
 
   let subst_fun_sym str_of map = function
-    | FVar (var', sorts) -> (
+    | FVar (var', sargs, sret) as fsym -> (
         match Map.Poly.find map var' with
-        | None -> FVar (var', sorts)
+        | None -> fsym
         | Some t -> (
-            try
-              let (var, _), _ = let_var t in
-              FVar (var, sorts)
+            try FVar (fst @@ fst @@ let_var t, sargs, sret)
             with _ ->
               failwith
               @@ sprintf "[subst_fun_sym] %s |-> %s" (Ident.name_of_tvar var')
@@ -2924,20 +2945,38 @@ module rec Term :
     | fsym -> fsym
 
   let subst_sorts_fun_sym map = function
-    | FVar (var, sorts) ->
-        FVar (var, List.map ~f:(Term.subst_sorts_sort map) sorts)
-    | ( T_num.Value (_, svar)
-      | T_num.NAdd svar
-      | T_num.NSub svar
-      | T_num.NMult svar
-      | T_num.NDiv svar
-      | T_num.NMod svar
-      | T_num.NRem svar
-      | T_num.NPower svar
-      | T_num.NNeg svar ) as fsym ->
+    | FVar (var, sargs, sret) ->
+        FVar
+          ( var,
+            List.map ~f:(Term.subst_sorts_sort map) sargs,
+            Term.subst_sorts_sort map sret )
+    | T_num.(
+        ( Value (_, svar)
+        | NNeg svar
+        | NAdd svar
+        | NSub svar
+        | NMul svar
+        | NDiv (svar, _)
+        | NRem (svar, _)
+        | NPower svar )) as fsym ->
         T_num.fsym_of_num_fsym fsym
-        @@ Term.subst_sorts_sort map @@ Sort.SVar svar
+          [ Term.subst_sorts_sort map @@ Sort.SVar svar ]
+    | T_num.NSEXT (_, svar1, _, svar2) as fsym ->
+        T_num.fsym_of_num_fsym fsym
+          [
+            Term.subst_sorts_sort map @@ Sort.SVar svar1;
+            Term.subst_sorts_sort map @@ Sort.SVar svar2;
+          ]
     | T_bool.Formula phi -> T_bool.Formula (Formula.subst_sorts map phi)
+    | T_array.ASelect (s1, s2) ->
+        T_array.ASelect
+          (Term.subst_sorts_sort map s1, Term.subst_sorts_sort map s2)
+    | T_array.AStore (s1, s2) ->
+        T_array.AStore
+          (Term.subst_sorts_sort map s1, Term.subst_sorts_sort map s2)
+    | T_array.AConst (s1, s2) ->
+        T_array.AConst
+          (Term.subst_sorts_sort map s1, Term.subst_sorts_sort map s2)
     | T_tuple.TupleCons sorts ->
         T_tuple.TupleCons (List.map ~f:(Term.subst_sorts_sort map) sorts)
     | T_tuple.TupleSel (sorts, i) ->
@@ -2950,33 +2989,41 @@ module rec Term :
     | T_dt.DTSel (name, dt, sort) ->
         T_dt.DTSel
           (name, Datatype.subst_sorts map dt, Term.subst_sorts_sort map sort)
-    | T_array.ASelect (s1, s2) ->
-        T_array.ASelect
-          (Term.subst_sorts_sort map s1, Term.subst_sorts_sort map s2)
-    | T_array.AStore (s1, s2) ->
-        T_array.AStore
-          (Term.subst_sorts_sort map s1, Term.subst_sorts_sort map s2)
-    | T_array.AConst (s1, s2) ->
-        T_array.AConst
-          (Term.subst_sorts_sort map s1, Term.subst_sorts_sort map s2)
     | fsym -> fsym (* ToDo *)
 
   let subst_conts_fun_sym map = function
-    | FVar (var, sorts) ->
-        FVar (var, List.map sorts ~f:(Term.subst_conts_sort map))
+    | FVar (var, sargs, sret) ->
+        FVar
+          ( var,
+            List.map sargs ~f:(Term.subst_conts_sort map),
+            Term.subst_conts_sort map sret )
+    | T_bool.Formula phi -> T_bool.Formula (Formula.subst_conts map phi)
     | T_num.(
         ( Value (_, svar)
+        | NNeg svar
         | NAdd svar
         | NSub svar
-        | NMult svar
-        | NDiv svar
-        | NMod svar
-        | NRem svar
-        | NPower svar
-        | NNeg svar )) as fsym ->
+        | NMul svar
+        | NDiv (svar, _)
+        | NRem (svar, _)
+        | NPower svar )) as fsym ->
         T_num.fsym_of_num_fsym fsym
-        @@ Term.subst_conts_sort map @@ Sort.SVar svar
-    | T_bool.Formula phi -> T_bool.Formula (Formula.subst_conts map phi)
+          [ Term.subst_conts_sort map @@ Sort.SVar svar ]
+    | T_num.NSEXT (_, svar1, _, svar2) as fsym ->
+        T_num.fsym_of_num_fsym fsym
+          [
+            Term.subst_conts_sort map @@ Sort.SVar svar1;
+            Term.subst_conts_sort map @@ Sort.SVar svar2;
+          ]
+    | T_array.ASelect (s1, s2) ->
+        T_array.ASelect
+          (Term.subst_conts_sort map s1, Term.subst_conts_sort map s2)
+    | T_array.AStore (s1, s2) ->
+        T_array.AStore
+          (Term.subst_conts_sort map s1, Term.subst_conts_sort map s2)
+    | T_array.AConst (s1, s2) ->
+        T_array.AConst
+          (Term.subst_conts_sort map s1, Term.subst_conts_sort map s2)
     | T_tuple.TupleCons sorts ->
         T_tuple.TupleCons (List.map sorts ~f:(Term.subst_conts_sort map))
     | T_tuple.TupleSel (sorts, i) ->
@@ -2989,40 +3036,45 @@ module rec Term :
     | T_dt.DTSel (name, dt, sort) ->
         T_dt.DTSel
           (name, Datatype.subst_conts map dt, Term.subst_conts_sort map sort)
-    | T_array.ASelect (s1, s2) ->
-        T_array.ASelect
-          (Term.subst_conts_sort map s1, Term.subst_conts_sort map s2)
-    | T_array.AStore (s1, s2) ->
-        T_array.AStore
-          (Term.subst_conts_sort map s1, Term.subst_conts_sort map s2)
-    | T_array.AConst (s1, s2) ->
-        T_array.AConst
-          (Term.subst_conts_sort map s1, Term.subst_conts_sort map s2)
     | fsym -> fsym (* ToDo *)
 
   let subst_opsigs_fun_sym map = function
-    | FVar (var, sorts) ->
-        FVar (var, List.map sorts ~f:(Term.subst_opsigs_sort map))
+    | FVar (var, sargs, sret) ->
+        FVar
+          ( var,
+            List.map sargs ~f:(Term.subst_opsigs_sort map),
+            Term.subst_opsigs_sort map sret )
+    | T_bool.Formula phi -> T_bool.Formula (Formula.subst_opsigs map phi)
     | T_num.(
         ( Value (_, svar)
+        | NNeg svar
         | NAdd svar
         | NSub svar
-        | NMult svar
-        | NDiv svar
-        | NMod svar
-        | NRem svar
-        | NPower svar
-        | NNeg svar )) as fsym ->
+        | NMul svar
+        | NDiv (svar, _)
+        | NRem (svar, _)
+        | NPower svar )) as fsym ->
         T_num.fsym_of_num_fsym fsym
-        @@ Term.subst_opsigs_sort map @@ Sort.SVar svar
-    | T_bool.Formula phi -> T_bool.Formula (Formula.subst_opsigs map phi)
+          [ Term.subst_opsigs_sort map @@ Sort.SVar svar ]
+    | T_num.NSEXT (_, svar1, _, svar2) as fsym ->
+        T_num.fsym_of_num_fsym fsym
+          [
+            Term.subst_opsigs_sort map @@ Sort.SVar svar1;
+            Term.subst_opsigs_sort map @@ Sort.SVar svar2;
+          ]
+    | T_array.ASelect (s1, s2) ->
+        T_array.ASelect
+          (Term.subst_opsigs_sort map s1, Term.subst_opsigs_sort map s2)
+    | T_array.AStore (s1, s2) ->
+        T_array.AStore
+          (Term.subst_opsigs_sort map s1, Term.subst_opsigs_sort map s2)
+    | T_array.AConst (s1, s2) ->
+        T_array.AConst
+          (Term.subst_opsigs_sort map s1, Term.subst_opsigs_sort map s2)
     | T_tuple.TupleCons sorts ->
         T_tuple.TupleCons (List.map sorts ~f:(Term.subst_opsigs_sort map))
     | T_tuple.TupleSel (sorts, i) ->
         T_tuple.TupleSel (List.map sorts ~f:(Term.subst_opsigs_sort map), i)
-    | T_ref.Ref sort -> T_ref.Ref (Term.subst_opsigs_sort map sort)
-    | T_ref.Deref sort -> T_ref.Deref (Term.subst_opsigs_sort map sort)
-    | T_ref.Update sort -> T_ref.Update (Term.subst_opsigs_sort map sort)
     | T_dt.DTCons (name, arg_sorts, dt) ->
         T_dt.DTCons
           ( name,
@@ -3031,35 +3083,25 @@ module rec Term :
     | T_dt.DTSel (name, dt, sort) ->
         T_dt.DTSel
           (name, Datatype.subst_opsigs map dt, Term.subst_opsigs_sort map sort)
-    | T_array.ASelect (s1, s2) ->
-        T_array.ASelect
-          (Term.subst_opsigs_sort map s1, Term.subst_opsigs_sort map s2)
-    | T_array.AStore (s1, s2) ->
-        T_array.AStore
-          (Term.subst_opsigs_sort map s1, Term.subst_opsigs_sort map s2)
-    | T_array.AConst (s1, s2) ->
-        T_array.AConst
-          (Term.subst_opsigs_sort map s1, Term.subst_opsigs_sort map s2)
+    | T_ref.Ref sort -> T_ref.Ref (Term.subst_opsigs_sort map sort)
+    | T_ref.Deref sort -> T_ref.Deref (Term.subst_opsigs_sort map sort)
+    | T_ref.Update sort -> T_ref.Update (Term.subst_opsigs_sort map sort)
     | fsym -> fsym (* ToDo *)
 
-  let neg_fsym = function
+  let negate_fsym = function
     | T_int.Add -> T_int.Sub
     | T_int.Sub -> T_int.Add
-    | T_int.Mult -> T_int.Div
-    | T_int.Div -> T_int.Mult
     | T_real.RAdd -> T_real.RSub
     | T_real.RSub -> T_real.RAdd
-    | T_real.RMult -> T_real.RDiv
-    | T_real.RDiv -> T_real.RMult
     | fsym ->
-        failwith @@ sprintf "[T_int.neg_fsym] %s" (Term.str_of_funsym fsym)
+        failwith @@ sprintf "[T_int.negate_fsym] %s" (Term.str_of_funsym fsym)
 
   (** Morphism *)
 
   let rec para ~f = function
     | Var (tvar, sort, _) -> f#fvar tvar sort
     | FunApp (fsym (*ToDo: can be formula*), args, _) ->
-        f#fapp fsym @@ (args, List.map args ~f:(para ~f))
+        f#fapp fsym (args, List.map args ~f:(para ~f))
     | LetTerm (tvar, sort, def, body, _) ->
         f#flet tvar sort (def, para ~f def) (body, para ~f body)
 
@@ -3146,8 +3188,8 @@ module rec Term :
         (object
            method fvar tvar sort _priority =
              match sort with
-             | T_int.SUnrefInt -> "*" ^ Ident.name_of_tvar tvar
              | T_int.SRefInt -> "&" ^ Ident.name_of_tvar tvar
+             | T_int.SUnrefInt -> "*" ^ Ident.name_of_tvar tvar
              | sort ->
                  if true then Ident.name_of_tvar tvar
                  else
@@ -3156,8 +3198,8 @@ module rec Term :
 
            method fapp fsym (ts, args) priority =
              match (fsym, args) with
-             | FVar (x, _), [] -> Ident.name_of_tvar x
-             | FVar (x, _), ts ->
+             | FVar (x, _, _), [] -> Ident.name_of_tvar x
+             | FVar (x, _, _), ts ->
                  Priority.add_paren priority Priority.fun_app
                  @@ sprintf "\\%s %s" (Ident.name_of_tvar x)
                  @@ String.concat_map_list ~sep:" " ts ~f:(fun t ->
@@ -3183,12 +3225,16 @@ module rec Term :
              | T_real.Alge n, [ t ] ->
                  sprintf "root-obj(%s, %s)" (t Priority.lowest)
                    (string_of_int n)
-             | T_bv.BVNum (_size, n), [] ->
+             | T_bv.BVNum (size, n), [] ->
                  Priority.add_paren priority Priority.fun_app
-                 @@ "bv" ^ String.paren @@ Z.to_string n
+                 @@ sprintf "bv(%s : %s)" (Z.to_string n)
+                      (T_bv.str_of_size size)
              | T_num.Value _, _ -> str_of_funsym fsym
-             | ( ( T_irb.(IntToReal | RealToInt | IntToBV _ | BVToInt _)
-                 | T_int.Abs | T_real.RAbs ),
+             | ( ( T_int.(Nop | Abs)
+                 | T_real.RAbs
+                 | T_bv.(BVSEXT _ | BVZEXT _)
+                 | T_irb.(IntToReal | RealToInt | IntToBV _ | BVToInt _)
+                 | T_num.NSEXT _ ),
                  [ t ] ) ->
                  Priority.add_paren priority Priority.fun_app
                  @@ sprintf "%s %s" (str_of_funsym fsym)
@@ -3197,22 +3243,24 @@ module rec Term :
                  Priority.add_paren priority Priority.neg_deref
                  @@ sprintf "%s%s" (str_of_funsym fsym)
                       (t (Priority.neg_deref + 1))
-             | ( ( T_int.Add | T_real.RAdd | T_bv.BVAdd _ | T_num.NAdd _
-                 | T_int.Sub | T_real.RSub | T_bv.BVSub _ | T_num.NSub _ ),
+             | ( ( T_int.(Add | Sub)
+                 | T_real.(RAdd | RSub)
+                 | T_bv.(BVAdd _ | BVSub _)
+                 | T_num.(NAdd _ | NSub _) ),
                  [ t1; t2 ] ) ->
                  Priority.add_paren priority Priority.add_sub
                  @@ sprintf "%s %s %s" (t1 Priority.add_sub)
                       (str_of_funsym fsym)
                       (t2 (Priority.add_sub + 1))
-             | ( ( T_int.Mult | T_real.RMult | T_bv.BVMult _ | T_num.NMult _
-                 | T_int.Div | T_real.RDiv | T_bv.BVDiv _ | T_num.NDiv _
-                 | T_int.Mod | T_bv.BVMod _ | T_num.NMod _ | T_int.Rem
-                 | T_bv.BVRem _ | T_num.NRem _ ),
+             | ( ( T_int.(Mul | Div _ | Rem _)
+                 | T_real.(RMul | RDiv)
+                 | T_bv.(BVMul _ | BVDiv _ | BVRem _)
+                 | T_num.(NMul _ | NDiv _ | NRem _) ),
                  [ t1; t2 ] ) ->
-                 Priority.add_paren priority Priority.mult_div_mod
-                 @@ sprintf "%s %s %s" (t1 Priority.mult_div_mod)
+                 Priority.add_paren priority Priority.mul_div_mod
+                 @@ sprintf "%s %s %s" (t1 Priority.mul_div_mod)
                       (str_of_funsym fsym)
-                      (t2 (Priority.mult_div_mod + 1))
+                      (t2 (Priority.mul_div_mod + 1))
              | (T_int.Power | T_real.RPower | T_num.NPower _), [ t1; t2 ] ->
                  Priority.add_paren priority Priority.append_power
                  @@ sprintf "%s %s %s"
@@ -3224,38 +3272,60 @@ module rec Term :
                  @@ sprintf "%s %s %s" (str_of_funsym fsym)
                       (t1 (Priority.fun_app + 1))
                       (t2 (Priority.fun_app + 1))
-             | ( ( T_int.Add | T_real.RAdd | T_bv.BVAdd _ | T_num.NAdd _
-                 | T_int.Sub | T_real.RSub | T_bv.BVSub _ | T_num.NSub _
-                 | T_int.Mult | T_real.RMult | T_bv.BVMult _ | T_num.NMult _
-                 | T_int.Div | T_real.RDiv | T_bv.BVDiv _ | T_num.NDiv _
-                 | T_int.Mod | T_bv.BVMod _ | T_num.NMod _ | T_int.Rem
-                 | T_bv.BVRem _ | T_num.NRem _ | T_int.Power | T_real.RPower
-                 | T_num.NPower _ | T_bv.BVSHL _ | T_bv.BVLSHR _ | T_bv.BVASHR _
-                 | T_bv.BVOr _ | T_bv.BVAnd _ ),
+             | ( ( T_int.(Add | Sub | Mul | Div _ | Rem _ | Power)
+                 | T_real.(RAdd | RSub | RMul | RDiv | RPower)
+                 | T_bv.(
+                     ( BVAdd _ | BVSub _ | BVMul _ | BVDiv _ | BVRem _ | BVSHL _
+                     | BVLSHR _ | BVASHR _ | BVOr _ | BVAnd _ ))
+                 | T_num.(NAdd _ | NSub _ | NMul _ | NDiv _ | NRem _ | NPower _)
+                   ),
                  _ ) ->
                  failwith
-                   "add, sub, mult, div, mod, rem, power, bitwise operators \
-                    are binary"
+                   "add, sub, mul, div, mod, rem, power, bitwise operators are \
+                    binary"
+             | T_string.StrConst _, [] -> str_of_funsym fsym
+             | T_sequence.(SeqEpsilon | SeqSymbol _), [] -> str_of_funsym fsym
+             | ( T_sequence.(
+                   SeqConcat _ | SeqLeftQuotient _ | SeqRightQuotient _),
+                 [ t1; t2 ] ) ->
+                 Priority.add_paren priority Priority.fun_app
+                 @@ sprintf "%s %s %s" (str_of_funsym fsym)
+                      (t1 (Priority.fun_app + 1))
+                      (t2 (Priority.fun_app + 1))
+             | T_regex.(RegEmpty | RegFull | RegEpsilon), [] ->
+                 str_of_funsym fsym
+             | ( T_regex.(RegStr | RegComplement | RegStar | RegPlus | RegOpt),
+                 [ t1 ] ) ->
+                 Priority.add_paren priority Priority.fun_app
+                 @@ sprintf "%s %s" (str_of_funsym fsym)
+                      (t1 (Priority.fun_app + 1))
+             | T_regex.(RegConcat | RegUnion | RegInter), [ t1; t2 ] ->
+                 Priority.add_paren priority Priority.fun_app
+                 @@ sprintf "%s %s %s" (str_of_funsym fsym)
+                      (t1 (Priority.fun_app + 1))
+                      (t2 (Priority.fun_app + 1))
+             | T_array.AConst _, [ t1 ] ->
+                 Priority.add_paren priority Priority.fun_app
+                 @@ sprintf "%s %s" (str_of_funsym fsym)
+                      (t1 (Priority.fun_app + 1))
+             | T_array.ASelect _, [ t1; t2 ] ->
+                 Priority.add_paren priority Priority.fun_app
+                 @@ sprintf "%s[%s]" (t1 Priority.highest) (t2 Priority.lowest)
+             | T_array.AStore _, [ t1; t2; t3 ] ->
+                 Priority.add_paren priority Priority.fun_app
+                 @@ sprintf "%s %s %s %s" (str_of_funsym fsym)
+                      (t1 (Priority.fun_app + 1))
+                      (t2 (Priority.fun_app + 1))
+                      (t3 (Priority.fun_app + 1))
              | T_tuple.TupleCons sorts, args ->
                  Priority.add_paren priority Priority.comma
-                 @@ String.concat ~sep:","
-                 @@ List.map2_exn args sorts ~f:(fun t s ->
+                 @@ String.concat_map_list ~sep:"," (List.zip_exn args sorts)
+                      ~f:(fun (t, s) ->
                         t (Priority.comma + 1) (*ToDo*) ^ ":" ^ str_of_sort s)
              | T_tuple.TupleSel (_, _), [ t ] ->
                  Priority.add_paren priority Priority.fun_app
                  @@ sprintf "%s %s" (str_of_funsym fsym)
                       (t (Priority.fun_app + 1))
-             | T_ref.Ref _sort, [ t ] ->
-                 Priority.add_paren priority Priority.fun_app
-                 @@ sprintf "ref %s" (t (Priority.fun_app + 1))
-             | T_ref.Deref _sort, [ t ] ->
-                 Priority.add_paren priority Priority.neg_deref
-                 @@ sprintf "!%s" (t (Priority.neg_deref + 1))
-             | T_ref.Update _sort, [ t1; t2 ] ->
-                 Priority.add_paren priority Priority.assign
-                 @@ sprintf "%s := %s"
-                      (t1 (Priority.assign + 1))
-                      (t2 Priority.assign)
              | T_dt.DTCons ("::", _, dt), [ _; _ ]
                when Datatype.is_list_sort (Datatype.sort_of dt) -> (
                  let rec aux args = function
@@ -3299,40 +3369,17 @@ module rec Term :
                  Priority.add_paren priority Priority.fun_app
                  @@ sprintf "%s %s" (str_of_funsym fsym)
                       (t1 (Priority.fun_app + 1))
-             | T_array.AConst _, [ t1 ] ->
+             | T_ref.Ref _sort, [ t ] ->
                  Priority.add_paren priority Priority.fun_app
-                 @@ sprintf "%s %s" (str_of_funsym fsym)
-                      (t1 (Priority.fun_app + 1))
-             | T_array.ASelect _, [ t1; t2 ] ->
-                 Priority.add_paren priority Priority.fun_app
-                 @@ sprintf "%s[%s]" (t1 Priority.highest) (t2 Priority.lowest)
-             | T_array.AStore _, [ t1; t2; t3 ] ->
-                 Priority.add_paren priority Priority.fun_app
-                 @@ sprintf "%s %s %s %s" (str_of_funsym fsym)
-                      (t1 (Priority.fun_app + 1))
-                      (t2 (Priority.fun_app + 1))
-                      (t3 (Priority.fun_app + 1))
-             | T_string.StrConst _, [] -> str_of_funsym fsym
-             | T_sequence.(SeqEpsilon | SeqSymbol _), [] -> str_of_funsym fsym
-             | ( T_sequence.(
-                   SeqConcat _ | SeqLeftQuotient _ | SeqRightQuotient _),
-                 [ t1; t2 ] ) ->
-                 Priority.add_paren priority Priority.fun_app
-                 @@ sprintf "%s %s %s" (str_of_funsym fsym)
-                      (t1 (Priority.fun_app + 1))
-                      (t2 (Priority.fun_app + 1))
-             | T_regex.(RegEmpty | RegFull | RegEpsilon), [] ->
-                 str_of_funsym fsym
-             | ( T_regex.(RegStr | RegComplement | RegStar | RegPlus | RegOpt),
-                 [ t1 ] ) ->
-                 Priority.add_paren priority Priority.fun_app
-                 @@ sprintf "%s %s" (str_of_funsym fsym)
-                      (t1 (Priority.fun_app + 1))
-             | T_regex.(RegConcat | RegUnion | RegInter), [ t1; t2 ] ->
-                 Priority.add_paren priority Priority.fun_app
-                 @@ sprintf "%s %s %s" (str_of_funsym fsym)
-                      (t1 (Priority.fun_app + 1))
-                      (t2 (Priority.fun_app + 1))
+                 @@ sprintf "ref %s" (t (Priority.fun_app + 1))
+             | T_ref.Deref _sort, [ t ] ->
+                 Priority.add_paren priority Priority.neg_deref
+                 @@ sprintf "!%s" (t (Priority.neg_deref + 1))
+             | T_ref.Update _sort, [ t1; t2 ] ->
+                 Priority.add_paren priority Priority.assign
+                 @@ sprintf "%s := %s"
+                      (t1 (Priority.assign + 1))
+                      (t2 Priority.assign)
              | f, ts ->
                  failwith
                    ("unknown function application: " ^ String.concat ~sep:" "
@@ -3354,24 +3401,28 @@ module rec Term :
     | Var (_, _, _) -> true
     | FunApp
         ( T_bool.Formula
-            (Formula.Atom
-              (Atom.App (Predicate.Var (Ident.Pvar _, []), [], _), _)),
+            (Formula.Atom (Atom.App (Predicate.Var (Ident.Pvar _, []), [], _), _)),
           _,
           _ ) ->
         true
     | _ -> false
 
   let is_app = function FunApp (_, _, _) -> true | _ -> false
-  let is_fvar_app = function FunApp (FVar (_, _), _, _) -> true | _ -> false
+
+  let is_fvar_app = function
+    | FunApp (FVar (_, _, _), _, _) -> true
+    | _ -> false
+
   let is_funcall = function FunApp (FunCall _, _, _) -> true | _ -> false
   let is_let_term = function LetTerm _ -> true | _ -> false
 
   let rec is_compound = function
     | Var _ -> false
     | FunApp
-        ( ( FVar (_, _)
-          | T_int.Int _ | T_real.Real _ | T_real.Alge _ | T_bv.BVNum _
-          | T_string.StrConst _ ),
+        ( ( FVar (_, _, _)
+          | T_int.Int _
+          | T_real.(Real _ | Alge _)
+          | T_bv.BVNum _ | T_string.StrConst _ ),
           [],
           _ ) ->
         false
@@ -3380,11 +3431,13 @@ module rec Term :
 
   let rec is_pathexp = function
     | Var (_, _, _) -> true
-    | FunApp (FVar (_, _), ts, _) -> List.exists ts ~f:is_pathexp
+    | FunApp (FVar (_, _, _), ts, _) -> List.exists ts ~f:is_pathexp
     | FunApp
-        ( ( T_int.Neg | T_real.RNeg | T_bv.BVNeg _ | T_num.NNeg _
-          | T_irb.IntToReal | T_irb.RealToInt | T_irb.IntToBV _
-          | T_irb.BVToInt _ ),
+        ( ( T_int.(Neg | Nop | Abs)
+          | T_real.(RNeg | RAbs)
+          | T_bv.(BVNeg _ | BVSEXT _ | BVZEXT _)
+          | T_irb.(IntToReal | RealToInt | IntToBV _ | BVToInt _)
+          | T_num.(NNeg _ | NSEXT _) ),
           [ t ],
           _ ) ->
         is_pathexp t
@@ -3406,7 +3459,7 @@ module rec Term :
   (* assume [t] is simplified*)
   let is_uninterpreted_term = function
     (* | Var (_, _, _) -> true *)
-    | FunApp ((T_int.Div | T_int.Mod), [ _; t2 ], _) -> T_int.is_zero t2
+    | FunApp (T_int.(Div _ | Rem _), [ _; t2 ], _) -> T_int.is_zero t2
     | FunApp (T_dt.DTSel _, [ t1 ], _) -> T_dt.is_cons t1 (*ToDo*)
     | FunApp (T_array.ASelect _, _, _) -> true (*ToDo*)
     | _ -> false
@@ -3449,8 +3502,8 @@ module rec Term :
              Set.Poly.union_list
              @@
              match fsym with
-             | FVar (tvar, _) when not @@ Hash_set.Poly.mem defined_fvars tvar
-               ->
+             | FVar (tvar, _, _)
+               when not @@ Hash_set.Poly.mem defined_fvars tvar ->
                  Set.Poly.singleton tvar :: args
              | T_bool.Formula phi -> Formula.tvs_of phi :: args
              | _ -> args
@@ -3513,9 +3566,9 @@ module rec Term :
            method fapp fsym args bvs =
              Set.Poly.union_list
              @@ (match fsym with
-                | FVar (x, sorts) when not @@ Hash_set.Poly.mem defined_fvars x
-                  ->
-                    Set.Poly.singleton (x, Sort.mk_fun sorts)
+                | FVar (x, sargs, sret)
+                  when not @@ Hash_set.Poly.mem defined_fvars x ->
+                    Set.Poly.singleton (x, Sort.mk_fun (sargs @ [ sret ]))
                 | T_bool.Formula phi -> Formula.term_sort_env_of ~bvs phi
                 | _ -> Set.Poly.empty)
                 :: List.map args ~f:(fun t -> t bvs)
@@ -3594,12 +3647,23 @@ module rec Term :
     | FunApp (fsym, args, _) as t ->
         Set.Poly.union_list
         @@ (match fsym with
-           | FVar (_, _) -> Set.Poly.singleton t
+           | FVar (_, _, _) -> Set.Poly.singleton t
            | T_bool.Formula phi -> Formula.fvar_apps_of phi
            | _ -> Set.Poly.empty)
            :: List.map args ~f:fvar_apps_of
     | LetTerm (_, _, def, body, _) ->
         Set.union (fvar_apps_of def) (fvar_apps_of body)
+
+  let rec number_of_quantifiers = function
+    | Var _ -> 0
+    | FunApp (fsym, args, _) ->
+        Integer.sum_list
+        @@ (match fsym with
+           | T_bool.Formula phi -> Formula.number_of_quantifiers phi
+           | _ -> 0)
+           :: List.map args ~f:number_of_quantifiers
+    | LetTerm (_, _, def, body, _) ->
+        number_of_quantifiers def + number_of_quantifiers body
 
   let rec pathexps_of ?(bvs = Set.Poly.empty) t =
     if is_pathexp t then Set.Poly.singleton t
@@ -3610,7 +3674,7 @@ module rec Term :
       | FunApp (fsym, args, _) ->
           Set.Poly.union_list
           @@ (match fsym with
-             | FVar (_, _) -> Set.Poly.singleton t
+             | FVar (_, _, _) -> Set.Poly.singleton t
              | T_bool.Formula phi -> Formula.pathexps_of ~bvs phi
              | _ -> Set.Poly.empty)
              :: List.map args ~f:(pathexps_of ~bvs)
@@ -3634,8 +3698,7 @@ module rec Term :
         assert (List.is_empty args);
         let pos, neg = Formula.atoms_of ~pos phi in
         let poss1, negs1 = List.unzip @@ List.map args ~f:Term.atoms_of in
-        ( Set.Poly.union_list @@ (pos :: poss1),
-          Set.Poly.union_list @@ (neg :: negs1) )
+        (Set.Poly.union_list (pos :: poss1), Set.Poly.union_list (neg :: negs1))
     | FunApp (_fsym, args, _) ->
         let poss1, negs1 = List.unzip @@ List.map args ~f:Term.atoms_of in
         (* ToDo: distinction between pos and neg is arbitrary since fsym is ignored *)
@@ -3668,12 +3731,14 @@ module rec Term :
   let ast_size t =
     let rec ast_size ~ex = function
       | Var (var, _, _) -> (
-          match Map.Poly.find ex var with Some size -> size | None -> 1)
+          match Map.Poly.find ex var with
+          | Some size -> size (*ToDo*)
+          | None -> 1)
       | FunApp (sym, args, _) -> (
-          (Integer.sum_list @@ (1 :: List.map ~f:(ast_size ~ex) args))
+          Integer.sum_list (1 :: List.map ~f:(ast_size ~ex) args)
           +
           match sym with
-          | T_bool.Formula phi -> Formula.ast_size phi - 1
+          | T_bool.Formula phi -> Formula.ast_size (*ToDo*) phi - 1
           | _ -> 0)
       | LetTerm (var, _, def, body, _) ->
           ast_size ~ex:(Map.Poly.set ex ~key:var ~data:(ast_size ~ex def)) body
@@ -3695,18 +3760,18 @@ module rec Term :
 
   let rec sort_of = function
     | Var (_, sort, _) -> sort
-    | FunApp (FVar (_, sorts), args, _) ->
-        Sort.mk_fun @@ List.drop sorts @@ List.length args
+    | FunApp (FVar (_, sargs, sret), args, _) ->
+        Sort.mk_fun @@ (List.drop sargs @@ List.length args) @ [ sret ]
     | FunApp (T_bool.Formula _, [], _) -> T_bool.SBool
     | FunApp (T_bool.IfThenElse, [ _; t; _ ], _) -> sort_of t
     | FunApp (T_int.Int _, [], _)
     | FunApp
-        ((T_int.Neg | T_int.Abs | T_irb.RealToInt | T_irb.BVToInt _), [ _ ], _)
-    | FunApp (T_int.(Add | Sub | Mult | Div | Mod | Rem), _, _) ->
+        ((T_int.(Neg | Nop | Abs) | T_irb.(RealToInt | BVToInt _)), [ _ ], _)
+    | FunApp (T_int.(Add | Sub | Mul | Div _ | Rem _), _, _) ->
         T_int.SInt
-    | FunApp ((T_real.Real _ | T_real.Alge _), [], _)
-    | FunApp ((T_real.RNeg | T_real.RAbs | T_irb.IntToReal), [ _ ], _)
-    | FunApp (T_real.(RAdd | RSub | RPower | RMult | RDiv), _, _) ->
+    | FunApp (T_real.(Real _ | Alge _), [], _)
+    | FunApp ((T_real.(RNeg | RAbs) | T_irb.IntToReal), [ _ ], _)
+    | FunApp (T_real.(RAdd | RSub | RPower | RMul | RDiv), _, _) ->
         T_real.SReal
     | FunApp (T_bv.BVNum (size, _), [], _)
     | FunApp ((T_bv.BVNeg size | T_irb.IntToBV size), [ _ ], _)
@@ -3714,10 +3779,9 @@ module rec Term :
         ( T_bv.(
             ( BVAdd size
             | BVSub size
-            | BVMult size
-            | BVDiv size
-            | BVMod size
-            | BVRem size
+            | BVMul size
+            | BVDiv (size, _)
+            | BVRem (size, _)
             | BVSHL size
             | BVLSHR size
             | BVASHR size
@@ -3726,30 +3790,21 @@ module rec Term :
           _,
           _ ) ->
         T_bv.SBV size
+    | FunApp (T_bv.(BVSEXT (_, to_) | BVZEXT (_, to_)), [ _ ], _) ->
+        T_bv.SBV (Some to_)
     | FunApp (T_num.Value (_, sv), [], _)
-    | FunApp (T_num.NNeg sv, [ _ ], _)
+    | FunApp (T_num.(NNeg sv | NSEXT (_, _, _, sv)), [ _ ], _)
     | FunApp
         ( T_num.(
             ( NAdd sv
             | NSub sv
-            | NMult sv
-            | NDiv sv
-            | NMod sv
-            | NRem sv
+            | NMul sv
+            | NDiv (sv, _)
+            | NRem (sv, _)
             | NPower sv )),
           _,
           _ ) ->
         Sort.SVar sv
-    | FunApp (T_dt.DTCons (_, _, dt), _, _) -> Datatype.sort_of dt
-    | FunApp (T_dt.DTSel (_, _, sort), _, _) -> sort
-    | FunApp (T_array.AStore (s1, s2), [ _; _; _ ], _) -> T_array.SArray (s1, s2)
-    | FunApp (T_array.ASelect (_s1, s2), [ _; _ ], _) -> s2
-    | FunApp (T_array.AConst (s1, s2), _, _) -> T_array.SArray (s1, s2)
-    | FunApp (T_tuple.TupleCons sorts, _, _) -> T_tuple.STuple sorts
-    | FunApp (T_tuple.TupleSel (sorts, i), [ _ ], _) -> List.nth_exn sorts i
-    | FunApp (T_ref.Ref sort, [ _ ], _) -> T_ref.SRef sort
-    | FunApp (T_ref.Deref sort, [ _ ], _) -> sort
-    | FunApp (T_ref.Update _, [ _; _ ], _) -> Datatype.mk_unit_sort ()
     | FunApp (T_string.StrConst _, _, _) -> T_string.SString
     | FunApp (T_sequence.(SeqEpsilon | SeqSymbol _), [], _) ->
         T_sequence.SSequence true
@@ -3766,21 +3821,27 @@ module rec Term :
         T_regex.SRegEx
     | FunApp (T_regex.(RegConcat | RegUnion | RegInter), [ _; _ ], _) ->
         T_regex.SRegEx
+    | FunApp (T_array.AStore (s1, s2), [ _; _; _ ], _) -> T_array.SArray (s1, s2)
+    | FunApp (T_array.ASelect (_s1, s2), [ _; _ ], _) -> s2
+    | FunApp (T_array.AConst (s1, s2), _, _) -> T_array.SArray (s1, s2)
+    | FunApp (T_tuple.TupleCons sorts, _, _) -> T_tuple.STuple sorts
+    | FunApp (T_tuple.TupleSel (sorts, i), [ _ ], _) -> List.nth_exn sorts i
+    | FunApp (T_dt.DTCons (_, _, dt), _, _) -> Datatype.sort_of dt
+    | FunApp (T_dt.DTSel (_, _, sort), _, _) -> sort
+    | FunApp (T_ref.Ref sort, [ _ ], _) -> T_ref.SRef sort
+    | FunApp (T_ref.Deref sort, [ _ ], _) -> sort
+    | FunApp (T_ref.Update _, [ _; _ ], _) -> Datatype.mk_unit_sort ()
     | LetTerm (_, _, _, body, _) -> sort_of body
     | t -> failwith ("error at sort_of: " ^ str_of t)
 
-  let rec find_div_mod_list = function
-    | [] -> Set.Poly.empty
-    | t :: tl -> Set.union (find_div_mod t) (find_div_mod_list tl)
-
-  and find_div_mod = function
+  and div_rem_of = function
     | Var (_, _, _) -> Set.Poly.empty
-    | FunApp (T_bool.Formula phi, [], _) -> Formula.find_div_mod phi
-    | FunApp (T_int.Div, [ t1; t2 ], _) | FunApp (T_int.Mod, [ t1; t2 ], _) ->
-        Set.add (Set.union (find_div_mod t1) (find_div_mod t2)) (t1, t2)
-    | FunApp (_, args, _) -> find_div_mod_list args
+    | FunApp (T_bool.Formula phi, [], _) -> Formula.div_rem_of phi
+    | FunApp (T_int.(Div _ | Rem _), [ t1; t2 ], _) ->
+        Set.add (Set.union (div_rem_of t1) (div_rem_of t2)) (t1, t2)
+    | FunApp (_, args, _) -> Set.Poly.union_list @@ List.map ~f:div_rem_of args
     | LetTerm (_, _, def, body, _) ->
-        Set.union (find_div_mod def) (find_div_mod body)
+        Set.union (div_rem_of def) (div_rem_of body)
 
   (** Substitution *)
 
@@ -3869,24 +3930,66 @@ module rec Term :
         assert (not @@ Map.Poly.mem map var);
         LetTerm (var, sort, subst map def, subst map body, info)
 
-  let rec subst_preds map = function
-    | Var (var, sort, info) -> (
-        let pvar = Ident.tvar_to_pvar var in
-        match Map.Poly.find map pvar with
-        | Some (sortenv, phi) ->
-            if List.is_empty sortenv then
-              T_bool.of_formula (Formula.subst_preds map phi)
-            else assert false
-        | None -> Var (var, sort, info))
-    | FunApp (sym, args, info) ->
-        let sym =
-          match sym with
-          | T_bool.Formula phi -> T_bool.Formula (Formula.subst_preds map phi)
-          | sym -> sym
-        in
-        FunApp (sym, List.map ~f:(subst_preds map) args, info)
-    | LetTerm (var, sort, def, body, info) ->
-        LetTerm (var, sort, subst_preds map def, subst_preds map body, info)
+  let subst_preds psub t =
+    fold
+      ~f:
+        (object
+           method fvar tvar sort psub =
+             match Map.Poly.find psub (Ident.tvar_to_pvar (*ToDo*) tvar) with
+             | Some (senv, phi) ->
+                 if List.is_empty senv then
+                   T_bool.of_formula (Formula.subst_preds (*ToDO*) psub phi)
+                 else assert false
+             | None -> Term.mk_var tvar sort
+
+           method fapp fsym args psub =
+             let args = List.map args ~f:(fun t -> t psub) in
+             match fsym with
+             | T_bool.Formula phi ->
+                 mk_fsym_app
+                   (T_bool.Formula (Formula.subst_preds psub phi))
+                   args
+             | _ -> mk_fsym_app fsym args
+
+           method flet tvar sort def body psub =
+             let psub' =
+               Map.Poly.remove psub (Ident.tvar_to_pvar (*ToDo*) tvar)
+             in
+             Term.mk_let_term tvar sort (def psub) (body psub')
+        end)
+      t psub
+
+  let subst_funcs fsub t =
+    fold
+      ~f:
+        (object
+           method fvar tvar sort fsub =
+             match Map.Poly.find fsub tvar with
+             | Some (senv, t) -> if List.is_empty senv then t else assert false
+             | None -> Term.mk_var tvar sort
+
+           method fapp fsym args fsub =
+             let args = List.map args ~f:(fun t -> t fsub) in
+             match fsym with
+             | T_bool.Formula phi ->
+                 mk_fsym_app
+                   (T_bool.Formula (Formula.subst_funcs fsub phi))
+                   args
+             | FVar (tvar, _, _) -> (
+                 match Map.Poly.find fsub tvar with
+                 | Some (senv, t) ->
+                     let tsub =
+                       TermSubst.make ~name:(Ident.name_of_tvar tvar) senv args
+                     in
+                     Term.subst tsub t
+                 | None -> mk_fsym_app fsym args)
+             | _ -> mk_fsym_app fsym args
+
+           method flet tvar sort def body fsub =
+             let fsub' = Map.Poly.remove fsub tvar in
+             Term.mk_let_term tvar sort (def fsub) (body fsub')
+        end)
+      t fsub
 
   let rec subst_sorts map = function
     | Var (x, sort, info) -> Var (x, subst_sorts_sort map sort, info)
@@ -3947,29 +4050,52 @@ module rec Term :
             subst_opsigs map body,
             info )
 
-  let rec aconv_tvar = function
-    | Var (var, sort, info) -> Var (var, sort, info)
-    | FunApp (sym, args, info) ->
-        let sym =
-          match sym with
-          | T_bool.Formula phi -> T_bool.Formula (Formula.aconv_tvar phi)
-          | sym -> sym
-        in
-        FunApp (sym, List.map ~f:aconv_tvar args, info)
-    | LetTerm (var, sort, def, body, info) ->
-        LetTerm (var, sort, aconv_tvar def, aconv_tvar body, info)
+  let aconv_tvar =
+    fold
+      ~f:
+        (object
+           method fvar tvar sort = mk_var tvar sort
 
-  let aconv_pvar = function
-    | Var (var, sort, info) -> Var (var, sort, info)
-    | FunApp (sym, args, info) ->
-        let sym =
-          match sym with
-          | T_bool.Formula phi -> T_bool.Formula (Formula.aconv_pvar phi)
-          | sym -> sym
-        in
-        FunApp (sym, List.map ~f:Term.aconv_pvar args, info)
-    | LetTerm (var, sort, def, body, info) ->
-        LetTerm (var, sort, Term.aconv_pvar def, Term.aconv_pvar body, info)
+           method fapp fsym args =
+             match (fsym, args) with
+             | T_bool.Formula phi, [] ->
+                 mk_fsym_app (T_bool.Formula (Formula.aconv_tvar phi)) []
+             | _, _ -> mk_fsym_app fsym args
+
+           method flet tvar sort def body = mk_let_term tvar sort def body
+        end)
+
+  let aconv_tvar_norm next =
+    fold
+      ~f:
+        (object
+           method fvar tvar sort = mk_var tvar sort
+
+           method fapp fsym args =
+             match (fsym, args) with
+             | T_bool.Formula phi, [] ->
+                 mk_fsym_app
+                   (T_bool.Formula (Formula.aconv_tvar_norm next phi))
+                   []
+             | _, _ -> mk_fsym_app fsym args
+
+           method flet tvar sort def body = mk_let_term tvar sort def body
+        end)
+
+  let aconv_pvar =
+    fold
+      ~f:
+        (object
+           method fvar tvar sort = mk_var tvar sort
+
+           method fapp fsym args =
+             match (fsym, args) with
+             | T_bool.Formula phi, [] ->
+                 mk_fsym_app (T_bool.Formula (Formula.aconv_pvar phi)) []
+             | _, _ -> mk_fsym_app fsym args
+
+           method flet tvar sort def body = mk_let_term tvar sort def body
+        end)
 
   (* assume that the argument is alpha-renamed *)
 
@@ -4025,20 +4151,22 @@ module rec Term :
           ( Formula.mk_true (),
             FunApp (T_bool.Formula (Formula.elim_ite phi), [], info) );
         ]
-    (*| FunApp (T_int.Neg, [t1], _) ->
-      List.map (elim_ite t1) ~f:(fun (phi, t) -> phi, T_int.mk_neg t)*)
+    (* | FunApp (T_int.Neg, [t1], _) ->
+       List.map (elim_ite t1) ~f:(fun (phi, t) -> phi, T_int.mk_neg t) *)
     | FunApp (fsym (* ToDo *), [ t1 ], _) ->
         List.map (elim_ite t1) ~f:(fun (phi, t) ->
             (phi, Term.mk_fsym_app fsym [ t ]))
-    (*| FunApp ((T_int.Add | T_int.Sub | T_int.Mult | T_int.Div | T_int.Mod |
-               T_real.RAdd | T_real.RSub | T_real.RMult | T_real.RDiv) as fsym,
-              [t1; t2], _) ->*)
+    (* | FunApp
+        ( (( T_int.(Add | Sub | Mul | Div _ | Rem _)
+           | T_real.(RAdd | RSub | RMul | RDiv) ) as fsym),
+          [ t1; t2 ],
+          _ ) -> *)
     | FunApp (fsym (* ToDo *), [ t1; t2 ], _) ->
         List.cartesian_product (elim_ite t1) (elim_ite t2)
         |> List.map ~f:(fun ((phi1, t1), (phi2, t2)) ->
                (Formula.and_of [ phi1; phi2 ], Term.mk_fsym_app fsym [ t1; t2 ]))
     | term ->
-        (* print_endline ("can't elim ite :" ^ Term.str_of term); *)
+        if false then print_endline ("can't elim ite :" ^ Term.str_of term);
         [ (Formula.mk_true (), term) ]
 
   let rec elim_pvars unknowns = function
@@ -4051,8 +4179,8 @@ module rec Term :
         LetTerm
           (var, sort, elim_pvars unknowns def, elim_pvars unknowns body, info)
 
-  (** eliminate let-binding that contains an unknown to be synthesized
-      if the argument is let-normalized, then the return value is let-normalized *)
+  (** eliminate let-binding that contains an unknown to be synthesized if the
+      argument is let-normalized, then the return value is let-normalized *)
   let rec elim_let_with_unknowns ?(map = Map.Poly.empty) unknowns = function
     | Var (var, _, _) as term -> (
         match Map.Poly.find map var with Some t -> t | None -> term)
@@ -4086,7 +4214,7 @@ module rec Term :
 
   let rec instantiate_div0_mod0 = function
     | Var (var, sort, info) -> Var (var, sort, info)
-    | FunApp ((T_int.Div | T_int.Mod), [ t1; t2 ], _) when T_int.is_zero t2 ->
+    | FunApp (T_int.(Div _ | Rem _), [ t1; t2 ], _) when T_int.is_zero t2 ->
         mk_var (Ident.mk_dontcare (Term.str_of t1)) T_int.SInt
     | FunApp (sym, args, info) ->
         let sym =
@@ -4126,10 +4254,10 @@ module rec Term :
 
   let rec replace_div_mod map = function
     | Var (var, sort, info) -> Var (var, sort, info)
-    | FunApp (T_int.Div, [ t1; t2 ], _) ->
+    | FunApp (T_int.Div _, [ t1; t2 ], _) ->
         let divvar, _ = Map.Poly.find_exn map (t1, t2) in
         Var (divvar, T_int.SInt, Dummy)
-    | FunApp (T_int.Mod, [ t1; t2 ], _) ->
+    | FunApp (T_int.Rem _, [ t1; t2 ], _) ->
         let _, modvar = Map.Poly.find_exn map (t1, t2) in
         Var (modvar, T_int.SInt, Dummy)
     | FunApp (sym, args, info) ->
@@ -4181,57 +4309,48 @@ module rec Term :
     | t, Var (x, _, _) when (not (Set.mem bvs x)) && not (Set.mem (tvs_of t) x)
       ->
         Option.some @@ Map.Poly.singleton x t
-    | FunApp (funsym, [ Var (x, _, _); t3 ], _), t2
+    | ( FunApp
+          ( ((T_int.(Add | Sub) | T_real.(RAdd | RSub)) as fsym),
+            [ Var (x, _, _); t3 ],
+            _ ),
+        t )
       when (not (Set.mem bvs x))
-           && (Stdlib.(funsym = T_int.Add || funsym = T_real.RAdd)
-              || Stdlib.(funsym = T_int.Sub || funsym = T_real.RSub))
            && (not (Set.mem (tvs_of t3) x))
-           && not (Set.mem (tvs_of t2) x) ->
+           && not (Set.mem (tvs_of t) x) ->
         Option.some
-        @@ Map.Poly.singleton x (Term.mk_fsym_app (neg_fsym funsym) [ t2; t3 ])
-    | FunApp (funsym, [ t3; Var (x, _, _) ], _), t2
+        @@ Map.Poly.singleton x (Term.mk_fsym_app (negate_fsym fsym) [ t; t3 ])
+    | ( t,
+        FunApp
+          ( ((T_int.(Add | Sub) | T_real.(RAdd | RSub)) as fsym),
+            [ Var (x, _, _); t3 ],
+            _ ) )
       when (not (Set.mem bvs x))
-           && Stdlib.(
-                funsym = T_int.Add
-                || funsym = T_real.RAdd (*|| funsym = T_int.Mult*))
            && (not (Set.mem (tvs_of t3) x))
-           && not (Set.mem (tvs_of t2) x) ->
+           && not (Set.mem (tvs_of t) x) ->
         Option.some
-        @@ Map.Poly.singleton x (Term.mk_fsym_app (neg_fsym funsym) [ t2; t3 ])
-    | FunApp (funsym, [ t3; Var (x, _, _) ], _), t2
+        @@ Map.Poly.singleton x (Term.mk_fsym_app (negate_fsym fsym) [ t; t3 ])
+    | FunApp (((T_int.Add | T_real.RAdd) as fsym), [ t3; Var (x, _, _) ], _), t
       when (not (Set.mem bvs x))
-           && Stdlib.(
-                funsym = T_int.Sub
-                || funsym = T_real.RSub (*|| funsym = T_int.Div*))
            && (not (Set.mem (tvs_of t3) x))
-           && not (Set.mem (tvs_of t2) x) ->
-        Option.some @@ Map.Poly.singleton x (Term.mk_fsym_app funsym [ t3; t2 ])
-    | t1, FunApp (funsym, [ Var (x, _, _); t3 ], _)
-      when (not (Set.mem bvs x))
-           && Stdlib.(
-                funsym = T_int.Add || funsym = T_real.RAdd || funsym = T_int.Sub
-                || funsym = T_real.RSub)
-           && (not (Set.mem (tvs_of t3) x))
-           && not (Set.mem (tvs_of t2) x) ->
+           && not (Set.mem (tvs_of t) x) ->
         Option.some
-        @@ Map.Poly.singleton x (Term.mk_fsym_app (neg_fsym funsym) [ t1; t3 ])
-    | t1, FunApp (funsym, [ t3; Var (x, _, _) ], _)
+        @@ Map.Poly.singleton x (Term.mk_fsym_app (negate_fsym fsym) [ t; t3 ])
+    | t, FunApp (((T_int.Add | T_real.RAdd) as fsym), [ t3; Var (x, _, _) ], _)
       when (not (Set.mem bvs x))
-           && Stdlib.(
-                funsym = T_int.Add
-                || funsym = T_real.RAdd (*|| funsym = T_int.Mult*))
            && (not (Set.mem (tvs_of t3) x))
-           && not (Set.mem (tvs_of t2) x) ->
+           && not (Set.mem (tvs_of t) x) ->
         Option.some
-        @@ Map.Poly.singleton x (Term.mk_fsym_app (neg_fsym funsym) [ t1; t3 ])
-    | t1, FunApp (funsym, [ t3; Var (x, _, _) ], _)
+        @@ Map.Poly.singleton x (Term.mk_fsym_app (negate_fsym fsym) [ t; t3 ])
+    | t, FunApp (((T_int.Sub | T_real.RSub) as fsym), [ t3; Var (x, _, _) ], _)
       when (not (Set.mem bvs x))
-           && Stdlib.(
-                funsym = T_int.Sub
-                || funsym = T_real.RSub (*|| funsym = T_int.Div*))
            && (not (Set.mem (tvs_of t3) x))
-           && not (Set.mem (tvs_of t2) x) ->
-        Option.some @@ Map.Poly.singleton x (Term.mk_fsym_app funsym [ t3; t1 ])
+           && not (Set.mem (tvs_of t) x) ->
+        Option.some @@ Map.Poly.singleton x (Term.mk_fsym_app fsym [ t3; t ])
+    | FunApp (((T_int.Sub | T_real.RSub) as fsym), [ t3; Var (x, _, _) ], _), t
+      when (not (Set.mem bvs x))
+           && (not (Set.mem (tvs_of t3) x))
+           && not (Set.mem (tvs_of t) x) ->
+        Option.some @@ Map.Poly.singleton x (Term.mk_fsym_app fsym [ t3; t ])
     | ( FunApp ((T_dt.DTCons (_, _, _) as fsym1), ts1, _),
         FunApp ((T_dt.DTCons (_, _, _) as fsym2), ts2, _) )
       when Stdlib.(fsym1 = fsym2) ->
@@ -4279,55 +4398,47 @@ module rec Term :
           Option.some @@ Map.Poly.empty
       | Var (x, _, _), _ when not @@ Set.mem bvs x ->
           Option.some @@ Map.Poly.singleton x t2
-      | FunApp (funsym, [ Var (x, _, _); t3 ], _), _
-        when (not (Set.mem bvs x))
-             && (Set.is_empty @@ Term.tvs_of t3)
-             && Stdlib.(funsym = T_int.Add || funsym = T_int.Sub) ->
+      | FunApp ((T_int.(Add | Sub) as fsym), [ Var (x, _, _); t3 ], _), t
+        when (not (Set.mem bvs x)) && (Set.is_empty @@ Term.tvs_of t3) ->
           Option.some
           @@ Map.Poly.singleton x
-               (Term.mk_fsym_app (neg_fsym funsym) [ t2; t3 ])
-      | FunApp (funsym, [ t3; Var (x, _, _) ], _), _
-        when (not (Set.mem bvs x))
-             && (Set.is_empty @@ Term.tvs_of t3)
-             && Stdlib.(funsym = T_int.Add (*|| funsym = T_int.Mult*)) ->
+               (Term.mk_fsym_app (negate_fsym fsym) [ t; t3 ])
+      | FunApp (T_int.Add, [ t3; Var (x, _, _) ], _), t
+        when (not (Set.mem bvs x)) && (Set.is_empty @@ Term.tvs_of t3) ->
           Option.some
-          @@ Map.Poly.singleton x
-               (Term.mk_fsym_app (neg_fsym funsym) [ t2; t3 ])
-      | FunApp (funsym, [ t3; Var (x, _, _) ], _), _
-        when (not (Set.mem bvs x))
-             && (Set.is_empty @@ Term.tvs_of t3)
-             && Stdlib.(funsym = T_int.Sub (*|| funsym = T_int.Div*)) ->
+          @@ Map.Poly.singleton x (Term.mk_fsym_app T_int.Sub [ t; t3 ])
+      | FunApp (T_int.Sub, [ t3; Var (x, _, _) ], _), t
+        when (not (Set.mem bvs x)) && (Set.is_empty @@ Term.tvs_of t3) ->
           Option.some
-          @@ Map.Poly.singleton x (Term.mk_fsym_app funsym [ t3; t2 ])
+          @@ Map.Poly.singleton x (Term.mk_fsym_app T_int.Sub [ t3; t ])
       | _ -> None
   (* ToDo: remerdy incompleteness. support more general terms *)
   (* especially, non-linear pattern is not supported *)
 end
 
 and Predicate :
-  (Type.PredicateType with type formula := Formula.t and type term := Term.t) =
-struct
+  (Type.PredicateType
+    with type formula := Formula.t
+     and type formula_def := Formula.t Formula.def
+     and type term := Term.t) = struct
   type fixpoint = Mu | Nu | Fix
 
   type t =
     | Var of pred_bind
     | Psym of pred_sym
-    | Fixpoint of fixpoint * Ident.pvar * sort_env_list * Formula.t
+    | Fixpoint of Formula.t Formula.def
 
   (** Construction *)
 
   let mk_var pvar sort = Var (pvar, sort)
   let mk_psym psym = Psym psym
-  let mk_fix fix pvar args body = Fixpoint (fix, pvar, args, body)
+  let mk_fix kind name args body = Fixpoint { kind; name; args; body }
 
   (** Destruction *)
 
   let let_var = function Var (pvar, sort) -> (pvar, sort) | _ -> assert false
   let let_psym = function Psym psym -> psym | _ -> assert false
-
-  let let_fix = function
-    | Fixpoint (fix, pvar, args, body) -> (fix, pvar, args, body)
-    | _ -> assert false
+  let let_fix = function Fixpoint def -> def | _ -> assert false
 
   (** Fixpoint Operators *)
 
@@ -4337,10 +4448,11 @@ struct
   (** Predicate Symbols *)
 
   let is_infix_psym = function
-    | T_bool.Eq | T_bool.Neq | T_int.Leq | T_real.RLeq | T_bv.BVLeq _
-    | T_num.NLeq _ | T_int.Geq | T_real.RGeq | T_bv.BVGeq _ | T_num.NGeq _
-    | T_int.Lt | T_real.RLt | T_bv.BVLt _ | T_num.NLt _ | T_int.Gt | T_real.RGt
-    | T_bv.BVGt _ | T_num.NGt _ | T_int.PDiv | T_int.NotPDiv ->
+    | T_bool.(Eq | Neq)
+    | T_int.(Leq | Geq | Lt | Gt | PDiv | NotPDiv)
+    | T_real.(RLeq | RGeq | RLt | RGt)
+    | T_bv.(BVLeq _ | BVGeq _ | BVLt _ | BVGt _)
+    | T_num.(NLeq _ | NGeq _ | NLt _ | NGt _) ->
         true
     | _ -> false
 
@@ -4348,31 +4460,27 @@ struct
     | T_bool.Eq -> "="
     | T_bool.Neq -> "!="
     | T_int.Leq -> "<="
-    | T_real.RLeq -> "<=."
-    | T_bv.BVLeq _ -> "<=_bv"
     | T_int.Geq -> ">="
-    | T_real.RGeq -> ">=."
-    | T_bv.BVGeq _ -> ">=_bv"
     | T_int.Lt -> "<"
-    | T_real.RLt -> "<."
-    | T_bv.BVLt _ -> "<_bv"
     | T_int.Gt -> ">"
-    | T_real.RGt -> ">."
-    | T_bv.BVGt _ -> ">_bv"
     | T_int.PDiv -> "|"
     | T_int.NotPDiv -> "!|"
+    | T_real.RLeq -> "<=."
+    | T_real.RGeq -> ">=."
+    | T_real.RLt -> "<."
+    | T_real.RGt -> ">."
+    | T_bv.BVLeq (size, signed) ->
+        sprintf "%sle%s" (T_bv.str_of_signed signed) (T_bv.str_of_size size)
+    | T_bv.BVGeq (size, signed) ->
+        sprintf "%sge%s" (T_bv.str_of_signed signed) (T_bv.str_of_size size)
+    | T_bv.BVLt (size, signed) ->
+        sprintf "%slt%s" (T_bv.str_of_signed signed) (T_bv.str_of_size size)
+    | T_bv.BVGt (size, signed) ->
+        sprintf "%sgt%s" (T_bv.str_of_signed signed) (T_bv.str_of_size size)
     | T_num.NLeq svar -> sprintf "<=_%s" (Ident.name_of_svar svar) (* "'<=" *)
     | T_num.NGeq svar -> sprintf ">=_%s" (Ident.name_of_svar svar) (* "'>=" *)
     | T_num.NLt svar -> sprintf "<_%s" (Ident.name_of_svar svar) (* "'<" *)
     | T_num.NGt svar -> sprintf ">_%s" (Ident.name_of_svar svar) (* "'>" *)
-    | T_tuple.IsTuple sorts ->
-        sprintf "is_tuple(%s)"
-        @@ String.concat_map_list ~sep:" * " sorts ~f:Term.str_of_sort
-    | T_tuple.NotIsTuple sorts ->
-        sprintf "is_not_tuple(%s)"
-        @@ String.concat_map_list ~sep:" * " sorts ~f:Term.str_of_sort
-    | T_dt.IsCons (name, _) -> sprintf "is_%s" name
-    | T_dt.NotIsCons (name, _) -> sprintf "is_not_%s" name
     | T_sequence.IsPrefix _fin -> "is_prefix"
     | T_sequence.NotIsPrefix _fin -> "not is_prefix"
     | T_sequence.SeqInRegExp (_fin, regexp) ->
@@ -4381,11 +4489,18 @@ struct
         sprintf "not in [%s]" @@ Grammar.RegWordExp.str_of Fn.id regexp
     | T_regex.StrInRegExp -> sprintf "str_in_regex"
     | T_regex.NotStrInRegExp -> sprintf "not str_in_regex"
+    | T_tuple.IsTuple sorts ->
+        sprintf "is_tuple(%s)"
+        @@ String.concat_map_list ~sep:" * " sorts ~f:Term.str_of_sort
+    | T_tuple.NotIsTuple sorts ->
+        sprintf "is_not_tuple(%s)"
+        @@ String.concat_map_list ~sep:" * " sorts ~f:Term.str_of_sort
+    | T_dt.IsCons (name, _) -> sprintf "is_%s" name
+    | T_dt.NotIsCons (name, _) -> sprintf "is_not_%s" name
     | _ -> failwith "unknown pred symbol"
 
   let subst_sorts_psym map = function
-    | (T_num.NGt svar | T_num.NLt svar | T_num.NGeq svar | T_num.NLeq svar) as
-      psym ->
+    | T_num.(NGt svar | NLt svar | NGeq svar | NLeq svar) as psym ->
         T_num.psym_of_num_psym psym
         @@ Term.subst_sorts_sort map @@ Sort.SVar svar
     | T_tuple.IsTuple sorts ->
@@ -4398,8 +4513,7 @@ struct
     | psym -> psym (* ToDo *)
 
   let subst_conts_psym map = function
-    | (T_num.NGt svar | T_num.NLt svar | T_num.NGeq svar | T_num.NLeq svar) as
-      psym ->
+    | T_num.(NGt svar | NLt svar | NGeq svar | NLeq svar) as psym ->
         T_num.psym_of_num_psym psym
         @@ Term.subst_conts_sort map @@ Sort.SVar svar
     | T_tuple.IsTuple sorts ->
@@ -4412,8 +4526,7 @@ struct
     | psym -> psym (* ToDo *)
 
   let subst_opsigs_psym map = function
-    | (T_num.NGt svar | T_num.NLt svar | T_num.NGeq svar | T_num.NLeq svar) as
-      psym ->
+    | T_num.(NGt svar | NLt svar | NGeq svar | NLeq svar) as psym ->
         T_num.psym_of_num_psym psym
         @@ Term.subst_opsigs_sort map @@ Sort.SVar svar
     | T_tuple.IsTuple sorts ->
@@ -4425,32 +4538,117 @@ struct
         T_dt.NotIsCons (name, Datatype.subst_opsigs map dt)
     | psym -> psym (* ToDo *)
 
+  let is_flippable_psym = function
+    | T_bool.(Eq | Neq)
+    | T_int.(Leq | Geq | Lt | Gt)
+    | T_real.(RLeq | RGeq | RLt | RGt)
+    | T_bv.(BVLeq (_, _) | BVGeq (_, _) | BVLt (_, _) | BVGt (_, _))
+    | T_num.(NLeq _ | NGeq _ | NLt _ | NGt _) ->
+        true
+    | _ -> false
+
+  let is_included_psym psym1 psym2 =
+    match (psym1, psym2) with
+    | T_bool.Eq, T_bool.Eq
+    | T_bool.Eq, T_int.Leq
+    | T_bool.Eq, T_int.Geq
+    | T_bool.Eq, T_real.RLeq
+    | T_bool.Eq, T_real.RGeq
+    | T_bool.Eq, T_bv.BVLeq (_, _)
+    | T_bool.Eq, T_bv.BVGeq (_, _)
+    | T_bool.Eq, T_num.NLeq _
+    | T_bool.Eq, T_num.NGeq _
+    | T_bool.Neq, T_bool.Neq
+    | T_int.Lt, T_bool.Neq
+    | T_int.Gt, T_bool.Neq
+    | T_real.RLt, T_bool.Neq
+    | T_real.RGt, T_bool.Neq
+    | T_int.Leq, T_int.Leq
+    | T_int.Geq, T_int.Geq
+    | T_int.Lt, T_int.Lt
+    | T_int.Lt, T_int.Leq
+    | T_int.Gt, T_int.Gt
+    | T_int.Gt, T_int.Geq
+    | T_real.RLeq, T_real.RLeq
+    | T_real.RGeq, T_real.RGeq
+    | T_real.RLt, T_real.RLt
+    | T_real.RLt, T_real.RLeq
+    | T_real.RGt, T_real.RGt
+    | T_real.RGt, T_real.RGeq ->
+        true
+    | T_bv.BVLeq (size1, signed1), T_bv.BVLeq (size2, signed2)
+    | T_bv.BVGeq (size1, signed1), T_bv.BVGeq (size2, signed2)
+    | T_bv.BVLt (size1, signed1), T_bv.BVLt (size2, signed2)
+    | T_bv.BVLt (size1, signed1), T_bv.BVLeq (size2, signed2)
+    | T_bv.BVGt (size1, signed1), T_bv.BVGt (size2, signed2)
+    | T_bv.BVGt (size1, signed1), T_bv.BVGeq (size2, signed2) ->
+        Stdlib.(size1 = size2 && signed1 = signed2)
+    | T_num.NLeq sort1, T_num.NLeq sort2
+    | T_num.NGeq sort1, T_num.NGeq sort2
+    | T_num.NLt sort1, T_num.NLt sort2
+    | T_num.NLt sort1, T_num.NLeq sort2
+    | T_num.NGt sort1, T_num.NGt sort2
+    | T_num.NGt sort1, T_num.NGeq sort2 ->
+        Stdlib.(sort1 = sort2)
+    | _ -> false
+
+  let flip_psym = function
+    | T_bool.Eq -> T_bool.Eq
+    | T_bool.Neq -> T_bool.Neq
+    | T_int.Leq -> T_int.Geq
+    | T_int.Geq -> T_int.Leq
+    | T_int.Lt -> T_int.Gt
+    | T_int.Gt -> T_int.Lt
+    | T_real.RLeq -> T_real.RGeq
+    | T_real.RGeq -> T_real.RLeq
+    | T_real.RLt -> T_real.RGt
+    | T_real.RGt -> T_real.RLt
+    | T_bv.BVLeq (size, signed) -> T_bv.BVGeq (size, signed)
+    | T_bv.BVGeq (size, signed) -> T_bv.BVLeq (size, signed)
+    | T_bv.BVLt (size, signed) -> T_bv.BVGt (size, signed)
+    | T_bv.BVGt (size, signed) -> T_bv.BVLt (size, signed)
+    | T_num.NLeq sort -> T_num.NGeq sort
+    | T_num.NGeq sort -> T_num.NLeq sort
+    | T_num.NLt sort -> T_num.NGt sort
+    | T_num.NGt sort -> T_num.NLt sort
+    | psym -> failwith ("[flip_psym] not supported: " ^ str_of_psym psym)
+
+  let is_negatable_psym = function
+    | T_bool.(Eq | Neq)
+    | T_int.(Leq | Geq | Lt | Gt | PDiv | NotPDiv)
+    | T_real.(RLeq | RGeq | RLt | RGt)
+    | T_bv.(BVLeq (_, _) | BVGeq (_, _) | BVLt (_, _) | BVGt (_, _))
+    | T_num.(NLeq _ | NGeq _ | NLt _ | NGt _)
+    | T_sequence.(
+        IsPrefix _ | NotIsPrefix _ | SeqInRegExp (_, _) | NotSeqInRegExp (_, _))
+    | T_regex.(StrInRegExp | NotStrInRegExp)
+    | T_tuple.(IsTuple _ | NotIsTuple _)
+    | T_dt.(IsCons (_, _) | NotIsCons (_, _)) ->
+        true
+    | _ -> false
+
   let negate_psym = function
     | T_bool.Eq -> T_bool.Neq
     | T_bool.Neq -> T_bool.Eq
     | T_int.Leq -> T_int.Gt
     | T_int.Geq -> T_int.Lt
-    | T_int.PDiv -> T_int.NotPDiv
-    | T_int.NotPDiv -> T_int.PDiv
     | T_int.Lt -> T_int.Geq
     | T_int.Gt -> T_int.Leq
+    | T_int.PDiv -> T_int.NotPDiv
+    | T_int.NotPDiv -> T_int.PDiv
     | T_real.RLeq -> T_real.RGt
     | T_real.RGeq -> T_real.RLt
     | T_real.RLt -> T_real.RGeq
     | T_real.RGt -> T_real.RLeq
-    | T_bv.BVLeq size -> T_bv.BVGt size
-    | T_bv.BVGeq size -> T_bv.BVLt size
-    | T_bv.BVLt size -> T_bv.BVGeq size
-    | T_bv.BVGt size -> T_bv.BVLeq size
+    | T_bv.BVLeq (size, signed) -> T_bv.BVGt (size, signed)
+    | T_bv.BVGeq (size, signed) -> T_bv.BVLt (size, signed)
+    | T_bv.BVLt (size, signed) -> T_bv.BVGeq (size, signed)
+    | T_bv.BVGt (size, signed) -> T_bv.BVLeq (size, signed)
+    | T_irb.IsInt -> failwith "[negate_psym] not supported"
     | T_num.NLeq sort -> T_num.NGt sort
     | T_num.NGeq sort -> T_num.NLt sort
     | T_num.NLt sort -> T_num.NGeq sort
     | T_num.NGt sort -> T_num.NLeq sort
-    | T_irb.IsInt -> failwith "[negate_psym] not supported"
-    | T_tuple.IsTuple sorts -> T_tuple.NotIsTuple sorts
-    | T_tuple.NotIsTuple sorts -> T_tuple.IsTuple sorts
-    | T_dt.IsCons (name, dt) -> T_dt.NotIsCons (name, dt)
-    | T_dt.NotIsCons (name, dt) -> T_dt.IsCons (name, dt)
     | T_sequence.IsPrefix fin -> T_sequence.NotIsPrefix fin
     | T_sequence.NotIsPrefix fin -> T_sequence.IsPrefix fin
     | T_sequence.SeqInRegExp (fin, regexp) ->
@@ -4459,20 +4657,24 @@ struct
         T_sequence.SeqInRegExp (fin, regexp)
     | T_regex.StrInRegExp -> T_regex.NotStrInRegExp
     | T_regex.NotStrInRegExp -> T_regex.StrInRegExp
+    | T_tuple.IsTuple sorts -> T_tuple.NotIsTuple sorts
+    | T_tuple.NotIsTuple sorts -> T_tuple.IsTuple sorts
+    | T_dt.IsCons (name, dt) -> T_dt.NotIsCons (name, dt)
+    | T_dt.NotIsCons (name, dt) -> T_dt.IsCons (name, dt)
     | psym -> failwith ("[negate_psym] not supported: " ^ str_of_psym psym)
 
   (** Printing *)
 
   let str_of = function
     | Var (Ident.Pvar pvar, _sorts) -> pvar
-    (*String.paren @@ sprintf "%s : [%s]" pvar
-      (String.concat_map_list ~sep:";" ~f:Term.str_of_sort sorts)*)
+    (* sprintf "(%s : [%s])" pvar
+       (String.concat_map_list ~sep:";" ~f:Term.str_of_sort sorts) *)
     | Psym psym -> str_of_psym psym
-    | Fixpoint (fp, Ident.Pvar pvar, params, phi) ->
-        String.paren
-        @@ sprintf "%s%s%s. %s" (str_of_fop fp) pvar
-             (String.paren @@ str_of_sort_env_list Term.str_of_sort params)
-             (Formula.str_of ~priority:Priority.lowest phi)
+    | Fixpoint def ->
+        sprintf "(%s%s%s. %s)" (str_of_fop def.kind)
+          (Ident.name_of_pvar def.name)
+          (String.paren @@ str_of_sort_env_list Term.str_of_sort def.args)
+          (Formula.str_of ~priority:Priority.lowest def.body)
 
   (** Observation *)
 
@@ -4483,21 +4685,21 @@ struct
   let tvs_of = function
     | Var _ -> Set.Poly.empty
     | Psym _ -> Set.Poly.empty
-    | Fixpoint (_, pvar, bounds, body) ->
-        Set.diff (Formula.tvs_of body)
+    | Fixpoint def ->
+        Set.diff (Formula.tvs_of def.body)
           (Set.add
-             (Set.Poly.of_list @@ List.map ~f:fst bounds)
-             (Ident.pvar_to_tvar pvar))
+             (Set.Poly.of_list @@ List.map ~f:fst def.args)
+             (Ident.pvar_to_tvar def.name))
 
   let pvs_of = function
     | Var (pvar, _) -> Set.Poly.singleton pvar
     | Psym _ -> Set.Poly.empty
-    | Fixpoint (_, pvar, bounds, body) ->
-        Set.diff (Formula.pvs_of body)
+    | Fixpoint def ->
+        Set.diff (Formula.pvs_of def.body)
           (Set.add
              (Set.Poly.map ~f:Ident.tvar_to_pvar
-             @@ Set.Poly.of_list @@ List.map ~f:fst bounds)
-             pvar)
+             @@ Set.Poly.of_list @@ List.map ~f:fst def.args)
+             def.name)
 
   let fvs_of atm =
     Set.union (tvs_of atm)
@@ -4510,26 +4712,28 @@ struct
              | Sort.SVar svar -> Some svar
              | _ -> None)
     | Psym _ -> Set.Poly.empty
-    | Fixpoint (_, _, bounds, body) ->
-        Set.union (Formula.svs_of body)
+    | Fixpoint def ->
+        Set.union (Formula.svs_of def.body)
           (Set.Poly.of_list
           @@ List.filter_map ~f:(function
                | Sort.SVar svar -> Some svar
                | _ -> None)
-          @@ List.map ~f:snd bounds)
+          @@ List.map ~f:snd def.args)
 
   let term_sort_env_of ?(bvs = Set.Poly.empty) = function
     | Var _ | Psym _ -> Set.Poly.empty
-    | Fixpoint (_, _, bounds, body) ->
-        Set.diff (Formula.term_sort_env_of ~bvs body) (Set.Poly.of_list bounds)
+    | Fixpoint def ->
+        Set.diff
+          (Formula.term_sort_env_of ~bvs def.body)
+          (Set.Poly.of_list def.args)
 
   let pred_sort_env_of ?(bpvs = Set.Poly.empty) = function
     | Var (pvar, sorts) ->
         if Set.mem bpvs pvar then Set.Poly.empty
         else Set.Poly.singleton (pvar, sorts)
     | Psym _ -> Set.Poly.empty
-    | Fixpoint (_, pvar, _, phi) ->
-        Formula.pred_sort_env_of ~bpvs:(Set.add bpvs pvar) phi
+    | Fixpoint def ->
+        Formula.pred_sort_env_of ~bpvs:(Set.add bpvs def.name) def.body
 
   let sort_env_of ?(bpvs = Set.Poly.empty) pred =
     Set.union (term_sort_env_of pred)
@@ -4538,30 +4742,30 @@ struct
   let terms_of = function
     | Var _ -> Set.Poly.empty
     | Psym _ -> Set.Poly.empty
-    | Fixpoint (_, _, _, phi) -> Formula.terms_of phi
+    | Fixpoint def -> Formula.terms_of def.body
 
   let fvar_apps_of = function
     | Var (_, _) -> Set.Poly.empty
     | Psym _ -> Set.Poly.empty
-    | Fixpoint (_, _, _, phi) -> Formula.fvar_apps_of phi
+    | Fixpoint def -> Formula.fvar_apps_of def.body
 
   let nesting_level = function
-    | Fixpoint (_, _, _, phi) -> 1 + Formula.nesting_level phi
+    | Fixpoint def -> 1 + Formula.nesting_level def.body
     | _ -> 0
 
   let number_of_quantifiers = function
-    | Fixpoint (_, _, _, phi) -> Formula.number_of_quantifiers phi
+    | Fixpoint def -> Formula.number_of_quantifiers def.body
     | _ -> 0
 
   let funsyms_of = function
     | Var _ -> Set.Poly.empty
     | Psym _ -> Set.Poly.empty
-    | Fixpoint (_, _, _, body) -> Formula.funsyms_of body
+    | Fixpoint def -> Formula.funsyms_of def.body
 
   let predsyms_of = function
     | Var _ -> Set.Poly.empty
     | Psym psym -> Set.Poly.singleton psym
-    | Fixpoint (_, _, _, body) -> Formula.predsyms_of body
+    | Fixpoint def -> Formula.predsyms_of def.body
 
   (** Substitution *)
 
@@ -4571,9 +4775,9 @@ struct
         | None -> Var (pvar, sort)
         | Some tvar -> Var (Ident.tvar_to_pvar tvar, sort))
     | Psym sym -> Psym sym
-    | Fixpoint (fixpoint, pvar, bounds, body) ->
-        let map' = Map.remove_keys map (List.map ~f:fst bounds) in
-        Fixpoint (fixpoint, pvar, bounds, Formula.rename map' body)
+    | Fixpoint def ->
+        let map' = Map.remove_keys map (List.map ~f:fst def.args) in
+        Fixpoint { def with body = Formula.rename map' def.body }
 
   let rename_pvars map = function
     | Var (pvar, sorts) -> (
@@ -4581,9 +4785,9 @@ struct
         | None -> Var (pvar, sorts)
         | Some pvar' -> Var (pvar', sorts))
     | Psym sym -> Psym sym
-    | Fixpoint (fixpoint, pvar, bounds, body) ->
-        let map' = Map.Poly.remove map pvar in
-        Fixpoint (fixpoint, pvar, bounds, Formula.rename_pvars map' body)
+    | Fixpoint def ->
+        let map' = Map.Poly.remove map def.name in
+        Fixpoint { def with body = Formula.rename_pvars map' def.body }
 
   let rename_sorted_pvars map = function
     | Var (pvar, sorts) -> (
@@ -4591,11 +4795,12 @@ struct
         | None -> Var (pvar, sorts)
         | Some pvar' -> Var (pvar', sorts))
     | Psym sym -> Psym sym
-    | Fixpoint (fixpoint, pvar, bounds, body) ->
+    | Fixpoint def ->
         let map' =
-          Map.Poly.remove map (Ident.name_of_pvar pvar, List.map bounds ~f:snd)
+          Map.Poly.remove map
+            (Ident.name_of_pvar def.name, List.map def.args ~f:snd)
         in
-        Fixpoint (fixpoint, pvar, bounds, Formula.rename_sorted_pvars map' body)
+        Fixpoint { def with body = Formula.rename_sorted_pvars map' def.body }
 
   let subst_neg pvar = function
     | Var (pvar', sort) ->
@@ -4603,69 +4808,100 @@ struct
           assert false (* it must be handled with Formula.subst_neg *)
         else Var (pvar', sort)
     | Psym psym -> Psym psym
-    | Fixpoint (fixpoint, pvar', bounds, body) ->
-        if Stdlib.(pvar = pvar') then assert false
-        else Fixpoint (fixpoint, pvar', bounds, Formula.subst_neg pvar body)
+    | Fixpoint def ->
+        if Stdlib.(pvar = def.name) then assert false
+        else Fixpoint { def with body = Formula.subst_neg pvar def.body }
 
   let subst_sorts map = function
     | Var (pvar, sorts) ->
         Var (pvar, List.map ~f:(Term.subst_sorts_sort map) sorts)
     | Psym psym -> Psym (subst_sorts_psym map psym)
-    | Fixpoint (fixpoint, pvar, bounds, body) ->
+    | Fixpoint def ->
         Fixpoint
-          ( fixpoint,
-            pvar,
-            Formula.subst_sorts_bounds map bounds,
-            Formula.subst_sorts map body )
+          {
+            def with
+            args = Formula.subst_sorts_bounds map def.args;
+            body = Formula.subst_sorts map def.body;
+          }
 
   let subst_conts map = function
     | Var (pvar, sorts) ->
         Var (pvar, List.map ~f:(Term.subst_conts_sort map) sorts)
     | Psym psym -> Psym (subst_conts_psym map psym)
-    | Fixpoint (fixpoint, pvar, bounds, body) ->
+    | Fixpoint def ->
         Fixpoint
-          ( fixpoint,
-            pvar,
-            Formula.subst_conts_bounds map bounds,
-            Formula.subst_conts map body )
+          {
+            def with
+            args = Formula.subst_conts_bounds map def.args;
+            body = Formula.subst_conts map def.body;
+          }
 
   let subst_opsigs map = function
     | Var (pvar, sorts) ->
         Var (pvar, List.map ~f:(Term.subst_opsigs_sort map) sorts)
     | Psym psym -> Psym (subst_opsigs_psym map psym)
-    | Fixpoint (fixpoint, pvar, bounds, body) ->
+    | Fixpoint def ->
         Fixpoint
-          ( fixpoint,
-            pvar,
-            Formula.subst_opsigs_bounds map bounds,
-            Formula.subst_opsigs map body )
+          {
+            def with
+            args = Formula.subst_opsigs_bounds map def.args;
+            body = Formula.subst_opsigs map def.body;
+          }
 
   let aconv_tvar = function
     | Var (pvar, sorts) -> Var (pvar, sorts)
     | Psym sym -> Psym sym
-    | Fixpoint (fp, pvar, params, body) ->
-        let params', map = refresh_sort_env_list params in
+    | Fixpoint def ->
+        let args, map = refresh_sort_env_list def.args in
         Fixpoint
-          (fp, pvar, params', Formula.aconv_tvar @@ Formula.rename map body)
+          {
+            def with
+            args;
+            body = Formula.rename map @@ Formula.aconv_tvar def.body;
+          }
+
+  let aconv_tvar_norm next = function
+    | Var (pvar, sorts) -> Var (pvar, sorts)
+    | Psym sym -> Psym sym
+    | Fixpoint def ->
+        let args, map = refresh_sort_env_list_norm next def.args in
+        Fixpoint
+          {
+            def with
+            args;
+            body = Formula.rename map @@ Formula.aconv_tvar_norm next def.body;
+          }
 
   let aconv_pvar = function
     | Var (pvar, sorts) -> Var (pvar, sorts)
     | Psym sym -> Psym sym
-    | Fixpoint (fp, pvar, params, body) ->
-        let pvar' = Ident.mk_fresh_pvar () in
-        let body =
-          Formula.aconv_pvar
-          @@ Formula.rename_pvars (Map.Poly.singleton pvar pvar') body
-        in
-        Fixpoint (fp, pvar', params, body)
+    | Fixpoint def ->
+        let name = Ident.mk_fresh_pvar () in
+        Fixpoint
+          {
+            def with
+            name;
+            body =
+              Formula.aconv_pvar
+              @@ Formula.rename_pvars
+                   (Map.Poly.singleton def.name name)
+                   def.body;
+          }
 
   (** Transformation *)
 
   let negate ?(negate_formula = Formula.mk_neg ~info:Dummy) = function
-    | Var _ -> failwith "Predicate.negate"
-    | Fixpoint (fixpoint, pvar, bounds, body) ->
-        Fixpoint (flip_fop fixpoint, pvar, bounds, negate_formula body)
-    | Psym psym -> Psym (negate_psym psym)
+    | Var _ -> None
+    | Fixpoint def ->
+        Option.return
+        @@ Fixpoint
+             {
+               def with
+               kind = flip_fop def.kind;
+               body = negate_formula def.body;
+             }
+    | Psym psym -> (
+        try Option.return (Psym (negate_psym psym)) with _ -> None)
 
   let complete_psort map = function
     | Var (pvar, _) -> (
@@ -4675,9 +4911,12 @@ struct
     | pred -> pred
 
   let extend_pred_params x extended_params = function
-    | Fixpoint (fp, pvar, args, body) ->
+    | Fixpoint def ->
         Fixpoint
-          (fp, pvar, args, Formula.extend_pred_params x extended_params body)
+          {
+            def with
+            body = Formula.extend_pred_params x extended_params def.body;
+          }
     | x -> x
 end
 
@@ -4687,7 +4926,8 @@ and Atom :
      and type term := Term.t
      and type formula := Formula.t
      and type termSubst := TermSubst.t
-     and type predSubst := PredSubst.t) = struct
+     and type predSubst := PredSubst.t
+     and type funcSubst := FuncSubst.t) = struct
   type t =
     | True of info
     | False of info
@@ -4710,17 +4950,17 @@ and Atom :
   let of_bool_var b =
     T_bool.mk_eq (Term.mk_var b T_bool.SBool) (T_bool.mk_true ())
 
-  let of_neg_bool_var b =
-    T_bool.mk_eq (Term.mk_var b T_bool.SBool) (T_bool.mk_false ())
-
   let of_bool_term = function
-    | Term.Var (_, T_bool.SBool, _) as t -> T_bool.mk_eq t (T_bool.mk_true ())
+    | Term.Var (b, T_bool.SBool, _) -> of_bool_var b
     | t ->
         (*ToDo: check that [t] is a boolean term*)
         T_bool.mk_eq t (T_bool.mk_true ())
 
+  let of_neg_bool_var b =
+    T_bool.mk_eq (Term.mk_var b T_bool.SBool) (T_bool.mk_false ())
+
   let of_neg_bool_term = function
-    | Term.Var (_, T_bool.SBool, _) as t -> T_bool.mk_eq t (T_bool.mk_false ())
+    | Term.Var (b, T_bool.SBool, _) -> of_neg_bool_var b
     | t ->
         (*ToDo: check that [t] is a boolean term*)
         T_bool.mk_eq t (T_bool.mk_false ())
@@ -4815,13 +5055,13 @@ and Atom :
     | True _ | False _ -> Set.Poly.empty
     | App (pred, args, _) ->
         Set.Poly.union_list
-        @@ (Predicate.tvs_of pred :: List.map args ~f:Term.tvs_of)
+          (Predicate.tvs_of pred :: List.map args ~f:Term.tvs_of)
 
   let pvs_of = function
     | True _ | False _ -> Set.Poly.empty
     | App (pred, args, _) ->
         Set.Poly.union_list
-        @@ (Predicate.pvs_of pred :: List.map args ~f:Term.pvs_of)
+          (Predicate.pvs_of pred :: List.map args ~f:Term.pvs_of)
 
   let fvs_of atm =
     Set.union (tvs_of atm)
@@ -4832,7 +5072,7 @@ and Atom :
     | True _ | False _ -> Set.Poly.empty
     | App (pred, args, _) ->
         Set.Poly.union_list
-        @@ (Predicate.svs_of pred :: List.map args ~f:Term.svs_of)
+          (Predicate.svs_of pred :: List.map args ~f:Term.svs_of)
 
   let term_sort_env_of ?(bvs = Set.Poly.empty) = function
     | True _ | False _ -> Set.Poly.empty
@@ -4858,30 +5098,30 @@ and Atom :
     | True _ | False _ -> Set.Poly.empty
     | App (pred, terms, _) ->
         Set.Poly.union_list
-        @@ (Predicate.funsyms_of pred :: List.map ~f:Term.funsyms_of terms)
+          (Predicate.funsyms_of pred :: List.map ~f:Term.funsyms_of terms)
 
   let predsyms_of = function
     | True _ | False _ -> Set.Poly.empty
     | App (pred, terms, _) ->
         Set.Poly.union_list
-        @@ (Predicate.predsyms_of pred :: List.map ~f:Term.predsyms_of terms)
+          (Predicate.predsyms_of pred :: List.map ~f:Term.predsyms_of terms)
 
   let pathexps_of ?(bvs = Set.Poly.empty) = function
     | True _ | False _ -> Set.Poly.empty
-    | App (Predicate.Fixpoint (_, _, senv, body), args, _) ->
+    | App (Predicate.Fixpoint def, args, _) ->
         Set.Poly.union_list
         @@ Set.diff
-             (Formula.pathexps_of ~bvs body)
-             (Set.Poly.of_list @@ Term.of_sort_env senv)
+             (Formula.pathexps_of ~bvs def.body)
+             (Set.Poly.of_list @@ Term.of_sort_env def.args)
            :: List.map args ~f:(Term.pathexps_of ~bvs)
     | App (_, args, _) ->
         Set.Poly.union_list @@ List.map args ~f:(Term.pathexps_of ~bvs)
 
   let filtered_terms_of ~f = function
     | True _ | False _ -> Set.Poly.empty
-    | App (Predicate.Fixpoint (_, _, _, body), args, _) ->
+    | App (Predicate.Fixpoint def, args, _) ->
         Set.Poly.union_list
-        @@ Formula.filtered_terms_of ~f body
+        @@ Formula.filtered_terms_of ~f def.body
            :: List.map args ~f:(Term.filtered_terms_of ~f)
     | App (_, args, _) ->
         Set.Poly.union_list @@ List.map args ~f:(Term.filtered_terms_of ~f)
@@ -4895,7 +5135,7 @@ and Atom :
     | True _ | False _ -> Set.Poly.empty
     | App (pred, terms, _) ->
         Set.Poly.union_list
-        @@ (Predicate.fvar_apps_of pred :: List.map ~f:Term.fvar_apps_of terms)
+          (Predicate.fvar_apps_of pred :: List.map ~f:Term.fvar_apps_of terms)
 
   let atoms_of ?(pos = true) = function
     | True _ | False _ -> (Set.Poly.empty, Set.Poly.empty)
@@ -4904,11 +5144,11 @@ and Atom :
           List.unzip @@ List.map terms ~f:(Term.atoms_of ~pos)
         in
         if pos then
-          ( Set.Poly.union_list @@ (Set.Poly.singleton atom :: poss1),
+          ( Set.Poly.union_list (Set.Poly.singleton atom :: poss1),
             Set.Poly.union_list negs1 )
         else
           ( Set.Poly.union_list poss1,
-            Set.Poly.union_list @@ (Set.Poly.singleton atom :: negs1) )
+            Set.Poly.union_list (Set.Poly.singleton atom :: negs1) )
 
   let nesting_level = function
     | True _ | False _ -> 0
@@ -4936,15 +5176,15 @@ and Atom :
 
   let ast_size = function
     | True _ | False _ -> 1
-    | App (Predicate.Var _, terms, _) | App (Predicate.Psym _, terms, _) ->
+    | App (Predicate.(Var _ | Psym _), terms, _) ->
         1 + (Integer.sum_list @@ List.map ~f:Term.ast_size terms)
-    | App (Predicate.Fixpoint (_, _, _, phi), terms, _) ->
-        Formula.ast_size phi
+    | App (Predicate.Fixpoint def, terms, _) ->
+        1 + Formula.ast_size def.body
         + (Integer.sum_list @@ List.map ~f:Term.ast_size terms)
 
   let occur_times ?(map = Map.Poly.empty) x = function
-    | Atom.True _ | Atom.False _ -> 0
-    | Atom.App (_, ts, _) ->
+    | True _ | False _ -> 0
+    | App (_, ts, _) ->
         Integer.sum_list @@ List.map ~f:(Term.occur_times ~map x) ts
 
   (* assume that the argument is alpha-renamed *)
@@ -4959,9 +5199,10 @@ and Atom :
         List.fold args ~init:map ~f:(fun map -> Term.let_sort_env_of ~map)
     | _ -> map
 
-  let find_div_mod = function
+  let div_rem_of = function
     | True _ | False _ -> Set.Poly.empty
-    | App (_, args, _) -> Term.find_div_mod_list args
+    | App (_, args, _) ->
+        Set.Poly.union_list @@ List.map ~f:Term.div_rem_of args
 
   (** Substitution *)
 
@@ -5009,42 +5250,55 @@ and Atom :
         App (Var (pvar, sorts), List.map ~f:(Term.subst map) args, info)
     | App (Psym sym, args, info) ->
         App (Psym sym, List.map ~f:(Term.subst map) args, info)
-    | App (Fixpoint (fixpoint, pvar, bounds, body), args, info) ->
-        let map' = Map.remove_keys map (List.map ~f:fst bounds) in
+    | App (Fixpoint def, args, info) ->
+        let map' = Map.remove_keys map (List.map ~f:fst def.args) in
         App
-          ( Fixpoint (fixpoint, pvar, bounds, Formula.subst map' body),
+          ( Fixpoint { def with body = Formula.subst map' def.body },
             List.map ~f:(Term.subst map') args,
             info )
 
-  let subst_preds map = function
-    | True info -> Formula.mk_true () ~info
-    | False info -> Formula.mk_false () ~info
-    | App (Predicate.Var (pvar, sort), args, info) -> (
-        let args = List.map ~f:(Term.subst_preds map) args in
-        match Map.Poly.find map pvar with
-        | Some (params, phi) ->
-            let map =
-              try
-                (* ToDo : check whether args match sorts *)
-                Map.Poly.of_alist_exn
-                @@ List.zip_exn (List.map ~f:fst params) args
-              with e ->
-                printf "ident: %s #params: %d #args: %d"
-                  (Ident.name_of_pvar pvar) (List.length params)
-                  (List.length args);
-                raise e
-            in
-            Formula.subst map phi
-        | None -> Formula.mk_atom (App (Predicate.Var (pvar, sort), args, info))
-        )
-    | App (Psym sym, args, info) ->
-        Formula.mk_atom
-          (App (Psym sym, List.map ~f:(Term.subst_preds map) args, info))
-    | App (Predicate.Fixpoint (fp, pvar, params, phi), terms, info) ->
-        let terms = List.map ~f:(Term.subst_preds map) terms in
-        let phi = Formula.subst_preds (Map.Poly.remove map pvar) phi in
-        Formula.mk_atom
-          (App (Predicate.Fixpoint (fp, pvar, params, phi), terms, info))
+  let subst_preds psub = function
+    | True info -> Formula.mk_true ~info ()
+    | False info -> Formula.mk_false ~info ()
+    | App (pred, args, info) -> (
+        let args = List.map ~f:(Term.subst_preds psub) args in
+        match pred with
+        | Predicate.Var (pvar, sort) -> (
+            match Map.Poly.find psub pvar with
+            | Some (senv, phi) ->
+                let tsub =
+                  TermSubst.make ~name:(Ident.name_of_pvar pvar) senv args
+                in
+                Formula.subst tsub phi
+            | None ->
+                Formula.mk_atom ~info (Atom.mk_pvar_app ~info pvar sort args))
+        | Predicate.Psym psym ->
+            Formula.mk_atom ~info (Atom.mk_psym_app ~info psym args)
+        | Predicate.Fixpoint def ->
+            Formula.mk_atom ~info
+              (Atom.mk_app ~info
+                 (Predicate.Fixpoint
+                    {
+                      def with
+                      body =
+                        Formula.subst_preds
+                          (Map.Poly.remove psub def.name)
+                          def.body;
+                    })
+                 args))
+
+  let subst_funcs fsub = function
+    | True info -> Atom.mk_true ~info ()
+    | False info -> Atom.mk_false ~info ()
+    | App (pred, args, info) ->
+        let pred =
+          match pred with
+          | Predicate.Fixpoint def ->
+              Predicate.Fixpoint
+                { def with body = Formula.subst_funcs fsub (*ToDo*) def.body }
+          | _ -> pred
+        in
+        Atom.mk_app ~info pred (List.map ~f:(Term.subst_funcs fsub) args)
 
   let subst_neg pvar = function
     | True info -> True info
@@ -5084,6 +5338,15 @@ and Atom :
     | App (pred, args, info) ->
         App (Predicate.aconv_tvar pred, List.map ~f:Term.aconv_tvar args, info)
 
+  let aconv_tvar_norm next = function
+    | True info -> True info
+    | False info -> False info
+    | App (pred, args, info) ->
+        App
+          ( Predicate.aconv_tvar_norm next pred,
+            List.map ~f:(Term.aconv_tvar_norm next) args,
+            info )
+
   let aconv_pvar = function
     | True info -> True info
     | False info -> False info
@@ -5093,10 +5356,12 @@ and Atom :
   (** Transformation *)
 
   let negate ?(negate_formula = Formula.mk_neg ~info:Dummy) = function
-    | True info -> False info
-    | False info -> True info
-    | App (pred, args, info) ->
-        App (Predicate.negate ~negate_formula pred, args, info)
+    | True info -> Option.return @@ False info
+    | False info -> Option.return @@ True info
+    | App (pred, args, info) -> (
+        match Predicate.negate ~negate_formula pred with
+        | None -> None
+        | Some neg_pred -> Option.return @@ App (neg_pred, args, info))
 
   let complete_psort map = function
     | True info -> True info
@@ -5123,11 +5388,11 @@ and Atom :
         List.cartesian_product (Term.elim_ite t1) (Term.elim_ite t2)
         |> List.map ~f:(fun ((phi1, t1), (phi2, t2)) ->
                Formula.and_of
-               @@ [
-                    phi1;
-                    phi2;
-                    Formula.mk_atom @@ Atom.mk_psym_app psym [ t1; t2 ];
-                  ])
+                 [
+                   phi1;
+                   phi2;
+                   Formula.mk_atom @@ Atom.mk_psym_app psym [ t1; t2 ];
+                 ])
         |> Formula.or_of
     | App (pred, [ t ], _) ->
         Term.elim_ite t
@@ -5135,6 +5400,54 @@ and Atom :
                Formula.and_of [ phi; Formula.mk_atom @@ Atom.mk_app pred [ t ] ])
         |> Formula.or_of
     | atm -> Formula.mk_atom atm
+
+  let elim_false phi =
+    (*ToDo: for PolyQEnt *)
+    if Formula.is_false phi then Formula.eq (T_real.rzero ()) (T_real.rone ())
+    else phi
+
+  let elim_ite_prob simplify = function
+    | App
+        ( Psym
+            (( T_bool.(Eq | Neq)
+             | T_int.(Leq | Geq | Lt | Gt)
+             | T_bv.(BVLeq _ | BVGeq _ | BVLt _ | BVGt _)
+             | T_real.(RLeq | RGeq | RLt | RGt) ) as psym),
+          [ t1; t2 ],
+          _ ) ->
+        List.cartesian_product (Term.elim_ite t1) (Term.elim_ite t2)
+        |> List.filter_map ~f:(fun ((phi1, t1), (phi2, t2)) ->
+               let cond = simplify @@ Formula.and_of [ phi1; phi2 ] in
+               let conc =
+                 simplify @@ Formula.mk_atom @@ Atom.mk_psym_app psym [ t1; t2 ]
+               in
+               if Formula.is_true conc || Formula.is_false cond then None
+               else if Formula.is_true cond then Some (elim_false conc)
+               else if Formula.is_false conc then
+                 let neg_cond = Formula.negate cond in
+                 if Formula.is_atom neg_cond then Some neg_cond
+                 else Some (Formula.mk_imply cond (elim_false conc))
+               else Some (Formula.mk_imply cond conc))
+        |> Set.Poly.of_list
+    | App (pred, [ t ], _) ->
+        Term.elim_ite t
+        |> List.filter_map ~f:(fun (phi, t) ->
+               let cond = simplify phi in
+               let conc =
+                 simplify @@ Formula.mk_atom @@ Atom.mk_app pred [ t ]
+               in
+               if Formula.is_true conc || Formula.is_false cond then None
+               else if Formula.is_true cond then Some (elim_false conc)
+               else if Formula.is_false conc then
+                 let neg_cond = Formula.negate cond in
+                 if Formula.is_atom neg_cond then Some neg_cond
+                 else Some (Formula.mk_imply cond (elim_false conc))
+               else Some (Formula.mk_imply cond conc))
+        |> Set.Poly.of_list
+    | atm ->
+        let conc = simplify @@ Formula.mk_atom atm in
+        if Formula.is_true conc then Set.Poly.empty
+        else Set.Poly.singleton (elim_false conc)
 
   let instantiate_div0_mod0 = function
     | True info -> True info
@@ -5229,7 +5542,8 @@ and Formula :
      and type rand := Rand.t
      and type predicate_fixpoint := Predicate.fixpoint
      and type termSubst := TermSubst.t
-     and type predSubst := PredSubst.t) = struct
+     and type predSubst := PredSubst.t
+     and type funcSubst := FuncSubst.t) = struct
   type unop = Not
   type binop = And | Or | Imply | Iff | Xor
   type binder = Forall | Exists | Random of Rand.t
@@ -5239,11 +5553,15 @@ and Formula :
     | UnaryOp of unop * Formula.t * info
     | BinaryOp of binop * Formula.t * Formula.t * info
     | Bind of binder * sort_env_list * Formula.t * info
-    | LetRec of
-        (Predicate.fixpoint * Ident.pvar * sort_env_list * Formula.t) list
-        * Formula.t
-        * info
+    | LetRec of t def list * Formula.t * info
     | LetFormula of Ident.tvar * Sort.t * Term.t * Formula.t * info
+
+  and 'a def = {
+    kind : Predicate.fixpoint;
+    name : Ident.pvar;
+    args : sort_env_list;
+    body : 'a;
+  }
 
   (** Sorts *)
 
@@ -5334,11 +5652,13 @@ and Formula :
 
   let rec negate = function
     | Atom (atom, info) as phi -> (
-        try Atom (Atom.negate atom, info) with _ -> mk_neg phi)
+        match Atom.negate atom with
+        | None -> mk_neg phi
+        | Some neg_atom -> Atom (neg_atom, info))
     | UnaryOp (Not, phi, _) -> phi
     | LetFormula (var, sort, def, body, info) ->
         LetFormula (var, sort, def, negate body, info)
-    | phi -> mk_neg phi
+    | phi -> mk_neg phi (*ToDo*)
 
   let of_bool_var b = mk_atom (Atom.of_bool_var b)
   let of_neg_bool_var b = mk_atom (Atom.of_neg_bool_var b)
@@ -5404,18 +5724,31 @@ and Formula :
     | _ -> assert false
 
   let geq t1 t2 =
-    mk_atom ((if T_int.is_sint t1 then T_int.mk_geq else T_real.mk_rgeq) t1 t2)
+    mk_atom
+      ((if T_int.is_sint t1 && T_int.is_sint t2 then T_int.mk_geq
+        else T_real.mk_rgeq)
+         t1 t2)
 
   let gt t1 t2 =
-    mk_atom ((if T_int.is_sint t1 then T_int.mk_gt else T_real.mk_rgt) t1 t2)
+    mk_atom
+      ((if T_int.is_sint t1 && T_int.is_sint t2 then T_int.mk_gt
+        else T_real.mk_rgt)
+         t1 t2)
 
   let leq t1 t2 =
-    mk_atom ((if T_int.is_sint t1 then T_int.mk_leq else T_real.mk_rleq) t1 t2)
+    mk_atom
+      ((if T_int.is_sint t1 && T_int.is_sint t2 then T_int.mk_leq
+        else T_real.mk_rleq)
+         t1 t2)
 
   let lt t1 t2 =
-    mk_atom ((if T_int.is_sint t1 then T_int.mk_lt else T_real.mk_rlt) t1 t2)
+    mk_atom
+      ((if T_int.is_sint t1 && T_int.is_sint t2 then T_int.mk_lt
+        else T_real.mk_rlt)
+         t1 t2)
 
   let eq t1 t2 = mk_atom (T_bool.mk_eq t1 t2)
+  let eqs ts = List.map ~f:mk_atom (T_bool.mk_eqs ts)
   let neq t1 t2 = mk_atom (T_bool.mk_neq t1 t2)
 
   let mk_range v lb ub =
@@ -5513,6 +5846,8 @@ and Formula :
 
   (** Morphism *)
 
+  let map_funcs ~f = List.map ~f:(fun def -> { def with body = f def.body })
+
   let rec fold ~f = function
     | Atom (atom, _) -> f#fatom atom
     | UnaryOp (Not, phi, _) -> f#fnot (fold ~f phi)
@@ -5523,11 +5858,7 @@ and Formula :
     | BinaryOp (Xor, phi1, phi2, _) -> f#fxor (fold ~f phi1) (fold ~f phi2)
     | Bind (binder, senv, phi, _) -> f#fbind binder senv (fold ~f phi)
     | LetRec (funcs, phi, _) ->
-        let funcs =
-          List.map funcs ~f:(fun (fix, pvar, senv, phi) ->
-              (fix, pvar, senv, fold ~f phi))
-        in
-        f#fletrec funcs (fold ~f phi)
+        f#fletrec (map_funcs ~f:(fold ~f) funcs) (fold ~f phi)
     | LetFormula (tvar, sort, def, body, _) ->
         f#flet tvar sort def (fold ~f body)
 
@@ -5536,14 +5867,14 @@ and Formula :
       ~f:
         (object
            method fatom atom = Formula.mk_atom @@ Atom.map_term ~f atom
+           method fnot p1 = mk_neg p1
            method fand p1 p2 = mk_and p1 p2
            method for_ p1 p2 = mk_or p1 p2
-           method fnot p1 = mk_neg p1
-           method fbind binder senv p1 = mk_bind binder senv p1
-           method fletrec funcs p1 = mk_letrec funcs p1
            method fimply p1 p2 = mk_imply p1 p2
            method fiff p1 p2 = mk_iff p1 p2
            method fxor p1 p2 = mk_xor p1 p2
+           method fbind binder senv p1 = mk_bind binder senv p1
+           method fletrec funcs p1 = mk_letrec funcs p1
 
            method flet tvar sort def body =
              mk_let_formula tvar sort (Term.map_term true ~f def) body
@@ -5562,14 +5893,14 @@ and Formula :
       ~f:
         (object
            method fatom atom = f atom
+           method fnot p1 = mk_neg p1
            method fand p1 p2 = mk_and p1 p2
            method for_ p1 p2 = mk_or p1 p2
-           method fnot p1 = mk_neg p1
-           method fbind binder senv p1 = mk_bind binder senv p1
-           method fletrec funcs p1 = mk_letrec funcs p1
            method fimply p1 p2 = mk_imply p1 p2
            method fiff p1 p2 = mk_iff p1 p2
            method fxor p1 p2 = mk_xor p1 p2
+           method fbind binder senv p1 = mk_bind binder senv p1
+           method fletrec funcs p1 = mk_letrec funcs p1
 
            method flet tvar sort def body =
              mk_let_formula tvar sort (Term.map_atom ~f def) body
@@ -5580,25 +5911,21 @@ and Formula :
       ~f:
         (object
            method fatom atom polarity = f polarity atom
+           method fnot p1 polarity = mk_neg (p1 @@ not polarity)
            method fand p1 p2 polarity = mk_and (p1 polarity) (p2 polarity)
            method for_ p1 p2 polarity = mk_or (p1 polarity) (p2 polarity)
-           method fnot p1 polarity = mk_neg (p1 @@ not polarity)
-
-           method fbind binder senv p1 polarity =
-             mk_bind binder senv (p1 polarity)
-
-           method fletrec funcs p1 polarity =
-             let funcs =
-               List.map funcs ~f:(fun (fix, pvar, args, phi) ->
-                   (fix, pvar, args, phi polarity))
-             in
-             mk_letrec funcs (p1 polarity)
 
            method fimply p1 p2 polarity =
              mk_imply (p1 @@ not polarity) (p2 polarity)
 
            method fiff _p1 _p2 _polarity = failwith "not supported"
            method fxor _p1 _p2 _polarity = failwith "not supported"
+
+           method fbind binder senv p1 polarity =
+             mk_bind binder senv (p1 polarity)
+
+           method fletrec funcs p1 polarity =
+             mk_letrec (map_funcs funcs ~f:(fun f -> f polarity)) (p1 polarity)
 
            method flet tvar sort def body polarity =
              mk_let_formula tvar sort
@@ -5679,16 +6006,17 @@ and Formula :
               next
               @@ Priority.add_paren priority Priority.let_forall_exists
               @@ sprintf "let rec %s in %s"
-                   (String.concat_map_list ~sep:" and " funcs
-                      ~f:(fun (fix, pvar, args, body) ->
+                   (String.concat_map_list ~sep:" and " funcs ~f:(fun def ->
                         let var_names =
-                          if List.is_empty args then [ "()" ]
-                          else List.map args ~f:(fst >> Ident.name_of_tvar)
+                          if List.is_empty def.args then [ "()" ]
+                          else List.map def.args ~f:(fst >> Ident.name_of_tvar)
                         in
-                        aux body ~priority:Priority.lowest ~next:(fun s ->
-                            sprintf "%s %s =%s %s" (Ident.name_of_pvar pvar)
+                        aux def.body ~priority:Priority.lowest ~next:(fun s ->
+                            sprintf "%s %s =%s %s"
+                              (Ident.name_of_pvar def.name)
                               (String.concat ~sep:" " var_names)
-                              (Predicate.str_of_fop fix) s)))
+                              (Predicate.str_of_fop def.kind)
+                              s)))
                    s)
       | LetFormula (var, sort, def, phi, _) ->
           aux phi ~priority:Priority.let_forall_exists ~next:(fun s ->
@@ -5755,10 +6083,9 @@ and Formula :
            method fbind _ _senv _r1 = false
 
            method fletrec funcs r1 =
-             List.for_all funcs ~f:(fun (_, _, _, r) -> r) && r1
+             List.for_all funcs ~f:(fun def -> def.body) && r1
 
-           method flet _tvar _sort def body =
-             Term.is_quantifier_free def && body
+           method flet _tvar _sort def r1 = Term.is_quantifier_free def && r1
         end)
 
   let tvs_of =
@@ -5780,15 +6107,14 @@ and Formula :
              Set.diff
                (Set.Poly.union_list
                @@ r1
-                  :: List.map funcs ~f:(fun (_, _, args, body) ->
-                         Set.diff body (Set.Poly.of_list @@ List.map ~f:fst args))
-               )
+                  :: List.map funcs ~f:(fun def ->
+                         Set.diff def.body
+                           (Set.Poly.of_list @@ List.map ~f:fst def.args)))
                (Set.Poly.of_list
-               @@ List.map funcs ~f:(fun (_, pvar, _, _) ->
-                      Ident.pvar_to_tvar pvar))
+               @@ List.map funcs ~f:(fun def -> Ident.pvar_to_tvar def.name))
 
-           method flet tvar _sort def body =
-             Set.union (Term.tvs_of def) (Set.remove body tvar)
+           method flet x _ def r1 =
+             Set.union (Term.tvs_of def) (Set.remove r1 x)
         end)
 
   let pvs_of =
@@ -5808,16 +6134,14 @@ and Formula :
              Set.diff
                (Set.Poly.union_list
                @@ r1
-                  :: List.map funcs ~f:(fun (_, _, args, body) ->
-                         Set.diff body
+                  :: List.map funcs ~f:(fun def ->
+                         Set.diff def.body
                            (Set.Poly.map ~f:Ident.tvar_to_pvar
-                           @@ Set.Poly.of_list @@ List.map ~f:fst args)))
-               (Set.Poly.of_list
-               @@ List.map funcs ~f:(fun (_, pvar, _, _) -> pvar))
+                           @@ Set.Poly.of_list @@ List.map ~f:fst def.args)))
+               (Set.Poly.of_list @@ List.map funcs ~f:(fun def -> def.name))
 
-           method flet tvar _sort def body =
-             Set.union (Term.pvs_of def)
-               (Set.remove body (Ident.tvar_to_pvar tvar))
+           method flet x _ def r1 =
+             Set.union (Term.pvs_of def) (Set.remove r1 (Ident.tvar_to_pvar x))
         end)
 
   let fvs_of phi =
@@ -5849,20 +6173,20 @@ and Formula :
            method fletrec funcs r1 =
              Set.Poly.union_list
              @@ r1
-                :: List.map funcs ~f:(fun (_, _, senv, body) ->
+                :: List.map funcs ~f:(fun def ->
                        Set.union
                          (Set.Poly.of_list
                          @@ List.filter_map ~f:(function
                               | Sort.SVar svar -> Some svar
                               | _ -> None)
-                         @@ List.map ~f:snd senv)
-                         body)
+                         @@ List.map ~f:snd def.args)
+                         def.body)
 
-           method flet _ sort def body =
+           method flet _ sort def r1 =
              Set.Poly.union_list
                [
                  Term.svs_of def;
-                 body;
+                 r1;
                  (match sort with
                  | Sort.SVar svar -> Set.Poly.singleton svar
                  | _ -> Set.Poly.empty);
@@ -5887,8 +6211,8 @@ and Formula :
            method fletrec funcs r1 bvs =
              Set.Poly.union_list
              @@ r1 bvs
-                :: List.map funcs ~f:(fun (_, _, args, body) ->
-                       Set.diff (body bvs) (Set.Poly.of_list args))
+                :: List.map funcs ~f:(fun def ->
+                       Set.diff (def.body bvs) (Set.Poly.of_list def.args))
 
            method flet tvar sort def body bvs =
              Set.remove
@@ -5915,10 +6239,10 @@ and Formula :
            method fletrec funcs r1 bpvs =
              let bpvs =
                Set.union bpvs @@ Set.Poly.of_list
-               @@ List.map funcs ~f:(fun (_, pvar, _, _) -> pvar)
+               @@ List.map funcs ~f:(fun def -> def.name)
              in
              Set.Poly.union_list
-             @@ (r1 bpvs :: List.map funcs ~f:(fun (_, _, _, body) -> body bpvs))
+               (r1 bpvs :: List.map funcs ~f:(fun def -> def.body bpvs))
 
            method flet _ _ def body bpvs =
              Set.union (Term.pred_sort_env_of ~bpvs def) (body bpvs)
@@ -5962,7 +6286,7 @@ and Formula :
            method fxor r1 r2 = Set.union r1 r2
            method fbind _ _ r1 = r1
            method fletrec _funcs _r1 = failwith "not implemented"
-           method flet _ _ def body = Set.union (Term.funsyms_of def) body
+           method flet _ _ def r1 = Set.union (Term.funsyms_of def) r1
         end)
 
   let predsyms_of =
@@ -5978,7 +6302,7 @@ and Formula :
            method fxor r1 r2 = Set.union r1 r2
            method fbind _ _ r1 = r1
            method fletrec _funcs _r1 = failwith "not implemented"
-           method flet _ _ def body = Set.union (Term.predsyms_of def) body
+           method flet _ _ def r1 = Set.union (Term.predsyms_of def) r1
         end)
 
   let rec pathexps_of ?(bvs = Set.Poly.empty) = function
@@ -5992,11 +6316,11 @@ and Formula :
     | LetRec (funcs, phi, _) ->
         Set.Poly.union_list
         @@ pathexps_of ~bvs phi
-           :: List.map funcs ~f:(fun (_, _, args, body) ->
+           :: List.map funcs ~f:(fun def ->
                   let bvs =
-                    Set.union bvs (Set.Poly.of_list @@ List.map ~f:fst args)
+                    Set.union bvs (Set.Poly.of_list @@ List.map ~f:fst def.args)
                   in
-                  pathexps_of ~bvs body)
+                  pathexps_of ~bvs def.body)
     | LetFormula (var, _, def, body, _) ->
         Set.union
           (Term.pathexps_of ~bvs def)
@@ -6025,10 +6349,10 @@ and Formula :
     | LetRec (funcs, phi, _) ->
         Set.Poly.union_list
         @@ filtered_terms_of ~f phi
-           :: List.map funcs ~f:(fun (_, _, args, body) ->
+           :: List.map funcs ~f:(fun def ->
                   Set.diff
-                    (filtered_terms_of ~f body)
-                    (Set.Poly.of_list @@ Term.of_sort_env args))
+                    (filtered_terms_of ~f def.body)
+                    (Set.Poly.of_list @@ Term.of_sort_env def.args))
     | LetFormula (var, sort, def, body, info) ->
         Term.filtered_terms_of ~f
         @@ LetTerm (var, sort, def, T_bool.of_formula body, info)
@@ -6055,7 +6379,7 @@ and Formula :
     | Bind (_, _, phi, _) -> atoms_of ~nrec ~pos phi
     | LetRec (_funcs, _body, _) -> assert false
     (*Set.Poly.union_list @@
-      aux pos body :: List.map funcs ~f:(fun (_, _, _, phi) -> aux pos phi)*)
+      aux pos body :: List.map funcs ~f:(Quadruple.fth >> aux pos)*)
     | LetFormula (_, _, def, body, _) ->
         let pos1, neg1 = Term.atoms_of ~pos def in
         let pos2, neg2 = atoms_of ~nrec ~pos body in
@@ -6098,26 +6422,30 @@ and Formula :
            method fbind _ _ r1 = r1
 
            method fletrec funcs r1 =
-             Integer.max_list
-             @@ (r1 :: List.map funcs ~f:(fun (_, _, _, r) -> 1 + r))
+             Integer.max_list (r1 :: List.map funcs ~f:(fun def -> 1 + def.body))
 
            method flet _ _ _def _body =
              failwith "[nesting_level] 'LetFormula' not supported"
         end)
 
-  let rec number_of_quantifiers = function
-    | UnaryOp (_, phi, _) -> number_of_quantifiers phi
-    | BinaryOp (_, phi1, phi2, _) ->
-        number_of_quantifiers phi1 + number_of_quantifiers phi2
-    | Atom (atom, _) -> Atom.number_of_quantifiers atom
-    | Bind (_, _, phi, _) -> 1 + number_of_quantifiers phi
-    | LetRec (funcs, body, _) ->
-        let nums =
-          List.map funcs ~f:(fun (_, _, _, phi) -> number_of_quantifiers phi)
-        in
-        Integer.sum_list @@ (number_of_quantifiers body :: nums)
-    | LetFormula _ ->
-        failwith "[number_of_quantifiers] 'LetFormula' not supported"
+  let number_of_quantifiers =
+    fold
+      ~f:
+        (object
+           method fatom atom = Atom.number_of_quantifiers atom
+           method fnot r1 = r1
+           method fand r1 r2 = r1 + r2
+           method for_ r1 r2 = r1 + r2
+           method fimply r1 r2 = r1 + r2
+           method fiff r1 r2 = r1 + r2
+           method fxor r1 r2 = r1 + r2
+           method fbind _ _ r1 = 1 + r1
+
+           method fletrec funcs r1 =
+             Integer.sum_list (r1 :: List.map funcs ~f:(fun def -> def.body))
+
+           method flet _ _ def body = body + Term.number_of_quantifiers def
+        end)
 
   let rec number_of_pvar_apps ?(ex = Map.Poly.empty) is_pos = function
     | Atom (atom, _) -> Atom.number_of_pvar_apps ~ex is_pos atom
@@ -6174,41 +6502,63 @@ and Formula :
         failwith "[count_pvar_apps] 'LetFormula' not supported yet"
 
   let rec ast_size = function
+    | Atom (atom, _) -> Atom.ast_size atom
     | UnaryOp (_, phi, _) -> 1 + ast_size phi
     | BinaryOp (_, phi1, phi2, _) -> 1 + ast_size phi1 + ast_size phi2
-    | Atom (atom, _) -> Atom.ast_size atom
     | Bind (_, _, phi, _) -> 1 + ast_size phi
     | LetRec (funcs, phi, _) ->
         1
-        + (Integer.sum_list
-          @@ List.map funcs ~f:(fun (_, _, _, phi) -> ast_size phi))
-        + ast_size phi
+        + Integer.sum_list
+            (ast_size phi :: List.map funcs ~f:(fun def -> ast_size def.body))
     | LetFormula (var, sort, def, body, info) ->
         Term.ast_size @@ LetTerm (var, sort, def, T_bool.of_formula body, info)
+  (* let ast_size =
+     Formula.fold
+       ~f:
+         (object
+            method fatom atom = Atom.ast_size atom
+            method fnot r1 = 1 + r1
+            method fand r1 r2 = 1 + r1 + r2
+            method for_ r1 r2 = 1 + r1 + r2
+            method fimply r1 r2 = 1 + r1 + r2
+            method fiff r1 r2 = 1 + r1 + r2
+            method fxor r1 r2 = 1 + r1 + r2
+            method fbind _ _ r1 = 1 + r1
+
+            method fletrec funcs r1 =
+              1 + Integer.sum_list (r1 :: List.map funcs ~f:(fun def -> def.body))
+
+            method flet _ _ def body = 1 + Term.ast_size def + body
+         end) *)
 
   let rec occur_times ?(map = Map.Poly.empty) x = function
-    | Formula.Atom (atom, _) -> Atom.occur_times ~map x atom
-    | Formula.BinaryOp (_, phi1, phi2, _) ->
+    | Atom (atom, _) -> Atom.occur_times ~map x atom
+    | BinaryOp (_, phi1, phi2, _) ->
         occur_times ~map x phi1 + occur_times ~map x phi2
-    | Formula.UnaryOp (_, phi1, _) -> occur_times ~map x phi1
-    | Formula.Bind (_, _, phi1, _) -> occur_times ~map x phi1
-    | Formula.LetRec _ -> failwith "[occur_times_in_formula]unsupported letrec"
-    | Formula.LetFormula (var, _, def, body, _) ->
+    | UnaryOp (_, phi1, _) -> occur_times ~map x phi1
+    | Bind (_, _, phi1, _) -> occur_times ~map x phi1
+    | LetRec _ -> failwith "[occur_times_in_formula]unsupported letrec"
+    | LetFormula (var, _, def, body, _) ->
         let map =
           Map.Poly.add_exn ~key:var ~data:(Term.occur_times ~map x def) map
         in
         occur_times ~map x body
 
-  let rec find_div_mod = function
-    | Atom (atom, _) -> Atom.find_div_mod atom
-    | UnaryOp (_, phi, _) -> find_div_mod phi
-    | BinaryOp (_, phi1, phi2, _) ->
-        Set.union (find_div_mod phi1) (find_div_mod phi2)
-    | Bind (_, _, phi, _) -> find_div_mod phi
-    | LetRec (_, _, _) -> failwith "unimplemented"
-    | LetFormula (var, sort, def, body, info) ->
-        Term.find_div_mod
-        @@ LetTerm (var, sort, def, T_bool.of_formula body, info)
+  let div_rem_of =
+    fold
+      ~f:
+        (object
+           method fatom atom = Atom.div_rem_of atom
+           method fnot r1 = r1
+           method fand r1 r2 = Set.union r1 r2
+           method for_ r1 r2 = Set.union r1 r2
+           method fimply r1 r2 = Set.union r1 r2
+           method fiff r1 r2 = Set.union r1 r2
+           method fxor r1 r2 = Set.union r1 r2
+           method fbind _ _ r1 = r1
+           method fletrec _funcs _r1 = failwith "not implemented"
+           method flet _ _ def r1 = Set.union (Term.div_rem_of def) r1
+        end)
 
   (** Construction *)
 
@@ -6250,9 +6600,9 @@ and Formula :
         | _ -> Bind (binder, bounds, rename map body, info))
     | LetRec (funcs, body, info) ->
         let funcs =
-          List.map funcs ~f:(fun (fix, pvar, args, body) ->
-              let map' = Map.remove_keys map (List.map ~f:fst args) in
-              (fix, pvar, args, rename map' body))
+          List.map funcs ~f:(fun def ->
+              let map' = Map.remove_keys map (List.map ~f:fst def.args) in
+              { def with body = rename map' def.body })
         in
         LetRec (funcs, rename map body, info)
     | LetFormula (var, sort, def, body, info) ->
@@ -6268,13 +6618,10 @@ and Formula :
         Bind (binder, bounds, rename_pvars map body, info)
     | LetRec (funcs, body, info) ->
         let map' =
-          Map.remove_keys map (List.map funcs ~f:(fun (_, pvar, _, _) -> pvar))
+          Map.remove_keys map (List.map funcs ~f:(fun def -> def.name))
         in
-        let funcs =
-          List.map funcs ~f:(fun (fix, pvar, args, body) ->
-              (fix, pvar, args, rename_pvars map' body))
-        in
-        LetRec (funcs, rename_pvars map body, info)
+        LetRec
+          (map_funcs funcs ~f:(rename_pvars map'), rename_pvars map body, info)
     | LetFormula (var, sort, def, body, info) ->
         of_bool_term @@ Term.rename_pvars map
         @@ LetTerm (var, sort, def, T_bool.of_formula body, info)
@@ -6291,14 +6638,13 @@ and Formula :
     | LetRec (funcs, body, info) ->
         let map' =
           Map.remove_keys map
-            (List.map funcs ~f:(fun (_, pvar, args, _) ->
-                 (Ident.name_of_pvar pvar, List.map ~f:snd args)))
+            (List.map funcs ~f:(fun def ->
+                 (Ident.name_of_pvar def.name, List.map ~f:snd def.args)))
         in
-        let funcs =
-          List.map funcs ~f:(fun (fix, pvar, args, body) ->
-              (fix, pvar, args, rename_sorted_pvars map' body))
-        in
-        LetRec (funcs, rename_sorted_pvars map body, info)
+        LetRec
+          ( map_funcs funcs ~f:(rename_sorted_pvars map'),
+            rename_sorted_pvars map body,
+            info )
     | LetFormula (var, sort, def, body, info) ->
         of_bool_term
         @@ Term.rename_sorted_pvars map
@@ -6375,9 +6721,9 @@ and Formula :
               next @@ Bind (binder, bounds, body', info))
       | LetRec (funcs, body, info) ->
           let funcs =
-            List.map funcs ~f:(fun (fix, pvar, args, body) ->
-                let map' = Map.remove_keys map (List.map ~f:fst args) in
-                (fix, pvar, args, subst map' body))
+            List.map funcs ~f:(fun def ->
+                let map' = Map.remove_keys map (List.map ~f:fst def.args) in
+                { def with body = subst map' def.body })
           in
           aux map body ~next:(fun body' -> next @@ LetRec (funcs, body', info))
       | LetFormula (var, sort, def, body, info) ->
@@ -6387,26 +6733,54 @@ and Formula :
     in
     aux map phi ~next:Fn.id
 
-  let rec subst_preds map = function
-    | Atom (atom, _) -> Atom.subst_preds map atom
-    | UnaryOp (op, phi, info) -> UnaryOp (op, subst_preds map phi, info)
-    | BinaryOp (op, phi1, phi2, info) ->
-        BinaryOp (op, subst_preds map phi1, subst_preds map phi2, info)
-    | Bind (binder, params, phi, info) ->
-        Bind (binder, params, subst_preds map phi, info)
-    | LetRec (funcs, body, info) ->
-        let map' =
-          Map.remove_keys map (List.map funcs ~f:(fun (_, pvar, _, _) -> pvar))
-        in
-        let funcs =
-          List.map funcs ~f:(fun (fp, pvar, args, phi) ->
-              (fp, pvar, args, subst_preds map' phi))
-        in
-        let body = subst_preds map body in
-        LetRec (funcs, body, info)
-    | LetFormula (var, sort, def, body, info) ->
-        LetFormula
-          (var, sort, Term.subst_preds map def, subst_preds map body, info)
+  let subst_preds psub phi =
+    fold
+      ~f:
+        (object
+           method fatom atom psub = Atom.subst_preds psub atom
+           method fnot phi1 psub = mk_neg (phi1 psub)
+           method fand phi1 phi2 psub = mk_and (phi1 psub) (phi2 psub)
+           method for_ phi1 phi2 psub = mk_or (phi1 psub) (phi2 psub)
+           method fimply phi1 phi2 psub = mk_imply (phi1 psub) (phi2 psub)
+           method fiff phi1 phi2 psub = mk_iff (phi1 psub) (phi2 psub)
+           method fxor phi1 phi2 psub = mk_xor (phi1 psub) (phi2 psub)
+           method fbind binder senv phi1 psub = mk_bind binder senv (phi1 psub)
+
+           method fletrec funcs phi1 psub =
+             let psub =
+               Map.remove_keys psub (List.map funcs ~f:(fun def -> def.name))
+             in
+             mk_letrec (map_funcs funcs ~f:(fun phi -> phi psub)) (phi1 psub)
+
+           method flet tvar sort def body psub =
+             mk_let_formula tvar sort (Term.subst_preds psub def) (body psub)
+        end)
+      phi psub
+
+  let subst_funcs fsub phi =
+    fold
+      ~f:
+        (object
+           method fatom atom fsub = mk_atom @@ Atom.subst_funcs fsub atom
+           method fnot phi1 fsub = mk_neg (phi1 fsub)
+           method fand phi1 phi2 fsub = mk_and (phi1 fsub) (phi2 fsub)
+           method for_ phi1 phi2 fsub = mk_or (phi1 fsub) (phi2 fsub)
+           method fimply phi1 phi2 fsub = mk_imply (phi1 fsub) (phi2 fsub)
+           method fiff phi1 phi2 fsub = mk_iff (phi1 fsub) (phi2 fsub)
+           method fxor phi1 phi2 fsub = mk_xor (phi1 fsub) (phi2 fsub)
+
+           method fbind binder senv phi1 fsub =
+             let fsub = Map.remove_keys fsub (List.map ~f:fst senv) in
+             mk_bind binder senv (phi1 fsub)
+
+           method fletrec funcs phi1 fsub =
+             mk_letrec (map_funcs funcs ~f:(fun phi -> phi fsub)) (phi1 fsub)
+
+           method flet tvar sort def body fsub =
+             let fsub' = Map.Poly.remove fsub tvar in
+             mk_let_formula tvar sort (Term.subst_funcs fsub def) (body fsub')
+        end)
+      phi fsub
 
   let rec subst_neg pvar = function
     | Atom (Atom.App (Predicate.Var (pvar', sort), args, info), info') ->
@@ -6423,54 +6797,100 @@ and Formula :
     | Bind (binder, bounds, body, info) ->
         Bind (binder, bounds, subst_neg pvar body, info)
     | LetRec (funcs, body, info) ->
-        let funcs =
-          List.map funcs ~f:(fun (fix, pvar', args, body) ->
-              (fix, pvar', args, subst_neg pvar body))
-        in
-        LetRec (funcs, subst_neg pvar body, info)
+        LetRec (map_funcs funcs ~f:(subst_neg pvar), subst_neg pvar body, info)
     | LetFormula (var, sort, dec, body, info) ->
         LetFormula (var, sort, dec, subst_neg pvar body, info)
 
-  let rec aconv_tvar = function
-    | Atom (atom, info) -> mk_atom (Atom.aconv_tvar atom) ~info
-    | UnaryOp (Not, phi, info) -> mk_neg (aconv_tvar phi) ~info
-    | BinaryOp (op, phi1, phi2, info) ->
-        BinaryOp (op, aconv_tvar phi1, aconv_tvar phi2, info)
-    | Bind (binder, bounds, phi, info) ->
-        let bounds', map = refresh_sort_env_list bounds in
-        Bind (binder, bounds', rename map (aconv_tvar phi), info)
-    | LetRec (funcs, body, info) ->
-        let funcs' =
-          List.map funcs ~f:(fun (fp, pvar, args, body) ->
-              Predicate.let_fix @@ Predicate.aconv_tvar
-              @@ Predicate.Fixpoint (fp, pvar, args, body))
-        in
-        LetRec (funcs', aconv_tvar body, info)
-    | LetFormula (var, sort, def, body, info) ->
-        of_bool_term @@ Term.aconv_tvar
-        @@ Term.LetTerm (var, sort, def, T_bool.of_formula body, info)
+  let aconv_tvar =
+    fold
+      ~f:
+        (object
+           method fatom atom = mk_atom (Atom.aconv_tvar atom)
+           method fnot phi1 = mk_neg phi1
+           method fand phi1 phi2 = mk_and phi1 phi2
+           method for_ phi1 phi2 = mk_or phi1 phi2
+           method fimply phi1 phi2 = mk_imply phi1 phi2
+           method fiff phi1 phi2 = mk_iff phi1 phi2
+           method fxor phi1 phi2 = mk_xor phi1 phi2
 
-  let rec aconv_pvar = function
-    | Atom (atom, info) -> Atom (Atom.aconv_pvar atom, info)
-    | UnaryOp (Not, phi, info) -> UnaryOp (Not, aconv_pvar phi, info)
-    | BinaryOp (op, phi1, phi2, info) ->
-        BinaryOp (op, aconv_pvar phi1, aconv_pvar phi2, info)
-    | Bind (binder, bounds, phi, info) ->
-        Bind (binder, bounds, aconv_pvar phi (* ToDo: fix bug *), info)
-    | LetRec (funcs, phi, info) ->
-        let map =
-          Map.Poly.of_alist_exn
-          @@ List.map funcs ~f:(fun (_, pvar, _, _) ->
-                 (pvar, Ident.mk_fresh_pvar ()))
-        in
-        let funcs =
-          List.map funcs ~f:(fun (fp, pvar, args, phi) ->
-              (fp, Map.Poly.find_exn map pvar, args, rename_pvars map phi))
-        in
-        LetRec (funcs, rename_pvars map phi, info)
-    | LetFormula (var, sort, def, body, info) ->
-        of_bool_term @@ Term.aconv_pvar
-        @@ Term.LetTerm (var, sort, def, T_bool.of_formula body, info)
+           method fbind binder senv phi1 =
+             let senv', ren = refresh_sort_env_list senv in
+             mk_bind binder senv' (rename ren phi1)
+
+           method fletrec funcs phi1 =
+             let funcs' =
+               List.map funcs ~f:(fun def ->
+                   let args, ren = refresh_sort_env_list def.args in
+                   { def with args; body = Formula.rename ren def.body })
+             in
+             mk_letrec funcs' phi1
+
+           method flet x sort def body =
+             mk_let_formula x sort (Term.aconv_tvar def) body
+        end)
+
+  let aconv_tvar_norm next =
+    fold
+      ~f:
+        (object
+           method fatom atom = mk_atom (Atom.aconv_tvar_norm next atom)
+           method fnot phi1 = mk_neg phi1
+           method fand phi1 phi2 = mk_and phi1 phi2
+           method for_ phi1 phi2 = mk_or phi1 phi2
+           method fimply phi1 phi2 = mk_imply phi1 phi2
+           method fiff phi1 phi2 = mk_iff phi1 phi2
+           method fxor phi1 phi2 = mk_xor phi1 phi2
+
+           method fbind binder senv phi1 =
+             let senv', map = refresh_sort_env_list_norm next senv in
+             mk_bind binder senv' (rename map phi1)
+
+           method fletrec funcs phi1 =
+             let funcs' =
+               List.map funcs ~f:(fun def ->
+                   let args, ren = refresh_sort_env_list_norm next def.args in
+                   { def with args; body = Formula.rename ren def.body })
+             in
+             mk_letrec funcs' phi1
+
+           method flet x sort def body =
+             mk_let_formula x sort (Term.aconv_tvar_norm next def) body
+        end)
+
+  let aconv_pvar =
+    fold
+      ~f:
+        (object
+           method fatom atom = mk_atom (Atom.aconv_pvar atom)
+           method fnot phi1 = mk_neg phi1
+           method fand phi1 phi2 = mk_and phi1 phi2
+           method for_ phi1 phi2 = mk_or phi1 phi2
+           method fimply phi1 phi2 = mk_imply phi1 phi2
+           method fiff phi1 phi2 = mk_iff phi1 phi2
+           method fxor phi1 phi2 = mk_xor phi1 phi2
+
+           method fbind binder senv phi1 =
+             mk_bind binder senv phi1 (* ToDo: fix bug? *)
+
+           method fletrec funcs phi1 =
+             let ren =
+               Map.Poly.of_alist_exn
+               @@ List.map funcs ~f:(fun def ->
+                      (def.name, Ident.mk_fresh_pvar ()))
+             in
+             let funcs' =
+               List.map funcs ~f:(fun def ->
+                   {
+                     def with
+                     name = Map.Poly.find_exn ren def.name;
+                     body = rename_pvars ren def.body;
+                   })
+             in
+             mk_letrec funcs' @@ rename_pvars ren phi1
+
+           method flet x sort def body =
+             mk_let_formula x sort (Term.aconv_pvar def) body
+        end)
 
   let rec subst_sorts map = function
     | Atom (atom, info) -> Atom (Atom.subst_sorts map atom, info)
@@ -6487,8 +6907,12 @@ and Formula :
         Bind (binder, subst_sorts_bounds map bounds, subst_sorts map phi, info)
     | LetRec (funcs, phi, info) ->
         let funcs' =
-          List.map funcs ~f:(fun (fix, pvar, args, phi) ->
-              (fix, pvar, subst_sorts_bounds map args, subst_sorts map phi))
+          List.map funcs ~f:(fun def ->
+              {
+                def with
+                args = subst_sorts_bounds map def.args;
+                body = subst_sorts map def.body;
+              })
         in
         LetRec (funcs', subst_sorts map phi, info)
     | LetFormula (var, sort, def, body, info) ->
@@ -6517,8 +6941,12 @@ and Formula :
         Bind (binder, subst_conts_bounds map bounds, subst_conts map phi, info)
     | LetRec (funcs, phi, info) ->
         let funcs' =
-          List.map funcs ~f:(fun (fix, pvar, args, phi) ->
-              (fix, pvar, subst_conts_bounds map args, subst_conts map phi))
+          List.map funcs ~f:(fun def ->
+              {
+                def with
+                args = subst_conts_bounds map def.args;
+                body = subst_conts map def.body;
+              })
         in
         LetRec (funcs', subst_conts map phi, info)
     | LetFormula (var, sort, def, body, info) ->
@@ -6547,8 +6975,12 @@ and Formula :
         Bind (binder, subst_opsigs_bounds map bounds, subst_opsigs map phi, info)
     | LetRec (funcs, phi, info) ->
         let funcs' =
-          List.map funcs ~f:(fun (fix, pvar, args, phi) ->
-              (fix, pvar, subst_opsigs_bounds map args, subst_opsigs map phi))
+          List.map funcs ~f:(fun def ->
+              {
+                def with
+                args = subst_opsigs_bounds map def.args;
+                body = subst_opsigs map def.body;
+              })
         in
         LetRec (funcs', subst_opsigs map phi, info)
     | LetFormula (var, sort, def, body, info) ->
@@ -6695,9 +7127,8 @@ and Formula :
       else assert false
     and rename_in_predicate pred =
       if Predicate.is_fix pred then
-        let fix, pvar, args, body = Predicate.let_fix pred in
-        let body = rename body in
-        Predicate.mk_fix fix pvar args body
+        let def = Predicate.let_fix pred in
+        Predicate.Fixpoint { def with body = rename def.body }
       else if Predicate.is_psym pred || Predicate.is_var pred then pred
       else assert false
     and rename_in_term replace_env term =
@@ -6776,8 +7207,8 @@ and Formula :
       else assert false
     and move_to_front_in_predicate pred =
       if Predicate.is_fix pred then
-        let fix, pvar, arg_sorts, body = Predicate.let_fix pred in
-        Predicate.mk_fix fix pvar arg_sorts (move_to_front body)
+        let def = Predicate.let_fix pred in
+        Predicate.Fixpoint { def with body = move_to_front def.body }
       else if Predicate.is_psym pred || Predicate.is_var pred then pred
       else assert false
     and move_to_front fml =
@@ -6940,12 +7371,12 @@ and Formula :
 
   (* Prerequisites of rm_div_mod f
      f is normalized and a-converted, and there are no free variables in f
-     there are some unimplemented forms
-     for example, (exists x. x=0 and z = x mod 0) and (exists y. y=0 and z = y mod 0)
-     but if f is prenex normal form then no problem *)
-  (* rm_div_mod must be done before simplify*)
+     there are some unsupported forms such as:
+       (exists x. x=0 and z = x mod 0) and (exists y. y=0 and z = y mod 0)
+     if f is prenex normal form there is no problem *)
+  (* simplify assumes that rm_div_mod is already applied *)
   let rm_div_mod f =
-    let divmod = find_div_mod f in
+    let divmod = div_rem_of f in
     if Set.is_empty divmod then f
     else
       let map =
@@ -6970,8 +7401,7 @@ and Formula :
         List.fold innerlist
           ~init:(Formula.mk_true (), outerlist)
           ~f:(fun (acc, outerlist) a ->
-            ( Formula.and_of
-              @@ (acc :: List.map outerlist ~f:(make_check_zero a)),
+            ( Formula.and_of (acc :: List.map outerlist ~f:(make_check_zero a)),
               a :: outerlist ))
       in
       let make_restriction mapouter mapinner =
@@ -6984,7 +7414,7 @@ and Formula :
                  let atom2 =
                    Formula.eq e
                      (T_int.mk_add
-                        (T_int.mk_mult n (Term.mk_var d T_int.SInt))
+                        (T_int.mk_mul n (Term.mk_var d T_int.SInt))
                         (Term.mk_var m T_int.SInt))
                  in
                  let atom3 =
@@ -7079,7 +7509,10 @@ and Formula :
 
   let rec to_atom = function
     | Atom (atom, _) -> atom
-    | UnaryOp (Not, Atom (atom, _), _) -> Atom.negate atom
+    | UnaryOp (Not, Atom (atom, _), _) -> (
+        match Atom.negate atom with
+        | None -> failwith "to_atom"
+        | Some atm -> atm)
     | UnaryOp (Not, UnaryOp (Not, phi', _), _) -> to_atom phi'
     | phi -> failwith (Formula.str_of phi ^ " is not atomic formula")
 
@@ -7222,7 +7655,7 @@ and Formula :
                     @@ Set.inter (Map.key_set exi_senv)
                          (fvs_of @@ and_of @@ Set.to_list phis))
           |> Pair.map
-               (Set.Poly.map ~f:(fun (_, _, phis) -> and_of @@ Set.to_list phis))
+               (Set.Poly.map ~f:(Triple.trd >> Set.to_list >> and_of))
                Fn.id
         in
         if Set.is_empty phis then cls
@@ -7447,18 +7880,19 @@ and Formula :
             else
               let sub, fsenv =
                 List.fold ~init:(Map.Poly.empty, fsenv) exi_senv
-                  ~f:(fun (sub, fsenv) (Ident.Tvar name, sort) ->
+                  ~f:(fun (sub, fsenv) (Ident.Tvar name, sret) ->
                     let sk_tvar =
                       let prefix = Some ("#skolem_" ^ name) in
                       Ident.mk_fresh_tvar ~prefix ()
                     in
-                    let sorts = List.map ~f:snd args @ [ sort ] in
+                    let sargs = List.map ~f:snd args in
                     let fapp =
-                      Term.mk_fvar_app sk_tvar sorts @@ Term.of_sort_env args
+                      Term.mk_fvar_app sk_tvar sargs sret
+                      @@ Term.of_sort_env args
                     in
                     ( Map.Poly.add_exn sub ~key:(Ident.Tvar name) ~data:fapp,
                       Map.Poly.add_exn fsenv ~key:sk_tvar
-                        ~data:(Sort.mk_fun sorts) ))
+                        ~data:(Sort.mk_fun (sargs @ [ sret ])) ))
               in
               aux senv fsenv (Formula.subst sub phi)
       | Bind (Random _, _, _, _) -> assert false (*ToDo*)
@@ -7482,25 +7916,35 @@ and Formula :
     let pos, neg = atoms_of phi in
     let pos =
       Set.Poly.filter_map pos ~f:(fun atm ->
-          let atm =
-            to_atom
-            @@ (if drop_let then body_of_let else elim_let ~map:Map.Poly.empty)
-            @@ simplifier @@ replace_let_body phi @@ mk_atom atm
-          in
-          let size = Atom.ast_size atm in
-          (*print_endline @@ "size: " ^ string_of_int size;*)
-          if enable && size >= threshold then None else Some atm)
+          try
+            let atm =
+              to_atom
+              @@ (if drop_let then body_of_let else elim_let ~map:Map.Poly.empty)
+              @@ simplifier @@ replace_let_body phi @@ mk_atom atm
+            in
+            let size =
+              Atom.ast_size atm
+              (*ToDo*)
+            in
+            (*print_endline @@ "size: " ^ string_of_int size;*)
+            if enable && size >= threshold then None else Some atm
+          with _ -> None)
     in
     let neg =
       Set.Poly.filter_map neg ~f:(fun atm ->
-          let atm =
-            to_atom
-            @@ (if drop_let then body_of_let else elim_let ~map:Map.Poly.empty)
-            @@ simplifier @@ replace_let_body phi @@ mk_atom atm
-          in
-          let size = Atom.ast_size atm in
-          (*print_endline @@ "size: " ^ string_of_int size;*)
-          if enable && size >= threshold then None else Some atm)
+          try
+            let atm =
+              to_atom
+              @@ (if drop_let then body_of_let else elim_let ~map:Map.Poly.empty)
+              @@ simplifier @@ replace_let_body phi @@ mk_atom atm
+            in
+            let size =
+              Atom.ast_size atm
+              (*ToDo*)
+            in
+            (*print_endline @@ "size: " ^ string_of_int size;*)
+            if enable && size >= threshold then None else Some atm
+          with _ -> None)
     in
     let psyms, pos_pvars =
       Set.fold ~init:([], []) pos ~f:(fun (symapps, papps) atom ->
@@ -7510,7 +7954,10 @@ and Formula :
     in
     let psyms, neg_pvars =
       Set.fold ~init:(psyms, []) neg ~f:(fun (symapps, papps) atom ->
-          if Atom.is_psym_app atom then (Atom.negate atom :: symapps, papps)
+          if Atom.is_psym_app atom then
+            match Atom.negate atom with
+            | None -> (symapps, papps)
+            | Some neg_atom -> (neg_atom :: symapps, papps)
           else if Atom.is_pvar_app atom then (symapps, atom :: papps)
           else (symapps, papps))
     in
@@ -7525,54 +7972,6 @@ and T_bool :
   type fun_sym += Formula of Formula.t | IfThenElse
   type pred_sym += Eq | Neq
   type Sort.t += SBool
-
-  (** Construction *)
-
-  let of_atom ?(info = Dummy) atom =
-    Term.mk_fsym_app (Formula (Formula.mk_atom atom)) [] ~info
-
-  let of_formula ?(info = Dummy) phi = Term.mk_fsym_app (Formula phi) [] ~info
-  let mk_true ?(info = Dummy) () = of_atom (Atom.mk_true ()) ~info
-  let mk_false ?(info = Dummy) () = of_atom (Atom.mk_false ()) ~info
-  let make ?(info = Dummy) b = if b then mk_true ~info () else mk_false ~info ()
-
-  let mk_eq ?(info = Dummy) t1 t2 =
-    Atom.mk_app (Predicate.Psym Eq) [ t1; t2 ] ~info
-
-  let mk_neq ?(info = Dummy) t1 t2 =
-    Atom.mk_app (Predicate.Psym Neq) [ t1; t2 ] ~info
-
-  let mk_eqs ts =
-    List.concat_mapi ts ~f:(fun i t ->
-        List.foldi ts ~init:[] ~f:(fun i1 ret t1 ->
-            if i1 <= i || Stdlib.(Term.sort_of t <> Term.sort_of t1) then ret
-            else mk_eq t t1 :: ret))
-
-  let mk_if_then_else ?(info = Dummy) cond then_ else_ =
-    Term.mk_fsym_app IfThenElse [ cond; then_; else_ ] ~info
-
-  let ifte ?(info = Dummy) phi = mk_if_then_else ~info (of_formula phi)
-
-  let rec neg = function
-    | Term.Var (x, s, _) ->
-        assert (Term.is_bool_sort s);
-        of_atom @@ Atom.of_neg_bool_var x
-    | Term.FunApp (Formula phi, _, _) -> of_formula @@ Formula.negate phi
-    | Term.FunApp (IfThenElse, [ t1; t2; t3 ], _) ->
-        mk_if_then_else t1 (neg t2) (neg t3)
-    | term ->
-        failwith @@ sprintf "[T_bool.neg] %s not supported" @@ Term.str_of term
-
-  (** Destruction *)
-
-  let let_bool = function
-    | Term.FunApp (Formula (Formula.Atom (Atom.True _, _)), [], _) -> true
-    | Term.FunApp (Formula (Formula.Atom (Atom.False _, _)), [], _) -> false
-    | _ -> assert false
-
-  let let_formula = function
-    | Term.FunApp (Formula phi, [], _) -> phi
-    | _ -> assert false
 
   (** Observation *)
 
@@ -7593,6 +7992,66 @@ and T_bool :
     | _ -> false
 
   let is_sbool = Term.sort_of >> Term.is_bool_sort
+
+  (** Construction *)
+
+  let of_formula ?(info = Dummy) = function
+    | Formula.Atom (Atom.App (Predicate.Psym Eq, [ t1; t2 ], _), _)
+      when is_true t2 ->
+        t1
+    | Formula.Atom (Atom.App (Predicate.Psym Eq, [ t1; t2 ], _), _)
+      when is_true t1 ->
+        t2
+    | Formula.Atom (Atom.App (Predicate.Psym Neq, [ t1; t2 ], _), _)
+      when is_false t2 ->
+        t1
+    | Formula.Atom (Atom.App (Predicate.Psym Neq, [ t1; t2 ], _), _)
+      when is_false t1 ->
+        t2
+    | phi -> Term.mk_fsym_app (Formula phi) [] ~info
+
+  let of_atom ?(info = Dummy) atom = of_formula (Formula.mk_atom atom) ~info
+  let mk_true ?(info = Dummy) () = of_atom (Atom.mk_true ()) ~info
+  let mk_false ?(info = Dummy) () = of_atom (Atom.mk_false ()) ~info
+  let make ?(info = Dummy) b = if b then mk_true ~info () else mk_false ~info ()
+  let mk_eq ?(info = Dummy) t1 t2 = Atom.mk_psym_app Eq [ t1; t2 ] ~info
+  let mk_neq ?(info = Dummy) t1 t2 = Atom.mk_psym_app Neq [ t1; t2 ] ~info
+
+  let mk_eqs ts =
+    List.concat_mapi ts ~f:(fun i t ->
+        List.foldi ts ~init:[] ~f:(fun i1 ret t1 ->
+            if i1 <= i || Stdlib.(Term.sort_of t <> Term.sort_of t1) then ret
+            else mk_eq t t1 :: ret))
+
+  let mk_if_then_else ?(info = Dummy) cond then_ else_ =
+    Term.mk_fsym_app IfThenElse [ cond; then_; else_ ] ~info
+
+  let ifte ?(info = Dummy) phi = mk_if_then_else ~info (of_formula phi)
+
+  let rec negate = function
+    | Term.Var (x, s, _) ->
+        assert (Term.is_bool_sort s);
+        of_atom @@ Atom.of_neg_bool_var x
+    | Term.FunApp (Formula phi, _, _) -> of_formula @@ Formula.negate phi
+    | Term.FunApp (IfThenElse, [ t1; t2; t3 ], _) ->
+        mk_if_then_else t1 (negate t2) (negate t3)
+    | term ->
+        if true then of_atom @@ Atom.of_neg_bool_term term
+        else
+          failwith
+          @@ sprintf "[T_bool.negate] %s not supported"
+          @@ Term.str_of term
+
+  (** Destruction *)
+
+  let let_bool = function
+    | Term.FunApp (Formula (Formula.Atom (Atom.True _, _)), [], _) -> true
+    | Term.FunApp (Formula (Formula.Atom (Atom.False _, _)), [], _) -> false
+    | _ -> assert false
+
+  let let_formula = function
+    | Term.FunApp (Formula phi, [], _) -> phi
+    | _ -> assert false
 end
 
 and T_int :
@@ -7600,14 +8059,14 @@ and T_int :
   type fun_sym +=
     | Int of Z.t
     | Neg
+    | Nop
     | Abs
     | Add
     | Sub
-    | Mult
-    | Div
-    | Mod
+    | Mul
+    | Div of Value.modulo
+    | Rem of Value.modulo
     | Power
-    | Rem
 
   type pred_sym += Leq | Geq | Lt | Gt | PDiv | NotPDiv
   type Sort.t += SInt | SRefInt | SUnrefInt
@@ -7621,36 +8080,25 @@ and T_int :
   let hundred ?(info = Dummy) () = from_int 100 ~info
   let mk_add ?(info = Dummy) t1 t2 = Term.mk_fsym_app Add [ t1; t2 ] ~info
   let mk_sub ?(info = Dummy) t1 t2 = Term.mk_fsym_app Sub [ t1; t2 ] ~info
-  let mk_mult ?(info = Dummy) t1 t2 = Term.mk_fsym_app Mult [ t1; t2 ] ~info
-  let mk_div ?(info = Dummy) t1 t2 = Term.mk_fsym_app Div [ t1; t2 ] ~info
-  let mk_mod ?(info = Dummy) t1 t2 = Term.mk_fsym_app Mod [ t1; t2 ] ~info
+  let mk_mul ?(info = Dummy) t1 t2 = Term.mk_fsym_app Mul [ t1; t2 ] ~info
+  let mk_div ?(info = Dummy) m t1 t2 = Term.mk_fsym_app (Div m) [ t1; t2 ] ~info
+  let mk_rem ?(info = Dummy) m t1 t2 = Term.mk_fsym_app (Rem m) [ t1; t2 ] ~info
   let mk_neg ?(info = Dummy) t = Term.mk_fsym_app Neg [ t ] ~info
 
   (* let mk_neg ?(info=Dummy) t =
-     mk_mult (mk_int (Z.neg Z.one) ~info) t ~info*)
+     mk_mul (mk_int (Z.neg Z.one) ~info) t ~info*)
   let mk_abs ?(info = Dummy) t = Term.mk_fsym_app Abs [ t ] ~info
   let mk_power ?(info = Dummy) t1 t2 = Term.mk_fsym_app Power [ t1; t2 ] ~info
-  let mk_rem ?(info = Dummy) t1 t2 = Term.mk_fsym_app Rem [ t1; t2 ] ~info
   let mk_sum ?(info = Dummy) t ts = List.fold ~init:t ts ~f:(mk_add ~info)
-  let mk_prod ?(info = Dummy) t ts = List.fold ~init:t ts ~f:(mk_mult ~info)
-
-  let mk_leq ?(info = Dummy) t1 t2 =
-    Atom.mk_app (Predicate.Psym Leq) [ t1; t2 ] ~info
-
-  let mk_geq ?(info = Dummy) t1 t2 =
-    Atom.mk_app (Predicate.Psym Geq) [ t1; t2 ] ~info
-
-  let mk_lt ?(info = Dummy) t1 t2 =
-    Atom.mk_app (Predicate.Psym Lt) [ t1; t2 ] ~info
-
-  let mk_gt ?(info = Dummy) t1 t2 =
-    Atom.mk_app (Predicate.Psym Gt) [ t1; t2 ] ~info
-
-  let mk_pdiv ?(info = Dummy) t1 t2 =
-    Atom.mk_app (Predicate.Psym PDiv) [ t1; t2 ] ~info
+  let mk_prod ?(info = Dummy) t ts = List.fold ~init:t ts ~f:(mk_mul ~info)
+  let mk_leq ?(info = Dummy) t1 t2 = Atom.mk_psym_app Leq [ t1; t2 ] ~info
+  let mk_geq ?(info = Dummy) t1 t2 = Atom.mk_psym_app Geq [ t1; t2 ] ~info
+  let mk_lt ?(info = Dummy) t1 t2 = Atom.mk_psym_app Lt [ t1; t2 ] ~info
+  let mk_gt ?(info = Dummy) t1 t2 = Atom.mk_psym_app Gt [ t1; t2 ] ~info
+  let mk_pdiv ?(info = Dummy) t1 t2 = Atom.mk_psym_app PDiv [ t1; t2 ] ~info
 
   let mk_not_pdiv ?(info = Dummy) t1 t2 =
-    Atom.mk_app (Predicate.Psym NotPDiv) [ t1; t2 ] ~info
+    Atom.mk_psym_app NotPDiv [ t1; t2 ] ~info
 
   let mk_min ?(info = Dummy) t1 t2 =
     T_bool.ifte (Formula.mk_atom @@ mk_leq t1 t2) t1 t2 ~info
@@ -7660,30 +8108,30 @@ and T_int :
 
   (*let abs t = T_bool.ifte (Formula.geq t (zero ())) t (mk_neg t)*)
   let l1_norm ts = mk_sum (zero ()) (List.map ~f:mk_abs ts)
-  let l2_norm_sq ts = mk_sum (zero ()) (List.map ~f:(fun t -> mk_mult t t) ts)
+  let l2_norm_sq ts = mk_sum (zero ()) (List.map ~f:(fun t -> mk_mul t t) ts)
 
   (** Destruction *)
 
   let let_int = function Term.FunApp (Int n, [], _) -> n | _ -> assert false
 
   let let_add = function
-    | Term.FunApp (Add, [ phi1; phi2 ], info) -> (phi1, phi2, info)
+    | Term.FunApp (Add, [ t1; t2 ], info) -> (t1, t2, info)
     | _ -> assert false
 
   let let_sub = function
-    | Term.FunApp (Sub, [ phi1; phi2 ], info) -> (phi1, phi2, info)
+    | Term.FunApp (Sub, [ t1; t2 ], info) -> (t1, t2, info)
     | _ -> assert false
 
-  let let_mult = function
-    | Term.FunApp (Mult, [ phi1; phi2 ], info) -> (phi1, phi2, info)
+  let let_mul = function
+    | Term.FunApp (Mul, [ t1; t2 ], info) -> (t1, t2, info)
     | _ -> assert false
 
   let let_div = function
-    | Term.FunApp (Div, [ phi1; phi2 ], info) -> (phi1, phi2, info)
+    | Term.FunApp (Div m, [ t1; t2 ], info) -> (m, t1, t2, info)
     | _ -> assert false
 
-  let let_mod = function
-    | Term.FunApp (Mod, [ phi1; phi2 ], info) -> (phi1, phi2, info)
+  let let_rem = function
+    | Term.FunApp (Rem m, [ t1; t2 ], info) -> (m, t1, t2, info)
     | _ -> assert false
 
   let let_neg = function
@@ -7696,10 +8144,6 @@ and T_int :
 
   let let_power = function
     | Term.FunApp (Power, [ phi1; phi2 ], info) -> (phi1, phi2, info)
-    | _ -> assert false
-
-  let let_rem = function
-    | Term.FunApp (Rem, [ t1; t2 ], info) -> (t1, t2, info)
     | _ -> assert false
 
   let let_leq = function
@@ -7732,13 +8176,12 @@ and T_int :
   let is_int = function Term.FunApp (Int _, [], _) -> true | _ -> false
   let is_add = function Term.FunApp (Add, _, _) -> true | _ -> false
   let is_sub = function Term.FunApp (Sub, _, _) -> true | _ -> false
-  let is_mult = function Term.FunApp (Mult, _, _) -> true | _ -> false
-  let is_div = function Term.FunApp (Div, _, _) -> true | _ -> false
-  let is_mod = function Term.FunApp (Mod, _, _) -> true | _ -> false
+  let is_mul = function Term.FunApp (Mul, _, _) -> true | _ -> false
+  let is_div = function Term.FunApp (Div _, _, _) -> true | _ -> false
+  let is_rem = function Term.FunApp (Rem _, _, _) -> true | _ -> false
   let is_neg = function Term.FunApp (Neg, _, _) -> true | _ -> false
   let is_abs = function Term.FunApp (Abs, _, _) -> true | _ -> false
   let is_power = function Term.FunApp (Power, _, _) -> true | _ -> false
-  let is_rem = function Term.FunApp (Rem, _, _) -> true | _ -> false
 
   let is_zero = function
     | Term.FunApp (Int i, _, _) when Z.Compare.(i = Z.zero) -> true
@@ -7773,7 +8216,7 @@ and T_real :
     | RAbs
     | RAdd
     | RSub
-    | RMult
+    | RMul
     | RDiv
     | RPower
 
@@ -7788,12 +8231,12 @@ and T_real :
   let rone ?(info = Dummy) () = mk_real Q.one ~info
   let mk_radd ?(info = Dummy) t1 t2 = Term.mk_fsym_app RAdd [ t1; t2 ] ~info
   let mk_rsub ?(info = Dummy) t1 t2 = Term.mk_fsym_app RSub [ t1; t2 ] ~info
-  let mk_rmult ?(info = Dummy) t1 t2 = Term.mk_fsym_app RMult [ t1; t2 ] ~info
+  let mk_rmul ?(info = Dummy) t1 t2 = Term.mk_fsym_app RMul [ t1; t2 ] ~info
   let mk_rdiv ?(info = Dummy) t1 t2 = Term.mk_fsym_app RDiv [ t1; t2 ] ~info
   let mk_rneg ?(info = Dummy) t = Term.mk_fsym_app RNeg [ t ] ~info
 
   (* let mk_neg ?(info=Dummy) t =
-     mk_mult (mk_int (Z.neg Z.one) ~info) t ~info*)
+     mk_mul (mk_int (Z.neg Z.one) ~info) t ~info*)
   let mk_rabs ?(info = Dummy) t = Term.mk_fsym_app RAbs [ t ] ~info
   let mk_rpower ?(info = Dummy) t1 t2 = Term.mk_fsym_app RPower [ t1; t2 ] ~info
 
@@ -7801,19 +8244,12 @@ and T_real :
     List.fold ~init:t ts ~f:(fun t1 t2 -> mk_radd t1 t2 ~info)
 
   let mk_rprod ?(info = Dummy) t ts =
-    List.fold ~init:t ts ~f:(fun t1 t2 -> mk_rmult t1 t2 ~info)
+    List.fold ~init:t ts ~f:(fun t1 t2 -> mk_rmul t1 t2 ~info)
 
-  let mk_rleq ?(info = Dummy) t1 t2 =
-    Atom.mk_app (Predicate.Psym RLeq) [ t1; t2 ] ~info
-
-  let mk_rgeq ?(info = Dummy) t1 t2 =
-    Atom.mk_app (Predicate.Psym RGeq) [ t1; t2 ] ~info
-
-  let mk_rlt ?(info = Dummy) t1 t2 =
-    Atom.mk_app (Predicate.Psym RLt) [ t1; t2 ] ~info
-
-  let mk_rgt ?(info = Dummy) t1 t2 =
-    Atom.mk_app (Predicate.Psym RGt) [ t1; t2 ] ~info
+  let mk_rleq ?(info = Dummy) t1 t2 = Atom.mk_psym_app RLeq [ t1; t2 ] ~info
+  let mk_rgeq ?(info = Dummy) t1 t2 = Atom.mk_psym_app RGeq [ t1; t2 ] ~info
+  let mk_rlt ?(info = Dummy) t1 t2 = Atom.mk_psym_app RLt [ t1; t2 ] ~info
+  let mk_rgt ?(info = Dummy) t1 t2 = Atom.mk_psym_app RGt [ t1; t2 ] ~info
 
   let mk_rmin ?(info = Dummy) t1 t2 =
     T_bool.ifte (Formula.mk_atom @@ mk_rleq t1 t2) t1 t2 ~info
@@ -7822,9 +8258,7 @@ and T_real :
     T_bool.ifte (Formula.mk_atom @@ mk_rleq t1 t2) t2 t1 ~info
 
   let l1_norm ts = mk_rsum (rzero ()) (List.map ~f:mk_rabs ts)
-
-  let l2_norm_sq ts =
-    mk_rsum (rzero ()) (List.map ~f:(fun t -> mk_rmult t t) ts)
+  let l2_norm_sq ts = mk_rsum (rzero ()) (List.map ~f:(fun t -> mk_rmul t t) ts)
 
   (** Destruction *)
 
@@ -7844,8 +8278,8 @@ and T_real :
     | Term.FunApp (RSub, [ phi1; phi2 ], info) -> (phi1, phi2, info)
     | _ -> assert false
 
-  let let_rmult = function
-    | Term.FunApp (RMult, [ phi1; phi2 ], info) -> (phi1, phi2, info)
+  let let_rmul = function
+    | Term.FunApp (RMul, [ phi1; phi2 ], info) -> (phi1, phi2, info)
     | _ -> assert false
 
   let let_rdiv = function
@@ -7887,7 +8321,7 @@ and T_real :
   let is_alge = function Term.FunApp (Alge _, [ _ ], _) -> true | _ -> false
   let is_radd = function Term.FunApp (RAdd, _, _) -> true | _ -> false
   let is_rsub = function Term.FunApp (RSub, _, _) -> true | _ -> false
-  let is_rmult = function Term.FunApp (RMult, _, _) -> true | _ -> false
+  let is_rmul = function Term.FunApp (RMul, _, _) -> true | _ -> false
   let is_rdiv = function Term.FunApp (RDiv, _, _) -> true | _ -> false
   let is_rneg = function Term.FunApp (RNeg, _, _) -> true | _ -> false
   let is_rabs = function Term.FunApp (RAbs, _, _) -> true | _ -> false
@@ -7917,11 +8351,14 @@ end
 
 and T_bv :
   (Type.T_bvType with type bvterm := Term.t and type bvatom := Atom.t) = struct
-  type size = (int (* bits *) * bool (* signed *)) option
+  type size = int (* bits *) option
+  type signed = bool (* signed/unsigned *) option
 
   type fun_sym +=
     | BVNum of size * Z.t
     | BVNeg of size
+    | BVSEXT of int * int
+    | BVZEXT of int * int
     | BVSHL of size
     | BVLSHR of size
     | BVASHR of size
@@ -7929,12 +8366,16 @@ and T_bv :
     | BVAnd of size
     | BVAdd of size
     | BVSub of size
-    | BVMult of size
-    | BVDiv of size
-    | BVMod of size
-    | BVRem of size
+    | BVMul of size
+    | BVDiv of size * signed
+    | BVRem of size * signed
 
-  type pred_sym += BVLeq of size | BVGeq of size | BVLt of size | BVGt of size
+  type pred_sym +=
+    | BVLeq of size * signed
+    | BVGeq of size * signed
+    | BVLt of size * signed
+    | BVGt of size * signed
+
   type Sort.t += SBV of size
 
   (** Construction *)
@@ -7945,23 +8386,26 @@ and T_bv :
   let mk_bvneg ?(info = Dummy) ~size t =
     Term.mk_fsym_app (BVNeg size) [ t ] ~info
 
+  let mk_bvsext ?(info = Dummy) from to_ t1 =
+    Term.mk_fsym_app (BVSEXT (from, to_)) [ t1 ] ~info
+
+  let mk_bvzext ?(info = Dummy) from to_ t1 =
+    Term.mk_fsym_app (BVZEXT (from, to_)) [ t1 ] ~info
+
   let mk_bvadd ?(info = Dummy) ~size t1 t2 =
     Term.mk_fsym_app (BVAdd size) [ t1; t2 ] ~info
 
   let mk_bvsub ?(info = Dummy) ~size t1 t2 =
     Term.mk_fsym_app (BVSub size) [ t1; t2 ] ~info
 
-  let mk_bvmult ?(info = Dummy) ~size t1 t2 =
-    Term.mk_fsym_app (BVMult size) [ t1; t2 ] ~info
+  let mk_bvmul ?(info = Dummy) ~size t1 t2 =
+    Term.mk_fsym_app (BVMul size) [ t1; t2 ] ~info
 
-  let mk_bvdiv ?(info = Dummy) ~size t1 t2 =
-    Term.mk_fsym_app (BVDiv size) [ t1; t2 ] ~info
+  let mk_bvdiv ?(info = Dummy) ~size ~signed t1 t2 =
+    Term.mk_fsym_app (BVDiv (size, signed)) [ t1; t2 ] ~info
 
-  let mk_bvmod ?(info = Dummy) ~size t1 t2 =
-    Term.mk_fsym_app (BVMod size) [ t1; t2 ] ~info
-
-  let mk_bvrem ?(info = Dummy) ~size t1 t2 =
-    Term.mk_fsym_app (BVRem size) [ t1; t2 ] ~info
+  let mk_bvrem ?(info = Dummy) ~size ~signed t1 t2 =
+    Term.mk_fsym_app (BVRem (size, signed)) [ t1; t2 ] ~info
 
   let mk_bvshl ?(info = Dummy) ~size t1 t2 =
     Term.mk_fsym_app (BVSHL size) [ t1; t2 ] ~info
@@ -7978,17 +8422,17 @@ and T_bv :
   let mk_bvand ?(info = Dummy) ~size t1 t2 =
     Term.mk_fsym_app (BVAnd size) [ t1; t2 ] ~info
 
-  let mk_bvleq ?(info = Dummy) ~size t1 t2 =
-    Atom.mk_app (Predicate.Psym (BVLeq size)) [ t1; t2 ] ~info
+  let mk_bvleq ?(info = Dummy) ~size ~signed t1 t2 =
+    Atom.mk_psym_app (BVLeq (size, signed)) [ t1; t2 ] ~info
 
-  let mk_bvgeq ?(info = Dummy) ~size t1 t2 =
-    Atom.mk_app (Predicate.Psym (BVGeq size)) [ t1; t2 ] ~info
+  let mk_bvgeq ?(info = Dummy) ~size ~signed t1 t2 =
+    Atom.mk_psym_app (BVGeq (size, signed)) [ t1; t2 ] ~info
 
-  let mk_bvlt ?(info = Dummy) ~size t1 t2 =
-    Atom.mk_app (Predicate.Psym (BVLt size)) [ t1; t2 ] ~info
+  let mk_bvlt ?(info = Dummy) ~size ~signed t1 t2 =
+    Atom.mk_psym_app (BVLt (size, signed)) [ t1; t2 ] ~info
 
-  let mk_bvgt ?(info = Dummy) ~size t1 t2 =
-    Atom.mk_app (Predicate.Psym (BVGt size)) [ t1; t2 ] ~info
+  let mk_bvgt ?(info = Dummy) ~size ~signed t1 t2 =
+    Atom.mk_psym_app (BVGt (size, signed)) [ t1; t2 ] ~info
 
   (** Destruction *)
 
@@ -7997,81 +8441,87 @@ and T_bv :
     | _ -> assert false
 
   let let_bvneg = function
-    | Term.FunApp (BVNeg size, [ t ], info) -> (size, t, info)
+    | Term.FunApp (BVNeg size, [ t1 ], info) -> (size, t1, info)
+    | _ -> assert false
+
+  let let_bvsext = function
+    | Term.FunApp (BVSEXT (from, to_), [ t1 ], info) -> (from, to_, t1, info)
+    | _ -> assert false
+
+  let let_bvzext = function
+    | Term.FunApp (BVZEXT (from, to_), [ t1 ], info) -> (from, to_, t1, info)
     | _ -> assert false
 
   let let_bvadd = function
-    | Term.FunApp (BVAdd size, [ phi1; phi2 ], info) -> (size, phi1, phi2, info)
+    | Term.FunApp (BVAdd size, [ t1; t2 ], info) -> (size, t1, t2, info)
     | _ -> assert false
 
   let let_bvsub = function
-    | Term.FunApp (BVSub size, [ phi1; phi2 ], info) -> (size, phi1, phi2, info)
+    | Term.FunApp (BVSub size, [ t1; t2 ], info) -> (size, t1, t2, info)
     | _ -> assert false
 
-  let let_bvmult = function
-    | Term.FunApp (BVMult size, [ phi1; phi2 ], info) -> (size, phi1, phi2, info)
+  let let_bvmul = function
+    | Term.FunApp (BVMul size, [ t1; t2 ], info) -> (size, t1, t2, info)
     | _ -> assert false
 
   let let_bvdiv = function
-    | Term.FunApp (BVDiv size, [ phi1; phi2 ], info) -> (size, phi1, phi2, info)
-    | _ -> assert false
-
-  let let_bvmod = function
-    | Term.FunApp (BVMod size, [ phi1; phi2 ], info) -> (size, phi1, phi2, info)
+    | Term.FunApp (BVDiv (size, signed), [ t1; t2 ], info) ->
+        (size, signed, t1, t2, info)
     | _ -> assert false
 
   let let_bvrem = function
-    | Term.FunApp (BVRem size, [ t1; t2 ], info) -> (size, t1, t2, info)
+    | Term.FunApp (BVRem (size, signed), [ t1; t2 ], info) ->
+        (size, signed, t1, t2, info)
     | _ -> assert false
 
   let let_bvshl = function
-    | Term.FunApp (BVSHL size, [ phi1; phi2 ], info) -> (size, phi1, phi2, info)
+    | Term.FunApp (BVSHL size, [ t1; t2 ], info) -> (size, t1, t2, info)
     | _ -> assert false
 
   let let_bvlshr = function
-    | Term.FunApp (BVLSHR size, [ phi1; phi2 ], info) -> (size, phi1, phi2, info)
+    | Term.FunApp (BVLSHR size, [ t1; t2 ], info) -> (size, t1, t2, info)
     | _ -> assert false
 
   let let_bvashr = function
-    | Term.FunApp (BVASHR size, [ phi1; phi2 ], info) -> (size, phi1, phi2, info)
+    | Term.FunApp (BVASHR size, [ t1; t2 ], info) -> (size, t1, t2, info)
     | _ -> assert false
 
   let let_bvor = function
-    | Term.FunApp (BVOr size, [ phi1; phi2 ], info) -> (size, phi1, phi2, info)
+    | Term.FunApp (BVOr size, [ t1; t2 ], info) -> (size, t1, t2, info)
     | _ -> assert false
 
   let let_bvand = function
-    | Term.FunApp (BVAnd size, [ phi1; phi2 ], info) -> (size, phi1, phi2, info)
+    | Term.FunApp (BVAnd size, [ t1; t2 ], info) -> (size, t1, t2, info)
     | _ -> assert false
 
   let let_bvleq = function
-    | Atom.App (Predicate.Psym (BVLeq size), [ t1; t2 ], info) ->
-        (size, t1, t2, info)
+    | Atom.App (Predicate.Psym (BVLeq (size, signed)), [ t1; t2 ], info) ->
+        (size, signed, t1, t2, info)
     | _ -> assert false
 
   let let_bvgeq = function
-    | Atom.App (Predicate.Psym (BVGeq size), [ t1; t2 ], info) ->
-        (size, t1, t2, info)
+    | Atom.App (Predicate.Psym (BVGeq (size, signed)), [ t1; t2 ], info) ->
+        (size, signed, t1, t2, info)
     | _ -> assert false
 
   let let_bvlt = function
-    | Atom.App (Predicate.Psym (BVLt size), [ t1; t2 ], info) ->
-        (size, t1, t2, info)
+    | Atom.App (Predicate.Psym (BVLt (size, signed)), [ t1; t2 ], info) ->
+        (size, signed, t1, t2, info)
     | _ -> assert false
 
   let let_bvgt = function
-    | Atom.App (Predicate.Psym (BVGt size), [ t1; t2 ], info) ->
-        (size, t1, t2, info)
+    | Atom.App (Predicate.Psym (BVGt (size, signed)), [ t1; t2 ], info) ->
+        (size, signed, t1, t2, info)
     | _ -> assert false
 
   (** Observation *)
 
-  let bits_of = function None -> 32 (*ToDo*) | Some (bits, _) -> bits
-  let signed_of = function None -> true (*ToDo*) | Some (_, signed) -> signed
+  let bits_of = function None -> 32 (*ToDo*) | Some bits -> bits
+  let signed_of = function None -> true (*ToDo*) | Some signed -> signed
 
   let is_bv_fsym = function
-    | BVNum _ | BVNeg _ | BVSHL _ | BVLSHR _ | BVASHR _ | BVOr _ | BVAnd _
-    | BVAdd _ | BVSub _ | BVMult _ | BVDiv _ | BVMod _ | BVRem _ ->
+    | BVNum _ | BVNeg _ | BVSEXT _ | BVZEXT _ | BVSHL _ | BVLSHR _ | BVASHR _
+    | BVOr _ | BVAnd _ | BVAdd _ | BVSub _ | BVMul _ | BVDiv _ | BVRem _ ->
         true
     | _ -> false
 
@@ -8082,11 +8532,12 @@ and T_bv :
   let is_sbv t = Term.is_bv_sort @@ Term.sort_of t
   let is_bv = function Term.FunApp (BVNum _, [], _) -> true | _ -> false
   let is_bvneg = function Term.FunApp (BVNeg _, _, _) -> true | _ -> false
+  let is_bvsext = function Term.FunApp (BVSEXT _, _, _) -> true | _ -> false
+  let is_bvzext = function Term.FunApp (BVZEXT _, _, _) -> true | _ -> false
   let is_bvadd = function Term.FunApp (BVAdd _, _, _) -> true | _ -> false
   let is_bvsub = function Term.FunApp (BVSub _, _, _) -> true | _ -> false
-  let is_bvmult = function Term.FunApp (BVMult _, _, _) -> true | _ -> false
+  let is_bvmul = function Term.FunApp (BVMul _, _, _) -> true | _ -> false
   let is_bvdiv = function Term.FunApp (BVDiv _, _, _) -> true | _ -> false
-  let is_bvmod = function Term.FunApp (BVMod _, _, _) -> true | _ -> false
   let is_bvrem = function Term.FunApp (BVRem _, _, _) -> true | _ -> false
   let is_bvshl = function Term.FunApp (BVSHL _, _, _) -> true | _ -> false
   let is_bvlshr = function Term.FunApp (BVLSHR _, _, _) -> true | _ -> false
@@ -8112,9 +8563,11 @@ and T_bv :
 
   (** Printing *)
 
-  let str_of_size = function
+  let str_of_size = function None -> "N/A" | Some bits -> sprintf "%d" bits
+
+  let str_of_signed = function
     | None -> "N/A"
-    | Some (bits, signed) -> sprintf "%d, %s" bits (Bool.string_of signed)
+    | Some signed -> if signed then "s" else "u"
 end
 
 and T_irb :
@@ -8126,12 +8579,18 @@ and T_irb :
      and type bvterm := Term.t
      and type bvatom := Atom.t
      and type term := Term.t
-     and type atom := Atom.t) = struct
+     and type atom := Atom.t
+     and type formula := Formula.t) = struct
   include T_int
   include T_real
   include T_bv
 
-  type fun_sym += IntToReal | RealToInt | IntToBV of size | BVToInt of size
+  type fun_sym +=
+    | IntToReal
+    | RealToInt
+    | IntToBV of size
+    | BVToInt of size * signed
+
   type pred_sym += IsInt
 
   (** Construction *)
@@ -8142,17 +8601,18 @@ and T_irb :
   let mk_int_to_bv ?(info = Dummy) ~size t =
     Term.mk_fsym_app (IntToBV size) [ t ] ~info
 
-  let mk_bv_to_int ?(info = Dummy) ~size t =
-    Term.mk_fsym_app (BVToInt size) [ t ] ~info
+  let mk_bv_to_int ?(info = Dummy) ~size ~signed t =
+    Term.mk_fsym_app (BVToInt (size, signed)) [ t ] ~info
 
-  let mk_is_int ?(info = Dummy) t =
-    Atom.mk_app (Predicate.Psym IsInt) [ t ] ~info
+  let mk_is_int ?(info = Dummy) t = Atom.mk_psym_app IsInt [ t ] ~info
 
   let to_int_if_rb t =
     match Term.sort_of t with
     | T_real.SReal -> mk_real_to_int t
-    | T_bv.SBV size -> mk_bv_to_int ~size t
+    | T_bv.SBV size -> mk_bv_to_int ~size ~signed:(Some true (*ToDo*)) t
     | _ -> t
+
+  let to_real_if_int t = if T_real.is_sreal t then t else mk_int_to_real t
 
   (** Destruction *)
 
@@ -8169,7 +8629,8 @@ and T_irb :
     | _ -> assert false
 
   let let_bv_to_int = function
-    | Term.FunApp (BVToInt size, [ t ], info) -> (size, t, info)
+    | Term.FunApp (BVToInt (size, signed), [ t ], info) ->
+        (size, signed, t, info)
     | _ -> assert false
 
   let let_is_int = function
@@ -8208,24 +8669,107 @@ and T_irb :
 
   let origin_of sorts =
     List.map sorts ~f:(function
+      | T_bool.SBool -> T_bool.mk_false ()
       | T_int.SInt -> T_int.zero ()
       | T_real.SReal -> T_real.rzero ()
-      | T_bool.SBool -> T_bool.mk_false ()
       | _ -> failwith "not supported")
+
+  let zero_of = function
+    | T_int.SInt -> T_int.zero ()
+    | T_real.SReal -> T_real.rzero ()
+    | sort -> failwith ("not supported: " ^ Term.str_of_sort sort)
+
+  let mul = function
+    | T_int.SInt -> T_int.mk_mul
+    | T_real.SReal -> T_real.mk_rmul
+    | sort -> failwith ("not supported: " ^ Term.str_of_sort sort)
+
+  let sum = function
+    | T_int.SInt -> T_int.mk_sum
+    | T_real.SReal -> T_real.mk_rsum
+    | sort -> failwith ("not supported: " ^ Term.str_of_sort sort)
+
+  let geq = function
+    | T_int.SInt -> T_int.mk_geq
+    | T_real.SReal -> T_real.mk_rgeq
+    | sort -> failwith ("not supported: " ^ Term.str_of_sort sort)
+
+  let cast = function
+    | T_int.SInt, T_int.SInt | T_real.SReal, T_real.SReal -> Fn.id
+    | T_int.SInt, T_real.SReal -> fun t -> mk_int_to_real t
+    | T_real.SReal, T_int.SInt -> fun t -> mk_real_to_int t
+    | sort1, sort2 ->
+        failwith
+        @@ sprintf "not supported: %s, %s" (Term.str_of_sort sort1)
+             (Term.str_of_sort sort2)
+
+  let sum_of sort term ts =
+    let coeffs, terms =
+      List.unzip
+      @@ List.map ts ~f:(fun (t, s) ->
+             let coeff = Term.mk_var (Ident.mk_fresh_parameter ()) T_int.SInt in
+             (coeff, cast (s, sort) (mul s (cast (T_int.SInt, s) coeff) t)))
+    in
+    (coeffs, sum sort term terms)
+
+  let ineq_of sort ts =
+    let negb = Term.mk_var (Ident.mk_fresh_parameter ()) T_int.SInt in
+    let term = cast (T_int.SInt, sort) negb in
+    let coeffs, term' = sum_of sort term ts in
+    ((coeffs, negb), geq sort term' (zero_of sort))
+
+  let eq_of sort ts =
+    let negb = Term.mk_var (Ident.mk_fresh_parameter ()) T_int.SInt in
+    let term = cast (T_int.SInt, sort) negb in
+    let coeffs, term' = sum_of sort term ts in
+    ((coeffs, negb), T_bool.mk_eq term' (zero_of sort))
+
+  let sort_of ts =
+    let sorts = Set.Poly.of_list @@ List.map ~f:snd ts in
+    if Set.mem sorts T_real.SReal then T_real.SReal
+    else if Set.mem sorts T_int.SInt then T_int.SInt
+    else T_int.SInt (* failwith "no int/real term" *)
+
+  let conj_with_bool_of ts =
+    let sort = sort_of ts in
+    let bool_ts =
+      List.filter ts ~f:(function _, T_bool.SBool -> true | _, _ -> false)
+    in
+    let num_ts =
+      List.filter ts ~f:(function
+        | _, T_int.SInt | _, T_real.SReal -> true
+        | _, _ -> false)
+    in
+    let rec aux = function
+      | [] ->
+          let params, templ = ineq_of sort num_ts in
+          ([ params ], Formula.mk_atom templ)
+      | (t, _) :: ts ->
+          let params1, tmpl1 = aux ts in
+          let params2, tmpl2 = aux ts in
+          ( params1 @ params2,
+            Formula.or_of
+              [
+                Formula.and_of [ Formula.of_bool_term t; tmpl1 ];
+                Formula.and_of
+                  [ Formula.mk_neg @@ Formula.of_bool_term t; tmpl2 ];
+              ] )
+    in
+    aux bool_ts
 end
 
 and T_num : (Type.T_numType with type term := Term.t and type atom := Atom.t) =
 struct
   type fun_sym +=
     | Value of string * Ident.svar
+    | NNeg of Ident.svar
+    | NSEXT of int * Ident.svar * int * Ident.svar
     | NAdd of Ident.svar
     | NSub of Ident.svar
-    | NMult of Ident.svar
-    | NDiv of Ident.svar
-    | NMod of Ident.svar
-    | NRem of Ident.svar
+    | NMul of Ident.svar
+    | NDiv of Ident.svar * Value.modulo
+    | NRem of Ident.svar * Value.modulo
     | NPower of Ident.svar
-    | NNeg of Ident.svar
 
   type pred_sym +=
     | NLeq of Ident.svar
@@ -8241,6 +8785,7 @@ struct
     if
       String.is_prefix num_str ~prefix:"e"
       || String.is_prefix num_str ~prefix:"E"
+      || String.is_prefix num_str ~prefix:"_"
     then raise NotValue
     else
       try
@@ -8266,6 +8811,7 @@ struct
     if
       String.is_prefix num_str ~prefix:"e"
       || String.is_prefix num_str ~prefix:"E"
+      || String.is_prefix num_str ~prefix:"_"
     then raise NotValue
     else
       try
@@ -8290,23 +8836,25 @@ struct
   let mk_nneg ?(info = Dummy) t1 =
     Term.mk_fsym_app (NNeg (Ident.mk_fresh_svar ())) [ t1 ] ~info
 
+  let mk_nsext ?(info = Dummy) from to_ t1 =
+    Term.mk_fsym_app
+      (NSEXT (from, Ident.mk_fresh_svar (), to_, Ident.mk_fresh_svar ()))
+      [ t1 ] ~info
+
   let mk_nadd ?(info = Dummy) t1 t2 =
     Term.mk_fsym_app (NAdd (Ident.mk_fresh_svar ())) [ t1; t2 ] ~info
 
   let mk_nsub ?(info = Dummy) t1 t2 =
     Term.mk_fsym_app (NSub (Ident.mk_fresh_svar ())) [ t1; t2 ] ~info
 
-  let mk_nmult ?(info = Dummy) t1 t2 =
-    Term.mk_fsym_app (NMult (Ident.mk_fresh_svar ())) [ t1; t2 ] ~info
+  let mk_nmul ?(info = Dummy) t1 t2 =
+    Term.mk_fsym_app (NMul (Ident.mk_fresh_svar ())) [ t1; t2 ] ~info
 
-  let mk_ndiv ?(info = Dummy) t1 t2 =
-    Term.mk_fsym_app (NDiv (Ident.mk_fresh_svar ())) [ t1; t2 ] ~info
+  let mk_ndiv ?(info = Dummy) m t1 t2 =
+    Term.mk_fsym_app (NDiv (Ident.mk_fresh_svar (), m)) [ t1; t2 ] ~info
 
-  let mk_nmod ?(info = Dummy) t1 t2 =
-    Term.mk_fsym_app (NMod (Ident.mk_fresh_svar ())) [ t1; t2 ] ~info
-
-  let mk_nrem ?(info = Dummy) t1 t2 =
-    Term.mk_fsym_app (NRem (Ident.mk_fresh_svar ())) [ t1; t2 ] ~info
+  let mk_nrem ?(info = Dummy) m t1 t2 =
+    Term.mk_fsym_app (NRem (Ident.mk_fresh_svar (), m)) [ t1; t2 ] ~info
 
   let mk_npower ?(info = Dummy) t1 t2 =
     Term.mk_fsym_app (NPower (Ident.mk_fresh_svar ())) [ t1; t2 ] ~info
@@ -8329,6 +8877,15 @@ struct
     | Term.FunApp (Value (n, _), [], info) -> (n, info)
     | _ -> assert false
 
+  let let_nneg = function
+    | Term.FunApp (NNeg _, [ t1 ], info) -> (t1, info)
+    | _ -> assert false
+
+  let let_nsext = function
+    | Term.FunApp (NSEXT (from, _, to_, _), [ t1 ], info) ->
+        (from, to_, t1, info)
+    | _ -> assert false
+
   let let_nadd = function
     | Term.FunApp (NAdd _, [ t1; t2 ], info) -> (t1, t2, info)
     | _ -> assert false
@@ -8337,16 +8894,12 @@ struct
     | Term.FunApp (NSub _, [ t1; t2 ], info) -> (t1, t2, info)
     | _ -> assert false
 
-  let let_nmult = function
-    | Term.FunApp (NMult _, [ t1; t2 ], info) -> (t1, t2, info)
+  let let_nmul = function
+    | Term.FunApp (NMul _, [ t1; t2 ], info) -> (t1, t2, info)
     | _ -> assert false
 
   let let_ndiv = function
     | Term.FunApp (NDiv _, [ t1; t2 ], info) -> (t1, t2, info)
-    | _ -> assert false
-
-  let let_nmod = function
-    | Term.FunApp (NMod _, [ t1; t2 ], info) -> (t1, t2, info)
     | _ -> assert false
 
   let let_nrem = function
@@ -8355,10 +8908,6 @@ struct
 
   let let_npower = function
     | Term.FunApp (NPower _, [ t1; t2 ], info) -> (t1, t2, info)
-    | _ -> assert false
-
-  let let_nneg = function
-    | Term.FunApp (NNeg _, [ t1 ], info) -> (t1, info)
     | _ -> assert false
 
   let let_ngeq = function
@@ -8380,11 +8929,11 @@ struct
   (** Observation *)
 
   let is_nneg = function Term.FunApp (NNeg _, _, _) -> true | _ -> false
+  let is_nsext = function Term.FunApp (NSEXT _, _, _) -> true | _ -> false
   let is_nadd = function Term.FunApp (NAdd _, _, _) -> true | _ -> false
   let is_nsub = function Term.FunApp (NSub _, _, _) -> true | _ -> false
-  let is_nmult = function Term.FunApp (NMult _, _, _) -> true | _ -> false
+  let is_nmul = function Term.FunApp (NMul _, _, _) -> true | _ -> false
   let is_ndiv = function Term.FunApp (NDiv _, _, _) -> true | _ -> false
-  let is_nmod = function Term.FunApp (NMod _, _, _) -> true | _ -> false
   let is_nrem = function Term.FunApp (NRem _, _, _) -> true | _ -> false
   let is_npower = function Term.FunApp (NPower _, _, _) -> true | _ -> false
 
@@ -8409,8 +8958,8 @@ struct
   (** Function Symbols *)
 
   let fsym_of_num_fsym fsym = function
-    | Sort.SVar _ -> fsym
-    | T_int.SInt -> (
+    | [ Sort.SVar _ ] -> fsym
+    | [ T_int.SInt ] -> (
         match fsym with
         | Value (value, _) -> (
             try T_int.Int (Z.of_string value)
@@ -8422,15 +8971,17 @@ struct
                     (Z.of_int @@ Q.to_int @@ Q.of_float @@ float_of_string value)
                 with _ -> raise NotValue)))
         | NNeg _ -> T_int.Neg
+        | NSEXT (_from, _, _to_, _) -> failwith "not supported @ 1"
         | NAdd _ -> T_int.Add
         | NSub _ -> T_int.Sub
-        | NMult _ -> T_int.Mult
-        | NDiv _ -> T_int.Div
-        | NMod _ -> T_int.Mod
-        | NRem _ -> T_int.Rem
+        | NMul _ -> T_int.Mul
+        | NDiv (_, m) -> T_int.Div m
+        | NRem (_, m) -> T_int.Rem m
         | NPower _ -> T_int.Power
         | _ -> fsym)
-    | T_real.SReal -> (
+    | [ T_int.SInt; T_int.SInt ] -> (
+        match fsym with NSEXT (_from, _, _to_, _) -> T_int.Nop | _ -> fsym)
+    | [ T_real.SReal ] -> (
         match fsym with
         | Value (value, _) -> (
             try T_real.Real (Q.of_string value)
@@ -8438,13 +8989,15 @@ struct
               try T_real.Real (Q.of_float @@ float_of_string value)
               with _ -> raise NotValue))
         | NNeg _ -> T_real.RNeg
+        | NSEXT (_from, _, _to_, _) -> failwith "not supported @ 2"
         | NAdd _ -> T_real.RAdd
         | NSub _ -> T_real.RSub
-        | NMult _ -> T_real.RMult
+        | NMul _ -> T_real.RMul
         | NDiv _ -> T_real.RDiv
+        | NRem _ -> failwith "not supported @ 3"
         | NPower _ -> T_real.RPower
         | _ -> fsym)
-    | T_bv.SBV size -> (
+    | [ T_bv.SBV size ] -> (
         match fsym with
         | Value (value, _) -> (
             try T_bv.BVNum (size, Z.of_string value)
@@ -8458,15 +9011,30 @@ struct
                       @@ float_of_string value )
                 with _ -> raise NotValue)))
         | NNeg _ -> T_bv.BVNeg size
+        | NSEXT (_from, _, _to_, _) -> failwith "not supported @ 4"
         | NAdd _ -> T_bv.BVAdd size
         | NSub _ -> T_bv.BVSub size
-        | NMult _ -> T_bv.BVMult size
-        | NDiv _ -> T_bv.BVDiv size
-        | NMod _ -> T_bv.BVMod size
-        | NRem _ -> T_bv.BVRem size
-        | NPower _ -> failwith "not supported"
+        | NMul _ -> T_bv.BVMul size
+        | NDiv _ -> T_bv.BVDiv (size, Some true (*ToDo*))
+        | NRem _ -> T_bv.BVRem (size, Some true (*ToDo*))
+        | NPower _ -> failwith "not supported @ 5"
         | _ -> fsym)
-    | sort -> failwith @@ sprintf "sort %s is not num" (Term.str_of_sort sort)
+    | [ T_bv.SBV _size1; T_bv.SBV _size2 ] -> (
+        match fsym with
+        | NSEXT (from, _, to_, _) ->
+            (* assert (size1 = from && size2 = to_); *) T_bv.BVSEXT (from, to_)
+        | _ -> fsym)
+    | [ T_int.SInt; T_bv.SBV _size ] -> (
+        (* ToDo: failure of type inference? *)
+        match fsym with
+        | NSEXT (_from, _, to_, _) -> T_irb.BVToInt (Some to_, Some true)
+        | _ -> fsym)
+    | [ sort ] ->
+        failwith @@ sprintf "sort %s is not num" (Term.str_of_sort sort)
+    | sorts ->
+        failwith
+        @@ sprintf "not supported @ 6: %s, %s" (Term.str_of_funsym fsym)
+             (String.concat_map_list ~sep:", " ~f:Term.str_of_sort sorts)
 
   let psym_of_num_psym psym = function
     | Sort.SVar _ -> psym
@@ -8486,10 +9054,10 @@ struct
         | _ -> psym)
     | T_bv.SBV size -> (
         match psym with
-        | NGeq _ -> T_bv.BVGeq size
-        | NLeq _ -> T_bv.BVLeq size
-        | NGt _ -> T_bv.BVGt size
-        | NLt _ -> T_bv.BVLt size
+        | NGeq _ -> T_bv.BVGeq (size, Some true (*ToDo*))
+        | NLeq _ -> T_bv.BVLeq (size, Some true (*ToDo*))
+        | NGt _ -> T_bv.BVGt (size, Some true (*ToDo*))
+        | NLt _ -> T_bv.BVLt (size, Some true (*ToDo*))
         | _ -> psym)
     | sort -> failwith @@ sprintf "sort %s is not num" (Term.str_of_sort sort)
 end
@@ -8544,8 +9112,8 @@ and T_array :
   let mk_const_array s1 s2 v = Term.mk_fsym_app (AConst (s1, s2)) [ v ]
 
   let of_fvar_app = function
-    | Term.FunApp (FVar (tvar, sorts), ts, _) ->
-        let arr_sort = of_arrow @@ Sort.mk_fun sorts in
+    | Term.FunApp (FVar (tvar, sargs, sret), ts, _) ->
+        let arr_sort = of_arrow @@ Sort.mk_fun (sargs @ [ sret ]) in
         List.fold_left ts ~init:(Term.mk_var tvar arr_sort) ~f:(fun arr t ->
             match Term.sort_of arr with
             | SArray (s1, s2) -> mk_select s1 s2 arr t
@@ -8747,9 +9315,9 @@ and T_dt :
   let inst_unknown_sel_term simplify_term =
     Formula.map_term
       ~f:
-        (simplify_term >> function
-         | Term.FunApp (DTSel (_, _, sort), _, _) -> Term.mk_dummy sort
-         | t -> t)
+        ( simplify_term >> function
+          | Term.FunApp (DTSel (_, _, sort), _, _) -> Term.mk_dummy sort
+          | t -> t )
 
   let eval_select sel_name dt = function
     | Term.FunApp (DTCons (cons_name, _, _), ts, _) -> (
@@ -9010,7 +9578,8 @@ struct
 
   let str_of_cons cons =
     sprintf "%s (%s)" (name_of_cons cons)
-    @@ String.concat ~sep:", " @@ List.map ~f:str_of_sel @@ sels_of_cons cons
+    @@ String.concat_map_list ~sep:", " ~f:str_of_sel
+    @@ sels_of_cons cons
 
   let str_of_flag = function
     | FDt -> "data"
@@ -9037,8 +9606,7 @@ struct
 
   let full_str_of_cons t cons =
     sprintf "%s (%s)" (name_of_cons cons)
-    @@ String.concat ~sep:", "
-    @@ List.map ~f:(full_str_of_sel t)
+    @@ String.concat_map_list ~sep:", " ~f:(full_str_of_sel t)
     @@ sels_of_cons cons
 
   (** Transformation *)
@@ -9369,14 +9937,14 @@ struct
 
   (** TODO: Now assume [dt] is a monotype datatype, support polytype in future
 
-      let rec SizeOf_dt (x:dt) =
-        if is_cons_0 x then 1 + SizeOf_(typeof(sel_01))(sel_01(x)) + ... + SizeOf_(typeof(sel_0n))(sel_0n(x))
-        ...
-        else if is_cons_m x then 1 + SizeOf(typeof(sel_m1))(sel_m1(x)) + ... + SizeOf(typeof(sel_mp))(sel_mp(x))
-        else 1
+      let rec SizeOf_dt (x:dt) = if is_cons_0 x then 1 +
+      SizeOf_(typeof(sel_01))(sel_01(x)) + ... +
+      SizeOf_(typeof(sel_0n))(sel_0n(x)) ... else if is_cons_m x then 1 +
+      SizeOf(typeof(sel_m1))(sel_m1(x)) + ... +
+      SizeOf(typeof(sel_mp))(sel_mp(x)) else 1
 
-      property:
-        forall x:dt. (is_cons_0 x => SizeOf_dt(x) >= 1 + |sels_0|) /\ ... /\ (is_cons_m x => SizeOf_dt(x) >= 1 + |sels_m|)*)
+      property: forall x:dt. (is_cons_0 x => SizeOf_dt(x) >= 1 + |sels_0|) /\
+      ... /\ (is_cons_m x => SizeOf_dt(x) >= 1 + |sels_m|)*)
   let size_fun_of dt =
     let min_size_of = function
       | T_dt.SDT dt ->
@@ -9387,8 +9955,7 @@ struct
       match sort_of_sel dt sel with
       | T_dt.SDT dt1 ->
           let t = T_dt.mk_sel dt (name_of_sel sel) x in
-          Term.mk_fvar_app (size_fun_var_of dt1)
-            [ T_dt.SDT dt1; T_int.SInt ]
+          Term.mk_fvar_app (size_fun_var_of dt1) [ T_dt.SDT dt1 ] T_int.SInt
             [ t ]
       | _ -> T_int.zero ()
     in
@@ -9413,17 +9980,15 @@ struct
                |> List.fold ~init:1 ~f:( + )
              in
              Formula.mk_imply (Formula.mk_atom @@ T_dt.mk_is_cons dt cons.name x)
-             @@ Formula.mk_atom
-             @@ T_int.mk_geq
-                  (Term.mk_fvar_app fun_var
-                     (List.map ~f:snd params @ [ T_int.SInt ])
+             @@ Formula.geq
+                  (Term.mk_fvar_app fun_var (List.map ~f:snd params) T_int.SInt
                      [ x ])
                   (T_int.mk_int @@ Z.of_int min_size))
     in
     (fun_var, (params, T_int.SInt, def, true, prop))
 
   let app_size_fun dt x =
-    Term.mk_fvar_app (size_fun_var_of dt) [ T_dt.SDT dt; T_int.SInt ] [ x ]
+    Term.mk_fvar_app (size_fun_var_of dt) [ T_dt.SDT dt ] T_int.SInt [ x ]
 
   (** Datatypes *)
 
@@ -9569,10 +10134,23 @@ and TermSubst : (Type.TermSubstType with type term := Term.t) = struct
     String.concat_map_list ~sep:", " (Map.Poly.to_alist subst)
       ~f:(fun (x, term) ->
         sprintf "%s |-> %s" (Ident.str_of_tvar x) (Term.str_of term))
+
+  let make ~name senv args =
+    try
+      (* ToDo : check whether args match sorts *)
+      Map.Poly.of_alist_exn @@ List.zip_exn (List.map senv ~f:fst) args
+    with e ->
+      printf "name: %s #senv: %d #args: %d" name (List.length senv)
+        (List.length args);
+      raise e
 end
 
 and PredSubst : (Type.PredSubstType with type formula := Formula.t) = struct
   type t = (Ident.pvar, sort_env_list * Formula.t) Map.Poly.t
+end
+
+and FuncSubst : (Type.FuncSubstType with type term := Term.t) = struct
+  type t = (Ident.tvar, sort_env_list * Term.t) Map.Poly.t
 end
 
 and FunEnv :
@@ -9588,12 +10166,12 @@ struct
     else
       let recterms =
         Formula.filtered_terms_of phi ~f:(function
-          | Term.FunApp (FVar (v, _), _, _) -> Map.Poly.mem fenv v
+          | Term.FunApp (FVar (v, _, _), _, _) -> Map.Poly.mem fenv v
           | _ -> false)
       in
       Formula.and_of @@ Set.to_list
       @@ Set.Poly.filter_map recterms ~f:(function
-           | Term.FunApp (FVar (v, _), args, _) -> (
+           | Term.FunApp (FVar (v, _, _), args, _) -> (
                match Map.Poly.find fenv v with
                | Some (_, _, _, _, property) when Formula.is_bind property ->
                    let _, env, phi, _ = Formula.let_bind property in
@@ -9615,21 +10193,26 @@ struct
       else if polarity then Formula.mk_and property phi
       else Formula.mk_neg @@ Formula.mk_imply property phi
 
-  (*assume phi is nnf*)
-  let rec defined_formula_of_aux (fenv : t) phi =
-    let open Formula in
-    match phi with
-    | Atom _ -> defined_atom_formula_of true fenv phi
-    | UnaryOp (Not, phi, _) -> defined_atom_formula_of false fenv phi
+  (* assume phi is nnf *)
+  let rec defined_formula_of_aux (fenv : t) = function
+    | Formula.Atom _ as phi -> defined_atom_formula_of true fenv phi
+    | UnaryOp (Not, phi1, _) -> defined_atom_formula_of false fenv phi1
     | BinaryOp (op, phi1, phi2, info) ->
         BinaryOp
           ( op,
             defined_formula_of_aux fenv phi1,
             defined_formula_of_aux fenv phi2,
             info )
-    | Bind (binder, env, phi, info) ->
-        Bind (binder, env, defined_formula_of_aux fenv phi, info)
-    | _ -> failwith "unsupported"
+    | Bind (binder, env, phi1, info) ->
+        Bind (binder, env, defined_formula_of_aux fenv phi1, info)
+    | LetRec (funcs, phi1, info) ->
+        LetRec
+          ( Formula.map_funcs ~f:(defined_formula_of_aux fenv) funcs,
+            defined_formula_of_aux fenv phi1,
+            info )
+    | LetFormula (tvar, sort, def, body, info) ->
+        LetFormula
+          (tvar, sort, (*ToDo*) def, defined_formula_of_aux fenv body, info)
 
   let defined_formula_of (fenv : t) phi =
     if Map.Poly.is_empty fenv then phi
@@ -9710,6 +10293,7 @@ and DTEnv :
         force_merge ret @@ of_sort sort)
 
   let rec of_term = function
+    | Term.Var (_, T_dt.SDT dt, _) -> of_sort (T_dt.SDT dt)
     | Term.FunApp (T_dt.DTSel (_, dt, ret_sort), ts, _) ->
         of_sort (T_dt.SDT dt)
         |> force_merge (of_sort ret_sort)
@@ -9719,9 +10303,8 @@ and DTEnv :
         |> force_merge (of_sorts args)
         |> force_merge @@ of_terms ts
     | Term.FunApp (T_bool.Formula phi, _, _) -> of_formula phi
-    | Term.FunApp (FVar (_, sorts), ts, _) ->
-        force_merge (of_sorts sorts) (of_terms ts)
-    | Term.Var (_, T_dt.SDT dt, _) -> of_sort (T_dt.SDT dt)
+    | Term.FunApp (FVar (_, sargs, sret), ts, _) ->
+        force_merge (of_sorts (sargs @ [ sret ])) (of_terms ts)
     | Term.FunApp (_, ts, _) as term ->
         force_merge (of_terms ts) @@ of_sort (Term.sort_of term)
     | _ -> Map.Poly.empty
@@ -9736,15 +10319,25 @@ and DTEnv :
     | Atom.App (_, ts, _) -> of_terms ts
     | _ -> Map.Poly.empty
 
-  and of_formula = function
-    | Formula.Atom (atom, _) -> of_atom atom
-    | Formula.UnaryOp (_, phi, _) -> of_formula phi
-    | Formula.BinaryOp (_, phi1, phi2, _) ->
-        force_merge (of_formula phi1) (of_formula phi2)
-    | Formula.Bind (_, _, phi, _) -> of_formula phi
-    | Formula.LetFormula (_, _, def, body, _) ->
-        force_merge (of_formula body) (of_term def)
-    | _ -> Map.Poly.empty
+  and of_formula phi =
+    Formula.fold phi
+      ~f:
+        (object
+           method fatom atom = of_atom atom
+           method fnot r1 = r1
+           method fand r1 r2 = force_merge r1 r2
+           method for_ r1 r2 = force_merge r1 r2
+           method fimply r1 r2 = force_merge r1 r2
+           method fiff r1 r2 = force_merge r1 r2
+           method fxor r1 r2 = force_merge r1 r2
+           method fbind _ _ r1 = r1
+
+           method fletrec funcs r1 =
+             Map.force_merge_list
+               (r1 :: List.map funcs ~f:(fun def -> def.Formula.body))
+
+           method flet _ _ def body = force_merge body (of_term def)
+        end)
 end
 
 and Rand :
@@ -9819,16 +10412,12 @@ and Rand :
         Formula.and_of @@ List.concat
         @@ List.map vars ~f:(fun var ->
                let t = Term.mk_var var T_real.SReal in
-               let a1 = Formula.mk_atom @@ T_real.mk_rleq t1 t in
-               let a2 = Formula.mk_atom @@ T_real.mk_rleq t t2 in
-               [ a1; a2 ])
+               [ Formula.leq t1 t; Formula.leq t t2 ])
     | IntUniform (t1, t2) ->
         Formula.and_of @@ List.concat
         @@ List.map vars ~f:(fun var ->
                let t = Term.mk_var var T_int.SInt in
-               let a1 = Formula.mk_atom @@ T_int.mk_leq t1 t in
-               let a2 = Formula.mk_atom @@ T_int.mk_leq t t2 in
-               [ a1; a2 ])
+               [ Formula.leq t1 t; Formula.leq t t2 ])
     | _ -> assert false
 end
 
@@ -9957,21 +10546,25 @@ let set_dtenv = Atomic.set ref_dtenv
 
 let update_dtenv (dtenv : DTEnv.t) =
   set_dtenv
-  @@ Map.force_merge
+  @@ Map.Poly.merge_skewed
+       ~combine:(fun ~key:_ data1 _data2 -> data1)
+       (*Map.force_merge
        ~catch_dup:(fun (name, t1, t2) ->
-         failwith
-         @@ sprintf "duplicate definition of %s as %s and %s" name
-              (Datatype.str_of t1) (Datatype.str_of t2))
+         if true then t1
+         else
+           failwith
+           @@ sprintf "duplicate definition of %s as %s and %s" name
+                (Datatype.str_of t1) (Datatype.str_of t2))*)
        dtenv
   @@ get_dtenv ()
 
 let init_dtenv () =
   set_dtenv
-  @@ (DTEnv.mk_empty ()
-     |> Map.Poly.add_exn ~key:"unit" ~data:(Datatype.mk_unit_dt ())
-     |> Map.Poly.add_exn ~key:"option" ~data:(Datatype.mk_option_dt ())
-     (* |> Map.Poly.add_exn ~key:"exn" ~data:(Datatype.mk_exn_dt ()) *)
-     |> Map.Poly.add_exn ~key:"list" ~data:(Datatype.mk_list_dt ()))
+    (DTEnv.mk_empty ()
+    |> Map.Poly.add_exn ~key:"unit" ~data:(Datatype.mk_unit_dt ())
+    |> Map.Poly.add_exn ~key:"option" ~data:(Datatype.mk_option_dt ())
+    (* |> Map.Poly.add_exn ~key:"exn" ~data:(Datatype.mk_exn_dt ()) *)
+    |> Map.Poly.add_exn ~key:"list" ~data:(Datatype.mk_list_dt ()))
 
 let _ = init_dtenv ()
 let ref_fenv = Atomic.make @@ FunEnv.mk_empty ()
@@ -9988,6 +10581,10 @@ type term_subst_elem = Ident.tvar * Term.t
 type term_subst_set = term_subst_elem Set.Poly.t
 type term_subst_list = term_subst_elem list
 type term_subst_map = (Ident.tvar, Term.t) Map.Poly.t
+type func_subst_elem = Ident.tvar * (sort_env_list * Term.t)
+type func_subst_set = func_subst_elem Set.Poly.t
+type func_subst_list = func_subst_elem list
+type func_subst_map = FuncSubst.t
 type pred_subst_elem = Ident.pvar * (sort_env_list * Formula.t)
 type pred_subst_set = pred_subst_elem Set.Poly.t
 type pred_subst_list = pred_subst_elem list

@@ -59,7 +59,7 @@ cd ~/coar
 ./icfp24ae/run.sh
 ```
 
-This script runs our tool against benchmarks in `benchmarks/OCaml/probabilistic/`.
+This script runs our tool against benchmarks in `benchmarks/OCaml/probabilistic/icfp24/`.
 After executing the script, you will find the output in `result.txt` at the top directory.
 
 
@@ -146,16 +146,16 @@ Note that runtime may vary depending on the environment.
 
 ## Other Tools Mentioned in Our Paper
 For those who are interested in comparing our artifact with other tools mentioned in our paper, we provide links to those tools here.
-We have provided benchmark files in `benchmarks/OCaml/probabilistic/` that are rewritten for those tools since the input formats for other tools are different from ours.
+We have provided benchmark files in `benchmarks/OCaml/probabilistic/icfp24/` that are rewritten for those tools since the input formats for other tools are different from ours.
 Note that not all benchmarks can be provided for those tools because our tool and others target slightly different problems.
 
 ### [Beutner & Ong, 2021]
 Their tool, ASTNAR is available at [https://github.com/ravenbeutner/astnar/tree/main](https://github.com/ravenbeutner/astnar).
-We have provided benchmark files in `benchmarks/OCaml/probabilistic/ASTNAR`.
+We have provided benchmark files in `benchmarks/OCaml/probabilistic/icfp24/ASTNAR`.
 
 ### [Avanzini et al., 2023]
 The tool, ev-imp is available at [https://zenodo.org/records/7825902](https://zenodo.org/records/7825902).
-We have provided benchmark files in `benchmarks/OCaml/probabilistic/ev-imp`.
+We have provided benchmark files in `benchmarks/OCaml/probabilistic/icfp24/ev-imp`.
 
 
 ## Detailed Documentation for Reusability
@@ -171,7 +171,7 @@ The type of proposition is `prop` and its interpretation should be specified in 
 - `[@@@mode "hfl_prop_as_expectation"]` means that `prop` is interpreted as a type of non-negative extended real numbers $[0, \infty]$. This mode is used for expected cost analysis, cost moment analysis, and weakest pre-expectation.
 - `[@@@mode "hfl_prop_as_conditional_expectation"]` means that `prop` is interpreted as a type of pairs of a non-negative extended real number $[0, \infty]$ and a real number in $[0, 1]$. This mode is used for conditional weakest pre-expectation.
 
-You can find more examples in `benchmarks/OCaml/probabilistic/*.ml`.
+You can find more examples in `benchmarks/OCaml/probabilistic/icfp24/*.ml`.
 
 
 ### Running the Type Checker

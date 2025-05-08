@@ -1,8 +1,8 @@
 (menhir
- (modules HESParser))
+ (modules parser))
 
 (ocamllex
- (modules HESLexer))
+ (modules lexer))
 
 (library
  (name muCLP)
@@ -10,5 +10,5 @@
  (preprocess
   (pps ppx_deriving_yojson))
  (libraries core CoAR.pCSP CoAR.ast CoAR.common CoAR.LTS)
- (modules HESLexer HESParser parser pred problem optimizer qelim reducer)
+ (modules pred problem lexer parser util optimizer qelim reducer)
  (synopsis "The definition of muCLP"))

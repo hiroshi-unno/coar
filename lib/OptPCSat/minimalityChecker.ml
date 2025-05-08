@@ -2,6 +2,7 @@ open Core
 open Common
 open Common.Ext
 open Common.Util
+open Common.Combinator
 open Ast
 open Ast.Ident
 open Ast.Logic
@@ -134,7 +135,7 @@ module Make (Config : Config.ConfigType) :
     in
     Debug.print_log ~tag:"head"
     @@ lazy (ExtTerm.str_of_formula exi_senv uni_senv head);
-    let pfapps = List.map pfapps ~f:(fun (_, ((_, term), (_, _))) -> term) in
+    let pfapps = List.map pfapps ~f:(snd >> fst >> snd) in
     let body =
       ExtTerm.subst eqsubst
       @@ ExtTerm.and_of
@@ -202,7 +203,7 @@ module Make (Config : Config.ConfigType) :
   let backward_clauses_of pvars pysenv idx_map nwf theta exi_senv uni_senv defs
       =
     let trans_cls, start_cls =
-      List.partition_tf defs ~f:(fun (_, _, ns, _) -> Fn.non Set.is_empty ns)
+      List.partition_tf defs ~f:(Quadruple.trd >> Fn.non Set.is_empty)
     in
     let bwd_theta =
       OptimalityChecker.bwd_theta_of

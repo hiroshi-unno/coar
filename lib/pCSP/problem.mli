@@ -62,7 +62,7 @@ val args_record_of : t -> (Ident.pvar, bool array * Sort.t list) Map.Poly.t
 val partial_sol_targets_of :
   t -> (Ident.tvar, Params.random_info Set.Poly.t) Map.Poly.t
 
-val dep_graph_of : t -> (Ident.tvar, Ident.tvar Set.Poly.t) Map.Poly.t
+val dep_graph_of : t -> (Ident.tvar, Ident.tvar_set) Map.Poly.t
 val fnpvs_senv_of : t -> sort_env_map
 val nepvs_senv_of : t -> sort_env_map
 val wfpvs_senv_of : t -> sort_env_map
@@ -80,21 +80,21 @@ val nwfpvs_senv_of :
     * Sort.t list )
   Map.Poly.t
 
-val fnpvs_of : t -> Ident.tvar Set.Poly.t
-val nepvs_of : t -> Ident.tvar Set.Poly.t
-val wfpvs_of : t -> Ident.tvar Set.Poly.t
-val dwfpvs_of : t -> Ident.tvar Set.Poly.t
-val nwfpvs_of : t -> Ident.tvar Set.Poly.t
-val admpvs_of : t -> Ident.tvar Set.Poly.t
-val integpvs_of : t -> Ident.tvar Set.Poly.t
+val fnpvs_of : t -> Ident.tvar_set
+val nepvs_of : t -> Ident.tvar_set
+val wfpvs_of : t -> Ident.tvar_set
+val dwfpvs_of : t -> Ident.tvar_set
+val nwfpvs_of : t -> Ident.tvar_set
+val admpvs_of : t -> Ident.tvar_set
+val integpvs_of : t -> Ident.tvar_set
 val num_constrs : t -> int
 val num_pvars : t -> int
 
 (* all non-predicate function variables *)
-val npfvs_of : t -> Ident.tvar Set.Poly.t
+val npfvs_of : t -> Ident.tvar_set
 
 (* all predicate variables including well-founded, functional, and non-empty ones *)
-val pvs_of : t -> Ident.tvar Set.Poly.t
+val pvs_of : t -> Ident.tvar_set
 val is_ord_pred : t -> Ident.tvar -> bool
 val is_fn_pred : t -> Ident.tvar -> bool
 val is_ne_pred : t -> Ident.tvar -> bool
@@ -133,7 +133,17 @@ val map_old :
   t ->
   t
 
+val concat_map_old :
+  f:
+    (LogicOld.sort_env_map * LogicOld.Formula.t ->
+    (LogicOld.sort_env_map * LogicOld.Formula.t) Set.Poly.t) ->
+  t ->
+  t
+
 val map : f:(sort_env_map * term -> sort_env_map * term) -> t -> t
+
+val concat_map :
+  f:(sort_env_map * term -> (sort_env_map * term) Set.Poly.t) -> t -> t
 
 (*val str_of_pvars: pvars -> string
   val str_of_clause : clause -> string *)
@@ -159,6 +169,8 @@ val id_of : t -> int option
 val ast_size_of : t -> int
 val tag_of : t -> Ident.tvar -> (Ident.tvar * Ident.tvar) option
 val instantiate_svars_to_int : t -> t
+val elim_ite : t -> t
+val elim_ite_prob : t -> t
 val normalize : t -> t
 val of_sygus : SyGuS.Problem.Make(SyGuS.Problem.ExtTerm).t -> t
 val of_lts : LTS.Problem.t -> t
@@ -175,10 +187,7 @@ val recover_elimed_params_of_sol :
   term_subst_map
 
 val sol_of_candidate : t -> CandSol.t -> term_subst_map
-
-val subst :
-  ?bpvs:Ident.tvar Set.Poly.t -> ?elim:bool -> term_subst_map -> t -> t
-
+val subst : ?bpvs:Ident.tvar_set -> ?elim:bool -> term_subst_map -> t -> t
 val cochc_to_chc : t -> t
 val elim_unsat_wf_predicates : print:(string lazy_t -> unit) -> t -> t
 val elim_dup_nwf_predicate : t -> t
@@ -187,8 +196,8 @@ val merge_clauses : t -> t
 
 val is_qualified_partial_solution :
   print:(string lazy_t -> unit) ->
-  Ident.tvar Set.Poly.t ->
-  Ident.tvar Set.Poly.t ->
+  Ident.tvar_set ->
+  Ident.tvar_set ->
   ClauseSet.t ->
   bool
 

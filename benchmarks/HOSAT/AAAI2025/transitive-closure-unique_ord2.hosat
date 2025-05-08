@@ -1,0 +1,17 @@
+_forall p : bool -> bool -> bool. _forall pc1 : bool -> bool -> bool. _forall pc2 : bool -> bool -> bool. (
+    (((_forall x : bool. _forall y : bool. (p(x, y) => pc1(x, y))) &&
+      (_forall x : bool. _forall y : bool. _forall z : bool. ((pc1(x, y) && pc1(y, z)) => pc1(x, z))) &&
+      (_forall q : bool -> bool -> bool. (
+          ((_forall x : bool. _forall y : bool. (p(x, y) => q(x, y))) &&
+           (_forall x : bool. _forall y : bool. _forall z : bool. ((q(x, y) && q(y, z)) => q(x, z)))) =>
+          (_forall x : bool. _forall y : bool. (pc1(x, y) => q(x, y)))
+       ))) &&
+     ((_forall x : bool. _forall y : bool. (p(x, y) => pc2(x, y))) &&
+      (_forall x : bool. _forall y : bool. _forall z : bool. ((pc2(x, y) && pc2(y, z)) => pc2(x, z))) &&
+      (_forall q : bool -> bool -> bool. (
+          ((_forall x : bool. _forall y : bool. (p(x, y) => q(x, y))) &&
+           (_forall x : bool. _forall y : bool. _forall z : bool. ((q(x, y) && q(y, z)) => q(x, z)))) =>
+          (_forall x : bool. _forall y : bool. (pc2(x, y) => q(x, y)))
+       )))) =>
+    (_forall x : bool. _forall y : bool. (pc1(x, y) <=> pc2(x,y)))
+)

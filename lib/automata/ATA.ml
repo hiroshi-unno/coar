@@ -11,13 +11,11 @@ let pr_dest ppf (dest : dest) =
   @@
   if List.is_empty dest then "false"
   else
-    String.concat ~sep:" \\/ "
-    @@ List.map dest ~f:(fun conj ->
-           if List.is_empty conj then "true"
-           else
-             String.concat ~sep:" /\\ "
-             @@ List.map conj ~f:(fun (i, s) ->
-                    "(" ^ string_of_int i ^ "," ^ s ^ ")"))
+    String.concat_map_list ~sep:" \\/ " dest ~f:(fun conj ->
+        if List.is_empty conj then "true"
+        else
+          String.concat_map_list ~sep:" /\\ " conj ~f:(fun (i, s) ->
+              "(" ^ string_of_int i ^ "," ^ s ^ ")"))
 (*List.pr (List.pr (Pair.pr Integer.pr pr_id) " /\\ ") " \\/ "*)
 
 type arity = (string, int) List.Assoc.t

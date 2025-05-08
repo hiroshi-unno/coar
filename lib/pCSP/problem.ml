@@ -173,7 +173,8 @@ let formula_of ?(full_clauses = true) pcsp =
 
 let old_formulas_of ?(full_clauses = true) = function
   | Raw (phis, params) ->
-      Set.union (Set.Poly.map ~f:(ExtTerm.to_old_fml params.senv) phis)
+      Set.union
+        (Set.Poly.map ~f:(uncurry2 @@ ExtTerm.to_old_fml params.senv) phis)
       @@ Set.Poly.map ~f:(Clause.to_old_formula params.senv)
       @@ if full_clauses then params.Params.stable_clauses else Set.Poly.empty
   | Cnf (cnf, params) ->
@@ -192,7 +193,7 @@ let num_unknowns pcsp = Map.Poly.length @@ senv_of pcsp
 let dtenv_of_def pcsp =
   let exi_senv = (params_of pcsp).senv in
   Set.fold ~init:Map.Poly.empty (formulas_of pcsp) ~f:(fun ret ->
-      ExtTerm.to_old_fml exi_senv
+      uncurry2 @@ ExtTerm.to_old_fml exi_senv
       >> LogicOld.DTEnv.of_formula
       >> LogicOld.DTEnv.force_merge ret)
 
@@ -207,10 +208,10 @@ let update_params pcsp params =
 
 let update_params_dtenv pcsp =
   update_params pcsp
-  @@ {
-       (params_of pcsp) with
-       dtenv = Map.force_merge (dtenv_of pcsp) @@ dtenv_of_def pcsp;
-     }
+    {
+      (params_of pcsp) with
+      dtenv = Map.force_merge (dtenv_of pcsp) @@ dtenv_of_def pcsp;
+    }
 
 let set_params_sol_space pcsp sol_space =
   update_params pcsp { (params_of pcsp) with sol_space }
@@ -231,7 +232,7 @@ let map_if_raw_old ~f pcsp =
   let f =
     Set.Poly.map ~f:(fun (uni_senv, phi) ->
         ( Map.of_set_exn @@ Map.to_set @@ to_old_sort_env_map uni_senv,
-          ExtTerm.to_old_fml exi_senv (uni_senv, phi) ))
+          ExtTerm.to_old_fml exi_senv uni_senv phi ))
     >> f
     >> Set.Poly.map ~f:ExtTerm.of_old
   in
@@ -246,10 +247,25 @@ let map_old ~f pcsp =
   let f =
     (fun (uni_senv, phi) ->
       ( Map.of_set_exn @@ Map.to_set @@ to_old_sort_env_map uni_senv,
-        ExtTerm.to_old_fml exi_senv (uni_senv, phi) ))
+        ExtTerm.to_old_fml exi_senv uni_senv phi ))
     >> f >> ExtTerm.of_old
   in
   map ~f pcsp
+
+let concat_map ~f = function
+  | Raw (phis, params) -> Raw (Set.concat_map ~f phis, params)
+  | Cnf (cls, params) -> Cnf (ClauseSet.concat_map_formula ~f cls, params)
+
+let concat_map_old ~f pcsp =
+  let exi_senv = (params_of pcsp).senv in
+  let f =
+    (fun (uni_senv, phi) ->
+      ( Map.of_set_exn @@ Map.to_set @@ to_old_sort_env_map uni_senv,
+        ExtTerm.to_old_fml exi_senv uni_senv phi ))
+    >> f
+    >> Set.Poly.map ~f:ExtTerm.of_old
+  in
+  concat_map ~f pcsp
 
 type pcsp = { clauses : string list; unknowns : (string * string) list }
 [@@deriving to_yojson]
@@ -319,7 +335,7 @@ let str_of_sygus_solution = function
 
 (* expand existential quantification over boolean variables *)
 let rec qelim xs body =
-  let open LogicOld in
+  let open Ast.LogicOld in
   match xs with
   | [] -> body
   | (x, sort) :: xs' ->
@@ -332,7 +348,7 @@ let rec qelim xs body =
         ]
 
 let add_non_emptiness (pvar, sorts) =
-  let open LogicOld in
+  let open Ast.LogicOld in
   function
   | Raw (phis, p_params) ->
       let params = sort_env_list_of_sorts sorts in
@@ -345,16 +361,15 @@ let add_non_emptiness (pvar, sorts) =
               Ident.Pvar ("FN" ^ Ident.divide_flag ^ Ident.name_of_tvar tvar)
             in
             ( ExtTerm.of_old_sort_bind @@ Term.pred_to_sort_bind (pvar, [ sort ]),
-              Formula.mk_atom
-              @@ Atom.mk_pvar_app pvar [ sort ] [ Term.mk_var tvar sort ] ))
+              Formula.mk_atom @@ Atom.pvar_app_of_senv pvar [ (tvar, sort) ] ))
       in
       let phis =
         Set.add phis
-        @@ ( Map.Poly.of_alist_exn @@ of_old_sort_env_list params,
-             BoolTerm.elim_imp @@ ExtTerm.of_old_formula @@ Evaluator.simplify
-             @@ Formula.mk_imply (Formula.and_of @@ List.map pvs ~f:snd)
-             @@ qelim bool_params @@ Formula.mk_atom
-             @@ Atom.mk_pvar_app pvar sorts (Term.of_sort_env params) )
+          ( Map.Poly.of_alist_exn @@ of_old_sort_env_list params,
+            BoolTerm.elim_imp @@ ExtTerm.of_old_formula @@ Evaluator.simplify
+            @@ Formula.mk_imply (Formula.and_of @@ List.map pvs ~f:snd)
+            @@ qelim bool_params @@ Formula.mk_atom
+            @@ Atom.mk_pvar_app pvar sorts (Term.of_sort_env params) )
       in
       let p_params =
         let fnpv_senv = Map.Poly.of_alist_exn @@ List.map pvs ~f:fst in
@@ -452,6 +467,16 @@ let instantiate_svars_to_int pcsp =
   map_old pcsp ~f:(fun (uni_senv, phi) ->
       (uni_senv, LogicOld.Formula.subst_sorts sub phi))
 
+let elim_ite pcsp =
+  map_old pcsp ~f:(fun (uni_senv, phi) ->
+      (uni_senv, phi |> LogicOld.Formula.elim_ite |> Evaluator.simplify))
+
+let elim_ite_prob pcsp =
+  concat_map_old pcsp ~f:(fun (uni_senv, phi) ->
+      phi |> LogicOld.Formula.to_atom
+      |> LogicOld.Atom.elim_ite_prob (Normalizer.normalize >> Evaluator.simplify)
+      |> Set.Poly.map ~f:(fun phi -> (uni_senv, phi)))
+
 let normalize pcsp =
   let unknowns = Map.key_set @@ senv_of pcsp in
   map_old pcsp ~f:(fun (uni_senv, phi) ->
@@ -465,7 +490,11 @@ let normalize pcsp =
         |> Normalizer.normalize
         |> Evaluator.simplify
       in
-      (*print_endline @@ sprintf "[normalize] \n  before: %s\n  after: %s\n" (LogicOld.Formula.str_of phi) (LogicOld.Formula.str_of phi');*)
+      if false then
+        print_endline
+        @@ sprintf "[normalize] \n  before: %s\n  after: %s\n"
+             (LogicOld.Formula.str_of phi)
+             (LogicOld.Formula.str_of phi');
       (uni_senv, phi'))
 
 let of_sygus (synth_funs, declared_vars, terms) =
@@ -505,7 +534,7 @@ let remove_unused_params pcsp =
         Set.exists pvs ~f:(fun pv ->
             is_ord_pred pcsp pv && Ident.is_related_tvar pv k))
   in
-  update_params pcsp' @@ { (params_of pcsp') with partial_sol_targets }
+  update_params pcsp' { (params_of pcsp') with partial_sol_targets }
 
 let normalize_uni_senv = function
   | Raw (phis, params) ->
@@ -622,7 +651,7 @@ let cochc_to_chc pcsp =
   subst ~elim:false (*ToDo*) sub pcsp
 
 let elim_unsat_wf_predicates ~print pcsp =
-  let open Logic in
+  let open Ast.Logic in
   if Map.Poly.exists (kind_map_of pcsp) ~f:Kind.is_wf then
     let replace_wf_term term =
       let pv, args = ExtTerm.let_var_app term in
@@ -691,7 +720,7 @@ let elim_dup_nwf_predicate pcsp =
   else pcsp
 
 let elim_dup_fn_predicate pcsp =
-  let open Logic in
+  let open Ast.Logic in
   if Map.Poly.exists (kind_map_of pcsp) ~f:Kind.is_fn then
     map pcsp ~f:(fun (uni_senv, phi) ->
         ( uni_senv,
@@ -747,7 +776,7 @@ let elim_dup_fn_predicate pcsp =
                    ( uni_senv,
                      ps,
                      Set.union ns (Set.Poly.of_list ns'),
-                     ExtTerm.or_of @@ (phi :: List.concat phiss) )))
+                     ExtTerm.or_of (phi :: List.concat phiss) )))
           |> ClauseSet.to_formula ))
   else pcsp
 
@@ -827,9 +856,9 @@ let check_valid is_valid pcsp sol =
       (*if not res then
         print_endline @@ sprintf "before: %s\nafter: %s"
           (LogicOld.Formula.str_of @@
-           ExtTerm.to_old_fml (senv_of pcsp) (uni_senv, phi))
+           ExtTerm.to_old_fml (senv_of pcsp) uni_senv phi)
           (LogicOld.Formula.str_of @@
-           ExtTerm.to_old_fml (senv_of pcsp) (uni_senv, phi'));*)
+           ExtTerm.to_old_fml (senv_of pcsp) uni_senv phi');*)
       res)
 
 let make ?(skolem_pred = false) phis (envs : SMT.Problem.envs) =
@@ -883,7 +912,7 @@ let make ?(skolem_pred = false) phis (envs : SMT.Problem.envs) =
   in
   let params =
     Params.make ~kind_map ~fenv ~dtenv:envs.dtenv
-    @@ Map.force_merge_list @@ (exi_senv :: fsenvs)
+    @@ Map.force_merge_list (exi_senv :: fsenvs)
   in
   Set.Poly.of_list phis |> of_old_formulas ~params |> update_params_dtenv
 (*|> normalize*)

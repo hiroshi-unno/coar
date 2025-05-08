@@ -14,6 +14,7 @@ module Config = struct
     resolution_threshold : int;
     simplification_with_smt : bool;
     num_elim_bool_vars : int;
+    elim_ite : bool;
     propagate_lb_ub : bool;
     reduce_pvar_args : bool;
   }
@@ -43,6 +44,7 @@ module Config = struct
       resolution_threshold;
       simplification_with_smt = false;
       num_elim_bool_vars;
+      elim_ite = false;
       propagate_lb_ub = false;
       reduce_pvar_args;
     }
@@ -50,14 +52,14 @@ end
 
 module type PreprocessorType = sig
   val solve :
-    ?bpvs:Ident.tvar Set.Poly.t ->
+    ?bpvs:Ident.tvar_set ->
     ?oracle:PCSP.Problem.oracle ->
     (?oracle:PCSP.Problem.oracle -> PCSP.Problem.t -> State.output Or_error.t) ->
     PCSP.Problem.t ->
     State.output Or_error.t
 
   val preprocess :
-    ?bpvs:Ident.tvar Set.Poly.t ->
+    ?bpvs:Ident.tvar_set ->
     ?oracle:CandSolOld.t option ->
     ?normalize_params:bool ->
     PCSP.Problem.t ->
@@ -90,7 +92,7 @@ module Make (Config : Config.ConfigType) = struct
       else Fn.id
     in
     let phi =
-      Logic.ExtTerm.to_old_fml exi_senv (uni_senv, phi)
+      Logic.ExtTerm.to_old_fml exi_senv uni_senv phi
       (*|> (fun phi -> Debug.print @@ lazy ("orig: " ^ Formula.str_of phi); phi)*)
       |> Normalizer.normalize
       (*|> (fun phi -> Debug.print @@ lazy ("normalized: " ^ Formula.str_of phi); phi)*)
@@ -199,6 +201,8 @@ module Make (Config : Config.ConfigType) = struct
     in
     return (sol', info)
 
+  let print_pcsp = false
+
   let preprocess ?(bpvs = Set.Poly.empty) ?(oracle = None)
       ?(normalize_params = false) pcsp =
     Debug.print @@ lazy "**************** preprocessing  ****************";
@@ -208,24 +212,22 @@ module Make (Config : Config.ConfigType) = struct
     let pcsp = PCSP.Problem.normalize pcsp in
     Debug.print @@ lazy "normalized:";
     Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
-    (*Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
-      Debug.print @@ lazy "";*)
+    if print_pcsp then (
+      Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
+      Debug.print @@ lazy "");
     let pcsp = PCSP.Problem.to_nnf pcsp in
     Debug.print @@ lazy "NNF transformed:";
     Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
-    (*Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
-      Debug.print @@ lazy "";*)
-    (*let pcsp = PCSP.Problem.to_cnf pcsp in
-      Debug.print @@ lazy "CNF transformed:";
-      Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
-      (*Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
-      Debug.print @@ lazy "";*)*)
+    if print_pcsp then (
+      Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
+      Debug.print @@ lazy "");
     if not config.enable then (
       let pcsp = PCSP.Problem.to_cnf pcsp in
       Debug.print @@ lazy "CNF transformed:";
       Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
-      (*Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
-        Debug.print @@ lazy "";*)
+      if print_pcsp then (
+        Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
+        Debug.print @@ lazy "");
       Debug.print @@ lazy "************************************************";
       (None (*ToDo:use oracle*), pcsp))
     else
@@ -235,8 +237,9 @@ module Make (Config : Config.ConfigType) = struct
       in
       Debug.print @@ lazy "simplified:";
       Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
-      (*Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
-        Debug.print @@ lazy "";*)
+      if print_pcsp then (
+        Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
+        Debug.print @@ lazy "");
       let pcsp =
         PCSP.Problem.(
           remove_unused_params
@@ -244,15 +247,17 @@ module Make (Config : Config.ConfigType) = struct
       in
       Debug.print @@ lazy "unsat wf predicates eliminated:";
       Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
-      (*Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
-        Debug.print @@ lazy "";*)
+      if print_pcsp then (
+        Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
+        Debug.print @@ lazy "");
       let pcsp =
         PCSP.Problem.(remove_unused_params @@ elim_dup_nwf_predicate pcsp)
       in
       Debug.print @@ lazy "duplicate nwf predicates eliminated:";
       Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
-      (*Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
-        Debug.print @@ lazy "";*)
+      if print_pcsp then (
+        Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
+        Debug.print @@ lazy "");
       Debug.print @@ lazy "*************** start elim pvars ***************";
       let param_logs =
         DimReducer.init_param_logs_of @@ PCSP.Problem.senv_of pcsp
@@ -261,8 +266,9 @@ module Make (Config : Config.ConfigType) = struct
       let pcsp = PCSP.Problem.(remove_unused_params pcsp) in
       Debug.print @@ lazy "predicate variables eliminated:";
       Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
-      (*Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
-        Debug.print @@ lazy "";*)
+      if print_pcsp then (
+        Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
+        Debug.print @@ lazy "");
       Debug.print @@ lazy "**************** end elim pvars ****************";
       Debug.print @@ lazy "************* start elim pvar args *************";
       let pcsp =
@@ -287,55 +293,73 @@ module Make (Config : Config.ConfigType) = struct
             Debug.print @@ lazy "";
             let psenv, map = sol in
             Option.some
-            @@ ( psenv,
-                 Set.Poly.map map ~f:(fun (pvar, (senv, phi)) ->
-                     let arr, _sargs = Map.Poly.find_exn param_logs pvar in
-                     ( pvar,
-                       ( List.filteri senv ~f:(fun i _bind -> Array.get arr i),
-                         phi ) )) )
+              ( psenv,
+                Set.Poly.map map ~f:(fun (pvar, (senv, phi)) ->
+                    let arr, _sargs = Map.Poly.find_exn param_logs pvar in
+                    ( pvar,
+                      ( List.filteri senv ~f:(fun i _bind -> Array.get arr i),
+                        phi ) )) )
       in
       let pcsp = PCSP.Problem.(remove_unused_params @@ expand_bool pcsp) in
       Debug.print @@ lazy "boolean variables expanded:";
       Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
-      (*Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
-        Debug.print @@ lazy "";*)
+      if print_pcsp then (
+        Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
+        Debug.print @@ lazy "");
+      let pcsp =
+        if config.elim_ite then (
+          let pcsp = PCSP.Problem.elim_ite pcsp in
+          Debug.print @@ lazy "ite eliminated:";
+          Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
+          if print_pcsp then (
+            Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
+            Debug.print @@ lazy "");
+          pcsp)
+        else pcsp
+      in
       let pcsp =
         PCSP.Problem.(remove_unused_params @@ elim_dup_nwf_predicate pcsp)
       in
       Debug.print @@ lazy "duplicate nwf predicates eliminated:";
       Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
-      (*Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
-        Debug.print @@ lazy "";*)
+      if print_pcsp then (
+        Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
+        Debug.print @@ lazy "");
       let pcsp =
         PCSP.Problem.(remove_unused_params @@ elim_dup_fn_predicate pcsp)
       in
       Debug.print @@ lazy "duplicate fn predicates eliminated:";
       Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
-      (*Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
-        Debug.print @@ lazy "";*)
+      if print_pcsp then (
+        Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
+        Debug.print @@ lazy "");
       let pcsp = PCSP.Problem.to_nnf pcsp in
       Debug.print @@ lazy "NNF transformed:";
       Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
-      (*Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
-        Debug.print @@ lazy "";*)
+      if print_pcsp then (
+        Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
+        Debug.print @@ lazy "");
       let pcsp = PCSP.Problem.to_cnf pcsp in
       Debug.print @@ lazy "CNF transformed:";
       Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
-      (*Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
-        Debug.print @@ lazy "";*)
+      if print_pcsp then (
+        Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
+        Debug.print @@ lazy "");
       let pcsp =
         PCSP.Problem.(
           remove_unused_params @@ simplify ~timeout:(Some 1000) pcsp)
       in
       Debug.print @@ lazy "simplified:";
       Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
-      (*Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
-        Debug.print @@ lazy "";*)
+      if print_pcsp then (
+        Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
+        Debug.print @@ lazy "");
       let pcsp = PCSP.Problem.normalize pcsp in
       Debug.print @@ lazy "normalized:";
       Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
-      (*Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
-        Debug.print @@ lazy "";*)
+      if print_pcsp then (
+        Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
+        Debug.print @@ lazy "");
       let pcsp =
         if normalize_params then (
           let pcsp =
@@ -343,8 +367,9 @@ module Make (Config : Config.ConfigType) = struct
           in
           Debug.print @@ lazy "universally quantified variables normalized:";
           Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
-          (*Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
-            Debug.print @@ lazy "";*)
+          if print_pcsp then (
+            Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
+            Debug.print @@ lazy "");
           pcsp)
         else pcsp
       in
@@ -355,13 +380,13 @@ module Make (Config : Config.ConfigType) = struct
       ( oracle,
         let params = PCSP.Problem.params_of pcsp in
         PCSP.Problem.update_params pcsp
-        @@ {
-             params with
-             PCSP.Params.args_record = param_logs;
-             PCSP.Params.sol_for_eliminated =
-               (try Map.force_merge sol_for_eliminated params.sol_for_eliminated
-                with _ -> (*ToDo*) sol_for_eliminated);
-           } )
+          {
+            params with
+            PCSP.Params.args_record = param_logs;
+            PCSP.Params.sol_for_eliminated =
+              (try Map.force_merge sol_for_eliminated params.sol_for_eliminated
+               with _ -> (*ToDo*) sol_for_eliminated);
+          } )
 
   let solve ?(bpvs = Set.Poly.empty) ?(oracle = None)
       (solver :

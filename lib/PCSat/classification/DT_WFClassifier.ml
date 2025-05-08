@@ -1,6 +1,7 @@
 open Core
 open Common
 open Common.Ext
+open Common.Combinator
 open Ast
 open Ast.LogicOld
 open PCSatCommon
@@ -74,7 +75,7 @@ end = struct
       |> Map.Poly.of_alist_exn
     in
     let tm =
-      Logic.ExtTerm.to_old_term Map.Poly.empty senv (Affine.term_of affine) []
+      Logic.ExtTerm.to_old_trm Map.Poly.empty senv (Affine.term_of affine)
     in
     T_int.mk_geq tm (T_int.zero ())
 
@@ -129,13 +130,10 @@ end = struct
   (** Make an affine template and the list of all parameters. *)
   let gen_template_affine vars =
     let p = Term.mk_var (Ident.mk_fresh_parameter ()) T_int.SInt in
-    let template, params =
-      List.fold vars ~init:(p, [ p ]) ~f:(fun (template, params) (tvar, sort) ->
-          let p = Term.mk_var (Ident.mk_fresh_parameter ()) T_int.SInt in
-          ( T_int.mk_add template (T_int.mk_mult p (Term.mk_var tvar sort)),
-            p :: params ))
-    in
-    (template, params)
+    List.fold vars ~init:(p, [ p ]) ~f:(fun (template, params) (tvar, sort) ->
+        let p = Term.mk_var (Ident.mk_fresh_parameter ()) T_int.SInt in
+        ( T_int.mk_add template (T_int.mk_mul p (Term.mk_var tvar sort)),
+          p :: params ))
 
   let gen_template_lexicographic deg vars =
     let gather =
@@ -158,15 +156,13 @@ end = struct
       | [] -> []
       | (x, y) :: xys ->
           let x_gt_y =
-            Formula.mk_and
-              (Formula.mk_atom (T_int.mk_geq x (T_int.zero ())))
-              (Formula.mk_atom (T_int.mk_gt x y))
+            Formula.mk_and (Formula.geq x (T_int.zero ())) (Formula.gt x y)
           in
           let x_eq_y = Formula.eq x y in
           let xy_neg =
             Formula.mk_and
-              (Formula.mk_atom (T_int.mk_lt x (T_int.zero ())))
-              (Formula.mk_atom (T_int.mk_lt y (T_int.zero ())))
+              (Formula.lt x (T_int.zero ()))
+              (Formula.lt y (T_int.zero ()))
           in
           Formula.and_of (x_gt_y :: eq)
           :: gt' (Formula.mk_or x_eq_y xy_neg :: eq) xys
@@ -178,9 +174,7 @@ end = struct
       | [] -> []
       | (x, y) :: xys ->
           let x_gt_y =
-            Formula.mk_and
-              (Formula.mk_atom (T_int.mk_geq x (T_int.zero ())))
-              (Formula.mk_atom (T_int.mk_gt x y))
+            Formula.mk_and (Formula.geq x (T_int.zero ())) (Formula.gt x y)
           in
           Formula.and_of (x_gt_y :: eq)
           :: gt_degenerate_negative' (Formula.eq x y :: eq) xys
@@ -202,11 +196,9 @@ struct
 
   let model_postprocess model params =
     let zero_model =
-      List.map
-        ~f:(fun p ->
+      List.map params ~f:(fun p ->
           let (t, _), _ = Term.let_var p in
           (t, T_int.zero ()))
-        params
       |> Map.Poly.of_alist_exn
     in
     let model = remove_dontcare model |> Map.Poly.of_alist_exn in
@@ -219,9 +211,8 @@ struct
   end = struct
     let gen_halfspaces_interval params_src state_examples =
       let params_src_tvar = List.map ~f:fst params_src in
-      List.concat_map
-        ~f:(fun x -> StateExample.z_of x |> List.zip_exn params_src_tvar)
-        state_examples
+      List.concat_map state_examples ~f:(fun x ->
+          StateExample.z_of x |> List.zip_exn params_src_tvar)
       |> List.concat_map ~f:(fun (v, b) ->
              let affine = Affine.(of_var v - of_z b) in
              [ affine; Affine.( ~- ) affine ])
@@ -234,9 +225,8 @@ struct
 
     let gen_halfspaces_octagon params_src state_examples =
       let params_src_tvar = List.map ~f:fst params_src in
-      List.map
-        ~f:(fun x -> StateExample.z_of x |> List.zip_exn params_src_tvar)
-        state_examples
+      List.map state_examples ~f:(fun x ->
+          StateExample.z_of x |> List.zip_exn params_src_tvar)
       |> List.concat_map ~f:combination2
       |> List.concat_map ~f:(fun ((p1, x1), (p2, x2)) ->
              let p1 = Affine.of_var p1 in
@@ -474,20 +464,16 @@ struct
     let fenv = Map.Poly.empty in
     (*TODO: generate fenv*)
     let t_src_gt_t_dst =
-      List.map
-        ~f:(fun (src, dst) ->
+      List.map transition_example_id_list ~f:(fun (src, dst) ->
           let t_src =
-            List.map
+            List.map template_terms
               ~f:(Term.subst (Table.get_state_example_map t src))
-              template_terms
           in
           let t_dst =
-            List.map
+            List.map template_terms
               ~f:(Term.subst (Table.get_state_example_map t dst))
-              template_terms
           in
           lex2wf t_src t_dst)
-        transition_example_id_list
     in
     (fenv, t_src_gt_t_dst)
 
@@ -645,28 +631,24 @@ struct
                  ~f:(fun (src, dst) label -> ((src, label), (dst, label)))
           in
           let state_label =
-            List.map
-              ~f:(fun (x, label) ->
+            List.map (src_label @ dst_label) ~f:(fun (x, label) ->
                 ( List.map ~f:Z.to_float @@ StateExample.z_of
                   @@ Table.get_state_example t x,
                   label ))
-              (src_label @ dst_label)
           in
           let compare (x, l) (x', l') =
             let x_comp = List.compare Float.compare x x' in
             if x_comp = 0 then Float.compare l l' else x_comp
           in
           let state_label = List.dedup_and_sort ~compare state_label in
-          List.iter
-            ~f:(fun (x, label) ->
+          List.iter state_label ~f:(fun (x, label) ->
               Debug.print
               @@ lazy
                    (let x_str =
                       String.concat_map_list ~sep:", " ~f:string_of_float x
                     in
                     let label_str = string_of_float label in
-                    sprintf "%s: %s" (String.paren x_str) label_str))
-            state_label;
+                    sprintf "%s: %s" (String.paren x_str) label_str));
           let samples, labels = List.unzip state_label in
           let labels = Array.of_list labels |> Vec.of_array in
           let samples =
@@ -710,8 +692,7 @@ struct
         (gain, progress, h_id, (ex_tt, t_max_sat), (ex_ff, f_max_sat))
       in
       let _, _, best_halfspace, (ex_tt, t_max_sat), (ex_ff, f_max_sat) =
-        List.map ~f:try_halfspace h_id_list
-        |> List.filter ~f:(fun (_, p, _, _, _) -> p)
+        List.map ~f:try_halfspace h_id_list |> List.filter ~f:Quintuple.snd
         (* making progress *)
         |> fun l ->
         (List.sort
@@ -727,9 +708,7 @@ struct
         |> List.max_elt ~compare:(fun (g0, _, _, _, _) (g1, _, _, _, _) ->
                Stdlib.compare g0 g1)
         (* take a halfspace with maximum information gain *)
-        |> function
-        | Some x -> x
-        | None -> assert false
+        |> Option.elem_of
       in
       (best_halfspace, (ex_tt, t_max_sat), (ex_ff, f_max_sat))
 
@@ -769,9 +748,8 @@ struct
         let rec loop level cut =
           let lb = List.nth_exn sorted_abs_exact_bw cut in
           let abs_exact_bw' =
-            List.map
-              ~f:(fun n -> if Z.Compare.(n >= lb) then n else Z.zero)
-              abs_exact_bw
+            List.map abs_exact_bw ~f:(fun n ->
+                if Z.Compare.(n >= lb) then n else Z.zero)
           in
           let abs_approx_bw' = ContFrac.approximate_ratio abs_exact_bw' level in
           let approx_bw =
@@ -866,9 +844,8 @@ struct
                      |> Array.to_list |> String.concat ~sep:", "))
               samples;
             let w =
-              List.mapi
-                ~f:(fun i x -> (x, samples.(1).(i) -. samples.(0).(i)))
-                (List.map ~f:fst params_src)
+              List.mapi (List.map ~f:fst params_src) ~f:(fun i x ->
+                  (x, samples.(1).(i) -. samples.(0).(i)))
             in
             let b =
               Array.foldi ~init:0.
@@ -881,13 +858,12 @@ struct
             Debug.print
             @@ lazy
                  ("w = "
-                 ^ String.concat_map_list ~sep:", " w ~f:(fun (_, a) ->
-                       string_of_float a));
+                 ^ String.concat_map_list ~sep:", " w ~f:(snd >> string_of_float)
+                 );
             Debug.print @@ lazy ("b = " ^ string_of_float b);
             let eval_hyperplane sample =
-              List.foldi ~init:b
-                ~f:(fun i sum (_, a) -> sum +. (a *. sample.(i)))
-                w
+              List.foldi ~init:b w ~f:(fun i sum (_, a) ->
+                  sum +. (a *. sample.(i)))
             in
             Debug.print
             @@ lazy
@@ -939,12 +915,10 @@ struct
     let rec build_dtree lex2wf t (transition_example_id_list, num_max_sat, info)
         =
       Debug.print @@ lazy (sprintf "num_max_sat = %d" num_max_sat);
-      List.iter
-        ~f:(fun (x, y) ->
+      List.iter transition_example_id_list ~f:(fun (x, y) ->
           let x_str = Table.get_state_example t x |> StateExample.str_of in
           let y_str = Table.get_state_example t y |> StateExample.str_of in
-          Debug.print @@ lazy (x_str ^ " " ^ y_str))
-        transition_example_id_list;
+          Debug.print @@ lazy (x_str ^ " " ^ y_str));
       if List.length transition_example_id_list = num_max_sat then
         Leaf
           (Template.gen_template_lexicographic (config.lex_deg + 1)
@@ -1058,33 +1032,26 @@ struct
         Table.eval_halfspace t x h && not (Table.eval_halfspace t y h)
       in
       let hs_xt_yf =
-        List.filter
-          ~f:(fun h -> cross_hyperplane_t_f h x y)
-          (Table.get_hs_id_list t)
+        List.filter (Table.get_hs_id_list t) ~f:(fun h ->
+            cross_hyperplane_t_f h x y)
       in
       let count_xt_yf h =
-        List.count
-          ~f:(fun (x, y) -> cross_hyperplane_t_f h x y)
-          transition_example_id_list
+        List.count transition_example_id_list ~f:(fun (x, y) ->
+            cross_hyperplane_t_f h x y)
       in
       let hs_xt_yf = List.map ~f:(fun h -> (count_xt_yf h, h)) hs_xt_yf in
       let hs_xf_yt =
-        List.filter
-          ~f:(fun h -> cross_hyperplane_t_f h y x)
-          (Table.get_hs_id_list t)
+        List.filter (Table.get_hs_id_list t) ~f:(fun h ->
+            cross_hyperplane_t_f h y x)
       in
       let count_xf_yt h =
-        List.count
-          ~f:(fun (x, y) -> cross_hyperplane_t_f h y x)
-          transition_example_id_list
+        List.count transition_example_id_list ~f:(fun (x, y) ->
+            cross_hyperplane_t_f h y x)
       in
       let hs_xf_yt = List.map ~f:(fun h -> (count_xf_yt h, h)) hs_xf_yt in
-      List.min_elt
-        ~compare:(fun (c0, _) (c1, _) -> compare c0 c1)
-        (hs_xt_yf @ hs_xf_yt)
-      |> function
-      | Some (_, x) -> x
-      | None -> assert false
+      List.min_elt (hs_xt_yf @ hs_xf_yt) ~compare:(fun (c0, _) (c1, _) ->
+          compare c0 c1)
+      |> Option.elem_of |> snd
 
     let choose_separating_halfspace_lazy ~id t x y transition_example_id_list =
       let fenv = Map.Poly.empty in
@@ -1092,7 +1059,7 @@ struct
       let term, params =
         Template.gen_template_affine (Table.get_params_src t)
       in
-      let formula = Formula.mk_atom (T_int.mk_geq term (T_int.zero ())) in
+      let formula = Formula.geq term (T_int.zero ()) in
       let hard =
         let xp = Formula.subst (Table.get_state_example_map t x) formula in
         let yn =
@@ -1102,15 +1069,13 @@ struct
         [ xp; yn ]
       in
       let soft =
-        List.map
-          ~f:(fun (x, y) ->
+        List.map transition_example_id_list ~f:(fun (x, y) ->
             let xn =
               Formula.mk_neg
                 (Formula.subst (Table.get_state_example_map t x) formula)
             in
             let yp = Formula.subst (Table.get_state_example_map t y) formula in
             (Formula.mk_or xn yp, 1))
-          transition_example_id_list
       in
       let soft = Map.Poly.singleton "noncrossing" soft in
       match Z3Smt.Z3interface.max_smt ~id fenv hard soft with
@@ -1151,20 +1116,16 @@ struct
           with
           | true, true ->
               let transition_example_id_list' =
-                List.filter
-                  ~f:(fun (x, y) ->
+                List.filter transition_example_id_list ~f:(fun (x, y) ->
                     Table.eval_halfspace t x h && Table.eval_halfspace t y h)
-                  transition_example_id_list
               in
               Node
                 (h, dtree_separate t dst src transition_example_id_list' tt, ft)
           | false, false ->
               let transition_example_id_list' =
-                List.filter
-                  ~f:(fun (x, y) ->
+                List.filter transition_example_id_list ~f:(fun (x, y) ->
                     (not (Table.eval_halfspace t x h))
                     && not (Table.eval_halfspace t y h))
-                  transition_example_id_list
               in
               Node
                 (h, tt, dtree_separate t dst src transition_example_id_list' ft)
@@ -1174,34 +1135,28 @@ struct
   let sum_of_abs_params template_params =
     let qs, constraints =
       (* for each p in template_params, generate a fresh parameter q and a constraint -q <= p <= q *)
-      List.map
-        ~f:(fun p ->
+      List.map template_params ~f:(fun p ->
           let q = Term.mk_var (Ident.mk_fresh_parameter ()) T_int.SInt in
-          let p_le_q = Formula.mk_atom (T_int.mk_leq p q) in
-          let minus_q_le_p =
-            Formula.mk_atom (T_int.mk_leq (T_int.mk_neg q) p)
-          in
+          let p_le_q = Formula.leq p q in
+          let minus_q_le_p = Formula.leq (T_int.mk_neg q) p in
           (q, Formula.mk_and p_le_q minus_q_le_p))
-        template_params
       |> List.unzip
     in
     (T_int.mk_sum (T_int.zero ()) qs, constraints)
 
   let rec loop_elimination ~id lex2wf t dt =
     let example_map =
-      List.mapi
-        ~f:(fun i e -> (sprintf "D%d" i, e))
-        (Table.get_transition_example_id_list t)
+      List.mapi (Table.get_transition_example_id_list t) ~f:(fun i e ->
+          (sprintf "D%d" i, e))
       |> Map.Poly.of_alist_exn
     in
     let constraints =
-      Map.Poly.map
-        ~f:(fun (x, y) ->
+      Map.Poly.map example_map ~f:(fun (x, y) ->
           lex2wf
             (DecisionTreeTemplate.eval_dtree t x dt)
             (DecisionTreeTemplate.eval_dtree t y dt))
-        example_map
     in
+
     Debug.print @@ lazy "synthesizing linear functions";
     Debug.print
     @@ lazy ("constraint size = " ^ string_of_int (Map.Poly.length constraints));
@@ -1225,7 +1180,7 @@ struct
         let model =
           model_postprocess model (DecisionTreeTemplate.collect_params dt)
         in
-        dtree_fmap (fun (t, _) -> List.map ~f:(Term.subst model) t) dt
+        dtree_fmap (snd >> List.map ~f:(Term.subst model)) dt
     | `Unsat unsat_keys ->
         Debug.print @@ lazy "cut implicit cycle";
         let x, y = ImplicitCycle.find_gap t dt unsat_keys example_map in
@@ -1249,18 +1204,17 @@ struct
     (params_src, params_dst)
 
   let init_table pvar params table labeling =
-    let alist = labeling in
     let tt = TruthTable.get_table table pvar in
     Debug.print
-    @@ lazy (sprintf "    labeled atoms (%d):" (TruthTable.num_atoms alist));
-    Debug.print @@ lazy (TruthTable.str_of_atoms tt alist);
-    let _neg_ex, pneg_ex, pos_ex, ppos_ex = TruthTable.papps_of tt alist in
+    @@ lazy (sprintf "    labeled atoms (%d):" (TruthTable.num_atoms labeling));
+    Debug.print @@ lazy (TruthTable.str_of_atoms tt labeling);
+    let _neg_ex, pneg_ex, pos_ex, ppos_ex = TruthTable.papps_of tt labeling in
     (* ToDo: ppos_ex can be non-empty *)
     (* temporarily allow negative examples *)
     assert (Set.is_empty pneg_ex && Set.is_empty ppos_ex);
     let params_src, _ = split_sort_env params in
     let transition_examples =
-      Set.Poly.map ~f:(fun (_, t) -> TransitionExample.of_term t) pos_ex
+      Set.Poly.map pos_ex ~f:(snd >> TransitionExample.of_term)
     in
     if config.eager_halfspace_gen then
       Table.make_eager params_src (Set.to_list transition_examples)
@@ -1280,8 +1234,8 @@ struct
       BuildDT.build_dtree lex2wf table (BuildDT.initialize lex2wf table)
     in
     List.iter
-      ~f:(fun tm -> Debug.print @@ lazy (Term.str_of tm))
-      (dtree_fmap fst pre_dt |> term_of_dtree table);
+      (dtree_fmap fst pre_dt |> term_of_dtree table)
+      ~f:(fun tm -> Debug.print @@ lazy (Term.str_of tm));
     let dtx = loop_elimination ~id lex2wf table pre_dt in
     let params_src, params_dst = split_sort_env params in
     let map_x2y =
@@ -1290,12 +1244,10 @@ struct
       List.zip_exn params_src_tvar params_dst_term |> Map.Poly.of_alist_exn
     in
     let dtx_term = term_of_dtree table dtx in
-    let dty_term = List.map ~f:(Term.subst map_x2y) dtx_term in
+    let dty_term = List.map dtx_term ~f:(Term.subst map_x2y) in
     Debug.print @@ lazy "** Decision tree";
-    List.iter
-      ~f:(fun t ->
-        Debug.print @@ lazy (Evaluator.simplify_term t |> Term.str_of))
-      dtx_term;
+    List.iter dtx_term ~f:(fun t ->
+        Debug.print @@ lazy (Evaluator.simplify_term t |> Term.str_of));
     lex2wf dtx_term dty_term
 
   let mk_classifier pvar params table labeling _examples =

@@ -2,24 +2,28 @@ open Core
 open Common.Ext
 open Common.Combinator
 open LogicOld
-open ArithTerm
-open Normalizer
 
 let sign model atom =
   Normalizer.normalize_atom
   @@
   if Evaluator.eval_atom @@ Atom.subst model atom then atom
-  else Atom.negate atom
+  else
+    match Atom.negate atom with
+    | None -> failwith "[sign]"
+    | Some neg_atom -> neg_atom
 
 exception NotNormalized
 
 let rec atoms_of model = function
   | Formula.Atom (phi, _) -> Set.Poly.singleton phi
-  | UnaryOp (Not, Atom (phi, _), _) -> Set.Poly.singleton @@ Atom.negate phi
-  | UnaryOp (Not, UnaryOp (Not, phi', _), _) -> atoms_of model phi'
-  | BinaryOp (And, phi1, phi2, _) ->
+  | Formula.UnaryOp (Not, Atom (phi, _), _) -> (
+      match Atom.negate phi with
+      | None -> (*failwith "[atoms_of]"*) Set.Poly.empty
+      | Some neg_atom -> Set.Poly.singleton neg_atom)
+  | Formula.UnaryOp (Not, UnaryOp (Not, phi', _), _) -> atoms_of model phi'
+  | Formula.BinaryOp (And, phi1, phi2, _) ->
       Set.union (atoms_of model phi1) (atoms_of model phi2)
-  | BinaryOp (Or, phi1, phi2, _) ->
+  | Formula.BinaryOp (Or, phi1, phi2, _) ->
       let s1 =
         if Evaluator.eval @@ Formula.subst model phi1 then atoms_of model phi1
         else Set.Poly.empty
@@ -29,18 +33,17 @@ let rec atoms_of model = function
         else Set.Poly.empty
       in
       Set.union s1 s2
-  | _phi -> raise NotNormalized
-(*failwith (Formula.str_of phi ^ " is not atomic formula")*)
+  | _ ->
+      (*failwith (Formula.str_of phi ^ " is not atomic formula")*)
+      raise NotNormalized
 
-let normalize_mbp model atm =
-  Set.concat
-  @@ Set.Poly.map ~f:(fun atm ->
-         Set.Poly.map ~f:Normalizer.normalize_atom
-         @@ atoms_of model
-         @@ Evaluator.simplify_atom atm)
-  @@ Set.Poly.map ~f:Normalizer.normalize_atom
-  @@ atoms_of model
-  @@ Evaluator.simplify_atom atm
+let normalize_mbp model =
+  Evaluator.simplify_atom >> atoms_of model
+  >> Set.Poly.map ~f:Normalizer.normalize_atom
+  >> Set.concat_map
+       ~f:
+         (Evaluator.simplify_atom >> atoms_of model
+         >> Set.Poly.map ~f:Normalizer.normalize_atom)
 
 module LRA = struct
   let let_sort names =
@@ -59,10 +62,9 @@ module LRA = struct
 
   let eq_atom tvar = function
     | Atom.App (Predicate.Psym T_bool.Eq, [ t; _ ], _) -> (
-        let varterm = Term.mk_var tvar T_real.SReal in
         match
-          Linear.find_var_monomial varterm
-          @@ linear_real_monomials_of (Value.Real Q.one) t
+          AffineTerm.find_var_monomial (Term.mk_var tvar T_real.SReal)
+          @@ Normalizer.linear_real_monomials_of (Value.Real Q.one) t
         with
         | Some (c, rest) ->
             if
@@ -71,31 +73,30 @@ module LRA = struct
                   | None -> false
                   | Some t -> Set.mem (Term.fvs_of t) tvar)
             then raise NotNormalized;
-            Option.return @@ Linear.mk_real_term
-            @@ Map.Poly.map rest ~f:(Fn.flip Value.div (Value.neg c))
+            Option.return @@ AffineTerm.mk_real_term
+            @@ Map.Poly.map rest ~f:(Fn.flip Value.rdiv (Value.neg c))
         | None -> None)
     | _ -> None
 
-  (*let neq_atom tvar = function
-    | Atom.App (Predicate.Psym T_bool.Neq, [t; _], _) as atm ->
-      let varterm = Term.mk_var tvar T_real.SReal in
-      (match Linear.find_var_monomial varterm @@
-         linear_real_monomials_of (Value.Real Q.one) t with
-      | Some (c, rest) ->
-        if Map.Poly.existsi rest ~f:(fun ~key ~data:_ -> match key with None -> false | Some t -> Set.mem (Term.fvs_of t) tvar) then raise NotNormalized;
-        Option.return @@
-        (Linear.mk_real_term @@ Map.Poly.map rest ~f:(Fn.flip Value.div (Value.neg c)), atm)
-      | None -> None)
-    | _ -> None*)
+  (* let neq_atom tvar = function
+     | Atom.App (Predicate.Psym T_bool.Neq, [t; _], _) as atm ->
+       (match AffineTerm.find_var_monomial (Term.mk_var tvar T_real.SReal) @@
+          Normalizer.linear_real_monomials_of (Value.Real Q.one) t with
+       | Some (c, rest) ->
+         if Map.Poly.existsi rest ~f:(fun ~key ~data:_ -> match key with None -> false | Some t -> Set.mem (Term.fvs_of t) tvar) then raise NotNormalized;
+         Option.return @@
+         (AffineTerm.mk_real_term @@ Map.Poly.map rest ~f:(Fn.flip Value.rdiv (Value.neg c)), atm)
+       | None -> None)
+     | _ -> None *)
+
   let ub_and_lb tvar =
     Set.fold ~init:(Set.Poly.empty, Set.Poly.empty, Set.Poly.empty)
       ~f:(fun (ub, lb, others) -> function
       | Atom.App (Predicate.Psym T_real.(RGeq | RGt (*ToDo*)), [ t; _ ], _) as
         atom -> (
-          let varterm = Term.mk_var tvar T_real.SReal in
           match
-            Linear.find_var_monomial varterm
-            @@ linear_real_monomials_of (Value.Real Q.one) t
+            AffineTerm.find_var_monomial (Term.mk_var tvar T_real.SReal)
+            @@ Normalizer.linear_real_monomials_of (Value.Real Q.one) t
           with
           | Some (Real r, rest) ->
               if
@@ -105,16 +106,16 @@ module LRA = struct
                     | Some t -> Set.mem (Term.fvs_of t) tvar)
               then raise NotNormalized;
               if Q.(r < zero) then
-                ( Set.add ub @@ Linear.mk_real_term
+                ( Set.add ub @@ AffineTerm.mk_real_term
                   @@ Map.Poly.map rest
-                       ~f:(Fn.flip Value.div (Value.neg (Real r))),
+                       ~f:(Fn.flip Value.rdiv (Value.neg (Real r))),
                   lb,
                   others )
               else if Q.(r > zero) then
                 ( ub,
-                  Set.add lb @@ Linear.mk_real_term
+                  Set.add lb @@ AffineTerm.mk_real_term
                   @@ Map.Poly.map rest
-                       ~f:(Fn.flip Value.div (Value.neg (Real r))),
+                       ~f:(Fn.flip Value.rdiv (Value.neg (Real r))),
                   others )
               else failwith "ub_and_lb"
           | _ -> (ub, lb, Set.add others atom))
@@ -140,31 +141,31 @@ module LRA = struct
         let sub = Map.Poly.singleton tvar t in
         Set.concat_map atoms ~f:(Atom.subst sub >> normalize_mbp model)
     | None -> (
-        (*let rec elim_neq atoms =
-            match Set.find_map atoms ~f:(neq_atom tvar) with
-            | Some (t, atom) ->
-              elim_neq @@
-              Set.add (Set.remove atoms atom) @@
-              if Value.compare Z.Compare.(>) Q.(>)
-                  (Evaluator.eval_term @@ Map.Poly.find_exn model tvar)
-                  (Evaluator.eval_term @@ Term.subst model t) then
-                Normalizer.normalize_atom @@
-                T_real.mk_rgt (Term.mk_var tvar T_real.SReal) t
-              else if Value.compare Z.Compare.(<) Q.(<)
-                  (Evaluator.eval_term @@ Map.Poly.find_exn model tvar)
-                  (Evaluator.eval_term @@ Term.subst model t) then
-                Normalizer.normalize_atom @@
-                T_real.mk_rgt t (Term.mk_var tvar T_real.SReal)
-              else failwith "elim_neq"
-            | None -> atoms
-          in
-          let atoms = elim_neq atoms in*)
+        (* let rec elim_neq atoms =
+             match Set.find_map atoms ~f:(neq_atom tvar) with
+             | Some (t, atom) ->
+               elim_neq @@
+               Set.add (Set.remove atoms atom) @@
+               if Value.compare Z.Compare.(>) Q.(>)
+                   (Evaluator.eval_term @@ Map.Poly.find_exn model tvar)
+                   (Evaluator.eval_term @@ Term.subst model t) then
+                 Normalizer.normalize_atom @@
+                 T_real.mk_rgt (Term.mk_var tvar T_real.SReal) t
+               else if Value.compare Z.Compare.(<) Q.(<)
+                   (Evaluator.eval_term @@ Map.Poly.find_exn model tvar)
+                   (Evaluator.eval_term @@ Term.subst model t) then
+                 Normalizer.normalize_atom @@
+                 T_real.mk_rgt t (Term.mk_var tvar T_real.SReal)
+               else failwith "elim_neq"
+             | None -> atoms
+           in
+           let atoms = elim_neq atoms in *)
         let ub, lb, rest = ub_and_lb tvar atoms in
         match (lub model ub, glb model lb) with
         | Some lub, Some glb ->
             let sub =
               Map.Poly.singleton tvar
-              @@ T_real.mk_rmult (T_real.mk_radd lub glb)
+              @@ T_real.mk_rmul (T_real.mk_radd lub glb)
                    (T_real.mk_real (Q.of_float 0.5))
             in
             Set.concat_map rest ~f:(Atom.subst sub >> normalize_mbp model)
@@ -199,12 +200,11 @@ module LIA = struct
 
   let is_pdiv atom tvar =
     match atom with
-    | Atom.App
-        (Predicate.Psym ((T_int.PDiv | T_int.NotPDiv) as psym), [ d; t ], _)
+    | Atom.App (Predicate.Psym (T_int.(PDiv | NotPDiv) as psym), [ d; t ], _)
       -> (
         match
-          Linear.find_var_monomial (Term.mk_var tvar T_int.SInt)
-          @@ linear_int_monomials_of (Value.Int Z.one) t
+          AffineTerm.find_var_monomial (Term.mk_var tvar T_int.SInt)
+          @@ Normalizer.linear_int_monomials_of (Value.Int Z.one) t
         with
         | Some (c, rest) ->
             if
@@ -222,23 +222,29 @@ module LIA = struct
       Set.fold pdivs ~init:Z.one ~f:(fun d1 (_, value, _, _) ->
           match value with Value.Int d2 -> Z.lcm d1 d2 | _ -> d1)
     in
-    (*print_endline @@ "lcm: " ^ Z.to_string lcm;*)
+    if false then print_endline @@ "lcm: " ^ Z.to_string lcm;
     let varmodel = Term.subst model (Term.mk_var tvar T_int.SInt) in
     let u_val =
-      Evaluator.eval_term @@ T_int.mk_mod varmodel (T_int.mk_int lcm)
+      Evaluator.eval_term
+      @@ T_int.mk_rem Value.Euclidean varmodel (T_int.mk_int lcm)
     in
     let u = Term.of_value u_val in
     let newtvar = Ident.mk_fresh_tvar () in
     let newterm =
       T_int.mk_add u
-        (T_int.mk_mult (T_int.mk_int lcm) (Term.mk_var newtvar T_int.SInt))
+        (T_int.mk_mul (T_int.mk_int lcm) (Term.mk_var newtvar T_int.SInt))
     in
     let newmodel =
       let newvalue =
         Term.of_value @@ Evaluator.eval_term
-        @@ T_int.mk_div (T_int.mk_sub varmodel u) (T_int.mk_int lcm)
+        @@ T_int.mk_div Value.Euclidean (T_int.mk_sub varmodel u)
+             (T_int.mk_int lcm)
       in
-      (*print_endline @@ sprintf "newvar: %s |-> %s" (Ident.name_of_tvar newtvar) (Term.str_of newvalue);*)
+      if false then
+        print_endline
+        @@ sprintf "newvar: %s |-> %s"
+             (Ident.name_of_tvar newtvar)
+             (Term.str_of newvalue);
       Map.Poly.add_exn model ~key:newtvar ~data:newvalue
     in
     let pdivs =
@@ -247,13 +253,13 @@ module LIA = struct
           | T_int.PDiv ->
               Normalizer.normalize_atom
               @@ Atom.mk_app (Predicate.Psym psym)
-              @@ [
-                   Term.of_value d;
-                   T_int.mk_add
-                     (T_int.mk_int
-                        Z.(mul (Value.int_of c) (Value.int_of u_val)))
-                     (Linear.mk_int_term t);
-                 ]
+                   [
+                     Term.of_value d;
+                     T_int.mk_add
+                       (T_int.mk_int
+                          Z.(mul (Value.int_of c) (Value.int_of u_val)))
+                       (AffineTerm.mk_int_term t);
+                   ]
           | _ ->
               failwith
               @@ sprintf "[rm_pdiv] %s not supported"
@@ -263,10 +269,9 @@ module LIA = struct
 
   let eq_atom tvar = function
     | Atom.App (Predicate.Psym T_bool.Eq, [ t; _ ], _) as atm -> (
-        let varterm = Term.mk_var tvar T_int.SInt in
         match
-          Linear.find_var_monomial varterm
-          @@ linear_int_monomials_of (Value.Int Z.one) t
+          AffineTerm.find_var_monomial (Term.mk_var tvar T_int.SInt)
+          @@ Normalizer.linear_int_monomials_of (Value.Int Z.one) t
         with
         | Some (c, rest) ->
             if
@@ -277,49 +282,49 @@ module LIA = struct
             then raise NotNormalized;
             if
               Map.Poly.for_all rest ~f:(fun v ->
-                  Z.Compare.(Value.int_of @@ Value.bmod v c = Z.zero))
+                  Z.Compare.(
+                    Value.int_of @@ Value.rem Value.Euclidean v c = Z.zero))
             then
               Some
                 ( Z.one,
-                  Linear.mk_int_term
-                  @@ Map.Poly.map rest ~f:(Fn.flip Value.div (Value.neg c)),
+                  AffineTerm.mk_int_term
+                  @@ Map.Poly.map rest
+                       ~f:(Fn.flip (Value.div Value.Euclidean) (Value.neg c)),
                   atm )
             else if Z.Compare.(Value.int_of c > Z.zero) then
               Some
                 ( Value.int_of c,
-                  Linear.mk_int_term
-                  @@ Map.Poly.map rest ~f:(Fn.flip Value.mult (Int Z.minus_one)),
+                  AffineTerm.mk_int_term
+                  @@ Map.Poly.map rest ~f:(Fn.flip Value.mul (Int Z.minus_one)),
                   atm )
-            else Some (Z.(-Value.int_of c), Linear.mk_int_term rest, atm)
+            else Some (Z.(-Value.int_of c), AffineTerm.mk_int_term rest, atm)
         | _ -> None)
     | _ -> None
 
-  (*let neq_atom tvar = function
-    | Atom.App (Predicate.Psym T_bool.Neq, [t; _], _) as atm ->
-      let varterm = Term.mk_var tvar T_int.SInt in
-      (match Linear.find_var_monomial varterm @@
-         linear_int_monomials_of (Value.Int Z.one) t with
-      | Some (c, rest) ->
-        if Map.Poly.existsi rest ~f:(fun ~key ~data:_ -> match key with None -> false | Some t -> Set.mem (Term.fvs_of t) tvar) then raise NotNormalized;
-        if Map.Poly.for_all rest ~f:(fun v -> Z.Compare.(Value.int_of @@ Value.bmod v c = Z.zero)) then
-          Some (Z.one, Linear.mk_int_term @@
-                Map.Poly.map rest ~f:(Fn.flip Value.div (Value.neg c)),
-                atm)
-        else if Z.Compare.(Value.int_of c > Z.zero) then
-          Some (Value.int_of c, Linear.mk_int_term @@
-                Map.Poly.map rest ~f:(Fn.flip Value.mult (Int Z.minus_one)),
-                atm)
-        else Some (Z.(- Value.int_of c), Linear.mk_int_term rest, atm)
-      | _ -> None)
-    | _ -> None*)
+  (* let neq_atom tvar = function
+     | Atom.App (Predicate.Psym T_bool.Neq, [t; _], _) as atm ->
+       (match AffineTerm.find_var_monomial (Term.mk_var tvar T_int.SInt) @@
+          Normalizer.linear_int_monomials_of (Value.Int Z.one) t with
+       | Some (c, rest) ->
+         if Map.Poly.existsi rest ~f:(fun ~key ~data:_ -> match key with None -> false | Some t -> Set.mem (Term.fvs_of t) tvar) then raise NotNormalized;
+         if Map.Poly.for_all rest ~f:(fun v -> Z.Compare.(Value.int_of @@ Value.bmod v c = Z.zero)) then
+           Some (Z.one, AffineTerm.mk_int_term @@
+                 Map.Poly.map rest ~f:(Fn.flip Value.div (Value.neg c)),
+                 atm)
+         else if Z.Compare.(Value.int_of c > Z.zero) then
+           Some (Value.int_of c, AffineTerm.mk_int_term @@
+                 Map.Poly.map rest ~f:(Fn.flip Value.mul (Int Z.minus_one)),
+                 atm)
+         else Some (Z.(- Value.int_of c), AffineTerm.mk_int_term rest, atm)
+       | _ -> None)
+     | _ -> None *)
   let ub_and_lb tvar =
     Set.fold ~init:(Set.Poly.empty, Set.Poly.empty, Set.Poly.empty)
       ~f:(fun (ub, lb, others) -> function
       | Atom.App (Predicate.Psym T_int.Geq, [ t; _ ], _) as atom -> (
-          let varterm = Term.mk_var tvar T_int.SInt in
           match
-            Linear.find_var_monomial varterm
-            @@ linear_int_monomials_of (Value.Int Z.one) t
+            AffineTerm.find_var_monomial (Term.mk_var tvar T_int.SInt)
+            @@ Normalizer.linear_int_monomials_of (Value.Int Z.one) t
           with
           | Some (Int n, rest) ->
               if
@@ -329,14 +334,14 @@ module LIA = struct
                     | Some t -> Set.mem (Term.fvs_of t) tvar)
               then raise NotNormalized;
               if Z.Compare.(n < Z.zero) then
-                (Set.add ub (Z.(-n), Linear.mk_int_term rest), lb, others)
+                (Set.add ub (Z.(-n), AffineTerm.mk_int_term rest), lb, others)
               else if Z.Compare.(n > Z.zero) then
                 ( ub,
                   Set.add lb
                     ( n,
-                      Linear.mk_int_term
+                      AffineTerm.mk_int_term
                       @@ Map.Poly.map rest
-                           ~f:(Fn.flip Value.mult (Int Z.minus_one)) ),
+                           ~f:(Fn.flip Value.mul (Int Z.minus_one)) ),
                   others )
               else failwith "ub_and_lb"
           | _ -> (ub, lb, Set.add others atom))
@@ -360,8 +365,8 @@ module LIA = struct
   let resolve model av t bv s =
     let tv = Value.int_of @@ Evaluator.eval_term (Term.subst model t) in
     let sv = Value.int_of @@ Evaluator.eval_term (Term.subst model s) in
-    let btt = T_int.mk_mult (T_int.mk_int bv) t in
-    let ast = T_int.mk_mult (T_int.mk_int av) s in
+    let btt = T_int.mk_mul (T_int.mk_int bv) t in
+    let ast = T_int.mk_mul (T_int.mk_int av) s in
     let a_1b_1 = Z.((av - one) * (bv - one)) in
     let as_bt = Z.((av * sv) - (bv * tv)) in
     if Z.Compare.(a_1b_1 <= as_bt) then
@@ -372,58 +377,73 @@ module LIA = struct
       let td = T_int.mk_add t (T_int.mk_int d) in
       let atom1 = T_int.mk_leq btt ast in
       let atom2 = T_int.mk_pdiv (T_int.mk_int av) td in
-      let atom3 = T_int.(mk_leq (mk_mult (mk_int bv) td) ast) in
+      let atom3 = T_int.(mk_leq (mk_mul (mk_int bv) td) ast) in
       Set.Poly.of_list [ atom1; atom2; atom3 ]
     else
       let d = Z.erem sv bv in
       let sd = T_int.mk_sub s (T_int.mk_int d) in
       let atom1 = T_int.mk_leq btt ast in
       let atom2 = T_int.mk_pdiv (T_int.mk_int bv) sd in
-      let atom3 = T_int.(mk_leq btt (mk_mult (mk_int av) sd)) in
+      let atom3 = T_int.(mk_leq btt (mk_mul (mk_int av) sd)) in
       Set.Poly.of_list [ atom1; atom2; atom3 ]
 
   let model_based_projection_sub model tvar atoms =
     let ub, lb, rest = ub_and_lb tvar atoms in
-    (*print_endline @@ "ub: " ^ List.to_string ~f:(fun (t1, t2) -> Term.str_of t1 ^ "," ^ Term.str_of t2) (Set.to_list ub);
-      print_endline @@ "lb: " ^ List.to_string ~f:(fun (t1, t2) -> Term.str_of t1 ^ "," ^ Term.str_of t2) (Set.to_list lb);
-      print_endline @@ "rest: " ^ List.to_string ~f:str_of rest;*)
-    (*if Set.mem (Set.concat_map ~f:Formula.fvs_of rest) tvar then
-      let sub = Map.Poly.singleton tvar (Map.Poly.find_exn model tvar) in
-      Set.concat_map atoms ~f:(Atom.subst sub >> Formula.mk_atom)
-      else*)
+    if false then (
+      print_endline @@ "ub: "
+      ^ List.to_string
+          ~f:(fun (t1, t2) -> Z.to_string t1 ^ "," ^ Term.str_of t2)
+          (Set.to_list ub);
+      print_endline @@ "lb: "
+      ^ List.to_string
+          ~f:(fun (t1, t2) -> Z.to_string t1 ^ "," ^ Term.str_of t2)
+          (Set.to_list lb)
+      (* print_endline @@ "rest: " ^ List.to_string ~f:str_of rest *));
+    (* if Set.mem (Set.concat_map ~f:Formula.fvs_of rest) tvar then
+       let sub = Map.Poly.singleton tvar (Map.Poly.find_exn model tvar) in
+       Set.concat_map atoms ~f:(Atom.subst sub >> Formula.mk_atom)
+       else *)
     match (lub model ub, glb model lb) with
     | Some (cub, tub), Some (clb, tlb) ->
         let lbformulas =
           Set.Poly.map lb ~f:(fun (c, t) ->
               T_int.mk_leq
-                (T_int.mk_mult t @@ T_int.mk_int clb)
-                (T_int.mk_mult tlb @@ T_int.mk_int c))
+                (T_int.mk_mul t @@ T_int.mk_int clb)
+                (T_int.mk_mul tlb @@ T_int.mk_int c))
         in
         let ubformulas =
           Set.concat_map ub ~f:(fun (c, t) -> resolve model clb tlb c t)
         in
         let sub =
-          let glb = T_int.mk_div tlb @@ T_int.mk_int clb in
+          let glb = T_int.mk_div Value.Euclidean tlb @@ T_int.mk_int clb in
           let lub =
-            T_int.mk_add (T_int.mk_div tub @@ T_int.mk_int cub) (T_int.one ())
+            T_int.mk_add
+              (T_int.mk_div Value.Euclidean tub @@ T_int.mk_int cub)
+              (T_int.one ())
           in
           Map.Poly.singleton tvar
-            (T_int.mk_div (T_int.mk_add glb lub) (T_int.from_int 2))
+            (T_int.mk_div Value.Euclidean (T_int.mk_add glb lub)
+               (T_int.from_int 2))
         in
-        (*print_endline @@ "lbformulas: " ^ List.to_string ~f:str_of lbformulas;
-          print_endline @@ "ubformulas: " ^ List.to_string ~f:str_of ubformulas;*)
+        (* if false then (
+           print_endline @@ "lbformulas: " ^ List.to_string ~f:str_of lbformulas;
+           print_endline @@ "ubformulas: " ^ List.to_string ~f:str_of ubformulas); *)
         Set.concat_map ~f:(normalize_mbp model)
         @@ Set.Poly.union_list
              [ lbformulas; ubformulas; Set.Poly.map rest ~f:(Atom.subst sub) ]
     | Some (cub, tub), None ->
         let sub =
-          Map.Poly.singleton tvar @@ T_int.mk_div tub @@ T_int.mk_int cub
+          Map.Poly.singleton tvar
+          @@ T_int.mk_div Value.Euclidean tub
+          @@ T_int.mk_int cub
         in
         Set.concat_map rest ~f:(Atom.subst sub >> normalize_mbp model)
     | None, Some (clb, tlb) ->
         let sub =
           Map.Poly.singleton tvar
-          @@ T_int.mk_add (T_int.mk_div tlb @@ T_int.mk_int clb) (T_int.one ())
+          @@ T_int.mk_add
+               (T_int.mk_div Value.Euclidean tlb @@ T_int.mk_int clb)
+               (T_int.one ())
         in
         Set.concat_map rest ~f:(Atom.subst sub >> normalize_mbp model)
     | None, None ->
@@ -440,7 +460,7 @@ module LIA = struct
           Set.concat_map atoms ~f:(Atom.subst sub >> normalize_mbp model)
         else
           let cx =
-            T_int.mk_mult (T_int.mk_int c) @@ Term.mk_var tvar T_int.SInt
+            T_int.mk_mul (T_int.mk_int c) @@ Term.mk_var tvar T_int.SInt
           in
           model_based_projection model tvar
           @@ Set.union (Set.remove atoms atom)
@@ -450,7 +470,7 @@ module LIA = struct
         (*let rec elim_neq atoms =
             match Set.find_map atoms ~f:(neq_atom tvar) with
             | Some (c, t, atom) ->
-              let cx = T_int.mk_mult (T_int.mk_int c) @@ Term.mk_var tvar T_int.SInt in
+              let cx = T_int.mk_mul (T_int.mk_int c) @@ Term.mk_var tvar T_int.SInt in
               elim_neq @@
               Set.add (Set.remove atoms atom) @@
               if Value.compare Z.Compare.(>) Q.(>)
@@ -475,8 +495,11 @@ module LIA = struct
         if Set.is_empty pdivs then model_based_projection_sub model tvar rest
         else
           let newmodel, newtvar, newterm, pdivs = rm_pdiv pdivs model tvar in
-          (*print_endline @@ sprintf "newterm: %s -> %s" (Ident.name_of_tvar tvar) (Term.str_of newterm);
-            print_endline @@ sprintf "newmodel: %s" (TermSubst.str_of newmodel);*)
+          if false then (
+            print_endline
+            @@ sprintf "newterm: %s -> %s" (Ident.name_of_tvar tvar)
+                 (Term.str_of newterm);
+            print_endline @@ sprintf "newmodel: %s" (TermSubst.str_of newmodel));
           let pdivs = Set.concat_map pdivs ~f:(normalize_mbp model) in
           Set.union pdivs
           @@ model_based_projection newmodel newtvar
@@ -505,10 +528,10 @@ module Boolean = struct
         Some t
     | Atom.App (Predicate.Psym T_bool.Neq, [ Term.Var (x, _, _); t ], _)
       when Ident.tvar_equal x tvar && (not @@ Set.mem (Term.fvs_of t) x) ->
-        Some (Evaluator.simplify_term @@ T_bool.neg t)
+        Some (Evaluator.simplify_term @@ T_bool.negate t)
     | Atom.App (Predicate.Psym T_bool.Neq, [ t; Term.Var (x, _, _) ], _)
       when Ident.tvar_equal x tvar && (not @@ Set.mem (Term.fvs_of t) x) ->
-        Some (Evaluator.simplify_term @@ T_bool.neg t)
+        Some (Evaluator.simplify_term @@ T_bool.negate t)
     | _ -> None
 
   let model_based_projection model tvar atoms =

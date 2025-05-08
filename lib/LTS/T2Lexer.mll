@@ -17,6 +17,7 @@ let comp = "==" | ">=" | '<' | "<=" | '<'*)
 
 rule token = parse
 | "START" { START }
+| "TYPE" { TYPE }
 | "ERROR" { ERROR }
 | "FROM" { FROM }
 | "TO" { TO }
@@ -45,6 +46,24 @@ rule token = parse
 | "store_array" { STORE_ARRAY }
 | "select_tuple" { SELECT_TUPLE }
 | "constr_tuple" { CONSTR_TUPLE }
+
+| "bv" { BV }
+
+| "sign_extend" { SEXT }
+| "zero_extend" { ZEXT }
+
+| "sdiv" { SDIV }
+| "udiv" { UDIV }
+| "srem" { SREM }
+| "urem" { UREM }
+| "sgt" { SGT }
+| "ugt" { UGT }
+| "slt" { SLT }
+| "ult" { ULT }
+| "sge" { SGE }
+| "uge" { UGE }
+| "sle" { SLE }
+| "ule" { ULE }
 
 | digit+ { INT (Lexing.lexeme lexbuf |> int_of_string) }
 | (alpha | '_') (digit | alpha | '_' | '.')* ('!' digit+)? { VAR (Lexing.lexeme lexbuf) }
@@ -90,7 +109,7 @@ rule token = parse
 | '-' { MINUS }
 | '*' { TIMES }
 | '/' { DIV }
-| '%' { MOD }
+| '%' { REM }
 | "==" { EQ }
 | "!=" { NEQ }
 | '>' { GT }

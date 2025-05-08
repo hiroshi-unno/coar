@@ -60,3 +60,9 @@
 [submodule "benchmarks/sv-comp"]
 	path = benchmarks/sv-comp
 	url = https://gitlab.com/sosy-lab/benchmarking/sv-benchmarks.git
+[submodule "benchmarks/chc-comp23"]
+	path = benchmarks/chc-comp23
+	url = https://github.com/chc-comp/chc-comp23-benchmarks.git
+[submodule "benchmarks/chc-comp24"]
+	path = benchmarks/chc-comp24
+	url = https://github.com/chc-comp/chc-comp24-benchmarks.git

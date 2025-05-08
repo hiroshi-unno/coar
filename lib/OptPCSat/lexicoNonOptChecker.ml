@@ -2,7 +2,7 @@ open Core
 open Common
 open Ast.Logic
 open Ast.Ident
-open Ast.Assertion
+open Ast.Rtype.Assertion
 
 module type ConfigType = sig
   val dir_map : (tvar, direction) Map.Poly.t
@@ -66,7 +66,7 @@ module Make (Config : ConfigType) : NonOptChecker.NonOptCheckerType = struct
                in
                (geq, gt, (mp, sort)))
       in
-      (ExtTerm.and_of @@ (ExtTerm.or_of gts :: geqs), Map.Poly.of_alist_exn env)
+      (ExtTerm.and_of (ExtTerm.or_of gts :: geqs), Map.Poly.of_alist_exn env)
     else
       let fronts_0 =
         let theta_01, theta_02 =

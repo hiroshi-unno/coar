@@ -76,7 +76,7 @@ module Make
   let old_formula_of_sol senv args sol =
     let sol = ExtTerm.beta_reduction (Term.mk_apps sol args) in
     (* Debug.print_log ~tag:(name_of_tvar p) @@ ExtTerm.str_of sol; *)
-    ExtTerm.to_old_fml Map.Poly.empty (Map.Poly.of_alist_exn senv, sol)
+    ExtTerm.to_old_fml Map.Poly.empty (Map.Poly.of_alist_exn senv) sol
 
   let equiv_old_sol_of (p : tvar) (sol : term) =
     match Hashtbl.Poly.find old_theta p with
@@ -107,7 +107,7 @@ module Make
         let fenv = LogicOld.get_fenv () in
         let sol = ExtTerm.beta_reduction (Term.mk_apps sol args) in
         (* Debug.print_log ~tag:(name_of_tvar p) @@ ExtTerm.str_of sol; *)
-        ExtTerm.to_old_fml delta (Map.Poly.of_alist_exn senv, sol)
+        ExtTerm.to_old_fml delta (Map.Poly.of_alist_exn senv) sol
         (* |> (fun phi -> Debug.print_log ~tag:"1" @@ LogicOld.Formula.str_of phi; phi) *)
         |> Evaluator.simplify
         |> Normalizer.normalize
@@ -128,14 +128,14 @@ module Make
 
   let remove_unused_params pcsp =
     PCSP.Problem.update_params pcsp
-    @@ {
-         (PCSP.Problem.params_of pcsp) with
-         PCSP.Params.sol_for_eliminated = Map.Poly.empty;
-         PCSP.Params.args_record = Map.Poly.empty;
-       }
+      {
+        (PCSP.Problem.params_of pcsp) with
+        PCSP.Params.sol_for_eliminated = Map.Poly.empty;
+        PCSP.Params.args_record = Map.Poly.empty;
+      }
 
   let _qelim ~id delta phi =
-    let open LogicOld in
+    let open Ast.LogicOld in
     let clauses =
       Formula.cnf_of (to_old_sort_env_map delta) @@ Formula.nnf_of phi
     in
@@ -172,7 +172,7 @@ module Make
     |> Set.Poly.map ~f:(fun (_, _, phi) ->
            let uni_senv, _, phi =
              LogicOld.Formula.skolemize ~use_fn_pred:false ~only_impure:true
-             @@ ExtTerm.to_old_fml delta (Map.Poly.empty, phi)
+             @@ ExtTerm.to_old_fml delta Map.Poly.empty phi
            in
            ExtTerm.of_old (uni_senv, phi))
     |> Set.union @@ PCSP.Problem.formulas_of pcsp
@@ -237,7 +237,7 @@ module Make
         theta
     in
     let phi =
-      ExtTerm.to_old_fml (Map.force_merge delta nepvs) (Map.Poly.empty, c)
+      ExtTerm.to_old_fml (Map.force_merge delta nepvs) Map.Poly.empty c
     in
     let bpvs =
       Map.Poly.keys nepvs @ full_priority
@@ -482,7 +482,7 @@ module Make
                      OptimalityChecker.pn (mk_ne_tvar (Tvar "non_vac")) i
                    in
                    let tvs =
-                     ExtTerm.fvs_of @@ ExtTerm.and_of @@ (phi :: Set.to_list ns)
+                     phi :: Set.to_list ns |> ExtTerm.and_of |> ExtTerm.fvs_of
                      |> Set.filter ~f:(Map.Poly.mem param_senv)
                      |> Set.Poly.map ~f:ExtTerm.mk_var
                      |> Set.to_list

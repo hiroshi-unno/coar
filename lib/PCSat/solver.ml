@@ -6,14 +6,14 @@ open Preprocessing
 
 module type SolverType = sig
   val solve :
-    ?bpvs:Ast.Ident.tvar Set.Poly.t ->
+    ?bpvs:Ast.Ident.tvar_set ->
     ?filename:string option ->
     ?print_sol:bool ->
     PCSP.Problem.t ->
     State.output Or_error.t
 
   val preprocess :
-    ?bpvs:Ast.Ident.tvar Set.Poly.t ->
+    ?bpvs:Ast.Ident.tvar_set ->
     PCSP.Problem.t ->
     PCSP.Problem.t Or_error.t
 

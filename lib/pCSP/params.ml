@@ -23,11 +23,11 @@ type t = {
   sol_for_eliminated : Logic.term_subst_map;
   stable_clauses : ClauseSet.t;
   partial_sol_targets : (Ident.tvar, random_info Set.Poly.t) Map.Poly.t;
-  dep_graph : (Ident.tvar, Ident.tvar Set.Poly.t) Map.Poly.t;
+  dep_graph : (Ident.tvar, Ident.tvar_set) Map.Poly.t;
 }
 
 let id = Atomic.make 0
-let new_id () = Option.some @@ (Atomic.fetch_and_add id 1 + 1)
+let new_id () = Option.some (Atomic.fetch_and_add id 1 + 1)
 let is_kind t is_kind tvar : bool = is_kind @@ Map.Poly.find_exn t.kind_map tvar
 
 let mk_random_info name random_ex_bound random_ex_size =

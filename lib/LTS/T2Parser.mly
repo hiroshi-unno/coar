@@ -4,7 +4,7 @@
   open Ast.LogicOld
 %}
 
-%token START ERROR CUTPOINT FROM TO AT SHADOW
+%token START TYPE ERROR CUTPOINT FROM TO AT SHADOW
 %token COLON SEMICOLON COMMA
 %token SKIP ASSUME SUBST
 %token INT_TO_REAL REAL_TO_INT
@@ -17,17 +17,18 @@
 %token <Q.t> FLOAT
 %token STRING
 %token PLUS MINUS
-%token TIMES DIV MOD
-%token EQ NEQ GEQ GT LEQ LT
+%token TIMES DIV REM SDIV UDIV SREM UREM
+%token EQ NEQ GEQ GT LEQ LT SGT UGT SLT ULT SGE UGE SLE ULE
 %token AND OR NOT
-%token SHL LSHR ASHR BITOR BITAND
+%token BV
+%token SEXT ZEXT SHL LSHR ASHR BITOR BITAND
 %token EOF
 
 %left OR
 %left AND
 %nonassoc NOT
 %left PLUS MINUS
-%left TIMES DIV MOD
+%left TIMES DIV REM SDIV UDIV SREM UREM
 %nonassoc UMINUS
 
 %type <Problem.lts> main
@@ -36,12 +37,18 @@
 %%
 
 main:
-  | start_opt error_opt cutpoint_opt list(transition) EOF
-    { ($1, $2, $3, List.filter_map ~f:Fn.id $4) }
+  | start_opt type_opt error_opt cutpoint_opt list(transition) EOF
+    { ($1, $2, $3, $4, List.filter_map ~f:Fn.id $5) }
 
 start_opt:
     { None }
   | START COLON state SEMICOLON { Some $3 }
+
+type_opt:
+    { [] }
+  | TYPE VAR COLON BV LPAREN INT RPAREN SEMICOLON type_opt {
+      (Ident.Tvar $2, T_bv.SBV (Some $6)) :: $9
+    }
 
 error_opt:
     { None }
@@ -82,9 +89,15 @@ expr:
   }
   | expr PLUS expr { T_num.mk_nadd $1 $3 }
   | expr MINUS expr { T_num.mk_nsub $1 $3 }
-  | expr TIMES expr { T_num.mk_nmult $1 $3 }
-  | expr DIV expr { T_num.mk_ndiv $1 $3 }
-  | expr MOD expr { T_num.mk_nmod $1 $3 }
+  | expr TIMES expr { T_num.mk_nmul $1 $3 }
+  | expr DIV expr { T_num.mk_ndiv Value.Truncated $1 $3 }
+  | expr SDIV expr { T_num.mk_ndiv Value.Truncated $1 $3 }
+  | expr UDIV expr { T_bv.mk_bvdiv ~size:None ~signed:(Some false) $1 $3 }
+  | expr REM expr { T_num.mk_nrem Value.Truncated $1 $3 }
+  | expr SREM expr { T_num.mk_nrem Value.Truncated $1 $3 }
+  | expr UREM expr { T_bv.mk_bvrem ~size:None ~signed:(Some false) $1 $3 }
+  | SEXT LPAREN INT COMMA INT COMMA expr RPAREN { T_num.mk_nsext $3 $5 $7 }
+  | ZEXT LPAREN INT COMMA INT COMMA expr RPAREN { T_bv.mk_bvzext $3 $5 $7 }
   | SHL LPAREN expr COMMA expr RPAREN { T_bv.mk_bvshl ~size:None $3 $5 }
   | LSHR LPAREN expr COMMA expr RPAREN { T_bv.mk_bvlshr ~size:None $3 $5 }
   | ASHR LPAREN expr COMMA expr RPAREN { T_bv.mk_bvashr ~size:None $3 $5 }
@@ -119,6 +132,14 @@ atom:
   | expr EQ expr { T_bool.mk_eq $1 $3 }
   | expr NEQ expr { T_bool.mk_neq $1 $3 }
   | expr GEQ expr { T_num.mk_ngeq $1 $3 }
+  | expr SGE expr { T_num.mk_ngeq $1 $3 }
+  | expr UGE expr { T_bv.mk_bvgeq ~size:None ~signed:(Some false) $1 $3 }
   | expr GT expr { T_num.mk_ngt $1 $3 }
+  | expr SGT expr { T_num.mk_ngt $1 $3 }
+  | expr UGT expr { T_bv.mk_bvgt ~size:None ~signed:(Some false) $1 $3 }
   | expr LEQ expr { T_num.mk_nleq $1 $3 }
+  | expr SLE expr { T_num.mk_nleq $1 $3 }
+  | expr ULE expr { T_bv.mk_bvleq ~size:None ~signed:(Some false) $1 $3 }
   | expr LT expr { T_num.mk_nlt $1 $3 }
+  | expr SLT expr { T_num.mk_nlt $1 $3 }
+  | expr ULT expr { T_bv.mk_bvlt ~size:None ~signed:(Some false) $1 $3 }

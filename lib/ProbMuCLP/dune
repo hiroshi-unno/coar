@@ -1,0 +1,14 @@
+(menhir
+ (modules parser))
+
+(ocamllex
+ (modules lexer))
+
+(library
+ (name probMuCLP)
+ (public_name CoAR.probMuCLP)
+ (preprocess
+  (pps ppx_deriving_yojson))
+ (libraries core CoAR.pCSP CoAR.ast CoAR.common CoAR.LTS)
+ (modules pred problem lexer parser util)
+ (synopsis "The definition of probabilistic muCLP"))

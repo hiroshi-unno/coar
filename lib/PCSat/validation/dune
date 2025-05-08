@@ -10,6 +10,5 @@
   CoAR.common
   CoAR.pCSP
   CoAR.Z3Smt
-  CoAR.QSMT
   CoAR.PCSat.common)
  (modules validator))

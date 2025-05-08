@@ -228,8 +228,7 @@ module Make (Cfg : Config.ConfigType) = struct
                 ()))
       (* x >= 0 *)
       :: List.map bounds ~f:(fun (tvar, sort) ->
-             Formula.mk_atom
-               (T_int.mk_geq (Term.mk_var tvar sort) (T_int.zero ())))
+             Formula.geq (Term.mk_var tvar sort) (T_int.zero ()))
     in
     ( [ Pred.make Predicate.Nu pvar (bound_tvars @ bounds) body ],
       (* forall x. x >= range => Exists(x) *)
@@ -238,9 +237,7 @@ module Make (Cfg : Config.ConfigType) = struct
            (* x >= range *)
            (Formula.and_of
            @@ List.map bounds ~f:(fun (tvar, sort) ->
-                  Formula.mk_atom
-                    (T_int.mk_geq (Term.mk_var tvar sort) (T_int.mk_int range)))
-           )
+                  Formula.geq (Term.mk_var tvar sort) (T_int.mk_int range)))
            (* Exists(x) *)
            (mk_app pvar bound_tvars bounds ()),
       unknowns )
@@ -257,17 +254,18 @@ module Make (Cfg : Config.ConfigType) = struct
     let arith_params, body =
       let subst, bounds_rev =
         List.fold ~init:(Map.Poly.empty, []) arith_params
-          ~f:(fun (subst, bounds_rev) (tvar, sort) ->
+          ~f:(fun (subst, bounds_rev) (tvar, sret) ->
             let new_tvar =
               (*ToDo:generate fresh id*)
               Ident.Tvar ("#skolem_" ^ prefix ^ Ident.name_of_tvar tvar)
             in
-            let sorts = List.map ~f:snd bound_tvars @ [ sort ] in
+            let sargs = List.map ~f:snd bound_tvars in
             let fapp =
-              Term.mk_fvar_app new_tvar sorts (Term.of_sort_env bound_tvars)
+              Term.mk_fvar_app new_tvar sargs sret
+                (Term.of_sort_env bound_tvars)
             in
             ( Map.Poly.add_exn subst ~key:tvar ~data:fapp,
-              (new_tvar, sorts) :: bounds_rev ))
+              (new_tvar, sargs @ [ sret ]) :: bounds_rev ))
       in
       (List.rev bounds_rev, Formula.subst subst body)
     in
@@ -442,7 +440,9 @@ module Make (Cfg : Config.ConfigType) = struct
             Pred.pvars_of_list add_preds @ bound_pvars,
             unknowns )
         else (preds, fml, bound_pvars, unknowns)
-      else failwith (sprintf "[encode_exists] %s not supported" (Formula.str_of fml))
+      else
+        failwith
+          (sprintf "[encode_exists] %s not supported" (Formula.str_of fml))
     in
     let preds, fml, _pvars, unknowns =
       rep bound_tvars bound_pvars unknowns @@ Formula.nnf_of fml
@@ -450,27 +450,27 @@ module Make (Cfg : Config.ConfigType) = struct
     (preds, fml, unknowns)
 
   let elim_exists_in_query ?(forall_dom = false) (muclp, unknowns) =
-    let preds, query = Problem.let_muclp muclp in
-    let bound_pvars = Pred.pvars_of_list preds in
+    let bound_pvars = Pred.pvars_of_list muclp.Problem.preds in
     let add_preds, query', unknowns =
       let prefix = "query_" in
-      encode_exists ~forall_dom prefix [] bound_pvars unknowns query
+      encode_exists ~forall_dom prefix [] bound_pvars unknowns
+        muclp.Problem.query
     in
-    (Problem.make (add_preds @ preds) query', unknowns)
+    (Problem.make (add_preds @ muclp.Problem.preds) query', unknowns)
 
   let elim_exists_in_preds ?(forall_dom = false) (muclp, unknowns) =
-    let preds, query = Problem.let_muclp muclp in
-    let bound_pvars = Pred.pvars_of_list preds in
+    let bound_pvars = Pred.pvars_of_list muclp.Problem.preds in
     let preds', unknowns =
-      List.fold ~init:([], unknowns) preds ~f:(fun (preds, unknowns) def ->
-          let fix, pvar, bounds, body = Pred.let_ def in
-          let add_preds, body', unknowns =
-            let prefix = Ident.name_of_pvar pvar ^ Ident.divide_flag in
-            encode_exists ~forall_dom prefix bounds bound_pvars unknowns body
+      List.fold ~init:([], unknowns) muclp.Problem.preds
+        ~f:(fun (preds, unknowns) pred ->
+          let add_preds, body, unknowns =
+            let prefix = Ident.name_of_pvar pred.name ^ Ident.divide_flag in
+            encode_exists ~forall_dom prefix pred.args bound_pvars unknowns
+              pred.body
           in
-          (add_preds @ (Pred.make fix pvar bounds body' :: preds), unknowns))
+          (add_preds @ ({ pred with body } :: preds), unknowns))
     in
-    (Problem.make (List.rev preds') query, unknowns)
+    (Problem.make (List.rev preds') muclp.Problem.query, unknowns)
 
   let elim_exists ?(forall_dom = false) =
     elim_exists_in_query ~forall_dom >> elim_exists_in_preds ~forall_dom

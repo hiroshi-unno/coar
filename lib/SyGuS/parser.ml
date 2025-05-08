@@ -59,9 +59,9 @@ module IntTerm : TermType = struct
         | 1 -> mk_neg () |> Option.some
         | 2 -> mk_sub () |> Option.some
         | _ -> None)
-    | "*" -> mk_mult () |> Option.some
-    | "div" -> mk_div () |> Option.some
-    | "mod" -> mk_mod () |> Option.some
+    | "*" -> mk_mul () |> Option.some
+    | "div" -> mk_div Value.Euclidean |> Option.some
+    | "mod" -> mk_rem Value.Euclidean |> Option.some
     | "abs" -> mk_abs () |> Option.some
     | text -> (
         try
@@ -72,7 +72,7 @@ module IntTerm : TermType = struct
 end
 
 module ExtTerm : TermType = struct
-  open Logic.ExtTerm
+  open Ast.Logic.ExtTerm
 
   let of_term _sexps = failwith "not implemented yet"
 
@@ -111,8 +111,8 @@ module Make (Term : TermType) (ProblemTerm : Problem.TermType) : sig
 end = struct
   module CFG = Problem.CFG (ProblemTerm)
   module Problem = Problem.Make (ProblemTerm)
-  open Logic.IntTerm
-  open Logic.BoolTerm
+  open Ast.Logic.IntTerm
+  open Ast.Logic.BoolTerm
 
   let rec parse_bfTerm = function
     | Sexp.Atom idORlit -> (
@@ -484,16 +484,16 @@ let sort_of_sexp = function
 let rec formula_of_sexp tenv = function
   | Sexp.List [Sexp.Atom ">="; left; right] ->
     let left, right = term_of_sexp tenv left, term_of_sexp tenv right in
-    Formula.mk_atom (T_int.mk_geq left right)
+    Formula.geq left right
   | Sexp.List [Sexp.Atom "<="; left; right] ->
     let left, right = term_of_sexp tenv left, term_of_sexp tenv right in
-    Formula.mk_atom (T_int.mk_leq left right)
+    Formula.leq left right
   | Sexp.List [Sexp.Atom "<"; left; right] ->
     let left, right = term_of_sexp tenv left, term_of_sexp tenv right in
-    Formula.mk_atom (T_int.mk_lt left right)
+    Formula.lt left right
   | Sexp.List [Sexp.Atom ">"; left; right] ->
     let left, right = term_of_sexp tenv left, term_of_sexp tenv right in
-    Formula.mk_atom (T_int.mk_gt left right)
+    Formula.gt left right
   | Sexp.List [Sexp.Atom "="; left; right] ->
     let left, right = term_of_sexp tenv left, term_of_sexp tenv right in
     Formula.eq left right
@@ -523,7 +523,7 @@ and term_of_sexp tenv = function
   | Sexp.List [Sexp.Atom "-"; left; right] ->
     T_int.mk_sub (term_of_sexp tenv left) (term_of_sexp tenv right)
   | Sexp.List [Sexp.Atom "*"; left; right] ->
-    T_int.mk_mult (term_of_sexp tenv left) (term_of_sexp tenv right)
+    T_int.mk_mul (term_of_sexp tenv left) (term_of_sexp tenv right)
   | Sexp.List [Sexp.Atom "/"; left; right] ->
     T_int.mk_div (term_of_sexp tenv left) (term_of_sexp tenv right)
   | Sexp.List [Sexp.Atom "ite"; cond; left; right] -> (* for SyGuS '18 *)
@@ -550,7 +550,7 @@ let rec toplevel acc logic_type tenv
   | Sexp.List [Sexp.Atom "synth-inv"; Sexp.Atom name; Sexp.List args] :: es ->
     let pvapp =
       let args = List.map ~f:bind_of_sexp args in
-      Atom.mk_pvar_app (Ident.Pvar name) (List.map ~f:snd args) @@ Term.of_sort_env args
+      Atom.pvar_app_of_senv (Ident.Pvar name) args
     in
     toplevel acc logic_type tenv fenv ((name, pvapp) :: penv) es
   | Sexp.List [Sexp.Atom "declare-primed-var"; Sexp.Atom name; Sexp.Atom sort] :: es ->

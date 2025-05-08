@@ -154,3 +154,8 @@ let mk_fresh_head_arg () =
 
 type tvar_map = (tvar, tvar) Map.Poly.t
 type pvar_map = (pvar, pvar) Map.Poly.t
+type tvar_set = tvar Set.Poly.t
+type pvar_set = pvar Set.Poly.t
+type svar_set = svar Set.Poly.t
+type evar_set = evar Set.Poly.t
+type rvar_set = rvar Set.Poly.t

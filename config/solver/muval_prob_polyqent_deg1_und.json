@@ -1,0 +1,49 @@
+[
+    "MuVal",
+    {
+        "optimizer": [
+            "Filename",
+            "./config/muval/optimizer/disable.json"
+        ],
+        "number_of_pairs": 1,
+        "pcsp_solver_primal": [
+            "Filename",
+            "./config/solver/polyqent_deg1.json"
+        ],
+        "pcsp_solver_dual": [
+            "Filename",
+            "./config/solver/polyqent_deg1.json"
+        ],
+        "qelim": {
+            "mode": [
+                "SkolemPred"
+            ],
+            "verbose": false
+        },
+        "mode": [
+            "Prove"
+        ],
+        "check_problem": false,
+        "verbose": false,
+        "gen_extra_partial_sols": false,
+        "random_ex_size": 0,
+        "random_ex_bound": 0,
+        "send_lower_bounds": false,
+        "output_iteration": true,
+        "output_yes_no": false,
+        "prob_prefp_templ_num_conds": 0,
+        "prob_prefp_templ_use_orig_ite": true,
+        "prob_prefp_templ_cond_degree": 1,
+        "prob_prefp_templ_term_degree": 1,
+        "prob_rank_templ_num_conds": 0,
+        "prob_rank_templ_use_orig_ite": true,
+        "prob_rank_templ_cond_degree": 1,
+        "prob_rank_templ_term_degree": 1,
+        "prob_postfp_templ_num_conds": 0,
+        "prob_postfp_templ_use_orig_ite": true,
+        "prob_postfp_templ_cond_degree": 1,
+        "prob_postfp_templ_term_degree": 1,
+        "prob_underapprox_templ_cond_degree": 1,
+        "prob_underapprox_templ_term_degree": 0
+    }
+]

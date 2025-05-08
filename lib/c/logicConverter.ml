@@ -90,25 +90,21 @@ let hmes_of_ba ba =
     |> HMESFormula.or_of
   in
   let nu_preds =
-    List.fold_left
+    List.fold_left ~init:[] (List.init states ~f:Fn.id)
       ~f:(fun nu_preds state ->
         if Set.mem final_states state then
           HMES.mk_func Predicate.Nu (hmespvar_of_state state)
             (hmesfunc_of_transition transition.(state))
           :: nu_preds
         else nu_preds)
-      ~init:[]
-      (List.init states ~f:Fn.id)
   in
   let mu_preds =
-    List.fold_left
+    List.fold_left ~init:[] (List.init states ~f:Fn.id)
       ~f:(fun mu_preds state ->
         if Set.mem final_states state then mu_preds
         else
           HMES.mk_func Predicate.Mu (hmespvar_of_state state)
             (hmesfunc_of_transition transition.(state))
           :: mu_preds)
-      ~init:[]
-      (List.init states ~f:Fn.id)
   in
   HMES.mk_hmes (mu_preds @ nu_preds) (hmespvar_of_state initial_state)

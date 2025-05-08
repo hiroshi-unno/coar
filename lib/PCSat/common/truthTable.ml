@@ -2,7 +2,6 @@ open Core
 open Common.Ext
 open Ast
 open Ast.LogicOld
-open HypSpace
 
 type table = {
   mutable table : (int, Bigarray.int_elt, Bigarray.c_layout) IncrBigArray2.t;
@@ -53,6 +52,48 @@ let clone_table t =
 let length_of_quals table = Hashtbl.Poly.length table.qenv
 let length_of_atoms table = Hashtbl.Poly.length table.aenv
 
+let eval_pred_aux ~id fenv qdeps (params, qual) (_param_senv, cond, _sorts, args)
+    =
+  if false then
+    print_endline
+      (sprintf "evaluating %s with (%s=>%s)" (Formula.str_of qual)
+         (Formula.str_of cond)
+         (String.concat_map_list ~sep:"," ~f:Term.str_of args));
+  let cond' =
+    match Map.Poly.find qdeps qual with
+    | None -> Formula.mk_true ()
+    | Some qdep ->
+        if false then
+          print_endline @@ sprintf "eval_qdep: %s" (QualDep.str_of qdep);
+        let qdep =
+          QualDep.map_atom qdep ~f:(function
+            | QualDep.LFormula (phi, _) when Stdlib.(phi = qual) ->
+                QualDep.mk_atom QualDep.LTrue
+            | lit -> QualDep.mk_atom lit)
+        in
+        Evaluator.simplify @@ QualDep.formula_of qdep
+  in
+  let sub =
+    Map.Poly.of_alist_exn @@ List.zip_exn (List.map ~f:fst params) args
+  in
+  let phi = Formula.subst sub qual in
+  let cond' = Formula.subst sub cond' in
+  if false then
+    print_endline @@ sprintf "eval_qdep_cond: %s" (Formula.str_of cond');
+  Evaluator.check
+    ~cond:(Formula.mk_and cond cond')
+    (Z3Smt.Z3interface.is_valid ~id fenv)
+    phi
+
+(* assume the ExAtom argument is papp or ppapp*)
+let eval_pred ~id fenv qdeps (params, qual) = function
+  | ExAtom.PApp ((_pvar, sorts), args) ->
+      eval_pred_aux ~id fenv qdeps (params, qual)
+        (Map.Poly.empty, Formula.mk_true (), sorts, args)
+  | ExAtom.PPApp ((param_senv, cond), ((_pvar, sorts), args)) ->
+      eval_pred_aux ~id fenv qdeps (params, qual) (param_senv, cond, sorts, args)
+  | _ -> assert false
+
 let update_with_atom ~id (table : table) fenv qdeps atom =
   if Hashtbl.Poly.mem table.aenv atom then ()
   else
@@ -63,9 +104,7 @@ let update_with_atom ~id (table : table) fenv qdeps atom =
       table.table <-
         IncrBigArray2.auto_set table.table qi ai
           (res_encode
-          @@ ExAtom.eval_pred ~id fenv qdeps
-               (table.params, table.qarr.(qi))
-               atom)
+          @@ eval_pred ~id fenv qdeps (table.params, table.qarr.(qi)) atom)
     done
 
 let update_with_qualifier ~id (table : table) fenv qdeps qual =
@@ -78,7 +117,7 @@ let update_with_qualifier ~id (table : table) fenv qdeps qual =
       table.table <-
         IncrBigArray2.auto_set table.table qi ai
           (res_encode
-          @@ ExAtom.eval_pred ~id fenv qdeps (table.params, qual)
+          @@ eval_pred ~id fenv qdeps (table.params, qual)
           @@ table.aarr.(ai))
     done
 
@@ -109,7 +148,7 @@ let update_map_with_atom ~id t fenv hspaces atom =
   | None -> ()
   | Some pvar ->
       let hspace = Hashtbl.Poly.find_exn hspaces (Ident.pvar_to_tvar pvar) in
-      update_with_atom ~id (get_table t pvar) fenv hspace.qdeps atom
+      update_with_atom ~id (get_table t pvar) fenv hspace.HypSpace.qdeps atom
 
 let update_map_with_atoms ~id t qdeps fenv =
   Set.iter ~f:(update_map_with_atom ~id t fenv qdeps)
@@ -143,7 +182,8 @@ let index_of_qual ~id table fenv qdeps qual =
   match Hashtbl.Poly.find table.qenv qual with
   | Some qi -> qi
   | None ->
-      (*print_endline (" adding qual: " ^ Formula.str_of qual);*)
+      if false then
+        print_endline (sprintf " adding qual: %s" (Formula.str_of qual));
       let qi = length_of_quals table in
       update_with_qualifier ~id table fenv qdeps qual;
       qi
@@ -202,7 +242,7 @@ let pos_neg_atoms_of table =
 
 let labeled_atoms_of table =
   Map.Poly.fold ~init:Set.Poly.empty ~f:(fun ~key ~data atoms ->
-      Set.add atoms @@ (table.aarr.(key), data))
+      Set.add atoms (table.aarr.(key), data))
 
 (** remove redundant atoms *)
 let reduced_alist_of (t : table) (qlist, alist) =

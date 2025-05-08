@@ -4,9 +4,8 @@ open Common.Combinator
 open Logic
 
 let eqcs_of phi =
-  let phis = BoolTerm.disjuncts_of phi in
   let eqcs, phis =
-    List.partition_map phis ~f:(fun phi ->
+    List.partition_map (BoolTerm.disjuncts_of phi) ~f:(fun phi ->
         if BoolTerm.is_not phi then
           match Term.let_apps (BoolTerm.let_not phi) with
           | TyApp (Con (BoolTerm.Eq, _), ty, _), [ Var (x1, _); Var (x2, _) ] ->
@@ -70,7 +69,7 @@ let elim_eqcls let_bounds bounds (uni_senv, defs, phi) =
     |> Pair.map List.concat List.concat
   in
   let sub =
-    Map.Poly.of_alist_exn @@ List.map ~f:(fun (x, (t, _)) -> (x, t)) ttsub
+    Map.Poly.of_alist_exn @@ List.map ttsub ~f:(fun (x, (t, _)) -> (x, t))
   in
   ( uni_senv,
     List.map defs ~f:(Term.subst sub),
@@ -84,16 +83,16 @@ let consts_of bounds phi =
   | Con (BoolTerm.Not, _), [ Var (x, _) ] ->
       if Map.Poly.mem bounds x then Second phi
       else First (x, BoolTerm.True, BoolTerm.SBool)
-  | TyApp (Con (BoolTerm.Neq, _), ty, _), [ Var (x, _); Con (sym, _) ]
-  | TyApp (Con (BoolTerm.Neq, _), ty, _), [ Con (sym, _); Var (x, _) ] ->
+  | ( TyApp (Con (BoolTerm.Neq, _), ty, _),
+      ([ Var (x, _); Con (sym, _) ] | [ Con (sym, _); Var (x, _) ]) ) ->
       if Map.Poly.mem bounds x then Second phi else First (x, sym, ty)
-  | TyApp (Con (BoolTerm.Eq, _), ty, _), [ Var (x, _); Con (BoolTerm.True, _) ]
-  | TyApp (Con (BoolTerm.Eq, _), ty, _), [ Con (BoolTerm.True, _); Var (x, _) ]
-    ->
+  | ( TyApp (Con (BoolTerm.Eq, _), ty, _),
+      ( [ Var (x, _); Con (BoolTerm.True, _) ]
+      | [ Con (BoolTerm.True, _); Var (x, _) ] ) ) ->
       if Map.Poly.mem bounds x then Second phi else First (x, BoolTerm.False, ty)
-  | TyApp (Con (BoolTerm.Eq, _), ty, _), [ Var (x, _); Con (BoolTerm.False, _) ]
-  | TyApp (Con (BoolTerm.Eq, _), ty, _), [ Con (BoolTerm.False, _); Var (x, _) ]
-    ->
+  | ( TyApp (Con (BoolTerm.Eq, _), ty, _),
+      ( [ Var (x, _); Con (BoolTerm.False, _) ]
+      | [ Con (BoolTerm.False, _); Var (x, _) ] ) ) ->
       if Map.Poly.mem bounds x then Second phi else First (x, BoolTerm.True, ty)
   | _ -> Second phi
 
@@ -114,17 +113,16 @@ let elim_consts bounds (uni_senv, defs, phi) =
       Term.subst sub @@ BoolTerm.or_of phis1 )
 
 let reduce (uni_senv, defs, body) =
-  let fvs = Set.Poly.union_list @@ List.map ~f:Term.fvs_of @@ (body :: defs) in
+  let fvs = Set.Poly.union_list @@ List.map ~f:Term.fvs_of (body :: defs) in
   (Map.Poly.filter_keys uni_senv ~f:(Set.mem fvs), defs, body)
 
 let rec qelim_aux1 let_bounds bounds exi_senv (uni_senv, defs, phi) =
   let simplify (uni_senv, defs, body) =
-    let body' =
+    ( uni_senv,
+      (*ToDo: simplify*) defs,
       ExtTerm.simplify_formula exi_senv
         (Map.force_merge let_bounds uni_senv)
-        body
-    in
-    (uni_senv, (*ToDo: simplify*) defs, body')
+        body )
   in
   let bounds' = Map.force_merge_list [ exi_senv; let_bounds; bounds ] in
   let uni_senv', defs', phi' =
@@ -251,15 +249,10 @@ let rec qelim_aux2 let_bounds bounds exi_senv (uni_senv, defs, phi) =
         |> List.find_distinct_pair
              ~f:(fun (x11, sym11, x12, sym12) (x21, sym21, x22, sym22) ->
                if
-                 ((Stdlib.(x11 = x21)
-                  && Stdlib.(x12 = x22)
-                  && Stdlib.(sym11 <> sym21))
-                 || Stdlib.(x11 = x22)
-                    && Stdlib.(x12 = x21)
-                    && Stdlib.(sym11 <> sym22))
-                 && Stdlib.(x11 <> x12)
-                 && Stdlib.(sym11 = sym12)
-                 && Stdlib.(sym21 = sym22)
+                 Stdlib.(
+                   ((x11 = x21 && x12 = x22 && sym11 <> sym21)
+                   || (x11 = x22 && x12 = x21 && sym11 <> sym22))
+                   && x11 <> x12 && sym11 = sym12 && sym21 = sym22)
                then
                  if
                    (not (Map.Poly.mem bounds' x11))
@@ -271,15 +264,10 @@ let rec qelim_aux2 let_bounds bounds exi_senv (uni_senv, defs, phi) =
                  then Some (x12, BoolTerm.neg_of @@ Term.mk_var x11)
                  else None
                else if
-                 ((Stdlib.(x11 = x21)
-                  && Stdlib.(x12 = x22)
-                  && Stdlib.(sym11 <> sym21))
-                 || Stdlib.(x11 = x22)
-                    && Stdlib.(x12 = x21)
-                    && Stdlib.(sym11 <> sym22))
-                 && Stdlib.(x11 <> x12)
-                 && Stdlib.(sym11 <> sym12)
-                 && Stdlib.(sym21 <> sym22)
+                 Stdlib.(
+                   ((x11 = x21 && x12 = x22 && sym11 <> sym21)
+                   || (x11 = x22 && x12 = x21 && sym11 <> sym22))
+                   && x11 <> x12 && sym11 <> sym12 && sym21 <> sym22)
                then
                  if
                    (not (Map.Poly.mem bounds' x11))
@@ -298,13 +286,13 @@ let rec qelim_aux2 let_bounds bounds exi_senv (uni_senv, defs, phi) =
       let sub =
         Map.Poly.singleton x @@ ExtTerm.simplify_term exi_senv uni_senv' t
       in
-      (*print_endline @@ sprintf "[qelim_aux2] %s ==> %s" (Ident.name_of_tvar x) (ExtTerm.str_of t');*)
+      (* print_endline @@ sprintf "[qelim_aux2] %s ==> %s" (Ident.name_of_tvar x) (ExtTerm.str_of t'); *)
       let phi' =
         ExtTerm.simplify_formula exi_senv (Map.force_merge let_bounds uni_senv')
         @@ Term.subst sub phi
       in
       qelim_aux2 let_bounds bounds exi_senv
-      @@ (uni_senv', (*ToDo: simplify*) List.map ~f:(Term.subst sub) defs, phi')
+        (uni_senv', (*ToDo: simplify*) List.map ~f:(Term.subst sub) defs, phi')
   | None -> (uni_senv, defs, phi)
 
 let app_qelim let_bounds bounds exi_senv =
@@ -336,7 +324,7 @@ let rec qelim ?(let_bounds = Map.Poly.empty) bounds exi_senv
                   Set.fold
                     (Set.diff
                        (Set.Poly.union_list
-                       @@ (fvs_body :: List.map ~f:Term.fvs_of defs'))
+                          (fvs_body :: List.map ~f:Term.fvs_of defs'))
                        (Map.key_set let_bounds'))
                     ~init:bounds
                     ~f:(fun acc tvar ->
@@ -357,20 +345,19 @@ let qelim_old bounds exi_senv (uni_senv, phi) =
   let uni_senv', _, phi' =
     qelim bounds exi_senv (uni_senv, [], ExtTerm.of_old_formula phi)
   in
-  (uni_senv', ExtTerm.to_old_fml exi_senv (uni_senv', phi'))
+  (uni_senv', ExtTerm.to_old_fml exi_senv uni_senv' phi')
 
-(*let rec qelim_clause exi_senv (uni_senv, ps, ns, phi) =
-  let senv = Map.force_merge exi_senv uni_senv in
-  let atms = Set.Poly.map (Set.union ps ns) ~f:(fun t -> ExtTerm.to_old_atom senv t []) in
-  let papp_tvs = of_old_sort_env_list @@ Set.to_list @@ Util.Set.concat_map atms ~f:LogicOld.Atom.term_sort_env_of in
-  let bounds = (* this is essential for qualifiers extraction *) Map.force_merge (Map.Poly.of_alist_exn papp_tvs) exi_senv in
-  let phi' =
-    ExtTerm.simplify_formula senv (snd @@ g bounds @@ snd @@ f bounds phi)
-  in
-  let uni_senv', ps, ns, phi' = Clause.reduce_sort_map (uni_senv, ps, ns, phi') in
-  if Map.Poly.length uni_senv > Map.Poly.length uni_senv' then
-    qelim_clause exi_senv (uni_senv', ps, ns, phi')
-  else (uni_senv', ps, ns, phi')
+(* let rec qelim_clause exi_senv (uni_senv, ps, ns, phi) =
+   let senv = Map.force_merge exi_senv uni_senv in
+   let atms = Set.Poly.map (Set.union ps ns) ~f:(ExtTerm.to_old_atom senv) in
+   let papp_tvs = of_old_sort_env_list @@ Set.to_list @@ Util.Set.concat_map atms ~f:LogicOld.Atom.term_sort_env_of in
+   let bounds = (* this is essential for qualifiers extraction *) Map.force_merge (Map.Poly.of_alist_exn papp_tvs) exi_senv in
+   let phi' =
+     ExtTerm.simplify_formula senv (snd @@ g bounds @@ snd @@ f bounds phi)
+   in
+   let uni_senv', ps, ns, phi' = Clause.reduce_sort_map (uni_senv, ps, ns, phi') in
+   if Map.Poly.length uni_senv > Map.Poly.length uni_senv' then
+     qelim_clause exi_senv (uni_senv', ps, ns, phi')
+   else (uni_senv', ps, ns, phi')
 
-  let qelim_clause_set exi_senv = Set.Poly.map ~f:qelim_clause exi_senv
-*)
+   let qelim_clause_set exi_senv = Set.Poly.map ~f:qelim_clause exi_senv *)

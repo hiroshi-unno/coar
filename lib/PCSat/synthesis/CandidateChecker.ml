@@ -1,8 +1,10 @@
 open Core
 open Common
 open Common.Ext
+open Common.Combinator
 open PCSatCommon
 open Ast
+open Ast.LogicOld
 
 module Make
     (Verbose : Debug.Config.ConfigType)
@@ -22,7 +24,7 @@ struct
       | None ->
           let model =
             Z3Smt.Z3interface.check_sat ~timeout:smt_timeout fenv
-              [ LogicOld.Formula.mk_neg phi ]
+              [ Formula.mk_neg phi ]
           in
           Hashtbl.add_exn check_history ~key:phi ~data:model;
           model
@@ -31,14 +33,13 @@ struct
       ((params_senv, cand) : CandSol.t) =
     let clause, uni_senv =
       let senv, phi = ExClause.to_old_formula cl in
-      ( Logic.ExtTerm.of_old_formula phi,
-        Logic.of_old_sort_env_map senv )
+      (Logic.ExtTerm.of_old_formula phi, Logic.of_old_sort_env_map senv)
     in
     let sub = CandSol.to_subst (params_senv, cand) in
     let phi =
-      Logic.ExtTerm.to_old_fml exi_senv (uni_senv, Logic.Term.subst sub clause)
+      Logic.ExtTerm.to_old_fml exi_senv uni_senv (Logic.Term.subst sub clause)
     in
-    let phi = LogicOld.UTermEnv.subst_formula uenv @@ Evaluator.simplify phi in
+    let phi = UTermEnv.subst_formula uenv @@ Evaluator.simplify phi in
     match check_clause ~id ~smt_timeout phi with
     | `Sat model ->
         (* not all but some clause in cls caused a countermodel *)
@@ -46,17 +47,16 @@ struct
         Debug.print
         @@ lazy
              ("phi: "
-             ^ (LogicOld.Formula.str_of @@ LogicOld.Formula.mk_neg phi)
-             ^ "\nmodel: "
-             ^ LogicOld.str_of_model model);
-        LogicOld.UTermEnv.update_by_model uenv model;
+             ^ (Formula.str_of @@ Formula.mk_neg phi)
+             ^ "\nmodel: " ^ str_of_model model);
+        UTermEnv.update_by_model uenv model;
         let cond =
-          LogicOld.Formula.and_of
+          Formula.and_of
           @@ List.filter_map model ~f:(function
                | (tvar, _), Some term -> (
                    try
-                     let term1, _ = LogicOld.UTermEnv.of_tvar uenv tvar in
-                     Some (LogicOld.Formula.eq term1 term)
+                     let term1, _ = UTermEnv.of_tvar uenv tvar in
+                     Some (Formula.eq term1 term)
                    with _ -> None)
                | _ -> None)
         in
@@ -81,31 +81,28 @@ struct
               (PCSP.Problem.dtenv_of APCSP.problem)
           in
           failwith
-            ("model: "
-            ^ LogicOld.str_of_model model
-            ^ "\ncandidate: "
-            ^ CandSol.str_of (params_senv, cand)
-            ^ "\nphi: "
-            ^ LogicOld.Formula.str_of phi
-            ^ "\nz3 input: " ^ Z3.Expr.to_string
-            @@ Z3Smt.Z3interface.of_formula ~id ctx [] [] fenv dtenv
-            @@ LogicOld.Formula.mk_neg phi)
+            (sprintf "model: %s\ncandidate: %s\nphi: %s\nz3 input: %s"
+               (str_of_model model)
+               (CandSol.str_of (params_senv, cand))
+               (Formula.str_of phi)
+               (Z3.Expr.to_string
+               @@ Z3Smt.Z3interface.of_formula ~id ctx [] [] fenv dtenv
+               @@ Formula.mk_neg phi))
     | `Unsat -> Set.Poly.empty
     | _ ->
         (*failwith "Z3 reported unknown or timeout in the validation phase"*)
-        Set.Poly.singleton @@ (ExClause.mk_unit_pos @@ ExAtom.mk_true (), [])
+        Set.Poly.singleton (ExClause.mk_unit_pos @@ ExAtom.mk_true (), [])
   (*dummy*)
 
   let of_cand_and_exs ?(smt_timeout = None) vs cls (cand : CandSol.t) =
-    let uenv = VersionSpace.uenf_of vs in
+    let uenv = vs.VersionSpace.uenv in
     Set.fold cls ~init:Set.Poly.empty ~f:(fun exs cl ->
         if
           not
           @@ ExClause.exists cl
                ~f:
                  (ExAtom.exists ~f:(fun term ->
-                      LogicOld.Term.is_var term
-                      || LogicOld.T_dt.is_sdt (LogicOld.Term.sort_of term)))
+                      Term.is_var term || T_dt.is_sdt (Term.sort_of term)))
         then exs
         else
           let exs' =
@@ -117,8 +114,7 @@ struct
 
   let str_of_conflicts conflicts =
     "********* conflicts *********\n"
-    ^ String.concat_set ~sep:", "
-    @@ Set.Poly.map ~f:ExAtom.str_of conflicts
+    ^ String.concat_map_set ~sep:", " ~f:ExAtom.str_of conflicts
 
   let check_candidate ?(smt_timeout = None) vs (cand : CandSol.t) =
     let dpos, dneg, und = VersionSpace.pos_neg_und_examples_of vs in
@@ -133,15 +129,13 @@ struct
       Debug.print
       @@ lazy
            ("Uninterpreted terms env after candidate checking:"
-          ^ Ast.LogicOld.UTermEnv.str_of @@ VersionSpace.uenf_of vs);
+          ^ UTermEnv.str_of vs.uenv);
       Debug.print
       @@ lazy
            "*** Counterexamples of parametric-examples to the Candidate \
             Solutions:";
       Debug.print
-      @@ lazy
-           (String.concat_set ~sep:";\n"
-           @@ Set.Poly.map exs ~f:(fun (ex, _) -> ExClause.str_of ex));
+      @@ lazy (String.concat_map_set ~sep:";\n" exs ~f:(fst >> ExClause.str_of));
       Debug.print @@ lazy "*************************************");
     (dpos', dneg', und')
 

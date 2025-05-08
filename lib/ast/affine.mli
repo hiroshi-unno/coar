@@ -8,7 +8,7 @@ val of_var : Ident.tvar -> t
 val ( + ) : t -> t -> t
 val ( ~- ) : t -> t
 val ( - ) : t -> t -> t
-val mult : Z.t -> t -> t
+val mul : Z.t -> t -> t
 val to_string : t -> string
 val ( = ) : t -> t -> bool
 val compare : t -> t -> int

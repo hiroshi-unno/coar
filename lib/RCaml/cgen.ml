@@ -34,10 +34,10 @@ module Make (Config : Config.ConfigType) = struct
 
   type item =
     | Skip
-    | Check of (tvar * Assertion.t) list
+    | Check of (tvar * Rtype.Assertion.kind) list
     | Infer of
         (tvar
-        * (tvar * Assertion.direction) list (* priority *)
+        * (tvar * Rtype.Assertion.direction) list (* priority *)
         * (tvar * SolSpace.space_flag * int) list (* solution space *))
         list
 
@@ -119,8 +119,7 @@ module Make (Config : Config.ConfigType) = struct
                        let tv = Ident.mk_fresh_tvar () in
                        ( tv,
                          Formula.mk_atom
-                         @@ Atom.mk_pvar_app pv [ sort ] [ Term.mk_var tv sort ]
-                       ) )) )
+                         @@ Atom.pvar_app_of_senv pv [ (tv, sort) ] ) )) )
           else (Map.Poly.empty, Map.Poly.empty)
         in
         let t =
@@ -257,25 +256,24 @@ module Make (Config : Config.ConfigType) = struct
                                 phi_args ))
                  in
                  Option.return
-                 @@ ( Set.Poly.union_list css,
-                      Formula.and_of @@ (Formula.apply_pred pred x_term :: phis)
-                    )
+                   ( Set.Poly.union_list css,
+                     Formula.and_of (Formula.apply_pred pred x_term :: phis) )
              | RTuple (elems, pred) ->
                  let args =
                    List.map elems ~f:(fun t -> (mk_fresh_tvar_with "v", t))
                  in
                  let constrs_elems, phi_elems =
                    constr_of ~config ~depth
-                   @@ ( Map.Poly.of_alist_exn args,
-                        Set.Poly.singleton @@ Formula.eq x_term
-                        @@ T_tuple.mk_tuple_cons (List.map elems ~f:sort_of_val)
-                        @@ List.map args ~f:(fun (x, t) ->
-                               Term.mk_var x @@ sort_of_val t) )
+                     ( Map.Poly.of_alist_exn args,
+                       Set.Poly.singleton @@ Formula.eq x_term
+                       @@ T_tuple.mk_tuple_cons (List.map elems ~f:sort_of_val)
+                       @@ List.map args ~f:(fun (x, t) ->
+                              Term.mk_var x @@ sort_of_val t) )
                  in
                  Option.return
-                 @@ ( constrs_elems,
-                      Formula.and_of
-                        [ Formula.apply_pred pred x_term; phi_elems ] )
+                   ( constrs_elems,
+                     Formula.and_of
+                       [ Formula.apply_pred pred x_term; phi_elems ] )
              | RGeneral (_params, T_dt.SUS (_name, _), pred) ->
                  (* ToDo: SUS can be promoted to SDT? *)
                  Some (Set.Poly.empty, Formula.apply_pred pred x_term)
@@ -325,8 +323,7 @@ module Make (Config : Config.ConfigType) = struct
         Debug.print
         @@ lazy
              (sprintf "[cgen_subeff_temp] constraints:\n  %s\n"
-             @@ String.concat_set ~sep:"\n  "
-             @@ Set.Poly.map constrs ~f:Formula.str_of);
+             @@ String.concat_map_set ~sep:"\n  " constrs ~f:Formula.str_of);
       constrs)
     else Set.Poly.empty
 
@@ -381,8 +378,7 @@ module Make (Config : Config.ConfigType) = struct
       Debug.print
       @@ lazy
            (sprintf "[cgen_subeff_cont] constraints:\n  %s\n"
-              (String.concat_set ~sep:"\n  "
-              @@ Set.Poly.map constrs ~f:Formula.str_of));
+              (String.concat_map_set ~sep:"\n  " constrs ~f:Formula.str_of));
     constrs
 
   and cgen_subtype_opsig ?(first = true) ~config ?(depth = 0) renv
@@ -413,8 +409,7 @@ module Make (Config : Config.ConfigType) = struct
       Debug.print
       @@ lazy
            (sprintf "[cgen_subtype_opsig] constraints:\n  %s\n"
-              (String.concat_set ~sep:"\n  "
-              @@ Set.Poly.map constrs ~f:Formula.str_of));
+              (String.concat_map_set ~sep:"\n  " constrs ~f:Formula.str_of));
     constrs
 
   and cgen_subtype_comp ?(first = true) ~config ?(depth = 0) renv (c1 : Rtype.c)
@@ -443,8 +438,7 @@ module Make (Config : Config.ConfigType) = struct
       Debug.print
       @@ lazy
            (sprintf "[cgen_subtype_comp] constraints:\n  %s\n"
-              (String.concat_set ~sep:"\n  "
-              @@ Set.Poly.map constrs ~f:Formula.str_of));
+              (String.concat_map_set ~sep:"\n  " constrs ~f:Formula.str_of));
     constrs
 
   and cgen_subtype_val ?(first = true) ~config ?(depth = 0) renv (t1 : Rtype.t)
@@ -484,11 +478,11 @@ module Make (Config : Config.ConfigType) = struct
                   ~f:(cgen_subtype_val ~first:false ~config ~depth renv)
       | RRef (t1, pred1), RRef (t2, pred2) ->
           Set.Poly.union_list
-          @@ [
-               imply pred1 pred2;
-               cgen_subtype_val ~first:false ~config ~depth renv t1 t2;
-               cgen_subtype_val ~first:false ~config ~depth renv t2 t1;
-             ]
+            [
+              imply pred1 pred2;
+              cgen_subtype_val ~first:false ~config ~depth renv t1 t2;
+              cgen_subtype_val ~first:false ~config ~depth renv t2 t1;
+            ]
       | RArrow (v1, t1, c1, pred1), RArrow (v2, t2, c2, pred2) ->
           let renv' = Env.disj_union renv @@ Env.singleton_ty v2 t2 in
           let c1' =
@@ -497,11 +491,11 @@ module Make (Config : Config.ConfigType) = struct
               c1
           in
           Set.Poly.union_list
-          @@ [
-               imply pred1 pred2;
-               cgen_subtype_val ~first:false ~config ~depth renv t2 t1;
-               cgen_subtype_comp ~first:false ~config ~depth renv' c1' c2;
-             ]
+            [
+              imply pred1 pred2;
+              cgen_subtype_val ~first:false ~config ~depth renv t2 t1;
+              cgen_subtype_comp ~first:false ~config ~depth renv' c1' c2;
+            ]
       (*| RForall (_penv1, _phis1, _c1), RForall (_penv2, _phis2, _c2) -> failwith "not supported"
         (* ToDo: forall penv2 exists penv1. phis2 => phis1 /\ cgen_subtype_comp renv c1 c2 *)*)
       | _ ->
@@ -515,8 +509,7 @@ module Make (Config : Config.ConfigType) = struct
       Debug.print
       @@ lazy
            (sprintf "[cgen_subtype_val] constraints:\n  %s\n"
-              (String.concat_set ~sep:"\n  "
-              @@ Set.Poly.map constrs ~f:Formula.str_of));
+              (String.concat_map_set ~sep:"\n  " constrs ~f:Formula.str_of));
     constrs
 
   let compose_temp_eff_inv ~config renv ((x1, phi1), (y1, psi1))
@@ -623,14 +616,14 @@ module Make (Config : Config.ConfigType) = struct
           Eff (x2, c3, c2) )
     | (_, _, _, First es1) :: (pat2, renv2, t2, First es2) :: ss ->
         (*ToDo*)
-        compose_cont_eff ~config @@ ((pat2, renv2, t2, First (es1 @ es2)) :: ss)
+        compose_cont_eff ~config ((pat2, renv2, t2, First (es1 @ es2)) :: ss)
     | ((_, _, _, Second _) as s1)
       :: (_, _, _, First es1)
       :: (pat2, renv2, t2, First es2)
       :: ss ->
         (*ToDo*)
         compose_cont_eff ~config
-        @@ (s1 :: (pat2, renv2, t2, First (es1 @ es2)) :: ss)
+          (s1 :: (pat2, renv2, t2, First (es1 @ es2)) :: ss)
     | (_pat1, renv1, _t1, First es)
       :: (pat2, renv2, t2, Second (Eff (x, c1, c2)))
       :: ss ->
@@ -642,7 +635,7 @@ module Make (Config : Config.ConfigType) = struct
            because the type is only used by cgen_subeff negatively *)
         let s = Eff (x, c1, c3) in
         let constrs, s =
-          compose_cont_eff ~config @@ ((pat2, renv2, t2, Second s) :: ss)
+          compose_cont_eff ~config ((pat2, renv2, t2, Second s) :: ss)
         in
         ( (Set.union constrs
           @@
@@ -667,7 +660,7 @@ module Make (Config : Config.ConfigType) = struct
            because the type is only used by cgen_subeff negatively *)
         let s = Eff (x, c1, c3) in
         let constrs, s =
-          compose_cont_eff ~config @@ (s1 :: (pat2, renv2, t2, Second s) :: ss)
+          compose_cont_eff ~config (s1 :: (pat2, renv2, t2, Second s) :: ss)
         in
         ( (Set.union constrs
           @@
@@ -737,8 +730,7 @@ module Make (Config : Config.ConfigType) = struct
     Debug.print
     @@ lazy
          (sprintf "[cgen_subeff] constraints:\n  %s\n"
-            (String.concat_set ~sep:"\n  "
-            @@ Set.Poly.map constrs ~f:Formula.str_of));
+            (String.concat_map_set ~sep:"\n  " constrs ~f:Formula.str_of));
     constrs
 
   let cgen_check_pure ~config renv c =
@@ -756,8 +748,7 @@ module Make (Config : Config.ConfigType) = struct
     Debug.print
     @@ lazy
          (sprintf "[cgen_check_pure] constraints:\n  %s\n"
-            (String.concat_set ~sep:"\n  "
-            @@ Set.Poly.map constrs ~f:Formula.str_of));
+            (String.concat_map_set ~sep:"\n  " constrs ~f:Formula.str_of));
     constrs
 
   (** assume [pat] is instantiated to [sort_of_val rty] *)
@@ -792,9 +783,8 @@ module Make (Config : Config.ConfigType) = struct
             @@ T_tuple.mk_tuple_cons sorts targs )
         in
         ( Rtype.Env.add_phi
-            (Rtype.Env.disj_union_list
-           @@ (* assume distinct *)
-           (renv_args :: renvs))
+            (Rtype.Env.disj_union_list (* assume distinct *)
+               (renv_args :: renvs))
             (Formula.apply_pred pred term (*ToDo: redundant?*)),
           Set.Poly.union_list constrss,
           Formula.or_of
@@ -829,11 +819,10 @@ module Make (Config : Config.ConfigType) = struct
                  pattern_match_with renv ~config pi (ti, snd argi))
         in
         ( Rtype.Env.add_phi
-            (Rtype.Env.disj_union_list
-           @@ (* assume distinct *)
-           (renv_args :: renvs))
+            (Rtype.Env.disj_union_list (* assume distinct *)
+               (renv_args :: renvs))
             (Formula.apply_pred pred term (*ToDo: redundant?*)),
-          Set.Poly.union_list @@ (constrs :: constrss_args),
+          Set.Poly.union_list (constrs :: constrss_args),
           Formula.or_of
           @@ (Formula.mk_atom @@ T_dt.mk_is_not_cons dt cons_name term)
              :: not_matched )
@@ -883,15 +872,15 @@ module Make (Config : Config.ConfigType) = struct
           in
           let constrs, kind_map = next kind_map maps renv_branch c_branch in
           ( Set.Poly.union_list
-            @@ [
-                 (if is_impure_pure then
-                    cgen_subtype_val ~config renv_branch c_branch.val_type
-                      c.val_type
-                  else Set.Poly.empty);
-                 cgen_subeff ~config renv_matched rev_comp_effs
-                   c_branch.val_type c;
-                 constrs;
-               ],
+              [
+                (if is_impure_pure then
+                   cgen_subtype_val ~config renv_branch c_branch.val_type
+                     c.val_type
+                 else Set.Poly.empty);
+                cgen_subeff ~config renv_matched rev_comp_effs c_branch.val_type
+                  c;
+                constrs;
+              ],
             kind_map )
       | _ ->
           let renv =
@@ -935,8 +924,8 @@ module Make (Config : Config.ConfigType) = struct
                          %s\n\
                          constraints: %s" (Pattern.str_of pat)
                         (Env.str_of ~config pat_renv)
-                        (String.concat_set ~sep:"\n"
-                        @@ Set.Poly.map ~f:Formula.str_of constrs_params));
+                        (String.concat_map_set ~sep:"\n" ~f:Formula.str_of
+                           constrs_params));
 
                 ( Env.add_phi renv
                   @@ Formula.rename
@@ -984,17 +973,17 @@ module Make (Config : Config.ConfigType) = struct
                     next kind_map maps renv_branch c_branch
                   in
                   ( Set.Poly.union_list
-                    @@ [
-                         (if is_impure_pure || is_pure_in_impures then
-                            cgen_subtype_val ~config renv_branch
-                              c_branch.val_type c.val_type
-                          else Set.Poly.empty);
-                         cgen_subeff ~config renv_matched rev_comp_effs
-                           c_branch.val_type c;
-                         constrs';
-                         constrs_params;
-                         constrs;
-                       ],
+                      [
+                        (if is_impure_pure || is_pure_in_impures then
+                           cgen_subtype_val ~config renv_branch
+                             c_branch.val_type c.val_type
+                         else Set.Poly.empty);
+                        cgen_subeff ~config renv_matched rev_comp_effs
+                          c_branch.val_type c;
+                        constrs';
+                        constrs_params;
+                        constrs;
+                      ],
                     kind_map ) ))
           in
           let constrs_matched, phi_matched =
@@ -1110,10 +1099,10 @@ module Make (Config : Config.ConfigType) = struct
           in
           let v = Rtype.mk_fresh_tvar_with "v" in
           ( Rtype.mk_rtuple rtys
-            @@ ( v,
-                 Formula.mk_atom
-                 @@ Atom.mk_pvar_app pvar (sorts @ [ sort ])
-                      (terms @ [ Term.mk_var v sort ]) ),
+              ( v,
+                Formula.mk_atom
+                @@ Atom.mk_pvar_app pvar (sorts @ [ sort ])
+                     (terms @ [ Term.mk_var v sort ]) ),
             phi )
         in
         ( Rtype.Env.add_phi
@@ -1147,8 +1136,10 @@ module Make (Config : Config.ConfigType) = struct
 
   let pcsp_of ?(skolem_pred = false) ?(sol_space = Map.Poly.empty) envs constrs
       =
-    (*Debug.print @@ lazy (sprintf "\n*** original:" );
-      Debug.print @@ lazy (String.concat_map_set ~sep:"\n" constrs ~f:Formula.str_of);*)
+    if false then (
+      Debug.print @@ lazy (sprintf "\n*** original:");
+      Debug.print
+      @@ lazy (String.concat_map_set ~sep:"\n" constrs ~f:Formula.str_of));
     let phis =
       Set.Poly.map (Set.union envs.constrs constrs) ~f:(fun phi ->
           let phi = Evaluator.simplify phi in
@@ -1157,17 +1148,21 @@ module Make (Config : Config.ConfigType) = struct
           in
           Formula.mk_forall_if_bounded (Set.to_list tvs) phi)
     in
-    (*Debug.print @@ lazy (sprintf "\n*** simplified:" );
-      Debug.print @@ lazy (String.concat_map_set ~sep:"\n" phis ~f:Formula.str_of);*)
+    if false then (
+      Debug.print @@ lazy (sprintf "\n*** simplified:");
+      Debug.print
+      @@ lazy (String.concat_map_set ~sep:"\n" phis ~f:Formula.str_of));
     let phis =
       Typeinf.typeinf ~print:(fun _ -> () (*Debug.print*)) ~to_sus:true
       @@ Set.to_list phis
     in
-    (*Debug.print @@ lazy (sprintf "\n*** type inferred:" );
-      Debug.print @@ lazy (String.concat_map_list ~sep:"\n" phis ~f:Formula.str_of);*)
+    if false then (
+      Debug.print @@ lazy (sprintf "\n*** type inferred:");
+      Debug.print
+      @@ lazy (String.concat_map_list ~sep:"\n" phis ~f:Formula.str_of));
     let pcsp =
       let exi_senv, kind_map =
-        (*ToDo: given exi_senv and kind_map are incomplete? *)
+        (* ToDo: given exi_senv and kind_map are incomplete? *)
         List.map phis ~f:Formula.pred_sort_env_of
         |> Set.Poly.union_list
         |> Set.fold ~init:(envs.exi_senv, envs.kind_map)
@@ -1191,9 +1186,7 @@ module Make (Config : Config.ConfigType) = struct
              uni_senv = Map.Poly.empty;
              exi_senv;
              kind_map;
-             fenv =
-               Map.Poly.filter envs.fenv ~f:(fun (_, _, _, is_rec, _) -> is_rec)
-               (*ToDo*);
+             fenv = Map.Poly.filter envs.fenv ~f:Quintuple.fth (*ToDo*);
              dtenv = envs.dtenv;
            }
     in
@@ -1238,14 +1231,14 @@ module Make (Config : Config.ConfigType) = struct
         Set.union !inst_pvs_dtrenv (Set.Poly.of_list @@ Map.Poly.data pren);
       ( Set.Poly.map constrs ~f:(Formula.rename_sorted_pvars pren),
         Set.union bpvs !inst_pvs_dtrenv )
-      (*Set.Poly.map constrs ~f:(Formula.map_atom ~f:(function
-        | Atom.App (Predicate.Var (pvar, sorts), ts, _)
-          when Set.mem pvs_dtrenv pvar &&
-               Set.is_empty @@ Set.Poly.union_list @@
-               List.map sorts ~f:Term.svs_of_sort ->
-          let name = Ident.name_of_pvar pvar ^ String.bracket @@ String.concat_map_list ~sep:"\n" sorts ~f:Term.str_of_sort in
-          Formula.mk_atom @@ Atom.mk_pvar_app (Ident.Pvar name) sorts ts
-        | atom -> Formula.mk_atom atom))*)
+      (* Set.Poly.map constrs ~f:(Formula.map_atom ~f:(function
+         | Atom.App (Predicate.Var (pvar, sorts), ts, _)
+           when Set.mem pvs_dtrenv pvar &&
+                Set.is_empty @@ Set.Poly.union_list @@
+                List.map sorts ~f:Term.svs_of_sort ->
+           let name = Ident.name_of_pvar pvar ^ String.bracket @@ String.concat_map_list ~sep:"\n" sorts ~f:Term.str_of_sort in
+           Formula.mk_atom @@ Atom.mk_pvar_app (Ident.Pvar name) sorts ts
+         | atom -> Formula.mk_atom atom)) *)
     in
     let pcsp0 =
       (*ToDo*)
@@ -1302,7 +1295,8 @@ module Make (Config : Config.ConfigType) = struct
           let phi =
             Logic.ExtTerm.to_old_fml
               (PCSP.Problem.senv_of pcsp)
-              (Map.Poly.of_alist_exn env, t)
+              (Map.Poly.of_alist_exn env)
+              t
           in
           assert (Set.is_empty @@ Set.inter (Formula.pvs_of phi) pvs_dummy);
           let env = Logic.to_old_sort_env_list env in
@@ -1326,7 +1320,8 @@ module Make (Config : Config.ConfigType) = struct
           let phi =
             Logic.ExtTerm.to_old_fml
               (PCSP.Problem.senv_of pcsp)
-              (Map.Poly.of_alist_exn env, t)
+              (Map.Poly.of_alist_exn env)
+              t
           in
           assert (Set.is_empty @@ Set.inter (Formula.pvs_of phi) pvs_dummy);
           let env = Logic.to_old_sort_env_list env in
@@ -1342,7 +1337,7 @@ module Make (Config : Config.ConfigType) = struct
       Set.Poly.map clauses1
         ~f:
           (Clause.normalize_uni_senv >> Clause.to_senv_formula
-          >> Logic.ExtTerm.to_old_fml (PCSP.Problem.senv_of pcsp))
+          >> uncurry2 @@ Logic.ExtTerm.to_old_fml (PCSP.Problem.senv_of pcsp))
     in
     Debug.print @@ lazy "*** predicate constraints extracted:";
     Debug.print @@ lazy "";
@@ -1352,7 +1347,7 @@ module Make (Config : Config.ConfigType) = struct
     constrs
 
   let generalize ~config renv pat_renv constrs =
-    (*ToDo: note that nu_preds and mu_preds can be type-polymorphic as well!*)
+    (* ToDo: note that nu_preds and mu_preds can be type-polymorphic as well! *)
     let pvs_preds =
       Set.Poly.of_list @@ Map.Poly.(keys !mu_preds @ keys !nu_preds)
     in
@@ -1461,15 +1456,15 @@ module Make (Config : Config.ConfigType) = struct
                let constrs, kind_map =
                  let bpvs =
                    Set.Poly.union_list
-                   @@ [
-                        pvs_preds;
-                        pvs_renv;
-                        pvs_dtrenv;
-                        (if is_rec then cs_pvs
-                         else
-                           Set.Poly.map ~f:fst
-                           @@ pred_sort_env_of_comp (*ToDo*) ~bpvs:pvs_preds c);
-                      ]
+                     [
+                       pvs_preds;
+                       pvs_renv;
+                       pvs_dtrenv;
+                       (if is_rec then cs_pvs
+                        else
+                          Set.Poly.map ~f:fst
+                          @@ pred_sort_env_of_comp (*ToDo*) ~bpvs:pvs_preds c);
+                     ]
                  in
                  let constrs, kind_map = next kind_map maps renv_bound c' in
                  ( fixpoint ~config renv kind_map fenv dtenv penv_dtrenv
@@ -1486,7 +1481,7 @@ module Make (Config : Config.ConfigType) = struct
       && List.for_all pats ~f:(Pattern.sort_of >> Sort.is_arrow)
     in
     let renv_body, map =
-      (*shadowing*)
+      (* shadowing *)
       Env.update_with ~config renv
       @@ Env.disj_union_list
       (* assume the following are distinct *)
@@ -1694,7 +1689,7 @@ module Make (Config : Config.ConfigType) = struct
                           in
                           let cx =
                             List.fold ~init:const_t
-                              (List.map2_exn coeffs_t args ~f:T_real.mk_rmult)
+                              (List.map2_exn coeffs_t args ~f:T_real.mk_rmul)
                               ~f:T_real.mk_radd
                           in
                           let phi =
@@ -1704,10 +1699,9 @@ module Make (Config : Config.ConfigType) = struct
                               (Formula.mk_atom
                               @@ T_real.mk_rleq
                                    (if enable_lhs_param then
-                                      T_real.mk_rmult lhs_coeff_t vt
+                                      T_real.mk_rmul lhs_coeff_t vt
                                     else vt)
-                              @@ T_real.mk_radd cx (T_real.mk_rmult coeff_t yt)
-                              )
+                              @@ T_real.mk_radd cx (T_real.mk_rmul coeff_t yt))
                           in
                           let phi' =
                             Formula.mk_and
@@ -1716,10 +1710,10 @@ module Make (Config : Config.ConfigType) = struct
                               (Formula.mk_atom
                               @@ T_real.mk_rleq
                                    (if enable_lhs_param then
-                                      T_real.mk_rmult lhs_coeff_t vt
+                                      T_real.mk_rmul lhs_coeff_t vt
                                     else vt)
                               @@ T_real.mk_radd cx
-                                   (T_real.mk_rmult coeff_t
+                                   (T_real.mk_rmul coeff_t
                                       (T_real.mk_real Q.(one / of_int 2))))
                           in
                           Debug.print
@@ -1747,9 +1741,8 @@ module Make (Config : Config.ConfigType) = struct
                           let xt = Term.mk_var x T_int.SInt in
                           Formula.mk_imply
                             (Formula.mk_atom
-                            @@ Atom.mk_pvar_app p [ T_int.SInt ] [ xt ])
-                          @@ Formula.mk_atom
-                          @@ T_int.mk_leq (T_int.one ()) xt)
+                            @@ Atom.pvar_app_of_senv p [ (x, T_int.SInt) ])
+                          @@ Formula.leq (T_int.one ()) xt)
                  in
                  let constrs_rhs_pvars =
                    if true (*ToDo*) then
@@ -1758,9 +1751,8 @@ module Make (Config : Config.ConfigType) = struct
                             let xt = Term.mk_var x T_int.SInt in
                             Formula.mk_imply
                               (Formula.mk_atom
-                              @@ Atom.mk_pvar_app p [ T_int.SInt ] [ xt ])
-                            @@ Formula.mk_atom
-                            @@ T_int.mk_leq (T_int.zero ()) xt)
+                              @@ Atom.pvar_app_of_senv p [ (x, T_int.SInt) ])
+                            @@ Formula.leq (T_int.zero ()) xt)
                    else Set.Poly.empty
                  in
                  ( Rtype.Env.add_phis renv
@@ -1768,8 +1760,7 @@ module Make (Config : Config.ConfigType) = struct
                      @@ List.map2_exn (lhs_pvars @ rhs_pvars)
                           (lhs_params @ rhs_params) ~f:(fun p x ->
                             Formula.mk_atom
-                            @@ Atom.mk_pvar_app p [ T_int.SInt ]
-                                 [ Term.mk_var x T_int.SInt ])),
+                            @@ Atom.pvar_app_of_senv p [ (x, T_int.SInt) ])),
                    (match (ts, ts') with
                    | [ t ], [ t' ] ->
                        ( Rtype.pure_comp_of_val ~config t,
@@ -1901,12 +1892,12 @@ module Make (Config : Config.ConfigType) = struct
                   (sprintf "[rcaml:const] %s : %s <: %s\n" (Term.str_of term)
                      (str_of_val ~config cty) (str_of_comp ~config ty));
              ( Set.Poly.union_list
-               @@ [
-                    constrs;
-                    cgen_subtype_comp ~config renv
-                      (pure_comp_of_val ~config cty)
-                      ty;
-                  ],
+                 [
+                   constrs;
+                   cgen_subtype_comp ~config renv
+                     (pure_comp_of_val ~config cty)
+                     ty;
+                 ],
                kind_map )
 
            method f_construct _dt cons_name nexts_either kind_map maps renv ty =
@@ -1962,12 +1953,12 @@ module Make (Config : Config.ConfigType) = struct
                @ (pure_comp_of_val ~config fun_ty :: cs)
              in
              ( Set.Poly.union_list
-               @@ [
-                    constrs;
-                    cgen_subeff ~config renv rev_comp_effs ty.val_type ty;
-                    cgen_subtype_val renv ~config cty fun_ty;
-                    constrs';
-                  ],
+                 [
+                   constrs;
+                   cgen_subeff ~config renv rev_comp_effs ty.val_type ty;
+                   cgen_subtype_val renv ~config cty fun_ty;
+                   constrs';
+                 ],
                kind_map )
 
            method f_apply (pure1, next1, opsig1s, opsig1, cont1s, cont1)
@@ -2023,11 +2014,11 @@ module Make (Config : Config.ConfigType) = struct
              in
              let constrs', kind_map = next1 kind_map maps renv fun_ty in
              ( Set.Poly.union_list
-               @@ [
-                    cgen_subeff ~config renv rev_comp_effs ty.val_type ty;
-                    constrs';
-                    constrs;
-                  ],
+                 [
+                   cgen_subeff ~config renv rev_comp_effs ty.val_type ty;
+                   constrs';
+                   constrs;
+                 ],
                kind_map )
 
            method f_tuple nexts_either kind_map maps renv ty =
@@ -2068,11 +2059,11 @@ module Make (Config : Config.ConfigType) = struct
                    (Pattern.PAny (sort_of_comp c), renv, c))
              in
              ( Set.Poly.union_list
-               @@ [
-                    cgen_subeff ~config renv rev_comp_effs tup_ty ty;
-                    cgen_subtype_val ~config renv' tup_ty ty.val_type;
-                    constrs;
-                  ],
+                 [
+                   cgen_subeff ~config renv rev_comp_effs tup_ty ty;
+                   cgen_subtype_val ~config renv' tup_ty ty.val_type;
+                   constrs;
+                 ],
                kind_map )
 
            method f_function pats t_annot_rty_opt (nexts, conts) kind_map maps
@@ -2281,16 +2272,15 @@ module Make (Config : Config.ConfigType) = struct
                  let constrs_else, phi_else = constr_of ~config renv_else in
                  let constrs, kind_map = next kind_map maps renv c_cond in
                  ( Set.Poly.union_list
-                   @@ [
-                        constrs;
-                        cgen_subeff ~config renv_then rev_comp_effs ty_then ty;
-                        cgen_subtype_val ~config renv_then ty_then
-                        @@ ty.val_type;
-                        Set.add constrs_else
-                        @@ Formula.mk_imply
-                             (Evaluator.simplify phi_else)
-                             (Formula.mk_false ());
-                      ],
+                     [
+                       constrs;
+                       cgen_subeff ~config renv_then rev_comp_effs ty_then ty;
+                       cgen_subtype_val ~config renv_then ty_then @@ ty.val_type;
+                       Set.add constrs_else
+                       @@ Formula.mk_imply
+                            (Evaluator.simplify phi_else)
+                            (Formula.mk_false ());
+                     ],
                    kind_map )
 
            method f_let_and is_rec pats defs (next2, cont2) kind_map maps renv
@@ -2349,15 +2339,15 @@ module Make (Config : Config.ConfigType) = struct
              in
              let constrs2, kind_map = next2 kind_map maps renv_body c_body in
              ( Set.Poly.union_list
-               @@ [
-                    (if is_impure_pure then
-                       cgen_subtype_val ~config renv_body c_body.val_type
-                         ty.val_type
-                     else Set.Poly.empty);
-                    constrs;
-                    cgen_subeff ~config renv rev_comp_effs ty.val_type ty;
-                    constrs2;
-                  ],
+                 [
+                   (if is_impure_pure then
+                      cgen_subtype_val ~config renv_body c_body.val_type
+                        ty.val_type
+                    else Set.Poly.empty);
+                   constrs;
+                   cgen_subeff ~config renv rev_comp_effs ty.val_type ty;
+                   constrs2;
+                 ],
                kind_map )
 
            method f_sequence (next1, sort1, cont1) (next2, cont2) kind_map maps
@@ -2387,11 +2377,11 @@ module Make (Config : Config.ConfigType) = struct
              let constrs1, kind_map = next1 kind_map maps renv c1 in
              let constrs2, kind_map = next2 kind_map maps renv c2 in
              ( Set.Poly.union_list
-               @@ [
-                    cgen_subeff ~config renv rev_comp_effs ty.val_type ty;
-                    constrs1;
-                    constrs2;
-                  ],
+                 [
+                   cgen_subeff ~config renv rev_comp_effs ty.val_type ty;
+                   constrs1;
+                   constrs2;
+                 ],
                kind_map )
 
            method f_shift0 (x_opt, sort) (next2, c2) kind_map maps renv ty =
@@ -2603,16 +2593,16 @@ module Make (Config : Config.ConfigType) = struct
                    if is_bound then renv else Env.set_ty renv x c.val_type)
              in
              let rev_comp_effs =
-               List.map ~f:(fun c -> (Pattern.PAny (sort_of_comp c), renv', c))
-               @@ (c_pfm :: (*ToDo:List.rev*) c_args)
+               List.map (c_pfm :: (*ToDo:List.rev*) c_args) ~f:(fun c ->
+                   (Pattern.PAny (sort_of_comp c), renv', c))
              in
              ( Set.Poly.union_list
-               @@ [
-                    constr_o;
-                    cgen_subtype_val ~config renv' t_pfm ty.val_type;
-                    cgen_subeff ~config renv' rev_comp_effs t_pfm ty;
-                    constrs;
-                  ],
+                 [
+                   constr_o;
+                   cgen_subtype_val ~config renv' t_pfm ty.val_type;
+                   cgen_subeff ~config renv' rev_comp_effs t_pfm ty;
+                   constrs;
+                 ],
                kind_map )
 
            method f_handling (next_b, c_b) (next_r, xr, c_r) op_names nexts
@@ -2712,7 +2702,7 @@ module Make (Config : Config.ConfigType) = struct
 
   let cgen_dir_map ~is_up t =
     let open Rtype in
-    let rec inner (d : Assertion.direction) = function
+    let rec inner (d : Rtype.Assertion.direction) = function
       | (RTuple (_, (_, phi)) | RGeneral (_, _, (_, phi)))
         when Formula.is_atom phi ->
           let atm, _ = Formula.let_atom phi in
@@ -2726,10 +2716,10 @@ module Make (Config : Config.ConfigType) = struct
             (inner d c.val_type (*ToDo*))
       | _ -> Map.Poly.empty
     in
-    if is_up then inner Assertion.DUp t else inner Assertion.DDown t
+    if is_up then inner Rtype.Assertion.DUp t else inner Rtype.Assertion.DDown t
 
   let cgen_fronts ~config ~is_up ?(renv = Rtype.Env.mk_empty ()) t :
-      Assertion.fronts =
+      Rtype.Assertion.fronts =
     let open Rtype in
     let rec inner d (constrs, phi) = function
       | RTuple (_, (_, phi1)) | RRef (_, (_, phi1)) | RGeneral (_, _, (_, phi1))
@@ -2761,7 +2751,7 @@ module Make (Config : Config.ConfigType) = struct
                 in
                 let ts =
                   match List.rev ts with
-                  | _ :: tl -> List.rev @@ (Term.mk_var x (sort_of_val t) :: tl)
+                  | _ :: tl -> List.rev (Term.mk_var x (sort_of_val t) :: tl)
                   | [] -> assert false
                 in
                 Map.force_merge
@@ -2779,7 +2769,7 @@ module Make (Config : Config.ConfigType) = struct
       | RForall _ | RPoly _ -> assert false
     in
     inner
-      (if is_up then Assertion.DUp else Assertion.DDown)
+      (if is_up then Rtype.Assertion.DUp else Rtype.Assertion.DDown)
       (constr_of ~config renv) t
 
   (** Constraint Generation *)
@@ -2880,7 +2870,7 @@ module Make (Config : Config.ConfigType) = struct
           let senv_bounds =
             if is_rec then
               let pat_senvs = List.map defs (* assume distinct *) ~f:fst3 in
-              Map.update_with_list (*shadowing*) @@ (senv :: pat_senvs)
+              Map.update_with_list (*shadowing*) (senv :: pat_senvs)
             else senv
           in
           let eff_constrss, opsig_constrss, next1s =
@@ -3202,7 +3192,7 @@ module Make (Config : Config.ConfigType) = struct
         | envs, Skip -> top_level_aux ~config envs tl
         | envs, Check asserts ->
             List.map asserts ~f:(function
-              | tvar, Assertion.Type rty ->
+              | tvar, Rtype.Assertion.Type rty ->
                   let rty_def, constrs_def, kind_map_def =
                     match Rtype.Env.look_up envs.renv tvar with
                     | Some rty_def ->
@@ -3228,13 +3218,13 @@ module Make (Config : Config.ConfigType) = struct
                   ( sprintf "type_of(%s) <: %s" (name_of_tvar tvar)
                       (Rtype.str_of_val ~config rty),
                     Problem.PAssertion (!mu_preds, !nu_preds, pcsp) )
-              | tvar, Assertion.FinEff eff ->
+              | tvar, Rtype.Assertion.FinEff eff ->
                   Debug.print
                   @@ lazy
                        (sprintf "fin_eff_of(%s) <: %s" (name_of_tvar tvar)
                           (Grammar.RegWordExp.str_of Fn.id eff));
                   assert false
-              | tvar, Assertion.InfEff eff ->
+              | tvar, Rtype.Assertion.InfEff eff ->
                   Debug.print
                   @@ lazy
                        (sprintf "inf_eff_of(%s) <: %s" (name_of_tvar tvar)

@@ -7,7 +7,7 @@ open Ast.LogicOld
 module type SolverType = sig
   val solve :
     ?timeout:int option ->
-    ?bpvs:Ast.Ident.tvar Set.Poly.t ->
+    ?bpvs:Ast.Ident.tvar_set ->
     ?print_sol:bool ->
     ?preds:(Ident.pvar, sort_env_list * Formula.t) Map.Poly.t ->
     ?copreds:(Ident.pvar, sort_env_list * Formula.t) Map.Poly.t ->
@@ -15,14 +15,12 @@ module type SolverType = sig
     (PCSP.Problem.solution * int) Or_error.t
 
   val preprocess :
-    ?bpvs:Ast.Ident.tvar Set.Poly.t ->
-    PCSP.Problem.t ->
-    PCSP.Problem.t Or_error.t
+    ?bpvs:Ast.Ident.tvar_set -> PCSP.Problem.t -> PCSP.Problem.t Or_error.t
 
   val reset : unit -> unit
   val push : unit -> unit
   val pop : unit -> unit
-  val print : PCSP.Problem.t -> string
+  (*val print : PCSP.Problem.t -> string*)
 end
 
 module Make (Cfg : Config.ConfigType) : SolverType = struct
@@ -30,17 +28,19 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
 
   type solver =
     | SPCSat of (module PCSat.Solver.SolverType)
-    | SSPACER of SPACER.Config.t
+    | SSPACER of (module SPACER.Solver.SolverType)
     | SHoice of (module Hoice.Solver.SolverType)
+    | SPolyQEnt of (module PolyQEnt.Solver.SolverType)
     | SForward
     | SPrinter of (module Printer.Solver.SolverType)
 
   let solver =
     match config with
-    | Config.SPACER cfg -> SSPACER cfg
+    | Config.SPACER cfg -> SSPACER (SPACER.Solver.make cfg)
     | Config.PCSat cfg -> SPCSat (PCSat.Solver.make cfg)
-    | Config.Forward -> SForward
     | Config.Hoice cfg -> SHoice (Hoice.Solver.make cfg)
+    | Config.PolyQEnt cfg -> SPolyQEnt (PolyQEnt.Solver.make cfg)
+    | Config.Forward -> SForward
     | Config.Printer cfg -> SPrinter (Printer.Solver.make cfg)
 
   let solve ?(timeout = None) ~preds ~copreds =
@@ -51,11 +51,7 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
           fun ?(bpvs = Set.Poly.empty) ?(print_sol = false) pcsp ->
             PCSat.solve ~bpvs ~print_sol pcsp >>= fun (sol, info) ->
             Ok (sol, info.PCSatCommon.State.num_cegis_iters)
-      | SSPACER cfg ->
-          let module Cfg = struct
-            let config = cfg
-          end in
-          let module SPACER = SPACER.Solver.Make (Cfg) in
+      | SSPACER (module SPACER) ->
           fun ?bpvs ?(print_sol = false) pcsp ->
             ignore bpvs;
             SPACER.solve ~timeout ~print_sol pcsp >>= fun sol -> Ok (sol, -1)
@@ -63,6 +59,10 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
           fun ?bpvs ?(print_sol = false) pcsp ->
             ignore bpvs;
             Hoice.solve ~print_sol pcsp >>= fun sol -> Ok (sol, -1)
+      | SPolyQEnt (module PolyQEnt) ->
+          fun ?bpvs ?(print_sol = false) pcsp ->
+            ignore bpvs;
+            PolyQEnt.solve ~print_sol pcsp >>= fun sol -> Ok (sol, -1)
       | SForward ->
           fun ?bpvs ?(print_sol = false) pcsp ->
             ignore bpvs;
@@ -144,10 +144,10 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
           ignore bpvs;
           failwith "preprocess unsupported (need apply pcsat)"
 
-  let print =
+  (*let print =
     match solver with
     | SPrinter (module Printer) -> fun pcsp -> Printer.string_of_pcsp pcsp
-    | _ -> fun _ -> failwith "print function expects printer config"
+    | _ -> fun _ -> failwith "print function expects printer config"*)
 
   let reset () =
     match solver with SPCSat (module PCSat) -> PCSat.reset () | _ -> ()

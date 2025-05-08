@@ -82,12 +82,12 @@ and str_of_term = function
   | _ -> failwith "unknown function application"
 
 and str_of_funsym = function
+  | T_int.Neg -> "-"
   | T_int.Add -> "+"
   | T_int.Sub -> "-"
-  | T_int.Mult -> "*"
-  | T_int.Div -> "div"
-  | T_int.Mod -> "mod"
-  | T_int.Neg -> "-"
+  | T_int.Mul -> "*"
+  | T_int.Div _ -> "div"
+  | T_int.Rem _ -> "mod" (*ToDo*)
   | T_bool.IfThenElse -> "ite"
   | _ -> failwith "unknown function symbol"
 
@@ -102,14 +102,14 @@ and str_of_psym = function
 let str_of_solution (params, sol) =
   if Fn.non Map.Poly.is_empty params && Set.is_empty sol then assert false
   else
-    String.concat_set ~sep:"\n"
-    @@ Set.Poly.map sol ~f:(fun (Ident.Pvar ident, (params, formula)) ->
-           sprintf "(define-fun %s (%s) Bool %s)" ident
-             (str_of_sort_env_list str_of_sort params)
-           @@ str_of_formula @@ Formula.elim_neq
-           (* T_bool.Neq is not supported by SyGuS-IF *)
-           @@ Z3Smt.Z3interface.simplify ~id:None Map.Poly.empty
-           (* TODO *) @@ Evaluator.simplify formula)
+    String.concat_map_set ~sep:"\n" sol
+      ~f:(fun (Ident.Pvar ident, (params, formula)) ->
+        sprintf "(define-fun %s (%s) Bool %s)" ident
+          (str_of_sort_env_list str_of_sort params)
+        @@ str_of_formula @@ Formula.elim_neq
+        (* T_bool.Neq is not supported by SyGuS-IF *)
+        @@ Z3Smt.Z3interface.simplify ~id:None Map.Poly.empty
+        (* TODO *) @@ Evaluator.simplify formula)
 
 let str_of_unsat () =
   match mode with SyGuS_IF1 -> "(fail)" | SyGuS_IF2 -> "infeasible"
@@ -149,10 +149,10 @@ module ExtTerm : TermType = struct
     | Int n -> Z.(if Compare.(<) n zero then "(- " ^ to_string (-n) ^ ")" else to_string n)
     | Add -> "+"
     | Sub | Neg -> "-"
-    | Mult -> "*"
-    | Div -> "div"
-    | Mod -> "mod"
     | Abs -> "abs"
+    | Mul -> "*"
+    | Div -> "div"
+    | Rem -> "mod" (*ToDo*)
 
     (* lia theory *)
     | Leq -> "<="
@@ -170,13 +170,13 @@ end
 module Make (Term : TermType) : sig
   val str_of_term: sort_env_map -> term -> string
 end = struct
-  let rec str_of_term map term : string = let open Logic.Term in
+  let rec str_of_term map term : string = let open Ast.Logic.Term in
     if is_var term then let_var term |> fst |> Ident.name_of_tvar
     else if is_con term then let_con term |> fst |> Term.str_of_sym
     else if is_app term then let t1, t2, _ = let_app term in str_of_app map t1 t2
     else if is_tyapp term then let t, _, _ = let_tyapp term in str_of_term map t
     else failwith @@ sprintf "[str_of_term] not supported: %s" @@ Term.str_of term
-  and str_of_app map t1 t2 = let open Logic.Term in
+  and str_of_app map t1 t2 = let open Ast.Logic.Term in
     let rec inner t1 t2 n =
       if is_var t1 then
         let v, _ = let_var t1 in

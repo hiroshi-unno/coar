@@ -2,7 +2,7 @@
    loop detection including verbose, whether use Jhonson's algorithms, and so on. *)
 
 open Core
-open PCSatCommon
+open Ast
 
 let find_cycle graph vertiecs =
   (* graph must be strongly connected *)

@@ -1,0 +1,4 @@
+T 1.0 >= 10000.0
+s.t.
+T (b : real) : real =mu 0.5 * F b + 0.5 * T (2.0 * b);
+F (b : real) : real =mu b;

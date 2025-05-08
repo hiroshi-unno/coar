@@ -22,7 +22,6 @@ module Make (Config : Config.ConfigType) : SolverType = struct
   module Cgen = Cgen.Make (Config)
 
   let solve_from_file ?(print_sol = true) filename =
-    ignore print_sol;
     match snd (Filename.split_extension filename) with
     | Some "ml" ->
         let open Or_error.Monad_infix in

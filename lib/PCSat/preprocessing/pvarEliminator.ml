@@ -113,78 +113,80 @@ struct
       @@ Set.Poly.map ~f:(fun (senv, ps, ns, phis) ->
              (senv, ps, ns, Formula.or_of phis))
       @@ Set.Poly.union_list
-      @@ [
-           Set.cartesian_map clauses_pos_lin clauses_neg_lin
-             ~f:(fun (senv1, ps1, ns1, phi1) ncl ->
-               (*print_string "ll:"; Out_channel.flush stdout;*)
-               let ps11, ps12 = Set.partition_tf ps1 ~f:is_resolved in
-               Set.fold ps11 ~init:(senv1, ps12, ns1, [ phi1 ])
-                 ~f:(fun (senv, ps, ns, phis) -> function
-                 | Atom.App (_, ts1, _) -> (
-                     let senv2, ps2, ns2, phi2 = ClauseOld.refresh_tvar ncl in
-                     let ns21, ns22 = Set.partition_tf ns2 ~f:is_resolved in
-                     match Set.choose ns21 with
-                     | Some (Atom.App (_, ts2, _)) ->
-                         ( Map.force_merge senv senv2,
-                           Set.union ps ps2,
-                           Set.union ns ns22,
-                           phis @ (phi2 :: List.map2_exn ts1 ts2 ~f:Formula.neq)
-                         )
-                     | _ -> assert false)
-                 | _ -> assert false));
-           Set.concat_map clauses_pos_nonlin ~f:(fun (senv1, ps1, ns1, phi1) ->
-               let ps11, ps12 = Set.partition_tf ps1 ~f:is_resolved in
-               Set.fold ps11
-                 ~init:(Set.Poly.singleton (senv1, ps12, ns1, [ phi1 ]))
-                 ~f:(fun acc -> function
-                   | Atom.App (_, ts1, _) ->
-                       Set.concat_map acc ~f:(fun (senv, ps, ns, phis) ->
-                           Set.Poly.map clauses_neg_lin ~f:(fun ncl ->
-                               (*print_string "nl:"; Out_channel.flush stdout;*)
-                               let senv2, ps2, ns2, phi2 =
-                                 ClauseOld.refresh_tvar ncl
-                               in
-                               let ns21, ns22 =
-                                 Set.partition_tf ns2 ~f:is_resolved
-                               in
-                               match Set.choose ns21 with
-                               | Some (Atom.App (_, ts2, _)) ->
-                                   ( Map.force_merge senv senv2,
-                                     Set.union ps ps2,
-                                     Set.union ns ns22,
-                                     phis
-                                     @ phi2
-                                       :: List.map2_exn ts1 ts2 ~f:Formula.neq
-                                   )
-                               | _ -> assert false))
+           [
+             Set.cartesian_map clauses_pos_lin clauses_neg_lin
+               ~f:(fun (senv1, ps1, ns1, phi1) ncl ->
+                 (*print_string "ll:"; Out_channel.flush stdout;*)
+                 let ps11, ps12 = Set.partition_tf ps1 ~f:is_resolved in
+                 Set.fold ps11 ~init:(senv1, ps12, ns1, [ phi1 ])
+                   ~f:(fun (senv, ps, ns, phis) -> function
+                   | Atom.App (_, ts1, _) -> (
+                       let senv2, ps2, ns2, phi2 = ClauseOld.refresh_tvar ncl in
+                       let ns21, ns22 = Set.partition_tf ns2 ~f:is_resolved in
+                       match Set.choose ns21 with
+                       | Some (Atom.App (_, ts2, _)) ->
+                           ( Map.force_merge senv senv2,
+                             Set.union ps ps2,
+                             Set.union ns ns22,
+                             phis
+                             @ (phi2 :: List.map2_exn ts1 ts2 ~f:Formula.neq) )
+                       | _ -> assert false)
                    | _ -> assert false));
-           Set.concat_map clauses_neg_nonlin ~f:(fun (senv1, ps1, ns1, phi1) ->
-               let ns11, ns12 = Set.partition_tf ns1 ~f:is_resolved in
-               Set.fold ns11
-                 ~init:(Set.Poly.singleton (senv1, ps1, ns12, [ phi1 ]))
-                 ~f:(fun acc -> function
-                   | Atom.App (_, ts1, _) ->
-                       Set.concat_map acc ~f:(fun (senv, ps, ns, phis) ->
-                           Set.Poly.map clauses_pos_lin ~f:(fun pcl ->
-                               (*print_string "ln:"; Out_channel.flush stdout;*)
-                               let senv2, ps2, ns2, phi2 =
-                                 ClauseOld.refresh_tvar pcl
-                               in
-                               let ps21, ps22 =
-                                 Set.partition_tf ps2 ~f:is_resolved
-                               in
-                               match Set.choose ps21 with
-                               | Some (Atom.App (_, ts2, _)) ->
-                                   ( Map.force_merge senv senv2,
-                                     Set.union ps ps22,
-                                     Set.union ns ns2,
-                                     phis
-                                     @ phi2
-                                       :: List.map2_exn ts1 ts2 ~f:Formula.neq
-                                   )
-                               | _ -> assert false))
-                   | _ -> assert false));
-         ]
+             Set.concat_map clauses_pos_nonlin
+               ~f:(fun (senv1, ps1, ns1, phi1) ->
+                 let ps11, ps12 = Set.partition_tf ps1 ~f:is_resolved in
+                 Set.fold ps11
+                   ~init:(Set.Poly.singleton (senv1, ps12, ns1, [ phi1 ]))
+                   ~f:(fun acc -> function
+                     | Atom.App (_, ts1, _) ->
+                         Set.concat_map acc ~f:(fun (senv, ps, ns, phis) ->
+                             Set.Poly.map clauses_neg_lin ~f:(fun ncl ->
+                                 (*print_string "nl:"; Out_channel.flush stdout;*)
+                                 let senv2, ps2, ns2, phi2 =
+                                   ClauseOld.refresh_tvar ncl
+                                 in
+                                 let ns21, ns22 =
+                                   Set.partition_tf ns2 ~f:is_resolved
+                                 in
+                                 match Set.choose ns21 with
+                                 | Some (Atom.App (_, ts2, _)) ->
+                                     ( Map.force_merge senv senv2,
+                                       Set.union ps ps2,
+                                       Set.union ns ns22,
+                                       phis
+                                       @ phi2
+                                         :: List.map2_exn ts1 ts2 ~f:Formula.neq
+                                     )
+                                 | _ -> assert false))
+                     | _ -> assert false));
+             Set.concat_map clauses_neg_nonlin
+               ~f:(fun (senv1, ps1, ns1, phi1) ->
+                 let ns11, ns12 = Set.partition_tf ns1 ~f:is_resolved in
+                 Set.fold ns11
+                   ~init:(Set.Poly.singleton (senv1, ps1, ns12, [ phi1 ]))
+                   ~f:(fun acc -> function
+                     | Atom.App (_, ts1, _) ->
+                         Set.concat_map acc ~f:(fun (senv, ps, ns, phis) ->
+                             Set.Poly.map clauses_pos_lin ~f:(fun pcl ->
+                                 (*print_string "ln:"; Out_channel.flush stdout;*)
+                                 let senv2, ps2, ns2, phi2 =
+                                   ClauseOld.refresh_tvar pcl
+                                 in
+                                 let ps21, ps22 =
+                                   Set.partition_tf ps2 ~f:is_resolved
+                                 in
+                                 match Set.choose ps21 with
+                                 | Some (Atom.App (_, ts2, _)) ->
+                                     ( Map.force_merge senv senv2,
+                                       Set.union ps ps22,
+                                       Set.union ns ns2,
+                                       phis
+                                       @ phi2
+                                         :: List.map2_exn ts1 ts2 ~f:Formula.neq
+                                     )
+                                 | _ -> assert false))
+                     | _ -> assert false));
+           ]
     in
     (*Debug.print @@ lazy "done";
       Set.iter cls ~f:(fun c -> Debug.print @@ lazy ("  " ^ ClauseOld.str_of c));*)
@@ -360,12 +362,12 @@ struct
   let or_preds params preds =
     Formula.or_of @@ Set.to_list
     @@ Set.Poly.map preds ~f:(fun (params', phi) ->
-           Formula.rename (tvar_map_of_sort_env_list params' params) phi)
+           Formula.rename (ren_of_sort_env_list params' params) phi)
 
   let and_preds params preds =
     Formula.and_of @@ Set.to_list
     @@ Set.Poly.map preds ~f:(fun (params', phi) ->
-           Formula.rename (tvar_map_of_sort_env_list params' params) phi)
+           Formula.rename (ren_of_sort_env_list params' params) phi)
 
   let elim_pvars_with_lb_ub exi_senv eliminable_pvs clauses =
     let cls = ref Set.Poly.empty in
@@ -483,7 +485,7 @@ struct
       Set.Poly.filter_map pvs ~f:(fun (pvar, (dc, pc, nc)) ->
           if dc = 0 && not (Set.mem dc_pvs pvar) then
             let pn = pc * nc in
-            if pn <= Config.resolution_threshold then
+            if pn <= Config.resolution_threshold (*|| pc = 1 || nc = 1*) then
               Some
                 ( pvar,
                   List.length @@ Logic.Sort.args_of
@@ -597,8 +599,7 @@ struct
               Debug.print
               @@ lazy
                    (sprintf "[elim_pvs] bpvs: %s"
-                   @@ String.concat_set ~sep:","
-                   @@ Set.Poly.map bpvs ~f:Ident.name_of_tvar);
+                      (String.concat_map_set ~sep:"," bpvs ~f:Ident.name_of_tvar));
               Set.concat_map phis
                 ~f:
                   (Formula.cnf_of (*ToDo*) Logic.(to_old_sort_env_map exi_senv))

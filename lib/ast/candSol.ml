@@ -17,25 +17,23 @@ let make cand : t =
 
 let of_old_bind (Ident.Pvar n, (args, phi)) =
   let args_new = of_old_sort_env_list args in
-  let sort = Sort.mk_fun @@ List.map args_new ~f:snd @ [ ExtTerm.SBool ] in
-  ((Ident.Tvar n, sort), Term.mk_lambda args_new @@ ExtTerm.of_old_formula phi)
+  ( (Ident.Tvar n, Sort.mk_fun @@ List.map args_new ~f:snd @ [ ExtTerm.SBool ]),
+    Term.mk_lambda args_new @@ ExtTerm.of_old_formula phi )
 
 let of_old ((params_senv, cand) : CandSolOld.t) : t =
   (of_old_sort_env_map params_senv, Set.Poly.map cand ~f:of_old_bind)
 
 let of_subst params_senv theta : t =
   ( params_senv,
-    Set.Poly.of_list
-    @@ List.map ~f:(fun (var, term) ->
-           ((var, Map.Poly.find_exn params_senv var), term))
-    @@ Map.Poly.to_alist theta )
+    Set.Poly.map ~f:(fun (var, term) ->
+        ((var, Map.Poly.find_exn params_senv var), term))
+    @@ Map.to_set theta )
 
 let to_old_bind ((Ident.Tvar n, _sort), term) =
   let args, term' = Term.let_lam term in
-  let phi =
-    ExtTerm.to_old_formula Map.Poly.empty (Map.of_list_exn args) term' []
-  in
-  (Ident.Pvar n, (to_old_sort_env_list args, phi))
+  ( Ident.Pvar n,
+    ( to_old_sort_env_list args,
+      ExtTerm.to_old_fml Map.Poly.empty (Map.of_list_exn args) term' ) )
 
 let to_old ((params_senv, cand) : t) : CandSolOld.t =
   (to_old_sort_env_map params_senv, Set.Poly.map cand ~f:to_old_bind)
@@ -68,11 +66,11 @@ let str_of (params_senv, cand) : string =
         try
           LogicOld.Formula.str_of @@ Evaluator.simplify
           @@ LogicOld.Formula.rename map
-          @@ ExtTerm.to_old_formula Map.Poly.empty senv term' []
+          @@ ExtTerm.to_old_fml Map.Poly.empty senv term'
         with _ ->
           LogicOld.Term.str_of @@ Evaluator.simplify_term
           @@ LogicOld.Term.rename map
-          @@ ExtTerm.to_old_term Map.Poly.empty senv term' []
+          @@ ExtTerm.to_old_trm Map.Poly.empty senv term'
       in
       sprintf "%s(%s) :=\n  %s" tvar
         (str_of_sort_env_list ExtTerm.str_of_sort params')
@@ -83,35 +81,34 @@ type pcsp = { candidates : (string * (string * string) list * string) list }
 
 let to_yojson (params_senv, cand) =
   pcsp_to_yojson
-  @@ {
-       candidates =
-         Set.to_list
-         @@ Set.Poly.map cand ~f:(fun ((Ident.Tvar tvar, _sort), term) ->
-                let params, term' = Term.let_lam term in
-                let params', map =
-                  LogicOld.normalize_sort_env_list
-                  @@ to_old_sort_env_list params
-                in
-                let params' = of_old_sort_env_list params' in
-                (*ExtTerm.str_of term'*)
-                let str_term' =
-                  let senv =
-                    Map.force_merge params_senv @@ Map.of_list_exn params
-                  in
-                  try
-                    LogicOld.Formula.str_of @@ Evaluator.simplify
-                    @@ LogicOld.Formula.rename map
-                    @@ ExtTerm.to_old_formula Map.Poly.empty senv term' []
-                  with _ ->
-                    LogicOld.Term.str_of @@ Evaluator.simplify_term
-                    @@ LogicOld.Term.rename map
-                    @@ ExtTerm.to_old_term Map.Poly.empty senv term' []
-                in
-                ( tvar,
-                  List.map params' ~f:(fun (tvar, sort) ->
-                      (Ident.name_of_tvar tvar, ExtTerm.str_of_sort sort)),
-                  str_term' ));
-     }
+    {
+      candidates =
+        Set.to_list
+        @@ Set.Poly.map cand ~f:(fun ((Ident.Tvar tvar, _sort), term) ->
+               let params, term' = Term.let_lam term in
+               let params', map =
+                 LogicOld.normalize_sort_env_list @@ to_old_sort_env_list params
+               in
+               let params' = of_old_sort_env_list params' in
+               (*ExtTerm.str_of term'*)
+               let str_term' =
+                 let senv =
+                   Map.force_merge params_senv @@ Map.of_list_exn params
+                 in
+                 try
+                   LogicOld.Formula.str_of @@ Evaluator.simplify
+                   @@ LogicOld.Formula.rename map
+                   @@ ExtTerm.to_old_fml Map.Poly.empty senv term'
+                 with _ ->
+                   LogicOld.Term.str_of @@ Evaluator.simplify_term
+                   @@ LogicOld.Term.rename map
+                   @@ ExtTerm.to_old_trm Map.Poly.empty senv term'
+               in
+               ( tvar,
+                 List.map params' ~f:(fun (tvar, sort) ->
+                     (Ident.name_of_tvar tvar, ExtTerm.str_of_sort sort)),
+                 str_term' ));
+    }
 
 (* replace all non-parametric interger in the term
    ToDo: rewrite *)
@@ -119,12 +116,12 @@ let replace_int_con t =
   let norm t sortmap =
     (* normalization *)
     Logic.ExtTerm.of_old_term @@ Normalizer.normalize_term
-    @@ Logic.ExtTerm.to_old_term Map.Poly.empty sortmap t []
+    @@ Logic.ExtTerm.to_old_trm Map.Poly.empty sortmap t
   in
   let rec replace_int_con' = function
     | Logic.App
         ( Logic.App
-            ( Logic.Con (Logic.IntTerm.Mult, _),
+            ( Logic.Con (Logic.IntTerm.Mul, _),
               Logic.Con (Logic.IntTerm.Int _, _),
               _ ),
           Logic.Var (_, _),
@@ -141,13 +138,7 @@ let replace_int_con t =
         | Logic.IntTerm.Int _ ->
             (*if Stdlib.(a = Z.zero) then t' else*)
             Logic.ExtTerm.mk_var @@ Ident.mk_fresh_tvar ()
-        | Logic.IntTerm.Mult -> t'
-        | Logic.IntTerm.Add -> t'
-        | Logic.IntTerm.Sub -> t'
-        | Logic.IntTerm.Div -> t'
-        | Logic.IntTerm.Mod -> t'
-        | Logic.IntTerm.Neg -> t'
-        | Logic.IntTerm.Abs -> t'
+        | Logic.IntTerm.(Neg | Abs | Add | Sub | Mul | Div _ | Rem _) -> t'
         | Logic.BoolTerm.IfThenElse -> t'
         | _ -> t')
     | Logic.Bin (_, _, _, _, _) -> assert false
@@ -157,9 +148,8 @@ let replace_int_con t =
     | [] -> map
   in
   let main (letlam, term) a b =
-    let m = Map.Poly.singleton a b in
-    let m' = add m letlam in
-    Logic.ExtTerm.mk_lambda letlam @@ replace_int_con' (norm term m')
+    let m = add (Map.Poly.singleton a b) letlam in
+    Logic.ExtTerm.mk_lambda letlam @@ replace_int_con' (norm term m)
   in
   match t with (a, b), term -> ((a, b), main (Logic.ExtTerm.let_lam term) a b)
 

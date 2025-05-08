@@ -1,0 +1,8 @@
+_forall f : bool -> bool. _exists g : bool -> (bool -> bool) -> bool.
+_forall x : bool. (
+    (* f(x) <=> g(x, (fun z -> z)) *)
+    _exists k : bool -> bool. (
+        (_forall z : bool. (k(z) <=> z())) &&
+        (f(x) <=> g(x, k))
+    )
+)

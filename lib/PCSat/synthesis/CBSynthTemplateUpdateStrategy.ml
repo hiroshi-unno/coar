@@ -23,7 +23,7 @@ struct
             in
             Logic.ExtTerm.to_old_fml
               (PCSP.Problem.senv_of APCSP.problem)
-              (Map.Poly.empty, term)
+              Map.Poly.empty term
             |> FT.update_with_solution)
     | _ -> assert false
 end

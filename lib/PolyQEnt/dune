@@ -1,0 +1,7 @@
+(library
+ (name PolyQEnt)
+ (public_name CoAR.PolyQEnt)
+ (preprocess
+  (pps ppx_deriving_yojson))
+ (libraries core CoAR.pCSP CoAR.Printer CoAR.SMT)
+ (modules config solver))

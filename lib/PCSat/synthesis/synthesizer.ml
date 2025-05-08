@@ -1,6 +1,7 @@
 open Core
 open Common
 open Common.Util
+open Ast
 open PCSatCommon
 
 module Config = struct
@@ -100,6 +101,44 @@ module Make
 
   let init () = Synthesizer.init ()
 
+  let check_candidates ?(inst = true) ~id fenv exi_senv (sample : ExClauseSet.t)
+      (cands : CandSol.t list) =
+    let constrs =
+      Set.Poly.map sample ~f:(fun cl ->
+          let senv, phi = ExClause.to_old_formula cl in
+          (cl, Logic.of_old_sort_env_map senv, Logic.ExtTerm.of_old_formula phi))
+    in
+    List.find_map cands ~f:(fun cand ->
+        let sub = CandSol.to_subst cand in
+        let psenv = Map.Poly.key_set @@ fst cand in
+        let cex =
+          Set.find constrs ~f:(fun (_, uni_senv, phi) ->
+              let phi =
+                Logic.ExtTerm.to_old_fml exi_senv uni_senv
+                  (Logic.Term.subst sub phi)
+              in
+              let phi =
+                LogicOld.Formula.forall (LogicOld.get_dummy_term_senv ())
+                @@
+                let bounds =
+                  Map.to_alist @@ Logic.to_old_sort_env_map uni_senv
+                in
+                (if inst then
+                   LogicOld.Formula.subst
+                     (Map.Poly.of_alist_exn
+                     @@ List.map bounds ~f:(fun (x, s) ->
+                            (x, LogicOld.Term.mk_dummy s)))
+                 else LogicOld.Formula.forall bounds)
+                @@ phi
+              in
+              assert (Set.is_subset (LogicOld.Formula.fvs_of phi) ~of_:psenv);
+              not
+              @@ Evaluator.is_valid (Z3Smt.Z3interface.is_valid ~id fenv) phi)
+        in
+        match cex with
+        | None -> None
+        | Some (clause, _, _) -> Some (cand, clause))
+
   let check_candidates e =
     if config.check_candidates && not config.refine_candidates then (
       let open State.Monad_infix in
@@ -107,7 +146,7 @@ module Make
       @@ lazy "** checking whether the candidates satisfy the examples";
       Ok e >>=? fun vs cands ->
       match
-        ExClauseSet.check_candidates ~id ~inst:true (VersionSpace.fenv_of vs)
+        check_candidates ~id ~inst:true vs.fenv
           (PCSP.Problem.senv_of APCSP.problem)
           (VersionSpace.examples_of vs)
           (List.map ~f:fst cands)

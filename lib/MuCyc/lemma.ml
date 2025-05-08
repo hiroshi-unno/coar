@@ -73,14 +73,14 @@ let generate_from_preds _preds = Set.Poly.empty
   List.map of_psub_elem psub
   |> List.remove_if not_useful (* Remove ... |- true *)*)
 
-(*let forall_elim tenv lemma =
-  let with_g = Sequent.forall_elim tenv @@ {
-      lemma.sequent with
-      left_atms(*ToDo*) =
-        [Sequent.guard @@ Atom.pvar_app_of_senv (guard_pvar lemma)] @
-        lemma.sequent.left_atms }
-  in
-  { lemma with sequent = { lemma.sequent with left_phi = with_g.left_phi } }*)
+(* let forall_elim tenv lemma =
+   let with_g = Sequent.forall_elim tenv {
+       lemma.sequent with
+       left_atms(*ToDo*) =
+         [Sequent.guard @@ Atom.pvar_app_of_senv (guard_pvar lemma)] @
+         lemma.sequent.left_atms }
+   in
+   { lemma with sequent = { lemma.sequent with left_phi = with_g.left_phi } } *)
 
 (** p(x,y,z), q(y,z,w), x=0 |- false
     ~> p(v1,v2,v3), q(v4,v5,v6), v1=0 /\ v2=v4 /\ v3=v5 |- false *)

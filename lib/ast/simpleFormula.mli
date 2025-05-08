@@ -1,4 +1,3 @@
-open Core
 open LogicOld
 
 type t =
@@ -56,8 +55,8 @@ val let_bind : t -> Formula.binder * sort_env_list * t
 val simplify : t -> t
 val of_formula : Formula.t -> t
 val formula_of : t -> Formula.t
-val get_ftv : t -> Ident.tvar Set.Poly.t
-val get_fpv : t -> Ident.pvar Set.Poly.t
+val get_ftv : t -> Ident.tvar_set
+val get_fpv : t -> Ident.pvar_set
 val mk_branch_with_simplification_one : Formula.binop -> t list -> t
 val mk_bind_with_filter : Formula.binder -> sort_env_list -> t -> t
 val neg : t -> t

@@ -1,0 +1,7 @@
+_forall p : bool -> bool -> bool.
+(
+((_forall x : bool. _forall y : bool. (p(x, y) => p(y, x))) &&
+ (_forall x : bool. _forall y : bool. ((p(x, y) && p(y, x)) => x = y)))
+<=>
+(_forall x : bool. _forall y : bool. (p(x, y) => x = y))
+)

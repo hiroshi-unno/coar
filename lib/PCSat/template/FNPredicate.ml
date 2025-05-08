@@ -4,7 +4,7 @@ open Common.Ext
 open Common.Util
 open Ast
 open Ast.LogicOld
-open PCSatCommon.HypSpace
+open Ast.HypSpace
 open Function
 
 module Config = struct
@@ -217,10 +217,10 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
       !param.depth !param.ext
       (match !param.ubec with None -> "N/A" | Some ubec -> Z.to_string ubec)
       (match !param.ubed with None -> "N/A" | Some ubed -> Z.to_string ubed)
-      (String.concat_set ~sep:"," @@ Set.Poly.map !param.es ~f:Z.to_string)
+      (String.concat_map_set ~sep:"," !param.es ~f:Z.to_string)
       (match !param.ubcc with None -> "N/A" | Some ubcc -> Z.to_string ubcc)
       (match !param.ubcd with None -> "N/A" | Some ubcd -> Z.to_string ubcd)
-      (String.concat_set ~sep:"," @@ Set.Poly.map !param.cs ~f:Z.to_string)
+      (String.concat_map_set ~sep:"," !param.cs ~f:Z.to_string)
 
   let in_space () =
     SolSpace.in_space Arg.name SolSpace.ND !param.nd Arg.sol_space
@@ -230,8 +230,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
   let adjust_quals ~tag quals =
     let params = params_of ~tag in
     let eq_quals =
-      Qualifier.AllTheory.mk_eq_quals_for_ith_param params
-        (List.length params - 1)
+      Qual.mk_eq_quals_for_ith_param params (List.length params - 1)
     in
     Set.union eq_quals
     @@ Set.Poly.filter_map quals ~f:(fun phi ->
@@ -253,34 +252,36 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
 
   let update_hspace ~tag hspace =
     ignore tag;
-    Qualifier.AllTheory.qualifiers_of ~fenv:Arg.fenv !param.depth hspace
+    qualifiers_of ~fenv:Arg.fenv !param.depth hspace
 
   let gen_template ~tag ~ucore hspace =
     ignore tag;
     ignore ucore;
-    let ( temp_params,
-          hole_qualifiers_map,
-          tmpl,
-          constr_of_expr_dt_bound,
-          cnstr_of_expr_coeffs,
-          cnstr_of_expr_const,
-          cnstr_of_cond_coeffs,
-          cnstr_of_cond_const ) =
-      Generator.gen_fn_predicate config.ignore_bool (Set.to_list hspace.quals)
-        (Set.to_list hspace.terms)
-        (Generator.mk_tp
-           (List.init !param.nd ~f:(fun _ -> !param.nc))
-           !param.depth !param.ext !param.ubec !param.ubed !param.es !param.ubcc
-           !param.ubcd !param.cs)
-        (Generator.mk_tsp
-           (Option.map config.lower_bound_expr_coeff ~f:Z.of_int)
-           (Option.map config.lower_bound_cond_coeff ~f:Z.of_int)
-           (Option.map config.bound_each_expr_coeff ~f:Z.of_int)
-           (Option.map config.bound_each_cond_coeff ~f:Z.of_int))
+    let template =
+      Templ.gen_fn_predicate ~ignore_bool:config.ignore_bool
+        {
+          terms = Set.to_list hspace.terms;
+          quals = Set.to_list hspace.quals;
+          shp = List.init !param.nd ~f:(fun _ -> !param.nc);
+          depth = !param.depth;
+          ext = !param.ext;
+          ubec = !param.ubec;
+          ubed = !param.ubed;
+          es = !param.es;
+          ubcc = !param.ubcc;
+          ubcd = !param.ubcd;
+          cs = !param.cs;
+        }
+        {
+          lbec = Option.map config.lower_bound_expr_coeff ~f:Z.of_int;
+          lbcc = Option.map config.lower_bound_cond_coeff ~f:Z.of_int;
+          beec = Option.map config.bound_each_expr_coeff ~f:Z.of_int;
+          becc = Option.map config.bound_each_cond_coeff ~f:Z.of_int;
+        }
         hspace.params
     in
-    (* let tmpl =
-       Formula.elim_ite tmpl
+    (* let pred =
+       Formula.elim_ite template.pred
        |> Evaluator.simplify
        |> Z3Smt.Z3interface.simplify ~id Arg.fenv
        in *)
@@ -288,47 +289,47 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     @@ lazy
          (sprintf "[%s] predicate template:\n  %s"
             (Ident.name_of_tvar @@ Arg.name)
-            (Formula.str_of tmpl));
+            (Formula.str_of template.pred));
     Debug.print
     @@ lazy
-         (sprintf "[%s] constr_of_expr_dt_bound:\n  %s"
+         (sprintf "[%s] expr_params_bounds:\n  %s"
             (Ident.name_of_tvar @@ Arg.name)
-            (Formula.str_of constr_of_expr_dt_bound));
+            (Formula.str_of template.expr_params_bounds));
     Debug.print
     @@ lazy
-         (sprintf "[%s] cnstr_of_expr_coeffs:\n  %s"
+         (sprintf "[%s] expr_coeffs_bounds:\n  %s"
             (Ident.name_of_tvar @@ Arg.name)
-            (Formula.str_of cnstr_of_expr_coeffs));
+            (Formula.str_of template.expr_coeffs_bounds));
     Debug.print
     @@ lazy
-         (sprintf "[%s] cnstr_of_expr_const:\n  %s"
+         (sprintf "[%s] expr_const_bounds:\n  %s"
             (Ident.name_of_tvar @@ Arg.name)
-            (Formula.str_of cnstr_of_expr_const));
+            (Formula.str_of template.expr_const_bounds));
     Debug.print
     @@ lazy
-         (sprintf "[%s] cnstr_of_cond_coeffs:\n  %s"
+         (sprintf "[%s] cond_coeffs_bounds:\n  %s"
             (Ident.name_of_tvar @@ Arg.name)
-            (Formula.str_of cnstr_of_cond_coeffs));
+            (Formula.str_of template.cond_coeffs_bounds));
     Debug.print
     @@ lazy
-         (sprintf "[%s] cnstr_of_cond_const:\n  %s"
+         (sprintf "[%s] cond_const_bounds:\n  %s"
             (Ident.name_of_tvar @@ Arg.name)
-            (Formula.str_of cnstr_of_cond_const));
+            (Formula.str_of template.cond_const_bounds));
     let tmpl =
       Logic.(Term.mk_lambda (of_old_sort_env_list hspace.params))
-      @@ Logic.ExtTerm.of_old_formula tmpl
+      @@ Logic.ExtTerm.of_old_formula template.pred
     in
     ( (ExprCondConjDepthExt, tmpl),
       [
-        (ExprCoeff, Logic.ExtTerm.of_old_formula cnstr_of_expr_coeffs);
-        (ExprConst, Logic.ExtTerm.of_old_formula cnstr_of_expr_const);
-        (CondCoeff, Logic.ExtTerm.of_old_formula cnstr_of_cond_coeffs);
-        (CondConst, Logic.ExtTerm.of_old_formula cnstr_of_cond_const);
+        (ExprCoeff, Logic.ExtTerm.of_old_formula template.expr_coeffs_bounds);
+        (ExprConst, Logic.ExtTerm.of_old_formula template.expr_const_bounds);
+        (CondCoeff, Logic.ExtTerm.of_old_formula template.cond_coeffs_bounds);
+        (CondConst, Logic.ExtTerm.of_old_formula template.cond_const_bounds);
         ( ExprCondConjDepthExt,
-          Logic.ExtTerm.of_old_formula constr_of_expr_dt_bound );
+          Logic.ExtTerm.of_old_formula template.expr_params_bounds );
       ],
-      temp_params,
-      hole_qualifiers_map )
+      template.templ_params,
+      template.hole_quals_map )
 
   let restart (_param, actions) =
     Debug.print
@@ -681,7 +682,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
           (if config.fix_upper_bound then param_actions
            else increase_cond_const config.threshold_cond_const param_actions)
           labels
-    | QDep :: labels -> inner param_actions labels
+    | QualDep :: labels -> inner param_actions labels
     | TimeOut :: _labels -> param_actions (* z3 may unexpectedly time out*)
     | _ -> assert false
 

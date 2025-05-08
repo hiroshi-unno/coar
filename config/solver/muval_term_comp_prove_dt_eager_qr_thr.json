@@ -30,6 +30,20 @@
         "random_ex_bound": 0,
         "send_lower_bounds": false,
         "output_iteration": false,
-        "output_yes_no": true
+        "output_yes_no": true,
+        "prob_prefp_templ_num_conds": 1,
+        "prob_prefp_templ_use_orig_ite": false,
+        "prob_prefp_templ_cond_degree": 1,
+        "prob_prefp_templ_term_degree": 1,
+        "prob_rank_templ_num_conds": 1,
+        "prob_rank_templ_use_orig_ite": false,
+        "prob_rank_templ_cond_degree": 1,
+        "prob_rank_templ_term_degree": 1,
+        "prob_postfp_templ_num_conds": 1,
+        "prob_postfp_templ_use_orig_ite": false,
+        "prob_postfp_templ_cond_degree": 1,
+        "prob_postfp_templ_term_degree": 1,
+        "prob_underapprox_templ_cond_degree": 1,
+        "prob_underapprox_templ_term_degree": null
     }
 ]

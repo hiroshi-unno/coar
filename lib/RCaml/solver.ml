@@ -100,7 +100,7 @@ module Make (Config : Config.ConfigType) : SolverType = struct
         (* (match solution with
            | PCSP.Problem.Sat term_map ->
             Map.Poly.iteri term_map ~f:(fun ~key ~data ->
-               let open Ast in let open Logic in
+               let open Ast in let open Ast.Logic in
                Debug.print @@ lazy
                  (sprintf "%s : %s" (Ident.name_of_tvar key) (ExtTerm.str_of data)))
            | _ -> ()); *)

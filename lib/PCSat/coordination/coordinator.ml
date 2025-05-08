@@ -201,6 +201,11 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
 
   exception NoSolution
 
+  let solve =
+    let module Z3interface =
+      Z3Smt.Z3interfaceNew.Make (Z3Smt.Z3interfaceNew.ExtTerm) in
+    fun senv phi -> Z3interface.check_sat [ phi ] senv (Z3.mk_context [])
+
   let eliminate_fn_preds pcsp =
     let clauses = PCSP.Problem.clauses_of pcsp in
     let cls1, cls2 =
@@ -255,13 +260,13 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                  @@ Formula.mk_exists_if_bounded [ ret ]
                  @@ Formula.aconv_tvar body
                in
-               let open QSMT.StrategySynthesis in
+               let open StratSynth in
                match
                  LIA.formula_of_term @@ Logic.ExtTerm.of_old_formula phi
                with
                | Some phi -> (
                    let p, s =
-                     LIAStrategySynthesis.nondet_strategy_synthesis phi
+                     LIAStrategySynthesis.nondet_strategy_synthesis solve phi
                    in
                    match p with
                    | SAT -> raise NoSolution
@@ -321,7 +326,8 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                    | None -> First cls
                    | Some phi -> (
                        let p, s =
-                         LRAStrategySynthesis.nondet_strategy_synthesis phi
+                         LRAStrategySynthesis.nondet_strategy_synthesis solve
+                           phi
                        in
                        match p with
                        | SAT -> raise NoSolution

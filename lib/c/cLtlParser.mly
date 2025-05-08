@@ -6,7 +6,7 @@
 
   let funname_nondet = "__VERIFIER_nondet_int"
   let stmt_of_statements = Statement.of_statements
-  let formula_of_term term = Formula.mk_atom (T_bool.mk_neq term (T_int.mk_int Z.zero ~info:Dummy) ~info:Dummy) ~info:Dummy
+  let formula_of_term term = Formula.neq term (T_int.mk_int Z.zero ~info:Dummy)
   let term_of_string str = let varname = sprintf "\"%s\"" str in Term.mk_var (Ident.Tvar varname) T_int.SRefInt ~info:Dummy
   let is_nondet term =
     if Term.is_funcall term then
@@ -209,7 +209,7 @@ Statement:
       let varname = Statement.varname_of_assign cond_assign_stmt in
       let tvar = Ident.Tvar varname in
       let term = Term.mk_var tvar T_int.SInt ~info:Dummy in
-      let cond_fml = Formula.mk_atom (T_bool.mk_neq term (T_int.mk_int Z.zero ~info:Dummy) ~info:Dummy) ~info:Dummy in
+      let cond_fml = Formula.neq term (T_int.mk_int Z.zero ~info:Dummy) in
       stmt_of_statements [
         cond_assign_stmt;
         Statement.mk_if cond_fml t_stmt (Statement.mk_nop ())
@@ -231,7 +231,7 @@ IfElse:
       let varname = Statement.varname_of_assign cond_assign_stmt in
       let tvar = Ident.Tvar varname in
       let term = Term.mk_var tvar T_int.SInt ~info:Dummy in
-      let cond_fml = Formula.mk_atom (T_bool.mk_neq term (T_int.mk_int Z.zero ~info:Dummy) ~info:Dummy) ~info:Dummy in
+      let cond_fml = Formula.neq term (T_int.mk_int Z.zero ~info:Dummy) in
       fun f_stmt ->
         stmt_of_statements [
           cond_assign_stmt;
@@ -419,15 +419,15 @@ T_int:
     t=T_intAddSub { t }
 
 T_intAddSub:
-    t=T_intMultDivMod { t }
-  | t1=T_intAddSub ADD t2=T_intMultDivMod { T_int.mk_add t1 t2 ~info:Dummy }
-  | t1=T_intAddSub MINUS t2=T_intMultDivMod { T_int.mk_sub t1 t2 ~info:Dummy }
+    t=T_intMulDivMod { t }
+  | t1=T_intAddSub ADD t2=T_intMulDivMod { T_int.mk_add t1 t2 ~info:Dummy }
+  | t1=T_intAddSub MINUS t2=T_intMulDivMod { T_int.mk_sub t1 t2 ~info:Dummy }
 
-T_intMultDivMod:
+T_intMulDivMod:
     t=T_intUnary { t }
-  | t1=T_intMultDivMod ASTERISK t2=T_intUnary { T_int.mk_mult t1 t2 ~info:Dummy }
-  | t1=T_intMultDivMod DIV t2=T_intUnary { T_int.mk_div t1 t2 ~info:Dummy }
-  | t1=T_intMultDivMod MOD t2=T_intUnary { T_int.mk_mod t1 t2 ~info:Dummy }
+  | t1=T_intMulDivMod ASTERISK t2=T_intUnary { T_int.mk_mul t1 t2 ~info:Dummy }
+  | t1=T_intMulDivMod DIV t2=T_intUnary { T_int.mk_div Value.Truncated t1 t2 ~info:Dummy }
+  | t1=T_intMulDivMod MOD t2=T_intUnary { T_int.mk_rem Value.Truncated t1 t2 ~info:Dummy }
 
 T_intUnary:
     t=T_intParen { t }

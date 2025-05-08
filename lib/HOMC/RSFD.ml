@@ -182,8 +182,7 @@ let pr_rules (trs : TTA.trs) ppf (rules : t) =
   else
     List.iter rules ~f:(fun (id, (ids, t)) ->
         Format.fprintf ppf "%s -> %a.@,"
-          (String.concat ~sep:" "
-             (List.map ~f:Ident.name_of_tvar @@ (id :: ids)))
+          (String.concat_map_list ~sep:" " ~f:Ident.name_of_tvar (id :: ids))
           (pr_aux false trs) t)
 
 let verbose_fail = ref false

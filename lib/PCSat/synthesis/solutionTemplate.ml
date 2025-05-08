@@ -426,16 +426,24 @@ module Make
                      Logic.ExtTerm.simplify_formula Map.Poly.empty
                        (Map.Poly.of_alist_exn senv)
                      @@ Logic.ExtTerm.subst temp_param_sub
-                     @@ Template.Generator.gen_from_qualifiers (senv, quals) ))
+                     @@ Templ.gen_from_qualifiers (senv, quals) ))
         in
-        (*Debug.print @@ lazy ("size before: " ^ string_of_int @@ Logic.ExtTerm.ast_size term);*)
-        (* Debug.print @@ lazy (Logic.ExtTerm.str_of term); *)
+        if false then (
+          Debug.print
+          @@ lazy
+               ("size before: " ^ string_of_int @@ Logic.ExtTerm.ast_size term);
+          Debug.print @@ lazy (Logic.ExtTerm.str_of term));
         let term' = Logic.ExtTerm.subst temp_param_sub term in
-        (*Debug.print @@ lazy ("size mid: " ^ string_of_int @@ Logic.ExtTerm.ast_size term');*)
-        (* Debug.print @@ lazy (Logic.ExtTerm.str_of term'); *)
+        if false then (
+          Debug.print
+          @@ lazy ("size mid: " ^ string_of_int @@ Logic.ExtTerm.ast_size term');
+          Debug.print @@ lazy (Logic.ExtTerm.str_of term'));
         let term' = Logic.ExtTerm.subst hole_sub term' in
-        (*Debug.print @@ lazy ("size after: " ^ string_of_int @@ Logic.ExtTerm.ast_size term');*)
-        (* Debug.print @@ lazy (Logic.ExtTerm.str_of term'); *)
+        if false then (
+          Debug.print
+          @@ lazy
+               ("size after: " ^ string_of_int @@ Logic.ExtTerm.ast_size term');
+          Debug.print @@ lazy (Logic.ExtTerm.str_of term'));
         assert (Set.is_empty @@ Logic.ExtTerm.fvs_of term');
         (sort, term'))
 
@@ -444,10 +452,16 @@ module Make
     let fvs = Set.Poly.union_list @@ List.map ~f:LogicOld.Term.tvs_of args in
     let fenv = Map.Poly.empty in
     (*TODO: generate fenv*)
-    if Set.is_empty @@ Set.inter fvs unknowns then
+    if Set.is_empty @@ Set.inter fvs unknowns then (
       let phi =
         let sub =
-          Map.Poly.of_alist_exn @@ List.zip_exn (List.map ~f:fst params) args
+          try
+            Map.Poly.of_alist_exn @@ List.zip_exn (List.map ~f:fst params) args
+          with _ ->
+            failwith
+            @@ sprintf "old_eval_qual: %s -> %s"
+                 (str_of_sort_env_list Term.str_of_sort params)
+                 (List.to_string ~f:Term.str_of args)
         in
         Formula.subst sub phi
       in
@@ -455,14 +469,18 @@ module Make
       | Some true -> Logic.ExtTerm.(geq_of (mk_var key) (zero ()))
       | Some false -> Logic.ExtTerm.(leq_of (mk_var key) (zero ()))
       | None ->
-          (*Debug.print @@ lazy (Formula.str_of phi ^ " couldn't be evaluated.  This may cause a violation of the progress property.");*)
+          if false then
+            Debug.print
+            @@ lazy
+                 (Formula.str_of phi
+                ^ " couldn't be evaluated.  This may cause a violation of the \
+                   progress property.");
           if not polarity then Logic.ExtTerm.mk_bool true
-          else Logic.ExtTerm.(eq_of SInt (mk_var key) (zero ()))
+          else Logic.ExtTerm.(eq_of SInt (mk_var key) (zero ())))
     else (*never use*) Logic.ExtTerm.(eq_of SInt (mk_var key) (zero ()))
 
-  let eval_qual tt fenv qdeps polarity unknowns atom (key, (qi, _params, _phi))
-      =
-    if Set.is_empty @@ Set.inter (ExAtom.tvs_of atom) unknowns then
+  let eval_qual tt fenv qdeps polarity unknowns atom (key, (qi, _params, phi)) =
+    if Set.is_empty @@ Set.inter (ExAtom.tvs_of atom) unknowns then (
       (*Debug.print @@ lazy "before";*)
       let atom = ExAtom.normalize_params atom in
       (*Debug.print @@ lazy "mid";*)
@@ -473,20 +491,25 @@ module Make
       | 1 -> Logic.ExtTerm.(geq_of (mk_var key) (zero ()))
       | -1 -> Logic.ExtTerm.(leq_of (mk_var key) (zero ()))
       | _ ->
-          (*Debug.print @@ lazy (ExAtom.str_of atom ^ " on " ^ Formula.str_of phi ^ " couldn't be evaluated.  This may cause a violation of the progress property.");*)
+          if false then
+            Debug.print
+            @@ lazy
+                 (ExAtom.str_of atom ^ " on " ^ Formula.str_of phi
+                ^ " couldn't be evaluated.  This may cause a violation of the \
+                   progress property.");
           if not polarity then Logic.ExtTerm.mk_bool true
-          else Logic.ExtTerm.(eq_of SInt (mk_var key) (zero ()))
+          else Logic.ExtTerm.(eq_of SInt (mk_var key) (zero ())))
     else (*never use*) Logic.ExtTerm.(eq_of SInt (mk_var key) (zero ()))
 
   let cgen_from_fcon template_map qualifiers_map unknowns polarity
       (param_senv, phi) =
-    try
-      Debug.print @@ lazy "[cgen_from_fcon] generating hole map";
-      let hole_map =
+    Debug.print
+    @@ lazy ("[cgen_from_fcon] generating hole map for: " ^ Formula.str_of phi);
+    let hole_map =
+      let hole_maps =
         Formula.fvar_apps_of phi |> Set.to_list
         |> List.concat_map ~f:(fun fvar_app ->
-               let tvar, sorts, args, _ = Term.let_fvar_app fvar_app in
-               let arg_sorts, _ = List.rest_last sorts in
+               let tvar, sargs, _, args, _ = Term.let_fvar_app fvar_app in
                let hole_qualifiers_map =
                  Map.Poly.find_exn qualifiers_map tvar
                in
@@ -495,7 +518,7 @@ module Make
                      if List.is_empty quals then
                        let senv =
                          Logic.of_old_sort_env_list
-                         @@ sort_env_list_of_sorts arg_sorts
+                         @@ sort_env_list_of_sorts sargs
                        in
                        Logic.Term.mk_lambda senv @@ Logic.BoolTerm.mk_bool true
                      else
@@ -507,22 +530,27 @@ module Make
                        @@ List.map quals
                             ~f:
                               (old_eval_qual polarity unknowns
-                                 ( param_senv,
-                                   Formula.mk_true (),
-                                   arg_sorts,
-                                   args )) )))
-        |> Map.Poly.of_alist_exn
+                                 (param_senv, Formula.mk_true (), sargs, args))
+                   )))
       in
-      let term = Logic.ExtTerm.of_old_formula phi in
-      (*Debug.print @@ lazy ("size before: " ^ string_of_int @@ Logic.ExtTerm.ast_size term);*)
-      let term' = Logic.ExtTerm.subst template_map term in
-      (*Debug.print @@ lazy ("size mid: " ^ string_of_int @@ Logic.ExtTerm.ast_size term');*)
-      let term' = Logic.ExtTerm.subst hole_map term' in
-      (*Debug.print @@ lazy ("size after: " ^ string_of_int @@ Logic.ExtTerm.ast_size term');*)
-      term'
-    with _ ->
-      (*ToDo*)
-      failwith "multiple occurrences of a function variable not supported"
+      try Map.Poly.of_alist_exn hole_maps
+      with _ ->
+        (*ToDo*)
+        failwith "multiple occurrences of a function variable not supported"
+    in
+    let term = Logic.ExtTerm.of_old_formula phi in
+    if false then
+      Debug.print
+      @@ lazy ("size before: " ^ string_of_int @@ Logic.ExtTerm.ast_size term);
+    let term' = Logic.ExtTerm.subst template_map term in
+    if false then
+      Debug.print
+      @@ lazy ("size mid: " ^ string_of_int @@ Logic.ExtTerm.ast_size term');
+    let term' = Logic.ExtTerm.subst hole_map term' in
+    if false then
+      Debug.print
+      @@ lazy ("size after: " ^ string_of_int @@ Logic.ExtTerm.ast_size term');
+    term'
 
   let cgen_from_ppapp vs template_map qualifiers_map unknowns polarity atom =
     let pvar, sorts =
@@ -533,8 +561,8 @@ module Make
     let hole_qualifiers_map =
       Map.Poly.find_exn qualifiers_map (Ident.pvar_to_tvar pvar)
     in
-    let tt = TruthTable.get_table (VersionSpace.truth_table_of vs) pvar in
-    let fenv = VersionSpace.fenv_of vs in
+    let tt = TruthTable.get_table vs.VersionSpace.truth_table pvar in
+    let fenv = vs.fenv in
     let qdeps = VersionSpace.qdeps_of pvar vs in
     Debug.print @@ lazy "[cgen_from_ppapp] generating hole map";
     let hole_map =
@@ -561,8 +589,7 @@ module Make
           List.map ~f:Term.fvar_apps_of args
           |> Set.Poly.union_list |> Set.to_list
           |> List.concat_map ~f:(fun fvar_app ->
-                 let tvar, sorts, args, _ = Term.let_fvar_app fvar_app in
-                 let arg_sorts, _ = List.rest_last sorts in
+                 let tvar, sargs, _, args, _ = Term.let_fvar_app fvar_app in
                  let hole_qualifiers_map =
                    Map.Poly.find_exn qualifiers_map tvar
                  in
@@ -571,7 +598,7 @@ module Make
                        if List.is_empty quals then
                          let senv =
                            Logic.of_old_sort_env_list
-                           @@ sort_env_list_of_sorts arg_sorts
+                           @@ sort_env_list_of_sorts sargs
                          in
                          Logic.Term.mk_lambda senv
                          @@ Logic.BoolTerm.mk_bool true
@@ -585,17 +612,21 @@ module Make
                          @@ List.map quals
                               ~f:
                                 (old_eval_qual polarity unknowns
-                                   ( param_senv,
-                                     Formula.mk_true (),
-                                     arg_sorts,
-                                     args )) )))
+                                   (param_senv, Formula.mk_true (), sargs, args))
+                     )))
     in
     let _, term = ExAtom.to_formula polarity atom in
-    (*Debug.print @@ lazy ("size before: " ^ string_of_int @@ Logic.ExtTerm.ast_size term);*)
+    if false then
+      Debug.print
+      @@ lazy ("size before: " ^ string_of_int @@ Logic.ExtTerm.ast_size term);
     let term' = Logic.Term.subst template_map term in
-    (*Debug.print @@ lazy ("size mid: " ^ string_of_int @@ Logic.ExtTerm.ast_size term');*)
+    if false then
+      Debug.print
+      @@ lazy ("size mid: " ^ string_of_int @@ Logic.ExtTerm.ast_size term');
     let term' = Logic.Term.subst hole_map term' in
-    (*Debug.print @@ lazy ("size after: " ^ string_of_int @@ Logic.ExtTerm.ast_size term');*)
+    if false then
+      Debug.print
+      @@ lazy ("size after: " ^ string_of_int @@ Logic.ExtTerm.ast_size term');
     term'
 
   let cgen_from_exatom vs template_map qualifiers_map unknowns polarity =
@@ -624,7 +655,7 @@ module Make
         assert (num > 0);
         if Map.Poly.is_empty param_senv then phi
         else
-          let open Logic in
+          let open Ast.Logic in
           BoolTerm.forall (Map.Poly.to_alist param_senv)
           @@ BoolTerm.and_of
           @@ List.init num ~f:(fun k ->
@@ -656,7 +687,10 @@ module Make
       Z3.mk_context [ ("model", "true"); ("unsat_core", "true") ]
       (*dummy*)
     in
-    let solver = Z3.Solver.mk_solver ctx None (*dummy*) in
+    let solver =
+      Z3.Solver.mk_solver ctx None
+      (*dummy*)
+    in
     let z3dtenv =
       Z3Smt.Z3interface.z3_dtenv_of_dtenv ctx
       @@ PCSP.Problem.dtenv_of APCSP.problem
@@ -759,9 +793,8 @@ module Make
             Set.filter (ExClause.tvs_of clause) ~f:(Map.Poly.mem templates)
           in
           let constr =
-            ( temp_param_senv,
-              cgen_from_pex vs template_map qualifiers_map unknowns clause )
-            |> Logic.ExtTerm.to_old_fml Map.Poly.empty
+            cgen_from_pex vs template_map qualifiers_map unknowns clause
+            |> Logic.ExtTerm.to_old_fml Map.Poly.empty temp_param_senv
             |> Evaluator.simplify
           in
           Debug.print
@@ -792,9 +825,8 @@ module Make
           let key = get_key () in
           let constr =
             let constr =
-              ( temp_param_senv,
-                cgen_from_pex vs template_map qualifiers_map unknowns clause )
-              |> Logic.ExtTerm.to_old_fml Map.Poly.empty
+              cgen_from_pex vs template_map qualifiers_map unknowns clause
+              |> Logic.ExtTerm.to_old_fml Map.Poly.empty temp_param_senv
               |> Evaluator.simplify
             in
             if
@@ -831,11 +863,11 @@ module Make
         |> Set.concat_map ~f:(snd >> Formula.tvs_of)
         |> Set.concat_map ~f:(fun (Ident.Tvar x) ->
                Set.Poly.of_list
-               @@ [
-                    Ident.Tvar x;
-                    Ident.Tvar (x ^ "#pos" (*ToDo*));
-                    Ident.Tvar (x ^ "#neg" (*ToDo*));
-                  ])
+                 [
+                   Ident.Tvar x;
+                   Ident.Tvar (x ^ "#pos" (*ToDo*));
+                   Ident.Tvar (x ^ "#neg" (*ToDo*));
+                 ])
       in
       Map.Poly.fold temp_param_cnstrs
         ~init:(key_constr_map, key_tvar_update_list_map)
@@ -857,8 +889,7 @@ module Make
                              assert (Ident.is_parameter key);
                              if Set.mem used_param_senv key then None
                              else Some (Logic.mk_old_dummy data)))
-                @@ Logic.ExtTerm.to_old_fml Map.Poly.empty
-                     (temp_param_senv, cnstr)
+                @@ Logic.ExtTerm.to_old_fml Map.Poly.empty temp_param_senv cnstr
               in
               if RLCfg.config.enable && RLCfg.config.show_unsat_core then (
                 RLConfig.lock ();
@@ -969,7 +1000,7 @@ module Make
         ->
         let (module FT) = Map.Poly.find_exn template_modules tvar in
         let pvar = Ident.tvar_to_pvar tvar in
-        let tt = TruthTable.get_table (VersionSpace.truth_table_of vs) pvar in
+        let tt = TruthTable.get_table vs.VersionSpace.truth_table pvar in
         let template, temp_param_cnstrs', temp_param_senv', hole_qualifiers_map
             =
           FT.gen_template ~tag:(PCSP.Problem.tag_of APCSP.problem tvar) ~ucore
@@ -980,7 +1011,7 @@ module Make
               ( tvar,
                 List.map quals ~f:(fun (tvar, (env, phi)) ->
                     ( tvar,
-                      ( TruthTable.index_of_qual ~id tt (VersionSpace.fenv_of vs)
+                      ( TruthTable.index_of_qual ~id tt vs.fenv
                           (VersionSpace.qdeps_of pvar vs)
                           phi,
                         env,
@@ -1008,7 +1039,7 @@ module Make
   let reduce_quals_terms vs =
     if config.reduce_quals_terms then (
       let reduced_quals_map =
-        Hashtbl.Poly.map (VersionSpace.truth_table_of vs) ~f:(fun tt ->
+        Hashtbl.Poly.map vs.VersionSpace.truth_table ~f:(fun tt ->
             let qlist = List.init (TruthTable.length_of_quals tt) ~f:Fn.id in
             let alist =
               Map.Poly.of_alist_exn
@@ -1043,7 +1074,14 @@ module Make
         let pvar = Ident.tvar_to_pvar key in
         let quals =
           match Map.Poly.find extracted_qualifiers pvar with
-          | Some (_, quals) -> FT.adjust_quals ~tag quals
+          | Some (_, quals) ->
+              if true then
+                Debug.print
+                @@ lazy
+                     (sprintf "adjusting qualifiers for %s:\n%s\n"
+                        (Ident.name_of_tvar key)
+                        (String.concat_map_set ~sep:"\n" ~f:Formula.str_of quals));
+              FT.adjust_quals ~tag quals
           | None -> Set.Poly.empty
         in
         if true then
@@ -1051,8 +1089,7 @@ module Make
           @@ lazy
                (sprintf "adding qualifiers for %s:\n%s\n"
                   (Ident.name_of_tvar key)
-                  (String.concat_set ~sep:"\n"
-                     (Set.Poly.map ~f:Formula.str_of quals)));
+                  (String.concat_map_set ~sep:"\n" ~f:Formula.str_of quals));
         let terms =
           match Map.Poly.find extracted_terms pvar with
           | Some (_, terms) -> terms
@@ -1069,13 +1106,13 @@ module Make
         let ref_quals, ref_terms = Map.Poly.find_exn quals_terms_map key in
         let hspace =
           FT.update_hspace ~tag
-          @@ {
-               (VersionSpace.hspace_of_pvar pvar vs) with
-               params = FT.params_of ~tag;
-               quals = !ref_quals;
-               terms = !ref_terms;
-               consts = extracted_consts;
-             }
+            {
+              (VersionSpace.hspace_of_pvar pvar vs) with
+              params = FT.params_of ~tag;
+              quals = !ref_quals;
+              terms = !ref_terms;
+              consts = extracted_consts;
+            }
         in
         Debug.print
         @@ lazy
@@ -1083,7 +1120,8 @@ module Make
                 (str_of_sort_env_list Term.str_of_sort hspace.params)
                 (Set.length hspace.quals) (Set.length hspace.terms)
                 (Set.length hspace.consts) (FT.str_of ()));
-        (* Debug.print @@ lazy (VersionSpace.str_of_hspace name hspace); *)
+        if false then
+          Debug.print @@ lazy (VersionSpace.str_of_hspace name hspace);
         VersionSpace.update_hspace key hspace vs);
     VersionSpace.update_truth_table ~id vs
 
@@ -1153,16 +1191,14 @@ module Make
             ( ex,
               ClauseGraph.Example ex
               |> ClauseGraph.pred_clause_vertexs_of
-                   (VersionSpace.example_graph_of vs).graph
+                   vs.VersionSpace.examples.graph
               |> Set.Poly.filter_map ~f:(function
                    | ClauseGraph.Clause c -> Some c
                    | _ -> None) ))
       in
       let rand_examples (* positive examples used instead of query claues *) =
         let get_random_parameter bound pvar sargs vs =
-          let table =
-            Hashtbl.Poly.find_exn (VersionSpace.truth_table_of vs) pvar
-          in
+          let table = Hashtbl.Poly.find_exn vs.VersionSpace.truth_table pvar in
           List.mapi sargs ~f:(fun i s ->
               if Array.length table.aarr <= 0 then
                 Logic.ExtTerm.random_term_of bound s
@@ -1189,10 +1225,7 @@ module Make
                             @@ get_random_parameter rand_info.random_ex_bound
                                  (Ident.tvar_to_pvar rand_info.name)
                                  sargs vs
-                            |> Fn.flip
-                                 (Logic.ExtTerm.to_old_atom exi_senv
-                                    Map.Poly.empty)
-                                 []
+                            |> Logic.ExtTerm.to_old_atm exi_senv Map.Poly.empty
                             |> ExAtom.of_old_atom exi_senv (Formula.mk_true ())
                             |> ExClause.mk_unit_pos)))
       in
@@ -1248,7 +1281,9 @@ module Make
       if !iters_after_updated = 0 then (
         update_hspaces vs;
         ignore @@ reduce_quals_terms vs;
+        Debug.print @@ lazy "**** for non-ucore";
         ref_templates := initialize_templates ~ucore:false vs;
+        Debug.print @@ lazy "**** for ucore";
         ref_templates_ucore := initialize_templates ~ucore:true vs;
         Debug.print @@ lazy "templates generated";
         reset_all_smt_instances ();
@@ -1257,8 +1292,7 @@ module Make
         !iters_after_updated <> 0 && reduce_quals_terms vs
       in
       if print_truth_table then
-        Hashtbl.Poly.iteri (VersionSpace.truth_table_of vs)
-          ~f:(fun ~key ~data ->
+        Hashtbl.Poly.iteri vs.truth_table ~f:(fun ~key ~data ->
             let alist =
               Map.Poly.of_alist_exn
               @@ List.init (TruthTable.length_of_atoms data) ~f:(fun i ->
@@ -1358,9 +1392,8 @@ module Make
                                        (sprintf
                                           "adding qualifiers for %s:\n%s\n"
                                           (Ident.name_of_tvar key)
-                                          (String.concat_set ~sep:"\n"
-                                             (Set.Poly.map ~f:Formula.str_of
-                                                new_quals)));
+                                          (String.concat_map_set ~sep:"\n"
+                                             ~f:Formula.str_of new_quals));
                                 (*print_endline @@ Formula.str_of phi;*)
                                 ref_quals := Set.union !ref_quals new_quals);
                         (true, Map.Poly.empty)

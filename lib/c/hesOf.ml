@@ -144,9 +144,8 @@ let hesfunc_of_c_one prev_env env phi stmt =
 let rec hes_of_c_rep_stmt prev_env (env, preds_rev) phi stmt =
   let env, pvar, _ = get_funinfo prev_env env phi stmt in
   let exists =
-    List.exists preds_rev ~f:(fun func ->
-        let _, pvar', _, _ = MuCLP.Pred.let_ func in
-        Stdlib.(pvar = pvar'))
+    List.exists preds_rev ~f:(fun pred ->
+        Stdlib.( = ) pvar pred.MuCLP.Pred.name)
   in
   if exists then (env, preds_rev)
   else
@@ -226,9 +225,8 @@ let hes_of_chmes ~print (hmes, decls, inits, query_stmt) =
   let stmts = LinkedStatement.get_all_statements query_stmt in
   (* make a table for stmt -> id *)
   let stmt_to_id = LinkedStatementHashtbl.create 1234 in
-  List.iteri
-    ~f:(fun idx stmt -> LinkedStatementHashtbl.add stmt_to_id stmt idx)
-    stmts;
+  List.iteri stmts ~f:(fun idx stmt ->
+      LinkedStatementHashtbl.add stmt_to_id stmt idx);
   let id_of_stmt stmt = LinkedStatementHashtbl.find stmt_to_id stmt in
   let pvar_of stmt hmes_pvar =
     Ident.Pvar
@@ -348,10 +346,15 @@ let hes_of_chmes ~print (hmes, decls, inits, query_stmt) =
     let state = List.fold_left ~f:Init.update_state ~init:state inits in
     let fml = State.appformula_of pvar state in
     let fml = List.fold_left ~f:Init.update_formula_E ~init:fml inits in
-    Formula.bind_fvs_with_exists fml
+    let bounds =
+      Set.to_list
+      @@ Set.filter (Formula.sort_env_of fml)
+           ~f:(fst >> Ident.tvar_to_pvar >> Stdlib.( <> ) pvar)
+    in
+    Formula.mk_bind_if_bounded Formula.Exists bounds fml ~info:Dummy
   in
   let hes_neg = MuCLP.Problem.make hes_preds query in
   print @@ lazy "vvvvvvvvvvvvv Converted Hes (neg) vvvvvvvvvvvvv";
   print @@ lazy (MuCLP.Problem.str_of hes_neg);
   print @@ lazy "";
-  MuCLP.Problem.get_dual hes_neg
+  MuCLP.Util.get_dual hes_neg

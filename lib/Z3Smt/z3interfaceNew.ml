@@ -102,12 +102,12 @@ module IntTerm : TermType = struct
         | _ -> assert false)
     | Add -> Arithmetic.mk_add ctx args
     | Sub -> Arithmetic.mk_sub ctx args
-    | Mult -> Arithmetic.mk_mul ctx args
-    | Div -> (
+    | Mul -> Arithmetic.mk_mul ctx args
+    | Div Value.(Euclidean | Truncated (*ToDo*)) -> (
         match args with
         | [ exp1; exp2 ] -> Arithmetic.mk_div ctx exp1 exp2
         | _ -> assert false)
-    | Mod -> (
+    | Rem Value.(Euclidean | Truncated (*ToDo*)) -> (
         match args with
         | [ exp1; exp2 ] -> Arithmetic.Integer.mk_mod ctx exp1 exp2
         | _ -> assert false)
@@ -122,9 +122,9 @@ module IntTerm : TermType = struct
     let term =
       if Arithmetic.is_add expr then mk_op_app (mk_add ()) expr
       else if Arithmetic.is_sub expr then mk_op_app (mk_sub ()) expr
-      else if Arithmetic.is_mul expr then mk_op_app (mk_mult ()) expr
+      else if Arithmetic.is_mul expr then mk_op_app (mk_mul ()) expr
       else if Arithmetic.is_div expr || Arithmetic.is_idiv expr then
-        mk_op_app (mk_div ()) expr
+        mk_op_app (mk_div Value.Euclidean) expr
       else assert false
     in
     Option.some term
@@ -148,7 +148,7 @@ module RealTerm : TermType = struct
         | _ -> assert false)
     | RAdd -> Arithmetic.mk_add ctx args
     | RSub -> Arithmetic.mk_sub ctx args
-    | RMult -> Arithmetic.mk_mul ctx args
+    | RMul -> Arithmetic.mk_mul ctx args
     | RDiv -> (
         match args with
         | [ exp1; exp2 ] ->
@@ -168,7 +168,7 @@ module RealTerm : TermType = struct
     @@
     if Arithmetic.is_add expr then mk_op_app (mk_radd ()) expr
     else if Arithmetic.is_sub expr then mk_op_app (mk_rsub ()) expr
-    else if Arithmetic.is_mul expr then mk_op_app (mk_rmult ()) expr
+    else if Arithmetic.is_mul expr then mk_op_app (mk_rmul ()) expr
     else if Arithmetic.is_div expr || Arithmetic.is_idiv expr then
       mk_op_app (mk_rdiv ()) expr
     else assert false
@@ -206,9 +206,9 @@ module IRBTerm : TermType = struct
         | exp :: [] ->
             Arithmetic.Integer.mk_int2bv ctx (BVTerm.bits_of size) exp
         | _ -> assert false)
-    | BVToInt size -> (
+    | BVToInt (_size, signed) -> (
         match args with
-        | exp :: [] -> Z3.BitVector.mk_bv2int ctx exp (BVTerm.signed_of size)
+        | exp :: [] -> Z3.BitVector.mk_bv2int ctx exp (BVTerm.signed_of signed)
         | _ -> assert false)
     | sym ->
         if Map.Poly.mem Logic.IntTerm.sym_sort_map sym then
@@ -326,7 +326,7 @@ module Make (Term : TermType) : sig
     context ->
     (Ident.tvar * Logic.term option) list option
 end = struct
-  open Logic.Term
+  open Ast.Logic.Term
 
   let rec sym_of t =
     if is_con t then

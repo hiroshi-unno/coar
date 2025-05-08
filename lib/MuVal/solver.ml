@@ -5,7 +5,6 @@ open Common.Util
 open Common.Combinator
 open Ast
 open Ast.LogicOld
-open MuCLP.Problem
 open Preprocessing
 
 module Make (Cfg : Config.ConfigType) = struct
@@ -44,18 +43,24 @@ module Make (Cfg : Config.ConfigType) = struct
     optimizer_cfg >>= fun optimizer_cfg ->
     Ok (MuCLP.Optimizer.make optimizer_cfg)
     >>= fun (module Optimizer : MuCLP.Optimizer.OptimizerType) ->
-    let muclp = if config.check_problem then check_problem muclp else muclp in
-    Debug.print ~id @@ lazy (sprintf "before optimization: %s\n" @@ str_of muclp);
     let muclp =
-      Optimizer.f ~id ~elim_forall ~elim_exists ~elim_pvar_args (simplify muclp)
+      if config.check_problem then MuCLP.Problem.check_problem muclp else muclp
     in
-    Debug.print ~id @@ lazy (sprintf "after optimization: %s\n" @@ str_of muclp);
+    Debug.print ~id
+    @@ lazy (sprintf "before optimization: %s\n" @@ MuCLP.Problem.str_of muclp);
+    let muclp =
+      Optimizer.f ~id ~elim_forall ~elim_exists ~elim_pvar_args
+        (MuCLP.Problem.simplify muclp)
+    in
+    Debug.print ~id
+    @@ lazy (sprintf "after optimization: %s\n" @@ MuCLP.Problem.str_of muclp);
     Ok muclp
 
   let pfwcsp_of ?(id = None) ~messenger ~exc_info unknowns muclp =
     let muclp =
       let pvs = Kind.pred_sort_env_map_of unknowns in
-      muclp |> aconv_tvar |> complete_tsort |> complete_psort pvs
+      muclp |> MuCLP.Problem.aconv_tvar |> MuCLP.Problem.complete_tsort
+      |> MuCLP.Problem.complete_psort pvs
     in
     (*Debug.print ~id @@ lazy (sprintf "Preprocessed muCLP: %s\n" @@ str_of muclp);*)
     let pfwcsp =
@@ -77,7 +82,7 @@ module Make (Cfg : Config.ConfigType) = struct
 
   let check ~primal ?(id = None) ~messenger ~exc_info muclp =
     let check_forall_only (exi_senv, kind_map) muclp :
-        (solution * int) Or_error.t =
+        (MuCLP.Problem.solution * int) Or_error.t =
       let open Or_error.Monad_infix in
       pcsp_solver ~primal >>= fun (module PCSPSolver) ->
       muclp
@@ -85,7 +90,7 @@ module Make (Cfg : Config.ConfigType) = struct
       |> PCSP.Problem.map ~f:Logic.Term.refresh
       |> PCSPSolver.solve
       >>= function
-      | PCSP.Problem.Sat _, num_iters -> Ok (Valid, num_iters)
+      | PCSP.Problem.Sat _, num_iters -> Ok (MuCLP.Problem.Valid, num_iters)
       | Unsat _, num_iters -> Ok (Invalid, num_iters)
       | Unknown, num_iters -> Ok (Unknown, num_iters)
       | OutSpace _, _ -> failwith "out of space" (* TODO *)
@@ -93,14 +98,15 @@ module Make (Cfg : Config.ConfigType) = struct
     in
     let muclp, unknowns =
       let unknowns = (Map.Poly.empty, Map.Poly.empty) in
-      if has_only_forall muclp then
+      if MuCLP.Problem.has_only_forall muclp then
         (* no encoding of existential quantifiers required *)
         (muclp, unknowns)
       else
         (* Skolemize existential quantifiers *)
         (*Debug.print ~id @@ lazy (sprintf "Input muCLP: %s\n" @@ str_of muclp);*)
         let muclp, unknowns = Qelim.elim_exists (muclp, unknowns) in
-        Debug.print ~id @@ lazy (sprintf "Skolemized: %s\n" @@ str_of muclp);
+        Debug.print ~id
+        @@ lazy (sprintf "Skolemized: %s\n" @@ MuCLP.Problem.str_of muclp);
         (muclp, unknowns)
     in
     check_forall_only unknowns muclp
@@ -112,17 +118,21 @@ module Make (Cfg : Config.ConfigType) = struct
           if flip_on_failure then
             solve_dual ~id ~messenger ~exc_info false muclp
           else Ok (r, num_iters)
-      | x -> Ok x)
+      | x ->
+          Debug.print @@ lazy "primal finished";
+          Ok x)
 
   and solve_dual ?(id = None) ~messenger ~exc_info flip_on_failure muclp =
     Or_error.Monad_infix.(
-      get_dual muclp |> check ~primal:false ~id ~messenger ~exc_info
+      MuCLP.Util.get_dual muclp |> check ~primal:false ~id ~messenger ~exc_info
       >>= function
       | ((Unknown | Timeout) as r), num_iters ->
           if flip_on_failure then
             solve_primal ~id ~messenger ~exc_info false muclp
           else Ok (r, num_iters)
-      | res, num_iters -> Ok (flip_solution res, num_iters))
+      | res, num_iters ->
+          Debug.print @@ lazy "dual finished";
+          Ok (MuCLP.Problem.flip_solution res, num_iters))
 
   let solve_primal_dual muclp =
     let open Or_error.Monad_infix in
@@ -200,7 +210,7 @@ module Make (Cfg : Config.ConfigType) = struct
                             (Ident.Tvar (sprintf "x%d" (i + 1)), s))
                         @@ fst @@ Logic.ExtTerm.let_lam data
                       in
-                      ( List.split_n params @@ (List.length params - arity),
+                      ( List.split_n params (List.length params - arity),
                         Normalizer.normalize @@ Evaluator.simplify_neg
                         @@ Logic.ExtTerm.to_old_formula Map.Poly.empty
                              (Map.Poly.of_alist_exn params)
@@ -253,7 +263,7 @@ module Make (Cfg : Config.ConfigType) = struct
                                 (Ident.Tvar (sprintf "x%d" (i + 1)), s))
                             @@ fst @@ Logic.ExtTerm.let_lam data
                           in
-                          ( List.split_n params @@ (List.length params - arity),
+                          ( List.split_n params (List.length params - arity),
                             Normalizer.normalize @@ Evaluator.simplify_neg
                             @@ Logic.ExtTerm.to_old_formula Map.Poly.empty
                                  (Map.Poly.of_alist_exn params)
@@ -354,17 +364,16 @@ module Make (Cfg : Config.ConfigType) = struct
     >>= fun muclp ->
     let arity_map =
       let open Reducer.DepGraph in
-      let g =
-        transitive_closure @@ gen_init_graph (query_of muclp) @@ preds_of muclp
-      in
+      let g = transitive_closure @@ gen_init_graph muclp.query muclp.preds in
       let reached_pvs pv =
         Set.Poly.map ~f:Ident.pvar_to_tvar
         @@ Set.add (Map.Poly.find_exn g pv).reachable pv
       in
       Debug.print @@ lazy ("dep_pvars_graph:\n" ^ Reducer.DepGraph.str_of g);
       Map.Poly.of_alist_exn
-      @@ List.map (preds_of muclp) ~f:(fun (_, pv, params, _) ->
-             (Ident.pvar_to_tvar pv, (reached_pvs pv, List.length params)))
+      @@ List.map muclp.preds ~f:(fun pred ->
+             ( Ident.pvar_to_tvar pred.name,
+               (reached_pvs pred.name, List.length pred.args) ))
     in
     let exc_info =
       if not config.gen_extra_partial_sols then
@@ -391,10 +400,10 @@ module Make (Cfg : Config.ConfigType) = struct
     in
     let task_dual =
       Util.Task.async pool (fun () ->
-          get_dual muclp
+          MuCLP.Util.get_dual muclp
           |> check ~primal:false ~id:id_dual ~messenger:messenger_dual ~exc_info
           >>= function
-          | res, num_iters -> Ok (flip_solution res, num_iters))
+          | res, num_iters -> Ok (MuCLP.Problem.flip_solution res, num_iters))
     in
     let sol_cache_primal = Hash_set.Poly.create () in
     let sol_cache_dual = Hash_set.Poly.create () in
@@ -426,24 +435,24 @@ module Make (Cfg : Config.ConfigType) = struct
 
   let resolve_auto muclp mode =
     if Stdlib.(mode = Config.Auto) then
-      if has_only_forall muclp then (
-        if has_only_nu muclp then
+      if MuCLP.Problem.has_only_forall muclp then (
+        if MuCLP.Problem.has_only_nu muclp then
           Debug.print @@ lazy "vvvv muCLP shape: only forall-nu"
-        else if has_only_mu muclp then
+        else if MuCLP.Problem.has_only_mu muclp then
           Debug.print @@ lazy "vvvv muCLP shape: only forall-mu"
         else Debug.print @@ lazy "vvvv muCLP shape: only forall";
         Config.Prove)
-      else if has_only_exists muclp then (
-        if has_only_nu muclp then
+      else if MuCLP.Problem.has_only_exists muclp then (
+        if MuCLP.Problem.has_only_nu muclp then
           Debug.print @@ lazy "vvvv muCLP shape: only exists-nu"
-        else if has_only_mu muclp then
+        else if MuCLP.Problem.has_only_mu muclp then
           Debug.print @@ lazy "vvvv muCLP shape: only exists-mu"
         else Debug.print @@ lazy "vvvv muCLP shape: only exists";
         Config.Disprove)
       else (
-        if has_only_nu muclp then
+        if MuCLP.Problem.has_only_nu muclp then
           Debug.print @@ lazy "vvvv muCLP shape: only nu"
-        else if has_only_mu muclp then
+        else if MuCLP.Problem.has_only_mu muclp then
           Debug.print @@ lazy "vvvv muCLP shape: only mu"
         else Debug.print @@ lazy "vvvv muCLP shape: otherwise";
         Config.Prove)
@@ -481,6 +490,12 @@ module Make (Cfg : Config.ConfigType) = struct
     >>= function
     | sol, num_iters ->
         Debug.print @@ lazy "=========================";
+        let str_sol =
+          MuCLP.Problem.(
+            if config.output_yes_no then lts_str_of_solution
+            else str_of_solution)
+            sol
+        in
         let info =
           match
             ( Hashtbl.Poly.find send_records id_primal,
@@ -493,17 +508,8 @@ module Make (Cfg : Config.ConfigType) = struct
         if print_sol then
           print_endline
           @@
-          if config.output_iteration then
-            sprintf "%s,%s"
-              ((if config.output_yes_no then lts_str_of_solution
-                else str_of_solution)
-                 sol)
-              info
-          else
-            sprintf "%s"
-              ((if config.output_yes_no then lts_str_of_solution
-                else str_of_solution)
-                 sol);
+          if config.output_iteration then sprintf "%s,%s" str_sol info
+          else sprintf "%s" str_sol;
         Or_error.return (sol, num_iters, info)
 
   let solve_pcsp ?(print_sol = false) pcsp =
@@ -516,7 +522,8 @@ module Make (Cfg : Config.ConfigType) = struct
       (fun ?oracle pcsp ->
         ignore oracle;
         let open Or_error.Monad_infix in
-        solve ~print_sol:false (of_chc pcsp) >>= fun (sol, num_iters, info) ->
+        solve ~print_sol:false (MuCLP.Util.of_chc ~print:Debug.print pcsp)
+        >>= fun (sol, num_iters, info) ->
         let sol =
           match sol with
           | Valid -> PCSP.Problem.Sat Map.Poly.empty (* ToDo *)
@@ -536,7 +543,8 @@ module Make (Cfg : Config.ConfigType) = struct
   let solve_interactive muclp =
     let pre_primal, muclp_primal =
       let bounds, phi, _ =
-        if Formula.is_forall muclp.query then Formula.let_forall muclp.query
+        if Formula.is_forall muclp.MuCLP.Problem.query then
+          Formula.let_forall muclp.query
         else ([], muclp.query, Dummy)
       in
       let _, sorts, args, _ =
@@ -549,10 +557,11 @@ module Make (Cfg : Config.ConfigType) = struct
         Formula.mk_atom @@ Atom.mk_pvar_app (Ident.Pvar "PrePrimal") sorts args
       in
       ( (senv, pre),
-        make muclp.preds @@ Formula.(forall bounds @@ mk_imply pre phi) )
+        MuCLP.Problem.make muclp.preds
+        @@ Formula.(forall bounds @@ mk_imply pre phi) )
     in
     let pre_dual, muclp_dual =
-      let muclp = get_dual muclp in
+      let muclp = MuCLP.Util.get_dual muclp in
       let bounds, phi, _ =
         if Formula.is_exists muclp.query then Formula.let_exists muclp.query
         else ([], muclp.query, Dummy)
@@ -565,7 +574,8 @@ module Make (Cfg : Config.ConfigType) = struct
         Formula.mk_atom @@ Atom.mk_pvar_app (Ident.Pvar "PreDual") sorts args
       in
       ( (senv, pre),
-        make muclp.preds @@ Formula.(forall bounds @@ mk_imply pre phi) )
+        MuCLP.Problem.make muclp.preds
+        @@ Formula.(forall bounds @@ mk_imply pre phi) )
     in
     let ord_pvs_primal = Formula.pred_sort_env_of @@ snd pre_primal in
     let ord_pvs_dual = Formula.pred_sort_env_of @@ snd pre_dual in
@@ -647,11 +657,10 @@ module Make (Cfg : Config.ConfigType) = struct
               let phi =
                 Z3Smt.Z3interface.simplify (get_fenv ()) ~id:None
                 @@ Evaluator.simplify
-                @@ Logic.ExtTerm.to_old_fml Map.Poly.empty
-                     ( fst pre_primal,
-                       Logic.(
-                         Term.subst sol @@ ExtTerm.of_old_formula
-                         @@ snd pre_primal) )
+                @@ Logic.ExtTerm.to_old_fml Map.Poly.empty (fst pre_primal)
+                     Logic.(
+                       Term.subst sol @@ ExtTerm.of_old_formula
+                       @@ snd pre_primal)
               in
               let primal =
                 Z3Smt.Z3interface.simplify ~id:None (get_fenv ())
@@ -669,13 +678,13 @@ module Make (Cfg : Config.ConfigType) = struct
                   (Formula.mk_false ())
               else (
                 Out_channel.print_endline "maximality is guaranteed";
-                Or_error.return (Unknown, -1) (*Dummy*))
+                Or_error.return (MuCLP.Problem.Unknown, -1) (*Dummy*))
           | Unsat _, _ ->
               if Formula.is_false pos && Formula.is_false neg then (
                 Out_channel.print_endline
                   "maximally weak precondition for dual property:";
                 Out_channel.print_endline @@ Formula.str_of unknown;
-                Or_error.return (Unknown, -1) (*Dummy*))
+                Or_error.return (MuCLP.Problem.Unknown, -1) (*Dummy*))
               else (
                 Out_channel.print_endline
                   "the specified constraints for positive and negative \
@@ -721,11 +730,9 @@ module Make (Cfg : Config.ConfigType) = struct
               let phi =
                 Z3Smt.Z3interface.simplify ~id:None (get_fenv ())
                 @@ Evaluator.simplify
-                @@ Logic.ExtTerm.to_old_fml Map.Poly.empty
-                     ( fst pre_dual,
-                       Logic.(
-                         Term.subst sol @@ ExtTerm.of_old_formula
-                         @@ snd pre_dual) )
+                @@ Logic.ExtTerm.to_old_fml Map.Poly.empty (fst pre_dual)
+                     Logic.(
+                       Term.subst sol @@ ExtTerm.of_old_formula @@ snd pre_dual)
               in
               let dual =
                 Z3Smt.Z3interface.simplify ~id:None (get_fenv ())
@@ -743,13 +750,13 @@ module Make (Cfg : Config.ConfigType) = struct
                   (Formula.mk_false ())
               else (
                 Out_channel.print_endline "maximality is guaranteed";
-                Or_error.return (Unknown, -1) (*Dummy*))
+                Or_error.return (MuCLP.Problem.Unknown, -1) (*Dummy*))
           | Unsat _, _ ->
               if Formula.is_false pos && Formula.is_false neg then (
                 Out_channel.print_endline
                   "maximally weak precondition for primal property:";
                 Out_channel.print_endline @@ Formula.str_of unknown;
-                Or_error.return (Unknown, -1) (*Dummy*))
+                Or_error.return (MuCLP.Problem.Unknown, -1) (*Dummy*))
               else (
                 Out_channel.print_endline
                   "the specified constraints for positive and negative \
@@ -764,7 +771,7 @@ module Make (Cfg : Config.ConfigType) = struct
           Out_channel.output_string Out_channel.stdout "positive examples: ";
           Out_channel.flush Out_channel.stdout;
           match
-            MuCLP.Parser.query_from_string ~print:Debug.print
+            MuCLP.Util.query_from_string ~print:Debug.print
             @@ In_channel.(input_line_exn stdin)
           with
           | Ok phi -> refine primal dual unknown (Formula.mk_or pos phi) neg
@@ -773,7 +780,7 @@ module Make (Cfg : Config.ConfigType) = struct
           Out_channel.output_string Out_channel.stdout "negative examples: ";
           Out_channel.flush Out_channel.stdout;
           match
-            MuCLP.Parser.query_from_string ~print:Debug.print
+            MuCLP.Util.query_from_string ~print:Debug.print
             @@ In_channel.(input_line_exn stdin)
           with
           | Ok phi -> refine primal dual unknown pos (Formula.mk_or neg phi)
@@ -781,9 +788,320 @@ module Make (Cfg : Config.ConfigType) = struct
       | "unknown" ->
           Out_channel.print_endline @@ Formula.str_of unknown;
           refine primal dual unknown pos neg
-      | "end" -> Or_error.return (Unknown, -1) (*Dummy*)
+      | "end" -> Or_error.return (MuCLP.Problem.Unknown, -1) (*Dummy*)
       | _ -> refine primal dual unknown pos neg
     in
     refine (Formula.mk_false ()) (Formula.mk_false ()) (Formula.mk_true ())
       (Formula.mk_false ()) (Formula.mk_false ())
+
+  let underapprox_of (pred : ProbMuCLP.Pred.t) =
+    let cond, template =
+      Templ.underapprox_of
+        ~cond_degree:config.prob_underapprox_templ_cond_degree
+        ~term_degree:config.prob_underapprox_templ_term_degree pred.args
+        pred.body
+    in
+    ( cond,
+      template.templ_params,
+      template.templ_constrs,
+      { pred with body = template.prob_pred } )
+
+  let con_of fsub (pred : ProbMuCLP.Pred.t) =
+    ProbMuCLP.Pred.simplify
+      {
+        pred with
+        body =
+          T_real.mk_rsub
+            (Term.subst_funcs fsub pred.body)
+            (Term.subst_funcs
+               (Map.Poly.map fsub ~f:(fun (args, _) -> (args, T_real.rzero ())))
+               pred.body);
+      }
+
+  let print_templ templ =
+    List.iter templ ~f:(fun (name, (args, prob_pred)) ->
+        Debug.print
+        @@ lazy
+             (sprintf "%s %s |-> %s" (Ident.name_of_tvar name)
+                (str_of_sort_env_list Term.str_of_sort args)
+                (Term.str_of prob_pred)))
+
+  let solve_prob ?(print_sol = false) (prob_muclp : ProbMuCLP.Problem.t) =
+    Debug.print @@ lazy "======== MuVal ========";
+    let prob_muclp = ProbMuCLP.Problem.simplify prob_muclp in
+    Debug.print ~id:None
+    @@ lazy (sprintf "input: %s\n" @@ ProbMuCLP.Problem.str_of prob_muclp);
+    if
+      List.exists prob_muclp.preds ~f:(fun pred ->
+          Stdlib.( = ) Predicate.Nu pred.kind)
+    then failwith "not implemented";
+    let (ua_preds, prefp, rank, postfp), pqes =
+      match prob_muclp.query.kind with
+      | LB ->
+          let conds, templ_paramss, templ_constrss, ua_preds =
+            List.unzip4 @@ List.map prob_muclp.preds ~f:underapprox_of
+          in
+          Debug.print ~id:None
+          @@ lazy
+               (sprintf "\nunderapproximated:\n%s\n"
+               @@ ProbMuCLP.Pred.str_of_list ua_preds);
+          let prefp_templ_paramss, prefp_templ_preds =
+            List.unzip
+            @@ List.map2_exn prob_muclp.preds conds ~f:(fun pred cond ->
+                   let template =
+                     Templ.gen_prob_template
+                       ~num_conds:config.prob_prefp_templ_num_conds
+                       ~use_orig_ite:config.prob_prefp_templ_use_orig_ite
+                       ~cond_degree:config.prob_prefp_templ_cond_degree
+                       ~term_degree:config.prob_prefp_templ_term_degree
+                       pred.args pred.body
+                   in
+                   let prob_pred =
+                     match cond with
+                     | None -> template.prob_pred
+                     | Some cond ->
+                         T_bool.mk_if_then_else
+                           (T_bool.of_formula
+                           @@ Formula.geq cond (T_real.rzero ()))
+                           template.prob_pred (T_real.rzero ())
+                   in
+                   (template.templ_params, (pred.name, (pred.args, prob_pred))))
+          in
+          let rank_templ_paramss, rank_templ_preds =
+            List.unzip
+            @@ List.map2_exn prob_muclp.preds conds ~f:(fun pred cond ->
+                   let template =
+                     Templ.gen_prob_template
+                       ~num_conds:config.prob_rank_templ_num_conds
+                       ~use_orig_ite:config.prob_rank_templ_use_orig_ite
+                       ~cond_degree:config.prob_rank_templ_cond_degree
+                       ~term_degree:config.prob_rank_templ_term_degree pred.args
+                       pred.body
+                   in
+                   let prob_pred =
+                     match cond with
+                     | None -> template.prob_pred
+                     | Some cond ->
+                         T_bool.mk_if_then_else
+                           (T_bool.of_formula
+                           @@ Formula.geq cond (T_real.rzero ()))
+                           template.prob_pred (T_real.rzero ())
+                   in
+                   (template.templ_params, (pred.name, (pred.args, prob_pred))))
+          in
+          let postfp_templ_paramss, postfp_templ_preds =
+            List.unzip
+            @@ List.map2_exn prob_muclp.preds conds ~f:(fun pred cond ->
+                   let template =
+                     Templ.gen_prob_template
+                       ~num_conds:config.prob_postfp_templ_num_conds
+                       ~use_orig_ite:config.prob_postfp_templ_use_orig_ite
+                       ~cond_degree:config.prob_postfp_templ_cond_degree
+                       ~term_degree:config.prob_postfp_templ_term_degree
+                       pred.args pred.body
+                   in
+                   let prob_pred =
+                     match cond with
+                     | None -> template.prob_pred
+                     | Some cond ->
+                         T_bool.mk_if_then_else
+                           (T_bool.of_formula
+                           @@ Formula.geq cond (T_real.rzero ()))
+                           template.prob_pred (T_real.rzero ())
+                   in
+                   (template.templ_params, (pred.name, (pred.args, prob_pred))))
+          in
+          if not @@ List.is_empty prefp_templ_preds then (
+            Debug.print @@ lazy "templates for prefixpoint:";
+            print_templ prefp_templ_preds);
+          if not @@ List.is_empty rank_templ_preds then (
+            Debug.print @@ lazy "\ntemplates for ranking supermartingales:";
+            print_templ rank_templ_preds);
+          if not @@ List.is_empty postfp_templ_preds then (
+            Debug.print @@ lazy "\ntemplates for postfixpoint:";
+            print_templ postfp_templ_preds);
+          let prefp_sub = Map.Poly.of_alist_exn prefp_templ_preds in
+          let rank_sub = Map.Poly.of_alist_exn rank_templ_preds in
+          let postfp_sub = Map.Poly.of_alist_exn postfp_templ_preds in
+          let ua_preds_con = List.map ua_preds ~f:(con_of rank_sub) in
+          Debug.print ~id:None
+          @@ lazy
+               (sprintf "con:\n%s\n" @@ ProbMuCLP.Pred.str_of_list ua_preds_con);
+          let constrs =
+            List.concat templ_constrss
+            @ List.map
+                (prefp_templ_preds @ rank_templ_preds @ postfp_templ_preds)
+                ~f:(fun (_, (_, prob_pred)) ->
+                  Formula.geq prob_pred (T_real.rzero ()))
+            @ List.map postfp_templ_preds
+                ~f:(fun (name, (postfp_args, postfp_body)) ->
+                  let prefp_args, prefp_body =
+                    List.Assoc.find_exn ~equal:Stdlib.( = ) prefp_templ_preds
+                      name
+                  in
+                  Formula.leq postfp_body
+                    (Term.rename
+                       (LogicOld.ren_of_sort_env_list prefp_args postfp_args)
+                       prefp_body))
+            @ (List.map ~f:(Formula.subst_funcs postfp_sub)
+              @@ ProbMuCLP.Problem.formula_of_query prob_muclp.query
+                 :: List.map ua_preds ~f:(fun pred ->
+                        Formula.geq pred.body
+                          (Term.fvar_app_of_senv pred.name pred.args
+                             T_real.SReal)))
+            @ List.map ~f:(Formula.subst_funcs prefp_sub)
+            @@ List.map ua_preds ~f:(fun pred ->
+                   Formula.geq
+                     (Term.fvar_app_of_senv pred.name pred.args T_real.SReal)
+                     pred.body)
+            @ List.map rank_templ_preds
+                ~f:(fun (name, (rank_args, rank_body)) ->
+                  let ua_preds_con =
+                    List.find_exn ua_preds_con ~f:(fun pred ->
+                        Stdlib.( = ) pred.name name)
+                  in
+                  let prefp_args, prefp_body =
+                    List.Assoc.find_exn ~equal:Stdlib.( = ) prefp_templ_preds
+                      name
+                  in
+                  Formula.leq
+                    (T_real.mk_radd
+                       (Term.rename
+                          (LogicOld.ren_of_sort_env_list ua_preds_con.args
+                             rank_args)
+                          ua_preds_con.body)
+                       (Term.rename
+                          (LogicOld.ren_of_sort_env_list prefp_args rank_args)
+                          prefp_body))
+                    rank_body)
+          in
+          let templ_params =
+            Map.force_merge_list @@ templ_paramss @ prefp_templ_paramss
+            @ postfp_templ_paramss @ rank_templ_paramss
+          in
+          ( ( Some ua_preds,
+              prefp_templ_preds,
+              rank_templ_preds,
+              postfp_templ_preds ),
+            PCSP.Problem.make constrs
+            @@ SMT.Problem.
+                 {
+                   uni_senv = Map.Poly.empty;
+                   exi_senv = templ_params;
+                   kind_map = Map.Poly.empty (*ToDo*);
+                   fenv = Map.Poly.empty;
+                   dtenv = Map.Poly.empty;
+                 } )
+      | UB ->
+          let prefp_templ_paramss, prefp_templ_preds =
+            List.unzip
+            @@ List.map prob_muclp.preds ~f:(fun pred ->
+                   let template =
+                     Templ.gen_prob_template
+                       ~num_conds:config.prob_prefp_templ_num_conds
+                       ~use_orig_ite:config.prob_prefp_templ_use_orig_ite
+                       ~cond_degree:config.prob_prefp_templ_cond_degree
+                       ~term_degree:config.prob_prefp_templ_term_degree
+                       pred.args pred.body
+                   in
+                   ( template.templ_params,
+                     (pred.name, (pred.args, template.prob_pred)) ))
+          in
+          if not @@ List.is_empty prefp_templ_preds then (
+            Debug.print @@ lazy "templates for prefixpoint:";
+            print_templ prefp_templ_preds);
+          let prefp_sub = Map.Poly.of_alist_exn prefp_templ_preds in
+          let constrs =
+            List.map prefp_templ_preds ~f:(fun (_, (_, prob_pred)) ->
+                Formula.geq prob_pred (T_real.rzero ()))
+            @ List.map ~f:(Formula.subst_funcs prefp_sub)
+            @@ ProbMuCLP.Problem.formula_of_query prob_muclp.query
+               :: List.map prob_muclp.preds ~f:(fun pred ->
+                      Formula.geq
+                        (Term.fvar_app_of_senv pred.name pred.args T_real.SReal)
+                        pred.body)
+          in
+          let templ_params = Map.force_merge_list prefp_templ_paramss in
+          ( (None, prefp_templ_preds, [], []),
+            PCSP.Problem.make constrs
+            @@ SMT.Problem.
+                 {
+                   uni_senv = Map.Poly.empty;
+                   exi_senv = templ_params;
+                   kind_map = Map.Poly.empty (*ToDo*);
+                   fenv = Map.Poly.empty;
+                   dtenv = Map.Poly.empty;
+                 } )
+    in
+    Debug.print ~id:None
+    @@ lazy (sprintf "******* Generated PQEs:\n%s" @@ PCSP.Problem.str_of pqes);
+    let open Or_error.Monad_infix in
+    pcsp_solver ~primal:true >>= fun (module PCSPSolver) ->
+    (PCSPSolver.solve pqes >>= function
+     | PCSP.Problem.Sat model, num_iters ->
+         let tsub =
+           Logic.ExtTerm.to_old_subst Map.Poly.empty Map.Poly.empty model
+         in
+         let prefp =
+           List.map prefp ~f:(fun (name, (args, prob_pred)) ->
+               ( name,
+                 (args, Evaluator.simplify_term @@ Term.subst tsub prob_pred) ))
+         in
+         let rank =
+           List.map rank ~f:(fun (name, (args, prob_pred)) ->
+               ( name,
+                 (args, Evaluator.simplify_term @@ Term.subst tsub prob_pred) ))
+         in
+         let postfp =
+           List.map postfp ~f:(fun (name, (args, prob_pred)) ->
+               ( name,
+                 (args, Evaluator.simplify_term @@ Term.subst tsub prob_pred) ))
+         in
+         (match ua_preds with
+         | None -> ()
+         | Some ua_preds ->
+             let ua_preds =
+               List.map ua_preds ~f:(fun pred ->
+                   { pred with body = Term.subst tsub pred.body })
+             in
+             Debug.print ~id:None
+             @@ lazy
+                  (sprintf "\nunderapproximated:\n%s"
+                  @@ ProbMuCLP.Pred.str_of_list ua_preds));
+         if not @@ List.is_empty prefp then (
+           Debug.print @@ lazy "\nsynthesized prefixpoint:";
+           print_templ prefp);
+         if not @@ List.is_empty rank then (
+           Debug.print @@ lazy "\nsynthesized ranking supermartingales:";
+           print_templ rank);
+         if not @@ List.is_empty postfp then (
+           Debug.print @@ lazy "\nsynthesized postfixpoint:";
+           print_templ postfp);
+         Ok (MuCLP.Problem.Valid, num_iters)
+     | Unsat _, num_iters ->
+         print_endline "the templates used may not be expressive enough";
+         Ok (Unknown, num_iters)
+     | Unknown, num_iters ->
+         print_endline
+           "the backend PQE solver failed or the templates used may not be \
+            expressive enough";
+         Ok (Unknown, num_iters)
+     | OutSpace _, _ -> failwith "out of space" (* TODO *)
+     | Timeout, num_iters -> Ok (Timeout, num_iters))
+    >>= function
+    | sol, num_iters ->
+        Debug.print @@ lazy "=========================";
+        let str_sol =
+          MuCLP.Problem.(
+            if config.output_yes_no then lts_str_of_solution
+            else str_of_solution)
+            sol
+        in
+        let info = sprintf "%d" num_iters in
+        if print_sol then
+          print_endline
+          @@
+          if config.output_iteration then sprintf "%s,%s" str_sol info
+          else sprintf "%s" str_sol;
+        Or_error.return (sol, num_iters, info)
 end

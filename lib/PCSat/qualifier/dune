@@ -22,7 +22,4 @@
   SVM
   NN
   union
-  dtTheory
-  allTheory
-  arrayTheory
   generator))

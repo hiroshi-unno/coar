@@ -22,14 +22,14 @@ let str_of_list =
 let of_fundef (Ident.Tvar x, t) : pred_subst_elem =
   let args, t' = Logic.Term.let_lam t in
   let params, map =
-    normalize_sort_env_list
-    @@ Logic.to_old_sort_env_list  args
+    normalize_sort_env_list @@ Logic.to_old_sort_env_list args
   in
   try
-    let phi =
-      Logic.ExtTerm.to_old_formula Map.Poly.empty (Map.of_list_exn args) t' []
-    in
-    (Ident.Pvar x, (params, Formula.rename map phi))
+    ( Ident.Pvar x,
+      ( params,
+        Formula.rename map
+        @@ Logic.ExtTerm.to_old_fml Map.Poly.empty (Map.of_list_exn args) t' )
+    )
   with _ ->
     failwith
     @@ sprintf "[of_fundef] the given solution for %s(%s) is ill-formed: %s" x

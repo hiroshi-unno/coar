@@ -91,7 +91,7 @@ end = struct
                        Atom.refresh_tvar neg_atm
                      in
                      unifiable
-                       (Logic.ExtTerm.to_old_atom exi_senv uni_senv atm [], atm'))
+                       (Logic.ExtTerm.to_old_atm exi_senv uni_senv atm, atm'))
                  |> Set.to_list
                in
                if List.is_empty xs then raise E else Formula.or_of xs))
@@ -102,7 +102,7 @@ end = struct
                        Atom.refresh_tvar pos_atm
                      in
                      unifiable
-                       (Logic.ExtTerm.to_old_atom exi_senv uni_senv atm [], atm'))
+                       (Logic.ExtTerm.to_old_atm exi_senv uni_senv atm, atm'))
                  |> Set.to_list
                in
                if List.is_empty xs then raise E else Formula.or_of xs))
@@ -110,7 +110,7 @@ end = struct
       in
       let phi =
         Formula.and_of
-        @@ Formula.mk_neg (Logic.ExtTerm.to_old_fml exi_senv (uni_senv, c_phi))
+        @@ Formula.mk_neg (Logic.ExtTerm.to_old_fml exi_senv uni_senv c_phi)
            :: eqs
       in
       let fvs = Formula.term_sort_env_of phi in
@@ -188,7 +188,7 @@ end = struct
                    (List.map2_exn ts ts' ~f:(fun t t' ->
                         (*ToDo: here t' is assumed to have no variable*)
                         assert (Set.is_empty @@ Term.tvs_of t');
-                        Formula.mk_atom (T_bool.mk_neq t t')))
+                        Formula.neq t t'))
                else Formula.mk_true ())
       else Formula.mk_true ()
     in
@@ -215,8 +215,8 @@ end = struct
         ~f:(fun (dpos, dneg, und) (uni_senv, pos, neg, pure) ->
           match (Set.to_list pos, Set.to_list neg) with
           | [ atm ], [] | [], [ atm ] ->
-              let atm = Logic.ExtTerm.to_old_atom exi_senv uni_senv atm [] in
-              let pure = Logic.ExtTerm.to_old_fml exi_senv (uni_senv, pure) in
+              let atm = Logic.ExtTerm.to_old_atm exi_senv uni_senv atm in
+              let pure = Logic.ExtTerm.to_old_fml exi_senv uni_senv pure in
               let tvs = Set.union (Atom.tvs_of atm) (Formula.tvs_of pure) in
               let fnvs = Set.inter tvs (Map.key_set exi_senv) in
               (* if Set.exists (Set.Poly.union_list [Formula.pvs_of pure;Atom.pvs_of atm] |> Set.Poly.map ~f:Ident.pvar_to_tvar) ~f:(PCSP.Problem.is_ne_pred APCSP.problem) || true then
@@ -268,7 +268,7 @@ end = struct
                       (dpos, Set.add dneg cl, und))
               else (* with function variables *) (dpos, dneg, und)
           | [], [] -> (
-              let pure = Logic.ExtTerm.to_old_fml exi_senv (uni_senv, pure) in
+              let pure = Logic.ExtTerm.to_old_fml exi_senv uni_senv pure in
               let tvs = Formula.tvs_of pure in
               let fnvs = Set.inter tvs (Map.key_set exi_senv) in
               if Set.is_empty fnvs then
@@ -334,7 +334,7 @@ end = struct
     let d_dpos = Set.diff dpos0 !old_dpos in
     let d_dneg = Set.diff dneg0 !old_dneg in
     let d_und = Set.diff und0 !old_und in
-    let fenv = VersionSpace.fenv_of vs in
+    let fenv = vs.fenv in
     old_dpos := dpos0;
     old_dneg := dneg0;
     old_und := und0;
@@ -438,14 +438,12 @@ end = struct
     in
     Debug.print @@ lazy "*** Example Instances obtained by Resolution:";
     Debug.print
-    @@ lazy
-         (String.concat_set ~sep:";\n" @@ Set.Poly.map ~f:ExClause.str_of added);
+    @@ lazy (String.concat_map_set ~sep:";\n" ~f:ExClause.str_of added);
     Debug.print @@ lazy "";
     let old_examples = VersionSpace.examples_of vs in
     let new_examples = Set.Poly.union_list [ dpos; dneg; und ] in
     Set.iter (Set.diff old_examples new_examples) ~f:(fun ex ->
-        ClauseGraph.hide_vertex (VersionSpace.example_graph_of vs)
-        @@ ClauseGraph.mk_example ex);
+        ClauseGraph.hide_vertex vs.examples @@ ClauseGraph.mk_example ex);
     let new_examples =
       Set.diff new_examples old_examples
       |> Set.Poly.map ~f:(fun ex -> (ex, [ (ClauseGraph.Dummy, false) ]))

@@ -827,7 +827,7 @@ module Make (Config : Config.ConfigType) = struct
                            s_pat_op
                     in
                     match body.exp_desc with
-                    | Texp_match (e_op, cases, _) ->
+                    | Texp_match (e_op, cases, _, _) ->
                         let sort_op = sort_of_expr ~lift:true dtenv e_op in
                         List.unzip6
                         @@ List.map ~f:(fun case ->
@@ -1249,10 +1249,8 @@ module Make (Config : Config.ConfigType) = struct
                       next_b,
                       c_b )
                   in
-                  ( Set.Poly.union_list
-                    @@ (econstrs_b :: econstrs_r :: econstrss),
-                    Set.Poly.union_list
-                    @@ (oconstrs_b :: oconstrs_r :: oconstrss),
+                  ( Set.Poly.union_list (econstrs_b :: econstrs_r :: econstrss),
+                    Set.Poly.union_list (oconstrs_b :: oconstrs_r :: oconstrss),
                     f#f_handling (next_b, c_b) (next_r, xr, c_r) names nexts
                       clauses )
               | e1' :: e2' :: e3' :: es' ->
@@ -1699,7 +1697,7 @@ module Make (Config : Config.ConfigType) = struct
                 | _ -> None (*todo*)
               in
               ( Set.Poly.union_list
-                @@ (Set.Poly.singleton ([ Sort.Pure ], c0.cont_eff) :: econstrss),
+                  (Set.Poly.singleton ([ Sort.Pure ], c0.cont_eff) :: econstrss),
                 Set.Poly.union_list
                 @@ Set.Poly.singleton (c0.op_sig, Sort.empty_closed_opsig)
                    (*ToDo*)
@@ -1760,9 +1758,9 @@ module Make (Config : Config.ConfigType) = struct
                           sort_fun
                       in
                       ( Set.Poly.union_list
-                        @@ (econstrs_args :: econstrs :: econstrss),
+                          (econstrs_args :: econstrs :: econstrss),
                         Set.Poly.union_list
-                        @@ (oconstrs_args :: oconstrs :: oconstrss),
+                          (oconstrs_args :: oconstrs :: oconstrss),
                         f#f_construct dt name nexts_either )
                   | T_dt.SUS (*ToDo*) (name, params)
                     when Map.Poly.mem dtenv name ->
@@ -1792,9 +1790,9 @@ module Make (Config : Config.ConfigType) = struct
                           sort_fun
                       in
                       ( Set.Poly.union_list
-                        @@ (econstrs_args :: econstrs :: econstrss),
+                          (econstrs_args :: econstrs :: econstrss),
                         Set.Poly.union_list
-                        @@ (oconstrs_args :: oconstrs :: oconstrss),
+                          (oconstrs_args :: oconstrs :: oconstrss),
                         f#f_construct dt name nexts_either )
                   | T_dt.SUS _ ->
                       (* reachable here? *)
@@ -1808,8 +1806,8 @@ module Make (Config : Config.ConfigType) = struct
                           List.map sort_args ~f:(Fn.const Sort.Pure),
                           Sort.Pure )
                       in
-                      ( Set.Poly.union_list @@ (econstrs_args :: econstrss),
-                        Set.Poly.union_list @@ (oconstrs_args :: oconstrss),
+                      ( Set.Poly.union_list (econstrs_args :: econstrss),
+                        Set.Poly.union_list (oconstrs_args :: oconstrss),
                         f#f_apply res nexts_either )
                   | _ -> failwith @@ "unknown construct: " ^ name))
           | Texp_tuple es ->
@@ -1843,7 +1841,7 @@ module Make (Config : Config.ConfigType) = struct
                         ~f:(fun ovar -> (c0.op_sig, ovar)))
                    :: (oconstrss @ oconstrss'),
                 f#f_tuple nexts_either )
-          | Texp_match (e1, cases, _) ->
+          | Texp_match (e1, cases, _, _) ->
               let econstrs, oconstrs, matched = mk_either senv e1 in
               let ovar1 = ovar_of_either matched in
               let sort1 = sort_of_either matched in
@@ -1897,7 +1895,7 @@ module Make (Config : Config.ConfigType) = struct
                 Set.Poly.union_list [ oconstrs1; oconstrs2 ],
                 f#f_sequence (next1, sort1, evar1) (next2, evar2) )
           | Texp_unreachable
-          | Texp_try (_, _)
+          | Texp_try (_, _, _)
           | Texp_variant (_, _)
           | Texp_record _
           | Texp_field (_, _, _)

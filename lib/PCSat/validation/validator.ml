@@ -7,6 +7,7 @@ open Common.Util
 open Common.Combinator
 open PCSatCommon
 open Ast
+open Ast.LogicOld
 
 module type ValidatorType = sig
   val run_phase : int -> State.s -> State.u Or_error.t
@@ -59,14 +60,13 @@ module Make
   let _ = Debug.set_id id
 
   let check_clause_nonparam_smt ?(timeout = None) fenv phi =
-    let phi = Evaluator.simplify @@ LogicOld.Formula.mk_neg phi in
-    Debug.print
-    @@ lazy (sprintf "[check valid -> sat] %s" @@ LogicOld.Formula.str_of phi);
+    let phi = Evaluator.simplify @@ Formula.mk_neg phi in
+    Debug.print @@ lazy (sprintf "[check valid -> sat] %s" @@ Formula.str_of phi);
     Z3Smt.Z3interface.check_sat ~id ~timeout fenv [ phi ]
 
   let check_clause_param_smt ?(timeout = None) fenv params_senv uni_senv phi =
     let qphi =
-      LogicOld.Formula.forall
+      Formula.forall
         (Map.Poly.to_alist @@ Logic.to_old_sort_env_map uni_senv)
         phi
     in
@@ -76,28 +76,31 @@ module Make
     | _ ->
         (* unsat, unknown, timeout*)
         let sub = Logic.to_old_dummies params_senv in
-        check_clause_nonparam_smt fenv (LogicOld.Formula.subst sub phi)
+        check_clause_nonparam_smt fenv (Formula.subst sub phi)
+
+  let solve =
+    let module Z3interface =
+      Z3Smt.Z3interfaceNew.Make (Z3Smt.Z3interfaceNew.ExtTerm) in
+    fun senv phi -> Z3interface.check_sat [ phi ] senv (Z3.mk_context [])
 
   let check_clause_param_strat_synth ?(timeout = None) fenv params_senv uni_senv
       phi =
-    let open QSMT.StrategySynthesis in
+    let open StratSynth in
     let f =
-      Evaluator.simplify @@ LogicOld.Formula.elim_ite
-      @@ LogicOld.Formula.exists
+      Evaluator.simplify @@ Formula.elim_ite
+      @@ Formula.exists
            (Map.Poly.to_alist @@ Logic.to_old_sort_env_map params_senv)
-      @@ LogicOld.Formula.forall
-           (Map.Poly.to_alist @@ Logic.to_old_sort_env_map uni_senv)
-      @@ LogicOld.Formula.aconv_tvar
-           phi (*ToDo: this is necessary due to a bug?*)
+      @@ Formula.forall (Map.Poly.to_alist @@ Logic.to_old_sort_env_map uni_senv)
+      @@ Formula.aconv_tvar phi (*ToDo: this is necessary due to a bug?*)
     in
-    (*print_endline @@ (sprintf "original input: %s\n" (LogicOld.Formula.str_of f));*)
+    (*print_endline (sprintf "original input: %s\n" (Formula.str_of f));*)
     match LIA.formula_of_term @@ Logic.ExtTerm.of_old_formula f with
     | None ->
         (* f is possibly non-linear *)
         check_clause_param_smt ~timeout fenv params_senv uni_senv phi
     | Some f -> (
         (*Debug.print @@ lazy (sprintf "input: %s\n" (formula_to_string f));*)
-        let p, s = LIAStrategySynthesis.nondet_strategy_synthesis f in
+        let p, s = LIAStrategySynthesis.nondet_strategy_synthesis solve f in
         (*Debug.print @@ lazy (sprintf "strategy skelton for %s:\n%s" (player_to_string p) (ssforest_to_string s));*)
         match p with
         | SAT ->
@@ -122,23 +125,30 @@ module Make
                 ~params:(PCSP.Params.make @@ Map.of_list_exn params)
               @@ Set.Poly.of_list chc
             in
-            (*Debug.print @@ lazy "recursion-free CHC problem for determinization:";
+            if false then (
+              Debug.print
+              @@ lazy "recursion-free CHC problem for determinization:";
               Debug.print @@ lazy (PCSP.Problem.str_of problem);
-              Debug.print @@ lazy "";*)
+              Debug.print @@ lazy "");
             match PCSP.ForwardPropagate.solve problem with
             | Ok (PCSP.Problem.Sat subs) ->
-                (*Debug.print @@ lazy ("solution:\n" ^ Logic.str_of_term_subst Logic.ExtTerm.str_of subs);*)
+                if false then
+                  Debug.print
+                  @@ lazy
+                       ("solution:\n"
+                       ^ Logic.str_of_term_subst Logic.ExtTerm.str_of subs);
                 let ds =
                   Map.Poly.map det ~f:(fun (senv, t) ->
                       (senv, Logic.ExtTerm.subst subs t))
                 in
-                (*print_endline @@ (sprintf "determinized strategy for %s:"
-                                    (player_to_string p));
-                  Map.Poly.iteri ds ~f:(fun ~key ~data:(senv, t) ->
-                    print_endline @@
-                    (sprintf "%s: %s"
-                       (Ident.name_of_tvar key)
-                       (LogicOld.ExTerm.str_of_term params_senv(*ToDo*) senv t)));*)
+                (* if false then (
+                   print_endline
+                     (sprintf "determinized strategy for %s:"
+                        (player_to_string p));
+                   Map.Poly.iteri ds ~f:(fun ~key ~data:(senv, t) ->
+                       print_endline
+                       @@ sprintf "%s: %s" (Ident.name_of_tvar key)
+                            (ExTerm.str_of_term params_senv (*ToDo*) senv t))); *)
                 `Sat
                   (List.map (Map.Poly.to_alist ds) ~f:(fun (x, (senv, t)) ->
                        let t =
@@ -146,9 +156,8 @@ module Make
                            ~f:(Logic.Term.subst (Map.Poly.map ds ~f:snd))
                            ~equal:Stdlib.( = ) t
                        in
-                       ( (x, LogicOld.T_bool.SBool),
-                         Some
-                           (Logic.ExtTerm.to_old_term Map.Poly.empty senv t [])
+                       ( (x, T_bool.SBool),
+                         Some (Logic.ExtTerm.to_old_trm Map.Poly.empty senv t)
                        )))
             | Ok (PCSP.Problem.Unsat _) -> assert false
             | Ok PCSP.Problem.Unknown -> assert false
@@ -162,15 +171,24 @@ module Make
       Set.partition_tf ~f:(fst >> Quintuple.trd >> Map.Poly.is_empty)
       @@ Set.Poly.map clauses ~f:(fun cl ->
              let uni_senv, clause = Clause.to_senv_formula cl in
-             (*Debug.print @@ lazy ("size before: " ^ string_of_int @@ Logic.ExtTerm.ast_size clause);*)
+             if false then
+               Debug.print
+               @@ lazy
+                    ("size before: " ^ string_of_int
+                    @@ Logic.ExtTerm.ast_size clause);
              let phi = Logic.Term.subst cand_map clause in
-             (*Debug.print @@ lazy ("size after: " ^ string_of_int @@ Logic.ExtTerm.ast_size phi);*)
+             if false then
+               Debug.print
+               @@ lazy
+                    ("size after: " ^ string_of_int
+                   @@ Logic.ExtTerm.ast_size phi);
              let phi =
                Logic.ExtTerm.to_old_fml Map.Poly.empty
-                 (Map.force_merge params_senv uni_senv, phi)
+                 (Map.force_merge params_senv uni_senv)
+                 phi
              in
              let phi = Evaluator.simplify phi in
-             let fvs = LogicOld.Formula.tvs_of phi in
+             let fvs = Formula.tvs_of phi in
              let uni_senv' = Map.Poly.filter_keys uni_senv ~f:(Set.mem fvs) in
              let params_senv' =
                Map.Poly.filter_keys params_senv ~f:(Set.mem fvs)
@@ -195,11 +213,7 @@ module Make
              let (cls, params_senv', uni_senv', phi), cl =
                List.fold rs
                  ~init:
-                   ( ( [],
-                       Map.Poly.empty,
-                       Map.Poly.empty,
-                       LogicOld.Formula.mk_true () ),
-                     [] )
+                   (([], Map.Poly.empty, Map.Poly.empty, Formula.mk_true ()), [])
                  ~f:(fun
                      ((cls, params_senv, uni_senv, phi), srcs)
                      ( (uni_senv0, clause0, params_senv', uni_senv', phi'),
@@ -208,7 +222,7 @@ module Make
                    ( ( (uni_senv0, clause0) :: cls,
                        Map.force_merge params_senv params_senv',
                        Map.force_merge uni_senv uni_senv',
-                       LogicOld.Formula.mk_and phi phi' ),
+                       Formula.mk_and phi phi' ),
                      src_cl :: srcs ))
              in
              (* parametric candidate solution *)
@@ -238,7 +252,7 @@ module Make
                         let phi_clause =
                           Logic.ExtTerm.to_old_fml
                             (PCSP.Problem.senv_of APCSP.problem)
-                            (uni_senv, clause)
+                            uni_senv clause
                         in
                         ExClauseSet.of_model
                           (PCSP.Problem.senv_of APCSP.problem)
@@ -256,27 +270,26 @@ module Make
                  in
                  Debug.print
                  @@ lazy
-                      ("model: "
-                      ^ LogicOld.str_of_model model
-                      ^ "\ncandidate: "
-                      ^ CandSol.str_of (params_senv, cand)
-                      ^ "\nphi: "
-                      ^ LogicOld.Formula.str_of phi
-                      ^ "\nz3 input: " ^ Z3.Expr.to_string
-                      @@ Z3Smt.Z3interface.of_formula ~id ctx [] [] fenv dtenv
-                      @@ LogicOld.Formula.mk_neg phi);
+                      (sprintf "model: %s\ncandidate: %s\nphi: %s\nz3 input: %s"
+                         (str_of_model model)
+                         (CandSol.str_of (params_senv, cand))
+                         (Formula.str_of phi)
+                         (Z3.Expr.to_string
+                         @@ Z3Smt.Z3interface.of_formula ~id ctx [] [] fenv
+                              dtenv
+                         @@ Formula.mk_neg phi));
                  (* ToDo: should be unreachable *)
                  (*dummy*)
                  Set.Poly.singleton
-                 @@ ( ExClause.mk_unit_pos @@ ExAtom.mk_true (),
-                      [ (ClauseGraph.Dummy, true) ] )
+                   ( ExClause.mk_unit_pos @@ ExAtom.mk_true (),
+                     [ (ClauseGraph.Dummy, true) ] )
            | `Unsat -> Set.Poly.empty
            | _ ->
                (*failwith "Z3 reported unknown or timeout in the validation phase"*)
                (*dummy*)
                Set.Poly.singleton
-               @@ ( ExClause.mk_unit_pos @@ ExAtom.mk_true (),
-                    [ (ClauseGraph.Dummy, true) ] ))
+                 ( ExClause.mk_unit_pos @@ ExAtom.mk_true (),
+                   [ (ClauseGraph.Dummy, true) ] ))
 
   (** ToDo: fix to use real MaxSMT *)
   let find_common_counterexamples_for_clause fenv num_ex
@@ -288,9 +301,9 @@ module Make
           let cand_map = CandSol.to_subst cand in
           ( cand,
             ( cand_tag,
-              LogicOld.Formula.mk_neg
-              @@ Logic.ExtTerm.to_old_fml uni_senv
-                   (Map.Poly.empty, Logic.Term.subst cand_map clause) ) ))
+              Formula.mk_neg
+              @@ Logic.ExtTerm.to_old_fml uni_senv Map.Poly.empty
+                   (Logic.Term.subst cand_map clause) ) ))
     in
     let spurious_cand_phi_list =
       List.filter cand_phi_list
@@ -304,7 +317,7 @@ module Make
              let examples =
                ExClauseSet.of_model exi_senv false
                  ( Map.force_merge exi_senv uni_senv,
-                   Logic.ExtTerm.to_old_fml exi_senv (uni_senv, clause) )
+                   Logic.ExtTerm.to_old_fml exi_senv uni_senv clause )
                  model
              in
              assert (Fn.non Set.is_empty examples);
@@ -337,8 +350,8 @@ module Make
           if config.check_part_sol_with_lbs then
             Some
               ( PCSP.Problem.senv_of APCSP.problem,
-                VersionSpace.fenv_of vs,
-                VersionSpace.lower_bounds_of vs )
+                vs.VersionSpace.fenv,
+                vs.VersionSpace.lower_bounds )
           else None
         in
         let stable_clauses = PCSP.Problem.stable_clauses_of APCSP.problem in
@@ -453,11 +466,11 @@ module Make
     @@ lazy
          (VersionSpace.str_of_learned_clauses
             (PCSP.Problem.senv_of APCSP.problem)
-         @@ VersionSpace.learned_clauses_of vs);
+            vs.learned_clauses);
     let clauses =
       Set.union (PCSP.Problem.clauses_of APCSP.problem)
-      @@ Set.Poly.of_list @@ Hash_set.to_list
-      @@ VersionSpace.learned_clauses_of vs
+      @@ Set.Poly.of_list
+      @@ Hash_set.to_list vs.learned_clauses
     in
     let res =
       match config.cex_strategy with
@@ -490,10 +503,7 @@ module Make
                       Set.filter clauses ~f:(is_hard pvs)
                   | _ -> clauses
                 in
-                let cexs =
-                  find_all_counterexamples hard_clauses
-                    (VersionSpace.fenv_of vs) cand
-                in
+                let cexs = find_all_counterexamples hard_clauses vs.fenv cand in
                 if RLCfg.config.enable then (
                   RLConfig.lock ();
                   let total = Set.length hard_clauses in
@@ -535,15 +545,14 @@ module Make
           iter Set.Poly.empty candidates
       | ExamplesUpTo num_of_examples -> (
           (* for each clause,
-              generate up to [num_of_examples] counterexamples that are not satisfied by as much candidates as possible
-          *)
+              generate up to [num_of_examples] counterexamples that are not satisfied by as much candidates as possible *)
           (* assume candidates are non-parametric *)
           let examples, spurious_cands =
             Set.fold clauses ~init:(Set.Poly.empty, Set.Poly.empty)
               ~f:(fun (examples, spurious_cands) cl ->
                 let examples', spurious_cands' =
-                  find_common_counterexamples_for_clause
-                    (VersionSpace.fenv_of vs) num_of_examples candidates cl
+                  find_common_counterexamples_for_clause vs.fenv num_of_examples
+                    candidates cl
                 in
                 let examples' =
                   Set.Poly.map examples' ~f:(fun ex ->
@@ -567,8 +576,8 @@ module Make
         Debug.print @@ lazy "*** Counterexamples to the Candidate Solutions:";
         Debug.print
         @@ lazy
-             (String.concat_set ~sep:";\n"
-             @@ Set.Poly.map ~f:(fst >> ExClause.str_of) examples);
+             (String.concat_map_set ~sep:";\n" ~f:(fst >> ExClause.str_of)
+                examples);
         Debug.print @@ lazy "";
         Ok (State.of_examples vs examples)
     | Second sol ->

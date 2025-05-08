@@ -1,13 +1,12 @@
 open Core
 open Common.Ext
+open Common.Combinator
 open Ast
 open Ast.LogicOld
-open PCSatCommon
 
 let make n seeds =
-  Set.fold
+  Set.fold seeds
     ~init:(Set.Poly.singleton (n, []))
-    seeds
     ~f:(fun acc (x, _, t) ->
       Set.Poly.union_list
         [
@@ -49,7 +48,7 @@ let polyhedron_half_spaces_of n sorts examples =
       (Set.concat_map examples ~f:(fun terms ->
            List.map2_exn params terms ~f:(fun (x, s) t ->
                (Term.mk_var x s, s, t))
-           |> List.filter ~f:(fun (_, s, _) -> Fn.non Term.is_bool_sort s)
+           |> List.filter ~f:(Triple.snd >> Fn.non Term.is_bool_sort)
            |> Set.Poly.of_list |> make n)) )
 
 module Make (Config : sig
@@ -57,17 +56,12 @@ module Make (Config : sig
 end) =
 struct
   let qualifiers_of _pvar sorts labeled_atoms _examples =
-    let examples =
-      Set.Poly.filter_map labeled_atoms ~f:(fun (atom, _) ->
-          match ExAtom.instantiate atom with
-          | ExAtom.PApp (_, terms) -> Some terms
-          | ExAtom.PPApp (_, (_, terms)) -> Some terms
-          | _ -> None)
-    in
     let params, quals =
-      polyhedron_half_spaces_of Config.upper_bound sorts examples
+      polyhedron_half_spaces_of Config.upper_bound sorts
+      @@ Set.Poly.filter_map labeled_atoms
+           ~f:(fst >> ExAtom.instantiate >> ExAtom.args_of)
     in
-    Set.Poly.map ~f:(fun qual -> (params, qual)) quals
+    Set.Poly.map quals ~f:(fun qual -> (params, qual))
 
   let str_of_domain =
     "Polyhedron with upper bound " ^ string_of_int Config.upper_bound

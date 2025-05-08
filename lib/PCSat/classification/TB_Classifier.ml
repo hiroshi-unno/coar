@@ -2,10 +2,10 @@ open Core
 open Common
 open Common.Ext
 open Common.Util
+open Common.Combinator
 open Ast
 open Ast.LogicOld
 open PCSatCommon
-open PCSatCommon.HypSpace
 open Template.Function
 
 module Config = struct
@@ -117,13 +117,12 @@ struct
                     end)
                     (M) : Template.Function.Type)
     in
-    let alist = labeling in
     let tt = TruthTable.get_table table pvar in
     Debug.print
-    @@ lazy (sprintf "    labeled atoms (%d):" (TruthTable.num_atoms alist));
-    Debug.print @@ lazy (TruthTable.str_of_atoms tt alist);
+    @@ lazy (sprintf "    labeled atoms (%d):" (TruthTable.num_atoms labeling));
+    Debug.print @@ lazy (TruthTable.str_of_atoms tt labeling);
     let pos_neg_ex =
-      let neg_ex, pneg_ex, pos_ex, ppos_ex = TruthTable.papps_of tt alist in
+      let neg_ex, pneg_ex, pos_ex, ppos_ex = TruthTable.papps_of tt labeling in
       assert (Set.is_empty pneg_ex && Set.is_empty ppos_ex);
       Set.union
         (Set.Poly.map ~f:(fun a -> (true, a)) pos_ex)
@@ -137,14 +136,14 @@ struct
             temp_param_senv,
             qualifiers ) =
         FT.gen_template ~tag ~ucore:false
-        @@ {
-             depth = -1;
-             params = FT.params_of ~tag;
-             quals = Set.Poly.empty (*quals*);
-             qdeps = Map.Poly.empty;
-             terms = Set.Poly.empty;
-             consts = Set.Poly.empty;
-           }
+          {
+            depth = -1;
+            params = FT.params_of ~tag;
+            quals = Set.Poly.empty (*quals*);
+            qdeps = Map.Poly.empty;
+            terms = Set.Poly.empty;
+            consts = Set.Poly.empty;
+          }
       in
       let hole_qualifiers_map =
         List.map qualifiers ~f:(fun (tvar, quals) ->
@@ -169,19 +168,18 @@ struct
                   (ExAtom.normalize_params atom)
               in
               let e = tt.table.{qi, ai} in
-              if e = 1 then
-                Logic.ExtTerm.geq_of (Logic.Term.mk_var key)
-                  (Logic.ExtTerm.zero ())
-              else if e = -1 then
-                Logic.ExtTerm.leq_of (Logic.Term.mk_var key)
-                  (Logic.ExtTerm.zero ())
+              if e = 1 then Logic.ExtTerm.(geq_of (mk_var key) (zero ()))
+              else if e = -1 then Logic.ExtTerm.(leq_of (mk_var key) (zero ()))
               else if
-                (*Debug.print @@ lazy (ExAtom.str_of atom ^ " on " ^ Formula.str_of phi ^ " couldn't be evaluated.  This may cause a violation of the progress property.");*)
+                (* if false then
+                   Debug.print
+                   @@ lazy
+                        (ExAtom.str_of atom ^ " on " ^ Formula.str_of phi
+                       ^ " couldn't be evaluated.  This may cause a violation \
+                          of the progress property."); *)
                 not polarity
               then Logic.ExtTerm.mk_bool true
-              else
-                Logic.ExtTerm.eq_of Logic.ExtTerm.SInt (Logic.Term.mk_var key)
-                  (Logic.ExtTerm.zero ())
+              else Logic.ExtTerm.(eq_of SInt (Logic.Term.mk_var key) (zero ()))
             in
             let hole_map =
               List.map hole_qualifiers_map ~f:(fun (hole, quals) ->
@@ -204,8 +202,7 @@ struct
               |> Logic.Term.subst
                    (Map.Poly.singleton (Ident.pvar_to_tvar pvar) template)
               |> Logic.Term.subst hole_map
-              |> (fun phi ->
-                   Logic.ExtTerm.to_old_fml Map.Poly.empty (temp_param_senv, phi))
+              |> Logic.ExtTerm.to_old_fml Map.Poly.empty temp_param_senv
               |> if polarity then Evaluator.simplify else Evaluator.simplify_neg
             in
             ( Map.Poly.add_exn key_constr_map ~key ~data:constr,
@@ -215,7 +212,7 @@ struct
       let key_constr_map, key_tvar_update_list_map =
         let used_param_senv =
           Set.of_map key_constr_map
-          |> Set.concat_map ~f:(fun (_, phi) -> Formula.tvs_of phi)
+          |> Set.concat_map ~f:(snd >> Formula.tvs_of)
           |> Set.concat_map ~f:(fun (Ident.Tvar x) ->
                  Set.Poly.of_list
                    [
@@ -238,7 +235,7 @@ struct
                     if Set.mem used_param_senv key then None
                     else Some (Logic.mk_old_dummy data))
               in
-              Logic.ExtTerm.to_old_fml Map.Poly.empty (temp_param_senv, cnstr)
+              Logic.ExtTerm.to_old_fml Map.Poly.empty temp_param_senv cnstr
               |> Formula.subst dis_map |> Evaluator.simplify
             in
             ( Map.Poly.add_exn key_constr_map ~key ~data:param_constr,
@@ -254,14 +251,11 @@ struct
           let model =
             List.map model ~f:(fun ((x, s), t_opt) ->
                 ( (x, Logic.ExtTerm.of_old_sort s),
-                  Option.(
-                    t_opt >>= fun t -> return (Logic.ExtTerm.of_old_term t)) ))
+                  Option.(t_opt >>= (Logic.ExtTerm.of_old_term >> return)) ))
           in
           let temp_param_sub =
             Map.Poly.mapi temp_param_senv ~f:(fun ~key ~data ->
-                (match
-                   List.find model ~f:(fun ((x, _), _) -> Stdlib.(x = key))
-                 with
+                (match List.find model ~f:(fst >> fst >> Stdlib.( = ) key) with
                 | None -> ((key, data), None)
                 | Some opt -> opt)
                 |> Logic.ExtTerm.remove_dontcare_elem
@@ -280,7 +274,7 @@ struct
                          let _, (_, qsenv, _) = List.hd_exn quals in
                          Logic.of_old_sort_env_list qsenv
                        in
-                       Template.Generator.gen_from_qualifiers (senv, quals) ))
+                       Templ.gen_from_qualifiers (senv, quals) ))
           in
           let phi =
             Logic.ExtTerm.subst temp_param_sub

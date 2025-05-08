@@ -6,8 +6,9 @@
 %token <string>ATOM
 %token EOF
 
-%type <Ppx_sexp_conv_lib.Sexp.t list > program
-%start program
+%type <Ppx_sexp_conv_lib.Sexp.t list> program
+%type <Ppx_sexp_conv_lib.Sexp.t> sexp
+%start program sexp
 
 %%
 

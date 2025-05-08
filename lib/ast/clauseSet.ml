@@ -158,6 +158,12 @@ let map_formula ~f =
       let uni_senv, phi = f (uni_senv, phi) in
       (uni_senv, ps, ns, phi))
 
+let concat_map_formula ~f =
+  Set.concat_map ~f:(fun (uni_senv, ps, ns, phi) ->
+      Set.Poly.map
+        (f (uni_senv, phi))
+        ~f:(fun (uni_senv, phi) -> (uni_senv, ps, ns, phi)))
+
 let partial_sols_of ~print is_valid exi_senv sol lbs clauses0 target_pvars
     ignored =
   let clauses =
@@ -229,9 +235,9 @@ let partial_sols_of ~print is_valid exi_senv sol lbs clauses0 target_pvars
              in
              let right =
                Normalizer.normalize @@ Evaluator.simplify
-               @@ Logic.ExtTerm.to_old_formula Map.Poly.empty
+               @@ Logic.ExtTerm.to_old_fml Map.Poly.empty
                     (Map.Poly.of_alist_exn uni_senv)
-                    pred []
+                    pred
              in
              is_valid @@ LogicOld.Formula.mk_imply left right
            in

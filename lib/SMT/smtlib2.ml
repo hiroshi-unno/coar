@@ -9,6 +9,86 @@ open Ast.LogicOld
 (* open Parsexp *)
 module Sexp = Ppx_sexp_conv_lib.Sexp
 
+let str_of_sort = function
+  | T_int.SInt -> "Int"
+  | T_real.SReal -> "Real"
+  | T_bool.SBool -> "Bool"
+  | T_string.SString -> "String"
+  | s -> failwith ("[str_of_sort] unsupported sort: " ^ Term.str_of_sort s)
+
+let str_of_fsym = function
+  | FVar (x, _, _) -> Ident.name_of_tvar x
+  | T_int.Int n -> Z.to_string n
+  | T_int.Neg -> "-"
+  | T_int.Add -> "+"
+  | T_int.Sub -> "-"
+  | T_int.Mul -> "*"
+  | T_int.Div _ (*ToDo*) -> "div"
+  | T_int.Rem _ (*ToDo*) -> "mod"
+  | T_real.Real r ->
+      if true then
+        if Z.equal (Q.den r) Z.one then Z.to_string (Q.num r)
+        else if Z.equal (Q.num r) Z.zero then Z.to_string Z.zero
+        else sprintf "(/ %s %s)" (Z.to_string (Q.num r)) (Z.to_string (Q.den r))
+      else Q.to_string r
+  | T_real.RNeg -> "-"
+  | T_real.RAdd -> "+"
+  | T_real.RSub -> "-"
+  | T_real.RMul -> "*"
+  | T_real.RDiv -> "/"
+  | T_irb.IntToReal -> "to_real"
+  | T_irb.RealToInt -> "to_int"
+  | _ -> failwith "[str_of_fsym] unsupported function symbol"
+
+let str_of_psym = function
+  | T_bool.Eq -> "="
+  (*| T_bool.Neq -> "xor"*)
+  | T_int.Leq | T_real.RLeq -> "<="
+  | T_int.Geq | T_real.RGeq -> ">="
+  | T_int.Lt | T_real.RLt -> "<"
+  | T_int.Gt | T_real.RGt -> ">"
+  | _ -> failwith "[str_of_psym] unsupported predicate symbol"
+
+let rec str_of_term = function
+  | Term.Var (x, _, _) -> Ident.name_of_tvar x
+  | Term.FunApp (fsym, args, _) ->
+      if List.is_empty args then str_of_fsym fsym
+      else
+        sprintf "(%s %s)" (str_of_fsym fsym)
+          (String.concat_map_list ~sep:" " args ~f:str_of_term)
+  | Term.LetTerm (_x, _, _t1, _t2, _) -> failwith "unsupported"
+
+let str_of_atom = function
+  | Atom.True _info -> "true"
+  | Atom.False _info -> "false"
+  | Atom.App (Predicate.Psym T_bool.Neq, [ t1; t2 ], _info) ->
+      if T_irb.is_sint_sreal t1 then
+        sprintf "(or (< %s %s) (> %s %s))" (str_of_term t1) (str_of_term t2)
+          (str_of_term t1) (str_of_term t2)
+      else sprintf "(not (= %s %s))" (str_of_term t1) (str_of_term t2)
+  | Atom.App (Predicate.Psym psym, args, _info) ->
+      if List.is_empty args then str_of_psym psym
+      else
+        sprintf "(%s %s)" (str_of_psym psym)
+          (String.concat_map_list ~sep:" " args ~f:str_of_term)
+  | _ -> assert false
+
+let str_of_formula =
+  Formula.fold
+    ~f:
+      (object
+         method fatom atom = str_of_atom atom
+         method fand s1 s2 = sprintf "(and %s %s)" s1 s2
+         method for_ s1 s2 = sprintf "(or %s %s)" s1 s2
+         method fimply s1 s2 = sprintf "(=> %s %s)" s1 s2
+         method fiff s1 s2 = sprintf "(= %s %s)" s1 s2
+         method fxor s1 s2 = sprintf "(xor %s %s)" s1 s2
+         method fnot s1 = sprintf "(not %s)" s1
+         method fbind _ _ _ = failwith "unsupported"
+         method fletrec _ _ = failwith "unsupported"
+         method flet _ _ _ _ = failwith "unsupported"
+      end)
+
 let rec sort_of_sexp ~print dtenv = function
   | Sexp.Atom "Int" -> T_int.SInt
   | Sexp.Atom "Real" -> T_real.SReal
@@ -111,17 +191,17 @@ let is_fun_sym2 = function
   | _ -> false
 
 let of_fun_sym2 = function
-  | "+" -> T_num.mk_nadd
-  | "-" -> T_num.mk_nsub
-  | "*" -> T_num.mk_nmult
-  | "/" -> T_real.mk_rdiv
-  | "div" -> T_int.mk_div
-  | "mod" -> T_num.mk_nmod
-  | "rem" -> T_num.mk_nrem
-  | "^" -> T_num.mk_npower
-  | "re.++" -> T_regex.mk_concat
-  | "re.union" -> T_regex.mk_union
-  | "re.inter" -> T_regex.mk_inter
+  | "+" -> T_num.mk_nadd ~info:Dummy
+  | "-" -> T_num.mk_nsub ~info:Dummy
+  | "*" -> T_num.mk_nmul ~info:Dummy
+  | "/" -> T_real.mk_rdiv ~info:Dummy
+  | "div" -> T_int.mk_div Value.Euclidean
+  | "mod" -> T_int.mk_rem Value.Euclidean
+  | "rem" -> T_int.mk_rem Value.Euclidean (*ToDo: z3 rem is different from mod*)
+  | "^" -> T_num.mk_npower ~info:Dummy
+  | "re.++" -> T_regex.mk_concat ~info:Dummy
+  | "re.union" -> T_regex.mk_union ~info:Dummy
+  | "re.inter" -> T_regex.mk_inter ~info:Dummy
   | op -> failwith @@ "parse error : unknown fun sym " ^ op
 
 let rec of_formula ~print ~inline (envs : Problem.envs) phi =
@@ -159,7 +239,7 @@ let rec of_formula ~print ~inline (envs : Problem.envs) phi =
                   if inline then phi
                   else
                     Formula.of_bool_term
-                    @@ Term.mk_fvar_app (Ident.Tvar name) [ T_bool.SBool ] []
+                    @@ Term.mk_fvar_app (Ident.Tvar name) [] T_bool.SBool []
               | _ -> failwith @@ sprintf "%s is not bound" name)))
   (* logical operation *)
   | Sexp.List [ Sexp.Atom "not"; phi ] ->
@@ -288,14 +368,12 @@ let rec of_formula ~print ~inline (envs : Problem.envs) phi =
                   else
                     Formula.of_bool_term
                     @@ Term.mk_fvar_app (Ident.Tvar name)
-                         (List.map ~f:snd fargs @ [ T_bool.SBool ])
-                         args
+                         (List.map ~f:snd fargs) T_bool.SBool args
               | Some (fargs, T_bool.SBool, _, true, _) ->
                   assert (List.length args = List.length fargs);
                   Formula.of_bool_term
-                  @@ Term.mk_fvar_app (Tvar name)
-                       (List.map ~f:snd fargs @ [ T_bool.SBool ])
-                       args
+                  @@ Term.mk_fvar_app (Tvar name) (List.map ~f:snd fargs)
+                       T_bool.SBool args
               | Some _ -> failwith ""
               | None -> failwith @@ sprintf "%s is not bound" name)))
   | sexp -> failwith @@ "parse error : " ^ Sexp.to_string_hum sexp
@@ -363,11 +441,11 @@ and of_term ~print ~inline envs =
               | Some sort -> mk_var (Ident.Tvar name) sort
               | None -> (
                   match Map.Poly.find envs.fenv (Ident.Tvar name) with
-                  | Some ([], ret_sort, t, false, _) ->
+                  | Some ([], sret, t, false, _) ->
                       if inline then t
-                      else Term.mk_fvar_app (Ident.Tvar name) [ ret_sort ] []
-                  | Some ([], ret_sort, _, true, _) ->
-                      Term.mk_fvar_app (Ident.Tvar name) [ ret_sort ] []
+                      else Term.mk_fvar_app (Ident.Tvar name) [] sret []
+                  | Some ([], sret, _, true, _) ->
+                      Term.mk_fvar_app (Ident.Tvar name) [] sret []
                   | Some _ -> failwith ""
                   | None -> (
                       match DTEnv.look_up_func envs.dtenv name with
@@ -389,7 +467,7 @@ and of_term ~print ~inline envs =
           of_term ~print ~inline envs >> T_num.mk_nadd acc)
   | Sexp.List (Sexp.Atom "*" :: arg :: args) ->
       List.fold args ~init:(of_term ~print ~inline envs arg) ~f:(fun acc ->
-          of_term ~print ~inline envs >> T_num.mk_nmult acc)
+          of_term ~print ~inline envs >> T_num.mk_nmul acc)
   | Sexp.List (Sexp.Atom "re.++" :: arg :: args) ->
       List.fold args ~init:(of_term ~print ~inline envs arg) ~f:(fun acc ->
           of_term ~print ~inline envs >> T_regex.mk_concat acc)
@@ -429,7 +507,7 @@ and of_term ~print ~inline envs =
   (* function variable application *)
   | Sexp.List (Sexp.Atom name :: args) as t -> (
       match Map.Poly.find envs.fenv (Tvar name) with
-      | Some (fargs, ret_sort, term, false, _) ->
+      | Some (fargs, sret, term, false, _) ->
           if inline then
             let sub =
               Map.Poly.of_alist_exn
@@ -438,12 +516,10 @@ and of_term ~print ~inline envs =
             in
             Term.subst sub term
           else
-            Term.mk_fvar_app (Ident.Tvar name)
-              (List.map ~f:snd fargs @ [ ret_sort ])
+            Term.mk_fvar_app (Ident.Tvar name) (List.map ~f:snd fargs) sret
             @@ List.map args ~f:(of_term ~print ~inline envs)
-      | Some (fargs, ret_sort, _, true, _) ->
-          Term.mk_fvar_app (Ident.Tvar name)
-            (List.map ~f:snd fargs @ [ ret_sort ])
+      | Some (fargs, sret, _, true, _) ->
+          Term.mk_fvar_app (Ident.Tvar name) (List.map ~f:snd fargs) sret
           @@ List.map args ~f:(of_term ~print ~inline envs)
       | _ -> (
           match Map.Poly.find envs.exi_senv (Ident.Tvar name) with
@@ -453,7 +529,7 @@ and of_term ~print ~inline envs =
                 T_bool.of_formula @@ of_formula ~print ~inline envs t
               else (
                 assert (List.length args = List.length sargs);
-                Term.mk_fvar_app (Ident.Tvar name) (sargs @ [ sret ])
+                Term.mk_fvar_app (Ident.Tvar name) sargs sret
                 @@ List.map args ~f:(of_term ~print ~inline envs))
           | None -> T_bool.of_formula @@ of_formula ~print ~inline envs t))
   | t -> T_bool.of_formula @@ of_formula ~print ~inline envs t
@@ -609,8 +685,7 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
       in
       (*ToDo*)
       LogicOld.set_fenv
-      @@ Map.force_merge
-           (Map.Poly.filter envs.fenv ~f:(fun (_, _, _, is_rec, _) -> is_rec))
+      @@ Map.force_merge (Map.Poly.filter envs.fenv ~f:Quintuple.fth)
       @@ LogicOld.get_fenv ();
       (acc', envs)
   | Sexp.List [ Sexp.Atom "set-logic"; Sexp.Atom logic ] :: es ->
@@ -618,17 +693,17 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
       toplevel ~print ~inline acc envs es
   | Sexp.List (Sexp.Atom "set-info" :: Sexp.Atom name :: t :: _) :: es -> (
       match Map.Poly.find envs.fenv (Tvar name) with
-      | Some (fargs, ret_sort, body, is_rec, _ (* ToDo *)) ->
-          let fenv' =
+      | Some (fargs, sret, body, is_rec, _ (* ToDo *)) ->
+          let fenv =
             (* ToDo *)
             let phi =
               Typeinf.typeinf_formula ~print ~to_sus:true
               @@ of_formula ~print ~inline envs t
             in
             Map.Poly.set envs.fenv ~key:(Tvar name)
-              ~data:(fargs, ret_sort, body, is_rec, phi)
+              ~data:(fargs, sret, body, is_rec, phi)
           in
-          toplevel ~print ~inline acc { envs with fenv = fenv' } es
+          toplevel ~print ~inline acc { envs with fenv } es
       | None -> toplevel ~print ~inline acc envs es (* ToDo: ignored? *))
   | Sexp.List (Sexp.Atom ("set-info" | "set-option") :: _) :: es
   | Sexp.List [ Sexp.Atom ("get-model" | "check-sat" | "exit") ] :: es ->
@@ -746,15 +821,15 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
     :: es ->
       (*print @@ lazy ("adding " ^ name);*)
       let args_sort = List.map args ~f:(sort_of_sexp ~print envs.dtenv) in
-      let ret_sort = sort_of_sexp ~print envs.dtenv ret in
-      let fun_sort = Sort.mk_fun @@ args_sort @ [ ret_sort ] in
+      let sret = sort_of_sexp ~print envs.dtenv ret in
+      let fun_sort = Sort.mk_fun @@ args_sort @ [ sret ] in
       let exi_senv' =
         Map.Poly.add_exn envs.exi_senv ~key:(Ident.Tvar name) ~data:fun_sort
       in
       let kind_map' =
         let kind =
-          if Term.is_int_sort ret_sort then Kind.IntFun
-          else if Term.is_regex_sort ret_sort && List.is_empty args_sort then
+          if Term.is_int_sort sret then Kind.IntFun
+          else if Term.is_regex_sort sret && List.is_empty args_sort then
             Kind.RegEx
           else
             failwith

@@ -5,6 +5,7 @@ type t =
   | PCSat of PCSat.Config.t
   | SPACER of SPACER.Config.t
   | Hoice of Hoice.Config.t
+  | PolyQEnt of PolyQEnt.Config.t
   | Forward
   | Printer of Printer.Config.t
 [@@deriving yojson]
@@ -22,6 +23,8 @@ let instantiate_ext_files =
       SPACER.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (SPACER cfg)
   | Hoice cfg ->
       Hoice.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (Hoice cfg)
+  | PolyQEnt cfg ->
+      PolyQEnt.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (PolyQEnt cfg)
   | Forward -> Ok Forward
   | Printer cfg ->
       Printer.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (Printer cfg)

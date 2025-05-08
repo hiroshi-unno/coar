@@ -1,0 +1,7 @@
+(library
+ (name HOSAT)
+ (public_name CoAR.HOSAT)
+ (preprocess
+  (pps ppx_deriving_yojson))
+ (libraries core yojson CoAR.common CoAR.ast CoAR.SAT CoAR.DQSAT)
+ (modules problem))

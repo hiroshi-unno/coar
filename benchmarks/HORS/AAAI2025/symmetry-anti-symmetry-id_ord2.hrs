@@ -1,0 +1,57 @@
+%BEGING
+S -> Forall23 ZeroBBB.
+Forall23 p -> and (S22 p) (if (IsMaxBBB p) tt (Forall23 (SuccBBB p))).
+S22 p -> iff (and (and (S17 p tt) (S17 p ff)) (and (S19 p tt) (S19 p ff))) (and (S21 p tt) (S21 p ff)).
+S17 p x -> and (S16 p x tt) (S16 p x ff).
+S16 p x y -> imply (p x y) (p y x).
+S19 p x -> and (S18 p x tt) (S18 p x ff).
+S18 p x y -> imply (and (p x y) (p y x)) (iff x y).
+S21 p x -> and (S20 p x tt) (S20 p x ff).
+S20 p x y -> imply (p x y) (iff x y).
+ZeroBBB x1 x2 -> ff.
+IsMaxBBB x -> and (IsMaxBB (x tt)) (IsMaxBB (x ff)).
+SuccBBB x x1 x2 -> if (IsMaxBB (x ff)) (if x1 (SuccBB (x x1) x2) (ZeroBB x2)) (if x1 (x x1 x2) (SuccBB (x x1) x2)).
+CompareBBB x y z lt eq gt -> if (IsMaxB z) eq (CompareBBB x y (SuccB z) lt (CompareBB (x z) (y z) ZeroB lt eq gt) gt).
+ZeroBB x1 -> ff.
+IsMaxBB x -> and (IsMaxB (x tt)) (IsMaxB (x ff)).
+SuccBB x x1 -> if (IsMaxB (x ff)) (if x1 (SuccB (x x1)) ZeroB) (if x1 (x x1) (SuccB (x x1))).
+CompareBB x y z lt eq gt -> if (IsMaxB z) eq (CompareBB x y (SuccB z) lt (CompareB (x z) (y z) lt eq gt) gt).
+ZeroB -> ff.
+IsMaxB x -> x.
+SuccB x -> tt.
+CompareB x y lt eq gt -> if x (if y eq gt) (if y lt eq).
+%ENDG
+
+%BEGINR
+tt -> 0.
+ff -> 0.
+not -> 1.
+and -> 2.
+or -> 2.
+imply -> 2.
+iff -> 2.
+xor -> 2.
+if -> 3.
+%ENDR
+
+%BEGINATA
+qT tt -> true.
+qT ff -> false.
+qT not -> (1,qF).
+qT and -> (1,qT) /\ (2,qT).
+qT or -> (1,qT) \/ (2,qT).
+qT imply -> (1,qF) \/ (2,qT).
+qT iff -> (1,qT) /\ (2,qT) \/ (1,qF) /\ (2,qF).
+qT xor -> (1,qT) /\ (2,qF) \/ (1,qF) /\ (2,qT).
+qT if -> (1,qT) /\ (2,qT) \/ (1,qF) /\ (3,qT).
+qF tt -> false.
+qF ff -> true.
+qF not -> (1,qT).
+qF and -> (1,qF) \/ (2,qF).
+qF or -> (1,qF) /\ (2,qF).
+qF imply -> (1,qT) /\ (2,qF).
+qF iff -> (1,qT) /\ (2,qF) \/ (1,qF) /\ (2,qT).
+qF xor -> (1,qT) /\ (2,qT) \/ (1,qF) /\ (2,qF).
+qF if -> (1,qT) /\ (2,qF) \/ (1,qF) /\ (3,qF).
+%ENDATA
+

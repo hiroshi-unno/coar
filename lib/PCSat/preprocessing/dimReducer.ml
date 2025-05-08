@@ -28,8 +28,8 @@ module Make (Verbose : Debug.Config.ConfigType) = struct
 
   let str_of_pcsp_clause (ps, ns, _) =
     sprintf "%s <- %s"
-      (String.concat_set ~sep:", " @@ Set.Poly.map ns ~f:Atom.str_of)
-      (String.concat_set ~sep:", " @@ Set.Poly.map ps ~f:Atom.str_of)
+      (String.concat_map_set ~sep:", " ns ~f:Atom.str_of)
+      (String.concat_map_set ~sep:", " ps ~f:Atom.str_of)
 
   let str_of_erasure (e : erasure) =
     String.concat ~sep:"\n"

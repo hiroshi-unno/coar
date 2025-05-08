@@ -3,7 +3,7 @@ open Common
 open Common.Ext
 open Ast
 open Ast.LogicOld
-open PCSatCommon.HypSpace
+open Ast.HypSpace
 open Function
 
 module type ArgType = sig
@@ -149,7 +149,7 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
       (match !param.ubrd with None -> "N/A" | Some ubrd -> Z.to_string ubrd)
       (match !param.ubdc with None -> "N/A" | Some ubdc -> Z.to_string ubdc)
       (match !param.ubdd with None -> "N/A" | Some ubdd -> Z.to_string ubdd)
-      (String.concat_set ~sep:"," @@ Set.Poly.map !param.ds ~f:Z.to_string)
+      (String.concat_map_set ~sep:"," !param.ds ~f:Z.to_string)
 
   let in_space () = true (* TODO *)
 
@@ -166,17 +166,17 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
 
   let adjust_quals ~tag quals =
     let idxl, idxr = Option.value_exn tag in
-    let quals = Qualifier.AllTheory.add_quals_form_affine_eq_quals quals in
+    let quals = Qual.add_quals_form_affine_eq_quals quals in
     if Stdlib.(idxl <> idxr) then quals
     else
       let params_x, params_y =
         (params_of_idx_l idxl, params_of_idx_r idxl idxr)
       in
       let rename_x_y =
-        Formula.rename (tvar_map_of_sort_env_list params_x params_y)
+        Formula.rename (ren_of_sort_env_list params_x params_y)
       in
       let rename_y_x =
-        Formula.rename (tvar_map_of_sort_env_list params_y params_x)
+        Formula.rename (ren_of_sort_env_list params_y params_x)
       in
       Set.concat_map quals ~f:(fun phi ->
           let qual1 =
@@ -263,38 +263,35 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
         quals = (if true (*ToDo*) then Set.Poly.empty else hspace.quals);
       }
     in
-    let hspace =
-      Qualifier.AllTheory.qualifiers_of ~fenv:Arg.fenv !param.depth hspace
-    in
+    let hspace = qualifiers_of ~fenv:Arg.fenv !param.depth hspace in
     { hspace with quals = Set.Poly.union_list [ hspace.quals; qualsl; qualsr ] }
 
   let gen_template ~tag ~ucore hspace =
     ignore ucore;
     let idxl, idxr = Option.value_exn tag in
     let real_name = Ident.mk_nwf_tvar Arg.name idxl idxr in
-    let ( temp_params,
-          hole_qualifiers_map,
-          tmpl,
-          cnstr_of_rfun_coeffs,
-          cnstr_of_rfun_const,
-          cnstr_of_disc_coeffs,
-          cnstr_of_disc_const ) =
-      Generator.gen_simplified_nwf_predicate
+    let template =
+      Templ.gen_simplified_nwf_predicate
         (*config.use_ifte*)
-        (Set.to_list hspace.quals)
-        (Set.to_list hspace.terms) (rcs, dcs, qds)
-        ( List.init !param.np ~f:(fun _ -> !param.ndc),
-          !param.nl,
-          !param.ubrc,
-          !param.ubrd,
-          !param.ubdc,
-          !param.ubdd,
-          !param.ds )
-        ( config.norm_type,
-          Option.map config.lower_bound_rfun_coeff ~f:Z.of_int,
-          Option.map config.lower_bound_disc_coeff ~f:Z.of_int,
-          Option.map config.bound_each_rfun_coeff ~f:Z.of_int,
-          Option.map config.bound_each_disc_coeff ~f:Z.of_int )
+        (rcs, dcs, qds)
+        {
+          terms = Set.to_list hspace.terms;
+          quals = Set.to_list hspace.quals;
+          shp = List.init !param.np ~f:(fun _ -> !param.ndc);
+          nl = !param.nl;
+          ubrc = !param.ubrc;
+          ubrd = !param.ubrd;
+          ubdc = !param.ubdc;
+          ubdd = !param.ubdd;
+          ds = !param.ds;
+        }
+        {
+          norm_type = config.norm_type;
+          lbrc = Option.map config.lower_bound_rfun_coeff ~f:Z.of_int;
+          lbdc = Option.map config.lower_bound_disc_coeff ~f:Z.of_int;
+          berc = Option.map config.bound_each_rfun_coeff ~f:Z.of_int;
+          bedc = Option.map config.bound_each_disc_coeff ~f:Z.of_int;
+        }
         ( LogicOld.sort_env_list_of_sorts ~pre:"" Arg.sorts,
           idxl,
           params_of_idx_l idxl,
@@ -305,41 +302,41 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
     @@ lazy
          (sprintf "[%s] predicate template:\n  %s"
             (Ident.name_of_tvar real_name)
-            (Formula.str_of tmpl));
+            (Formula.str_of template.pred));
     Debug.print
     @@ lazy
-         (sprintf "[%s] cnstr_of_rfun_coeffs:\n  %s"
+         (sprintf "[%s] rfun_coeffs_bounds:\n  %s"
             (Ident.name_of_tvar real_name)
-            (Formula.str_of cnstr_of_rfun_coeffs));
+            (Formula.str_of template.rfun_coeffs_bounds));
     Debug.print
     @@ lazy
-         (sprintf "[%s] cnstr_of_rfun_const:\n  %s"
+         (sprintf "[%s] rfun_const_bounds:\n  %s"
             (Ident.name_of_tvar real_name)
-            (Formula.str_of cnstr_of_rfun_const));
+            (Formula.str_of template.rfun_const_bounds));
     Debug.print
     @@ lazy
-         (sprintf "[%s] cnstr_of_disc_coeffs:\n  %s"
+         (sprintf "[%s] disc_coeffs_bounds:\n  %s"
             (Ident.name_of_tvar real_name)
-            (Formula.str_of cnstr_of_disc_coeffs));
+            (Formula.str_of template.disc_coeffs_bounds));
     Debug.print
     @@ lazy
-         (sprintf "[%s] cnstr_of_disc_const:\n  %s"
+         (sprintf "[%s] disc_const_bounds:\n  %s"
             (Ident.name_of_tvar real_name)
-            (Formula.str_of cnstr_of_disc_const));
+            (Formula.str_of template.disc_const_bounds));
     let tmpl =
       let params = params_of ~tag in
       Logic.(Term.mk_lambda (of_old_sort_env_list params))
-      @@ Logic.ExtTerm.of_old_formula tmpl
+      @@ Logic.ExtTerm.of_old_formula template.pred
     in
     ( (LexicoPieceConj, tmpl),
       [
-        (RFunCoeff, Logic.ExtTerm.of_old_formula cnstr_of_rfun_coeffs);
-        (RFunConst, Logic.ExtTerm.of_old_formula cnstr_of_rfun_const);
-        (DiscCoeff, Logic.ExtTerm.of_old_formula cnstr_of_disc_coeffs);
-        (DiscConst, Logic.ExtTerm.of_old_formula cnstr_of_disc_const);
+        (RFunCoeff, Logic.ExtTerm.of_old_formula template.rfun_coeffs_bounds);
+        (RFunConst, Logic.ExtTerm.of_old_formula template.rfun_const_bounds);
+        (DiscCoeff, Logic.ExtTerm.of_old_formula template.disc_coeffs_bounds);
+        (DiscConst, Logic.ExtTerm.of_old_formula template.disc_const_bounds);
       ],
-      temp_params,
-      hole_qualifiers_map )
+      template.templ_params,
+      template.hole_quals_map )
 
   let restart (_param, actions) =
     Debug.print
@@ -665,7 +662,7 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
           (increase_disc_const config.threshold_disc_const param_actions)
           labels
     | TimeOut :: _labels -> param_actions (* z3 may unexpectedly time out*)
-    | QDep :: labels -> inner param_actions labels
+    | QualDep :: labels -> inner param_actions labels
     | _ -> assert false
 
   let actions_of labels =

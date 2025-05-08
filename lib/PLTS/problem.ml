@@ -4,7 +4,7 @@ open Ast
 open Ast.LogicOld
 
 type plts =
-  Ident.tvar Set.Poly.t
+  Ident.tvar_set
   * (string * sort_env_list * string * Formula.t)
   * (string
     * sort_env_list
@@ -41,7 +41,7 @@ let lts_of ~print
                         (List.map args2 ~f:(uncurry Term.mk_var)),
                     proc_loc proc dst )))
   in
-  (Some init, None, None, trans)
+  (Some init, [], None, None, trans)
 
 let lts_mode_of = function
   | Term -> LTS.Problem.Term

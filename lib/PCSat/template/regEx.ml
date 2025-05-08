@@ -4,7 +4,7 @@ open Common.Ext
 open Common.Util
 open Ast
 open Ast.LogicOld
-open PCSatCommon.HypSpace
+open Ast.HypSpace
 open Function
 
 module Config = struct
@@ -79,7 +79,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
 
   let update_hspace ~tag hspace =
     ignore tag;
-    Qualifier.AllTheory.qualifiers_of ~fenv:Arg.fenv !param.depth hspace
+    qualifiers_of ~fenv:Arg.fenv !param.depth hspace
 
   let gen_template ~tag ~ucore hspace =
     ignore tag;
@@ -96,12 +96,12 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
         cnstr_of_temp_params :=
           Formula.and_of
           @@ !cnstr_of_temp_params
-             :: Formula.mk_range xt Z.zero (Z.of_int @@ (List.length ts - 1));
+             :: Formula.mk_range xt Z.zero (Z.of_int (List.length ts - 1));
         let cond n =
-          (*let x = Ident.mk_fresh_parameter () in
-            temp_params := Map.Poly.add_exn !temp_params ~key:x ~data:Logic.ExtTerm.SBool;
-            Formula.of_bool_var x*)
-          Formula.mk_atom @@ T_bool.mk_eq xt (T_int.mk_int @@ Z.of_int n)
+          (* let x = Ident.mk_fresh_parameter () in
+             temp_params := Map.Poly.add_exn !temp_params ~key:x ~data:Logic.ExtTerm.SBool;
+             Formula.of_bool_var x *)
+          Formula.eq xt (T_int.mk_int @@ Z.of_int n)
         in
         let rec aux i = function
           | [] -> assert false
@@ -143,8 +143,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
             (Ident.name_of_tvar @@ Arg.name)
             (Term.str_of tmpl));
     let tmpl =
-      Logic.(
-        Term.mk_lambda (of_old_sort_env_list  hspace.params))
+      Logic.(Term.mk_lambda (of_old_sort_env_list hspace.params))
       @@ Logic.ExtTerm.of_old_term tmpl
     in
     ( (Depth, tmpl),
@@ -197,7 +196,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
   let rec inner param_actions = function
     | [] -> param_actions
     | Depth :: labels -> inner (increase_depth param_actions) labels
-    | (Dummy | QDep) :: labels -> inner param_actions labels
+    | (Dummy | QualDep) :: labels -> inner param_actions labels
     | TimeOut :: _labels -> param_actions (* z3 may unexpectedly time out*)
     | _ -> assert false
 

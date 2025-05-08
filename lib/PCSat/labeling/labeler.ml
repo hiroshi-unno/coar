@@ -242,11 +242,10 @@ module Make
     | Some p -> p
 
   let abstract_clause map clause =
-    let ps = Set.Poly.map ~f:(abstract_exatom map) clause.ExClause.positive in
+    let ps = Set.Poly.map clause.ExClause.positive ~f:(abstract_exatom map) in
     let ns =
-      Set.Poly.map
-        ~f:(fun e -> PropLogic.Formula.mk_neg (abstract_exatom map e))
-        clause.ExClause.negative
+      Set.Poly.map clause.ExClause.negative
+        ~f:(abstract_exatom map >> PropLogic.Formula.mk_neg)
     in
     PropLogic.Formula.or_of @@ Set.to_list @@ Set.union ps ns
 
@@ -262,15 +261,17 @@ module Make
 
   let mk_labels pos neg und =
     assert (Set.is_empty (Set.inter pos neg));
-    Map.of_set_exn @@ Set.Poly.union_list
-    @@ [
-         Set.Poly.filter_map und ~f:(fun atm ->
-             if Set.mem pos atm || Set.mem neg atm then (*ToDo: reachable?*)
-               None
-             else Some (atm, gen_fresh_prop ()));
-         Set.Poly.map pos ~f:(fun atm -> (atm, PropLogic.Formula.mk_true ()));
-         Set.Poly.map neg ~f:(fun atm -> (atm, PropLogic.Formula.mk_false ()));
-       ]
+    Map.of_set_exn
+    @@ Set.Poly.union_list
+         [
+           Set.Poly.filter_map und ~f:(fun atm ->
+               if Set.mem pos atm || Set.mem neg atm then
+                 (*ToDo: reachable?*)
+                 None
+               else Some (atm, gen_fresh_prop ()));
+           Set.Poly.map pos ~f:(fun atm -> (atm, PropLogic.Formula.mk_true ()));
+           Set.Poly.map neg ~f:(fun atm -> (atm, PropLogic.Formula.mk_false ()));
+         ]
 
   let of_assignment map assign =
     Map.Poly.fold map ~init:(Set.Poly.empty, Set.Poly.empty)
@@ -286,12 +287,16 @@ module Make
         | _ -> (pos, neg))
 
   let scaler = 10000.0
+  let print_log = false
 
   let check_sat_with iters vs _wfpvs map cls =
     let open Or_error.Monad_infix in
-    (*Set.iter cls ~f:(fun cl -> Debug.print @@ lazy ("checking: " ^ ExClause.str_of cl));*)
+    if print_log then
+      Set.iter cls ~f:(fun cl ->
+          Debug.print @@ lazy ("checking: " ^ ExClause.str_of cl));
     let constr = abstract map cls in
-    (*Debug.print @@ lazy ("checking: " ^ PropLogic.Formula.str_of constr);*)
+    if print_log then
+      Debug.print @@ lazy ("checking: " ^ PropLogic.Formula.str_of constr);
     let rec aux iters strategy =
       sat_solver >>= fun (module SatSolver : SATSolver.Solver.SolverType) ->
       match strategy with
@@ -300,7 +305,7 @@ module Make
           | SAT.Problem.Unsat | SAT.Problem.Unknown (*ToDo*) -> Ok None
           | SAT.Problem.Sat sol -> Ok (Some (of_assignment map sol, true)))
       | Config.ORACLE_SAT s -> (
-          match VersionSpace.oracle_of vs with
+          match vs.VersionSpace.oracle with
           | None -> aux iters s
           | Some oracle -> (
               constr
@@ -310,10 +315,7 @@ module Make
                      let qdep = VersionSpace.qdeps_of pvar vs in
                      Map.Poly.find (Map.of_set_exn @@ snd oracle) pvar
                      >>= fun pred ->
-                     match
-                       ExAtom.eval_pred ~id (VersionSpace.fenv_of vs) qdep pred
-                         atom
-                     with
+                     match TruthTable.eval_pred ~id vs.fenv qdep pred atom with
                      | Some true -> Some prop
                      | Some false -> Some (PropLogic.Formula.mk_neg prop)
                      | None -> assert false)
@@ -349,10 +351,8 @@ module Make
                 let heat = Random.float_range (-1.) 1. in
                 Debug.print
                 @@ lazy (sprintf "%s has value %f" (ExAtom.str_of atom) heat);
-                let scaled_heat = int_of_float @@ (scaler *. heat) in
-                let scaled_cut_off_lb =
-                  int_of_float @@ (scaler *. cut_off_lb)
-                in
+                let scaled_heat = int_of_float (scaler *. heat) in
+                let scaled_cut_off_lb = int_of_float (scaler *. cut_off_lb) in
                 if scaled_heat > scaled_cut_off_lb then
                   Some (SAT.Problem.of_prop_formula prop, scaled_heat)
                 else if scaled_heat < -scaled_cut_off_lb then
@@ -400,7 +400,7 @@ module Make
                           | Logic.IntTerm.SInt ->
                               Logic.ExtTerm.mk_int
                                 (Z.of_int
-                                @@ (Random.int ((2 * bound) + 1) - bound))
+                                   (Random.int ((2 * bound) + 1) - bound))
                           | Logic.RealTerm.SReal ->
                               let fb = float_of_int bound in
                               Logic.ExtTerm.mk_real
@@ -465,10 +465,8 @@ module Make
                 in
                 Debug.print
                 @@ lazy (sprintf "%s has value %f" (ExAtom.str_of atom) heat);
-                let scaled_heat = int_of_float @@ (scaler *. heat) in
-                let scaled_cut_off_lb =
-                  int_of_float @@ (scaler *. cut_off_lb)
-                in
+                let scaled_heat = int_of_float (scaler *. heat) in
+                let scaled_cut_off_lb = int_of_float (scaler *. cut_off_lb) in
                 if scaled_heat > scaled_cut_off_lb then
                   Some (SAT.Problem.of_prop_formula prop, scaled_heat)
                 else if scaled_heat < -scaled_cut_off_lb then
@@ -482,7 +480,7 @@ module Make
           | SAT.Problem.Unsat | SAT.Problem.Unknown (*ToDo*) -> Ok None
           | SAT.Problem.Sat sol -> Ok (Some (of_assignment map sol, true)))
       | Config.ORACLE_MAX_SAT s -> (
-          match VersionSpace.oracle_of vs with
+          match vs.oracle with
           | None -> aux iters s
           | Some oracle -> (
               let soft =
@@ -492,8 +490,7 @@ module Make
                     Map.Poly.find (Map.of_set_exn @@ snd oracle) pvar
                     >>= fun pred ->
                     match
-                      ExAtom.eval_pred ~id (VersionSpace.fenv_of vs)
-                        Map.Poly.empty pred atom
+                      TruthTable.eval_pred ~id vs.fenv Map.Poly.empty pred atom
                     with
                     | Some true -> Some (SAT.Problem.of_prop_formula prop, 1)
                     | Some false ->
@@ -542,10 +539,10 @@ module Make
                 let prop = Map.Poly.find_exn map atm in
                 if pos_bias then
                   ( SAT.Problem.of_prop_formula prop,
-                    int_of_float @@ (scaler *. weight) )
+                    int_of_float (scaler *. weight) )
                 else
                   ( SAT.Problem.of_prop_formula (PropLogic.Formula.mk_neg prop),
-                    int_of_float @@ (scaler *. weight) ))
+                    int_of_float (scaler *. weight) ))
           in
           SatSolver.opt_solve soft (SAT.Problem.of_prop_formula constr)
           >>= function
@@ -567,6 +564,14 @@ module Make
   let check_sat_main iters vs nwfpvs wfpvs fnpvs pos_atms neg_atms undecided =
     let und_atms = ExClauseSet.exatoms_of undecided in
     let map = mk_labels pos_atms neg_atms und_atms in
+    if print_log then
+      Debug.print
+      @@ lazy
+           ("map:\n"
+           ^ String.concat_map_list (Map.Poly.to_alist map) ~sep:"\n"
+               ~f:(fun (atm, prop) ->
+                 sprintf "%s -> %s" (ExAtom.str_of atm)
+                   (PropLogic.Formula.str_of prop)));
     let rec outer_loop ps_ns_list cls n =
       let open Or_error.Monad_infix in
       let rec inner_loop lcls (* learned clauses *) sample =
@@ -575,11 +580,18 @@ module Make
           Set.Poly.map (Set.Poly.of_list ps_ns_list) ~f:(fun (ps, ns, _) ->
               ExClause.{ positive = ns; negative = ps })
         in
-        (* Debug.print @@ lazy
-           ("learned clauses:\n" ^ ExClauseSet.str_of ~max_display:None lcls);
-           Debug.print @@ lazy
-           ("example instances:\n" ^ ExClauseSet.str_of ~max_display:None sample);
-        *)
+        if print_log then (
+          Debug.print
+          @@ lazy
+               ("learned clauses:\n" ^ ExClauseSet.str_of ~max_display:None lcls);
+          Debug.print
+          @@ lazy
+               ("example instances:\n"
+               ^ ExClauseSet.str_of ~max_display:None sample);
+          Debug.print
+          @@ lazy
+               ("block_prev_assignments:\n"
+               ^ ExClauseSet.str_of ~max_display:None block_prev_assignments));
         check_sat_with iters vs wfpvs map
           (Set.Poly.union_list [ lcls; sample; block_prev_assignments ])
           config.strategy
@@ -620,8 +632,7 @@ module Make
 
   let str_of_conflicts conflicts =
     "********* conflicts *********\n"
-    ^ String.concat_set ~sep:", "
-    @@ Set.Poly.map ~f:ExAtom.str_of conflicts
+    ^ String.concat_map_set ~sep:", " ~f:ExAtom.str_of conflicts
 
   let check_sat iters vs () =
     let dpos, dneg, undecided = VersionSpace.pos_neg_und_examples_of vs in

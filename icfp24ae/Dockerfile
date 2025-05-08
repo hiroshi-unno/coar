@@ -1,4 +1,4 @@
-FROM ocaml/opam:ubuntu-24.04-ocaml-5.1
+FROM ocaml/opam:ubuntu-24.10-ocaml-5.3
 
 WORKDIR /home/opam/coar
 USER opam:opam
@@ -12,6 +12,7 @@ RUN sudo apt update \
 	libmpfr-dev \
 	pkg-config \
 	python3
+RUN sudo ln -f /usr/bin/opam-2.3 /usr/bin/opam
 COPY --chown=opam:opam . /home/opam/coar/
 RUN opam update \
 	&& opam install . --deps-only -j 4 \

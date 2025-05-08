@@ -13,12 +13,11 @@ module Debug =
 
 let _ = Debug.set_module_name "TupleExtracter"
 
-let param_senv_of phi =
-  LogicOld.Formula.term_sort_env_of phi
-  |> Set.to_list |> of_old_sort_env_list |> Map.Poly.of_alist_exn
+let param_senv_of =
+  LogicOld.Formula.term_sort_env_of >> of_old_sort_env_set >> Map.of_set_exn
 
 let rec replace_tuple_var_to_cons_term tuple_var_map =
-  let open LogicOld in
+  let open Ast.LogicOld in
   Term.map_term true ~f:(function
     | Term.Var (v, T_tuple.STuple sorts, _) -> (
         match Hashtbl.Poly.find tuple_var_map v with
@@ -36,7 +35,7 @@ let rec replace_tuple_var_to_cons_term tuple_var_map =
     | t -> t)
 
 let extract_tuple tuple_var_map t =
-  let open LogicOld in
+  let open Ast.LogicOld in
   let rec inner = function
     | Term.FunApp (T_tuple.TupleCons _, ts, _) -> List.concat_map ts ~f:inner
     | Term.FunApp (T_tuple.TupleSel (_, i), [ te ], _) as t -> (
@@ -50,9 +49,9 @@ let extract_tuple tuple_var_map t =
 
 (** extract all tuple_cons/tuple_sel/tuple_var terms in phi *)
 let extract_tuples tuple_var_map exi_senv fnpvs (param_senv, phi) =
-  let open LogicOld in
+  let open Ast.LogicOld in
   let phi =
-    ExtTerm.to_old_fml exi_senv (param_senv, phi)
+    ExtTerm.to_old_fml exi_senv param_senv phi
     |> (fun phi ->
          Debug.print_log ~tag:"extract_tuple"
          @@ lazy (sprintf "\n%s\n" @@ Formula.str_of phi);

@@ -29,7 +29,7 @@ end
 module type RegressorType = sig
   val mk_regressor :
     sort_env_list ->
-    (PCSatCommon.ExAtom.t * int) Set.Poly.t ->
+    (Ast.ExAtom.t * int) Set.Poly.t ->
     (sort_env_map * Term.t) Or_error.t
 end
 

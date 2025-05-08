@@ -9,24 +9,27 @@ open Config
 (** Sequents *)
 
 type guard = int Set.Poly.t
-(** Sequent (e.g. [A x, y. E z, w. { P(x,y), Q(x,y), R(x,y,z) x = y |- Q(x,w) }]) *)
+
+(* Sequent (e.g. [A x, y. E z, w. { P(x,y), Q(x,y), R(x,y,z) x = y |- Q(x,w) }]) *)
 type t = {
-  eqvars : (*existentially quantified variables*)sort_env_map;
+  eqvars : (*existentially quantified variables*) sort_env_map;
   left_atms : (Atom.t * guard) list;
   left_phi : Formula.t;
   right_atms : (Atom.t * guard) list;
-  right_phi : Formula.t
+  right_phi : Formula.t;
 }
 
 (** {6 Destructors} *)
 
 let to_formula (e : t) =
-  Formula.exists (Map.Poly.to_alist e.eqvars) @@
-  Formula.mk_imply
-    (Evaluator.simplify @@
-     Formula.and_of @@ e.left_phi :: List.map e.left_atms ~f:(fst >> Formula.mk_atom))
-    (Evaluator.simplify @@
-     Formula.or_of @@ e.right_phi :: List.map e.right_atms ~f:(fst >> Formula.mk_atom))
+  Formula.exists (Map.Poly.to_alist e.eqvars)
+  @@ Formula.mk_imply
+       (Evaluator.simplify
+       @@ Formula.and_of
+            (e.left_phi :: List.map e.left_atms ~f:(fst >> Formula.mk_atom)))
+       (Evaluator.simplify
+       @@ Formula.or_of
+            (e.right_phi :: List.map e.right_atms ~f:(fst >> Formula.mk_atom)))
 
 (** {6 Constructors} *)
 
@@ -44,53 +47,59 @@ let to_formula (e : t) =
       right_phi = Formula.and_of f2 }
 *)
 
-let guard atm = atm, Set.Poly.empty
-let ext_guard (atm, guard) i = atm, Set.add guard i
+let guard atm = (atm, Set.Poly.empty)
+let ext_guard (atm, guard) i = (atm, Set.add guard i)
 let ext_guard_list atms i = List.map ~f:(Fn.flip ext_guard i) atms
 
 let of_formula exi_senv phi : t Set.Poly.t =
   Set.Poly.map ~f:(fun (ps, ns, phi) ->
-      { eqvars = Map.Poly.empty;
+      {
+        eqvars = Map.Poly.empty;
         left_atms = Set.to_list @@ Set.Poly.map ~f:guard ns;
         left_phi = Formula.negate phi;
         right_atms = Set.to_list @@ Set.Poly.map ~f:guard ps;
-        right_phi = Formula.mk_false ()}) @@
-  Formula.cnf_of exi_senv @@ snd @@
-  Formula.rm_quant ~forall:true @@ Evaluator.simplify @@
-  (*LogicOld.Formula.elim_let_with_unknowns (Map.key_set exi_senv) @@
-    Normalizer.normalize_let ~rename:true*) phi
+        right_phi = Formula.mk_false ();
+      })
+  @@ Formula.cnf_of exi_senv @@ snd
+  @@ Formula.rm_quant ~forall:true
+  @@ Evaluator.simplify
+  @@ (*LogicOld.Formula.elim_let_with_unknowns (Map.key_set exi_senv) @@
+       Normalizer.normalize_let ~rename:true*) phi
 
 (** Generate determinacy conjecture [p(~x,y1), p(~x,y2) |- y1 = y2] from predicates *)
 let generate_determinacy_conjecture preds =
-  List.filter_map preds ~f:(fun ((_fix, pvar, senv0, _body) : MuCLP.Pred.t) ->
-      match senv0 with
+  List.filter_map preds ~f:(fun (pred : MuCLP.Pred.t) ->
+      match pred.args with
       | [] -> None
       | _ ->
-        let senv, (y1, s) =
-          List.rest_last @@ mk_fresh_sort_env_list @@ List.map ~f:snd senv0
-        in
-        let y2 = Ident.mk_fresh_tvar () in
-        Some {
-          eqvars = Map.Poly.empty;
-          left_atms = [
-            guard @@ Atom.pvar_app_of_senv pvar (senv @ [y1, s]);
-            guard @@ Atom.pvar_app_of_senv pvar (senv @ [y2, s])
-          ];
-          left_phi = Formula.mk_true ();
-          right_atms = [];
-          right_phi = Formula.eq (Term.mk_var y1 s) (Term.mk_var y2 s)
-        })
+          let senv, (y1, s) =
+            List.rest_last @@ mk_fresh_sort_env_list
+            @@ List.map ~f:snd pred.args
+          in
+          let y2 = Ident.mk_fresh_tvar () in
+          Some
+            {
+              eqvars = Map.Poly.empty;
+              left_atms =
+                [
+                  guard @@ Atom.pvar_app_of_senv pred.name (senv @ [ (y1, s) ]);
+                  guard @@ Atom.pvar_app_of_senv pred.name (senv @ [ (y2, s) ]);
+                ];
+              left_phi = Formula.mk_true ();
+              right_atms = [];
+              right_phi = Formula.eq (Term.mk_var y1 s) (Term.mk_var y2 s);
+            })
 
 (** {6 Inspectors} *)
 
 let tvs_of sequent =
   Set.diff
-    (Set.Poly.union_list @@
-     Formula.tvs_of sequent.left_phi ::
-     Formula.tvs_of sequent.right_phi ::
-     List.map ~f:(fst >> Atom.tvs_of) sequent.left_atms @
-     List.map ~f:(fst >> Atom.tvs_of) sequent.right_atms) @@
-  Map.Poly.key_set sequent.eqvars
+    (Set.Poly.union_list
+    @@ Formula.tvs_of sequent.left_phi
+       :: Formula.tvs_of sequent.right_phi
+       :: List.map ~f:(fst >> Atom.tvs_of) sequent.left_atms
+    @ List.map ~f:(fst >> Atom.tvs_of) sequent.right_atms)
+  @@ Map.Poly.key_set sequent.eqvars
 (*
   let pvs ent =
     let pvsL ent = List.map ~f:Pva.ident_of (lpvams_of ent |> List.map ~f:fst) in
@@ -100,7 +109,7 @@ let tvs_of sequent =
 
 (** {6 Operators} *)
 
-let map_atm ~f = List.map ~f:(fun (atm, m) -> f atm, m)
+let map_atm ~f = List.map ~f:(fun (atm, m) -> (f atm, m))
 
 let simplify (sequent : t) =
   {
@@ -108,72 +117,98 @@ let simplify (sequent : t) =
     left_atms = List.unique @@ sequent.left_atms;
     left_phi = Evaluator.simplify @@ sequent.left_phi;
     right_atms = List.unique @@ sequent.right_atms;
-    right_phi = Evaluator.simplify @@ sequent.right_phi
+    right_phi = Evaluator.simplify @@ sequent.right_phi;
   }
 
 (** e.g. p(x-1) ~> (p(v1), v1=x-1) for fresh v1 *)
 let normalize_atom atm =
   let pvar, sorts, ts, _ = Atom.let_pvar_app atm in
   let senv = mk_fresh_sort_env_list sorts in
-  (pvar, senv),
-  Formula.and_of @@ List.map2_exn senv ts ~f:(fun (x, s) -> Formula.eq (Term.mk_var x s))
+  ( (pvar, senv),
+    Formula.and_of
+    @@ List.map2_exn senv ts ~f:(fun (x, s) -> Formula.eq (Term.mk_var x s)) )
 
 (** e.g. p(x-1){(1)} |- p(x+1) ~> A v1, v2. { p(v1){(1)}, v1=x-1, v2=x+1 |- p(v2) } *)
 let normalize sequent =
   let atms1, phis1 =
-    List.unzip_map (fun (atm, m) ->
+    List.unzip_map
+      (fun (atm, m) ->
         let (pvar, senv), phi = normalize_atom atm in
-        (Atom.mk_pvar_app pvar (List.map ~f:snd senv) (Term.of_sort_env senv),
-         m), phi)
+        ((Atom.pvar_app_of_senv pvar senv, m), phi))
       sequent.left_atms
   in
   let atms2, phis2 =
-    List.unzip_map (fun (atm, m) ->
+    List.unzip_map
+      (fun (atm, m) ->
         let (pvar, senv), phi = normalize_atom atm in
-        (Atom.mk_pvar_app pvar (List.map ~f:snd senv) (Term.of_sort_env senv),
-         m), phi)
+        ((Atom.pvar_app_of_senv pvar senv, m), phi))
       sequent.right_atms
   in
-  { sequent with
+  {
+    sequent with
     left_atms = atms1;
-    left_phi = Formula.and_of (sequent.left_phi :: phis1 @ phis2);
-    right_atms = atms2 }
+    left_phi = Formula.and_of ((sequent.left_phi :: phis1) @ phis2);
+    right_atms = atms2;
+  }
 
 let normalize_body seq =
-  (** assume that the RHS atoms are already normalized *)
+  (* assume that the RHS atoms are already normalized *)
   let left_atms', eqss =
-    List.unzip @@ List.map seq.left_atms ~f:(fun (atm, guard) ->
-        let pvar, sorts, args, _ = Atom.let_pvar_app atm in
-        let args' = List.map2_exn args sorts ~f:(fun _ -> Term.mk_var (Ident.mk_fresh_tvar ())) in
-        (Atom.mk_pvar_app pvar sorts args', guard),
-        List.map2_exn args' args ~f:Formula.eq)
+    List.unzip
+    @@ List.map seq.left_atms ~f:(fun (atm, guard) ->
+           let pvar, sorts, args, _ = Atom.let_pvar_app atm in
+           let args' =
+             List.map2_exn args sorts ~f:(fun _ ->
+                 Term.mk_var (Ident.mk_fresh_tvar ()))
+           in
+           ( (Atom.mk_pvar_app pvar sorts args', guard),
+             List.map2_exn args' args ~f:Formula.eq ))
   in
   let bounds =
-    Logic.of_old_sort_env_map @@ Map.of_set_exn @@ Set.Poly.union_list @@ List.map ~f:Atom.term_sort_env_of @@
-    List.map ~f:fst (left_atms' @ seq.right_atms)
+    Logic.of_old_sort_env_map @@ Map.of_set_exn @@ Set.Poly.union_list
+    @@ List.map ~f:Atom.term_sort_env_of
+    @@ List.map ~f:fst (left_atms' @ seq.right_atms)
   in
   let phi1 =
-    Formula.and_of @@ seq.left_phi :: Formula.negate seq.right_phi :: List.concat eqss
+    Formula.and_of
+      (seq.left_phi :: Formula.negate seq.right_phi :: List.concat eqss)
   in
   let uni_senv =
     Logic.of_old_sort_env_map @@ Map.of_set_exn @@ Formula.term_sort_env_of phi1
   in
-  (*print_endline @@ "1: " ^ Formula.str_of phi1;*)
-  let phi2 = Evaluator.simplify_neg @@ snd @@ Qelim.qelim_old bounds Map.Poly.empty (uni_senv, Evaluator.simplify_neg phi1) in
-  (*print_endline @@ "2: " ^ Formula.str_of phi2;*)
-  let phi3 = (*Formula.elim_let_equi false(*ToDo*) @@ Normalizer.normalize_let ~rename:true*) phi2 in
-  (*print_endline @@ "3: " ^ Formula.str_of phi3;*)
-  (*let phi3 = Z3Smt.Z3interface.simplify ~id:None Map.Poly.empty(* TODO *)~timeout:(Some 5000) phi3 in*)
-  let _n, phi4 = Formula.quantify_except ~exists:true (Map.key_set bounds) phi3 in
-  let _s = Formula.ast_size phi4 in
-  (*print_endline @@ "4 (" ^ string_of_int n ^ ", " ^ string_of_int s ^ "): " ^ Formula.str_of phi4;*)
-  let phi5 =
-    (*Normalizer.normalize @@*) Evaluator.simplify @@
-    (*if s * n <= 400(*ToDo*) then Z3Smt.Z3interface.qelim ~id:None ~fenv:(LogicOld.get_fenv ()) phi4
-    else*) phi4
+  if false then print_endline @@ "1: " ^ Formula.str_of phi1;
+  let phi2 =
+    Evaluator.simplify_neg @@ snd
+    @@ Qelim.qelim_old bounds Map.Poly.empty
+         (uni_senv, Evaluator.simplify_neg phi1)
   in
-  (*print_endline @@ "5: " ^ Formula.str_of phi5;*)
-  { seq with left_atms = left_atms'; left_phi = phi5; right_phi = Formula.mk_false () }
+  if false then print_endline @@ "2: " ^ Formula.str_of phi2;
+  let phi3 =
+    (*Formula.elim_let_equi false(*ToDo*) @@ Normalizer.normalize_let ~rename:true*)
+    phi2
+  in
+  if false then print_endline @@ "3: " ^ Formula.str_of phi3;
+  (*let phi3 = Z3Smt.Z3interface.simplify ~id:None Map.Poly.empty(* TODO *)~timeout:(Some 5000) phi3 in*)
+  let n, phi4 =
+    Formula.quantify_except ~exists:true (Map.key_set bounds) phi3
+  in
+  let s = Formula.ast_size phi4 in
+  if false then
+    print_endline @@ "4 (" ^ string_of_int n ^ ", " ^ string_of_int s ^ "): "
+    ^ Formula.str_of phi4;
+  let phi5 =
+    (*Normalizer.normalize @@*)
+    Evaluator.simplify
+    @@ (*if s * n <= 400(*ToDo*) then Z3Smt.Z3interface.qelim ~id:None ~fenv:(LogicOld.get_fenv ()) phi4
+         else*) phi4
+  in
+  if false then print_endline @@ "5: " ^ Formula.str_of phi5;
+  {
+    seq with
+    left_atms = left_atms';
+    left_phi = phi5;
+    right_phi = Formula.mk_false ();
+  }
 
 (*let forall_elim tenv sequent =
   let bvs =
@@ -190,9 +225,10 @@ let normalize_body seq =
 
 (** {6 Printers} *)
 
-let pr ?(wo_guard=false) ppf sequent =
+let pr ?(wo_guard = false) ppf sequent =
   let pr_phi ppf phi =
-    if Fn.non Formula.is_true phi then Format.fprintf ppf "%s@;" (Formula.str_of phi)
+    if Fn.non Formula.is_true phi then
+      Format.fprintf ppf "%s@;" (Formula.str_of phi)
   in
   let pr_eqvars ppf eqvars =
     if Fn.non Map.Poly.is_empty eqvars then
@@ -200,20 +236,19 @@ let pr ?(wo_guard=false) ppf sequent =
   in
   let pr_i ppf i = Format.fprintf ppf "(%a)" Integer.pr i in
   let pr_atm ?(wo_guard = false) ppf (atm, guard) =
-    if wo_guard then
-      Format.fprintf ppf "%s" (Atom.str_of atm)
+    if wo_guard then Format.fprintf ppf "%s" (Atom.str_of atm)
     else
-      Format.fprintf ppf "%s {%a}" (Atom.str_of atm) (List.pr pr_i ",") @@
-      Set.to_list guard
+      Format.fprintf ppf "%s {%a}" (Atom.str_of atm) (List.pr pr_i ",")
+      @@ Set.to_list guard
   in
   let pr_atms ppf atms =
     if Fn.non List.is_empty atms then
       Format.fprintf ppf "%a,@;" (List.pr (pr_atm ~wo_guard) ",@;") atms
   in
-  Format.fprintf ppf "%a@[<v>@[<v>@[<v>%a%a@]  |- @[<v>%a%a@]@]@]"
-    pr_eqvars sequent.eqvars
-    pr_atms sequent.left_atms pr_phi sequent.left_phi
-    pr_atms sequent.right_atms pr_phi sequent.right_phi
+  Format.fprintf ppf "%a@[<v>@[<v>@[<v>%a%a@]  |- @[<v>%a%a@]@]@]" pr_eqvars
+    sequent.eqvars pr_atms sequent.left_atms pr_phi sequent.left_phi pr_atms
+    sequent.right_atms pr_phi sequent.right_phi
+
 let pr_tex ppf _sequent = Format.fprintf ppf "not implemented"
 
 (** {6 Inspectors} *)
@@ -222,61 +257,79 @@ let pr_tex ppf _sequent = Format.fprintf ppf "not implemented"
 let equal_light e1 e2 =
   let e1 = simplify e1 in
   let e2 = simplify e2 in
-  Map.Poly.equal Stdlib.(=) e1.eqvars e2.eqvars &&
-  Stdlib.(e1.left_atms = e2.left_atms &&
-          e1.left_phi = e2.left_phi &&
-          e1.right_atms = e2.right_atms &&
-          e1.right_phi = e2.right_phi)
+  Map.Poly.equal Stdlib.( = ) e1.eqvars e2.eqvars
+  && Stdlib.(
+       e1.left_atms = e2.left_atms
+       && e1.left_phi = e2.left_phi
+       && e1.right_atms = e2.right_atms
+       && e1.right_phi = e2.right_phi)
 
 (** more precise than [equal_light] *)
 let equal e1 e2 =
-  Map.Poly.equal Stdlib.(=) e1.eqvars e2.eqvars &&
-  List.equal Stdlib.(=) e1.left_atms e2.left_atms &&
-  List.equal Stdlib.(=) e1.right_atms e2.right_atms &&
-  Z3Smt.Z3interface.is_valid ~id:None (FunEnv.mk_empty ())
-    (Formula.mk_iff e1.left_phi e2.left_phi) &&
-  Z3Smt.Z3interface.is_valid ~id:None (FunEnv.mk_empty ())
-    (Formula.mk_iff e1.right_phi e2.right_phi)
+  Map.Poly.equal Stdlib.( = ) e1.eqvars e2.eqvars
+  && List.equal Stdlib.( = ) e1.left_atms e2.left_atms
+  && List.equal Stdlib.( = ) e1.right_atms e2.right_atms
+  && Z3Smt.Z3interface.is_valid ~id:None (FunEnv.mk_empty ())
+       (Formula.mk_iff e1.left_phi e2.left_phi)
+  && Z3Smt.Z3interface.is_valid ~id:None (FunEnv.mk_empty ())
+       (Formula.mk_iff e1.right_phi e2.right_phi)
 
 let subst tsub sequent =
-  let tsub = Map.Poly.filter_keys tsub ~f:(Fn.non @@ Map.Poly.mem sequent.eqvars) in
-  { sequent with
+  let tsub =
+    Map.Poly.filter_keys tsub ~f:(Fn.non @@ Map.Poly.mem sequent.eqvars)
+  in
+  {
+    sequent with
     left_atms = map_atm ~f:(Atom.subst tsub) sequent.left_atms;
     left_phi = Formula.subst tsub @@ sequent.left_phi;
     right_atms = map_atm ~f:(Atom.subst tsub) sequent.right_atms;
-    right_phi = Formula.subst tsub @@ sequent.right_phi }
+    right_phi = Formula.subst tsub @@ sequent.right_phi;
+  }
 
 let rename ren sequent =
-  let ren = Map.Poly.filter_keys ren ~f:(Fn.non @@ Map.Poly.mem sequent.eqvars) in
-  { sequent with
+  let ren =
+    Map.Poly.filter_keys ren ~f:(Fn.non @@ Map.Poly.mem sequent.eqvars)
+  in
+  {
+    sequent with
     left_atms = map_atm ~f:(Atom.rename ren) sequent.left_atms;
     left_phi = Formula.rename ren @@ sequent.left_phi;
     right_atms = map_atm ~f:(Atom.rename ren) sequent.right_atms;
-    right_phi = Formula.rename ren @@ sequent.right_phi }
+    right_phi = Formula.rename ren @@ sequent.right_phi;
+  }
 
 let refresh_tvar sequent =
-  rename (Map.of_set_exn @@ Set.Poly.map (tvs_of sequent) ~f:(fun x -> x, Ident.mk_fresh_tvar ())) sequent
+  rename
+    (Map.of_set_exn
+    @@ Set.Poly.map (tvs_of sequent) ~f:(fun x -> (x, Ident.mk_fresh_tvar ())))
+    sequent
 
 let subst_preds_right psub sequent =
-  { sequent with
+  {
+    sequent with
     right_atms = [];
-    right_phi = Formula.or_of @@
-      sequent.right_phi :: List.map sequent.right_atms ~f:(fst >> Atom.subst_preds psub)}
+    right_phi =
+      Formula.or_of
+      @@ sequent.right_phi
+         :: List.map sequent.right_atms ~f:(fst >> Atom.subst_preds psub);
+  }
 
 let instantiate tsub sequent =
   let tsub = Map.Poly.filter_keys tsub ~f:(Map.Poly.mem sequent.eqvars) in
-  { eqvars = Map.Poly.filter_keys sequent.eqvars ~f:(Fn.non @@ Map.Poly.mem tsub);
+  {
+    eqvars = Map.Poly.filter_keys sequent.eqvars ~f:(Fn.non @@ Map.Poly.mem tsub);
     left_atms = map_atm ~f:(Atom.subst tsub) sequent.left_atms;
     left_phi = Formula.subst tsub @@ sequent.left_phi;
     right_atms = map_atm ~f:(Atom.subst tsub) sequent.right_atms;
-    right_phi = Formula.subst tsub @@ sequent.right_phi }
+    right_phi = Formula.subst tsub @@ sequent.right_phi;
+  }
 
 let make_sigmas atms1 pvars2 =
   List.fold_right pvars2 ~init:[] ~f:(fun (pvar2, args2) sigmas ->
       List.filter_map atms1 ~f:(fun atm1 ->
           let pvar1, _, ts1, _ = Atom.let_pvar_app atm1 in
           if Stdlib.(pvar1 = pvar2) then Some ts1 else None)
-      |> List.map ~f:(List.map2_exn ~f:(fun (x2, _s2) t1 -> x2, t1) args2)
+      |> List.map ~f:(List.map2_exn ~f:(fun (x2, _s2) t1 -> (x2, t1)) args2)
       |> Fn.flip List.cons sigmas)
 
 (* Make candidate instantiations for eqvars
@@ -290,8 +343,9 @@ let make_sigmas atms1 pvars2 =
  *      (4) Omit univ. quantified : [ e1,e2 |-> y,z; ]
  *      (5) Remove unsuccesssful  : [ e1,e2 |-> y,z; ]
  *   Output: [ e1,e2 |-> y,z; ]
-*)
-let mk_eqvars_inst _sequent = [[]](*ToDo*)
+ *)
+let mk_eqvars_inst _sequent = [ [] ]
+(*ToDo*)
 (*let safe (x, t) =
   Map.Poly.mem sequent.eqvars x ||
   Z3Smt.Z3interface.is_valid ~id:None (FunEnv.mk_empty ())
@@ -340,33 +394,40 @@ let is_valid sequent =
   let sequent = normalize sequent in
   List.exists ~f:(fun th ->
       let sequent = instantiate (Map.Poly.of_alist_exn th) sequent in
-      Z3Smt.Z3interface.is_valid ~id:None (FunEnv.mk_empty ()) @@
-      Evaluator.simplify @@
-      Formula.exists (Map.Poly.to_alist sequent.eqvars)(* bind remaining eqvars *) @@
-      Formula.mk_imply sequent.left_phi sequent.right_phi ||
-      List.exists sequent.right_atms ~f:(fun (pvar_right, _) ->
-          let right_pvar, _, right_args, _ = Atom.let_pvar_app pvar_right in
-          List.exists sequent.left_atms ~f:(fun (pvar_left, _) ->
-              let left_pvar, _, left_args, _ = Atom.let_pvar_app pvar_left in
-              Stdlib.(left_pvar = right_pvar) &&
-              Z3Smt.Z3interface.is_valid ~id:None (FunEnv.mk_empty ()) @@
-              Evaluator.simplify @@
-              Formula.exists (Map.Poly.to_alist sequent.eqvars)(* bind remaining eqvars *) @@
-              Formula.mk_imply sequent.left_phi
-                (Formula.and_of @@ List.map2_exn left_args right_args ~f:Formula.eq)))) @@
-  mk_eqvars_inst sequent
+      Z3Smt.Z3interface.is_valid ~id:None (FunEnv.mk_empty ())
+      @@ Evaluator.simplify
+      @@ Formula.exists (Map.Poly.to_alist sequent.eqvars)
+      (* bind remaining eqvars *)
+      @@ Formula.mk_imply sequent.left_phi sequent.right_phi
+      || List.exists sequent.right_atms ~f:(fun (pvar_right, _) ->
+             let right_pvar, _, right_args, _ = Atom.let_pvar_app pvar_right in
+             List.exists sequent.left_atms ~f:(fun (pvar_left, _) ->
+                 let left_pvar, _, left_args, _ = Atom.let_pvar_app pvar_left in
+                 Stdlib.(left_pvar = right_pvar)
+                 && Z3Smt.Z3interface.is_valid ~id:None (FunEnv.mk_empty ())
+                    @@ Evaluator.simplify
+                    @@ Formula.exists (Map.Poly.to_alist sequent.eqvars)
+                    (* bind remaining eqvars *)
+                    @@ Formula.mk_imply sequent.left_phi
+                         (Formula.and_of
+                         @@ List.map2_exn left_args right_args ~f:Formula.eq))))
+  @@ mk_eqvars_inst sequent
+
 let is_valid ~print sequent =
-  let cands = (*elim_forall_heap_with_heuristics tsub*)[sequent] in
+  let cands = (*elim_forall_heap_with_heuristics tsub*) [ sequent ] in
   if Fn.non List.is_empty cands then
     List.exists cands ~f:(fun sequent ->
-        print @@ lazy
-          (Format.asprintf ":: Checking a candidate@.  %a" (pr ~wo_guard:false) sequent);
+        print
+        @@ lazy
+             (Format.asprintf ":: Checking a candidate@.  %a"
+                (pr ~wo_guard:false) sequent);
         is_valid sequent)
   else is_valid sequent
+
 let is_valid ~print ~config sequent =
   Timer.enable_timeout config.timeout_check_valid Fn.id ignore
     (fun () -> is_valid ~print sequent)
-    (fun _ ret  -> ret)
+    (fun _ ret -> ret)
     (fun _ exc -> raise exc)
 
 (*

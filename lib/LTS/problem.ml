@@ -14,6 +14,7 @@ let mk_nondet () =
 
 type lts =
   string option (* start *)
+  * (Ident.tvar * Sort.t) list (* types *)
   * string option (* error *)
   * string option (* cutpoint *)
   * transition list
@@ -120,7 +121,7 @@ let rec term_sort_env_of_command = function
 
 let term_sort_env_of_transition (_, c, _) = term_sort_env_of_command c
 
-let term_sort_env_of (_, _, _, trs) =
+let term_sort_env_of (_, _, _, _, trs) =
   Set.Poly.union_list @@ List.map ~f:term_sort_env_of_transition trs
 
 let rec tvs_of_command = function
@@ -132,21 +133,34 @@ let rec tvs_of_command = function
 
 let tvs_of_transition (_, c, _) = tvs_of_command c
 
-let tvs_of (_, _, _, trs) =
+let tvs_of (_, _, _, _, trs) =
   Set.Poly.union_list @@ List.map ~f:tvs_of_transition trs
 
-let rec cgen_command map = function
-  | Skip -> Set.Poly.empty
-  | Assume atm -> snd @@ Typeinf.cgen_formula ~print:(fun _ -> ()) map atm
+let print_log = false
+
+let rec cgen_command senv = function
+  | Skip -> (senv, Set.Poly.empty)
+  | Assume atm ->
+      Typeinf.cgen_formula
+        ~print:(fun s -> if print_log then print_endline (force s) else ())
+        senv atm
   | Subst ((x, s), t) -> (
-      let _, s', constrs = Typeinf.cgen_term ~print:(fun _ -> ()) map t in
-      match Map.Poly.find map x with
-      | None -> Set.add constrs (Typeinf.CEq (s, s'))
-      | Some s'' ->
-          Set.add (Set.add constrs (Typeinf.CEq (s, s'))) (Typeinf.CEq (s, s''))
-      )
+      let senv, s', constrs =
+        Typeinf.cgen_term
+          ~print:(fun s -> if print_log then print_endline (force s) else ())
+          senv t
+      in
+      ( senv,
+        match Map.Poly.find senv x with
+        | None -> Set.add constrs (Typeinf.CEq (s, s'))
+        | Some s'' ->
+            Set.add
+              (Set.add constrs (Typeinf.CEq (s'', s)))
+              (Typeinf.CEq (s'', s')) ))
   | Seq (c1, c2) | Choice (c1, c2) ->
-      Set.union (cgen_command map c1) (cgen_command map c2)
+      let senv, cs1 = cgen_command senv c1 in
+      let senv, cs2 = cgen_command senv c2 in
+      (senv, Set.union cs1 cs2)
 
 let cgen_transition map (_, c, _) = cgen_command map c
 
@@ -161,21 +175,31 @@ let rec subst_sorts_command map = function
 
 let subst_sorts_trans map (f, c, t) = (f, subst_sorts_command map c, t)
 
-let typeinf (s, e, c, trans) =
-  let map =
+let typeinf (s, types, e, c, trans) =
+  let senv =
     Map.of_set_exn
     @@ Set.Poly.map
-         (tvs_of (s, e, c, trans))
-         ~f:(fun x -> (x, Sort.mk_fresh_svar ()))
+         (tvs_of (s, types, e, c, trans))
+         ~f:(fun x ->
+           match List.Assoc.find ~equal:Stdlib.( = ) types x with
+           | None -> (x, Sort.mk_fresh_svar ())
+           | Some s -> (x, s))
   in
   let constrs =
-    Set.Poly.union_list @@ List.map ~f:(cgen_transition map) trans
+    snd
+    @@ List.fold trans ~init:(senv, Set.Poly.empty) ~f:(fun (senv, cs) tr ->
+           let senv, cs' = cgen_transition senv tr in
+           (senv, Set.union cs cs'))
   in
-  let nums, map = Typeinf.solve ~print:(fun _ -> ()) constrs in
+  let nums, map =
+    Typeinf.solve
+      ~print:(fun s -> if print_log then print_endline (force s) else ())
+      constrs
+  in
   let map =
     Typeinf.elim_nums ~to_sus:false ~instantiate_num_to_int:true nums map
   in
-  (s, e, c, List.map trans ~f:(subst_sorts_trans map))
+  (s, types, e, c, List.map trans ~f:(subst_sorts_trans map))
 
 let rec is_effect_free = function
   | Skip | Assume _ -> true
@@ -201,7 +225,7 @@ let rec str_of_command = function
 let str_of_transition (from, c, to_) =
   sprintf "FROM: %s;\n%sTO: %s;\n\n" from (str_of_command c) to_
 
-let str_of_lts (s, e, c, trans) =
+let str_of_lts (s, _ (*ToDo*), e, c, trans) =
   (match s with None -> "" | Some s -> sprintf "START: %s;\n" s)
   ^ (match e with None -> "" | Some e -> sprintf "ERROR: %s;\n" e)
   ^ (match c with None -> "" | Some c -> sprintf "CUTPOINT: %s;\n" c)
@@ -449,16 +473,16 @@ let rec cut_points_of g res =
     else cut_points_of g res)
   else res
 
-let analyze ~print ((s, e, c, trans) as lts) =
+let analyze ~print ((s, types, e, c, trans) as lts) =
   print @@ lazy "************* simplifying LTS ***************";
   print @@ lazy (sprintf "input LTS:\n%s" @@ str_of_lts lts);
   match s with
-  | None -> ((fun _ -> Set.Poly.empty), Set.Poly.empty, (s, e, c, trans))
+  | None -> ((fun _ -> Set.Poly.empty), Set.Poly.empty, (s, types, e, c, trans))
   | Some s ->
       let cfa = simplify ~print s (graph_of trans) in
       let live_vars = LiveVariables.analyze (fun _ -> Set.Poly.empty) cfa in
       let cut_points = cut_points_of (G.copy cfa) Set.Poly.empty in
-      let lts' = (Some s, e, c, of_graph cfa) in
+      let lts' = (Some s, types, e, c, of_graph cfa) in
       print @@ lazy (sprintf "simplified LTS:\n%s" @@ str_of_lts lts');
       print
       @@ lazy

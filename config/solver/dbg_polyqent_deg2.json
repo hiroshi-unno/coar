@@ -1,0 +1,8 @@
+[
+    "PolyQEnt",
+    {
+        "path": "./polyqent/PolyQEnt",
+        "config_path": "./config/solver/polyqent-config-deg2.json",
+        "verbose": true
+    }
+]

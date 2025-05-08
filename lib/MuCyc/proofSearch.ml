@@ -22,7 +22,7 @@ let str_of_head_with_args penv =
 let def_of penv defs pvar =
   match MuCLP.Pred.lookup defs pvar with
   | Some (Mu, args, body) ->
-      Formula.rename (tvar_map_of_sort_env_list args (args_of penv pvar)) body
+      Formula.rename (ren_of_sort_env_list args (args_of penv pvar)) body
   | _ -> failwith "ProofSearch.def_of"
 
 let seq_map_of penv (problem : Problem.t) =
@@ -166,9 +166,8 @@ let solve ~config penv solve_chc problem (trace1, trace2) =
                      in
                      qelim ~config (*Normalizer.normalize @@*)
                      @@ Evaluator.simplify
-                     @@ Formula.rename
-                          (tvar_map_of_sort_env_list params params0)
-                          phi)) ),
+                     @@ Formula.rename (ren_of_sort_env_list params params0) phi))
+           ),
            Map.Poly.empty )
   | Result.Ok (PCSP.Problem.Unsat _, _) -> None
   | Result.Ok (PCSP.Problem.Unknown, _) ->
@@ -320,13 +319,13 @@ let get_mbp ~config ~print model0 eliminated0 phi0 =
                   (preprocess
                   @@ Set.Poly.map ~f:Normalizer.normalize_atom
                   @@ Mbp.atoms_of model phi)
-                @@ T_bool.mk_eq tx @@ T_bool.mk_true ()
+                @@ Atom.of_bool_term tx
               else
                 Set.add
                   (preprocess
                   @@ Set.Poly.map ~f:Normalizer.normalize_atom
                   @@ Mbp.atoms_of model @@ Evaluator.simplify_neg phi)
-                @@ T_bool.mk_eq tx @@ T_bool.mk_false ()
+                @@ Atom.of_neg_bool_term tx
           | Atom.App
               ( Predicate.Psym T_bool.Eq,
                 [
@@ -345,13 +344,13 @@ let get_mbp ~config ~print model0 eliminated0 phi0 =
                   (preprocess
                   @@ Set.Poly.map ~f:Normalizer.normalize_atom
                   @@ Mbp.atoms_of model phi)
-                @@ T_bool.mk_eq tx @@ T_bool.mk_true ()
+                @@ Atom.of_bool_term tx
               else
                 Set.add
                   (preprocess
                   @@ Set.Poly.map ~f:Normalizer.normalize_atom
                   @@ Mbp.atoms_of model @@ Evaluator.simplify_neg phi)
-                @@ T_bool.mk_eq tx @@ T_bool.mk_false ()
+                @@ Atom.of_neg_bool_term tx
           | Atom.App
               ( Predicate.Psym T_bool.Neq,
                 [
@@ -370,13 +369,13 @@ let get_mbp ~config ~print model0 eliminated0 phi0 =
                   (preprocess
                   @@ Set.Poly.map ~f:Normalizer.normalize_atom
                   @@ Mbp.atoms_of model @@ Evaluator.simplify_neg phi)
-                @@ T_bool.mk_eq tx @@ T_bool.mk_true ()
+                @@ Atom.of_bool_term tx
               else
                 Set.add
                   (preprocess
                   @@ Set.Poly.map ~f:Normalizer.normalize_atom
                   @@ Mbp.atoms_of model phi)
-                @@ T_bool.mk_eq tx @@ T_bool.mk_false ()
+                @@ Atom.of_neg_bool_term tx
           | Atom.App
               ( Predicate.Psym T_bool.Neq,
                 [
@@ -395,13 +394,13 @@ let get_mbp ~config ~print model0 eliminated0 phi0 =
                   (preprocess
                   @@ Set.Poly.map ~f:Normalizer.normalize_atom
                   @@ Mbp.atoms_of model @@ Evaluator.simplify_neg phi)
-                @@ T_bool.mk_eq tx @@ T_bool.mk_true ()
+                @@ Atom.of_bool_term tx
               else
                 Set.add
                   (preprocess
                   @@ Set.Poly.map ~f:Normalizer.normalize_atom
                   @@ Mbp.atoms_of model phi)
-                @@ T_bool.mk_eq tx @@ T_bool.mk_false ()
+                @@ Atom.of_neg_bool_term tx
           | atm -> Set.Poly.singleton atm)
       in
       let is_looping =
@@ -619,7 +618,7 @@ let apply_induct_rule ~print seq_map penv trace induct =
                         ^ ": "
                          ^ String.concat_map_set ~sep:" /\\ " ~f:Formula.str_of
                              phis);
-                    Formula.and_of @@ (phi :: Set.to_list phis))
+                    Formula.and_of (phi :: Set.to_list phis))
             :: trace2 )),
       induct )
 
@@ -779,7 +778,7 @@ let cex_of_countermodel ~config ~print penv seq cexs_left_phis cond model pvar
           get_mbp ~config ~print model' (Set.filter senv ~f:(fst >> non_arg))
           @@ Evaluator.simplify_neg
           @@ Formula.mk_imply
-               (Formula.and_of @@ (seq.Sequent.left_phi :: cexs_left_phis))
+               (Formula.and_of (seq.Sequent.left_phi :: cexs_left_phis))
                (Formula.mk_false ())
         with e ->
           if config.backup_for_mbp then
@@ -1116,8 +1115,8 @@ let refine_atom ~config ~print solve_chc penv pvar_opt seq refine refine_clause
     ( pvar,
       aargs,
       fargs,
-      tvar_map_of_sort_env_list aargs fargs,
-      tvar_map_of_sort_env_list fargs aargs )
+      ren_of_sort_env_list aargs fargs,
+      ren_of_sort_env_list fargs aargs )
   in
   let aargs_set = Set.Poly.of_list @@ List.map ~f:fst aargs in
   let rec each_countermodel updated local_cex_acc state0_5 state1 =
@@ -1505,8 +1504,7 @@ let solve ~config ~print pcsp_solver problem =
   print @@ lazy (Format.asprintf "Problem: %a" Problem.pr problem);
   assert (Set.is_empty problem.Problem.lemmas);
   let penv =
-    List.map problem.Problem.defs ~f:(fun p ->
-        (MuCLP.Pred.pvar_of p, MuCLP.Pred.args_of p))
+    List.map problem.Problem.defs ~f:(fun pred -> (pred.name, pred.args))
   in
   let seq_map = seq_map_of penv problem in
   if config.top_down_search then print @@ lazy "Start top-down proof search"

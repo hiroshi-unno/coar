@@ -52,7 +52,8 @@ module Make (Cfg : Config.ConfigType) = struct
       (fun ?oracle pcsp ->
         ignore oracle;
         let open Or_error.Monad_infix in
-        solve ~print_sol:false (MuCLP.Problem.of_chc ~only_pos:false pcsp)
+        solve ~print_sol:false
+          (MuCLP.Util.of_chc ~print:Debug.print ~only_pos:false pcsp)
         >>= fun sol ->
         let sol =
           match sol with

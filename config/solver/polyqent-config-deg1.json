@@ -1,0 +1,12 @@
+{
+    "theorem_name": "handelman",
+    "degree_of_sat": 1,
+    "degree_of_nonstrict_unsat": 1,
+    "degree_of_strict_unsat": 0,
+    "max_d_of_strict": 0,
+    "solver_name": "z3",
+    "output_path": "fully_existentially_constraints.txt",
+    "unsat_core_heuristic": false,
+    "SAT_heuristic": false,
+    "integer_arithmetic": false
+}

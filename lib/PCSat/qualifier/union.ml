@@ -25,12 +25,12 @@ struct
     @@ List.map Config.domains ~f:(fun (module Q) ->
            Set.Poly.map ~f:(fun (params', phi) ->
                ( params,
-                 let map =
+                 let tsub =
                    Map.Poly.of_alist_exn
                    @@ List.map2_exn params' params ~f:(fun (x, _) (y, s) ->
                           (x, Term.mk_var y s))
                  in
-                 Formula.subst map phi ))
+                 Formula.subst tsub phi ))
            @@ Q.qualifiers_of pvar sorts labeled_atoms examples)
 
   let str_of_domain =

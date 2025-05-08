@@ -66,12 +66,12 @@ struct
     let (module R : Regressor.RegressorType) = regressor in
     let args, ret = List.rest_last params in
     let labeled_atoms =
-      let alist = labeling in
       let tt = TruthTable.get_table table pvar in
       Debug.print
-      @@ lazy (sprintf "    labeled atoms (%d):" (TruthTable.num_atoms alist));
-      Debug.print @@ lazy (TruthTable.str_of_atoms tt alist);
-      TruthTable.labeled_atoms_of tt alist
+      @@ lazy
+           (sprintf "    labeled atoms (%d):" (TruthTable.num_atoms labeling));
+      Debug.print @@ lazy (TruthTable.str_of_atoms tt labeling);
+      TruthTable.labeled_atoms_of tt labeling
     in
     R.mk_regressor args labeled_atoms >>= fun (ps, t) ->
     let phi = Formula.eq (uncurry Term.mk_var ret) t in

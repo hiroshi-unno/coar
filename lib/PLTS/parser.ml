@@ -37,7 +37,7 @@ let parse_from_lexbuf ~print lexbuf =
              in
              let src, rel =
                let t, _, _ = Formula.let_eq phi in
-               let f, _sorts, args, _ = Term.let_fvar_app t in
+               let f, _, _, args, _ = Term.let_fvar_app t in
                assert (String.(Ident.name_of_tvar f = "cfg_init"));
                match args with
                | [ pc'; src; rel ] ->
@@ -65,7 +65,7 @@ let parse_from_lexbuf ~print lexbuf =
                Formula.disjuncts_of phi
                |> Set.Poly.map ~f:(fun phi ->
                       let t, _, _ = Formula.let_eq phi in
-                      let f, _sorts, args, _ = Term.let_fvar_app t in
+                      let f, _, _, args, _ = Term.let_fvar_app t in
                       assert (String.(Ident.name_of_tvar f = "cfg_trans2"));
                       match args with
                       | [ pc1'; src; pc2'; dst; rel ] ->

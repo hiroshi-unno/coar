@@ -96,8 +96,7 @@ end = struct
                 match
                   unify
                     Set.Poly.empty (*ToDo: is it OK with function varibles?*)
-                    (Logic.ExtTerm.to_old_atom exi_senv (*ToDo*) Map.Poly.empty
-                       w [])
+                    (Logic.ExtTerm.to_old_atm exi_senv (*ToDo*) Map.Poly.empty w)
                     e
                 with
                 | Some theta ->
@@ -172,10 +171,8 @@ end = struct
       | Some (_param_senv (*ToDo*), papp') -> (
           match
             unify Set.Poly.empty (*ToDo: is it OK with function varibles?*)
-              (Logic.ExtTerm.to_old_atom exi_senv (*ToDo*) Map.Poly.empty papp
-                 [])
-              (Logic.ExtTerm.to_old_atom exi_senv (*ToDo*) Map.Poly.empty papp'
-                 [])
+              (Logic.ExtTerm.to_old_atm exi_senv (*ToDo*) Map.Poly.empty papp)
+              (Logic.ExtTerm.to_old_atm exi_senv (*ToDo*) Map.Poly.empty papp')
           with
           | None -> false
           | Some theta ->
@@ -284,9 +281,7 @@ end = struct
            let added = Set.diff (Set.union dpos' dneg') (Set.union dpos dneg) in
            print @@ lazy "*** Newly obtained example instances:";
            print
-           @@ lazy
-                (String.concat_set ~sep:";\n"
-                @@ Set.Poly.map ~f:ExClause.str_of added);
+           @@ lazy (String.concat_map_set ~sep:";\n" ~f:ExClause.str_of added);
            print @@ lazy "";
            let new_examples =
              Set.Poly.union_list [ dpos'; dneg'; undecided ]

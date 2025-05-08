@@ -3,7 +3,7 @@ open Common.Ext
 open Common.Combinator
 open Ast
 open Ast.LogicOld
-open HypSpace
+open Ast.HypSpace
 
 type examples = ClauseGraph.t
 
@@ -65,10 +65,8 @@ let clone t =
     upper_bounds = Hashtbl.Poly.copy t.upper_bounds;
   }
 
-let example_graph_of t = t.examples
 let examples_of t = ClauseGraph.examples_of t.examples
 let pos_neg_und_examples_of t = ClauseGraph.pos_neg_und_examples_of t.examples
-let hspaces_of t = t.hspaces
 
 let hspace_of_pvar (Ident.Pvar name) t =
   match Hashtbl.Poly.find t.hspaces (Ident.Tvar name) with
@@ -102,15 +100,6 @@ let terms_map_of t =
   |> Hashtbl.to_alist
   |> List.map ~f:(fun (v, q) -> (Ident.tvar_to_pvar v, q))
   |> Hashtbl.Poly.of_alist_exn
-
-let truth_table_of t = t.truth_table
-let labelings_of t = t.labelings
-let fenv_of t = t.fenv
-let uenf_of t = t.uenv
-let oracle_of t = t.oracle
-let learned_clauses_of t = t.learned_clauses
-let lower_bounds_of t = t.lower_bounds
-let upper_bounds_of t = t.upper_bounds
 
 let add_examples t examples =
   Set.iter examples ~f:(fun (ex, srcs) ->
@@ -150,8 +139,8 @@ let set_label ~id t label labeling atom =
   | Some pvar -> (
       let ai =
         TruthTable.index_of_atom ~id
-          (TruthTable.get_table (truth_table_of t) pvar)
-          (fenv_of t) (qdeps_of pvar t) atom
+          (TruthTable.get_table t.truth_table pvar)
+          t.fenv (qdeps_of pvar t) atom
       in
       match Map.Poly.find labeling pvar with
       | None ->
@@ -163,7 +152,7 @@ let set_label ~id t label labeling atom =
 
 let map ~f vs =
   let examples', labelings' =
-    f ~examples:(examples_of vs) ~labelings:(labelings_of vs)
+    f ~examples:(examples_of vs) ~labelings:vs.labelings
   in
   set_labelings labelings' @@ set_examples examples' vs
 
@@ -180,8 +169,8 @@ let add_learned_clause id t (uni_senv, ps, ns, phi) =
   | Some (uni_senv1, ps1, ns1, phi1) ->
       let uni_senv' = Map.force_merge uni_senv uni_senv1 in
       let phi' =
-        (uni_senv', Logic.ExtTerm.and_of [ phi1; phi ])
-        |> Logic.ExtTerm.to_old_fml Map.Poly.empty
+        Logic.ExtTerm.and_of [ phi1; phi ]
+        |> Logic.ExtTerm.to_old_fml Map.Poly.empty uni_senv'
         |> Evaluator.simplify
         |> Z3Smt.Z3interface.z3_simplify ~id (LogicOld.get_fenv ())
         |> Logic.ExtTerm.of_old_formula
@@ -319,7 +308,7 @@ let str_of_hspace name hspace =
     hspace.depth (Set.length hspace.quals)
     (String.concat_map_set ~sep:"\n" hspace.quals ~f:Formula.str_of)
     (Map.Poly.length hspace.qdeps)
-    (String.concat_map_list ~sep:"\n" ~f:(snd >> QDep.str_of)
+    (String.concat_map_list ~sep:"\n" ~f:(snd >> QualDep.str_of)
     @@ Map.Poly.to_alist hspace.qdeps)
     (Set.length hspace.terms)
     (String.concat_map_set ~sep:"\n" hspace.terms ~f:Term.str_of)
@@ -355,11 +344,11 @@ type ex = {
 
 let to_yojson (decided_pos, decided_neg, undecided) =
   ex_to_yojson
-  @@ {
-       positive = List.map ~f:ExClause.str_of @@ Set.to_list decided_pos;
-       negative = List.map ~f:ExClause.str_of @@ Set.to_list decided_neg;
-       undecided = List.map ~f:ExClause.str_of @@ Set.to_list undecided;
-     }
+    {
+      positive = List.map ~f:ExClause.str_of @@ Set.to_list decided_pos;
+      negative = List.map ~f:ExClause.str_of @@ Set.to_list decided_neg;
+      undecided = List.map ~f:ExClause.str_of @@ Set.to_list undecided;
+    }
 
 (** BMI learning for CEGIS *)
 

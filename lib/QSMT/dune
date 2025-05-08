@@ -1,8 +1,0 @@
-(library
- (name QSMT)
- (public_name CoAR.QSMT)
- (preprocess
-  (pps ppx_deriving_yojson))
- (libraries core yojson CoAR.common CoAR.ast CoAR.Z3Smt CoAR.SMT)
- (modules strategySynthesis)
- (synopsis "Quantified Satisfiability Modulo Theories"))

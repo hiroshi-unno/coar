@@ -1,0 +1,7 @@
+(library
+ (name HOMCSat)
+ (public_name CoAR.HOMCSat)
+ (preprocess
+  (pps ppx_deriving_yojson))
+ (libraries core CoAR.HOMCSolver CoAR.SAT CoAR.DQSAT CoAR.HOSAT)
+ (modules config solver))

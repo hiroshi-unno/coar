@@ -388,6 +388,28 @@ module Make (Config : Config.ConfigType) = struct
               |> SimplState.map_res (SimplResult.add_seqls [ (t, sort) ])
               |> SimplState.add_ssubs [ (t1, sv1); (t2, sv2) ]
               |> simplify_ssubs
+          | t, T_tuple.STuple (_ :: _ as ss) ->
+              let svs =
+                List.init (List.length ss) ~f:(fun _ -> Sort.mk_fresh_svar ())
+              in
+              let sort = T_tuple.STuple svs in
+              if print_log then
+                Debug.print @@ lazy ("introducing " ^ Term.str_of_sort sort);
+              state
+              |> SimplState.map_res (SimplResult.add_seqls [ (t, sort) ])
+              |> SimplState.add_ssubs (List.zip_exn svs ss)
+              |> simplify_ssubs
+          | T_tuple.STuple (_ :: _ as ss), t ->
+              let svs =
+                List.init (List.length ss) ~f:(fun _ -> Sort.mk_fresh_svar ())
+              in
+              let sort = T_tuple.STuple svs in
+              if print_log then
+                Debug.print @@ lazy ("introducing " ^ Term.str_of_sort sort);
+              state
+              |> SimplState.map_res (SimplResult.add_seqls [ (t, sort) ])
+              |> SimplState.add_ssubs (List.zip_exn ss svs)
+              |> simplify_ssubs
           | t, T_dt.SDT dt when Fn.non List.is_empty (Datatype.params_of dt) ->
               let args = Datatype.params_of dt in
               let svs =
@@ -411,28 +433,6 @@ module Make (Config : Config.ConfigType) = struct
               state
               |> SimplState.map_res (SimplResult.add_seqls [ (t, sort) ])
               |> SimplState.add_ssubs (List.zip_exn args svs) (*ToDo*)
-              |> simplify_ssubs
-          | t, T_tuple.STuple (_ :: _ as ss) ->
-              let svs =
-                List.init (List.length ss) ~f:(fun _ -> Sort.mk_fresh_svar ())
-              in
-              let sort = T_tuple.STuple svs in
-              if print_log then
-                Debug.print @@ lazy ("introducing " ^ Term.str_of_sort sort);
-              state
-              |> SimplState.map_res (SimplResult.add_seqls [ (t, sort) ])
-              |> SimplState.add_ssubs (List.zip_exn svs ss)
-              |> simplify_ssubs
-          | T_tuple.STuple (_ :: _ as ss), t ->
-              let svs =
-                List.init (List.length ss) ~f:(fun _ -> Sort.mk_fresh_svar ())
-              in
-              let sort = T_tuple.STuple svs in
-              if print_log then
-                Debug.print @@ lazy ("introducing " ^ Term.str_of_sort sort);
-              state
-              |> SimplState.map_res (SimplResult.add_seqls [ (t, sort) ])
-              |> SimplState.add_ssubs (List.zip_exn ss svs)
               |> simplify_ssubs
           | Sort.SVar sv1, Sort.SVar sv2 ->
               state
@@ -609,7 +609,7 @@ module Make (Config : Config.ConfigType) = struct
             if print_log then
               Debug.print @@ lazy ("introducing " ^ Term.str_of_cont eff');
             let res = SimplResult.add_eeqls [ (eff, eff') ] res in
-            go res @@ ((effs, eff') :: ecompsubs))
+            go res ((effs, eff') :: ecompsubs))
           else if List.for_all (eff :: effs) ~f:Sort.is_eff then
             let res =
               SimplResult.map_constr
@@ -848,17 +848,16 @@ module Make (Config : Config.ConfigType) = struct
         if Stdlib.(s1 = s2) then unify_seqls state
         else
           match (s1, s2) with
-          | T_array.SArray (t11, t12), T_array.SArray (t21, t22) ->
-              state
-              |> UniState.add_seqls [ (t11, t21); (t12, t22) ]
-              |> unify_seqls
           | Sort.SArrow (t1, c1), Sort.SArrow (t2, c2) ->
               state |> UniState.add_eqls c1 c2
               |> UniState.add_seqls [ (t1, t2) ]
               |> unify_seqls
-          | Sort.SVar sv, t | t, Sort.SVar sv ->
-              if Set.mem (Term.svs_of_sort t) sv then fail ()
-              else state |> UniState.subst_sort (sv, t) |> unify_seqls
+          | T_array.SArray (t11, t12), T_array.SArray (t21, t22) ->
+              state
+              |> UniState.add_seqls [ (t11, t21); (t12, t22) ]
+              |> unify_seqls
+          | T_tuple.STuple ss1, T_tuple.STuple ss2 ->
+              state |> UniState.add_seqls (List.zip_exn ss1 ss2) |> unify_seqls
           | T_dt.SDT dt1, T_dt.SDT dt2 ->
               let args1 = Datatype.params_of dt1 in
               let args2 = Datatype.params_of dt2 in
@@ -867,8 +866,9 @@ module Make (Config : Config.ConfigType) = struct
                 |> UniState.add_seqls (List.zip_exn args1 args2)
                 |> unify_seqls
               else fail ()
-          | T_tuple.STuple ss1, T_tuple.STuple ss2 ->
-              state |> UniState.add_seqls (List.zip_exn ss1 ss2) |> unify_seqls
+          | Sort.SVar sv, t | t, Sort.SVar sv ->
+              if Set.mem (Term.svs_of_sort t) sv then fail ()
+              else state |> UniState.subst_sort (sv, t) |> unify_seqls
           | _ -> fail ())
 
   let rec unify_oeqls (state : UniState.t) =
@@ -1390,56 +1390,56 @@ module Make (Config : Config.ConfigType) = struct
                   constr = preproc_res.constr;
                   subst = preproc_res.subst;
                 }
-            (*let assume_eff () =
+            (* let assume_eff () =
                 let ov1, sv1, ev1 = Sort.mk_fresh_triple () in
-                let ov2, sv2, ev2 = Sort.mk_fresh_triple () in
-                let cont = Sort.mk_cont_eff (ov1, sv1, ev1) (ov2, sv2, ev2) in
-                if print_log then
-                  Debug.print @@ lazy ("introducing " ^ Term.str_of_cont cont);
-                let cont' =
-                  Sort.mk_cont_eff (o_first, s_first, e_first) (ov1, sv1, ev1)
+                  let ov2, sv2, ev2 = Sort.mk_fresh_triple () in
+                  let cont = Sort.mk_cont_eff (ov1, sv1, ev1) (ov2, sv2, ev2) in
+                  if print_log then
+                    Debug.print @@ lazy ("introducing " ^ Term.str_of_cont cont);
+                  let cont' =
+                    Sort.mk_cont_eff (o_first, s_first, e_first) (ov1, sv1, ev1)
+                  in
+                  let sub_effs_eff = (es, cont') :: sub_effs_eff in
+                  let preproc_res =
+                    preprocess
+                    @@ PreprocState.add_esubs [ (ev2, e_last) ]
+                    @@ PreprocState.add_ssubs [ (sv2, s_last) ]
+                    @@ PreprocState.add_osubs [ (o_last, ov2) ]
+                    @@ SearchState.add_subst_conts [ (ev, cont) ]
+                       { state with constr = { state.constr with sub_effs_eff } }
+                  in
+                  search_effs_eff ~embed acc
+                    {
+                      constr = preproc_res.constr;
+                      subst = preproc_res.subst;
+                      embedded = Set.add state.embedded ev;
+                    }
                 in
-                let sub_effs_eff = (es, cont') :: sub_effs_eff in
-                let preproc_res =
-                  preprocess
-                  @@ PreprocState.add_esubs [ (ev2, e_last) ]
-                  @@ PreprocState.add_ssubs [ (sv2, s_last) ]
-                  @@ PreprocState.add_osubs [ (o_last, ov2) ]
-                  @@ SearchState.add_subst_conts [ (ev, cont) ]
-                  @@ { state with constr = { state.constr with sub_effs_eff } }
-                in
-                search_effs_eff ~embed acc
+                let assume_pure () =
+                  let sub_effs_eff =
+                    ( es,
+                      Sort.Eff (o_first, s_first, e_first, o_last, s_last, e_last)
+                    )
+                    :: sub_effs_eff
+                  in
+                  let preproc_res =
+                    preprocess
+                    @@ SearchState.add_subst_conts [ (ev, Sort.Pure) ]
+                       { state with constr = { state.constr with sub_effs_eff } }
+                  in
+                  search_effs_eff ~embed acc
                   {
-                    constr = preproc_res.constr;
-                    subst = preproc_res.subst;
-                    embedded = Set.add state.embedded ev;
+                       constr = preproc_res.constr;
+                       subst = preproc_res.subst;
+                       embedded = state.embedded;
                   }
-              in
-              let assume_pure () =
-                let sub_effs_eff =
-                  ( es,
-                    Sort.Eff (o_first, s_first, e_first, o_last, s_last, e_last)
-                  )
-                  :: sub_effs_eff
                 in
-                let preproc_res =
-                  preprocess
-                  @@ SearchState.add_subst_conts [ (ev, Sort.Pure) ]
-                  @@ { state with constr = { state.constr with sub_effs_eff } }
-                in
-                search_effs_eff ~embed acc
-                @@ {
-                     constr = preproc_res.constr;
-                     subst = preproc_res.subst;
-                     embedded = state.embedded;
-                   }
-              in
 
-              let assume1, assume2 =
-                if embed then (assume_eff, assume_pure)
-                else (assume_pure, assume_eff)
-              in
-              try assume1 () with Solve_failure _ -> assume2 ()*)
+                let assume1, assume2 =
+                  if embed then (assume_eff, assume_pure)
+                  else (assume_pure, assume_eff)
+                in
+                try assume1 () with Solve_failure _ -> assume2 () *)
         | _ -> failwith "unknown effect")
     | _ -> assert false
 

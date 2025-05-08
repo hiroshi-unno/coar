@@ -1,0 +1,11 @@
+[
+    "HOMCSat",
+    {
+        "verbose": true,
+        "solver": [
+            "Filename",
+            "./config/solver/dbg_horsat2.json"
+        ],
+        "encode_bool_ops": false
+    }
+]

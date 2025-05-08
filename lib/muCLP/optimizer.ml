@@ -47,13 +47,14 @@ module Make (Config : Config.ConfigType) = struct
   end = struct
     (* 0: query, n: n-th pvar from toplevel *)
     let pvargraph_of_muclp muclp =
-      let preds, query = Problem.let_muclp muclp in
       let pvar_to_id = Hashtbl.Poly.create ~size:1234 () in
       (* initialize pvar_to_id *)
-      List.iteri preds ~f:(fun i pred ->
-          (*Debug.print @@ lazy ("adding: " ^ Ident.name_of_pvar @@ Pred.pvar_of pred);*)
-          Hashtbl.Poly.set pvar_to_id ~key:(Pred.pvar_of pred) ~data:(i + 1));
-      query :: List.map ~f:Pred.body_of preds
+      List.iteri muclp.Problem.preds ~f:(fun i pred ->
+          if false then
+            Debug.print @@ lazy ("adding: " ^ Ident.name_of_pvar @@ pred.name);
+          Hashtbl.Poly.set pvar_to_id ~key:pred.name ~data:(i + 1));
+      muclp.Problem.query
+      :: List.map ~f:(fun pred -> pred.body) muclp.Problem.preds
       |> List.map
            ~f:
              (Formula.pvs_of
@@ -82,22 +83,18 @@ module Make (Config : Config.ConfigType) = struct
       let reachable =
         Array.to_list @@ reachable_from 0 @@ pvargraph_of_muclp muclp
       in
-      let preds, query = Problem.let_muclp muclp in
       let preds =
-        List.zip_exn preds (List.tl_exn reachable)
+        List.zip_exn muclp.Problem.preds (List.tl_exn reachable)
         |> List.filter_map ~f:(fun (p, r) -> if r then Some p else None)
       in
-      Problem.make preds query
+      Problem.make preds muclp.Problem.query
   end
 
-  (*
-  inline extension
+  (* inline extension
 
-  if a predicate P1 is called from only one predicate P2
-  and depth(P1) > depth(P2)
-  then P1 is eliminated by inline extension
-*)
-
+     if a predicate P1 is called from only one predicate P2
+     and depth(P1) > depth(P2)
+     then P1 is eliminated by inline extension *)
   module InlineExtension : sig
     val optimize : Problem.t -> Problem.t
   end = struct
@@ -120,7 +117,7 @@ module Make (Config : Config.ConfigType) = struct
     let get_pvar_called_counts pvar_to_id preds query =
       let res = Array.init (List.length preds) ~f:(fun _ -> 0) in
       List.iter
-        (query :: List.map preds ~f:Pred.body_of)
+        (query :: List.map preds ~f:(fun pred -> pred.Pred.body))
         ~f:
           (Formula.iter_atom ~f:(function
             | Atom.App (Predicate.Var (pvar, _), _, _) ->
@@ -130,40 +127,42 @@ module Make (Config : Config.ConfigType) = struct
       res
 
     let optimize muclp =
-      let preds_list, query = Problem.let_muclp muclp in
-      let n = List.length preds_list in
+      let n = List.length muclp.Problem.preds in
       (* pvar -> depth *)
       let pvar_to_id = Hashtbl.Poly.find_exn @@ Problem.get_depth_ht muclp in
-      let called_counts = get_pvar_called_counts pvar_to_id preds_list query in
-      let expanded = Array.init n ~f:(fun _ -> false) in
-      let preds = Array.of_list preds_list in
-      List.rev preds_list
-      |> List.iteri ~f:(fun i pred ->
-             let pred_id = n - i - 1 in
-             let fix, pvar, args, body = Pred.let_ pred in
-             let body =
-               Formula.map_atom body ~f:(function
-                 | Atom.App (Predicate.Var (pvar, _), args, _) as atm ->
-                     let pred_id' = pvar_to_id pvar in
-                     if called_counts.(pred_id') = 1 && pred_id' > pred_id then (
-                       expanded.(pred_id') <- true;
-                       let _, pvar', args', body = Pred.let_ preds.(pred_id') in
-                       assert (Stdlib.(pvar = pvar'));
-                       let subst =
-                         Map.Poly.of_alist_exn
-                         @@ List.zip_exn (List.map ~f:fst args') args
-                       in
-                       Formula.subst subst @@ Formula.aconv_tvar body)
-                     else Formula.mk_atom atm
-                 | atm -> Formula.mk_atom atm)
-             in
-             preds.(pred_id) <- Pred.make fix pvar args body);
-      let preds =
-        Array.to_list preds
-        |> List.filter ~f:(fun pred ->
-               not expanded.(pvar_to_id @@ Pred.pvar_of pred))
+      let called_counts =
+        get_pvar_called_counts pvar_to_id muclp.Problem.preds
+          muclp.Problem.query
       in
-      Problem.make preds query
+      let expanded = Array.init n ~f:(fun _ -> false) in
+      let preds = Array.of_list muclp.Problem.preds in
+      List.iteri (List.rev muclp.Problem.preds) ~f:(fun i pred ->
+          let pred_id = n - i - 1 in
+          let body =
+            Formula.map_atom pred.Pred.body ~f:(function
+              | Atom.App (Predicate.Var (pvar, _), args, _) as atm ->
+                  let pred_id' = pvar_to_id pvar in
+                  if called_counts.(pred_id') = 1 && pred_id' > pred_id then (
+                    expanded.(pred_id') <- true;
+                    assert (Stdlib.(pvar = preds.(pred_id').name));
+                    let tsub =
+                      Map.Poly.of_alist_exn
+                      @@ List.zip_exn
+                           (List.map ~f:fst preds.(pred_id').args)
+                           args
+                    in
+                    Formula.subst tsub
+                    @@ (* avoid variable capture *)
+                    Formula.aconv_tvar preds.(pred_id').body)
+                  else Formula.mk_atom atm
+              | atm -> Formula.mk_atom atm)
+          in
+          preds.(pred_id) <- { pred with body });
+      let preds =
+        List.filter (Array.to_list preds) ~f:(fun pred ->
+            not expanded.(pvar_to_id pred.Pred.name))
+      in
+      Problem.make preds muclp.Problem.query
   end
 
   module EraseQuantifiers : sig
@@ -172,31 +171,26 @@ module Make (Config : Config.ConfigType) = struct
   end = struct
     let seed = 1007
 
-    (*
-    AV(a+1) = {a}
-    AV(a*2) = {}
-    AV(a + a + b) = {b}
-    AV(a + b + c) = {a, b, c}
-    AV(1) = {}
-  *)
+    (* AV(a+1) = {a}
+       AV(a*2) = {}
+       AV(a + a + b) = {b}
+       AV(a + b + c) = {a, b, c}
+       AV(1) = {} *)
     let rec adj_vars_of_term = function
       | Term.Var (tvar, _, _) ->
           (* AV(a) = {a} *)
           Set.Poly.singleton tvar
       | FunApp ((T_int.Add | T_int.Sub), [ a; b ], _) ->
-          (*
-        AV(a + b) = AV(a - b) = AV(a) + AV(b) - (AV(a) and AV(b))
-        AV(a * b) = AV(a / b) = {}
-        AV(-a) = AV(a)
-      *)
+          (* AV(a + b) = AV(a - b) = AV(a) + AV(b) - (AV(a) and AV(b))
+             AV(a * b) = AV(a / b) = AV(a % b) = {}
+             AV(-a) = AV(a) *)
           let av1 = adj_vars_of_term a in
           let av2 = adj_vars_of_term b in
           Set.diff (Set.union av1 av2) (Set.inter av1 av2)
-      | FunApp ((T_int.Mult | T_int.Div), [ _; _ ], _)
+      | FunApp ((T_int.Mul | T_int.Div _ | T_int.Rem _), [ _; _ ], _)
       | FunApp
           ( ( T_int.Int _
-            | T_bool.Formula (Formula.Atom (Atom.True _, _))
-            | T_bool.Formula (Formula.Atom (Atom.False _, _)) ),
+            | T_bool.Formula (Formula.Atom (Atom.(True _ | False _), _)) ),
             [],
             _ ) ->
           Set.Poly.empty
@@ -215,9 +209,9 @@ module Make (Config : Config.ConfigType) = struct
       let indexes_of_ftv : (Ident.tvar, int list) Hashtbl.t =
         Hashtbl.Poly.create ~size:seed ()
       in
-      Array.iteri avfvs ~f:(fun idx (_, fv) ->
-          Set.to_list fv
-          |> List.iter ~f:(fun tvar ->
+      Array.iteri avfvs ~f:(fun idx ->
+          snd >> Set.to_list
+          >> List.iter ~f:(fun tvar ->
                  let current_count =
                    match Hashtbl.Poly.find fv_count tvar with
                    | None -> 0
@@ -250,39 +244,35 @@ module Make (Config : Config.ConfigType) = struct
       done;
       Array.for_all ~f:Fn.id is_assigned
 
-    (* let str_of_tvarset s =
-       |> Set.Poly.map s ~f: Ident.name_of_tvar
-       |> String.concat_set ", "
-       |> sprintf "{%s}" *)
+    let str_of_tvarset s =
+      sprintf "{%s}" @@ String.concat_map_set s ~sep:", " ~f:Ident.name_of_tvar
 
     let bound_flags_of_app_opt bounds args =
       (* let args = List.map Term.simplify args in *)
-      let bounds = List.map ~f:fst bounds |> Set.Poly.of_list in
-      let avs =
-        List.map ~f:adj_vars_of_term args |> List.map ~f:(Set.inter bounds)
-      in
-      let fvs =
-        List.map ~f:Term.tvs_of args |> List.map ~f:(Set.inter bounds)
-      in
+      let bounds = Set.Poly.of_list @@ List.map ~f:fst bounds in
+      let avs = List.map args ~f:(adj_vars_of_term >> Set.inter bounds) in
+      let fvs = List.map args ~f:(Term.tvs_of >> Set.inter bounds) in
       let avfvs = List.zip_exn avs fvs in
-      (* printf "[%s]: %s\n"
-         (String.concat_map_list ~sep:"; " ~f:PrinterHum.str_of_term args)
-         (String.concat_map_list ~sep:" " ~f:(fun (av, fv) -> String.paren @@ sprintf "%s, %s" (str_of_tvarset av) (str_of_tvarset fv)) avfvs); *)
+      if false then
+        printf "[%s]: %s\n"
+          (String.concat_map_list ~sep:"; " ~f:Term.str_of args)
+          (String.concat_map_list ~sep:" "
+             ~f:(fun (av, fv) ->
+               String.paren
+               @@ sprintf "%s, %s" (str_of_tvarset av) (str_of_tvarset fv))
+             avfvs);
       if
-        List.exists
-          ~f:(fun (av, fv) -> Fn.non Set.is_empty fv && Set.is_empty av)
-          avfvs
+        List.exists avfvs ~f:(fun (av, fv) ->
+            Fn.non Set.is_empty fv && Set.is_empty av)
       then
         (* if FV(t) and bounds != {} /\ AV(t) and bounds = {} for some arg t *)
         None
       else if
-        check_separatable (List.filter ~f:(snd >> Fn.non Set.is_empty) avfvs)
+        check_separatable (List.filter avfvs ~f:(snd >> Fn.non Set.is_empty))
       then
-        (*
-        exists x, y. F x (x + y) -> exists x, y. F x y
-        exists x, y. F (x + y) (x + y) -> exists x, y. F (x + y) (x + y)
-      *)
-        Some (List.map ~f:(Fn.non Set.is_empty) avs)
+        (* exists x, y. F x (x + y) -> exists x, y. F x y
+           exists x, y. F (x + y) (x + y) -> exists x, y. F (x + y) (x + y) *)
+        Some (List.map avs ~f:(Fn.non Set.is_empty))
       else None
 
     let create_initial_pvar_to_xpvar bounds pvar =
@@ -343,7 +333,8 @@ module Make (Config : Config.ConfigType) = struct
               let set_pos1 = Set.Poly.of_list pos1 in
               let set_pos2 = Set.Poly.of_list pos2 in
               let cond_fml =
-                List.filter ~f:(snd >> Set.mem set_pos1) (List.zip_index fmls1)
+                List.zip_index fmls1
+                |> List.filter ~f:(snd >> Set.mem set_pos1)
                 |> List.map ~f:fst
                 |> SimpleFormula.mk_branch_with_simplification_one inner_op
               in
@@ -370,8 +361,7 @@ module Make (Config : Config.ConfigType) = struct
       match let_if_opt fml with Some _ -> true | None -> false
 
     let optimize ?(elim_forall = true) ?(elim_exists = true) muclp =
-      let preds, query = Problem.let_muclp muclp in
-      let preds = Array.of_list preds in
+      let preds = Array.of_list muclp.Problem.preds in
       let pvar_to_pred : (Ident.pvar, Pred.t) Hashtbl.t =
         Hashtbl.Poly.create ~size:seed ()
       in
@@ -388,7 +378,7 @@ module Make (Config : Config.ConfigType) = struct
       in
       let endpvar = Ident.mk_fresh_pvar () in
       let startpvar =
-        if Array.is_empty preds then endpvar else Pred.pvar_of preds.(0)
+        if Array.is_empty preds then endpvar else preds.(0).name
       in
       let ht_of_binder = function
         | Formula.Forall -> pvar_to_fpvar
@@ -397,26 +387,22 @@ module Make (Config : Config.ConfigType) = struct
       in
       (* init pvar_to_pred, pvar_to_nxtpvar, pvar_to_epvar, pvar_to_fpvar *)
       Array.iteri preds ~f:(fun i pred ->
-          let _, pvar, bounds, _ = Pred.let_ pred in
           let nxtpvar =
-            if i = Array.length preds - 1 then endpvar
-            else Pred.pvar_of preds.(i + 1)
+            if i = Array.length preds - 1 then endpvar else preds.(i + 1).name
           in
-          Hashtbl.Poly.set pvar_to_nxtpvar ~key:pvar ~data:nxtpvar;
-          Hashtbl.Poly.set pvar_to_pred ~key:pvar ~data:pred;
-          Hashtbl.Poly.set pvar_to_epvar ~key:pvar
-            ~data:(create_initial_pvar_to_xpvar bounds pvar);
-          Hashtbl.Poly.set pvar_to_fpvar ~key:pvar
-            ~data:(create_initial_pvar_to_xpvar bounds pvar));
+          Hashtbl.Poly.set pvar_to_nxtpvar ~key:pred.name ~data:nxtpvar;
+          Hashtbl.Poly.set pvar_to_pred ~key:pred.name ~data:pred;
+          Hashtbl.Poly.set pvar_to_epvar ~key:pred.name
+            ~data:(create_initial_pvar_to_xpvar pred.args pred.name);
+          Hashtbl.Poly.set pvar_to_fpvar ~key:pred.name
+            ~data:(create_initial_pvar_to_xpvar pred.args pred.name));
       (* queue for erase_quantifiers_rep *)
       let queue = Queue.create () in
       (* add exists/forall pred of [pvar] pred and return the pvar of it *)
       let add_pred binder bound_flags pvar =
         (* construct new function *)
-        let pvar, pvar', pred =
-          let fix, pvar, bounds, body =
-            Pred.let_ @@ Hashtbl.find_exn pvar_to_pred pvar
-          in
+        let pvar, pred =
+          let pred' = Hashtbl.find_exn pvar_to_pred pvar in
           let pvar' = Ident.mk_fresh_pvar () in
           (* TODO *)
           Debug.print
@@ -424,32 +410,34 @@ module Make (Config : Config.ConfigType) = struct
                (sprintf "add_pred (pvar): %s. %s"
                   (Formula.str_of_binder binder)
                   (Ident.name_of_pvar pvar'));
-          let qbounds, bounds' =
-            List.zip_exn bounds bound_flags
-            |> List.partition_map ~f:(fun (b, f) ->
-                   if f then First b else Second b)
+          let qbounds, args =
+            List.partition_map (List.zip_exn pred'.args bound_flags)
+              ~f:(fun (b, f) -> if f then First b else Second b)
           in
-          ( pvar,
-            pvar',
-            Pred.make fix pvar' bounds'
-            @@ Formula.mk_bind_if_bounded binder qbounds body )
+          ( pred'.name,
+            {
+              pred' with
+              name = pvar';
+              args;
+              body = Formula.mk_bind_if_bounded binder qbounds pred'.body;
+            } )
         in
         (* update pvar_to_nxtpvar: insert the pred just after [pvar] *)
         let nxtpvar = Hashtbl.Poly.find_exn pvar_to_nxtpvar pvar in
-        Hashtbl.Poly.set pvar_to_nxtpvar ~key:pvar ~data:pvar';
-        Hashtbl.Poly.set pvar_to_nxtpvar ~key:pvar' ~data:nxtpvar;
+        Hashtbl.Poly.set pvar_to_nxtpvar ~key:pvar ~data:pred.name;
+        Hashtbl.Poly.set pvar_to_nxtpvar ~key:pred.name ~data:nxtpvar;
         (* update pvar_to_pred *)
-        Hashtbl.Poly.set pvar_to_pred ~key:pvar' ~data:pred;
+        Hashtbl.Poly.set pvar_to_pred ~key:pred.name ~data:pred;
         (* update pvar_to_fpvar, pvar_to_epvar *)
         Hashtbl.Poly.set
           (Hashtbl.find_exn (ht_of_binder binder) pvar)
-          ~key:bound_flags ~data:pvar';
-        Hashtbl.Poly.set (ht_of_binder binder) ~key:pvar'
+          ~key:bound_flags ~data:pred.name;
+        Hashtbl.Poly.set (ht_of_binder binder) ~key:pred.name
           ~data:(Hashtbl.Poly.create ~size:seed ());
         (* push to the queue for erase_quantifiers_rep *)
-        Queue.enqueue queue pvar';
+        Queue.enqueue queue pred.name;
         (* return new pvar *)
-        pvar'
+        pred.name
       in
       let get_or_add_pred binder bound_flags pvar =
         Debug.print
@@ -464,7 +452,7 @@ module Make (Config : Config.ConfigType) = struct
             ht pvar
         in
         if not (Hashtbl.Poly.mem ht' bound_flags) then
-          (add_pred binder bound_flags pvar : Ident.pvar) |> ignore;
+          ignore (add_pred binder bound_flags pvar : Ident.pvar);
         Hashtbl.find_exn ht' bound_flags
       in
       let binder_of_op = function
@@ -478,26 +466,22 @@ module Make (Config : Config.ConfigType) = struct
         let bounds = List.filter ~f:(fst >> Set.mem ftv) bounds in
         if List.is_empty bounds then erase_quantifiers_rep fml
         else if SimpleFormula.is_branch fml then (
-          (*
-          exists a. P(a) \/ P(b) -> (exists a. P(a)) \/ (exists a. P(b))
-          exists a. P(a) /\ Q -> (exists a. P(a)) /\ Q
-        *)
+          (* exists a. P(a) \/ P(b) -> (exists a. P(a)) \/ (exists a. P(b))
+             exists a. P(a) /\ Q -> (exists a. P(a)) /\ Q *)
           let op, fmls = SimpleFormula.let_branch fml in
           if Stdlib.(binder_of_op binder = op) then
             (* exists a. P(a) \/ P(b) -> (exists a. P(a)) \/ (exists a. P(b)) *)
             SimpleFormula.mk_branch op
             @@ List.map ~f:(erase_quantifiers_rep_bind binder bounds) fmls
           else if is_from_if fml then (
-            (*
-            forall x. (P /\ Q) \/ (not P /\ R)
-            -> forall x. (P => Q) /\ (not P => R)
-            -> (forall x. not P \/ Q) /\ (forall x. P \/ R)
+            (* forall x. (P /\ Q) \/ (not P /\ R)
+               -> forall x. (P => Q) /\ (not P => R)
+               -> (forall x. not P \/ Q) /\ (forall x. P \/ R)
 
-            exists x. (P \/ Q) /\ (not P \/ R)
-            -> exists x. (not P => Q) /\ (P => R)
-            -> exists x. (not P /\ Q) \/ (P /\ R)
-            -> (exists x. not P /\ Q) \/ (exists x. P /\ R)
-          *)
+               exists x. (P \/ Q) /\ (not P \/ R)
+               -> exists x. (not P => Q) /\ (P => R)
+               -> exists x. (not P /\ Q) \/ (P /\ R)
+               -> (exists x. not P /\ Q) \/ (exists x. P /\ R) *)
             let op', cond_fml, fml1, fml2 = let_if fml in
             assert (Stdlib.(op' = op));
             let fml1 =
@@ -513,14 +497,12 @@ module Make (Config : Config.ConfigType) = struct
             SimpleFormula.mk_branch_with_simplification_one
               (Formula.flip_binop op) [ fml1; fml2 ])
           else
-            (*
-            exists a. P(a) /\ Q
-              -> (exists a. P(a)) /\ Q
+            (* exists a. P(a) /\ Q
+                 -> (exists a. P(a)) /\ Q
 
-            [exists a, b, c. P1(a, b) /\ P2(a) /\ P3(c)]
-              -> [exists a, b, c. P1(a, b) /\ P2(a)] /\ [exists a, b, c. P3(c)]
-              with UnionFind
-          *)
+               [exists a, b, c. P1(a, b) /\ P2(a) /\ P3(c)]
+                 -> [exists a, b, c. P1(a, b) /\ P2(a)] /\ [exists a, b, c. P3(c)]
+                 with UnionFind *)
             let bounds_tvar_set = Set.Poly.of_list @@ List.map ~f:fst bounds in
             let ht = Hashtbl.Poly.create ~size:seed () in
             List.iteri fmls ~f:(fun i fml ->
@@ -533,7 +515,10 @@ module Make (Config : Config.ConfigType) = struct
                       in
                       Hashtbl.Poly.set ht ~key:tvar ~data:(i :: ids)));
             let n = List.length fmls in
-            (* printf "%s\n\n" (String.concat_map_list ~sep:"\n" ~f:(SimpleFormula.string_of) fmls); *)
+            if false then
+              printf "%s\n\n"
+                (String.concat_map_list ~sep:"\n" ~f:SimpleFormula.string_of
+                   fmls);
             assert (n >= 2);
             (* because of simplification *)
             (* construct uf *)
@@ -579,12 +564,10 @@ module Make (Config : Config.ConfigType) = struct
             let new_bounds = SimpleFormula.update_bounds bounds bounds' in
             erase_quantifiers_rep_bind binder new_bounds fml'
           else
-            (*
-            forall x. exists y. P
-            1. process [exists y. P]
-            2. if it's still of the form [forall x. exists y. P] then give up erasing (to avoid an infinite-loop)
-            3. otherwise, continue to process erase_quantifiers_rep_bind
-          *)
+            (* forall x. exists y. P
+               1. process [exists y. P]
+               2. if it's still of the form [forall x. exists y. P] then give up erasing (to avoid an infinite-loop)
+               3. otherwise, continue to process erase_quantifiers_rep_bind *)
             let fml = erase_quantifiers_rep_bind binder' bounds' fml' in
             if SimpleFormula.is_bind fml then
               let binder', _, _ = SimpleFormula.let_bind fml in
@@ -600,13 +583,10 @@ module Make (Config : Config.ConfigType) = struct
                ^ SimpleFormula.string_of fml);
           match bound_flags_of_app_opt bounds args with
           | Some bound_flags ->
-              let pvar' = get_or_add_pred binder bound_flags pvar in
-              let args =
-                List.zip_exn args bound_flags
-                |> List.filter ~f:(snd >> not)
-                |> List.map ~f:fst
-              in
-              SimpleFormula.mk_app pvar' args
+              SimpleFormula.mk_app (get_or_add_pred binder bound_flags pvar)
+              @@ List.map ~f:fst
+              @@ List.filter ~f:(snd >> not)
+              @@ List.zip_exn args bound_flags
           | None -> SimpleFormula.mk_bind_with_filter binder bounds fml)
         else if SimpleFormula.is_cond fml then
           SimpleFormula.mk_bind_with_filter binder bounds fml
@@ -633,24 +613,26 @@ module Make (Config : Config.ConfigType) = struct
       in
       let erase_quantifiers fml =
         try
+          Debug.print
+          @@ lazy (sprintf "erase_quantifiers before: " ^ Formula.str_of fml);
           let fml = SimpleFormula.of_formula @@ Formula.nnf_of fml in
           Debug.print
-          @@ lazy (sprintf "erase_quantifiers: " ^ SimpleFormula.string_of fml);
-          erase_quantifiers_rep fml |> SimpleFormula.formula_of
+          @@ lazy
+               (sprintf "erase_quantifiers after: "
+               ^ SimpleFormula.string_of fml);
+          SimpleFormula.formula_of @@ erase_quantifiers_rep fml
         with _ -> fml
       in
       (* init queue *)
-      Array.iter preds ~f:(Pred.pvar_of >> Queue.enqueue queue);
-      let query = erase_quantifiers query in
+      Array.iter preds ~f:(fun pred -> Queue.enqueue queue pred.name);
+      let query = erase_quantifiers muclp.Problem.query in
       while Fn.non Queue.is_empty queue do
         let pvar = Queue.dequeue_exn queue in
-        let fix, pvar_confirm, bounds, body =
-          Pred.let_ @@ Hashtbl.Poly.find_exn pvar_to_pred pvar
-        in
-        assert (Stdlib.(pvar = pvar_confirm));
+        let pred = Hashtbl.Poly.find_exn pvar_to_pred pvar in
+        assert (Stdlib.( = ) pvar pred.name);
         Debug.print @@ lazy (sprintf "%s: " (Ident.name_of_pvar pvar));
-        let pred = Pred.make fix pvar bounds @@ erase_quantifiers body in
-        Hashtbl.Poly.set pvar_to_pred ~key:pvar ~data:pred
+        Hashtbl.Poly.set pvar_to_pred ~key:pvar
+          ~data:{ pred with body = erase_quantifiers pred.body }
       done;
       (* reconstruct preds from startpvar, endpvar, pvar_to_nxtpvar, pvar_to_pred, processed_pvars(reached) *)
       let preds_queue = Queue.create () in
@@ -710,12 +692,11 @@ module Make (Config : Config.ConfigType) = struct
 
     let rec replace_to_topbot ~id = function
       | Formula.BinaryOp (op, phi1, phi2, info) ->
-          let phi1 = replace_to_topbot ~id phi1 in
-          let phi2 = replace_to_topbot ~id phi2 in
-          Formula.mk_binop op phi1 phi2 ~info
+          Formula.mk_binop ~info op
+            (replace_to_topbot ~id phi1)
+            (replace_to_topbot ~id phi2)
       | Formula.UnaryOp (op, phi1, info) ->
-          let phi1 = replace_to_topbot ~id phi1 in
-          Formula.mk_unop op phi1 ~info
+          Formula.mk_unop ~info op (replace_to_topbot ~id phi1)
       | Formula.Atom (_, _) as phi -> phi
       | Formula.Bind (binder, bounds, fml, info) as phi ->
           if check_always_true ~id phi then Formula.mk_true ()
@@ -753,11 +734,12 @@ module Make (Config : Config.ConfigType) = struct
       | ConstBool _ -> true
       | _ -> false
 
-    (* let string_of_vt = function
-       | UnReached -> "unreached"
-       | NonConst -> "nonconst"
-       | Const x -> sprintf "const %s" (Z.to_string x)
-       | ConstBool x -> sprintf "const %s" (Bool.to_string x) *)
+    let string_of_vt = function
+      | UnReached -> "unreached"
+      | NonConst -> "nonconst"
+      | ConstInt x -> sprintf "const %s" (Z.to_string x)
+      | ConstReal x -> sprintf "const %s" (Q.to_string x)
+      | ConstBool x -> sprintf "const %s" (Bool.to_string x)
 
     let seed = 1007
 
@@ -768,11 +750,11 @@ module Make (Config : Config.ConfigType) = struct
       let ht_vt : (Ident.pvar, (Ident.tvar, vartype) Hashtbl.t) Hashtbl.t =
         Hashtbl.Poly.create ~size:seed ()
       in
-      List.iter (Problem.preds_of muclp) ~f:(fun (_, pvar, bounds, _) ->
+      List.iter muclp.Problem.preds ~f:(fun pred ->
           let ht = Hashtbl.Poly.create ~size:seed () in
-          List.iter bounds ~f:(fun (tvar, _) ->
+          List.iter pred.args ~f:(fun (tvar, _) ->
               Hashtbl.Poly.set ht ~key:tvar ~data:UnReached);
-          Hashtbl.Poly.set ht_vt ~key:pvar ~data:ht);
+          Hashtbl.Poly.set ht_vt ~key:pred.name ~data:ht);
       ht_vt
 
     let rec nonconst_update ht_vt graph pt =
@@ -803,12 +785,15 @@ module Make (Config : Config.ConfigType) = struct
                 ConstBool false
             | T_int.Int x, [] -> ConstInt x
             | T_int.Neg, [ ConstInt x ] -> ConstInt (Z.neg x)
+            | T_int.Nop, [ ConstInt x ] -> ConstInt x
             | T_int.Abs, [ ConstInt x ] -> ConstInt (Z.abs x)
             | T_int.Add, [ ConstInt x; ConstInt y ] -> ConstInt (Z.( + ) x y)
             | T_int.Sub, [ ConstInt x; ConstInt y ] -> ConstInt (Z.( - ) x y)
-            | T_int.Mult, [ ConstInt x; ConstInt y ] -> ConstInt (Z.( * ) x y)
-            | T_int.Div, [ ConstInt x; ConstInt y ] -> ConstInt (Z.ediv x y)
-            | T_int.Mod, [ ConstInt x; ConstInt y ] -> ConstInt (Z.erem x y)
+            | T_int.Mul, [ ConstInt x; ConstInt y ] -> ConstInt (Z.( * ) x y)
+            | T_int.Div m, [ ConstInt x; ConstInt y ] ->
+                ConstInt (Value.div_of m x y)
+            | T_int.Rem m, [ ConstInt x; ConstInt y ] ->
+                ConstInt (Value.rem_of m x y)
             | T_int.Power, [ ConstInt x; ConstInt y ] ->
                 ConstInt (Z.pow x (Z.to_int (*ToDo*) y))
             | T_real.Real x, [] -> ConstReal x
@@ -818,23 +803,16 @@ module Make (Config : Config.ConfigType) = struct
                 ConstReal (Q.( + ) x y)
             | T_real.RSub, [ ConstReal x; ConstReal y ] ->
                 ConstReal (Q.( - ) x y)
-            | T_real.RMult, [ ConstReal x; ConstReal y ] ->
+            | T_real.RMul, [ ConstReal x; ConstReal y ] ->
                 ConstReal (Q.( * ) x y)
             | T_real.RDiv, [ ConstReal x; ConstReal y ] ->
                 ConstReal (Q.( / ) x y)
-            | T_bv.BVNum (_size, _), []
-            | T_bv.BVNeg _size, [ _ ]
-            | T_bv.BVAdd _size, [ _; _ ]
-            | T_bv.BVSub _size, [ _; _ ]
-            | T_bv.BVMult _size, [ _; _ ]
-            | T_bv.BVDiv _size, [ _; _ ]
-            | T_bv.BVMod _size, [ _; _ ]
-            | T_bv.BVRem _size, [ _; _ ]
-            | T_bv.BVSHL _size, [ _; _ ]
-            | T_bv.BVLSHR _size, [ _; _ ]
-            | T_bv.BVASHR _size, [ _; _ ]
-            | T_bv.BVOr _size, [ _; _ ]
-            | T_bv.BVAnd _size, [ _; _ ] ->
+            | T_bv.BVNum (_, _), []
+            | T_bv.(BVNeg _ | BVSEXT _ | BVZEXT _), [ _ ]
+            | ( T_bv.(
+                  ( BVAdd _ | BVSub _ | BVMul _ | BVDiv _ | BVRem _ | BVSHL _
+                  | BVLSHR _ | BVASHR _ | BVOr _ | BVAnd _ )),
+                [ _; _ ] ) ->
                 NonConst (*ToDo*)
             | _ ->
                 failwith @@ "EraseConstVariables.vt_of_term: illegal funapp "
@@ -889,15 +867,12 @@ module Make (Config : Config.ConfigType) = struct
 
     let tvars_of_pvar_of_muclp muclp =
       let tvars_of_pvar_ht = Hashtbl.Poly.create ~size:seed () in
-      List.iter
-        (fst @@ Problem.let_muclp muclp)
-        ~f:(fun (_, pvar, bounds, _) ->
-          Hashtbl.Poly.set tvars_of_pvar_ht ~key:pvar
-            ~data:(List.map ~f:fst bounds));
+      List.iter muclp.Problem.preds ~f:(fun pred ->
+          Hashtbl.Poly.set tvars_of_pvar_ht ~key:pred.name
+            ~data:(List.map ~f:fst pred.args));
       fun pvar -> Hashtbl.find_exn tvars_of_pvar_ht pvar
 
     let get_vargraph muclp =
-      let preds, query = Problem.let_muclp muclp in
       let dummy_pvar = Ident.Pvar "dummy" in
       let consts : (Ident.pvar * Ident.tvar * vartype) list = [] in
       let nonconsts : (Ident.pvar * Ident.tvar) list = [] in
@@ -908,26 +883,32 @@ module Make (Config : Config.ConfigType) = struct
         Hashtbl.Poly.create ~size:seed ()
       in
       let tvars_of_pvar = tvars_of_pvar_of_muclp muclp in
-      List.iter (Pred.pvars_of_list preds) ~f:(fun pvar ->
+      List.iter (Pred.pvars_of_list muclp.Problem.preds) ~f:(fun pvar ->
           List.iter (tvars_of_pvar pvar) ~f:(fun tvar ->
               Hashtbl.Poly.set graph ~key:(pvar, tvar) ~data:[]));
       let consts, nonconsts =
-        List.fold_left preds
+        List.fold_left muclp.Problem.preds
           ~init:
             (get_vargraph_rep tvars_of_pvar dummy_pvar Set.Poly.empty consts
-               nonconsts graph query)
-          ~f:(fun (consts, nonconsts) (_, pvar, bounds, body) ->
-            let arg_tvars = Set.Poly.of_list @@ List.map ~f:fst bounds in
-            get_vargraph_rep tvars_of_pvar pvar arg_tvars consts nonconsts graph
-              body)
+               nonconsts graph muclp.Problem.query)
+          ~f:(fun (consts, nonconsts) pred ->
+            let arg_tvars = Set.Poly.of_list @@ List.map ~f:fst pred.args in
+            get_vargraph_rep tvars_of_pvar pred.name arg_tvars consts nonconsts
+              graph pred.body)
       in
       (consts, nonconsts, graph)
 
     let gen_ht_vt muclp =
       let ht_vt = init_ht_vt muclp in
       let consts, nonconsts, graph = get_vargraph muclp in
-      (* printf "nonconsts: %s\n" (String.concat_map_list ~sep:" " ~f:(fun (pvar, tvar) -> String.paren @@ sprintf "%s, %s" (Ident.name_of_pvar pvar) (Ident.name_of_tvar tvar)) nonconsts); *)
-      List.iter ~f:(nonconst_update ht_vt graph) nonconsts;
+      if false then
+        printf "nonconsts: %s\n"
+          (String.concat_map_list ~sep:" "
+             ~f:(fun (pvar, tvar) ->
+               sprintf "(%s, %s)" (Ident.name_of_pvar pvar)
+                 (Ident.name_of_tvar tvar))
+             nonconsts);
+      List.iter nonconsts ~f:(nonconst_update ht_vt graph);
       let queue = Queue.create () in
       let update_ht_vt pt const =
         let current_vt = vt_of_pt ht_vt pt in
@@ -941,13 +922,16 @@ module Make (Config : Config.ConfigType) = struct
             if Stdlib.(new_vt = NonConst) then nonconst_update ht_vt graph pt
             else Queue.enqueue queue pt)
       in
-      List.iter
-        ~f:(fun (pvar, tvar, value) -> update_ht_vt (pvar, tvar) value)
-        consts;
+      List.iter consts ~f:(fun (pvar, tvar, value) ->
+          update_ht_vt (pvar, tvar) value);
       while Fn.non Queue.is_empty queue do
         let pt = Queue.dequeue_exn queue in
-        let pvar, _ = pt in
-        (* printf "%s, %s: %s\n" (Ident.name_of_pvar pvar) (Ident.name_of_tvar tvar) (string_of_vt (vt_of_pt ht_vt pt)); flush stdout; *)
+        let pvar, tvar = pt in
+        if false then (
+          printf "%s, %s: %s\n" (Ident.name_of_pvar pvar)
+            (Ident.name_of_tvar tvar)
+            (string_of_vt (vt_of_pt ht_vt pt));
+          Out_channel.flush stdout);
         if Stdlib.(vt_of_pt ht_vt pt <> NonConst) then
           List.iter (Hashtbl.Poly.find_exn graph pt)
             ~f:(fun (nxt_pvar, nxt_tvar, term) ->
@@ -981,61 +965,77 @@ module Make (Config : Config.ConfigType) = struct
         | atm -> Formula.mk_atom atm)
 
     let optimize muclp =
-      (* printf "[ReplaceConstVariables]\n";
-         printf "Input: %s\n\n" (Hesutil.str_of_muclp muclp); *)
+      if false then (
+        printf "[ReplaceConstVariables]\n";
+        printf "Input: %s\n\n" (Problem.str_of muclp));
       let ht_vt = gen_ht_vt muclp in
-      let preds, query = Problem.let_muclp muclp in
       let tvars_of_pvar = tvars_of_pvar_of_muclp muclp in
-      let query = filter_nonconst_args tvars_of_pvar ht_vt query in
+      let query =
+        filter_nonconst_args tvars_of_pvar ht_vt muclp.Problem.query
+      in
       let preds =
-        List.map preds ~f:(fun (fix, pvar, bounds, fml) ->
-            let ht_vt_of_tvar = Hashtbl.Poly.find_exn ht_vt pvar in
+        List.map muclp.Problem.preds ~f:(fun pred ->
+            let ht_vt_of_tvar = Hashtbl.Poly.find_exn ht_vt pred.name in
             let subst =
-              List.fold_left bounds ~init:Map.Poly.empty
-                ~f:(fun subst (tvar, _) ->
+              List.fold_left pred.args ~init:Map.Poly.empty
+                ~f:(fun tsub (tvar, _) ->
                   match Hashtbl.Poly.find_exn ht_vt_of_tvar tvar with
                   | ConstBool x ->
-                      Map.Poly.set subst ~key:tvar ~data:(T_bool.make x)
+                      Map.Poly.set tsub ~key:tvar ~data:(T_bool.make x)
                   | ConstInt x ->
-                      Map.Poly.set subst ~key:tvar ~data:(T_int.mk_int x)
+                      Map.Poly.set tsub ~key:tvar ~data:(T_int.mk_int x)
                   | ConstReal x ->
-                      Map.Poly.set subst ~key:tvar ~data:(T_real.mk_real x)
-                  | _ -> subst)
+                      Map.Poly.set tsub ~key:tvar ~data:(T_real.mk_real x)
+                  | _ -> tsub)
             in
-            let fml =
-              filter_nonconst_args tvars_of_pvar ht_vt
-              @@ Formula.subst subst fml
-            in
-            let bounds =
-              List.filter bounds
-                ~f:
-                  (fst >> Hashtbl.Poly.find_exn ht_vt_of_tvar >> is_const >> not)
-            in
-            Pred.make fix pvar bounds fml)
+            {
+              pred with
+              args =
+                List.filter pred.args
+                  ~f:
+                    (fst
+                    >> Hashtbl.Poly.find_exn ht_vt_of_tvar
+                    >> is_const >> not);
+              body =
+                filter_nonconst_args tvars_of_pvar ht_vt
+                @@ Formula.subst subst pred.body;
+            })
       in
       Problem.make preds query
   end
 
+  let print_log = true
+
   let f ?(id = None) ?(elim_forall = true) ?(elim_exists = true)
       ?(elim_pvar_args = true) muclp =
-    let elim =
+    let simplify =
       Problem.map_formula Formula.(elim_unused_bounds >> elim_let (*ToDo*))
     in
     Debug.set_id id;
     if config.enable then
-      muclp |> elim
-      (*|> (fun muclp -> Debug.print @@ lazy ("optimized: " ^ Problem.str_of muclp); muclp)*)
+      muclp |> simplify
+      |> (fun muclp ->
+           if print_log then
+             Debug.print @@ lazy ("simplified: " ^ Problem.str_of muclp);
+           muclp)
       |> InlineExtension.optimize
-      (*|> (fun muclp -> Debug.print @@ lazy ("\ninlined: " ^ Problem.str_of muclp); muclp)*)
+      |> (fun muclp ->
+           if print_log then
+             Debug.print @@ lazy ("\ninlined: " ^ Problem.str_of muclp);
+           muclp)
       |> (if config.erase_quantifiers then
             EraseQuantifiers.optimize ~elim_forall ~elim_exists
           else Fn.id)
-      (*|> (fun muclp -> Debug.print @@ lazy ("\nqelimed: " ^ Problem.str_of muclp); muclp)*)
+      |> (fun muclp ->
+           if print_log then
+             Debug.print
+             @@ lazy ("\nquantifiers eliminated: " ^ Problem.str_of muclp);
+           muclp)
       |> EraseUnreachedPredicates.optimize
       |> (if elim_pvar_args then EraseConstVariables.optimize else Fn.id)
       |> CheckAndReplaceToTopOrBot.optimize ~id
       |> Problem.simplify |> InlineExtension.optimize
-    else muclp |> elim
+    else muclp |> simplify
 end
 
 let make (config : Config.t) =

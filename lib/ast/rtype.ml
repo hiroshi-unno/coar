@@ -80,7 +80,7 @@ and t =
       * Formula.t Set.Poly.t (*~\phi(~X)*)
       * c (*C*)
   (* type polymorphism: forall ~\alpha. C *)
-  | RPoly of Ident.svar Set.Poly.t (*~\alpha*) * c (*C*)
+  | RPoly of Ident.svar_set (*~\alpha*) * c (*C*)
 
 (* refinement type environments *)
 type env = (tvar, t) Map.Poly.t * Formula.t Set.Poly.t
@@ -223,7 +223,7 @@ and tvs_of_comp c =
 
 and tvs_of_val = function
   | RGeneral (ts, _, p) | RTuple (ts, p) ->
-      Set.Poly.union_list @@ (tvs_of_pred p :: List.map ~f:tvs_of_val ts)
+      Set.Poly.union_list (tvs_of_pred p :: List.map ~f:tvs_of_val ts)
   | RRef (t, p) -> Set.union (tvs_of_pred p) (tvs_of_val t)
   | RArrow (x, t, c, p) ->
       Set.Poly.union_list
@@ -254,7 +254,7 @@ and pvs_of_comp c =
 
 and pvs_of_val = function
   | RGeneral (ts, _, p) | RTuple (ts, p) ->
-      Set.Poly.union_list @@ (pvs_of_pred p :: List.map ~f:pvs_of_val ts)
+      Set.Poly.union_list (pvs_of_pred p :: List.map ~f:pvs_of_val ts)
   | RRef (t, p) -> Set.union (pvs_of_pred p) (pvs_of_val t)
   | RArrow (_, t, c, p) ->
       Set.Poly.union_list [ pvs_of_val t; pvs_of_comp c; pvs_of_pred p ]
@@ -470,7 +470,7 @@ and str_of_val ~config = function
         sprintf "forall (%s | %s). %s"
           (String.concat_map_list ~sep:"," ~f:Ident.name_of_pvar
           @@ Map.Poly.keys penv)
-          (String.concat_set ~sep:"; " @@ Set.Poly.map phis ~f:Formula.str_of)
+          (String.concat_map_set ~sep:"; " ~f:Formula.str_of phis)
           (str_of_comp ~config c)
   | RPoly (svs, c) ->
       if Set.is_empty svs then
@@ -481,7 +481,7 @@ and str_of_val ~config = function
           (str_of_comp ~config c)
       else
         sprintf "forall (%s). %s"
-          (String.concat_set ~sep:"," @@ Set.Poly.map ~f:Ident.name_of_svar svs)
+          (String.concat_map_set ~sep:"," ~f:Ident.name_of_svar svs)
           (str_of_comp ~config c)
 
 (** Construction *)
@@ -878,12 +878,12 @@ let rec of_args_ret ~config ?(temp = false)
 let rec val_of_term ~config ?(top = true) term = function
   | RGeneral (params, sort, (v, phi)) ->
       mk_rcompound params (*ToDo*) sort
-      @@ ( v,
-           Formula.and_of
-             [
-               Formula.eq (Term.mk_var v sort) term;
-               (if top then Formula.mk_true () else phi);
-             ] )
+        ( v,
+          Formula.and_of
+            [
+              Formula.eq (Term.mk_var v sort) term;
+              (if top then Formula.mk_true () else phi);
+            ] )
   | RTuple (elems, (v, phi)) ->
       let sorts = List.map elems ~f:sort_of_val in
       let elems =
@@ -891,12 +891,12 @@ let rec val_of_term ~config ?(top = true) term = function
           ~f:(T_tuple.mk_tuple_sel sorts term >> val_of_term ~config ~top:false)
       in
       mk_rtuple elems
-      @@ ( v,
-           Formula.and_of
-             [
-               Formula.eq (Term.mk_var v @@ T_tuple.STuple sorts) term;
-               (if top then Formula.mk_true () else phi);
-             ] )
+        ( v,
+          Formula.and_of
+            [
+              Formula.eq (Term.mk_var v @@ T_tuple.STuple sorts) term;
+              (if top then Formula.mk_true () else phi);
+            ] )
   | RRef (elem, pred) -> mk_rref elem pred
   | RArrow (x, t, c, pred) -> mk_rarrow x t c pred
   | RForall (_penv, _constrs, _c) ->
@@ -950,7 +950,7 @@ let compose_temp_eff es =
     @@ List.map es ~f:(snd >> snd >> Formula.aconv_tvar >> Formula.split_exists)
   in
   ( ( x,
-      Formula.exists (List.concat @@ (xs :: fin_senvs))
+      Formula.exists (List.concat (xs :: fin_senvs))
       @@ Formula.and_of
       @@ Formula.eq (Term.mk_var x @@ T_sequence.SSequence true) fin
          :: fin_phis ),
@@ -1777,8 +1777,9 @@ module Env = struct
   let disj_union (senv1, phis1) (senv2, phis2) : t =
     try (Map.force_merge senv1 senv2, Set.union phis1 phis2)
     with _ ->
-      failwith @@ "duplicate definition: " ^ String.concat_set ~sep:","
-      @@ Set.Poly.map ~f:Ident.name_of_tvar
+      failwith
+      @@ sprintf "duplicate definition: %s"
+      @@ String.concat_map_set ~sep:"," ~f:Ident.name_of_tvar
       @@ Set.inter (Map.Poly.key_set senv1) (Map.Poly.key_set senv2)
 
   let disj_union_list = List.fold ~init:(mk_empty ()) ~f:disj_union
@@ -1849,8 +1850,7 @@ module Env = struct
     try Map.of_set_exn pred_senv
     with _ ->
       failwith
-      @@ String.concat_set ~sep:"\n"
-      @@ Set.Poly.map pred_senv ~f:(fun (pvar, sorts) ->
+      @@ String.concat_map_set ~sep:"\n" pred_senv ~f:(fun (pvar, sorts) ->
              Ident.name_of_pvar pvar ^ ": ("
              ^ String.concat_map_list ~sep:"," sorts ~f:Term.str_of_sort
              ^ ")")
@@ -1920,11 +1920,12 @@ let of_unop ~config = function
       let r = mk_fresh_tvar_with "r" in
       mk_rarrow x
         (mk_rbase T_bool.SBool @@ mk_fresh_trivial_pred ())
-        (pure_comp_of_val ~config @@ mk_rbase T_bool.SBool
-        @@ ( r,
-             Formula.neq
-               (Term.mk_var r T_bool.SBool)
-               (Term.mk_var x T_bool.SBool) ))
+        (pure_comp_of_val ~config
+        @@ mk_rbase T_bool.SBool
+             ( r,
+               Formula.neq
+                 (Term.mk_var r T_bool.SBool)
+                 (Term.mk_var x T_bool.SBool) ))
       @@ mk_fresh_trivial_pred ()
 
 let of_binop ~config = function
@@ -1991,12 +1992,12 @@ let is_binop = function
 let fsym_of_str sort = function
   | "Stdlib.+" -> T_int.Add
   | "Stdlib.-" -> T_int.Sub
-  | "Stdlib.*" -> T_int.Mult
-  | "Stdlib./" -> T_int.Div
-  | "Stdlib.mod" -> T_int.Mod
+  | "Stdlib.*" -> T_int.Mul
+  | "Stdlib./" -> T_int.Div Value.Truncated
+  | "Stdlib.mod" -> T_int.Rem Value.Truncated
   | "Stdlib.+." -> T_real.RAdd
   | "Stdlib.-." -> T_real.RSub
-  | "Stdlib.*." -> T_real.RMult
+  | "Stdlib.*." -> T_real.RMul
   | "Stdlib./." -> T_real.RDiv
   | "Stdlib.~-" -> T_int.Neg
   | "Stdlib.abs" -> T_int.Abs
@@ -2103,3 +2104,15 @@ let cgen_config =
       enable_pred_poly_for_ref_types = false;
       instantiate_svars_to_int = false;
     }
+
+module Assertion = struct
+  type kind =
+    | Type of t
+    | FinEff of string Grammar.RegWordExp.t
+    | InfEff of string Grammar.RegWordExp.t
+
+  type direction = DUp | DDown
+  type dir_map = (Ident.tvar, direction) Map.Poly.t
+  type priority = Ident.tvar list
+  type fronts = (Ident.tvar, Logic.term) Map.Poly.t
+end

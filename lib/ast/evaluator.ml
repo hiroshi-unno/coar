@@ -10,8 +10,8 @@ let rec eval_term ?(env = Map.Poly.empty) =
       match Map.Poly.find env tvar with
       | Some v -> v
       | None -> failwith @@ Ident.name_of_tvar tvar ^ " is not bound")
-  | FunApp (FVar (fvar, _), ts, _) as _term ->
-      (* print_endline @@ "eval rec fun: " ^ Term.str_of _term; *)
+  | FunApp (FVar (fvar, _, _), ts, _) as term ->
+      if false then print_endline @@ "eval rec fun: " ^ Term.str_of term;
       let params, _, def, _, _ = Map.Poly.find_exn (get_fenv ()) fvar in
       let env =
         Map.update_with env @@ Map.Poly.of_alist_exn
@@ -38,18 +38,21 @@ let rec eval_term ?(env = Map.Poly.empty) =
       Value.Real (Q.of_bigint i)
   | FunApp ((T_int.Neg | T_real.RNeg), [ t1 ], _) ->
       Value.neg (eval_term ~env t1)
+  | FunApp (T_int.Nop, [ t1 ], _) -> eval_term ~env t1
   | FunApp ((T_int.Abs | T_real.RAbs), [ t1 ], _) ->
       Value.abs (eval_term ~env t1)
   | FunApp ((T_int.Add | T_real.RAdd), [ t1; t2 ], _) ->
       Value.add (eval_term ~env t1) (eval_term ~env t2)
   | FunApp ((T_int.Sub | T_real.RSub), [ t1; t2 ], _) ->
       Value.sub (eval_term ~env t1) (eval_term ~env t2)
-  | FunApp ((T_int.Mult | T_real.RMult), [ t1; t2 ], _) ->
-      Value.mult (eval_term ~env t1) (eval_term ~env t2)
-  | FunApp ((T_int.Div | T_real.RDiv), [ t1; t2 ], _) ->
-      Value.div (eval_term ~env t1) (eval_term ~env t2)
-  | FunApp (T_int.Mod, [ t1; t2 ], _) ->
-      Value.bmod (eval_term ~env t1) (eval_term ~env t2)
+  | FunApp ((T_int.Mul | T_real.RMul), [ t1; t2 ], _) ->
+      Value.mul (eval_term ~env t1) (eval_term ~env t2)
+  | FunApp (T_int.Div m, [ t1; t2 ], _) ->
+      Value.div m (eval_term ~env t1) (eval_term ~env t2)
+  | FunApp (T_real.RDiv, [ t1; t2 ], _) ->
+      Value.rdiv (eval_term ~env t1) (eval_term ~env t2)
+  | FunApp (T_int.Rem m, [ t1; t2 ], _) ->
+      Value.rem m (eval_term ~env t1) (eval_term ~env t2)
   | FunApp (T_int.Power, [ t1; t2 ], _) ->
       Value.pow (eval_term ~env t1) (eval_term ~env t2)
   | LetTerm (var, _, def, body, _) ->
@@ -75,10 +78,12 @@ and eval_pred ?(env = Map.Poly.empty) psym terms =
   | T_bool.Neq, [ t1; t2 ] ->
       Value.compare Z.Compare.( <> ) Q.( <> ) ~opb:Stdlib.( <> ) t1 t2
   | T_int.PDiv, [ t1; t2 ] ->
-      Value.compare Z.Compare.( = ) Q.( = ) (Value.bmod t2 t1)
+      Value.compare Z.Compare.( = ) Q.( = )
+        (Value.rem Euclidean t2 t1)
         (Value.Int Z.zero)
   | T_int.NotPDiv, [ t1; t2 ] ->
-      Value.compare Z.Compare.( <> ) Q.( <> ) (Value.bmod t2 t1)
+      Value.compare Z.Compare.( <> ) Q.( <> )
+        (Value.rem Euclidean t2 t1)
         (Value.Int Z.zero)
   | _ -> failwith "[eval_pred] not supported"
 
@@ -109,7 +114,7 @@ and eval_atom ?(env = Map.Poly.empty) =
         _ ) ->
       false
   | App (Predicate.Psym psym, terms, _) -> eval_pred ~env psym terms
-  | App ((Predicate.Var (_, _) | Predicate.Fixpoint (_, _, _, _)), _, _) ->
+  | App ((Predicate.Var (_, _) | Predicate.Fixpoint _), _, _) ->
       failwith "Predicate variables and fixpoints applications not supported"
 
 (*val eval: Formula.t -> bool*)
@@ -134,10 +139,8 @@ and count_threshold = 1
 and prod_threshold = 16
 
 (*val simplify_term: Term.t -> Term.t*)
-and simplify_term =
-  let open Term in
-  function
-  | Var (_, sort, _) when Datatype.is_unit_sort sort -> Datatype.mk_unit ()
+and simplify_term = function
+  | Term.Var (_, sort, _) when Datatype.is_unit_sort sort -> Datatype.mk_unit ()
   | Var (tvar, sort, info) -> Var (tvar, sort, info)
   | FunApp (T_bool.IfThenElse, [ t1; t2; t3 ], info) ->
       let t1' = simplify_term t1 in
@@ -147,12 +150,15 @@ and simplify_term =
       else if T_bool.is_false t1' then t3'
       else if Stdlib.(t2' = t3') then t2'
       else if T_bool.is_true t2' && T_bool.is_false t3' then t1'
-      else if T_bool.is_false t2' && T_bool.is_true t3' then T_bool.neg t1'
+      else if T_bool.is_false t2' && T_bool.is_true t3' then T_bool.negate t1'
       else FunApp (T_bool.IfThenElse, [ t1'; t2'; t3' ], info)
   | LetTerm (tvar, sort, def, body, info) ->
       let def' = simplify_term def in
       let body' = simplify_term body in
-      let size = Term.ast_size def' in
+      let size =
+        Term.ast_size def'
+        (*ToDo*)
+      in
       let count = Term.occur_times tvar body' in
       if
         size <= size_threshold || count <= count_threshold
@@ -161,7 +167,7 @@ and simplify_term =
       else LetTerm (tvar, sort, def', body', info)
   | FunApp (fsym, ts, info) -> (
       let ts' = List.map ~f:simplify_term ts in
-      try of_value @@ eval_term @@ FunApp (fsym, ts', info)
+      try Term.of_value @@ eval_term @@ FunApp (fsym, ts', info)
       with _ -> (
         match (fsym, ts') with
         | T_bool.Formula phi, [] -> T_bool.of_formula (simplify phi) ~info
@@ -170,23 +176,21 @@ and simplify_term =
             | FunApp (T_int.Int n, [], _) ->
                 FunApp (T_int.Int (Z.neg n), [], info)
             | FunApp (T_int.Neg, [ t1 ], _) -> t1
-            | FunApp (T_int.Mult, [ Term.FunApp (T_int.Int n, [], _); t1 ], _)
-            | FunApp (T_int.Mult, [ t1; Term.FunApp (T_int.Int n, [], _) ], _)
-              ->
+            | FunApp (T_int.Mul, [ Term.FunApp (T_int.Int n, [], _); t1 ], _)
+            | FunApp (T_int.Mul, [ t1; Term.FunApp (T_int.Int n, [], _) ], _) ->
                 (* n is not 0, 1, -1 *)
-                T_int.mk_mult (T_int.mk_int Z.(-n)) t1
+                T_int.mk_mul (T_int.mk_int Z.(-n)) t1
             | _ -> FunApp (fsym, [ t ], info))
         | T_real.RNeg, [ t ] -> (
             match t with
             | FunApp (T_real.Real r, [], _) ->
                 FunApp (T_real.Real (Q.neg r), [], info)
             | FunApp (T_real.RNeg, [ t1 ], _) -> t1
-            | FunApp
-                (T_real.RMult, [ Term.FunApp (T_real.Real r, [], _); t1 ], _)
-            | FunApp
-                (T_real.RMult, [ t1; Term.FunApp (T_real.Real r, [], _) ], _) ->
+            | FunApp (T_real.RMul, [ Term.FunApp (T_real.Real r, [], _); t1 ], _)
+            | FunApp (T_real.RMul, [ t1; Term.FunApp (T_real.Real r, [], _) ], _)
+              ->
                 (* r is not 0, 1, -1 *)
-                T_real.mk_rmult (T_real.mk_real Q.(-r)) t1
+                T_real.mk_rmul (T_real.mk_real Q.(-r)) t1
             | _ -> FunApp (fsym, [ t ], info))
         | ( T_int.Add,
             [ FunApp (T_int.Neg, [ t1 ], _); FunApp (T_int.Neg, [ t2 ], _) ] )
@@ -238,28 +242,28 @@ and simplify_term =
             else if T_real.is_rzero t1 then T_real.mk_rneg t2
             else if Stdlib.(t1 = t2) then T_real.rzero ()
             else FunApp (fsym, [ t1; t2 ], info)
-        | ( T_int.Mult,
+        | ( T_int.Mul,
             [ FunApp (T_int.Neg, [ t1 ], _); FunApp (T_int.Neg, [ t2 ], _) ] )
           ->
-            simplify_term (T_int.mk_mult t1 t2)
-        | T_int.Mult, [ FunApp (T_int.Neg, [ t1 ], _); t2 ]
-        | T_int.Mult, [ t1; FunApp (T_int.Neg, [ t2 ], _) ] ->
-            T_int.mk_neg @@ simplify_term (T_int.mk_mult t1 t2)
-        | T_int.Mult, [ t1; t2 ] ->
+            simplify_term (T_int.mk_mul t1 t2)
+        | T_int.Mul, [ FunApp (T_int.Neg, [ t1 ], _); t2 ]
+        | T_int.Mul, [ t1; FunApp (T_int.Neg, [ t2 ], _) ] ->
+            T_int.mk_neg @@ simplify_term (T_int.mk_mul t1 t2)
+        | T_int.Mul, [ t1; t2 ] ->
             if T_int.is_zero t1 || T_int.is_zero t2 then T_int.zero ()
             else if T_int.is_unit t1 then t2
             else if T_int.is_unit t2 then t1
             else if T_int.is_minus_one t1 then T_int.mk_neg t2
             else if T_int.is_minus_one t2 then T_int.mk_neg t1
             else FunApp (fsym, [ t1; t2 ], info)
-        | ( T_real.RMult,
+        | ( T_real.RMul,
             [ FunApp (T_real.RNeg, [ t1 ], _); FunApp (T_real.RNeg, [ t2 ], _) ]
           ) ->
-            simplify_term (T_real.mk_rmult t1 t2)
-        | T_real.RMult, [ FunApp (T_real.RNeg, [ t1 ], _); t2 ]
-        | T_real.RMult, [ t1; FunApp (T_real.RNeg, [ t2 ], _) ] ->
-            T_real.mk_rneg @@ simplify_term (T_real.mk_rmult t1 t2)
-        | T_real.RMult, [ t1; t2 ] -> (
+            simplify_term (T_real.mk_rmul t1 t2)
+        | T_real.RMul, [ FunApp (T_real.RNeg, [ t1 ], _); t2 ]
+        | T_real.RMul, [ t1; FunApp (T_real.RNeg, [ t2 ], _) ] ->
+            T_real.mk_rneg @@ simplify_term (T_real.mk_rmul t1 t2)
+        | T_real.RMul, [ t1; t2 ] -> (
             if T_real.is_rzero t1 || T_real.is_rzero t2 then T_real.rzero ()
             else if T_real.is_runit t1 then t2
             else if T_real.is_runit t2 then t1
@@ -271,7 +275,7 @@ and simplify_term =
                 ->
                   FunApp (T_real.Real Q.(r1 * r2), [], info)
               | _, _ -> FunApp (fsym, [ t1; t2 ], info))
-        | T_int.Div, [ t1; t2 ] -> (
+        | T_int.Div m, [ t1; t2 ] -> (
             if T_int.is_zero t1 then T_int.zero ()
             else if T_int.is_unit t2 then t1
             else if T_int.is_minus_one t2 then T_int.mk_neg t1
@@ -279,7 +283,7 @@ and simplify_term =
               match (t1, t2) with
               | FunApp (T_int.Int n1, [], _), FunApp (T_int.Int n2, [], _)
                 when Z.Compare.(n2 <> Z.zero) ->
-                  FunApp (T_int.Int Z.(ediv n1 n2), [], info)
+                  FunApp (T_int.Int (Value.div_of m n1 n2), [], info)
               | _, _ -> FunApp (fsym, [ t1; t2 ], info))
         | T_real.RDiv, [ t1; t2 ] -> (
             if T_real.is_rzero t1 then T_real.rzero ()
@@ -291,7 +295,7 @@ and simplify_term =
                 when Q.(r2 <> zero) ->
                   FunApp (T_real.Real Q.(div r1 r2), [], info)
               | _, _ -> FunApp (fsym, [ t1; t2 ], info))
-        | T_int.Mod, [ t1; t2 ] -> (
+        | T_int.Rem m, [ t1; t2 ] -> (
             if T_int.is_zero t1 then T_int.zero ()
             else if T_int.is_unit t2 then T_int.zero ()
             else if T_int.is_minus_one t2 then T_int.mk_neg t1
@@ -299,7 +303,7 @@ and simplify_term =
               match (t1, t2) with
               | FunApp (T_int.Int n1, [], _), FunApp (T_int.Int n2, [], _)
                 when Z.Compare.(n2 <> Z.zero) ->
-                  FunApp (T_int.Int Z.(erem n1 n2), [], info)
+                  FunApp (T_int.Int (Value.rem_of m n1 n2), [], info)
               | _, _ -> FunApp (fsym, [ t1; t2 ], info))
         | T_ref.Deref _, [ t ] -> (
             match T_ref.eval_select t with
@@ -382,22 +386,25 @@ and simplify_term =
 (* including T_int.int, T_real.Real *)
 
 (*val simplify_pred: Predicate.t -> Predicate.t*)
-and simplify_pred =
-  let open Predicate in
-  function
-  | Var (var, sort) -> Var (var, sort)
+and simplify_pred = function
+  | Predicate.Var (var, sort) -> Predicate.Var (var, sort)
   | Psym psym -> Psym psym
-  | Fixpoint (fixpoint, pvar, args, body) ->
-      Fixpoint (fixpoint, pvar, args, simplify body)
+  | Fixpoint def -> Fixpoint { def with body = simplify def.body }
 
-(*val simplify_pred_neg: Predicate.t -> Predicate.t*)
-and simplify_pred_neg =
-  let open Predicate in
-  function
-  | Var _ -> assert false (* handled with simplify_atom_neg *)
-  | Fixpoint (fixpoint, pvar, args, body) ->
-      Fixpoint (flip_fop fixpoint, pvar, args, simplify_neg body)
-  | Psym psym -> Psym (Predicate.negate_psym psym)
+(*val simplify_pred_neg: Predicate.t -> Predicate.t option*)
+and simplify_pred_neg = function
+  | Predicate.Var _ -> None
+  | Fixpoint def ->
+      Option.return
+      @@ Predicate.Fixpoint
+           {
+             def with
+             kind = Predicate.flip_fop def.kind;
+             body = simplify_neg def.body;
+           }
+  | Psym psym -> (
+      try Option.return @@ Predicate.Psym (Predicate.negate_psym psym)
+      with _ -> None)
 
 (*val simplify_atom: Atom.t -> Formula.t*)
 and can_simplify = function
@@ -407,10 +414,8 @@ and can_simplify = function
   | Term.FunApp (T_tuple.TupleSel _, _, _) -> false
   | _ -> true
 
-and simplify_atom =
-  let open Atom in
-  function
-  | True _ -> Formula.mk_true ()
+and simplify_atom = function
+  | Atom.True _ -> Formula.mk_true ()
   | False _ -> Formula.mk_false ()
   | App (pred, terms, info) -> (
       match (simplify_pred pred, List.map ~f:simplify_term terms) with
@@ -422,30 +427,26 @@ and simplify_atom =
         when Stdlib.(Term.sort_of t1 <> Term.sort_of t2) ->
         failwith @@ sprintf "inconsistent sorts of %s and %s"
           (Term.str_of_sort @@ Term.sort_of t1) (Term.str_of_sort @@ Term.sort_of t2)*)
-      | Predicate.Psym T_bool.Eq, [ t1; t2 ]
-        when T_bool.is_true t1 && can_simplify t2 ->
-          Formula.of_bool_term @@ simplify_term t2
-      | Predicate.Psym T_bool.Eq, [ t1; t2 ]
-        when T_bool.is_false t1 && can_simplify t2 ->
-          simplify_neg @@ Formula.of_bool_term t2
-      | Predicate.Psym T_bool.Neq, [ t1; t2 ]
-        when T_bool.is_true t1 && can_simplify t2 ->
-          simplify_neg @@ Formula.of_bool_term t2
-      | Predicate.Psym T_bool.Neq, [ t1; t2 ]
-        when T_bool.is_false t1 && can_simplify t2 ->
+      | Predicate.Psym psym, [ t1; t2 ]
+        when ((Stdlib.(psym = T_bool.Eq) && T_bool.is_true t1)
+             || (Stdlib.(psym = T_bool.Neq) && T_bool.is_false t1))
+             && can_simplify t2 ->
           simplify @@ Formula.of_bool_term t2
-      | Predicate.Psym T_bool.Eq, [ t1; t2 ]
-        when T_bool.is_true t2 && can_simplify t1 ->
+      | Predicate.Psym psym, [ t1; t2 ]
+        when ((Stdlib.(psym = T_bool.Eq) && T_bool.is_false t1)
+             || (Stdlib.(psym = T_bool.Neq) && T_bool.is_true t1))
+             && can_simplify t2 ->
+          simplify_neg @@ Formula.of_bool_term t2
+      | Predicate.Psym psym, [ t1; t2 ]
+        when ((Stdlib.(psym = T_bool.Eq) && T_bool.is_true t2)
+             || (Stdlib.(psym = T_bool.Neq) && T_bool.is_false t2))
+             && can_simplify t1 ->
           simplify @@ Formula.of_bool_term t1
-      | Predicate.Psym T_bool.Eq, [ t1; t2 ]
-        when T_bool.is_false t2 && can_simplify t1 ->
+      | Predicate.Psym psym, [ t1; t2 ]
+        when ((Stdlib.(psym = T_bool.Eq) && T_bool.is_false t2)
+             || (Stdlib.(psym = T_bool.Neq) && T_bool.is_true t2))
+             && can_simplify t1 ->
           simplify_neg @@ Formula.of_bool_term t1
-      | Predicate.Psym T_bool.Neq, [ t1; t2 ]
-        when T_bool.is_true t2 && can_simplify t1 ->
-          simplify_neg @@ Formula.of_bool_term t1
-      | Predicate.Psym T_bool.Neq, [ t1; t2 ]
-        when T_bool.is_false t2 && can_simplify t1 ->
-          simplify @@ Formula.of_bool_term t1
       | Predicate.Psym T_bool.Eq, [ t1; t2 ]
         when Term.is_bool_sort @@ Term.sort_of t1 ->
           (*ToDo*)
@@ -473,122 +474,70 @@ and simplify_atom =
           else
             Formula.mk_atom (App (Predicate.Psym T_bool.Neq, [ t1; t2 ], info))
             (*ToDo*)
-      | Predicate.Psym T_bool.Eq, [ Term.FunApp (T_int.Neg, [ t1 ], _); t2 ] ->
-          simplify_atom (T_bool.mk_eq t1 (T_int.mk_neg t2))
-      | Predicate.Psym T_bool.Eq, [ Term.FunApp (T_real.RNeg, [ t1 ], _); t2 ]
-        ->
-          simplify_atom (T_bool.mk_eq t1 (T_real.mk_rneg t2))
-      | ( Predicate.Psym T_bool.Eq,
+      | ( Predicate.Psym ((T_bool.Eq | T_bool.Neq) as psym),
           [
-            Term.FunApp (T_int.Mult, [ Term.FunApp (T_int.Int n, [], _); t1 ], _);
-            t2;
-          ] )
-        when Z.Compare.(n = Z.minus_one) ->
-          simplify_atom (T_bool.mk_eq t1 (T_int.mk_neg t2))
-      | ( Predicate.Psym T_bool.Eq,
+            Term.FunApp (T_int.Neg, [ t1 ], _);
+            t2 (*| [ t2; Term.FunApp (T_int.Neg, [ t1 ], _) ]*);
+          ] ) ->
+          simplify_atom (Atom.mk_psym_app psym [ t1; T_int.mk_neg t2 ])
+      | ( Predicate.Psym ((T_bool.Eq | T_bool.Neq) as psym),
           [
-            Term.FunApp
-              (T_real.RMult, [ Term.FunApp (T_real.Real r, [], _); t1 ], _);
-            t2;
-          ] )
-        when Q.(r = Q.minus_one) ->
-          simplify_atom (T_bool.mk_eq t1 (T_real.mk_rneg t2))
-      | ( Predicate.Psym T_bool.Eq,
-          [
-            Term.FunApp (T_int.Mult, [ t1; Term.FunApp (T_int.Int n, [], _) ], _);
-            t2;
-          ] )
-        when Z.Compare.(n = Z.minus_one) ->
-          simplify_atom (T_bool.mk_eq t1 (T_int.mk_neg t2))
-      | ( Predicate.Psym T_bool.Eq,
+            Term.FunApp (T_real.RNeg, [ t1 ], _);
+            t2 (* | [ t2; Term.FunApp (T_real.RNeg, [ t1 ], _) ] *);
+          ] ) ->
+          simplify_atom (Atom.mk_psym_app psym [ t1; T_real.mk_rneg t2 ])
+      | ( Predicate.Psym ((T_bool.Eq | T_bool.Neq) as psym),
           [
             Term.FunApp
-              (T_real.RMult, [ t1; Term.FunApp (T_real.Real r, [], _) ], _);
+              ( T_int.Mul,
+                ( [ Term.FunApp (T_int.Int n, [], _); t1 ]
+                | [ t1; Term.FunApp (T_int.Int n, [], _) ] ),
+                _ );
             t2;
-          ] )
-        when Q.(r = Q.minus_one) ->
-          simplify_atom (T_bool.mk_eq t1 (T_real.mk_rneg t2))
-      | Predicate.Psym T_bool.Neq, [ Term.FunApp (T_int.Neg, [ t1 ], _); t2 ] ->
-          simplify_atom (T_bool.mk_neq t1 (T_int.mk_neg t2))
-      | Predicate.Psym T_bool.Neq, [ Term.FunApp (T_real.RNeg, [ t1 ], _); t2 ]
-        ->
-          simplify_atom (T_bool.mk_neq t1 (T_real.mk_rneg t2))
-      | ( Predicate.Psym T_bool.Neq,
-          [
-            Term.FunApp (T_int.Mult, [ Term.FunApp (T_int.Int n, [], _); t1 ], _);
-            t2;
-          ] )
-        when Z.Compare.(n = Z.minus_one) ->
-          simplify_atom (T_bool.mk_neq t1 (T_int.mk_neg t2))
-      | ( Predicate.Psym T_bool.Neq,
+          ] ) ->
+          if Z.Compare.(n = Z.one) then
+            simplify_atom (Atom.mk_psym_app psym [ t1; t2 ])
+          else if Z.Compare.(n = Z.minus_one) then
+            simplify_atom (Atom.mk_psym_app psym [ t1; T_int.mk_neg t2 ])
+          else
+            Formula.mk_atom
+            @@ Atom.mk_psym_app psym [ T_int.mk_mul (T_int.mk_int n) t1; t2 ]
+      | ( Predicate.Psym ((T_bool.Eq | T_bool.Neq) as psym),
           [
             Term.FunApp
-              (T_real.RMult, [ Term.FunApp (T_real.Real r, [], _); t1 ], _);
+              ( T_real.RMul,
+                ( [ Term.FunApp (T_real.Real r, [], _); t1 ]
+                | [ t1; Term.FunApp (T_real.Real r, [], _) ] ),
+                _ );
             t2;
-          ] )
-        when Q.(r = Q.minus_one) ->
-          simplify_atom (T_bool.mk_neq t1 (T_real.mk_rneg t2))
-      | ( Predicate.Psym T_bool.Neq,
-          [
-            Term.FunApp (T_int.Mult, [ t1; Term.FunApp (T_int.Int n, [], _) ], _);
-            t2;
-          ] )
-        when Z.Compare.(n = Z.minus_one) ->
-          simplify_atom (T_bool.mk_neq t1 (T_int.mk_neg t2))
-      | ( Predicate.Psym T_bool.Neq,
-          [
-            Term.FunApp
-              (T_real.RMult, [ t1; Term.FunApp (T_real.Real r, [], _) ], _);
-            t2;
-          ] )
-        when Q.(r = Q.minus_one) ->
-          simplify_atom (T_bool.mk_neq t1 (T_real.mk_rneg t2))
-      | ( Predicate.Psym ((T_int.Lt | T_int.Leq) as op),
+          ] ) ->
+          if Q.(r = Q.one) then simplify_atom (Atom.mk_psym_app psym [ t1; t2 ])
+          else if Q.(r = Q.minus_one) then
+            simplify_atom (Atom.mk_psym_app psym [ t1; T_real.mk_rneg t2 ])
+          else
+            Formula.mk_atom
+            @@ Atom.mk_psym_app psym
+                 [ T_real.mk_rmul (T_real.mk_real r) t1; t2 ]
+      | ( Predicate.Psym (T_int.(Lt | Leq) as op),
           [ Term.FunApp (T_int.Abs, [ t1 ], _); t2 ] ) ->
           Formula.mk_and
             (simplify_atom @@ Atom.mk_psym_app op [ T_int.mk_neg t2; t1 ])
             (Formula.mk_atom @@ Atom.mk_psym_app op [ t1; t2 ])
-      | ( Predicate.Psym ((T_int.Gt | T_int.Geq) as op),
+      | ( Predicate.Psym (T_int.(Gt | Geq) as op),
           [ t1; Term.FunApp (T_int.Abs, [ t2 ], _) ] ) ->
           Formula.mk_and
             (Formula.mk_atom @@ Atom.mk_psym_app op [ t1; t2 ])
             (simplify_atom @@ Atom.mk_psym_app op [ t2; T_int.mk_neg t1 ])
-      | ( Predicate.Psym ((T_real.RLt | T_real.RLeq) as op),
+      | ( Predicate.Psym (T_real.(RLt | RLeq) as op),
           [ Term.FunApp (T_real.RAbs, [ t1 ], _); t2 ] ) ->
           Formula.mk_and
             (simplify_atom @@ Atom.mk_psym_app op [ T_real.mk_rneg t2; t1 ])
             (Formula.mk_atom @@ Atom.mk_psym_app op [ t1; t2 ])
-      | ( Predicate.Psym ((T_real.RGt | T_real.RGeq) as op),
+      | ( Predicate.Psym (T_real.(RGt | RGeq) as op),
           [ t1; Term.FunApp (T_real.RAbs, [ t2 ], _) ] ) ->
           Formula.mk_and
             (Formula.mk_atom @@ Atom.mk_psym_app op [ t1; t2 ])
             (simplify_atom @@ Atom.mk_psym_app op [ t2; T_real.mk_rneg t1 ])
-      | ( Predicate.Psym (T_dt.IsCons (name, _)),
-          [ Term.FunApp (T_dt.DTCons (name1, _, _), _, _) ] ) ->
-          Formula.mk_bool @@ String.(name1 = name)
-      | Predicate.Psym (T_dt.IsCons (name, dt)), [ t ]
-        when Datatype.is_base dt name ->
-          Formula.eq t (T_dt.mk_cons dt name [])
-      | ( Predicate.Psym (T_dt.NotIsCons (name, _)),
-          [ Term.FunApp (T_dt.DTCons (name1, _, _), _, _) ] ) ->
-          Formula.mk_bool @@ String.(name1 <> name)
-      | Predicate.Psym (T_dt.NotIsCons (name, dt)), [ t ]
-        when Datatype.is_base dt name ->
-          Formula.neq t (T_dt.mk_cons dt name [])
-      | ( Predicate.Psym T_bool.Eq,
-          [
-            Term.FunApp (T_dt.DTCons (name1, _, _), ts1, _);
-            Term.FunApp (T_dt.DTCons (name2, _, _), ts2, _);
-          ] ) ->
-          if String.(name1 <> name2) then Formula.mk_false ()
-          else simplify @@ Formula.and_of @@ List.map2_exn ts1 ts2 ~f:Formula.eq
-      | ( Predicate.Psym T_bool.Neq,
-          [
-            Term.FunApp (T_dt.DTCons (name1, _, _), ts1, _);
-            Term.FunApp (T_dt.DTCons (name2, _, _), ts2, _);
-          ] ) ->
-          if String.(name1 <> name2) then Formula.mk_true ()
-          else simplify @@ Formula.or_of @@ List.map2_exn ts1 ts2 ~f:Formula.neq
       | ( Predicate.Psym (T_tuple.IsTuple _),
           [ Term.FunApp (T_tuple.TupleCons _, _, _) ] ) ->
           Formula.mk_true ()
@@ -621,115 +570,308 @@ and simplify_atom =
           simplify @@ Formula.or_of
           @@ List.mapi ts ~f:(fun i ti ->
                  Formula.neq ti @@ T_tuple.mk_tuple_sel sorts t i)
+      | ( Predicate.Psym (T_dt.IsCons (name, _)),
+          [ Term.FunApp (T_dt.DTCons (name1, _, _), _, _) ] ) ->
+          Formula.mk_bool @@ String.(name1 = name)
+      | Predicate.Psym (T_dt.IsCons (name, dt)), [ t ]
+        when Datatype.is_base dt name ->
+          Formula.eq t (T_dt.mk_cons dt name [])
+      | ( Predicate.Psym (T_dt.NotIsCons (name, _)),
+          [ Term.FunApp (T_dt.DTCons (name1, _, _), _, _) ] ) ->
+          Formula.mk_bool @@ String.(name1 <> name)
+      | Predicate.Psym (T_dt.NotIsCons (name, dt)), [ t ]
+        when Datatype.is_base dt name ->
+          Formula.neq t (T_dt.mk_cons dt name [])
+      | ( Predicate.Psym T_bool.Eq,
+          [
+            Term.FunApp (T_dt.DTCons (name1, _, _), ts1, _);
+            Term.FunApp (T_dt.DTCons (name2, _, _), ts2, _);
+          ] ) ->
+          if String.(name1 <> name2) then Formula.mk_false ()
+          else simplify @@ Formula.and_of @@ List.map2_exn ts1 ts2 ~f:Formula.eq
+      | ( Predicate.Psym T_bool.Neq,
+          [
+            Term.FunApp (T_dt.DTCons (name1, _, _), ts1, _);
+            Term.FunApp (T_dt.DTCons (name2, _, _), ts2, _);
+          ] ) ->
+          if String.(name1 <> name2) then Formula.mk_true ()
+          else simplify @@ Formula.or_of @@ List.map2_exn ts1 ts2 ~f:Formula.neq
       | pred', ts' -> (
           try Formula.mk_bool @@ eval_atom (App (pred', ts', info))
           with _ -> Formula.mk_atom (App (pred', ts', info))))
 
 (*val simplify_atom_neg: Atom.t -> Formula.t*)
-and simplify_atom_neg atom =
-  let open Atom in
-  try
-    match atom with
-    | True _ -> Formula.mk_false ()
-    | False _ -> Formula.mk_true ()
-    | App (Predicate.Var (pvar, sorts), args, _info) ->
-        Formula.mk_neg @@ Formula.mk_atom
-        @@ Atom.mk_pvar_app pvar sorts
-        @@ List.map ~f:simplify_term args
-    | App (pred, args, info) ->
-        simplify_atom
-        @@ App (simplify_pred_neg pred, List.map ~f:simplify_term args, info)
-  with _ -> Formula.mk_neg @@ Formula.mk_atom atom
+and simplify_atom_neg = function
+  | Atom.True _ -> Formula.mk_false ()
+  | False _ -> Formula.mk_true ()
+  | App (Predicate.Var (pvar, sorts), args, _info) ->
+      Formula.mk_neg @@ Formula.mk_atom
+      @@ Atom.mk_pvar_app pvar sorts
+      @@ List.map ~f:simplify_term args
+  | App (pred, args, info) as atom -> (
+      match simplify_pred_neg pred with
+      | None -> Formula.mk_neg @@ Formula.mk_atom atom
+      | Some neg_pred ->
+          simplify_atom @@ Atom.mk_app ~info neg_pred
+          @@ List.map ~f:simplify_term args)
 
-and simplify_andor_norec op phi1 phi2 info =
+and simplify_and_theory (psym1, t11, t12) (psym2, t21, t22) =
   let open Formula in
-  match (op, phi1, phi2) with
-  | And, Atom (Atom.False info', info), _ | And, _, Atom (Atom.False info', info)
-    ->
-      Atom (Atom.False info', info)
-  | Or, Atom (Atom.True info', info), _ | Or, _, Atom (Atom.True info', info) ->
-      Atom (Atom.True info', info)
-  | And, Atom (Atom.True _, _), phi
-  | And, phi, Atom (Atom.True _, _)
-  | Or, Atom (Atom.False _, _), phi
-  | Or, phi, Atom (Atom.False _, _) ->
-      phi
-  | (And, phi1, phi2 | Or, phi1, phi2) when Stdlib.(phi1 = phi2) -> phi1
-  (* adhoc simplification rules *)
-  | ( And,
-      Atom (Atom.App (Predicate.Psym T_int.Geq, [ t11; t12 ], _), _),
-      Atom (Atom.App (Predicate.Psym T_int.Leq, [ t21; t22 ], _), _) )
-  | ( And,
-      Atom (Atom.App (Predicate.Psym T_int.Leq, [ t11; t12 ], _), _),
-      Atom (Atom.App (Predicate.Psym T_int.Geq, [ t21; t22 ], _), _) )
-  | ( And,
-      Atom (Atom.App (Predicate.Psym T_real.RGeq, [ t11; t12 ], _), _),
-      Atom (Atom.App (Predicate.Psym T_real.RLeq, [ t21; t22 ], _), _) )
-  | ( And,
-      Atom (Atom.App (Predicate.Psym T_real.RLeq, [ t11; t12 ], _), _),
-      Atom (Atom.App (Predicate.Psym T_real.RGeq, [ t21; t22 ], _), _) )
-    when Stdlib.(t11 = t21) && Stdlib.(t12 = t22) ->
-      simplify @@ Formula.eq t11 t12
-  | ( And,
-      Atom (Atom.App (Predicate.Psym T_bool.Eq, [ t11; t12 ], _), _),
-      Atom (Atom.App (Predicate.Psym T_bool.Neq, [ t21; t22 ], _), _) )
-    when Stdlib.((t11 = t21 && t12 = t22) || (t11 = t22 && t12 = t21)) ->
-      Formula.mk_false ()
-  | ( And,
-      Atom (Atom.App (Predicate.Psym T_bool.Neq, [ t11; t12 ], _), _),
-      Atom (Atom.App (Predicate.Psym T_bool.Eq, [ t21; t22 ], _), _) )
-    when Stdlib.((t11 = t21 && t12 = t22) || (t11 = t22 && t12 = t21)) ->
-      Formula.mk_false ()
-  | ( And,
-      BinaryOp
-        ( Or,
-          Atom
-            ( Atom.App
-                (Predicate.Psym T_bool.Eq, [ Term.Var (x11, _, _); t11 ], _),
-              _ ),
-          Atom
-            ( Atom.App
-                (Predicate.Psym T_bool.Eq, [ Term.Var (x21, _, _); t21 ], _),
-              _ ),
-          _ ),
-      BinaryOp
-        ( Or,
-          Atom
-            ( Atom.App
-                (Predicate.Psym T_bool.Neq, [ Term.Var (x12, _, _); t12 ], _),
-              _ ),
-          Atom
-            ( Atom.App
-                (Predicate.Psym T_bool.Neq, [ Term.Var (x22, _, _); t22 ], _),
-              _ ),
-          _ ) )
-    when Stdlib.(x11 = x12 && x21 = x22)
-         && T_bool.is_true t11 && T_bool.is_true t21 && T_bool.is_true t12
-         && T_bool.is_true t22 ->
-      (* ToDo: generalize *)
-      (* (x \/ y) /\ (not x \/ not y) iff (x <> y) *)
-      Formula.neq (Term.mk_var x11 T_bool.SBool) (Term.mk_var x21 T_bool.SBool)
-  | op, phi1, phi2 -> BinaryOp (op, phi1, phi2, info)
+  (* simplification rules for background theories *)
+  if Predicate.is_included_psym psym1 psym2 then
+    mk_atom @@ Atom.mk_psym_app psym1 [ t11; t12 ]
+  else if Predicate.is_included_psym psym2 psym1 then
+    mk_atom @@ Atom.mk_psym_app psym2 [ t21; t22 ]
+  else if Predicate.is_included_psym psym1 (Predicate.negate_psym psym2) then
+    (* <> =
+       = <>
+       = <
+       = >
+       < =
+       < >
+       < >=
+       > =
+       > <
+       > <=
+       <= >
+       >= < *)
+    mk_false ()
+  else
+    match (psym1, psym2) with
+    | T_bool.Neq, T_int.Leq
+    | T_int.Leq, T_bool.Neq
+    | T_bool.Neq, T_real.RLeq
+    | T_real.RLeq, T_bool.Neq ->
+        (* <> <=
+           <= <> *)
+        simplify @@ lt t11 t12
+    | T_bool.Neq, T_int.Geq
+    | T_int.Geq, T_bool.Neq
+    | T_bool.Neq, T_real.RGeq
+    | T_real.RGeq, T_bool.Neq ->
+        (* <> >=
+           >= <> *)
+        simplify @@ gt t11 t12
+    | T_int.Leq, T_int.Geq
+    | T_int.Geq, T_int.Leq
+    | T_real.RLeq, T_real.RGeq
+    | T_real.RGeq, T_real.RLeq ->
+        (* <= >=
+           >= <= *)
+        simplify @@ eq t11 t12
+    | _ ->
+        (*not reachable*)
+        mk_binop And
+          (Formula.mk_atom @@ Atom.mk_psym_app psym1 [ t11; t12 ])
+          (Formula.mk_atom @@ Atom.mk_psym_app psym2 [ t21; t22 ])
+
+and simplify_and phis =
+  if Set.exists phis ~f:Formula.is_false then Formula.mk_false ()
+  else
+    let phis =
+      Set.Poly.filter_map phis ~f:(fun phi ->
+          if Formula.is_true phi then None
+          else
+            match phi with
+            | Formula.Atom (Atom.App (Predicate.Psym psym, [ t1; t2 ], _), _)
+              when Stdlib.(t1 > t2) && Predicate.is_flippable_psym psym ->
+                Some
+                  (Formula.mk_atom
+                  @@ Atom.mk_psym_app (Predicate.flip_psym psym) [ t2; t1 ])
+            | _ -> Some phi)
+    in
+    let phis1, phis =
+      List.partition_map (Set.to_list phis) ~f:(function
+        | Atom (Atom.App (Predicate.Psym psym, [ t1; t2 ], _), _) ->
+            First (psym, t1, t2)
+        | phi -> Second phi)
+    in
+    let phis2, phis3 =
+      List.partition_map phis ~f:(function
+        | BinaryOp (Or, Atom (atm1, _), Atom (atm2, _), _) ->
+            First (simplify_atom atm1, simplify_atom atm2)
+        | phi -> Second phi)
+    in
+    let phis1' =
+      phis1
+      |> List.classify (fun (psym1, t11, t12) (psym2, t21, t22) ->
+             Stdlib.(t11 = t21 && t12 = t22)
+             && Predicate.is_negatable_psym psym1
+             && Predicate.is_negatable_psym psym2)
+      |> List.concat_map ~f:(function
+           | [] -> (*not reachable*) []
+           | (psym, t1, t2) :: rest -> (
+               match rest with
+               | [] -> [ Formula.mk_atom @@ Atom.mk_psym_app psym [ t1; t2 ] ]
+               | _ -> List.map rest ~f:(simplify_and_theory (psym, t1, t2))))
+    in
+    let phis2' =
+      phis2
+      |> List.classify (fun (atm11, atm12) (atm21, atm22) ->
+             Stdlib.(
+               (atm11 = atm21 && atm12 = atm22)
+               || (atm11 = simplify_neg atm21 && atm12 = simplify_neg atm22)))
+      |> List.concat_map ~f:(function
+           | [] -> (*not reachable*) []
+           | (atm11, atm12) :: rest ->
+               if
+                 List.exists rest ~f:(fun (atm21, atm22) ->
+                     Stdlib.(
+                       atm11 = simplify_neg atm21 && atm12 = simplify_neg atm22))
+               then
+                 (* (a \/ b) /\ (not a \/ not b) iff (a <> b) *)
+                 [
+                   simplify
+                   @@ Formula.neq (T_bool.of_formula atm11)
+                        (T_bool.of_formula atm12);
+                 ]
+               else [ Formula.or_of [ atm11; atm12 ] ])
+    in
+    Formula.and_of (phis1' @ phis2' @ phis3)
+
+and simplify_or_theory (psym1, t11, t12) (psym2, t21, t22) =
+  let open Formula in
+  (* simplification rules for background theories *)
+  if Predicate.is_included_psym psym1 psym2 then
+    mk_atom @@ Atom.mk_psym_app psym2 [ t21; t22 ]
+  else if Predicate.is_included_psym psym2 psym1 then
+    mk_atom @@ Atom.mk_psym_app psym1 [ t11; t12 ]
+  else if Predicate.is_included_psym (Predicate.negate_psym psym1) psym2 then
+    (* = <>
+       <> =
+       <> <=
+       <> >=
+       < >=
+       <= >
+       <= >=
+       > <=
+       >= <
+       >= <= *)
+    mk_true ()
+  else
+    match (psym1, psym2) with
+    | T_bool.Eq, T_int.Lt
+    | T_int.Lt, T_bool.Eq
+    | T_bool.Eq, T_real.RLt
+    | T_real.RLt, T_bool.Eq ->
+        (* = <
+           < = *)
+        simplify @@ leq t11 t12
+    | T_bool.Eq, T_int.Gt
+    | T_int.Gt, T_bool.Eq
+    | T_bool.Eq, T_real.RGt
+    | T_real.RGt, T_bool.Eq ->
+        (* = >
+           > = *)
+        simplify @@ geq t11 t12
+    | T_int.Lt, T_int.Gt
+    | T_int.Gt, T_int.Lt
+    | T_real.RLt, T_real.RGt
+    | T_real.RGt, T_real.RLt ->
+        (* < >
+           > < *)
+        simplify @@ neq t11 t12
+    | _ ->
+        (*not reachable*)
+        mk_binop Or
+          (mk_atom @@ Atom.mk_psym_app psym1 [ t11; t12 ])
+          (mk_atom @@ Atom.mk_psym_app psym2 [ t21; t22 ])
+
+and simplify_or phis =
+  if Set.exists phis ~f:Formula.is_true then Formula.mk_true ()
+  else
+    let phis =
+      Set.Poly.filter_map phis ~f:(fun phi ->
+          if Formula.is_false phi then None
+          else
+            match phi with
+            | Formula.Atom (Atom.App (Predicate.Psym psym, [ t1; t2 ], _), _)
+              when Stdlib.(t1 > t2) && Predicate.is_flippable_psym psym ->
+                Some
+                  (Formula.mk_atom
+                  @@ Atom.mk_psym_app (Predicate.flip_psym psym) [ t2; t1 ])
+            | _ -> Some phi)
+    in
+    let phis1, phis =
+      List.partition_map (Set.to_list phis) ~f:(function
+        | Atom (Atom.App (Predicate.Psym psym, [ t1; t2 ], _), _) ->
+            First (psym, t1, t2)
+        | phi -> Second phi)
+    in
+    let phis2, phis3 =
+      List.partition_map phis ~f:(function
+        | BinaryOp (And, Atom (atm1, _), Atom (atm2, _), _) ->
+            First (simplify_atom atm1, simplify_atom atm2)
+        | phi -> Second phi)
+    in
+    let phis1' =
+      phis1
+      |> List.classify (fun (psym1, t11, t12) (psym2, t21, t22) ->
+             Stdlib.(t11 = t21 && t12 = t22)
+             && Predicate.is_negatable_psym psym1
+             && Predicate.is_negatable_psym psym2)
+      |> List.concat_map ~f:(function
+           | [] -> (*not reachable*) []
+           | (psym, t1, t2) :: rest -> (
+               match rest with
+               | [] -> [ Formula.mk_atom @@ Atom.mk_psym_app psym [ t1; t2 ] ]
+               | _ -> List.map rest ~f:(simplify_or_theory (psym, t1, t2))))
+    in
+    let phis2' =
+      phis2
+      |> List.classify (fun (atm11, atm12) (atm21, atm22) ->
+             Stdlib.(
+               (atm11 = atm21 && atm12 = atm22)
+               || (atm11 = simplify_neg atm21 && atm12 = simplify_neg atm22)))
+      |> List.concat_map ~f:(function
+           | [] -> (*not reachable*) []
+           | (atm11, atm12) :: rest ->
+               if
+                 List.exists rest ~f:(fun (atm21, atm22) ->
+                     Stdlib.(
+                       atm11 = simplify_neg atm21 && atm12 = simplify_neg atm22))
+               then
+                 (* (a /\ b) \/ (not a /\ not b) iff (a = b) *)
+                 [
+                   simplify
+                   @@ Formula.eq (T_bool.of_formula atm11)
+                        (T_bool.of_formula atm12);
+                 ]
+               else [ Formula.and_of [ atm11; atm12 ] ])
+    in
+    Formula.or_of (phis1' @ phis2' @ phis3)
 
 (*val simplify: Formula.t -> Formula.t*)
-and simplify ?(next = Fn.id) =
-  let open Formula in
-  function
-  | Atom (atom, _) -> next @@ simplify_atom atom
+and simplify ?(next = Fn.id) = function
+  | Formula.Atom (atom, _) -> next @@ simplify_atom atom
   | UnaryOp (Not, phi, _) -> simplify_neg phi ~next
   | BinaryOp (Imply, phi1, phi2, info) ->
       simplify (BinaryOp (Or, UnaryOp (Not, phi1, Dummy), phi2, info)) ~next
   | BinaryOp (Iff, phi1, phi2, info) ->
       (*simplify (BinaryOp (And, BinaryOp (Imply, phi1, phi2, Dummy), BinaryOp (Imply, phi2, phi1, Dummy), info)) ~next*)
       simplify phi1 ~next:(fun phi1' ->
-          simplify phi2 ~next:(fun phi2' -> next @@ mk_iff phi1' phi2' ~info))
+          simplify phi2 ~next:(fun phi2' ->
+              next @@ Formula.mk_iff phi1' phi2' ~info))
   | BinaryOp (Xor, phi1, phi2, info) ->
       simplify phi1 ~next:(fun phi1' ->
-          simplify phi2 ~next:(fun phi2' -> next @@ mk_xor phi1' phi2' ~info))
-  | BinaryOp (op, phi1, phi2, info) ->
+          simplify phi2 ~next:(fun phi2' ->
+              next @@ Formula.mk_xor phi1' phi2' ~info))
+  | BinaryOp (And, phi1, phi2, _info) ->
       simplify phi1 ~next:(fun phi1' ->
           simplify phi2 ~next:(fun phi2' ->
-              next @@ simplify_andor_norec op phi1' phi2' info))
+              next
+              @@ simplify_and
+                   (Set.union
+                      (Formula.conjuncts_of phi1')
+                      (Formula.conjuncts_of phi2'))))
+  | BinaryOp (Or, phi1, phi2, _info) ->
+      simplify phi1 ~next:(fun phi1' ->
+          simplify phi2 ~next:(fun phi2' ->
+              next
+              @@ simplify_or
+                   (Set.union
+                      (Formula.disjuncts_of phi1')
+                      (Formula.disjuncts_of phi2'))))
   | Bind (binder, bounds, phi, info) ->
       simplify phi ~next:(function
         | Bind (binder', bounds', phi'', _) as phi' ->
@@ -739,13 +881,19 @@ and simplify ?(next = Fn.id) =
               Bind (binder, bounds' @ bounds, phi'', info)
             else Bind (binder, bounds, phi', info)
         | phi' -> next @@ Bind (binder, bounds, phi', info))
-  | LetRec (_funcs, _phi, _info) -> assert false
-  (*simplify phi ~next:(fun phi' ->
-      next @@ LetRec (List.map funcs ~f:(fun (fix, pvar, bounds, body) -> fix, pvar, bounds, (*ToDo*)simplify body), phi', info))*)
+  | LetRec (funcs, phi, info) ->
+      if true then assert false
+      else
+        simplify phi ~next:(fun phi' ->
+            next
+            @@ LetRec (Formula.map_funcs ~f:(*ToDo*) simplify funcs, phi', info))
   | LetFormula (var, sort, def, body, info) ->
       let def' = simplify_term def in
       simplify body ~next:(fun body' ->
-          let size = Term.ast_size def' in
+          let size =
+            Term.ast_size def'
+            (*ToDo*)
+          in
           let count = Formula.occur_times var body' in
           if
             size <= size_threshold || count <= count_threshold
@@ -754,39 +902,68 @@ and simplify ?(next = Fn.id) =
           else next @@ LetFormula (var, sort, def', body', info))
 
 (*val simplify_neg: Formula.t -> Formula.t*)
-and simplify_neg ?(next = Fn.id) =
-  let open Formula in
-  function
-  | Atom (atom, _) -> next @@ simplify_atom_neg atom
+and simplify_neg ?(next = Fn.id) = function
+  | Formula.Atom (atom, _) -> next @@ simplify_atom_neg atom
   | UnaryOp (Not, phi, _) -> simplify phi ~next
   | BinaryOp (Imply, phi1, phi2, info) ->
       simplify_neg (BinaryOp (Or, UnaryOp (Not, phi1, Dummy), phi2, info)) ~next
   | BinaryOp (Iff, phi1, phi2, info) ->
       (*simplify_neg (BinaryOp (And, BinaryOp (Imply, phi1, phi2, Dummy), BinaryOp (Imply, phi2, phi1, Dummy), info)) ~next*)
       simplify phi1 ~next:(fun phi1' ->
-          simplify phi2 ~next:(fun phi2' -> next @@ mk_xor phi1' phi2' ~info))
+          simplify phi2 ~next:(fun phi2' ->
+              next @@ Formula.mk_xor phi1' phi2' ~info))
   | BinaryOp (Xor, phi1, phi2, info) ->
       simplify phi1 ~next:(fun phi1' ->
-          simplify phi2 ~next:(fun phi2' -> next @@ mk_iff phi1' phi2' ~info))
-  | BinaryOp (And, phi1, phi2, info) ->
+          simplify phi2 ~next:(fun phi2' ->
+              next @@ Formula.mk_iff phi1' phi2' ~info))
+  | BinaryOp (And, phi1, phi2, _info) ->
       simplify_neg phi1 ~next:(fun phi1' ->
           simplify_neg phi2 ~next:(fun phi2' ->
-              next @@ simplify_andor_norec Or phi1' phi2' info))
-  | BinaryOp (Or, phi1, phi2, info) ->
+              next
+              @@ simplify_or
+                   (Set.union
+                      (Formula.disjuncts_of phi1')
+                      (Formula.disjuncts_of phi2'))))
+  | BinaryOp (Or, phi1, phi2, _info) ->
       simplify_neg phi1 ~next:(fun phi1' ->
           simplify_neg phi2 ~next:(fun phi2' ->
-              next @@ simplify_andor_norec And phi1' phi2' info))
+              next
+              @@ simplify_and
+                   (Set.union
+                      (Formula.conjuncts_of phi1')
+                      (Formula.conjuncts_of phi2'))))
   | Bind (binder, bounds, phi, info) ->
-      simplify (Bind (flip_quantifier binder, bounds, mk_neg phi, info)) ~next
-  | LetRec (_funcs, _phi, _info) -> assert false (* ToDo: check *)
-  (*let f = let pvars = List.map ~f:(fun (_, pvar, _, _) -> pvar) funcs in
-    fun phi -> List.fold ~f:(fun phi pvar -> subst_neg pvar phi) ~init:phi pvars in
-    simplify_neg phi ~next:(fun phi' ->
-      next @@ LetRec (List.map funcs ~f:(fun (fix, pvar, bounds, body) -> Predicate.flip_fop fix, pvar, bounds, simplify_neg @@ f body), f phi', info))*)
+      simplify
+        (Bind (Formula.flip_quantifier binder, bounds, Formula.mk_neg phi, info))
+        ~next
+  | LetRec (funcs, phi, info) ->
+      if true then assert false (* ToDo: check *)
+      else
+        let f =
+          let pvars = List.map funcs ~f:(fun def -> def.name) in
+          fun phi ->
+            List.fold
+              ~f:(fun phi pvar -> Formula.subst_neg pvar phi)
+              ~init:phi pvars
+        in
+        simplify_neg phi ~next:(fun phi' ->
+            next
+            @@ LetRec
+                 ( List.map funcs ~f:(fun def ->
+                       {
+                         def with
+                         kind = Predicate.flip_fop def.kind;
+                         body = simplify_neg @@ f def.body;
+                       }),
+                   f phi',
+                   info ))
   | LetFormula (var, sort, def, body, info) ->
       let def' = simplify_term def in
       simplify_neg body ~next:(fun body' ->
-          let size = Term.ast_size def' in
+          let size =
+            Term.ast_size def'
+            (*ToDo*)
+          in
           let count = Formula.occur_times var body' in
           if
             size <= size_threshold || count <= count_threshold
@@ -795,37 +972,53 @@ and simplify_neg ?(next = Fn.id) =
           else next @@ LetFormula (var, sort, def', body', info))
 
 and simplify_keep_imply phi =
-  let open Formula in
   Formula.fold phi
     ~f:
       (object
          method fatom atom = simplify_atom atom
-         method fand p1 p2 = simplify_andor_norec And p1 p2 Dummy
-         method for_ p1 p2 = simplify_andor_norec Or p1 p2 Dummy
+
+         method fand p1 p2 =
+           simplify_and
+             (Set.union (Formula.conjuncts_of p1) (Formula.conjuncts_of p2))
+
+         method for_ p1 p2 =
+           simplify_or
+             (Set.union (Formula.disjuncts_of p1) (Formula.disjuncts_of p2))
+
          method fnot p1 = simplify_neg_keep_imply p1
-         method fbind binder senv p1 = mk_bind binder senv p1
-         method fletrec funcs p1 = mk_letrec funcs p1
-         method fimply p1 p2 = mk_imply p1 p2
-         method fiff p1 p2 = mk_iff p1 p2
-         method fxor p1 p2 = mk_xor p1 p2
-         method flet var sort def body = mk_let_formula var sort def body
+         method fbind binder senv p1 = Formula.mk_bind binder senv p1
+         method fletrec funcs p1 = Formula.mk_letrec funcs p1
+         method fimply p1 p2 = Formula.mk_imply p1 p2
+         method fiff p1 p2 = Formula.mk_iff p1 p2
+         method fxor p1 p2 = Formula.mk_xor p1 p2
+
+         method flet var sort def body =
+           Formula.mk_let_formula var sort def body
       end)
 
 and simplify_neg_keep_imply phi =
-  let open Formula in
   Formula.fold phi
     ~f:
       (object
          method fatom atom = simplify_atom_neg atom
-         method fand p1 p2 = simplify_andor_norec Or p1 p2 Dummy
-         method for_ p1 p2 = simplify_andor_norec And p1 p2 Dummy
+
+         method fand p1 p2 =
+           simplify_or
+             (Set.union (Formula.disjuncts_of p1) (Formula.disjuncts_of p2))
+
+         method for_ p1 p2 =
+           simplify_and
+             (Set.union (Formula.conjuncts_of p1) (Formula.conjuncts_of p2))
+
          method fnot p1 = simplify_keep_imply p1
-         method fbind binder senv p1 = mk_bind binder senv p1
-         method fletrec funcs p1 = mk_letrec funcs p1
-         method fimply p1 p2 = mk_imply p1 p2
-         method fiff p1 p2 = mk_iff p1 p2
-         method fxor p1 p2 = mk_xor p1 p2
-         method flet var sort def body = mk_let_formula var sort def body
+         method fbind binder senv p1 = Formula.mk_bind binder senv p1
+         method fletrec funcs p1 = Formula.mk_letrec funcs p1
+         method fimply p1 p2 = Formula.mk_imply p1 p2
+         method fiff p1 p2 = Formula.mk_iff p1 p2
+         method fxor p1 p2 = Formula.mk_xor p1 p2
+
+         method flet var sort def body =
+           Formula.mk_let_formula var sort def body
       end)
 
 let is_sat is_sat phi =
@@ -852,9 +1045,7 @@ and is_valid_atom (*ToDo: check if this is correct*) = function
   | Atom.True _ -> Some true
   | Atom.False _ -> Some false
   | Atom.App
-      ( Predicate.Psym (T_int.Gt | T_int.Lt | T_real.RGt | T_real.RLt),
-        [ t1; t2 ],
-        _ ) ->
+      (Predicate.Psym (T_int.(Gt | Lt) | T_real.(RGt | RLt)), [ t1; t2 ], _) ->
       if Stdlib.(t1 = t2) then Some false
       else if Term.is_pathexp t1 then
         if Set.mem (Term.pathexps_of t2) t1 then Some false else None

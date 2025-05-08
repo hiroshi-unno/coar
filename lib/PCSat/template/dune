@@ -11,8 +11,6 @@
   CoAR.PCSat.common
   CoAR.common)
  (modules
-  arith
-  generator
   function
   predicateDNF
   predicateFlex

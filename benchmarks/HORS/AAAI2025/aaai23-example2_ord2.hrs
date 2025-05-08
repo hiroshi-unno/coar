@@ -1,0 +1,60 @@
+%BEGING
+S -> Forall46 ZeroBB.
+Forall46 g1 -> and (S45 g1) (if (IsMaxBB g1) tt (Forall46 (SuccBB g1))).
+S45 g1 -> Exists44 g1 ZeroBBB.
+Exists44 g1 f1 -> or (S43 g1 f1) (if (IsMaxBBB f1) ff (Exists44 g1 (SuccBBB f1))).
+S43 g1 f1 -> Forall42 g1 f1 ZeroBBB.
+Forall42 g1 f1 g2 -> and (S41 g1 f1 g2) (if (IsMaxBBB g2) tt (Forall42 g1 f1 (SuccBBB g2))).
+S41 g1 f1 g2 -> Exists40 g1 f1 g2 ZeroBBB.
+Exists40 g1 f1 g2 f2 -> or (S39 g1 f1 g2 f2) (if (IsMaxBBB f2) ff (Exists40 g1 f1 g2 (SuccBBB f2))).
+S39 g1 f1 g2 f2 -> and (S38 g1 f1 g2 f2 tt) (S38 g1 f1 g2 f2 ff).
+S38 g1 f1 g2 f2 x1 -> and (S37 g1 f1 g2 f2 x1 tt) (S37 g1 f1 g2 f2 x1 ff).
+S37 g1 f1 g2 f2 x1 x2 -> and (S36 g1 f1 g2 f2 x1 x2 tt) (S36 g1 f1 g2 f2 x1 x2 ff).
+S36 g1 f1 g2 f2 x1 x2 x3 -> and (and (or (or (g1 tt) (f1 tt ff)) (f2 tt ff)) (or (g2 x2 x3) (not (f2 x1 x3)))) (or (or (or (not (g1 ff)) (not (f1 tt x3))) (not (g2 tt x3))) (f2 ff x3)).
+ZeroBBB x1 x2 -> ff.
+IsMaxBBB x -> and (IsMaxBB (x tt)) (IsMaxBB (x ff)).
+SuccBBB x x1 x2 -> if (IsMaxBB (x ff)) (if x1 (SuccBB (x x1) x2) (ZeroBB x2)) (if x1 (x x1 x2) (SuccBB (x x1) x2)).
+CompareBBB x y z lt eq gt -> if (IsMaxB z) eq (CompareBBB x y (SuccB z) lt (CompareBB (x z) (y z) ZeroB lt eq gt) gt).
+ZeroBB x1 -> ff.
+IsMaxBB x -> and (IsMaxB (x tt)) (IsMaxB (x ff)).
+SuccBB x x1 -> if (IsMaxB (x ff)) (if x1 (SuccB (x x1)) ZeroB) (if x1 (x x1) (SuccB (x x1))).
+CompareBB x y z lt eq gt -> if (IsMaxB z) eq (CompareBB x y (SuccB z) lt (CompareB (x z) (y z) lt eq gt) gt).
+ZeroB -> ff.
+IsMaxB x -> x.
+SuccB x -> tt.
+CompareB x y lt eq gt -> if x (if y eq gt) (if y lt eq).
+%ENDG
+
+%BEGINR
+tt -> 0.
+ff -> 0.
+not -> 1.
+and -> 2.
+or -> 2.
+imply -> 2.
+iff -> 2.
+xor -> 2.
+if -> 3.
+%ENDR
+
+%BEGINATA
+qT tt -> true.
+qT ff -> false.
+qT not -> (1,qF).
+qT and -> (1,qT) /\ (2,qT).
+qT or -> (1,qT) \/ (2,qT).
+qT imply -> (1,qF) \/ (2,qT).
+qT iff -> (1,qT) /\ (2,qT) \/ (1,qF) /\ (2,qF).
+qT xor -> (1,qT) /\ (2,qF) \/ (1,qF) /\ (2,qT).
+qT if -> (1,qT) /\ (2,qT) \/ (1,qF) /\ (3,qT).
+qF tt -> false.
+qF ff -> true.
+qF not -> (1,qT).
+qF and -> (1,qF) \/ (2,qF).
+qF or -> (1,qF) /\ (2,qF).
+qF imply -> (1,qT) /\ (2,qF).
+qF iff -> (1,qT) /\ (2,qF) \/ (1,qF) /\ (2,qT).
+qF xor -> (1,qT) /\ (2,qT) \/ (1,qF) /\ (2,qF).
+qF if -> (1,qT) /\ (2,qF) \/ (1,qF) /\ (3,qF).
+%ENDATA
+

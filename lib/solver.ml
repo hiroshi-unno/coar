@@ -5,6 +5,7 @@ module Config = struct
     (* SAT solvers *)
     | Z3Sat of Z3Sat.Config.t  (** configuration of Z3Sat *)
     | MiniSat of MiniSat.Config.t  (** configuration of MiniSat *)
+    | HOMCSat of HOMCSat.Config.t  (** configuration of HOMCSat *)
     (* SMT solvers *)
     | Z3Smt of Z3Smt.Config.t  (** configuration of Z3Smt *)
     (* HOMC solvers *)
@@ -16,6 +17,8 @@ module Config = struct
     | Hoice of Hoice.Config.t  (** configuration of Hoice *)
     (* CHC optimizers *)
     | OptPCSat of OptPCSat.Config.t
+    (* PQE solvers *)
+    | PolyQEnt of PolyQEnt.Config.t
     (* muCLP solvers *)
     | MuVal of MuVal.Config.t  (** configuration of MuVal *)
     | MuCyc of MuCyc.Config.t  (** configuration of MuCyc *)
@@ -38,6 +41,8 @@ module Config = struct
         Z3Sat.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (Z3Sat cfg)
     | MiniSat cfg ->
         MiniSat.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (MiniSat cfg)
+    | HOMCSat cfg ->
+        HOMCSat.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (HOMCSat cfg)
     | Z3Smt cfg ->
         Z3Smt.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (Z3Smt cfg)
     | TRecS cfg ->
@@ -53,6 +58,9 @@ module Config = struct
     | OptPCSat cfg ->
         OptPCSat.Config.instantiate_ext_files cfg >>= fun cfg ->
         Ok (OptPCSat cfg)
+    | PolyQEnt cfg ->
+        PolyQEnt.Config.instantiate_ext_files cfg >>= fun cfg ->
+        Ok (PolyQEnt cfg)
     | MuVal cfg ->
         MuVal.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (MuVal cfg)
     | MuCyc cfg ->
@@ -76,6 +84,8 @@ end
 
 module type SolverType = sig
   val solve_sat : SAT.Problem.t -> unit Or_error.t
+  val solve_dqsat : DQSAT.Problem.t -> unit Or_error.t
+  val solve_hosat : HOSAT.Problem.t -> unit Or_error.t
   val solve_smt : SMT.Problem.t -> unit Or_error.t
   val solve_homc : HOMC.Problem.t -> unit Or_error.t
 
@@ -85,7 +95,7 @@ module type SolverType = sig
     unit Or_error.t
 
   val solve_pcsp :
-    ?bpvs:Ast.Ident.tvar Set.Poly.t ->
+    ?bpvs:Ast.Ident.tvar_set ->
     ?filename:string option ->
     PCSP.Problem.t ->
     unit Or_error.t
@@ -95,6 +105,7 @@ module type SolverType = sig
 
   val solve_muclp : MuCLP.Problem.t -> unit Or_error.t
   val solve_muclp_interactive : MuCLP.Problem.t -> unit Or_error.t
+  val solve_prob_muclp : ProbMuCLP.Problem.t -> unit Or_error.t
 
   val solve_lts :
     print:(string lazy_t -> unit) -> LTS.Problem.t -> unit Or_error.t
@@ -123,7 +134,48 @@ module Make (Config : Config.ConfigType) : SolverType = struct
           let config = cfg
         end) in
         MiniSat.solve ~print_sol:true cnf >>= fun _ -> Ok ()
+    | HOMCSat cfg ->
+        let module HOMCSat = HOMCSat.Solver.Make (struct
+          let config = cfg
+        end) in
+        HOMCSat.solve ~print_sol:true cnf >>= fun _ -> Ok ()
+    | Printer cfg ->
+        let module Printer = Printer.Solver.Make (struct
+          let config = cfg
+        end) in
+        Printer.print_sat cnf;
+        Ok ()
     | _ -> Or_error.unimplemented "Solver.solve_sat"
+
+  let solve_dqsat dqsat =
+    match Config.config with
+    | HOMCSat cfg ->
+        let module HOMCSat = HOMCSat.Solver.Make (struct
+          let config = cfg
+        end) in
+        HOMCSat.solve_dqsat ~print_sol:true dqsat >>= fun _ -> Ok ()
+    | Printer cfg ->
+        let module Printer = Printer.Solver.Make (struct
+          let config = cfg
+        end) in
+        Printer.print_dqsat dqsat;
+        Ok ()
+    | _ -> Or_error.unimplemented "Solver.solve_dqsat"
+
+  let solve_hosat hosat =
+    match Config.config with
+    | HOMCSat cfg ->
+        let module HOMCSat = HOMCSat.Solver.Make (struct
+          let config = cfg
+        end) in
+        HOMCSat.solve_hosat ~print_sol:true hosat >>= fun _ -> Ok ()
+    | Printer cfg ->
+        let module Printer = Printer.Solver.Make (struct
+          let config = cfg
+        end) in
+        Printer.print_hosat hosat;
+        Ok ()
+    | _ -> Or_error.unimplemented "Solver.solve_hosat"
 
   let solve_smt phi =
     match Config.config with
@@ -134,18 +186,24 @@ module Make (Config : Config.ConfigType) : SolverType = struct
         Z3Smt.solve ~print_sol:true phi >>= fun _ -> Ok ()
     | _ -> Or_error.unimplemented "Solver.solve_smt"
 
-  let solve_homc cnf =
+  let solve_homc homc =
     match Config.config with
     | TRecS cfg ->
         let module TRecS = TRecS.Solver.Make (struct
           let config = cfg
         end) in
-        TRecS.solve ~print_sol:true cnf >>= fun _ -> Ok ()
+        TRecS.solve ~print_sol:true homc >>= fun _ -> Ok ()
     | HorSat2 cfg ->
         let module HorSat2 = HorSat2.Solver.Make (struct
           let config = cfg
         end) in
-        HorSat2.solve ~print_sol:true cnf >>= fun _ -> Ok ()
+        HorSat2.solve ~print_sol:true homc >>= fun _ -> Ok ()
+    | Printer cfg ->
+        let module Printer = Printer.Solver.Make (struct
+          let config = cfg
+        end) in
+        Printer.print_homc homc;
+        Ok ()
     | _ -> Or_error.unimplemented "Solver.solve_homc"
 
   let solve_sygus ?(filename = None) sygus =
@@ -207,6 +265,11 @@ module Make (Config : Config.ConfigType) : SolverType = struct
           let config = cfg
         end) in
         Hoice.solve ~print_sol:true pcsp >>= fun _ -> Ok ()
+    | PolyQEnt cfg ->
+        let module PolyQEnt = PolyQEnt.Solver.Make (struct
+          let config = cfg
+        end) in
+        PolyQEnt.solve ~print_sol:true pcsp >>= fun _ -> Ok ()
     | MuVal cfg ->
         let module MuVal = MuVal.Solver.Make (struct
           let config = cfg
@@ -262,6 +325,15 @@ module Make (Config : Config.ConfigType) : SolverType = struct
         MuVal.solve_interactive muclp >>= fun _ -> Ok ()
     | _ -> Or_error.unimplemented "Solver.solve_muclp_interactive"
 
+  let solve_prob_muclp prob_muclp =
+    match Config.config with
+    | MuVal cfg ->
+        let module MuVal = MuVal.Solver.Make (struct
+          let config = cfg
+        end) in
+        MuVal.solve_prob ~print_sol:true prob_muclp >>= fun _ -> Ok ()
+    | _ -> Or_error.unimplemented "Solver.solve_prob_muclp"
+
   let solve_lts ~print (lts, mode) =
     match Config.config with
     | PCSat cfg ->
@@ -276,7 +348,7 @@ module Make (Config : Config.ConfigType) : SolverType = struct
         let muclp =
           let lvs, cps, lts = LTS.Problem.analyze ~print lts in
           print @@ lazy "************* converting LTS to muCLP ***************";
-          MuCLP.Problem.of_lts ~live_vars:(Some lvs) ~cut_points:(Some cps)
+          MuCLP.Util.of_lts ~print ~live_vars:(Some lvs) ~cut_points:(Some cps)
             (lts, mode)
         in
         match Config.config with
@@ -309,7 +381,7 @@ module Make (Config : Config.ConfigType) : SolverType = struct
         let muclp =
           let lvs, cps, lts = LTS.Problem.analyze ~print lts in
           print @@ lazy "************* converting LTS to muCLP ***************";
-          MuCLP.Problem.of_lts ~live_vars:(Some lvs) ~cut_points:(Some cps)
+          MuCLP.Util.of_lts ~print ~live_vars:(Some lvs) ~cut_points:(Some cps)
             (lts, LTS.Problem.Term)
         in
         let module MuVal = MuVal.Solver.Make (struct
@@ -332,7 +404,7 @@ module Make (Config : Config.ConfigType) : SolverType = struct
         let muclp =
           let lvs, cps, lts = LTS.Problem.analyze ~print lts in
           print @@ lazy "************* converting LTS to muCLP ***************";
-          MuCLP.Problem.of_lts ~live_vars:(Some lvs) ~cut_points:(Some cps)
+          MuCLP.Util.of_lts ~print ~live_vars:(Some lvs) ~cut_points:(Some cps)
             (lts, mode)
         in
         match Config.config with

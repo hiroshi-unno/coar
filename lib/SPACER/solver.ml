@@ -5,7 +5,15 @@ open Common.Combinator
 open Ast
 open Ast.LogicOld
 
-module Make (Cfg : Config.ConfigType) = struct
+module type SolverType = sig
+  val solve :
+    ?timeout:int option ->
+    ?print_sol:bool ->
+    PCSP.Problem.t ->
+    PCSP.Problem.solution Or_error.t
+end
+
+module Make (Cfg : Config.ConfigType) : SolverType = struct
   let config = Cfg.config
 
   module Debug =
@@ -50,26 +58,39 @@ module Make (Cfg : Config.ConfigType) = struct
     solver
 
   let solve ?(timeout = None) ?(print_sol = false) pcsp =
-    (*let module Printer =
-      Printer.Solver.Make(struct
-        let config = {
-          Printer.Config.preprocessor = Instance (Preprocessor.Config.make false false 4 0 true);
-          Printer.Config.lts_format = Printer.Config.PCSP;
-          Printer.Config.smt_format = Printer.Config.SMT2;
-        }
-      end)
-      in
-      print_endline @@ Printer.string_of_pcsp pcsp;*)
+    (* let module Printer = Printer.Solver.Make (struct
+           let config =
+             {
+               Printer.Config.preprocessor =
+                 Instance (Preprocessor.Config.make false false 4 0 true);
+               Printer.Config.homc_sat =
+                 HOMCSat.
+                   {
+                     verbose = false;
+                     solver = Filename "./config/solver/horsat2.json";
+                     encode_bool_ops = false;
+                   };
+               Printer.Config.sat_format = Printer.Config.String;
+               Printer.Config.smt_format = Printer.Config.SMT2;
+               Printer.Config.lts_format = Printer.Config.PCSP;
+               add_missing_forall = false;
+             }
+         end)
+       in
+       print_endline @@ Printer.string_of_pcsp pcsp; *)
     let ctx =
       let options =
         match (config.timeout, timeout) with
         | None, None -> []
         | None, Some timeout | Some timeout, _ ->
-            [ ("timeout", string_of_int @@ (timeout * 1000)) ]
+            [ ("timeout", string_of_int (timeout * 1000)) ]
       in
       Z3.mk_context options
     in
-    let solver = mk_solver ctx (*ToDo*) in
+    let solver =
+      mk_solver ctx
+      (*ToDo*)
+    in
     assert (
       (Set.is_empty @@ PCSP.Problem.wfpvs_of pcsp)
       && (Set.is_empty @@ PCSP.Problem.fnpvs_of pcsp)
@@ -105,7 +126,7 @@ module Make (Cfg : Config.ConfigType) = struct
       |> Set.Poly.filter_map ~f:(fun (uni_senv, ps, ns, phi) ->
              let phi =
                Formula.aconv_tvar
-               @@ Logic.ExtTerm.to_old_fml exi_senv (uni_senv, phi)
+               @@ Logic.ExtTerm.to_old_fml exi_senv uni_senv phi
              in
              (*print_endline @@ "a: " ^ Formula.str_of phi;*)
              let senv, phi =
@@ -123,9 +144,7 @@ module Make (Cfg : Config.ConfigType) = struct
                   :: (Set.to_list
                      @@ Set.Poly.map ns
                           ~f:
-                            (Fn.flip
-                               (Logic.ExtTerm.to_old_atom exi_senv uni_senv)
-                               []
+                            (Logic.ExtTerm.to_old_atm exi_senv uni_senv
                             >> Formula.mk_atom))
              in
              let head =
@@ -137,7 +156,7 @@ module Make (Cfg : Config.ConfigType) = struct
                | 1 ->
                    Set.Poly.map ps
                      ~f:
-                       (Fn.flip (Logic.ExtTerm.to_old_atom exi_senv uni_senv) []
+                       (Logic.ExtTerm.to_old_atm exi_senv uni_senv
                        >> Formula.mk_atom)
                | _ -> failwith "head disjunction not supported"
              in
@@ -255,8 +274,8 @@ module Make (Cfg : Config.ConfigType) = struct
                          ~f:(fun phi ->
                            let _, phi' = Formula.rm_quant ~forall:true phi in
                            if Formula.is_true phi' then None
-                             (*ToDo*)
-                             (*else if Formula.is_neg phi' then
+                           (*ToDo*)
+                           (*else if Formula.is_neg phi' then
                                let lhs, _ = Formula.let_neg phi' in
                                let pvar, params =
                                  let pvar, _, args, _ =
@@ -271,7 +290,7 @@ module Make (Cfg : Config.ConfigType) = struct
                                  ( Ident.pvar_to_tvar pvar,
                                    Logic.ExtTerm.mk_lambda params
                                      (Logic.BoolTerm.mk_bool false) )*)
-                           else
+                             else
                              try
                                let lhs, rhs, _ = Formula.let_eq phi' in
                                let pvar, params =
@@ -282,7 +301,15 @@ module Make (Cfg : Config.ConfigType) = struct
                                  (pvar, List.map args ~f:(Term.let_var >> fst))
                                in
                                let body =
-                                 Formula.aconv_tvar @@ T_bool.let_formula rhs
+                                 if Term.is_var rhs then
+                                   Formula.mk_atom
+                                   @@ Atom.mk_pvar_app
+                                        (Ident.tvar_to_pvar @@ fst @@ fst
+                                       @@ Term.let_var rhs)
+                                        [] []
+                                 else if T_bool.is_formula rhs then
+                                   Formula.aconv_tvar @@ T_bool.let_formula rhs
+                                 else failwith @@ Term.str_of rhs
                                in
                                let body =
                                  let senv =
@@ -308,9 +335,9 @@ module Make (Cfg : Config.ConfigType) = struct
                            if Map.Poly.mem sol key then None
                            else
                              let args, _ = Logic.Sort.args_ret_of data in
-                             let params = Logic.sort_env_list_of_sorts args in
                              Some
-                               (Logic.ExtTerm.mk_lambda params
+                               (Logic.ExtTerm.mk_lambda
+                                  (Logic.sort_env_list_of_sorts args)
                                @@ Logic.BoolTerm.mk_bool true))
                   in
                   (*Debug.print @@ lazy ("SyGuS solution: " ^ PCSP.Problem.str_of_sygus_solution @@ PCSP.Problem.Sat sol);*)
@@ -327,7 +354,7 @@ module Make (Cfg : Config.ConfigType) = struct
                               let phi =
                                 Logic.ExtTerm.to_old_fml
                                   (PCSP.Problem.senv_of pcsp)
-                                  (uni_senv, t)
+                                  uni_senv t
                               in
                               (*print_endline @@ "checking " ^ Formula.str_of phi;*)
                               try
@@ -388,3 +415,8 @@ module Make (Cfg : Config.ConfigType) = struct
         Debug.print @@ lazy (sprintf "Z3 Error: %s" reason);
         Or_error.return PCSP.Problem.Unknown (* Or_error.error_string reason*))
 end
+
+let make (config : Config.t) =
+  (module Make (struct
+    let config = config
+  end) : SolverType)

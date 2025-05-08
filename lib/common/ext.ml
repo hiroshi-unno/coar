@@ -507,21 +507,27 @@ module List = struct
 
   let is_singleton l = List.length l = 1
 
+  let rec subsets = function
+    | [] -> [ [] ]
+    | x :: xs ->
+        let rss = subsets xs in
+        rss @ List.map rss ~f:(fun rs -> x :: rs)
+
   let rec power f = function
     | [] -> [ [] ]
     | x :: xs ->
-        List.concat_map (power f xs) ~f:(fun ys ->
-            List.map (f x) ~f:(fun y -> y :: ys))
+        let rss = power f xs in
+        List.concat_map rss ~f:(fun rs -> List.map (f x) ~f:(fun y -> y :: rs))
+
+  let rec n_cartesian_product = function
+    | [] -> [ [] ]
+    | xs :: xss ->
+        let rss = n_cartesian_product xss in
+        List.concat_map xs ~f:(fun x -> List.map rss ~f:(fun rs -> x :: rs))
 
   let cartesian_map ?(init = []) ~f l1 l2 =
     List.fold l1 ~init ~f:(fun acc x1 ->
         List.fold l2 ~init:acc ~f:(fun acc x2 -> f x1 x2 :: acc))
-
-  let rec n_cartesian_product = function
-    | [] -> [ [] ]
-    | x :: xs ->
-        let rss = n_cartesian_product xs in
-        List.concat_map x ~f:(fun r -> List.map rss ~f:(fun rs -> r :: rs))
 
   let sum_float xs = List.sum (module Float) xs ~f:Fn.id
   let average_float xs = sum_float xs /. (float_of_int @@ List.length xs)
@@ -1034,7 +1040,7 @@ module List = struct
 
   (** permutations \[1; 2; 3\] = \[\[1; 2; 3\]; \[2; 1; 3\]; \[2; 3; 1\]; \[1; 3; 2\]; \[3; 1; 2\]; \[3; 2; 1\]\] *)
   let rec permutations = function
-    | hd :: tl -> List.concat (List.map ~f:(interleave hd) (permutations tl))
+    | hd :: tl -> List.concat_map ~f:(interleave hd) (permutations tl)
     | lst -> [ lst ]
 
   (** {6 Printers} *)
@@ -1590,6 +1596,16 @@ module Set = struct
   let eqlen b1 b2 = Set.length b1 = Set.length b2
   let of_map m = Set.Poly.of_list @@ Map.Poly.to_alist m
 
+  let subsets_with_duplicates lst n =
+    List.fold_left ~init:(Set.Poly.singleton [])
+      (List.init n ~f:(fun _ -> ()))
+      ~f:(fun acc _ ->
+        Set.fold ~init:acc ~f:(fun acc subsets ->
+            List.fold subsets ~init:acc ~f:Set.add)
+        @@ Set.Poly.map acc ~f:(fun subset ->
+               List.map lst ~f:(fun x ->
+                   List.sort ~compare:Stdlib.compare @@ (x :: subset))))
+
   let cartesian_map ?(init = Set.Poly.empty) ~f s1 s2 =
     Set.fold s1 ~init ~f:(fun acc x1 ->
         Set.fold s2 ~init:acc ~f:(fun acc x2 -> Set.add acc (f x1 x2)))
@@ -1732,7 +1748,7 @@ module IncrArray = struct
 
   let grow t i =
     let rec aux length =
-      if length > i then length else aux @@ ((length + 1) * 2)
+      if length > i then length else aux ((length + 1) * 2)
     in
     grow_to t (aux @@ length t)
 

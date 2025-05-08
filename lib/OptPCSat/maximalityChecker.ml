@@ -2,6 +2,7 @@ open Core
 open Common
 open Common.Ext
 open Common.Util
+open Common.Combinator
 open Ast
 open Ast.Ident
 open Ast.Logic
@@ -227,8 +228,7 @@ module Make (Config : Config.ConfigType) :
     let bodys =
       if p_has_trans_clause then [ body ]
       else
-        List.map special_pfappss ~f:(fun phis ->
-            ExtTerm.and_of @@ (body :: phis))
+        List.map special_pfappss ~f:(fun phis -> ExtTerm.and_of (body :: phis))
     in
     let head =
       ExtTerm.rename p_y_subst
@@ -356,7 +356,7 @@ module Make (Config : Config.ConfigType) :
     let body =
       ExtTerm.simplify_formula exi_senv uni_senv
       @@ ExtTerm.and_of
-      @@ ((ExtTerm.neg_of @@ OptimalityChecker.apply_pred theta p w) :: pfapps)
+           ((ExtTerm.neg_of @@ OptimalityChecker.apply_pred theta p w) :: pfapps)
     in
     let kind_map =
       List.unzip pfs_senv |> fst
@@ -407,7 +407,7 @@ module Make (Config : Config.ConfigType) :
     in
     let _, wsorts, _ = winfo in
     let trans_cls, start_cls =
-      List.partition_tf defs ~f:(fun (_, _, ns, _) -> Fn.non Set.is_empty ns)
+      List.partition_tf defs ~f:(Quadruple.trd >> Fn.non Set.is_empty)
     in
     let init_bwd_theta = init_bwd_theta_of w p exi_senv theta in
     let bwd_theta =

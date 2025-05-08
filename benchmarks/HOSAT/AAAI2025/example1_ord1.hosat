@@ -1,0 +1,2 @@
+_forall x : bool. _exists y : bool. _forall z : bool.
+((x () || y () || z ()) && (not (x ()) || not (y ()) || not (z ())))

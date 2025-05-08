@@ -1,6 +1,6 @@
 opam-version: "2.0"
 name: "CoAR"
-version: "3.1"
+version: "3.2"
 maintainer: "Hiroshi Unno <hiroshi.unno@acm.org>"
 authors: "Hiroshi Unno <hiroshi.unno@acm.org>"
 homepage: "https://github.com/hiroshi-unno/coar"
@@ -11,18 +11,19 @@ pin-depends: [
   ["libsvm.0.10.0~modified" "git+https://github.com/hiroshi-unno/libsvm-ocaml.git"]
 ]
 depends: [
-  "ocaml" {>= "5.2"}
-  "core" {>= "v0.16.0"}
+  "ocaml" {>= "5.3.0"}
+  "core"
   "core_unix"
   "domainslib"
   "menhir"
   "ppx_deriving_yojson"
   "ocaml-compiler-libs"
   "ocamlgraph"
-  "zarith" {>= "1.9"}
-  "z3" {>= "4.8.8"}
+  "zarith"
+  "z3"
   "minisat"
   "libsvm" {= "0.10.0~modified"}
   "camlzip"
+  "apronext"
 ]
 build: ["dune" "build"]

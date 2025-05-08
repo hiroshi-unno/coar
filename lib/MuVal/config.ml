@@ -24,6 +24,20 @@ type t = {
   random_ex_size : int;
   random_ex_bound : int;
   send_lower_bounds : bool;
+  prob_prefp_templ_num_conds : int;
+  prob_prefp_templ_use_orig_ite : bool;
+  prob_prefp_templ_cond_degree : int;
+  prob_prefp_templ_term_degree : int;
+  prob_rank_templ_num_conds : int;
+  prob_rank_templ_use_orig_ite : bool;
+  prob_rank_templ_cond_degree : int;
+  prob_rank_templ_term_degree : int;
+  prob_postfp_templ_num_conds : int;
+  prob_postfp_templ_use_orig_ite : bool;
+  prob_postfp_templ_cond_degree : int;
+  prob_postfp_templ_term_degree : int;
+  prob_underapprox_templ_cond_degree : int option;
+  prob_underapprox_templ_term_degree : int option;
 }
 [@@deriving yojson]
 

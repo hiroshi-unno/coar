@@ -84,8 +84,7 @@ end = struct
                      in
                      insert_source src
                      @@ unifiable
-                          ( Logic.ExtTerm.to_old_atom exi_senv uni_senv atm [],
-                            atm' ))
+                          (Logic.ExtTerm.to_old_atm exi_senv uni_senv atm, atm'))
                  |> Set.to_list |> List.unzip
                in
                if List.is_empty xs then raise E
@@ -98,8 +97,7 @@ end = struct
                      in
                      insert_source src
                      @@ unifiable
-                          ( Logic.ExtTerm.to_old_atom exi_senv uni_senv atm [],
-                            atm' ))
+                          (Logic.ExtTerm.to_old_atm exi_senv uni_senv atm, atm'))
                  |> Set.to_list |> List.unzip
                in
                if List.is_empty xs then raise E
@@ -109,7 +107,7 @@ end = struct
       let srcs = List.concat srcs in
       let phi =
         Formula.and_of
-        @@ Formula.mk_neg (Logic.ExtTerm.to_old_fml exi_senv (uni_senv, c_phi))
+        @@ Formula.mk_neg (Logic.ExtTerm.to_old_fml exi_senv uni_senv c_phi)
            :: eqs
       in
       let fvs = Formula.term_sort_env_of phi in
@@ -241,7 +239,7 @@ end = struct
                      (List.map2_exn ts ts' ~f:(fun t t' ->
                           (*ToDo: here t' is assumed to have no variable*)
                           assert (Set.is_empty @@ Term.tvs_of t');
-                          Formula.mk_atom (T_bool.mk_neq t t'))),
+                          Formula.neq t t')),
                    src )
                else (Formula.mk_true (), []))
       else (Formula.mk_true (), [])
@@ -270,8 +268,8 @@ end = struct
         ~f:(fun (dpos, dneg, und) ((uni_senv, pos, neg, pure), source) ->
           match (Set.to_list pos, Set.to_list neg) with
           | [ atm ], [] | [], [ atm ] ->
-              let atm = Logic.ExtTerm.to_old_atom exi_senv uni_senv atm [] in
-              let pure = Logic.ExtTerm.to_old_fml exi_senv (uni_senv, pure) in
+              let atm = Logic.ExtTerm.to_old_atm exi_senv uni_senv atm in
+              let pure = Logic.ExtTerm.to_old_fml exi_senv uni_senv pure in
               let tvs = Set.union (Atom.tvs_of atm) (Formula.tvs_of pure) in
               let fnvs = Set.inter tvs (Map.key_set exi_senv) in
               (* if Set.exists (Set.Poly.union_list [Formula.pvs_of pure;Atom.pvs_of atm] |> Set.Poly.map ~f:Ident.pvar_to_tvar) ~f:(PCSP.Problem.is_ne_pred APCSP.problem) || true then
@@ -325,7 +323,7 @@ end = struct
                       (dpos, Set.add dneg (cl, src @ source), und))
               else (* with function variables *) (dpos, dneg, und)
           | [], [] -> (
-              let pure = Logic.ExtTerm.to_old_fml exi_senv (uni_senv, pure) in
+              let pure = Logic.ExtTerm.to_old_fml exi_senv uni_senv pure in
               let tvs = Formula.tvs_of pure in
               let fnvs = Set.inter tvs (Map.key_set exi_senv) in
               if Set.is_empty fnvs then
@@ -353,19 +351,18 @@ end = struct
     let d_dpos = Set.diff dpos0 !old_dpos in
     let d_dneg = Set.diff dneg0 !old_dneg in
     let d_und = Set.diff und0 !old_und in
-    let fenv = VersionSpace.fenv_of vs in
+    let fenv = vs.fenv in
     old_dpos := dpos0;
     old_dneg := dneg0;
     old_und := und0;
     let clauses =
       Set.union
         (PCSP.Problem.clauses_of APCSP.problem)
-        (VersionSpace.learned_clauses_of vs
-        |> Hash_set.to_list |> Set.Poly.of_list)
+        (vs.learned_clauses |> Hash_set.to_list |> Set.Poly.of_list)
     in
     let cs = clauses |> src_cls_of false in
     let exi_senv = PCSP.Problem.senv_of APCSP.problem in
-    let graph = (VersionSpace.example_graph_of vs).graph in
+    let graph = vs.examples.graph in
     let dpos, dneg =
       let to_be_refuted, to_be_proved =
         let to_be_refuted, to_be_proved =

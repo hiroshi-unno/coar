@@ -4,7 +4,7 @@ open Common.Ext
 open Common.Util
 open Ast
 open Ast.LogicOld
-open PCSatCommon.HypSpace
+open Ast.HypSpace
 open Function
 
 module Config = struct
@@ -143,7 +143,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
       !param.depth
       (match !param.ubc with None -> "N/A" | Some ubc -> Z.to_string ubc)
       (match !param.ubd with None -> "N/A" | Some ubd -> Z.to_string ubd)
-      (String.concat_set ~sep:"," @@ Set.Poly.map !param.s ~f:Z.to_string)
+      (String.concat_map_set ~sep:"," !param.s ~f:Z.to_string)
 
   let in_space () =
     SolSpace.in_space Arg.name SolSpace.ND !param.nd Arg.sol_space
@@ -158,68 +158,65 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
 
   let update_hspace ~tag hspace =
     ignore tag;
-    Qualifier.AllTheory.qualifiers_of ~fenv:Arg.fenv ~add_mod2_quals:true
-      !param.depth hspace
+    qualifiers_of ~fenv:Arg.fenv ~add_mod2_quals:true !param.depth hspace
 
   let gen_template ~tag ~ucore hspace =
     ignore tag;
     ignore ucore;
-    let ( temp_params,
-          hole_qualifiers_map,
-          tmpl,
-          cnstr_of_coeffs,
-          cnstr_of_consts,
-          cnstr_of_quals ) =
-      let terms =
-        List.map ~f:(fun t -> (t, Term.sort_of t (*ToDo*)))
-        @@ Set.to_list hspace.terms
-      in
-      let quals = Set.to_list hspace.quals in
-      Generator.gen_dnf ~eq_atom:config.eq_atom ~terms ~quals
-        ( List.init !param.nd ~f:(fun _ -> !param.nc),
-          !param.ubc,
-          !param.ubd,
-          !param.s )
-        (Option.map config.bound_each_coeff ~f:Z.of_int)
+    let template =
+      Templ.gen_dnf ~eq_atom:config.eq_atom
+        {
+          terms =
+            List.map ~f:(fun t -> (t, Term.sort_of t (*ToDo*)))
+            @@ Set.to_list hspace.terms;
+          quals = Set.to_list hspace.quals;
+          shp = List.init !param.nd ~f:(fun _ -> !param.nc);
+          ubc = !param.ubc;
+          ubd = !param.ubd;
+          s = !param.s;
+        }
+        { bec = Option.map config.bound_each_coeff ~f:Z.of_int }
         hspace.params
     in
     Debug.print
     @@ lazy
          (sprintf "[%s] predicate template:\n  %s"
             (Ident.name_of_tvar Arg.name)
-            (Formula.str_of tmpl));
+            (Formula.str_of template.pred));
     Debug.print
     @@ lazy
-         (sprintf "[%s] cnstr_of_coeffs:\n  %s"
+         (sprintf "[%s] coeffs_bounds:\n  %s"
             (Ident.name_of_tvar Arg.name)
-            (Formula.str_of cnstr_of_coeffs));
+            (Formula.str_of template.coeffs_bounds));
     Debug.print
     @@ lazy
-         (sprintf "[%s] cnstr_of_consts:\n  %s"
+         (sprintf "[%s] consts_bounds:\n  %s"
             (Ident.name_of_tvar Arg.name)
-            (Formula.str_of cnstr_of_consts));
+            (Formula.str_of template.consts_bounds));
     Debug.print
     @@ lazy
-         (sprintf "[%s] cnstr_of_qualifiers:\n  %s"
+         (sprintf "[%s] quals_bounds:\n  %s"
             (Ident.name_of_tvar Arg.name)
-            (Formula.str_of cnstr_of_quals));
-    (*Debug.print @@ lazy
-      ("qdeps:\n" ^ String.concat_map_list ~sep:"\n" qdeps ~f:PCSatCommon.QDep.str_of);*)
-    let qual_qdeps_env = Generator.qual_env_of_hole_map hole_qualifiers_map in
-    let tmpl =
-      Logic.(
-        Term.mk_lambda (of_old_sort_env_list  hspace.params))
-      @@ Logic.ExtTerm.of_old_formula tmpl
+            (Formula.str_of template.quals_bounds));
+    (* if false then
+       Debug.print
+       @@ lazy
+            ("qdeps:\n"
+            ^ String.concat_map_list ~sep:"\n" qdeps ~f:QualDep.str_of); *)
+    let qual_qdeps_env = Templ.qual_env_of_hole_map template.hole_quals_map in
+    let pred =
+      Logic.(Term.mk_lambda (of_old_sort_env_list hspace.params))
+      @@ Logic.ExtTerm.of_old_formula template.pred
     in
-    ( (DepthDisjConj, tmpl),
+    ( (DepthDisjConj, pred),
       [
-        (Coeff, Logic.ExtTerm.of_old_formula cnstr_of_coeffs);
-        (Const, Logic.ExtTerm.of_old_formula cnstr_of_consts);
-        (Qual, Logic.ExtTerm.of_old_formula cnstr_of_quals);
+        (Coeff, Logic.ExtTerm.of_old_formula template.coeffs_bounds);
+        (Const, Logic.ExtTerm.of_old_formula template.consts_bounds);
+        (Qual, Logic.ExtTerm.of_old_formula template.quals_bounds);
       ]
       @ qdep_constr_of_envs hspace.qdeps qual_qdeps_env,
-      temp_params,
-      hole_qualifiers_map )
+      template.templ_params,
+      template.hole_quals_map )
 
   let restart (_param, actions) =
     Debug.print
@@ -437,7 +434,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     | Const :: labels ->
         inner (increase_const config.threshold_const param_actions) labels
     | Qual :: labels -> inner param_actions (*ToDo*) labels
-    | QDep :: labels -> inner param_actions labels
+    | QualDep :: labels -> inner param_actions labels
     | TimeOut :: _labels -> param_actions (* z3 may unexpectedly time out*)
     | _ -> assert false
 
@@ -497,9 +494,9 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
             (match funsym, terms with
              | T_int.Int n, [] -> Z.(abs @@ n - seed)
              | T_int.Add, [t1; t2] -> Z.(get_coeff_abs_sum_aux ~ex seed t1 + get_coeff_abs_sum_aux ~ex seed t2)
-             | T_int.Mult, [t1; t2] -> Z.(get_coeff_abs_sum_aux ~ex seed t1 * get_coeff_abs_sum_aux ~ex seed t2)
+             | T_int.Mul, [t1; t2] -> Z.(get_coeff_abs_sum_aux ~ex seed t1 * get_coeff_abs_sum_aux ~ex seed t2)
              | T_int.Neg, [t] -> get_coeff_abs_sum_aux ~ex seed t
-             | T_int.Div, _ | T_int.Mod, _ (* ignore these int symbols *)
+             | T_int.Div _, _ | T_int.Rem _, _ (* ignore these int symbols *)
              | T_bool.Formula _, _ -> Z.one (** ToDo *)
              | _ -> assert false)
           | LetTerm(var, _, def, body, _) ->

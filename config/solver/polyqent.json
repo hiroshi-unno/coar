@@ -1,0 +1,8 @@
+[
+    "PolyQEnt",
+    {
+        "path": "./polyqent/PolyQEnt",
+        "config_path": "./polyqent/config-example.json",
+        "verbose": false
+    }
+]

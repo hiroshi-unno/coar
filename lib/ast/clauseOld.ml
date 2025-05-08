@@ -1,7 +1,7 @@
 open Core
-open LogicOld
 open Common.Ext
 open Common.Combinator
+open LogicOld
 
 type t = Logic.sort_env_map * Atom.t Set.Poly.t * Atom.t Set.Poly.t * Formula.t
 
@@ -73,7 +73,7 @@ let resolve_one_step_all positive negative c =
     Set.Poly.map positive ~f:(fun pos -> resolve_one_step `Forward pos c)
   in
   Set.union cs_b cs_f |> Set.concat
-  |> Set.filter ~f:(fun (_, _, pure) -> Stdlib.(pure <> Formula.mk_true ()))
+  |> Set.filter ~f:(Triple.trd >> Stdlib.( <> ) (Formula.mk_true ()))
 
 let has_only_pure (pos, neg, _) = Set.is_empty pos && Set.is_empty neg
 

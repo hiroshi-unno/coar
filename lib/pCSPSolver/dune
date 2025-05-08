@@ -10,7 +10,8 @@
   CoAR.ast
   CoAR.pCSP
   CoAR.PCSat
-  CoAR.Hoice
   CoAR.SPACER
+  CoAR.Hoice
+  CoAR.PolyQEnt
   CoAR.Printer)
  (modules solver config))

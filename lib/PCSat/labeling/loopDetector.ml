@@ -2,6 +2,7 @@
    loop detection including verbose, whether use Jhonson's algorithms, and so on. *)
 
 open Core
+open Ast
 
 let find_cycle graph vertiecs =
   (* graph must be strongly connected *)
@@ -95,9 +96,7 @@ let detect res pvar sorts (graph, components, node_map_rev) =
                        Map.Poly.
                          (find_exn node_map_rev v1, find_exn node_map_rev v2)
                      in
-                     let papp =
-                       PCSatCommon.ExAtom.PApp ((pvar, sorts), t1 @ t2)
-                     in
+                     let papp = ExAtom.PApp ((pvar, sorts), t1 @ t2) in
                      (* Debug.print ~id @@ lazy (str_of_example papp ^ ","); *)
                      let acc' = papp :: acc in
                      get_papps acc' (v2 :: tl)
@@ -108,8 +107,7 @@ let detect res pvar sorts (graph, components, node_map_rev) =
                (* Debug.print ~id @@ lazy "]\n"; *)
                let neg_examples = Set.Poly.of_list papps in
                let clause =
-                 PCSatCommon.ExClause.
-                   { positive = Set.Poly.empty; negative = neg_examples }
+                 ExClause.{ positive = Set.Poly.empty; negative = neg_examples }
                in
                Set.add acc clause)
              ~init:acc)

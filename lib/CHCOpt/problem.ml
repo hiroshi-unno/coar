@@ -4,7 +4,7 @@ open Common.Combinator
 open Ast
 open Ast.Ident
 open Ast.Logic
-open Ast.Assertion
+open Rtype.Assertion
 
 type t = (dir_map * priority * fronts) * PCSP.Problem.t
 
@@ -47,7 +47,7 @@ let topological_sort (ps : 'a list) (priority_pairs : ('a * 'a) list) =
                   Map.Poly.set acc ~key:b ~data:(Map.Poly.find_exn acc b - 1)
                 else acc)
           in
-          inner indegrees @@ (p :: ret)
+          inner indegrees (p :: ret)
   in
   let indegrees =
     Map.Poly.of_alist_exn

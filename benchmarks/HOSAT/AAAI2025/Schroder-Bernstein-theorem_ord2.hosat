@@ -1,0 +1,14 @@
+_forall dom : bool -> bool. _forall cod : bool -> bool. (
+    ((_exists f : bool -> bool. _forall x : bool. _forall y : bool. _forall z : bool. 
+        ((dom(y) && dom(z) && f(y) = x && f(z) = x) => cod(x) && y = z))
+    &&
+    (_exists g : bool -> bool. _forall x : bool. _forall y : bool. _forall z : bool. 
+        ((cod(y) && cod(z) && g(y) = x && g(z) = x) => dom(x) && y = z)))
+    =>
+    (_exists h : bool -> bool. (
+        (_forall x : bool. _forall y : bool. _forall z : bool. 
+            ((dom(y) && dom(z) && h(y) = x && h(z) = x) => cod(x) && y = z))
+        &&
+        (_forall x : bool. (cod(x) => _exists y : bool. (dom(y) && h(y) = x ())))
+    ))
+)

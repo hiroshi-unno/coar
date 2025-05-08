@@ -5,7 +5,6 @@ open Common.Combinator
 open Ast
 open Ast.Ident
 open Ast.Logic
-open Ast.AffineTerm
 
 module type OptimalityCheckerType = sig
   val check :
@@ -73,14 +72,14 @@ let simple_check ~is_max p exi_senv theta =
   let args, param_senv = mk_fresh_args sort in
   let phi = ExtTerm.beta_reduction (Term.mk_apps sol args) in
   let phi =
-    ExtTerm.to_old_fml exi_senv (Map.Poly.of_alist_exn param_senv, phi)
+    ExtTerm.to_old_fml exi_senv (Map.Poly.of_alist_exn param_senv) phi
   in
   let phi = if is_max then phi else LogicOld.Formula.mk_neg phi in
   try Z3Smt.Z3interface.is_valid ~id:(Atomic.get id) Map.Poly.empty phi
   with _ -> false
 
 let dnf_clause_to_formula (ps, ns, phi) =
-  let open LogicOld in
+  let open Ast.LogicOld in
   Formula.and_of
   @@ phi
      :: (Set.to_list
@@ -90,13 +89,13 @@ let dnf_clause_to_formula (ps, ns, phi) =
 
 let merge_get_leq pure_phi =
   (* assume [pure_phi] is a conjunction *)
-  let open LogicOld in
+  let open Ast.LogicOld in
   let ps, _ = Formula.atoms_of pure_phi in
   let ps = Set.Poly.map ps ~f:Normalizer.normalize_atom in
   let subst =
     Set.fold ps ~init:Map.Poly.empty ~f:(fun acc -> function
       | Atom.App (Predicate.Psym T_int.Geq, [ t1; t2 ], info) as atm
-        when is_affine t1 ->
+        when AffineTerm.is_affine t1 ->
           let neg_atm =
             Atom.App (Predicate.Psym T_int.Leq, [ t1; t2 ], info)
             |> Normalizer.normalize_atom
@@ -117,7 +116,7 @@ let merge_get_leq pure_phi =
   |> Set.to_list |> Formula.and_of
 
 let dnf_of_pure_formula exi_senv pure_phi =
-  let open LogicOld in
+  let open Ast.LogicOld in
   let rec inner acc = function
     | Formula.BinaryOp (Or, phi1, phi2, _) ->
         Set.union (inner acc phi1) (inner acc phi2)
@@ -132,14 +131,14 @@ let dnf_of_pure_formula exi_senv pure_phi =
 
 (* assume phi is pure formula*)
 let apply_qelim_on_pure_formula bound exi_senv uni_senv phi =
-  let open LogicOld in
+  let open Ast.LogicOld in
   let open Formula in
   let call_qelim phi =
     Qelim.qelim_old bound exi_senv (uni_senv, nnf_of @@ mk_neg phi)
     |> snd |> mk_neg |> nnf_of |> Evaluator.simplify
   in
   let phi' =
-    ExtTerm.to_old_fml exi_senv (uni_senv, phi)
+    ExtTerm.to_old_fml exi_senv uni_senv phi
     |> Formula.nnf_of |> Evaluator.simplify
     |> dnf_of_pure_formula (to_old_sort_env_map exi_senv)
     |> Set.Poly.map ~f:call_qelim |> Set.to_list |> Formula.or_of
@@ -191,9 +190,9 @@ let pvars_of p exi_senv =
 (* [pred_phi] connected to [pure_phi] by "and" *)
 (* result are disjunction formulas of [pred_phi] and [pure_phi]*)
 let apply_qelim bound exi_senv uni_senv pred_phi pure_phi =
-  let open LogicOld in
-  let pred_phi = ExtTerm.to_old_fml exi_senv (uni_senv, pred_phi) in
-  let pure_phi = ExtTerm.to_old_fml exi_senv (uni_senv, pure_phi) in
+  let open Ast.LogicOld in
+  let pred_phi = ExtTerm.to_old_fml exi_senv uni_senv pred_phi in
+  let pure_phi = ExtTerm.to_old_fml exi_senv uni_senv pure_phi in
   dnf_of_pure_formula (to_old_sort_env_map exi_senv) pure_phi
   |> Set.Poly.map ~f:(Formula.mk_and pred_phi)
   |> Set.Poly.map ~f:(fun phi ->
@@ -208,9 +207,9 @@ let apply_qelim bound exi_senv uni_senv pred_phi pure_phi =
 
 let check exi_senv uni_senv cond phi =
   Evaluator.check
-    ~cond:(ExtTerm.to_old_fml exi_senv (uni_senv, cond))
+    ~cond:(ExtTerm.to_old_fml exi_senv uni_senv cond)
     (Z3Smt.Z3interface.is_valid ~id:(Atomic.get id) (LogicOld.get_fenv ()))
-    (ExtTerm.to_old_fml exi_senv (uni_senv, phi))
+    (ExtTerm.to_old_fml exi_senv uni_senv phi)
 
 let inters sets =
   let rec inner = function
@@ -227,7 +226,7 @@ let is v = function
   | _ -> false
 
 let rename phi =
-  let open LogicOld in
+  let open Ast.LogicOld in
   let param_senv = Formula.tvs_of phi in
   let subst =
     Set.to_list param_senv
@@ -237,7 +236,7 @@ let rename phi =
   Formula.rename subst phi
 
 let is_elimable_pair fnsols_senv phi0 (v, term) =
-  let open LogicOld in
+  let open Ast.LogicOld in
   let bound =
     Formula.sort_env_of phi0
     |> Set.filter ~f:(fun (v1, _) ->
@@ -260,7 +259,7 @@ let is_elimable_pair fnsols_senv phi0 (v, term) =
   @@ Z3Smt.Z3interface.qelim ~id:(Atomic.get id) ~fenv phi
 
 let simple_get_eq_pair_with_dnf fnsols_senv v dnf check_flag phi0 =
-  let open LogicOld in
+  let open Ast.LogicOld in
   let dnf =
     Set.Poly.map dnf ~f:(fun phi ->
         let ps, _ = Formula.atoms_of @@ Evaluator.simplify phi in
@@ -313,7 +312,7 @@ let simple_get_eq_pair_with_dnf fnsols_senv v dnf check_flag phi0 =
       | _ -> Set.Poly.empty)
 
 let complex_get_eq_pair v args atms exi_senv fnsols_senv check_flag phi0 =
-  let open LogicOld in
+  let open Ast.LogicOld in
   match check_flag with
   | `Unuseable -> Set.Poly.empty
   | _ ->
@@ -335,11 +334,12 @@ let complex_get_eq_pair v args atms exi_senv fnsols_senv check_flag phi0 =
             @@ lazy (String.paren @@ sprintf "%d/%d" (i + 1) @@ List.length dnfs);
             Debug.print_log ~tag:"(complex) mk elim eqs form:"
             @@ lazy (Formula.str_of phi);
-            let ps, _ = Formula.atoms_of @@ Evaluator.simplify phi in
-            let ps = Set.Poly.map ps ~f:Normalizer.normalize_atom in
+            let ps =
+              Evaluator.simplify phi |> Formula.atoms_of |> fst
+              |> Set.Poly.map ~f:Normalizer.normalize_atom
+            in
             let ps_with_v =
-              Set.filter ps ~f:(fun atm ->
-                  Set.exists (Atom.terms_of atm) ~f:(has v))
+              Set.filter ps ~f:(Atom.terms_of >> Set.exists ~f:(has v))
             in
             let pure_phi_with_v =
               Formula.and_of
@@ -368,17 +368,14 @@ let complex_get_eq_pair v args atms exi_senv fnsols_senv check_flag phi0 =
                               (v, t2)
                        then Some (v, t1)
                        else None
-                   | Atom.App (Predicate.Psym T_bool.Eq, [ t1; _ ], _)
-                     when is_affine t1 && has v t1 && useable t1 -> (
-                       match extract_term_from_affine (is v) t1 with
-                       | Some t1'
-                         when is_elimable_pair fnsols_senv check_is_elimable_phi
-                                (v, t1') ->
-                           Some (v, t1')
-                       | _ -> None)
-                   | Atom.App (Predicate.Psym T_int.Geq, [ t1; _ ], _)
-                     when is_affine t1 && has v t1 && useable t1 -> (
-                       match extract_term_from_affine (is v) t1 with
+                   | Atom.App
+                       (Predicate.Psym (T_bool.Eq | T_int.Geq), [ t1; _ ], _)
+                     when AffineTerm.is_affine t1 && has v t1 && useable t1 -> (
+                       match
+                         AffineTerm.extract_term_from_affine v
+                           (Evaluator.simplify_term >> Normalizer.normalize_term)
+                           t1
+                       with
                        | Some t1'
                          when is_elimable_pair fnsols_senv check_is_elimable_phi
                                 (v, t1') ->
@@ -393,8 +390,7 @@ let check_can_use_geq exi_senv uni_senv pure_phi phi0 =
   | None -> `NeedCheck
 
 let qe_subst_of v args exi_senv uni_senv fnsols_senv pure_phi phi0 =
-  let open LogicOld in
-  let to_old phi = ExtTerm.to_old_fml exi_senv (uni_senv, phi) in
+  let open Ast.LogicOld in
   Debug.print_log ~tag:"phi0:"
   @@ lazy (ExtTerm.str_of_formula exi_senv uni_senv phi0);
   let phi0', check_flag =
@@ -402,9 +398,11 @@ let qe_subst_of v args exi_senv uni_senv fnsols_senv pure_phi phi0 =
     | Some true -> (ExtTerm.mk_bool true, `Useable)
     | _ -> (phi0, `NeedCheck)
   in
-  let old_phi0 = to_old phi0' in
+  let old_phi0 = ExtTerm.to_old_fml exi_senv uni_senv phi0' in
   let dnfs =
-    dnf_of_pure_formula (to_old_sort_env_map exi_senv) (to_old pure_phi)
+    dnf_of_pure_formula
+      (to_old_sort_env_map exi_senv)
+      (ExtTerm.to_old_fml exi_senv uni_senv pure_phi)
   in
   let useable t =
     Set.for_all (Term.tvs_of t) ~f:(fun v1 ->
@@ -421,7 +419,7 @@ let qe_subst_of v args exi_senv uni_senv fnsols_senv pure_phi phi0 =
       let ps, _ = Formula.atoms_of @@ Evaluator.simplify phi in
       let ps = Set.Poly.map ps ~f:Normalizer.normalize_atom in
       let ps_with_v =
-        Set.filter ps ~f:(fun atm -> Set.exists (Atom.terms_of atm) ~f:(has v))
+        Set.filter ps ~f:(Atom.terms_of >> Set.exists ~f:(has v))
       in
       (fun ret ->
         Set.iter ret ~f:(fun (v, term) ->
@@ -441,8 +439,12 @@ let qe_subst_of v args exi_senv uni_senv fnsols_senv pure_phi phi0 =
                  else if is v t2 && useable t1 then Some (v, t1)
                  else None
              | Atom.App (Predicate.Psym T_bool.Eq, [ t1; _ ], _)
-               when is_affine t1 && has v t1 && useable t1 -> (
-                 match extract_term_from_affine (is v) t1 with
+               when AffineTerm.is_affine t1 && has v t1 && useable t1 -> (
+                 match
+                   AffineTerm.extract_term_from_affine v
+                     (Evaluator.simplify_term >> Normalizer.normalize_term)
+                     t1
+                 with
                  | Some t -> Some (v, t)
                  | _ -> None)
              | _ -> None))
@@ -461,15 +463,17 @@ let qe_subst_of v args exi_senv uni_senv fnsols_senv pure_phi phi0 =
    change to x1 = x5
 *)
 let merge_eqs_with v args exi_senv uni_senv pure_phi phi_map =
-  let open LogicOld in
-  let to_old phi =
-    ExtTerm.to_old_fml exi_senv (uni_senv, phi)
-    |> Evaluator.simplify |> Normalizer.normalize
-  in
+  let open Ast.LogicOld in
   let old_phi_map =
-    Map.Poly.map phi_map ~f:(fun (pure, psi) -> (to_old pure, psi))
+    Map.Poly.map phi_map ~f:(fun (pure, psi) ->
+        ( Normalizer.normalize @@ Evaluator.simplify
+          @@ ExtTerm.to_old_fml exi_senv uni_senv pure,
+          psi ))
   in
-  let old_pure = to_old pure_phi in
+  let old_pure =
+    Normalizer.normalize @@ Evaluator.simplify
+    @@ ExtTerm.to_old_fml exi_senv uni_senv pure_phi
+  in
   let dnfs = dnf_of_pure_formula (to_old_sort_env_map exi_senv) old_pure in
   let mk_term v =
     Term.mk_var v (Map.Poly.find_exn uni_senv v |> ExtTerm.to_old_sort)
@@ -482,7 +486,11 @@ let merge_eqs_with v args exi_senv uni_senv pure_phi phi_map =
                | Atom.App (Predicate.Psym T_bool.Eq, [ t1; _ ], _)
                  when (Term.is_int_sort @@ Term.sort_of t1)
                       && Set.length (Term.tvs_of t1) > 2 -> (
-                   match extract_term_from_affine (is v1) t1 with
+                   match
+                     AffineTerm.extract_term_from_affine v1
+                       (Evaluator.simplify_term >> Normalizer.normalize_term)
+                       t1
+                   with
                    | Some affine
                      when Evaluator.is_valid
                             (Z3Smt.Z3interface.is_valid ~id:(Atomic.get id)
@@ -493,28 +501,34 @@ let merge_eqs_with v args exi_senv uni_senv pure_phi phi_map =
                | _ -> None))
     |> Set.to_list |> Set.Poly.union_list
   in
-  Set.Poly.map dnfs ~f:(fun phi ->
-      (* Debug.print_log ~tag:"mk merge eqs form:" @@ Formula.str_of phi; *)
-      let ps, _ = Formula.atoms_of phi in
-      let ps_with_v =
-        Set.filter ps ~f:(fun atm -> Set.exists (Atom.terms_of atm) ~f:(has v))
-      in
-      Set.Poly.map ps_with_v ~f:(fun atm ->
-          (* Debug.print_log ~tag:"mk merge eq form atom:" @@ Atom.str_of atm; *)
-          match atm with
-          | Atom.App (Predicate.Psym T_bool.Eq, [ t1; _ ], _)
-            when has v t1 && is_affine t1 && Set.length (Term.tvs_of t1) > 2
-            -> (
-              match extract_term_from_affine (is v) t1 with
-              | Some affine ->
-                  let pairs = search_eq_pairs ps affine in
-                  Set.union pairs
-                    (Set.Poly.map pairs ~f:(fun (_, atm1) -> (atm, atm1)))
-              | _ -> Set.Poly.empty)
-          | _ -> Set.Poly.empty)
-      |> Set.to_list |> Set.Poly.union_list)
-  |> Set.to_list |> inters
-  |> fun atom_pairs ->
+  let atom_pairs =
+    Set.Poly.map dnfs ~f:(fun phi ->
+        (* Debug.print_log ~tag:"mk merge eqs form:" @@ Formula.str_of phi; *)
+        let ps, _ = Formula.atoms_of phi in
+        let ps_with_v =
+          Set.filter ps ~f:(fun atm ->
+              Set.exists (Atom.terms_of atm) ~f:(has v))
+        in
+        Set.Poly.map ps_with_v ~f:(fun atm ->
+            (* Debug.print_log ~tag:"mk merge eq form atom:" @@ Atom.str_of atm; *)
+            match atm with
+            | Atom.App (Predicate.Psym T_bool.Eq, [ t1; _ ], _)
+              when has v t1 && AffineTerm.is_affine t1
+                   && Set.length (Term.tvs_of t1) > 2 -> (
+                match
+                  AffineTerm.extract_term_from_affine v
+                    (Evaluator.simplify_term >> Normalizer.normalize_term)
+                    t1
+                with
+                | Some affine ->
+                    let pairs = search_eq_pairs ps affine in
+                    Set.union pairs
+                      (Set.Poly.map pairs ~f:(fun (_, atm1) -> (atm, atm1)))
+                | _ -> Set.Poly.empty)
+            | _ -> Set.Poly.empty)
+        |> Set.to_list |> Set.Poly.union_list)
+    |> Set.to_list |> inters
+  in
   let atom_map =
     Set.fold atom_pairs ~init:Map.Poly.empty ~f:(fun acc (atm1, atm2) ->
         match Map.Poly.find acc atm1 with
@@ -540,8 +554,7 @@ let filter_pfapps exi_senv uni_senv pfapps pure_formula
     (phi_map : (int, term * term) Map.Poly.t) =
   let sol_args =
     let sols =
-      List.map pfapps ~f:(fun (_, (_, (_, fnret))) ->
-          fnret |> ExtTerm.let_var |> fst)
+      List.map pfapps ~f:(snd >> snd >> snd >> ExtTerm.let_var >> fst)
     in
     fun p -> List.filter sols ~f:(Stdlib.( <> ) p)
   in
@@ -550,7 +563,7 @@ let filter_pfapps exi_senv uni_senv pfapps pure_formula
       ~f:(fun ((fnpred, ext), ((phi_pf, pfapp), (fnargs, fnret))) ->
         let pfapp' =
           ExtTerm.of_old_formula @@ Evaluator.simplify
-          @@ ExtTerm.to_old_fml exi_senv (uni_senv, pfapp)
+          @@ ExtTerm.to_old_fml exi_senv uni_senv pfapp
         in
         ((fnpred, ext), ((phi_pf, pfapp'), (fnargs, fnret))))
   in

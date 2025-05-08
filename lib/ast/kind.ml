@@ -1,7 +1,7 @@
 open Core
-open Logic
 open Common.Ext
 open Common.Combinator
+open Logic
 
 type nwf = {
   name : Ident.tvar;
@@ -103,11 +103,11 @@ let add_pred_env_set (exi_senv, kind_map) kind pvs =
       @@ Set.Poly.map pvs ~f:(fun (pv, _) -> (Ident.pvar_to_tvar pv, kind))) )
 
 let pred_sort_env_map_of (exi_senv, kind_map) =
-  Map.Poly.filter_mapi exi_senv ~f:(fun ~key ~data ->
-      if is_pred @@ kind_of kind_map key then
-        Some (List.map ~f:ExtTerm.to_old_sort @@ Sort.args_of data)
-      else None)
-  |> Map.change_keys ~f:Ident.tvar_to_pvar
+  Map.change_keys ~f:Ident.tvar_to_pvar
+  @@ Map.Poly.filter_mapi exi_senv ~f:(fun ~key ~data ->
+         if is_pred @@ kind_of kind_map key then
+           Some (List.map ~f:ExtTerm.to_old_sort @@ Sort.args_of data)
+         else None)
 
 let pvars_of (exi_senv, kind_map) =
   Set.Poly.map ~f:Ident.tvar_to_pvar
@@ -162,7 +162,7 @@ let app_nwf_predicate_old nwf params (tag_l, params_l) (tag_r, params_r) =
   in
   ( wfp,
     ExtTerm.to_old_sort psort,
-    ExtTerm.to_old_formula (Map.Poly.singleton wfp psort) uni_senv term [] )
+    ExtTerm.to_old_fml (Map.Poly.singleton wfp psort) uni_senv term )
 
 let app_nwf_predicate_and_add_tag nwf params (tag_l, sorts_l, params_l)
     (tag_r, sorts_r, params_r) =

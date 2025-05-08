@@ -111,19 +111,20 @@ module Make (Config : Config.ConfigType) = struct
     cps_opsig_of (cps_cont_of c.val_type c.cont_eff) c.op_sig
 
   and cps_val_type_of = function
-    | ( Sort.SVar _ | T_bool.SBool | T_int.SInt | T_int.SRefInt | T_real.SReal
-      | T_string.SString | T_sequence.SSequence _ | T_regex.SRegEx ) as s ->
-        s
     | Sort.SArrow (s, c) ->
         Sort.mk_arrow (cps_val_type_of s) (cps_comp_type_of c)
     | Sort.SPoly (svs, s) -> Sort.SPoly (svs, cps_val_type_of s)
+    | ( Sort.SVar _ | T_bool.SBool | T_int.SInt | T_real.SReal
+      | T_string.SString | T_sequence.SSequence _ | T_regex.SRegEx ) as s ->
+        s
+    | T_array.SArray (s1, s2) ->
+        T_array.SArray (cps_val_type_of s1, cps_val_type_of s2)
     | T_tuple.STuple sorts -> T_tuple.STuple (List.map ~f:cps_val_type_of sorts)
-    | T_ref.SRef sort -> T_ref.SRef (cps_val_type_of sort)
     | T_dt.SDT t ->
         T_dt.SDT (Datatype.update_dt t (cps_type_of_dt (Datatype.dt_of t)))
     | T_dt.SUS (str, sorts) -> T_dt.SUS (str, List.map ~f:cps_val_type_of sorts)
-    | T_array.SArray (s1, s2) ->
-        T_array.SArray (cps_val_type_of s1, cps_val_type_of s2)
+    | T_int.SRefInt -> T_int.SRefInt
+    | T_ref.SRef sort -> T_ref.SRef (cps_val_type_of sort)
     | _ -> failwith "[cps_val_type_of] unknown sort"
 
   let term_unit = EHMTT.Term (Ident.Tvar "unit")
@@ -305,7 +306,7 @@ module Make (Config : Config.ConfigType) = struct
                   rules0,
                   Map.force_merge senv0
                     (Map.Poly.of_alist_exn
-                    @@ ((tl_nt0, tl_nt0_sort) :: List.map rules ~f:fst)) )
+                       ((tl_nt0, tl_nt0_sort) :: List.map rules ~f:fst)) )
           | _ -> failwith "not supported")
     in
     let senv_body =
@@ -1293,7 +1294,7 @@ module Make (Config : Config.ConfigType) = struct
           let senv_bounds =
             if is_rec then
               let pat_senvs = List.map defs (* assume distinct *) ~f:fst3 in
-              Map.update_with_list (*shadowing*) @@ (envs.senv :: pat_senvs)
+              Map.update_with_list (*shadowing*) (envs.senv :: pat_senvs)
             else envs.senv
           in
           let eff_constrss, opsig_constrss, next1s =

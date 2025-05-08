@@ -20,7 +20,7 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
     let options =
       match config.timeout with
       | None -> []
-      | Some timeout -> [ ("timeout", string_of_int @@ (timeout * 1000)) ]
+      | Some timeout -> [ ("timeout", string_of_int (timeout * 1000)) ]
     in
     Z3.mk_context options
 
@@ -30,7 +30,7 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
     | [] -> failwith "no result"
     | "sat" :: _ ->
         PCSP.Problem.Sat Map.Poly.empty (* ToDo: return a solution *)
-    | "unsat" :: _ -> PCSP.Problem.Unsat None(* ToDo *)
+    | "unsat" :: _ -> PCSP.Problem.Unsat None (* ToDo *)
     | "timeout" :: _ -> PCSP.Problem.Timeout
     | msg :: tail as result ->
         if Str.string_match (Str.regexp "^(error \\\"$") msg 0 then
@@ -103,7 +103,7 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
         let senv, phi =
           (* assume that [phi] is alpha-renamed *)
           Formula.elim_let_equivalid @@ Normalizer.normalize_let
-          @@ Logic.ExtTerm.to_old_fml exi_senv (uni_senv, phi)
+          @@ Logic.ExtTerm.to_old_fml exi_senv uni_senv phi
         in
         let body =
           Formula.and_of
@@ -111,7 +111,7 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
              :: (Set.to_list
                 @@ Set.Poly.map ns
                      ~f:
-                       (Fn.flip (Logic.ExtTerm.to_old_atom exi_senv uni_senv) []
+                       (Logic.ExtTerm.to_old_atm exi_senv uni_senv
                        >> Formula.mk_atom))
         in
         let head =
@@ -123,18 +123,14 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
               exists_query := true;
               Set.Poly.singleton
                 (Atom.mk_pvar_app (Ident.Pvar query_name) [] [])
-          | 1 ->
-              Set.Poly.map ps
-                ~f:(Fn.flip (Logic.ExtTerm.to_old_atom exi_senv uni_senv) [])
+          | 1 -> Set.Poly.map ps ~f:(Logic.ExtTerm.to_old_atm exi_senv uni_senv)
           | _ -> assert false
         in
         let phi' = Formula.mk_imply body head in
         Debug.print @@ lazy (Formula.str_of phi');
         let senv =
           Map.Poly.to_alist
-          @@ Map.force_merge
-               (Logic.to_old_sort_env_map uni_senv)
-               senv
+          @@ Map.force_merge (Logic.to_old_sort_env_map uni_senv) senv
         in
         let c =
           Z3Smt.Z3interface.of_formula ~id:None (*ToDo*) ctx senv penv fenv

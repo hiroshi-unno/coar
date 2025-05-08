@@ -1,10 +1,10 @@
 open Core
 open Common
 open Automata
-open HOMC
 
 module type SolverType = sig
-  val solve : ?print_sol:bool -> Problem.t -> Problem.solution Or_error.t
+  val solve :
+    ?print_sol:bool -> HOMC.Problem.t -> HOMC.Problem.solution Or_error.t
 end
 
 module Make (Config : Config.ConfigType) : SolverType = struct
@@ -15,11 +15,11 @@ module Make (Config : Config.ConfigType) : SolverType = struct
 
   let rec solve ?(print_sol = false) homc =
     match homc with
-    | Problem.RSFD (trs_in, rules, trs_out) ->
+    | HOMC.Problem.RSFD (trs_in, rules, trs_out) ->
         let filename = "temp_horsat2.hors" in
         Debug.print
         @@ lazy
-             (sprintf "Size of HORS: %d (%d rules)" (RSFD.sizeof rules)
+             (sprintf "Size of HORS: %d (%d rules)" (HOMC.RSFD.sizeof rules)
                 (List.length rules));
         Debug.print
         @@ lazy
@@ -76,38 +76,38 @@ module Make (Config : Config.ConfigType) : SolverType = struct
         in
         let open Or_error in
         (match res with
-        | None -> Or_error.error_string "HORS verification verified"
+        | None -> Or_error.error_string "HORS verification failed"
         | Some (First ()) ->
             Debug.print @@ lazy "verified";
-            Ok Problem.Sat
+            Ok HOMC.Problem.Sat
         | Some (Second None) ->
             Debug.print @@ lazy "refuted";
-            Ok Problem.Unsat
+            Ok HOMC.Problem.Unsat
         | Some (Second (Some cex)) ->
             Debug.print @@ lazy "refuted with a counterexample:";
             Debug.print @@ lazy cex;
-            Ok Problem.Unsat)
+            Ok HOMC.Problem.Unsat)
         >>= fun sol ->
         if print_sol then print_endline (HOMC.Problem.str_of_solution sol);
         Ok sol
-    | Problem.EHMTT (ehmtt, trs, (main, typ)) -> (
+    | HOMC.Problem.EHMTT (ehmtt, trs, (main, typ)) -> (
         try
           let start_t = Core_unix.time () in
           let rsfds =
-            Reducer.rsfds_of_ehmtt ~print:Debug.print ehmtt trs (main, typ)
+            HOMC.Reducer.rsfds_of_ehmtt ~print:Debug.print ehmtt trs (main, typ)
           in
           let res =
             List.for_all rsfds ~f:(fun (name, rsfd) ->
                 Debug.print
                 @@ lazy (sprintf "\nHigher-Order Model Checking: %s" name);
                 match solve ~print_sol:false (*ToDo*) rsfd with
-                | Ok Problem.Sat -> true
-                | Ok Problem.Unsat -> false
+                | Ok HOMC.Problem.Sat -> true
+                | Ok HOMC.Problem.Unsat -> false
                 | _ -> failwith "failed")
           in
           let elapsed_t = Core_unix.time () -. start_t in
           Debug.print @@ lazy (sprintf "\nElapsed Time: %f sec" elapsed_t);
-          let sol = if res then Problem.Sat else Problem.Unsat in
+          let sol = if res then HOMC.Problem.Sat else HOMC.Problem.Unsat in
           if print_sol then print_endline (HOMC.Problem.str_of_solution sol);
           Ok sol
         with _ -> Or_error.error_string "EHMTT verification failed")

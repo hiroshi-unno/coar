@@ -1,0 +1,5 @@
+_forall g1 : bool -> bool. _exists f1 : bool -> bool -> bool. _forall g2 : bool -> bool -> bool. _exists f2 : bool -> bool -> bool.
+_forall x1 : bool. _forall x2 : bool. _forall x3 : bool.
+   ((g1(tt) || f1(tt, ff) || f2 (tt, ff)) &&
+    (g2(x2, x3) || not (f2(x1, x3))) &&
+    (not (g1(ff)) || not (f1(tt, x3)) || not (g2(tt, x3)) || f2(ff, x3)))

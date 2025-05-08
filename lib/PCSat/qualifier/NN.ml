@@ -29,10 +29,7 @@ struct
     let pos_examples =
       Set.Poly.filter_map labeled_atoms ~f:(fun (atom, label) ->
           if TruthTable.label_pos = label then
-            match ExAtom.instantiate atom with
-            | ExAtom.PApp (_, terms) -> Some terms
-            | ExAtom.PPApp (_, (_, terms)) -> Some terms
-            | _ -> None
+            ExAtom.args_of @@ ExAtom.instantiate atom
           else None)
     in
     let neg_examples =
@@ -56,7 +53,7 @@ struct
     let params, quals =
       nn_half_spaces_of Config.dummy_param sorts pos_examples neg_examples
     in
-    Set.Poly.map ~f:(fun qual -> (params, Normalizer.normalize qual)) quals
+    Set.Poly.map quals ~f:(fun qual -> (params, Normalizer.normalize qual))
 
   let str_of_domain = "Neural Network"
 end
