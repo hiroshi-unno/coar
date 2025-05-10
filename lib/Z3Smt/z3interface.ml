@@ -1700,10 +1700,11 @@ let incr_check_sat_unsat_core ~id ?(z3str3 = false) ?(timeout = None)
           z3_solver_assert_and_track solver phi_expr label));
     Z3.Solver.push solver;
     if false then print_endline @@ Z3.Solver.to_string solver;
-    let ret =
+    if not @@ Set.is_empty non_tracked then
       Z3.Solver.add solver @@ Set.to_list
       @@ Set.Poly.map non_tracked
            ~f:(of_formula_with_z3fenv ~id ctx [] [] fenv dtenv);
+    let ret =
       match Z3.Solver.check solver [] with
       | Z3.Solver.SATISFIABLE -> (
           match z3_solver_get_model solver with
@@ -1724,7 +1725,7 @@ let incr_check_sat_unsat_core ~id ?(z3str3 = false) ?(timeout = None)
               if false then print_endline reason;
               `Unknown reason)
     in
-    Z3.Solver.pop solver 1;
+    if not @@ Set.is_empty non_tracked then Z3.Solver.pop solver 1;
     ret
   in
   match timeout with

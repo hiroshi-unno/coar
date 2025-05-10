@@ -27,7 +27,7 @@
           "DNF",
           [
             "Filename",
-            "./config/pcsat/template/predicate_dnf_template_interval3.json"
+            "./config/pcsat/template/predicate_dnf_template_thr.json"
           ]
         ],
         "wf_predicate_template": [

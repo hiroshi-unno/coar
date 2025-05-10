@@ -123,9 +123,11 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
             Logic.ExtTerm.of_old_formula
             (* Z3Smt.Z3interface.simplify (Problem.fenv_of APCSP.problem) @@ *)
             @@ Evaluator.simplify
-            @@ (* Formula.elim_ite @@
+            @@
+            (* Formula.elim_ite @@
                   Formula.elim_let_equivalid @@
-                  Formula.elim_let *) phi
+                  Formula.elim_let *)
+            phi
           in
           let senv = Map.force_merge (Problem.senv_of APCSP.problem) uni_senv in
           let bounds =
@@ -377,7 +379,8 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
                           Ident.Tvar ("#q" ^ string_of_int !cnt))
                       @@ Formula.forall (Set.to_list fvs)
                       @@ Evaluator.simplify
-                      @@ (*Formula.mk_imply cond @@*)
+                      @@
+                      (*Formula.mk_imply cond @@*)
                       Formula.mk_atom atomic
                     in
                     if print_log then
@@ -511,7 +514,8 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
                         ~f:
                           Set.(
                             function
-                            | None -> Poly.singleton x1 | Some xs -> add xs x1))
+                            | None -> Poly.singleton x1
+                            | Some xs -> add xs x1))
                 in
                 Set.add acc
                   ( Ident.tvar_to_pvar pvar1,
@@ -660,7 +664,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
         |> (if config.filter_out_non_div_mod then Set.filter ~f:div_mod_filter
             else Fn.id)
         |> Set.Poly.map ~f:(fun (params, phi) ->
-               (params, Normalizer.normalize @@ Evaluator.simplify_neg phi))
+               (params, Normalizer.normalize (*@@ Evaluator.simplify_neg*) phi))
         |> elim_neg
   (*|> (fun quals -> if config.reduce then Q.reduce_qualifiers quals neg_ex pos_ex else quals)*)
 

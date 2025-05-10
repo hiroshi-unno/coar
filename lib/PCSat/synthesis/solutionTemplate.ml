@@ -789,10 +789,10 @@ module Make
           @@ lazy
                (sprintf "gen temporary_constrs of temporary example: %s"
                @@ ExClause.str_of clause);
-          let unknowns =
-            Set.filter (ExClause.tvs_of clause) ~f:(Map.Poly.mem templates)
-          in
           let constr =
+            let unknowns =
+              Set.filter (ExClause.tvs_of clause) ~f:(Map.Poly.mem templates)
+            in
             cgen_from_pex vs template_map qualifiers_map unknowns clause
             |> Logic.ExtTerm.to_old_fml Map.Poly.empty temp_param_senv
             |> Evaluator.simplify
