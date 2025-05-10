@@ -9,6 +9,7 @@
           "UnsatCore"
         ],
         "smt_timeout": null,
+        "compute_ucores": false,
         "extract_qualifiers": true,
         "extract_terms": false,
         "extract_constants": true,
@@ -16,7 +17,7 @@
         "learn_quals_from_ucores": false,
         "qualifier_generator": [
           "Filename",
-          "./config/pcsat/qualifier/tb.json"
+          "./config/pcsat/qualifier/tb_hyperprop.json"
         ],
         "pex_strategy": [
           "InstDefault"

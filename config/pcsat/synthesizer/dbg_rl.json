@@ -9,6 +9,7 @@
           "RL"
         ],
         "smt_timeout": null,
+        "compute_ucores": true,
         "extract_qualifiers": true,
         "extract_terms": false,
         "extract_constants": true,

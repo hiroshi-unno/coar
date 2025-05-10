@@ -1,6 +1,5 @@
 open Core
 open Common.Ext
-open Common.Combinator
 open LogicOld
 
 let split_params_by_theory =
@@ -29,41 +28,20 @@ let mk_func_app_terms
                | Some ts -> List.map ~f:fst @@ Set.to_list ts
                | _ -> [ Term.mk_dummy sort ]))
 
-let int_real_terms_of term_map params =
-  Map.Poly.fold term_map ~init:Set.Poly.empty
-    ~f:(fun ~key:sort ~data:terms ret ->
-      match sort with
-      | T_int.SInt | T_real.SReal ->
-          Set.union ret
-          @@ Set.Poly.filter_map terms
-               ~f:
-                 (fst >> function
-                  | Term.Var (x, _, _)
-                    when List.exists params ~f:(fst >> Stdlib.( = ) x) ->
-                      None
-                  | term -> Some term)
-      | _ -> ret)
-
 let bool_quals_of terms params =
-  Set.Poly.filter_map terms ~f:(fun (term, dep) ->
-      match term with
-      | Term.Var (x, _, _) when List.exists params ~f:(fst >> Stdlib.( = ) x) ->
-          None
-      | _ -> Some (term, dep))
-  |> Set.Poly.map ~f:(fun (t, dep) ->
-         QualDep.qual_and_deps_of (Formula.eq t (T_bool.mk_true ())) dep)
-  |> Set.to_list
-  |> List.map ~f:(fun (qual, dep) -> (qual, (qual, dep)))
-  |> List.unzip
-  |> fun (quals, qdeps) -> (Set.Poly.of_list quals, Map.Poly.of_alist_exn qdeps)
-
-let add_term_map term_map term =
-  let sort = Term.sort_of term in
-  match Map.Poly.find term_map sort with
-  | Some terms ->
-      Map.Poly.set term_map ~key:sort ~data:(Set.add terms (term, []))
-  | _ ->
-      Map.Poly.add_exn term_map ~key:sort ~data:(Set.Poly.singleton (term, []))
+  let quals, qdeps =
+    Set.Poly.filter_map terms ~f:(fun (term, dep) ->
+        match term with
+        | Term.Var (x, _, _) when List.Assoc.mem params ~equal:Stdlib.( = ) x ->
+            None
+        | _ -> Some (term, dep))
+    |> Set.Poly.map ~f:(fun (t, dep) ->
+           QualDep.qual_and_deps_of (Formula.eq t (T_bool.mk_true ())) dep)
+    |> Set.to_list
+    |> List.map ~f:(fun (qual, dep) -> (qual, (qual, dep)))
+    |> List.unzip
+  in
+  (Set.Poly.of_list quals, Map.Poly.of_alist_exn qdeps)
 
 let add_quals_form_affine_eq_quals quals =
   Set.union quals @@ Set.concat
@@ -77,27 +55,26 @@ let add_quals_form_affine_eq_quals quals =
            | _ -> None
          else None)
 
-let add_mod_quals quals =
-  let rec inner i quals =
-    let quals' =
-      Set.union quals
-      @@ Set.Poly.map quals ~f:(fun qual ->
-             Formula.map_term qual ~f:(function
-               | Term.FunApp (T_int.Rem modulo, [ t1; t2 ], info) as t
-                 when T_int.is_int t2 ->
-                   let m = Z.to_int (*ToDo*) @@ T_int.let_int t2 in
-                   if m > i && m mod i = 0 then
-                     Term.FunApp
-                       (T_int.Rem modulo, [ t1; T_int.from_int i ], info)
-                   else t
-               | t -> t))
-    in
-    if Set.equal quals quals' then quals else inner (i + 1) quals'
-  in
-  inner 2 quals
-
 let add_mod_quals_terms quals terms =
-  let quals' = add_mod_quals quals in
+  let quals' =
+    let rec inner i quals =
+      let quals' =
+        Set.union quals
+        @@ Set.Poly.map quals ~f:(fun qual ->
+               Formula.map_term qual ~f:(function
+                 | Term.FunApp (T_int.Rem modulo, [ t1; t2 ], info) as t
+                   when T_int.is_int t2 ->
+                     let m = Z.to_int (*ToDo*) @@ T_int.let_int t2 in
+                     if m > i && m mod i = 0 then
+                       Term.FunApp
+                         (T_int.Rem modulo, [ t1; T_int.from_int i ], info)
+                     else t
+                 | t -> t))
+      in
+      if Set.equal quals quals' then quals else inner (i + 1) quals'
+    in
+    inner 2 quals
+  in
   if Set.equal quals' quals then (quals, terms)
   else
     (* let terms =

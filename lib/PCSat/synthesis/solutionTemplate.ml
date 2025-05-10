@@ -65,6 +65,7 @@ module Config = struct
     int_function_template : int_function_template;
     regex_template : regex_template;
     update_strategy : TemplateUpdateStrategy.Config.t;
+    compute_ucores : bool;
     qualifier_generator : Qualifier.Generator.Config.t ext_file;
     extract_qualifiers : bool;
     extract_terms : bool;
@@ -777,7 +778,6 @@ module Make
         (templates : (Ident.tvar, Logic.Sort.t * constr) Map.Poly.t),
         (temp_param_cnstrs : (Ident.tvar, constr Set.Poly.t) Map.Poly.t),
         (qualifiers_map : qualifiers_map) ) =
-    (* let uenv = VersionSpace.uenf_of vs in *)
     let tvar_update_map = Map.Poly.map templates ~f:(snd >> fst) in
     let templates =
       Map.Poly.map templates ~f:(fun (sort, (_, term)) -> (sort, term))
@@ -851,86 +851,74 @@ module Make
                  );
             RLConfig.unlock ());
           Debug.print
-          @@ lazy (sprintf "constr: [%s] %s" key (Formula.str_of constr));
+          @@ lazy (sprintf "** constr: [%s] %s" key (Formula.str_of constr));
           ( Map.Poly.add_exn key_constr_map ~key ~data:constr,
             Map.Poly.add_exn key_tvar_update_list_map ~key ~data:update_map,
             Map.Poly.add_exn key_clause_map ~key ~data:clause ))
     in
     let key_constr_map, key_tvar_update_list_map =
-      (*if !iters_after_updated = 0 then*)
-      let used_param_senv =
-        Set.of_map key_constr_map
-        |> Set.concat_map ~f:(snd >> Formula.tvs_of)
-        |> Set.concat_map ~f:(fun (Ident.Tvar x) ->
-               Set.Poly.of_list
-                 [
-                   Ident.Tvar x;
-                   Ident.Tvar (x ^ "#pos" (*ToDo*));
-                   Ident.Tvar (x ^ "#neg" (*ToDo*));
-                 ])
-      in
-      Map.Poly.fold temp_param_cnstrs
-        ~init:(key_constr_map, key_tvar_update_list_map)
-        ~f:(fun ~key:tvar ~data (key_constr_map, key_tvar_update_list_map) ->
-          Set.fold data ~init:(key_constr_map, key_tvar_update_list_map)
-            ~f:(fun
-                (key_constr_map, key_tvar_update_list_map)
-                (update_label, cnstr)
-              ->
-              let key = get_key () in
-              let param_constr =
-                Evaluator.simplify
-                @@ (if PCSP.Problem.is_ne_pred (*ToDo*) APCSP.problem tvar then
-                      Fn.id
-                    else
-                      Formula.subst
-                      @@ Map.Poly.filter_mapi temp_param_senv
-                           ~f:(fun ~key ~data ->
-                             assert (Ident.is_parameter key);
-                             if Set.mem used_param_senv key then None
-                             else Some (Logic.mk_old_dummy data)))
-                @@ Logic.ExtTerm.to_old_fml Map.Poly.empty temp_param_senv cnstr
-              in
-              if RLCfg.config.enable && RLCfg.config.show_unsat_core then (
-                RLConfig.lock ();
-                Debug.print_stdout
-                @@ lazy
-                     (sprintf "labeled bounds constraint: %s"
-                     @@ Yojson.Safe.to_string
-                     @@ lc_to_yojson
-                          { label = key; constr = Formula.str_of param_constr }
-                     );
-                RLConfig.unlock ());
-              if Formula.is_true param_constr then
-                (key_constr_map, key_tvar_update_list_map)
-              else (
-                Debug.print
-                @@ lazy
-                     (sprintf "bounds constr: [%s] %s" key
-                        (Formula.str_of param_constr));
-                ( Map.Poly.add_exn key_constr_map ~key ~data:param_constr,
-                  Map.Poly.add_exn key_tvar_update_list_map ~key
-                    ~data:[ (tvar, update_label) ] ))))
-      (*else key_constr_map, key_tvar_update_list_map*)
+      if !iters_after_updated = 0 then
+        Map.Poly.fold temp_param_cnstrs
+          ~init:(key_constr_map, key_tvar_update_list_map)
+          ~f:(fun ~key:tvar ~data (key_constr_map, key_tvar_update_list_map) ->
+            Set.fold data ~init:(key_constr_map, key_tvar_update_list_map)
+              ~f:(fun
+                  (key_constr_map, key_tvar_update_list_map)
+                  (update_label, cnstr)
+                ->
+                let param_constr =
+                  Logic.ExtTerm.to_old_fml Map.Poly.empty temp_param_senv cnstr
+                  |> Evaluator.simplify
+                in
+                if Formula.is_true param_constr then
+                  (key_constr_map, key_tvar_update_list_map)
+                else
+                  let key = get_key () in
+                  if RLCfg.config.enable && RLCfg.config.show_unsat_core then (
+                    RLConfig.lock ();
+                    Debug.print_stdout
+                    @@ lazy
+                         (sprintf "labeled bounds constraint: %s"
+                         @@ Yojson.Safe.to_string
+                         @@ lc_to_yojson
+                              {
+                                label = key;
+                                constr = Formula.str_of param_constr;
+                              });
+                    RLConfig.unlock ());
+                  Debug.print
+                  @@ lazy
+                       (sprintf "** bounds constr: [%s] %s" key
+                          (Formula.str_of param_constr));
+                  ( Map.Poly.add_exn key_constr_map ~key ~data:param_constr,
+                    Map.Poly.add_exn key_tvar_update_list_map ~key
+                      ~data:[ (tvar, update_label) ] )))
+      else (key_constr_map, key_tvar_update_list_map)
     in
-    (*let key_constr_map =
-      let phi = UTermEnv.to_formula uenv in
-      if Formula.is_true phi then key_constr_map
-      else if Map.Poly.exists key_constr_map ~f:(fun phi1 -> Stdlib.(Formula.str_of phi1 = Formula.str_of phi) then key_constr_map
-      else begin
-        let key = get_key () in
-        Debug.print @@ lazy (sprintf "uterm_constr %s: %s" key (Formula.str_of phi));
-        Map.Poly.add_exn key_constr_map ~key:(key) ~data:(phi)
-      end
-      in*)
+    let key_constr_map =
+      if true then key_constr_map
+      else
+        let phi = UTermEnv.to_formula vs.uenv in
+        if Formula.is_true phi then key_constr_map
+        else if
+          Map.Poly.exists key_constr_map ~f:(fun phi1 ->
+              Stdlib.(Formula.str_of phi1 = Formula.str_of phi))
+        then key_constr_map
+        else
+          let key = get_key () in
+          Debug.print
+          @@ lazy (sprintf "uterm_constr %s: %s" key (Formula.str_of phi));
+          Map.Poly.add_exn key_constr_map ~key ~data:phi
+    in
     ref_key_tvar_update_list_map := key_tvar_update_list_map;
     ref_key_clause_map := key_clause_map;
     Debug.print @@ lazy "constraints generated";
     match
       Z3Smt.Z3interface.incr_check_sat_unsat_core ~id
-        ~timeout:smt_solver_instance.smt_timeout ~non_tracked:temporary_constrs
-        smt_solver_instance.solver smt_solver_instance.ctx
-        smt_solver_instance.z3fenv smt_solver_instance.z3dtenv key_constr_map
+        ~enable:config.compute_ucores ~timeout:smt_solver_instance.smt_timeout
+        ~non_tracked:temporary_constrs smt_solver_instance.solver
+        smt_solver_instance.ctx smt_solver_instance.z3fenv
+        smt_solver_instance.z3dtenv key_constr_map
     with
     | `Sat model ->
         Debug.print @@ lazy "sat";
@@ -945,8 +933,10 @@ module Make
         Debug.print
         @@ lazy ("unsat, reason:" ^ String.concat ~sep:"," unsat_keys);
         let unsat_keys =
-          List.map unsat_keys ~f:(fun s ->
-              String.sub s ~pos:1 ~len:(String.length s - 2))
+          if config.compute_ucores then
+            List.map unsat_keys ~f:(fun s ->
+                String.sub s ~pos:1 ~len:(String.length s - 2))
+          else Map.Poly.keys key_clause_map (* ToDo *)
         in
         let ucores =
           Set.Poly.of_list
@@ -1283,8 +1273,9 @@ module Make
         ignore @@ reduce_quals_terms vs;
         Debug.print @@ lazy "**** for non-ucore";
         ref_templates := initialize_templates ~ucore:false vs;
-        Debug.print @@ lazy "**** for ucore";
-        ref_templates_ucore := initialize_templates ~ucore:true vs;
+        if config.learn_quals_from_ucores then (
+          Debug.print @@ lazy "**** for ucore";
+          ref_templates_ucore := initialize_templates ~ucore:true vs);
         Debug.print @@ lazy "templates generated";
         reset_all_smt_instances ();
         Debug.print @@ lazy "solver initialized");
@@ -1339,7 +1330,10 @@ module Make
             | UnsatCore (ucores, pvar_labels_map) ->
                 init_incr ();
                 let quals_changed, pvar_labels_map =
-                  if config.learn_quals_from_ucores then (
+                  if
+                    config.learn_quals_from_ucores
+                    && (not @@ Set.is_empty ucores)
+                  then (
                     reset_smt_instance ucore_smt_instance;
                     match
                       find_candidate ucore_smt_instance ucores vs

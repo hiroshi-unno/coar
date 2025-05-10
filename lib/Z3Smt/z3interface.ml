@@ -1675,12 +1675,14 @@ let is_valid_exn ~id fenv phi =
   | _ -> raise Unknown
 
 (** [non_tracked] will be popped from solver when solving finished *)
-let incr_check_sat_unsat_core ~id ?(z3str3 = false) ?(timeout = None)
-    ?(non_tracked = Set.Poly.empty) solver ctx fenv dtenv pvar_clause_map =
+let incr_check_sat_unsat_core ~id ?(enable = true) ?(z3str3 = false)
+    ?(timeout = None) ?(non_tracked = Set.Poly.empty) solver ctx fenv dtenv
+    labeled_constr_map =
   let f () =
     let params = Z3.Params.mk_params ctx in
     Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "model") true;
-    Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "unsat_core") true;
+    if enable then
+      Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "unsat_core") true;
     Z3.Params.add_symbol params
       (Z3.Symbol.mk_string ctx "smt.string_solver")
       (Z3.Symbol.mk_string ctx (if z3str3 then "z3str3" else "seq"));
@@ -1689,35 +1691,41 @@ let incr_check_sat_unsat_core ~id ?(z3str3 = false) ?(timeout = None)
     | Some timeout ->
         Z3.Params.add_int params (Z3.Symbol.mk_string ctx "timeout") timeout);
     Z3.Solver.set_parameters solver params;
-    Map.Poly.iteri pvar_clause_map ~f:(fun ~key:name ~data:phi ->
+    Map.Poly.iteri labeled_constr_map ~f:(fun ~key:label ~data:phi ->
         if Formula.is_true phi then ()
-        else (
-          Debug.print
-          @@ lazy
-               (sprintf "assert and track: [%s] %s" name (Formula.str_of phi));
-          let phi_expr = of_formula_with_z3fenv ~id ctx [] [] fenv dtenv phi in
-          let label = Z3.Boolean.mk_const_s ctx name in
-          z3_solver_assert_and_track solver phi_expr label));
-    Z3.Solver.push solver;
-    if false then print_endline @@ Z3.Solver.to_string solver;
-    if not @@ Set.is_empty non_tracked then
+        else
+          let z3_expr = of_formula_with_z3fenv ~id ctx [] [] fenv dtenv phi in
+          if enable then (
+            Debug.print
+            @@ lazy
+                 (sprintf "assert and track: [%s] %s" label (Formula.str_of phi));
+            z3_solver_assert_and_track solver z3_expr
+              (Z3.Boolean.mk_const_s ctx label))
+          else (
+            Debug.print @@ lazy (sprintf "assert: %s" (Formula.str_of phi));
+            z3_solver_add solver [ z3_expr ]));
+    if not @@ Set.is_empty non_tracked then (
+      Z3.Solver.push solver;
+      if false then print_endline @@ Z3.Solver.to_string solver;
       Z3.Solver.add solver @@ Set.to_list
       @@ Set.Poly.map non_tracked
-           ~f:(of_formula_with_z3fenv ~id ctx [] [] fenv dtenv);
+           ~f:(of_formula_with_z3fenv ~id ctx [] [] fenv dtenv));
     let ret =
       match Z3.Solver.check solver [] with
       | Z3.Solver.SATISFIABLE -> (
           match z3_solver_get_model solver with
           | Some model -> `Sat (model_of ctx dtenv model)
-          | None -> `Unknown "model production is not enabled?")
+          | None -> `Unknown "model generation is not enabled?")
       | UNSATISFIABLE ->
-          Debug.print @@ lazy "unsat reason:";
-          let unsat_keys =
-            List.map ~f:Z3.Expr.to_string @@ z3_solver_get_unsat_core solver
-          in
-          List.iter unsat_keys ~f:(fun unsat_key ->
-              Debug.print @@ lazy unsat_key);
-          `Unsat unsat_keys
+          if enable then (
+            let unsat_keys =
+              List.map ~f:Z3.Expr.to_string @@ z3_solver_get_unsat_core solver
+            in
+            Debug.print @@ lazy "unsat cores:";
+            List.iter unsat_keys ~f:(fun unsat_key ->
+                Debug.print @@ lazy unsat_key);
+            `Unsat unsat_keys)
+          else `Unsat [] (* ToDo: Dummy *)
       | UNKNOWN -> (
           match Z3.Solver.get_reason_unknown solver with
           | "timeout" | "canceled" -> `Timeout

@@ -23,6 +23,7 @@ module Config = struct
     disj_first : bool;
     fix_shape : bool;
     eq_atom : bool;
+    add_mod2_quals : bool;
   }
   [@@deriving yojson]
 
@@ -158,7 +159,8 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
 
   let update_hspace ~tag hspace =
     ignore tag;
-    qualifiers_of ~fenv:Arg.fenv ~add_mod2_quals:true !param.depth hspace
+    qualifiers_of ~fenv:Arg.fenv ~add_mod2_quals:config.add_mod2_quals
+      !param.depth hspace
 
   let gen_template ~tag ~ucore hspace =
     ignore tag;

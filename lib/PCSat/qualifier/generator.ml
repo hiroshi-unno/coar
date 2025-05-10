@@ -54,6 +54,7 @@ module Config = struct
     domains : domain list;
     extract_pcsp : bool;  (** extract qualifiers from pfwCSP *)
     normalize_pcsp : bool;  (** normalize pfwCSP to enhance extraction *)
+    propagate_quals : bool;  (** propagate qualifiers *)
     add_bool : bool;  (** add qualifiers for boolean variables *)
     add_homogeneous : bool;  (** add homogeneous qualifiers *)
     add_neg : bool;  (** add negation of qualifiers *)
@@ -629,13 +630,14 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
               | None -> d
               | Some d' -> Set.union d d'))
       in
-      Debug.print @@ lazy "*** propagating qualifiers";
-      let propagated =
-        Map.Poly.map ~f:elim_neg
-        @@ if true then qualifier_propagation extracted else extracted
-      in
-      Debug.print @@ lazy "done";
-      propagated)
+      if config.propagate_quals then (
+        Debug.print @@ lazy "*** propagating qualifiers";
+        let propagated =
+          Map.Poly.map ~f:elim_neg @@ qualifier_propagation extracted
+        in
+        Debug.print @@ lazy "done";
+        propagated)
+      else extracted)
     else Map.Poly.empty
 
   let div_mod_filter (_, phi) =

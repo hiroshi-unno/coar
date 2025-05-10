@@ -12,5 +12,6 @@
     "threshold_const": 3,
     "disj_first": false,
     "fix_shape": false,
-    "eq_atom": false
+    "eq_atom": false,
+    "add_mod2_quals": true
 }
