@@ -8,6 +8,9 @@
 * OptPCSat: An optimizing CHC solver based on pfwnCSP solving
 * HOMCSat: A SAT/QSAT/DQSAT/HOSAT solver based on higher-order model checking
 
+An overview of the fixed-point logic solvers MuVal, MuStrat, and MuCyc for $`\mu`$CLP, as well as RCaml for HFL, along with the backend solver PCSat used in both MuVal and RCaml, is provided in [these slides](https://www.riec.tohoku.ac.jp/~unno/slides/epit2025.pdf). An overview of the verification methods for algebraic effects and handlers implemented in RCaml and EffCaml is available in [these slides](https://www.riec.tohoku.ac.jp/~unno/slides/chocola2025.pdf), and a summary of techniques for relational verification using PCSat and MuCyc can be found in [these slides](https://www.riec.tohoku.ac.jp/~unno/slides/vmcai2024.pdf).
+
+
 ## Installation from source code
 
 * Install opam2 (see [the official webpage](https://opam.ocaml.org/doc/Install.html)).
