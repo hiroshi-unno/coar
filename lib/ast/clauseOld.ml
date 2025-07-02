@@ -8,15 +8,13 @@ type t = Logic.sort_env_map * Atom.t Set.Poly.t * Atom.t Set.Poly.t * Formula.t
 let pvs_of (_, ps, ns, _phi) = Set.union ps ns |> Set.concat_map ~f:Atom.pvs_of
 
 let simplify_with positive negative (c_pos, c_neg, c_pure) =
-  if
-    Set.is_empty (Set.inter positive c_pos)
-    && Set.is_empty (Set.inter negative c_neg)
-  then Some (Set.diff c_pos negative, Set.diff c_neg positive, c_pure)
+  if Set.disjoint c_pos positive && Set.disjoint c_neg negative then
+    Some (Set.diff c_pos negative, Set.diff c_neg positive, c_pure)
   else None
 
 let rec separate vs phis =
   let phis1, phis2 =
-    Set.partition_tf phis ~f:(fun (fvs, _) -> Set.is_empty @@ Set.inter fvs vs)
+    Set.partition_tf phis ~f:(fun (fvs, _) -> Set.disjoint fvs vs)
   in
   let dvs = Set.diff (Set.concat_map ~f:fst phis2) vs in
   if Set.is_empty dvs then (phis1, phis2)
@@ -30,9 +28,9 @@ let simplify unknowns is_valid (senv, pos, neg, phi) =
     Set.Poly.map (Formula.disjuncts_of phi) ~f:(fun phi ->
         (Formula.fvs_of phi, phi))
   in
-  if Set.is_empty (Set.inter pos neg) then
+  if Set.disjoint pos neg then
     let fvs_phi = Set.concat_map ~f:fst phis in
-    if Set.is_empty @@ Set.inter unknowns fvs_phi then
+    if Set.disjoint fvs_phi unknowns then
       let fvs_pos_neg = Set.concat_map (Set.union pos neg) ~f:Atom.fvs_of in
       let phis1, phis2 = separate fvs_pos_neg phis in
       if is_valid (Formula.or_of @@ Set.to_list (Set.Poly.map ~f:snd phis1))

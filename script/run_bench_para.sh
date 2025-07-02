@@ -63,9 +63,9 @@ run() {
                 [ "$result" = "MAYBE" ]; then
 
                 echo "$2,$result,$elapsed,$iterations"
-        elif [$1 -gt 0]; then
+        elif [ "$1" -gt 0 ]; then
                 echo "$2 Abort, restart!" 1>&2
-                run $(expr $1 - 1) $2
+                run $(( $1 - 1 )) "$2"
         else
                 echo "solved $2,$elapsed,abort" 1>&2
                 echo "$2,abort,$elapsed,$iterations"

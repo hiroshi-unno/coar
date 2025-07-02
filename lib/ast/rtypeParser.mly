@@ -6,15 +6,6 @@ open LogicOld
 open Grammar
 
 let print _ = ()
-
-(*let print_error_information () =
-  let st = Parsing.symbol_start_pos () in
-  let en = Parsing.symbol_end_pos () in
-  print_string ("File \"" ^ st.Lexing.pos_fname);
-  Format.printf "\", line %d" st.Lexing.pos_lnum;
-  Format.printf ", characters %d-%d:\n"
-    (st.Lexing.pos_cnum - st.Lexing.pos_bol)
-    (en.Lexing.pos_cnum - en.Lexing.pos_bol)*)
 %}
 
 //%token <string> UNKNOWN
@@ -353,7 +344,7 @@ atom_or_term:
 
 prop:
   | LPAREN prop RPAREN { $2 }
-  | atom { fun env -> Typeinf.typeinf_formula ~print @@ Formula.mk_atom ($1 env) }
+  | atom { fun env -> Typeinf.typeinf_formula ~print ~default:None @@ Formula.mk_atom ($1 env) }
   | NOT prop { fun env -> Formula.mk_neg ($2 env) }
   | prop AND prop { fun env -> Formula.mk_and ($1 env) ($3 env) }
   | prop OR prop { fun env -> Formula.mk_or ($1 env) ($3 env) }
@@ -555,7 +546,7 @@ assertions:
   | assertion assertions { $1 :: $2 }
   | EOF { [] }
   /*| error {
-    print_error_information ();
+    LexingHelper.print_error_information ();
     failwith "Syntax error"
   }*/
 assertion:

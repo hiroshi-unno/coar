@@ -135,7 +135,7 @@ struct
             temp_param_cnstrs,
             temp_param_senv,
             qualifiers ) =
-        FT.gen_template ~tag ~ucore:false
+        FT.gen_template ~tag ~ucore:None
           {
             depth = -1;
             params = FT.params_of ~tag;

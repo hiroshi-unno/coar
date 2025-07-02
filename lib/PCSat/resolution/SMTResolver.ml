@@ -1,6 +1,7 @@
 open Core
 open Common
 open Common.Ext
+open Common.Combinator
 open Ast
 open Ast.LogicOld
 open PCSatCommon
@@ -12,9 +13,11 @@ module Config = struct
     refute : bool;  (** try to refute existing positive/negative examples *)
     decide : bool;  (** try to decide undecided atoms *)
     acquire_und : bool;
-        (** try to acquire new positive/negative examples from undecided examples *)
+        (** try to acquire new positive/negative examples from undecided
+            examples *)
     acquire_org : bool;
-        (** try to acquire new positive/negative examples from original constraints *)
+        (** try to acquire new positive/negative examples from original
+            constraints *)
     unit_prop : bool;  (** perform unit propagation *)
     enforce_new : bool;
     parametric_examples : bool;
@@ -114,9 +117,7 @@ end = struct
            :: eqs
       in
       let fvs = Formula.term_sort_env_of phi in
-      let bvs =
-        Set.filter fvs ~f:(fun (x, _) -> not @@ Map.Poly.mem exi_senv x)
-      in
+      let bvs = Set.filter fvs ~f:(fst >> Map.Poly.mem exi_senv >> not) in
       let cond =
         Formula.exists (Set.to_list bvs)
           phi (* unbound variables are non-predicate function variables *)
@@ -134,21 +135,22 @@ end = struct
             let theta = Map.Poly.map theta ~f:(Term.subst sub) in
             Some
               (Map.Poly.merge sub theta ~f:(fun ~key:_x -> function
-                 | `Left v | `Right v -> Some v
-                 | `Both (v1, v2) ->
-                     if Stdlib.(v1 = v2) then Some v1
-                     else
-                       (*failwith (Ident.name_of_tvar x ^ ":" ^ LogicOld.Term.str_of v1 ^ ":" ^ LogicOld.Term.str_of v2)*)
-                       raise E))
+                | `Left v | `Right v -> Some v
+                | `Both (v1, v2) ->
+                    if Stdlib.(v1 = v2) then Some v1
+                    else
+                      (*failwith (Ident.name_of_tvar x ^ ":" ^ LogicOld.Term.str_of v1 ^ ":" ^ LogicOld.Term.str_of v2)*)
+                      raise E))
         | _ -> (*Debug.print @@ lazy "    no";*) None
-      else if Set.is_empty (Set.inter (Set.Poly.map ~f:fst bvs) params) then
+      else if Set.disjoint (Set.Poly.map ~f:fst bvs) params then
         (* with function variables and without parameters *)
         if Evaluator.is_valid (Z3Smt.Z3interface.is_valid ~id fenv) cond then
           (*let _ = Debug.print @@ lazy "    yes" in*) Some theta
         else (*let _ = Debug.print @@ lazy "    no" in*) None
       else None
-    with E -> (*Debug.print @@ lazy "    unification failed";*)
-              None
+    with E ->
+      (*Debug.print @@ lazy "    unification failed";*)
+      None
 
   let contradicts_assuming_pos ~dpos ~dneg fenv exi_senv cs (param_senv, atm) =
     let params =
@@ -446,7 +448,8 @@ end = struct
         ClauseGraph.hide_vertex vs.examples @@ ClauseGraph.mk_example ex);
     let new_examples =
       Set.diff new_examples old_examples
-      |> Set.Poly.map ~f:(fun ex -> (ex, [ (ClauseGraph.Dummy, false) ]))
+      |> Set.Poly.map ~f:(fun ex ->
+             (ex, Set.Poly.singleton (ClauseGraph.Dummy, false)))
       (*TODO: add sources of new_undecided *)
     in
     Ok (State.of_examples vs new_examples)

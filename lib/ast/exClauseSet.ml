@@ -116,12 +116,10 @@ let unit_propagation unknowns
           ~f:(ExClause.simplify unknowns pos_atms neg_atms)
           und
       in
-      if Set.exists und ~f:(fun (ex, _) -> ex |> ExClause.is_empty) then
+      if Set.exists und ~f:(fst >> ExClause.is_false) then
         `Unsat Set.Poly.empty (* ToDo: recover conflicting literals *)
       else
-        let ucs, nucs =
-          Set.partition_tf und ~f:(fun (ex, _) -> ExClause.is_unit ex)
-        in
+        let ucs, nucs = Set.partition_tf und ~f:(fst >> ExClause.is_unit) in
         if Set.is_empty ucs then `Result (pos, neg, und)
         else
           let pos', neg' =

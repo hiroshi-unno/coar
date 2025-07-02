@@ -1,7 +1,7 @@
 open Core
 open Common.Ext
+open Common.Util
 open Common.Combinator
-open Common.Util.LexingHelper
 open Ast
 open Ast.LogicOld
 open Problem
@@ -14,11 +14,11 @@ let typeinf_query ~print query =
   let args =
     List.map query.args
       ~f:
-        (Typeinf.typeinf_term ~print ~senv_opt:senv
+        (Typeinf.typeinf_term ~print ~default:None ~senv_opt:senv
            ~sort_opt:(Some T_real.SReal (*ToDo*)))
   in
   let bound =
-    Typeinf.typeinf_term ~print ~senv_opt:senv
+    Typeinf.typeinf_term ~print ~default:None ~senv_opt:senv
       ~sort_opt:(Some T_real.SReal (*ToDo*)) query.bound
   in
   { query with args; bound }
@@ -31,7 +31,7 @@ let typeinf ~print prob_muclp =
           {
             pred with
             body =
-              Typeinf.typeinf_term ~print ~instantiate_num_to_int:true
+              Typeinf.typeinf_term ~print ~default:(Some T_real.SReal (*ToDo*))
                 ~senv_opt:(Map.Poly.of_alist_exn pred.args)
                 pred.body;
           });
@@ -41,26 +41,34 @@ let typeinf ~print prob_muclp =
 let parse_from_lexbuf ~print lexbuf =
   try Ok (typeinf ~print @@ Parser.toplevel Lexer.main lexbuf) with
   | Parser.Error ->
-      print_endline @@ sprintf "%s: syntax error" (get_position_string lexbuf);
+      print_endline
+      @@ sprintf "%s: syntax error" (LexingHelper.get_position_string lexbuf);
       Result.fail
       @@ Error.of_string
-           (sprintf "%s: syntax error" (get_position_string lexbuf))
+           (sprintf "%s: syntax error"
+              (LexingHelper.get_position_string lexbuf))
   | Lexer.SyntaxError error ->
-      print_endline @@ sprintf "%s: syntax error" (get_position_string lexbuf);
+      print_endline
+      @@ sprintf "%s: syntax error" (LexingHelper.get_position_string lexbuf);
       Result.fail
       @@ Error.of_string
-           (sprintf "%s: syntax error: %s" (get_position_string lexbuf) error)
+           (sprintf "%s: syntax error: %s"
+              (LexingHelper.get_position_string lexbuf)
+              error)
 
 let parse_query_from_lexbuf ~print lexbuf =
   try Ok (typeinf_query ~print @@ Parser.query Lexer.main lexbuf) with
   | Parser.Error ->
       Result.fail
       @@ Error.of_string
-           (sprintf "%s: syntax error" (get_position_string lexbuf))
+           (sprintf "%s: syntax error"
+              (LexingHelper.get_position_string lexbuf))
   | Lexer.SyntaxError error ->
       Result.fail
       @@ Error.of_string
-           (sprintf "%s: syntax error: %s" (get_position_string lexbuf) error)
+           (sprintf "%s: syntax error: %s"
+              (LexingHelper.get_position_string lexbuf)
+              error)
 
 let from_file ~print =
   In_channel.create >> Lexing.from_channel >> parse_from_lexbuf ~print

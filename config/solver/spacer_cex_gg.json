@@ -4,6 +4,7 @@
         "timeout": null,
         "use_z3_native_mbp": true,
         "enable_global_guidance": true,
+        "enable_z3_validation": false,
         "check_validity": false,
         "conservative_check": true,
         "solve_again_if_invalid": true,

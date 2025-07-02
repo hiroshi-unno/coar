@@ -428,7 +428,10 @@ let divide pcsp =
       @@ Set.Poly.map cnf1 ~f:(fun c -> Cnf (Set.add cnf2 c, params))
 
 let merge_sols _pcsp sols =
-  let merge _s s' = s' (* ToDo *) in
+  let merge _s s' =
+    s'
+    (* ToDo *)
+  in
   let rec inner sol = function
     | [] -> Sat sol
     | Sat sol' :: sols -> inner (merge sol sol') sols
@@ -467,12 +470,12 @@ let instantiate_svars_to_int pcsp =
   map_old pcsp ~f:(fun (uni_senv, phi) ->
       (uni_senv, LogicOld.Formula.subst_sorts sub phi))
 
-let elim_ite pcsp =
-  map_old pcsp ~f:(fun (uni_senv, phi) ->
+let elim_ite =
+  map_old ~f:(fun (uni_senv, phi) ->
       (uni_senv, phi |> LogicOld.Formula.elim_ite |> Evaluator.simplify))
 
-let elim_ite_prob pcsp =
-  concat_map_old pcsp ~f:(fun (uni_senv, phi) ->
+let elim_ite_prob =
+  concat_map_old ~f:(fun (uni_senv, phi) ->
       phi |> LogicOld.Formula.to_atom
       |> LogicOld.Atom.elim_ite_prob (Normalizer.normalize >> Evaluator.simplify)
       |> Set.Poly.map ~f:(fun phi -> (uni_senv, phi)))
@@ -888,9 +891,10 @@ let make ?(skolem_pred = false) phis (envs : SMT.Problem.envs) =
     List.unzip
     @@ List.rev_map phis ~f:(fun phi ->
            let _, fsenv, phi =
-             LogicOld.Formula.(
-               skolemize ~use_fn_pred:skolem_pred ~only_impure:true
-               @@ nnf_of phi)
+             LogicOld.Formula.skolemize ~use_fn_pred:skolem_pred
+               ~only_impure:true
+             (*ToDo*) @@ LogicOld.Formula.aconv_tvar
+             @@ LogicOld.Formula.nnf_of phi
            in
            let fsenv = of_old_sort_env_map fsenv in
            let uni_senv =

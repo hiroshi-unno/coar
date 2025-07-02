@@ -1,3 +1,8 @@
+(rule
+ (with-stdout-to
+  version.ml
+  (echo "let version = \"%{version:CoAR}\"")))
+
 (executable
  (name main)
  (public_name main)
@@ -6,5 +11,3 @@
   (pps ppx_deriving.std))
  (flags
   (-cclib -lstdc++)))
-
-; (flags (-cclib -lstdc++ -cclib -lglpk -cclib -lgurobi)))

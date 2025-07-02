@@ -1,15 +1,6 @@
 %{
 open Ast
 
-let print_error_information () =
-  let st = Parsing.symbol_start_pos () in
-  let en = Parsing.symbol_end_pos () in
-  print_string ("File \"" ^ st.Lexing.pos_fname);
-  Format.printf "\", line %d" st.Lexing.pos_lnum;
-  Format.printf ", characters %d-%d:\n"
-    (st.Lexing.pos_cnum - st.Lexing.pos_bol)
-    (en.Lexing.pos_cnum - en.Lexing.pos_bol)
-
 let coerce_idx = ref 1
 %}
 
@@ -47,25 +38,16 @@ let coerce_idx = ref 1
 hors:
   BEGING rules ENDG tree_automata EOF
     { $2, $4 }
-| error
-    { print_error_information ();
-      raise (Failure "Syntax error") }
 
 hmtt:
   BEGING rules ENDG BEGINA tta_transitions ENDA BEGINT typedef ENDT EOF
     { $2, $5, $8 }
-| error
-    { print_error_information ();
-      raise (Failure "Syntax error") }
 
 tree_automata:
   BEGINA tta_transitions ENDA
     { Automata.TreeAutomaton.TTA (Automata.TTA.make $2) }
 | BEGINR ata_arities ENDR BEGINATA ata_transitions ENDATA
     { Automata.TreeAutomaton.ATA ($2, Automata.ATA.make $5) }
-| error
-    { print_error_information ();
-      raise (Failure "Syntax error") }
 
 rules:
   /* empty */

@@ -1,5 +1,6 @@
 open Core
 open Common.Ext
+open Common.Combinator
 open LogicOld
 
 let update_term_map ?(depth = 0) sort
@@ -10,9 +11,11 @@ let update_term_map ?(depth = 0) sort
     match sort with
     | T_array.SArray (si, se) ->
         let si_terms =
-          match Map.Poly.find term_map si with
-          | Some si_terms -> si_terms
-          | None -> Set.Poly.empty
+          Set.add
+            (match Map.Poly.find term_map si with
+            | Some si_terms -> si_terms
+            | None -> Set.Poly.empty)
+          @@ (Term.mk_dummy si (*ToDo*), [])
         in
         let se_terms =
           match Map.Poly.find term_map se with
@@ -46,12 +49,15 @@ let update_term_map ?(depth = 0) sort
 
 let qualifiers_of sort (terms : (Term.t * Formula.t list) Set.Poly.t) =
   if false then (
-    print_endline @@ sprintf "terms:%d" (Set.length terms);
+    print_endline @@ sprintf "terms: %d" (Set.length terms);
     Set.iter terms ~f:(fun t -> print_endline @@ Term.str_of @@ fst t));
+  if false then
+    assert (
+      T_array.is_sarray sort
+      && Set.for_all terms ~f:(fst >> Term.sort_of >> Stdlib.( = ) sort));
   match sort with
   | T_array.SArray _ ->
-      Set.Poly.of_list @@ Formula.eqs
-      @@ List.filter_map ~f:(fun (t, _) ->
-             if Term.is_var t then Some t else None)
-      @@ Set.to_list terms
+      Set.Poly.of_list @@ Formula.eqs @@ Set.to_list
+      @@ Set.Poly.filter_map terms ~f:(fun (t, _) ->
+             if Term.is_var t (*ToDo*) then Some t else None)
   | _ -> Set.Poly.empty

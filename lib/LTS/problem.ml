@@ -46,7 +46,7 @@ let subst = List.map2_exn ~f:(fun arg term -> Subst (arg, term))
 let commands_of_formula ~print args rel =
   let rel =
     let rel =
-      Typeinf.typeinf_formula ~print ~instantiate_num_to_int:true (*ToDo*) rel
+      Typeinf.typeinf_formula ~print ~default:(Some T_int.SInt (*ToDo*)) rel
     in
     if Formula.is_quantifier_free rel then rel
     else Z3Smt.Z3interface.qelim ~id:None ~fenv:(LogicOld.get_fenv ()) rel
@@ -54,7 +54,7 @@ let commands_of_formula ~print args rel =
   let args_set = Set.Poly.of_list @@ List.map ~f:fst args in
   let phis_cond, phis_rest =
     Set.partition_tf (Formula.conjuncts_of rel) ~f:(fun phi ->
-        Set.is_empty @@ Set.inter (Formula.fvs_of phi) args_set)
+        Set.disjoint (Formula.fvs_of phi) args_set)
   in
   let sub, phis_rest, phis_cond =
     let rec loop (sub, phis_rest, phis_cond) =
@@ -66,12 +66,12 @@ let commands_of_formula ~print args rel =
               if
                 Term.is_var t1
                 && Set.mem args_set (fst @@ fst @@ Term.let_var t1)
-                && (Set.is_empty @@ Set.inter (Term.fvs_of t2) args_set)
+                && Set.disjoint (Term.fvs_of t2) args_set
               then First (fst @@ Term.let_var t1, t2)
               else if
                 Term.is_var t2
                 && Set.mem args_set (fst @@ fst @@ Term.let_var t2)
-                && (Set.is_empty @@ Set.inter (Term.fvs_of t1) args_set)
+                && Set.disjoint (Term.fvs_of t1) args_set
               then First (fst @@ Term.let_var t2, t1)
               else Second phi
             with _ -> Second phi)
@@ -176,6 +176,7 @@ let rec subst_sorts_command map = function
 let subst_sorts_trans map (f, c, t) = (f, subst_sorts_command map c, t)
 
 let typeinf (s, types, e, c, trans) =
+  let bv_mode = not @@ List.is_empty types in
   let senv =
     Map.of_set_exn
     @@ Set.Poly.map
@@ -185,19 +186,19 @@ let typeinf (s, types, e, c, trans) =
            | None -> (x, Sort.mk_fresh_svar ())
            | Some s -> (x, s))
   in
-  let constrs =
-    snd
-    @@ List.fold trans ~init:(senv, Set.Poly.empty) ~f:(fun (senv, cs) tr ->
-           let senv, cs' = cgen_transition senv tr in
-           (senv, Set.union cs cs'))
+  let _, constrs =
+    List.fold trans ~init:(senv, Set.Poly.empty) ~f:(fun (senv, cs) tr ->
+        let senv, cs' = cgen_transition senv tr in
+        (senv, Set.union cs cs'))
   in
   let nums, map =
-    Typeinf.solve
-      ~print:(fun s -> if print_log then print_endline (force s) else ())
-      constrs
+    Typeinf.solve constrs ~print:(fun s ->
+        if print_log then print_endline (force s) else ())
   in
   let map =
-    Typeinf.elim_nums ~to_sus:false ~instantiate_num_to_int:true nums map
+    Typeinf.elim_nums ~to_sus:false
+      ~default:(Some (if bv_mode then T_bv.SBV None else T_int.SInt))
+      nums map
   in
   (s, types, e, c, List.map trans ~f:(subst_sorts_trans map))
 

@@ -1,5 +1,4 @@
 {
-  open Common.Util
   open T2Parser
 
   exception SyntaxError of string
@@ -103,7 +102,7 @@ rule token = parse
 | '(' { LPAREN }
 | ')' { RPAREN }
 | space { token lexbuf }
-| newline | "//" [^'\n']* newline { LexingHelper.update_loc lexbuf; token lexbuf }
+| newline | "//" [^'\n']* newline { Lexing.new_line lexbuf; token lexbuf }
 
 | '+' { PLUS }
 | '-' { MINUS }

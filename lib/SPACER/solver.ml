@@ -45,14 +45,21 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
       config.use_z3_native_mbp;
     if config.enable_global_guidance then
       Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "spacer.global") true
-    else
-      (*Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "spacer.gg.concretize") false;
-        Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "spacer.gg.conjecture") false;
-        Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "spacer.gg.subsume") false;
-        Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "spacer.global") false;*)
-      ();
+    else if true then ()
+    else (
+      Z3.Params.add_bool params
+        (Z3.Symbol.mk_string ctx "spacer.gg.concretize")
+        false;
+      Z3.Params.add_bool params
+        (Z3.Symbol.mk_string ctx "spacer.gg.conjecture")
+        false;
+      Z3.Params.add_bool params
+        (Z3.Symbol.mk_string ctx "spacer.gg.subsume")
+        false;
+      Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "spacer.global") false);
     (*Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "xform.elim_term_ite") true;*)
-    (*Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "validate") true;*)
+    if config.enable_z3_validation then
+      Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "validate") true;
     (*Z3.Params.add_bool params (Z3.Symbol.mk_string ctx "print_fixedpoint_extensions") false;*)
     Z3.Fixedpoint.set_parameters solver params;
     solver
@@ -326,8 +333,14 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
                                      (Logic.of_old_sort_env_list params)
                                      (Logic.ExtTerm.of_old_formula body) )
                              with _ ->
-                               failwith @@ "cannot get a solution from Spacer: "
-                               ^ Formula.str_of phi)
+                               let err =
+                                 "cannot get a solution from Spacer: "
+                                 ^ Formula.str_of phi
+                               in
+                               if true then (
+                                 Debug.print @@ lazy err;
+                                 None)
+                               else failwith err)
                   in
                   let sol =
                     Map.force_merge sol

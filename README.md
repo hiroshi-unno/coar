@@ -76,7 +76,96 @@ sudo docker build -t coar .
 
 ## Usage
 
-### Predicate Constraint Satisfiability Checking (CHC, $`\forall\exists`$CHC, pCSP, and pfwnCSP)
+### Verification of OCaml Programs via Refinement Type Inference using RCaml
+
+#### Safety Verification
+##### with PCSat
+
+```bash
+./_build/default/main.exe -c ./config/solver/dbg_rcaml_pcsat_tbq_ar.json -p ml ./benchmarks/OCaml/safety/simple/sum.ml
+```
+
+##### with Spacer
+
+```bash
+./_build/default/main.exe -c ./config/solver/dbg_rcaml_spacer.json -p ml ./benchmarks/OCaml/safety/simple/sum.ml
+```
+
+#### Temporal Verification (only for constraint generation)
+
+```bash
+./_build/default/main.exe -c ./config/solver/dbg_rcaml_temp_eff_pcsat_tbq_ar.json -p ml ./benchmarks/OCaml/temporal/sum_term.ml
+```
+
+### Verification of OCaml Programs via Higher-Order Model Checking using EffCaml
+
+Build `horsat2` and place it in the current directory.
+
+```bash
+./_build/default/main.exe -c ./config/solver/dbg_effcaml.json -p ml ./benchmarks/OCaml/oopsla24/mutable_set_not_b_false_UNSAT.ml
+```
+
+### Verification of C Programs via Fixpoint Logic Validity Checking using MuVal
+#### LTL Verification
+
+Build `ltl3ba` and place it in the current directory.
+
+```bash
+./_build/default/main.exe -c ./config/solver/dbg_muval_parallel_exc_tbq_ar.json -p cltl ./benchmarks/C/cav2015ltl/coolant/coolant_basis_1_safe_sfty.c
+```
+
+Please download and use the benchmark set of [Ultimate LTL Automizer](https://ultimate.informatik.uni-freiburg.de/downloads/ltlautomizer/).
+
+#### CTL Verification
+
+```bash
+./_build/default/main.exe -c ./config/solver/dbg_muval_parallel_exc_tbq_ar.json -p cctl ./benchmarks/C/pldi2013ctl/industrial/1-acqrel-AGimpAF-succeed.c
+```
+
+Please obtain and use the benchmark set from the following paper:
+* Byron Cook and Eric Koskinen. Reasoning about nondeterminism in programs. PLDI 2013.
+
+### Verification of Labeled Transition Systems via Fixpoint Logic Validity Checking using MuVal
+#### Termination Verification
+
+```bash
+./_build/default/main.exe -c ./config/solver/dbg_muval_parallel_exc_tbq_ar.json -p ltsterm ./benchmarks/LTS/simple/test.t2
+```
+
+#### Non-Termination Verification
+
+```bash
+./_build/default/main.exe -c ./config/solver/dbg_muval_parallel_exc_tbq_ar.json -p ltsnterm ./benchmarks/LTS/simple/test.t2
+```
+
+#### Interactive Conditional (Non-)Termination Verification
+
+```bash
+./_build/default/main.exe -c ./config/solver/muval_prove_tbq_ar.json -p ltsterminter ./benchmarks/LTS/simple/prog2.t2
+```
+
+The following interaction example demonstrates conditional termination analysis, which proves that the program [prog2.c](benchmarks/LTS/simple/prog2.c) terminates when the initial value of the variable `x` is 9 or less, and diverges otherwise.
+
+```
+timeout in sec: 10
+action (primal/dual/unknown/pos/neg/end): primal
+v0 <= 8 /\ v0 >= 2
+action (primal/dual/unknown/pos/neg/end): primal
+1 > v0 \/ v0 <= 8 /\ v0 >= 2
+action (primal/dual/unknown/pos/neg/end): primal
+v0 <= 9 /\ v0 > 8 \/ 1 > v0 \/ v0 <= 8 /\ v0 >= 2
+action (primal/dual/unknown/pos/neg/end): dual
+v0 mod 2 != 0 /\ v0 >= 10
+action (primal/dual/unknown/pos/neg/end): dual
+v0 >= 10
+action (primal/dual/unknown/pos/neg/end): primal
+v0 <= 9
+maximality is guaranteed
+```
+
+Here, the `primal` (resp. `dual`) action lets MuVal infer a precondition under which the program terminates (resp. diverges), but note that MuVal does not necessarily return the *weakest* precondition. By repeating sets of `primal` and `dual` actions, it is finally proved that the program terminates if and only if the initial value of the variable `x` is 9 or less.
+
+### Predicate Constraint Satisfiability Checking (CHC, $`\forall\exists`$CHC, pCSP, and pfwnCSP) using PCSat
 
 ```bash
 ./_build/default/main.exe -c ./config/solver/dbg_pcsat_tbq_ar.json -p pcsp ./benchmarks/CHC/simple/sum.smt2
@@ -88,52 +177,26 @@ sudo docker build -t coar .
 ./_build/default/main.exe -c ./config/solver/dbg_pcsat_tbq_ar.json -p pcsp ./benchmarks/pfwnCSP/simple/max.clp
 ```
 
-### Syntax Guided Synthesis (INV and CLIA)
+### Syntax Guided Synthesis (INV and CLIA) using PCSat
 
 ```bash
 git submodule update --init benchmarks/sygus-comp/
 ./_build/default/main.exe -c ./config/solver/dbg_pcsat_tbq_ar.json -p sygus ./benchmarks/sygus-comp/comp/2017/CLIA_Track/fg_max2.sl
 ```
 
-### Regular Expression Synthesis
+### Regular Expression Synthesis using PCSat
 
 ```bash
 ./_build/default/main.exe -c ./config/solver/dbg_pcsat_tbq_ar.json -p pcsp ./benchmarks/SyGuS/regex/ex1.smt2
 ```
 
-### CHC Satisfiability Checking via Cyclic-Proof Search and Proof Refinement
-
-#### `Ind(Ret(F, MBP(0)))` Configuration
+### CHC Maximization using OptPCSat
 
 ```bash
-./_build/default/main.exe -c ./config/solver/mucyc_returnF_mbp0_indNF.json -p pcsp ./benchmarks/CHC/simple/sum.smt2
+./_build/default/main.exe -c ./config/solver/dbg_optpcsat_nc_tbq_ar.json -p chcmax ./benchmarks/CHC/popl2023opt/test2.smt2
 ```
 
-#### `Ind(Yld(T, MBP(1)))` Configuration
-
-```bash
-./_build/default/main.exe -c ./config/solver/mucyc_yieldTT_mbp1_indNF.json -p pcsp ./benchmarks/CHC/simple/sum.smt2
-```
-
-#### `Ret(F, MBP(0))` Configuration
-
-```bash
-./_build/default/main.exe -c ./config/solver/mucyc_returnF_mbp0.json -p pcsp ./benchmarks/CHC/simple/sum.smt2
-```
-
-#### `Yld(T, MBP(1))` Configuration
-
-```bash
-./_build/default/main.exe -c ./config/solver/mucyc_yieldTT_mbp1.json -p pcsp ./benchmarks/CHC/simple/sum.smt2
-```
-
-#### `Solve` Configuration
-
-```bash
-./_build/default/main.exe -c ./config/solver/mucyc.json -p pcsp ./benchmarks/CHC/simple/sum.smt2
-```
-
-### Fixpoint Logic Validity Checking (muArith and $`\mu`$CLP)
+### Fixpoint Logic Validity Checking (muArith and $`\mu`$CLP) using MuVal
 
 #### Primal
 
@@ -198,17 +261,43 @@ maximality is guaranteed
 
 Here, the `dual` action lets MuVal infer a precondition under which the query does not hold, but note that MuVal does not necessarily return the *weakest* precondition. Before performing the `dual` action, hints about an input range that should be included in the weakest precondition are provided through the `pos` action. By repeating sets of `pos` and `dual` actions, it is finally proved that there is no input that satisfies the given $`\mu`$CLP query.
 
-### Probabilistic Fixpoint Logic Validity Checking
+### Probabilistic Fixpoint Logic Validity Checking using MuVal
 
 Build `PolyQEnt` and place it to run as `./polyqent/PolyQEnt`.
 ```bash
 ./_build/default/main.exe -c ./config/solver/dbg_muval_prob_polyqent_deg3.json -p prob-muclp ./benchmarks/muCLP/probabilistic/ert_random_walk_2nd_lb.phes
 ```
 
-### CHC Maximization
+### CHC Satisfiability Checking via Cyclic-Proof Search and Proof Refinement using MuCyc
+
+#### `Ind(Ret(F, MBP(0)))` Configuration
 
 ```bash
-./_build/default/main.exe -c ./config/solver/dbg_optpcsat_nc_tbq_ar.json -p chcmax ./benchmarks/CHC/popl2023opt/test2.smt2
+./_build/default/main.exe -c ./config/solver/mucyc_returnF_mbp0_indNF.json -p pcsp ./benchmarks/CHC/simple/sum.smt2
+```
+
+#### `Ind(Yld(T, MBP(1)))` Configuration
+
+```bash
+./_build/default/main.exe -c ./config/solver/mucyc_yieldTT_mbp1_indNF.json -p pcsp ./benchmarks/CHC/simple/sum.smt2
+```
+
+#### `Ret(F, MBP(0))` Configuration
+
+```bash
+./_build/default/main.exe -c ./config/solver/mucyc_returnF_mbp0.json -p pcsp ./benchmarks/CHC/simple/sum.smt2
+```
+
+#### `Yld(T, MBP(1))` Configuration
+
+```bash
+./_build/default/main.exe -c ./config/solver/mucyc_yieldTT_mbp1.json -p pcsp ./benchmarks/CHC/simple/sum.smt2
+```
+
+#### `Solve` Configuration
+
+```bash
+./_build/default/main.exe -c ./config/solver/mucyc.json -p pcsp ./benchmarks/CHC/simple/sum.smt2
 ```
 
 ### Boolean Satisfiability Checking (SAT, QSAT, DQSAT, and HOSAT) using HOMCSat
@@ -226,93 +315,6 @@ Build `horsat2` and place it in the current directory.
 ```
 ```bash
 ./_build/default/main.exe -c ./config/solver/dbg_homcsat.json -p hosat ./benchmarks/HOSAT/AAAI2025/cps-arity1_ord3.hosat
-```
-
-### Verification of OCaml Programs via Refinement Type Inference using RCaml
-
-#### Safety Verification
-##### with PCSat
-
-```bash
-./_build/default/main.exe -c ./config/solver/dbg_rcaml_pcsat_tbq_ar.json -p ml ./benchmarks/OCaml/safety/simple/sum.ml
-```
-
-##### with Spacer
-
-```bash
-./_build/default/main.exe -c ./config/solver/dbg_rcaml_spacer.json -p ml ./benchmarks/OCaml/safety/simple/sum.ml
-```
-
-#### Temporal Verification (only for constraint generation)
-
-```bash
-./_build/default/main.exe -c ./config/solver/dbg_rcaml_temp_eff_pcsat_tbq_ar.json -p ml ./benchmarks/OCaml/temporal/sum_term.ml
-```
-
-### Verification of OCaml Programs via Higher-Order Model Checking using EffCaml
-
-Build `horsat2` and place it in the current directory.
-
-```bash
-./_build/default/main.exe -c ./config/solver/dbg_effcaml.json -p ml ./benchmarks/OCaml/oopsla24/mutable_set_not_b_false_UNSAT.ml
-```
-
-### Verification of C Programs
-#### LTL Verification
-
-Build `ltl3ba` and place it in the current directory.
-
-```bash
-./_build/default/main.exe -c ./config/solver/dbg_muval_parallel_exc_tbq_ar.json -p cltl ./benchmarks/C/cav2015ltl/coolant/coolant_basis_1_safe_sfty.c
-```
-
-Please download and use the benchmark set of [Ultimate LTL Automizer](https://ultimate.informatik.uni-freiburg.de/downloads/ltlautomizer/).
-
-#### CTL Verification
-
-```bash
-./_build/default/main.exe -c ./config/solver/dbg_muval_parallel_exc_tbq_ar.json -p cctl ./benchmarks/C/pldi2013ctl/industrial/1-acqrel-AGimpAF-succeed.c
-```
-
-Please obtain and use the benchmark set from the following paper:
-* Byron Cook and Eric Koskinen. Reasoning about nondeterminism in programs. PLDI 2013.
-
-### Verification of Labeled Transition Systems
-#### Termination Verification
-
-```bash
-./_build/default/main.exe -c ./config/solver/dbg_muval_parallel_exc_tbq_ar.json -p ltsterm ./benchmarks/LTS/simple/test.t2
-```
-
-#### Non-Termination Verification
-
-```bash
-./_build/default/main.exe -c ./config/solver/dbg_muval_parallel_exc_tbq_ar.json -p ltsnterm ./benchmarks/LTS/simple/test.t2
-```
-
-#### Interactive Conditional (Non-)Termination Verification
-
-```bash
-./_build/default/main.exe -c ./config/solver/muval_prove_tbq_ar.json -p ltsterminter ./benchmarks/LTS/simple/prog2.t2
-```
-
-The following interaction example demonstrates conditional termination analysis, which proves that the program [prog2.c](benchmarks/LTS/simple/prog2.c) terminates when the initial value of the variable `x` is 9 or less, and diverges otherwise.
-
-```
-timeout in sec: 10
-action (primal/dual/unknown/pos/neg/end): primal
-v0 <= 8 /\ v0 >= 2
-action (primal/dual/unknown/pos/neg/end): primal
-1 > v0 \/ v0 <= 8 /\ v0 >= 2
-action (primal/dual/unknown/pos/neg/end): primal
-v0 <= 9 /\ v0 > 8 \/ 1 > v0 \/ v0 <= 8 /\ v0 >= 2
-action (primal/dual/unknown/pos/neg/end): dual
-v0 mod 2 != 0 /\ v0 >= 10
-action (primal/dual/unknown/pos/neg/end): dual
-v0 >= 10
-action (primal/dual/unknown/pos/neg/end): primal
-v0 <= 9
-maximality is guaranteed
 ```
 
 ## References
@@ -343,7 +345,7 @@ maximality is guaranteed
 
 1. Taro Sekiyama and Hiroshi Unno. Higher-Order Model Checking of Effect-Handling Programs with Answer-Type Modification. OOPSLA 2024.
 
-### MuVal & PCSat
+### MuVal & PCSat & OptPCSat
 
 1. Hiroshi Unno, Tachio Terauchi, Yu Gu, and Eric Koskinen. Modular Primal-Dual Fixpoint Logic Solving for Temporal Verification. POPL 2023.
 
@@ -354,7 +356,6 @@ maximality is guaranteed
 1. Satoshi Kura, Hiroshi Unno, and Ichiro Hasuo. Decision Tree Learning in CEGIS-Based Termination Analysis. CAV 2021.
 
 1. Yuki Satake, Hiroshi Unno, and Hinata Yanagi. Probabilistic Inference for Predicate Constraint Satisfaction. AAAI 2020.
-
 
 ### MuCyc
 

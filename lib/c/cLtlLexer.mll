@@ -1,7 +1,4 @@
 {
-  open Core
-  open Lexing
-  open Common.Util.LexingHelper
   open Ast.LogicOld
 
   exception SyntaxError of string
@@ -11,15 +8,16 @@
 }
 
 rule main = parse
- "//@"" "*"ltl invariant positive:" { CLtlParser.LTLDECLARE }
+ "//@" " "* "ltl invariant " (['a'-'z''A'-'Z''_']['a'-'z''A'-'Z''0'-'9'''''_']* as label) ":"
+    { CLtlParser.LTLDECLARE label }
   (* ignore spacing and newline characters *)
 | [' ' '\009' '\012' '\r']+ { main lexbuf }
 | "//"'\n'
-| '\n' { update_loc lexbuf; main lexbuf }
+| '\n' { Lexing.new_line lexbuf; main lexbuf }
 (* Safe/Unsafe *)
 | "//"[^'@''\n'][^'\n']* { main lexbuf }
 (* comments *)
-| "/*" { comment (lexeme_start_p lexbuf) lexbuf; main lexbuf }
+| "/*" { comment (Lexing.lexeme_start_p lexbuf) lexbuf; main lexbuf }
 (* string *)
 | '"'[^'"']*'"'
     {
@@ -31,9 +29,9 @@ rule main = parse
 | "<>" { CLtlParser.DIAMOND }
 | "[]" { CLtlParser.BOX }
 | "AP" { CLtlParser.AP }
-| "_X" { CLtlParser.X }
+| "X" { CLtlParser.X }
 | "U" { CLtlParser.U }
-| "_R" { CLtlParser.R }
+| "R" { CLtlParser.R }
 | "WU" { CLtlParser.WU }
 | "==>" { CLtlParser.IMPLY }
 
@@ -96,7 +94,8 @@ rule main = parse
 | "main" { CLtlParser.MAIN }
 
 (* non-deterministic *)
-| "__VERIFIER_nondet_int" { CLtlParser.NONDET }
+| "__VERIFIER_nondet_int" { CLtlParser.NONDET_INT }
+| "__VERIFIER_nondet_bool" { CLtlParser.NONDET_BOOL }
 
 | ['a'-'z''A'-'Z''_']['a'-'z''A'-'Z''0'-'9'''''_']*
     {
@@ -137,13 +136,13 @@ rule main = parse
 
 and comment openingpos = parse
 | '\n'
-    { update_loc lexbuf; comment openingpos lexbuf }
+    { Lexing.new_line lexbuf; comment openingpos lexbuf }
 | "*/"
     { () }
 | eof {
     raise
       (ErrorFormatted
-        (sprintf
+        (Core.sprintf
           "%d:%d:syntax error: unterminated comment."
           openingpos.pos_lnum (openingpos.pos_cnum - openingpos.pos_bol + 1)
         )
@@ -155,9 +154,10 @@ and include_file openingpos = parse
 | '<' [^'>']+ '>' { () }
 | '"' [^'"']+ '"' { () }
 | eof {
+    let open Lexing in
     raise
       (ErrorFormatted
-        (sprintf
+        (Core.sprintf
           "%d:%d:syntax error: unterminated include."
           openingpos.pos_lnum (openingpos.pos_cnum - openingpos.pos_bol + 1)
         )

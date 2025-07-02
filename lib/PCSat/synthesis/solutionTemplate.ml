@@ -453,7 +453,7 @@ module Make
     let fvs = Set.Poly.union_list @@ List.map ~f:LogicOld.Term.tvs_of args in
     let fenv = Map.Poly.empty in
     (*TODO: generate fenv*)
-    if Set.is_empty @@ Set.inter fvs unknowns then (
+    if Set.disjoint fvs unknowns then (
       let phi =
         let sub =
           try
@@ -481,7 +481,7 @@ module Make
     else (*never use*) Logic.ExtTerm.(eq_of SInt (mk_var key) (zero ()))
 
   let eval_qual tt fenv qdeps polarity unknowns atom (key, (qi, _params, phi)) =
-    if Set.is_empty @@ Set.inter (ExAtom.tvs_of atom) unknowns then (
+    if Set.disjoint (ExAtom.tvs_of atom) unknowns then (
       (*Debug.print @@ lazy "before";*)
       let atom = ExAtom.normalize_params atom in
       (*Debug.print @@ lazy "mid";*)
@@ -742,7 +742,19 @@ module Make
   let ref_templates =
     ref (Map.Poly.empty, Map.Poly.empty, Map.Poly.empty, Map.Poly.empty)
 
-  let ref_templates_ucore =
+  let ref_templates_ucore1 =
+    ref (Map.Poly.empty, Map.Poly.empty, Map.Poly.empty, Map.Poly.empty)
+
+  let ref_templates_ucore2 =
+    ref (Map.Poly.empty, Map.Poly.empty, Map.Poly.empty, Map.Poly.empty)
+
+  let ref_templates_ucore3 =
+    ref (Map.Poly.empty, Map.Poly.empty, Map.Poly.empty, Map.Poly.empty)
+
+  let ref_templates_ucore4 =
+    ref (Map.Poly.empty, Map.Poly.empty, Map.Poly.empty, Map.Poly.empty)
+
+  let ref_templates_ucore5 =
     ref (Map.Poly.empty, Map.Poly.empty, Map.Poly.empty, Map.Poly.empty)
 
   let init_incr () =
@@ -751,13 +763,19 @@ module Make
     ref_key_tvar_update_list_map := Map.Poly.empty;
     ref_key_clause_map := Map.Poly.empty;
     prev_sample := Set.Poly.empty
-  (*let initialize () =
+  (*
+  let initialize () =
     (* for SMT Solver *)
     reset_all_smt_instances ();
     init_incr ();
     (* for incremental solving *)
     ref_templates := Map.Poly.empty, Map.Poly.empty, Map.Poly.empty, Map.Poly.empty;
-    ref_templates_ucore := Map.Poly.empty, Map.Poly.empty, Map.Poly.empty, Map.Poly.empty*)
+    ref_templates_ucore1 := Map.Poly.empty, Map.Poly.empty, Map.Poly.empty, Map.Poly.empty;
+    ref_templates_ucore2 := Map.Poly.empty, Map.Poly.empty, Map.Poly.empty, Map.Poly.empty;
+    ref_templates_ucore3 := Map.Poly.empty, Map.Poly.empty, Map.Poly.empty, Map.Poly.empty;
+    ref_templates_ucore4 := Map.Poly.empty, Map.Poly.empty, Map.Poly.empty, Map.Poly.empty
+    ref_templates_ucore5 := Map.Poly.empty, Map.Poly.empty, Map.Poly.empty, Map.Poly.empty
+    *)
 
   (* let sel_env = ref Map.Poly.empty *)
 
@@ -1082,7 +1100,14 @@ module Make
                   (String.concat_map_set ~sep:"\n" ~f:Formula.str_of quals));
         let terms =
           match Map.Poly.find extracted_terms pvar with
-          | Some (_, terms) -> terms
+          | Some (_, terms) ->
+              if true then
+                Debug.print
+                @@ lazy
+                     (sprintf "adding terms for %s:\n%s\n"
+                        (Ident.name_of_tvar key)
+                        (String.concat_map_set ~sep:"\n" ~f:Term.str_of terms));
+              terms
           | None -> Set.Poly.empty
         in
         (ref quals, ref terms))
@@ -1272,10 +1297,31 @@ module Make
         update_hspaces vs;
         ignore @@ reduce_quals_terms vs;
         Debug.print @@ lazy "**** for non-ucore";
-        ref_templates := initialize_templates ~ucore:false vs;
+        ref_templates := initialize_templates ~ucore:None vs;
         if config.learn_quals_from_ucores then (
-          Debug.print @@ lazy "**** for ucore";
-          ref_templates_ucore := initialize_templates ~ucore:true vs);
+          Debug.print @@ lazy "**** for ucore1";
+          ref_templates_ucore1 :=
+            initialize_templates ~ucore:(Some ([ 1 ], false, false)) vs;
+          Debug.print @@ lazy "**** for ucore2";
+          ref_templates_ucore2 :=
+            initialize_templates
+              ~ucore:(Some ([ 1; 1; 1; 1; 1; 1; 1; 1 ] (*ToDo*), false, true))
+              vs;
+          Debug.print @@ lazy "**** for ucore3";
+          ref_templates_ucore3 :=
+            initialize_templates
+              ~ucore:(Some ([ 1; 1 ] (*ToDo*), false, false))
+              vs;
+          Debug.print @@ lazy "**** for ucore4";
+          ref_templates_ucore4 :=
+            initialize_templates
+              ~ucore:(Some ([ 2; 2 ] (*ToDo*), false, false))
+              vs;
+          Debug.print @@ lazy "**** for ucore5";
+          ref_templates_ucore5 :=
+            initialize_templates
+              ~ucore:(Some ([ 1; 1; 1; 1; 1; 1; 1; 1 ] (*ToDo*), false, false))
+              vs);
         Debug.print @@ lazy "templates generated";
         reset_all_smt_instances ();
         Debug.print @@ lazy "solver initialized");
@@ -1327,19 +1373,22 @@ module Make
                 prev_sample := Set.Poly.union_list [ diff_sample; !prev_sample ];
                 let part_cands = partial_candidates_of diff_sample vs in
                 Cands (cand, part_cands)
-            | UnsatCore (ucores, pvar_labels_map) ->
+            | UnsatCore (ucores0, pvar_labels_map0) ->
                 init_incr ();
                 let quals_changed, pvar_labels_map =
                   if
                     config.learn_quals_from_ucores
-                    && (not @@ Set.is_empty ucores)
+                    && (not @@ Set.is_empty ucores0)
                   then (
                     reset_smt_instance ucore_smt_instance;
                     match
-                      find_candidate ucore_smt_instance ucores vs
-                        !ref_templates_ucore
+                      find_candidate ucore_smt_instance ucores0 vs
+                        !ref_templates_ucore1
                     with
                     | Candidate cand ->
+                        Debug.print
+                        @@ lazy "*** qualifiers learned from unsat core";
+                        let changed = ref false in
                         Map.Poly.iteri template_modules
                           ~f:(fun ~key ~data:(module FT) ->
                             let ref_quals, _ref_terms =
@@ -1357,44 +1406,426 @@ module Make
                                         Logic.of_old_sort_env_map
                                         @@ Map.Poly.of_alist_exn params
                                       in
-                                      Logic.ExtTerm.to_old_formula
-                                        Map.Poly.empty uni_senv
-                                        t (*ToDo: t may have non-boolean type*)
+                                      Normalizer.normalize @@ Evaluator.simplify
+                                      @@ Logic.ExtTerm.to_old_formula
+                                           Map.Poly.empty uni_senv t
+                                         (*ToDo: t may have non-boolean type*)
                                       @@ List.map params
                                            ~f:(fst >> Logic.ExtTerm.mk_var)
                                     in
-                                    let pos, neg = Formula.atoms_of phi in
-                                    let pos =
-                                      Set.Poly.map ~f:Formula.mk_atom pos
-                                    in
-                                    let neg =
-                                      Set.Poly.map ~f:Formula.mk_atom neg
+                                    let quals =
+                                      let pos, neg = Formula.atoms_of phi in
+                                      let pos =
+                                        Set.Poly.map ~f:Formula.mk_atom pos
+                                      in
+                                      let neg =
+                                        Set.Poly.map ~f:Formula.mk_atom neg
+                                      in
+                                      Set.union pos neg
                                     in
                                     let tag =
                                       PCSP.Problem.tag_of APCSP.problem key
                                     in
-                                    Set.union pos neg
+                                    quals
                                     |> Set.Poly.map ~f:(fun q ->
                                            (FT.params_of ~tag, q))
                                     |> QualifierGenerator.elim_neg
                                     |> Set.Poly.map ~f:snd
                                   with _ -> Set.Poly.empty
                                 in
-                                if true then
+                                Debug.print
+                                @@ lazy
+                                     (sprintf "adding qualifiers for %s:\n%s\n"
+                                        (Ident.name_of_tvar key)
+                                        (String.concat_map_set ~sep:"\n"
+                                           ~f:Formula.str_of new_quals));
+                                let new_quals = Set.diff new_quals !ref_quals in
+                                if Set.is_empty new_quals then
                                   Debug.print
-                                  @@ lazy
-                                       (sprintf
-                                          "adding qualifiers for %s:\n%s\n"
-                                          (Ident.name_of_tvar key)
-                                          (String.concat_map_set ~sep:"\n"
-                                             ~f:Formula.str_of new_quals));
-                                (*print_endline @@ Formula.str_of phi;*)
-                                ref_quals := Set.union !ref_quals new_quals);
-                        (true, Map.Poly.empty)
-                    | UnsatCore (_, pvar_labels_map') ->
-                        (* ToDo: pvar_labels_map is ignored *)
-                        (false, pvar_labels_map'))
-                  else (false, pvar_labels_map)
+                                  @@ lazy (sprintf "no new qualifier learned\n")
+                                else (
+                                  changed := true;
+                                  ref_quals := Set.union !ref_quals new_quals));
+                        if !changed then (true, Map.Poly.empty)
+                        else (* ToDo: reachable? *) (false, pvar_labels_map0)
+                    | UnsatCore (_ucores1, pvar_labels_map1) -> (
+                        reset_smt_instance ucore_smt_instance;
+                        match
+                          find_candidate ucore_smt_instance ucores0 vs
+                            !ref_templates_ucore2
+                        with
+                        | Candidate cand ->
+                            Debug.print
+                            @@ lazy "*** qualifiers learned from unsat core";
+                            let changed = ref false in
+                            Map.Poly.iteri template_modules
+                              ~f:(fun ~key ~data:(module FT) ->
+                                let ref_quals, _ref_terms =
+                                  Map.Poly.find_exn quals_terms_map key
+                                in
+                                let tag =
+                                  PCSP.Problem.tag_of APCSP.problem key
+                                in
+                                match Map.Poly.find cand key with
+                                | None -> ()
+                                | Some (_s, t) ->
+                                    let new_quals =
+                                      try
+                                        let phi =
+                                          let params = FT.params_of ~tag in
+                                          let uni_senv =
+                                            Logic.of_old_sort_env_map
+                                            @@ Map.Poly.of_alist_exn params
+                                          in
+                                          Normalizer.normalize
+                                          @@ Evaluator.simplify
+                                          @@ Logic.ExtTerm.to_old_formula
+                                               Map.Poly.empty uni_senv t
+                                             (*ToDo: t may have non-boolean type*)
+                                          @@ List.map params
+                                               ~f:(fst >> Logic.ExtTerm.mk_var)
+                                        in
+                                        let quals =
+                                          if true then
+                                            (* disjunctive qualifier is added to ensure progress *)
+                                            Set.Poly.singleton phi
+                                          else
+                                            let pos, neg =
+                                              Formula.atoms_of phi
+                                            in
+                                            let pos =
+                                              Set.Poly.map ~f:Formula.mk_atom
+                                                pos
+                                            in
+                                            let neg =
+                                              Set.Poly.map ~f:Formula.mk_atom
+                                                neg
+                                            in
+                                            Set.union pos neg
+                                        in
+                                        let tag =
+                                          PCSP.Problem.tag_of APCSP.problem key
+                                        in
+                                        Set.Poly.map quals ~f:(fun q ->
+                                            (FT.params_of ~tag, q))
+                                        |> QualifierGenerator.elim_neg
+                                        |> Set.Poly.map ~f:snd
+                                      with _ -> Set.Poly.empty
+                                    in
+                                    Debug.print
+                                    @@ lazy
+                                         (sprintf
+                                            "adding qualifiers for %s:\n%s\n"
+                                            (Ident.name_of_tvar key)
+                                            (String.concat_map_set ~sep:"\n"
+                                               ~f:Formula.str_of new_quals));
+                                    let new_quals =
+                                      Set.diff new_quals !ref_quals
+                                    in
+                                    if Set.is_empty new_quals then
+                                      Debug.print
+                                      @@ lazy
+                                           (sprintf "no new qualifier learned\n")
+                                    else (
+                                      changed := true;
+                                      ref_quals :=
+                                        Set.union !ref_quals new_quals));
+                            if !changed then (true, Map.Poly.empty)
+                            else (* ToDo: reachable? *) (false, pvar_labels_map1)
+                        | UnsatCore (_ucores2, pvar_labels_map2) -> (
+                            reset_smt_instance ucore_smt_instance;
+                            match
+                              find_candidate ucore_smt_instance ucores0 vs
+                                !ref_templates_ucore3
+                            with
+                            | Candidate cand ->
+                                Debug.print
+                                @@ lazy "*** qualifiers learned from unsat core";
+                                let changed = ref false in
+                                Map.Poly.iteri template_modules
+                                  ~f:(fun ~key ~data:(module FT) ->
+                                    let ref_quals, _ref_terms =
+                                      Map.Poly.find_exn quals_terms_map key
+                                    in
+                                    let tag =
+                                      PCSP.Problem.tag_of APCSP.problem key
+                                    in
+                                    match Map.Poly.find cand key with
+                                    | None -> ()
+                                    | Some (_s, t) ->
+                                        let new_quals =
+                                          try
+                                            let phi =
+                                              let params = FT.params_of ~tag in
+                                              let uni_senv =
+                                                Logic.of_old_sort_env_map
+                                                @@ Map.Poly.of_alist_exn params
+                                              in
+                                              Normalizer.normalize
+                                              @@ Evaluator.simplify
+                                              @@ Logic.ExtTerm.to_old_formula
+                                                   Map.Poly.empty uni_senv t
+                                                 (*ToDo: t may have non-boolean type*)
+                                              @@ List.map params
+                                                   ~f:
+                                                     (fst
+                                                    >> Logic.ExtTerm.mk_var)
+                                            in
+                                            let quals =
+                                              let pos, neg =
+                                                Formula.atoms_of phi
+                                              in
+                                              let pos =
+                                                Set.Poly.map ~f:Formula.mk_atom
+                                                  pos
+                                              in
+                                              let neg =
+                                                Set.Poly.map ~f:Formula.mk_atom
+                                                  neg
+                                              in
+                                              Set.union pos neg
+                                            in
+                                            let tag =
+                                              PCSP.Problem.tag_of APCSP.problem
+                                                key
+                                            in
+                                            Set.Poly.map quals ~f:(fun q ->
+                                                (FT.params_of ~tag, q))
+                                            |> QualifierGenerator.elim_neg
+                                            |> Set.Poly.map ~f:snd
+                                          with _ -> Set.Poly.empty
+                                        in
+                                        Debug.print
+                                        @@ lazy
+                                             (sprintf
+                                                "adding qualifiers for %s:\n\
+                                                 %s\n"
+                                                (Ident.name_of_tvar key)
+                                                (String.concat_map_set ~sep:"\n"
+                                                   ~f:Formula.str_of new_quals));
+                                        let new_quals =
+                                          Set.diff new_quals !ref_quals
+                                        in
+                                        if Set.is_empty new_quals then
+                                          Debug.print
+                                          @@ lazy
+                                               (sprintf
+                                                  "no new qualifier learned\n")
+                                        else (
+                                          changed := true;
+                                          ref_quals :=
+                                            Set.union !ref_quals new_quals));
+                                if !changed then (true, Map.Poly.empty)
+                                else (* ToDo: reachable? *)
+                                  (false, pvar_labels_map2)
+                            | UnsatCore (_ucores3, pvar_labels_map3) -> (
+                                reset_smt_instance ucore_smt_instance;
+                                match
+                                  find_candidate ucore_smt_instance ucores0 vs
+                                    !ref_templates_ucore4
+                                with
+                                | Candidate cand ->
+                                    Debug.print
+                                    @@ lazy
+                                         "*** qualifiers learned from unsat \
+                                          core";
+                                    let changed = ref false in
+                                    Map.Poly.iteri template_modules
+                                      ~f:(fun ~key ~data:(module FT) ->
+                                        let ref_quals, _ref_terms =
+                                          Map.Poly.find_exn quals_terms_map key
+                                        in
+                                        let tag =
+                                          PCSP.Problem.tag_of APCSP.problem key
+                                        in
+                                        match Map.Poly.find cand key with
+                                        | None -> ()
+                                        | Some (_s, t) ->
+                                            let new_quals =
+                                              try
+                                                let phi =
+                                                  let params =
+                                                    FT.params_of ~tag
+                                                  in
+                                                  let uni_senv =
+                                                    Logic.of_old_sort_env_map
+                                                    @@ Map.Poly.of_alist_exn
+                                                         params
+                                                  in
+                                                  Normalizer.normalize
+                                                  @@ Evaluator.simplify
+                                                  @@ Logic.ExtTerm
+                                                     .to_old_formula
+                                                       Map.Poly.empty uni_senv t
+                                                     (*ToDo: t may have non-boolean type*)
+                                                  @@ List.map params
+                                                       ~f:
+                                                         (fst
+                                                        >> Logic.ExtTerm.mk_var
+                                                         )
+                                                in
+                                                let quals =
+                                                  let pos, neg =
+                                                    Formula.atoms_of phi
+                                                  in
+                                                  let pos =
+                                                    Set.Poly.map
+                                                      ~f:Formula.mk_atom pos
+                                                  in
+                                                  let neg =
+                                                    Set.Poly.map
+                                                      ~f:Formula.mk_atom neg
+                                                  in
+                                                  Set.union pos neg
+                                                in
+                                                let tag =
+                                                  PCSP.Problem.tag_of
+                                                    APCSP.problem key
+                                                in
+                                                Set.Poly.map quals ~f:(fun q ->
+                                                    (FT.params_of ~tag, q))
+                                                |> QualifierGenerator.elim_neg
+                                                |> Set.Poly.map ~f:snd
+                                              with _ -> Set.Poly.empty
+                                            in
+                                            Debug.print
+                                            @@ lazy
+                                                 (sprintf
+                                                    "adding qualifiers for %s:\n\
+                                                     %s\n"
+                                                    (Ident.name_of_tvar key)
+                                                    (String.concat_map_set
+                                                       ~sep:"\n"
+                                                       ~f:Formula.str_of
+                                                       new_quals));
+                                            let new_quals =
+                                              Set.diff new_quals !ref_quals
+                                            in
+                                            if Set.is_empty new_quals then
+                                              Debug.print
+                                              @@ lazy
+                                                   (sprintf
+                                                      "no new qualifier learned\n")
+                                            else (
+                                              changed := true;
+                                              ref_quals :=
+                                                Set.union !ref_quals new_quals));
+                                    if !changed then (true, Map.Poly.empty)
+                                    else (* ToDo: reachable? *)
+                                      (false, pvar_labels_map3)
+                                | UnsatCore (_, pvar_labels_map4) -> (
+                                    reset_smt_instance ucore_smt_instance;
+                                    match
+                                      find_candidate ucore_smt_instance ucores0
+                                        vs !ref_templates_ucore5
+                                    with
+                                    | Candidate cand ->
+                                        Debug.print
+                                        @@ lazy
+                                             "*** qualifiers learned from \
+                                              unsat core";
+                                        let changed = ref false in
+                                        Map.Poly.iteri template_modules
+                                          ~f:(fun ~key ~data:(module FT) ->
+                                            let ref_quals, _ref_terms =
+                                              Map.Poly.find_exn quals_terms_map
+                                                key
+                                            in
+                                            let tag =
+                                              PCSP.Problem.tag_of APCSP.problem
+                                                key
+                                            in
+                                            match Map.Poly.find cand key with
+                                            | None -> ()
+                                            | Some (_s, t) ->
+                                                let new_quals =
+                                                  try
+                                                    let phi =
+                                                      let params =
+                                                        FT.params_of ~tag
+                                                      in
+                                                      let uni_senv =
+                                                        Logic
+                                                        .of_old_sort_env_map
+                                                        @@ Map.Poly.of_alist_exn
+                                                             params
+                                                      in
+                                                      Normalizer.normalize
+                                                      @@ Evaluator.simplify
+                                                      @@ Logic.ExtTerm
+                                                         .to_old_formula
+                                                           Map.Poly.empty
+                                                           uni_senv t
+                                                         (*ToDo: t may have non-boolean type*)
+                                                      @@ List.map params
+                                                           ~f:
+                                                             (fst
+                                                            >> Logic.ExtTerm
+                                                               .mk_var)
+                                                    in
+                                                    let quals =
+                                                      let pos, neg =
+                                                        Formula.atoms_of phi
+                                                      in
+                                                      let pos =
+                                                        Set.Poly.map
+                                                          ~f:Formula.mk_atom pos
+                                                      in
+                                                      let neg =
+                                                        Set.Poly.map
+                                                          ~f:Formula.mk_atom neg
+                                                      in
+                                                      Set.union pos neg
+                                                    in
+                                                    let tag =
+                                                      PCSP.Problem.tag_of
+                                                        APCSP.problem key
+                                                    in
+                                                    Set.Poly.map quals
+                                                      ~f:(fun q ->
+                                                        (FT.params_of ~tag, q))
+                                                    |> QualifierGenerator
+                                                       .elim_neg
+                                                    |> Set.Poly.map ~f:snd
+                                                  with _ -> Set.Poly.empty
+                                                in
+                                                Debug.print
+                                                @@ lazy
+                                                     (sprintf
+                                                        "adding qualifiers for \
+                                                         %s:\n\
+                                                         %s\n"
+                                                        (Ident.name_of_tvar key)
+                                                        (String.concat_map_set
+                                                           ~sep:"\n"
+                                                           ~f:Formula.str_of
+                                                           new_quals));
+                                                let new_quals =
+                                                  Set.diff new_quals !ref_quals
+                                                in
+                                                if Set.is_empty new_quals then
+                                                  Debug.print
+                                                  @@ lazy
+                                                       (sprintf
+                                                          "no new qualifier \
+                                                           learned\n")
+                                                else (
+                                                  changed := true;
+                                                  ref_quals :=
+                                                    Set.union !ref_quals
+                                                      new_quals));
+                                        if !changed then (true, Map.Poly.empty)
+                                        else (* ToDo: reachable? *)
+                                          (false, pvar_labels_map4)
+                                    | UnsatCore (_, pvar_labels_map5) ->
+                                        (* The given constraint set is likely unsat, but since parametric examples are used, additional checks are required to conclude this. *)
+                                        Debug.print
+                                        @@ lazy
+                                             "*** qualifiers not learned from \
+                                              unsat core";
+                                        (* ToDo: pvar_labels_map0-4 are ignored *)
+                                        (false, pvar_labels_map5))))))
+                  else (false, pvar_labels_map0)
                 in
                 if quals_changed then inner ()
                 else (

@@ -1,12 +1,4 @@
 %{
-let print_error_information () =
-  let st = Parsing.symbol_start_pos () in
-  let en = Parsing.symbol_end_pos () in
-  print_string ("File \"" ^ st.Lexing.pos_fname);
-  Format.printf "\", line %d" st.Lexing.pos_lnum;
-  Format.printf ", characters %d-%d:\n"
-    (st.Lexing.pos_cnum - st.Lexing.pos_bol)
-    (en.Lexing.pos_cnum - en.Lexing.pos_bol)
 %}
 
 %token TYPE
@@ -38,9 +30,6 @@ regtreeexpdefs:
     { [] }
 | regtreeexpdef regtreeexpdefs EOF
     { $1::$2 }
-| error
-    { print_error_information ();
-      raise (Failure "Syntax error") }
 
 regtreeexpdef:
   TYPE UIDENT EQUAL regtreeexp

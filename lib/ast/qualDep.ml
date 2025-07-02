@@ -88,12 +88,13 @@ let condition_of_lit env = function
           in
           Formula.mk_atom @@ Atom.mk_psym_app psym [ t; T_int.zero () ]
       | None ->
-          print_endline ("phi: " ^ Formula.str_of phi);
-          print_endline
-            ("env: "
-            ^ String.concat_map_list ~sep:"," ~f:(fun (phi, x) ->
-                  Formula.str_of phi ^ "|->" ^ Ident.name_of_tvar x)
-            @@ Map.Poly.to_alist env);
+          if false then (
+            print_endline ("phi: " ^ Formula.str_of phi);
+            print_endline
+              ("env: "
+              ^ String.concat_map_list ~sep:"," ~f:(fun (phi, x) ->
+                    Formula.str_of phi ^ "|->" ^ Ident.name_of_tvar x)
+              @@ Map.Poly.to_alist env));
           failwith "condition_of_lit")
   | LTrue -> Formula.mk_true ()
   | LFalse -> Formula.mk_false ()
@@ -147,7 +148,9 @@ let qual_and_deps_of qual conds =
            mk_atom @@ mk_lit_formula cond (mk_act 1 0 T_int.Gt))
   in
   let dep =
-    if Stdlib.(dep = CAtom LTrue) then CAtom LTrue
-    else mk_imply (mk_atom @@ mk_lit_formula qual @@ mk_act 1 0 T_bool.Neq) dep
+    match dep with
+    | CAtom LTrue -> dep
+    | _ ->
+        mk_imply (mk_atom @@ mk_lit_formula qual @@ mk_act 1 0 T_bool.Neq) dep
   in
   (qual, dep)

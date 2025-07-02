@@ -1,6 +1,7 @@
 open Core
 open Common
 open Common.Ext
+open Common.Combinator
 open Ast
 open Ast.LogicOld
 open PCSatCommon
@@ -23,10 +24,12 @@ end = struct
   let insert_source src = Option.map ~f:(fun a -> (a, src))
 
   let src_exs_of (hide_und : bool) =
-    Set.Poly.map ~f:(fun ex -> (ex, [ (ClauseGraph.mk_example ex, hide_und) ]))
+    Set.Poly.map ~f:(fun ex ->
+        (ex, Set.Poly.singleton (ClauseGraph.mk_example ex, hide_und)))
 
   let src_cls_of (hide_und : bool) =
-    Set.Poly.map ~f:(fun cl -> (cl, [ (ClauseGraph.mk_clause cl, hide_und) ]))
+    Set.Poly.map ~f:(fun cl ->
+        (cl, Set.Poly.singleton (ClauseGraph.mk_clause cl, hide_und)))
 
   exception E
 
@@ -64,12 +67,12 @@ end = struct
       (*Debug.print @@ lazy ("  checking contradiction: " ^ Clause.str_of exi_senv (uni_senv, c_pos, c_neg, c_phi));*)
       let positive =
         Set.Poly.filter_map dpos
-          ~f:(fun (e, (src : (ClauseGraph.vertex * bool) list)) ->
+          ~f:(fun (e, (src : (ClauseGraph.vertex * bool) Set.Poly.t)) ->
             insert_source src @@ ExClause.old_atom_of_uclause e)
       in
       let negative =
         Set.Poly.filter_map dneg
-          ~f:(fun (e, (src : (ClauseGraph.vertex * bool) list)) ->
+          ~f:(fun (e, (src : (ClauseGraph.vertex * bool) Set.Poly.t)) ->
             insert_source src @@ ExClause.old_atom_of_uclause e)
       in
       let eqs, srcs =
@@ -78,7 +81,8 @@ end = struct
                let xs, srcs =
                  Set.Poly.filter_map negative
                    ~f:(fun
-                       (neg_atm, (src : (ClauseGraph.vertex * bool) list)) ->
+                       (neg_atm, (src : (ClauseGraph.vertex * bool) Set.Poly.t))
+                     ->
                      let _param_senv (*ToDo*), atm' =
                        Atom.refresh_tvar neg_atm
                      in
@@ -88,7 +92,7 @@ end = struct
                  |> Set.to_list |> List.unzip
                in
                if List.is_empty xs then raise E
-               else (Formula.or_of xs, List.concat srcs)))
+               else (Formula.or_of xs, Set.Poly.union_list srcs)))
           (Set.Poly.map c_neg ~f:(fun atm ->
                let xs, srcs =
                  Set.Poly.filter_map positive ~f:(fun (pos_atm, src) ->
@@ -101,25 +105,23 @@ end = struct
                  |> Set.to_list |> List.unzip
                in
                if List.is_empty xs then raise E
-               else (Formula.or_of xs, List.concat srcs)))
+               else (Formula.or_of xs, Set.Poly.union_list srcs)))
         |> Set.to_list |> List.unzip
       in
-      let srcs = List.concat srcs in
+      let srcs = Set.Poly.union_list srcs in
       let phi =
         Formula.and_of
         @@ Formula.mk_neg (Logic.ExtTerm.to_old_fml exi_senv uni_senv c_phi)
            :: eqs
       in
       let fvs = Formula.term_sort_env_of phi in
-      let bvs =
-        Set.filter fvs ~f:(fun (x, _) -> not @@ Map.Poly.mem exi_senv x)
-      in
+      let bvs = Set.filter fvs ~f:(fst >> Map.Poly.mem exi_senv >> not) in
       let cond =
         Formula.exists (Set.to_list bvs)
           phi (* unbound variables are non-predicate function variables *)
       in
       (*Debug.print @@ lazy ("    sufficient condition: " ^ Formula.str_of cond ^ " is valid?");*)
-      insert_source (source @ srcs)
+      insert_source (Set.union source srcs)
       @@
       if Set.eqlen fvs bvs then
         (* without non-predicate function variables*)
@@ -133,21 +135,22 @@ end = struct
             let theta = Map.Poly.map theta ~f:(Term.subst sub) in
             Some
               (Map.Poly.merge sub theta ~f:(fun ~key:_x -> function
-                 | `Left v | `Right v -> Some v
-                 | `Both (v1, v2) ->
-                     if Stdlib.(v1 = v2) then Some v1
-                     else
-                       (*failwith (Ident.name_of_tvar x ^ ":" ^ LogicOld.Term.str_of v1 ^ ":" ^ LogicOld.Term.str_of v2)*)
-                       raise E))
+                | `Left v | `Right v -> Some v
+                | `Both (v1, v2) ->
+                    if Stdlib.(v1 = v2) then Some v1
+                    else
+                      (*failwith (Ident.name_of_tvar x ^ ":" ^ LogicOld.Term.str_of v1 ^ ":" ^ LogicOld.Term.str_of v2)*)
+                      raise E))
         | _ -> (*Debug.print @@ lazy "    no";*) None
-      else if Set.is_empty (Set.inter (Set.Poly.map ~f:fst bvs) params) then
+      else if Set.disjoint (Set.Poly.map ~f:fst bvs) params then
         (* with function variables and without parameters *)
         if Evaluator.is_valid (Z3Smt.Z3interface.is_valid ~id fenv) cond then
           (*let _ = Debug.print @@ lazy "    yes" in*) Some theta
         else (*let _ = Debug.print @@ lazy "    no" in*) None
       else None
-    with E -> (*Debug.print @@ lazy "    unification failed";*)
-              None
+    with E ->
+      (*Debug.print @@ lazy "    unification failed";*)
+      None
 
   let contradicts_assuming_pos ~dpos ~dneg ~graph fenv exi_senv cs
       ((param_senv, atm), source) =
@@ -228,7 +231,7 @@ end = struct
     Debug.print @@ lazy ("checking " ^ Atom.str_of ~priority:0 atm);
     let enforce_new, srcs =
       if config.enforce_new then
-        (fun (phis, srcs) -> (Formula.and_of phis, List.concat srcs))
+        (fun (phis, srcs) -> (Formula.and_of phis, Set.Poly.union_list srcs))
         @@ List.unzip @@ Set.to_list
         @@ Set.Poly.map
              (Set.Poly.filter_map ucs ~f:(fun (ex, src) ->
@@ -241,8 +244,8 @@ end = struct
                           assert (Set.is_empty @@ Term.tvs_of t');
                           Formula.neq t t')),
                    src )
-               else (Formula.mk_true (), []))
-      else (Formula.mk_true (), [])
+               else (Formula.mk_true (), Set.Poly.empty))
+      else (Formula.mk_true (), Set.Poly.empty)
     in
     match
       Z3Smt.Z3interface.check_sat ~id fenv [ Formula.mk_neg pure; enforce_new ]
@@ -300,7 +303,7 @@ end = struct
                           @@ ExAtom.of_old_atom exi_senv (Formula.mk_true ())
                           @@ Atom.subst sub atm
                         in
-                        (Set.add dpos (cl, src @ source), dneg, und))
+                        (Set.add dpos (cl, Set.union src source), dneg, und))
                 else if
                   (* negative unit clause *)
                   parametric && config.add_unit_clause_as_is
@@ -320,7 +323,7 @@ end = struct
                         @@ ExAtom.of_old_atom exi_senv (Formula.mk_true ())
                         @@ Atom.subst sub atm
                       in
-                      (dpos, Set.add dneg (cl, src @ source), und))
+                      (dpos, Set.add dneg (cl, Set.union src source), und))
               else (* with function variables *) (dpos, dneg, und)
           | [], [] -> (
               let pure = Logic.ExtTerm.to_old_fml exi_senv uni_senv pure in
@@ -372,13 +375,17 @@ end = struct
                 ~f:(fun c ->
                   ExAtom.to_old_atom @@ ExClause.exatom_of_uclause c
                   |> Option.map ~f:(fun a ->
-                         (a, [ (ClauseGraph.mk_example c, false) ]))),
+                         ( a,
+                           Set.Poly.singleton (ClauseGraph.mk_example c, false)
+                         ))),
               Set.Poly.filter_map
                 (if config.only_diff then d_dneg else dneg0)
                 ~f:(fun c ->
                   ExAtom.to_old_atom @@ ExClause.exatom_of_uclause c
                   |> Option.map ~f:(fun a ->
-                         (a, [ (ClauseGraph.mk_example c, false) ]))) )
+                         ( a,
+                           Set.Poly.singleton (ClauseGraph.mk_example c, false)
+                         ))) )
           else (Set.Poly.empty, Set.Poly.empty)
         in
         if config.decide then
@@ -388,7 +395,9 @@ end = struct
             @@ Set.concat_map ~f:(fun c ->
                    ExClause.exatoms_of c
                    |> Set.Poly.map ~f:(fun a ->
-                          (a, [ (ClauseGraph.mk_example c, false) ])))
+                          ( a,
+                            Set.Poly.singleton (ClauseGraph.mk_example c, false)
+                          )))
             @@
             (* Set.filter ~f:(fun ex ->
                 Debug.print @@ lazy ("decide:" ^ ExClause.str_of ex);

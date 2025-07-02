@@ -14,6 +14,10 @@ let rec subst_formulas ?(subst = Map.Poly.empty) ltl =
     let ltl = Ltl.let_g ltl in
     let ltl, subst = subst_formulas ~subst ltl in
     (Ltl.mk_g ltl, subst)
+  else if Ltl.is_x ltl then
+    let ltl = Ltl.let_x ltl in
+    let ltl, subst = subst_formulas ~subst ltl in
+    (Ltl.mk_x ltl, subst)
   else if Ltl.is_u ltl then
     let ltl1, ltl2 = Ltl.let_u ltl in
     let ltl1, subst = subst_formulas ~subst ltl1 in
@@ -38,12 +42,14 @@ let rec subst_formulas ?(subst = Map.Poly.empty) ltl =
   else failwith @@ sprintf "not implemented: %s" (Ltl.string_of ltl)
 
 let bastr_of_ltlstr ltlstr =
-  (try
-     Common.Util.Command.sync_command "ltl3ba" [ "-f"; "\"" ^ ltlstr ^ "\"" ] []
-   with _ ->
-     Common.Util.Command.sync_command "./ltl3ba"
-       [ "-f"; "\"" ^ ltlstr ^ "\"" ]
-       [])
+  (let args = [ "-f"; "\"" ^ ltlstr ^ "\"" ] in
+   try Common.Util.Command.sync_command "ltl3ba" args []
+   with _ -> (
+     try Common.Util.Command.sync_command "./ltl3ba" args []
+     with _ ->
+       failwith
+         "ltl3ba not found, please install it or put it in the current \
+          directory"))
   |> String.concat ~sep:"\n"
 
 let ba_subst_pvar subst ba =

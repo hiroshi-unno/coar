@@ -30,7 +30,8 @@ let make n seeds =
          in
          let qual =
            Normalizer.normalize
-           @@ Formula.geq left (Evaluator.eval_term right |> Term.of_value)
+           @@ Formula.geq left
+                (Term.of_value (get_dtenv ()) @@ Evaluator.eval_term right)
          in
          if Set.is_empty @@ Formula.fvs_of qual then None else Some qual)
 

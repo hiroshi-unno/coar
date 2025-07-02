@@ -2,6 +2,7 @@ open Core
 open Common
 open Common.Ext
 open Common.Util
+open Common.Combinator
 open Ast
 open Ast.LogicOld
 open Ast.HypSpace
@@ -140,37 +141,43 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
 
   let update_hspace ~tag hspace =
     ignore tag;
-    hspace
+    qualifiers_of ~fenv:Arg.fenv ~add_mod2_quals:false
+      (*ToDo: use depth instead *) config.number_of_qpa hspace
 
   let gen_template ~tag ~ucore hspace =
     ignore tag;
-    ignore ucore;
     let template =
-      if ucore then
-        Templ.gen_dnf ~eq_atom:false
-          {
-            terms = [];
-            quals = [];
-            shp = [ 1 ];
-            ubc = !param.ubc;
-            ubd = !param.ubd;
-            s = !param.s;
-          }
-          { bec = Option.map config.bound_each_coeff ~f:Z.of_int }
-          hspace.params
-      else
-        Templ.gen_dnf ~eq_atom:false
-          {
-            terms =
-              List.map ~f:(fun t -> (t, Term.sort_of t (*ToDo*)))
-              @@ Set.to_list hspace.terms;
-            quals = Set.to_list hspace.quals;
-            shp = List.init !param.nd ~f:(fun _ -> 0);
-            ubc = None;
-            ubd = None;
-            s = Set.Poly.empty;
-          }
-          { bec = None } hspace.params
+      match ucore with
+      | Some (shp, eq_atom, only_bools) ->
+          Templ.gen_dnf ~eq_atom ~br_bools:false ~only_bools
+            {
+              terms =
+                List.map ~f:(fun t -> (t, Term.sort_of t (*ToDo*)))
+                @@ Set.to_list hspace.terms;
+              quals =
+                Set.to_list
+                @@ Set.filter hspace.quals
+                     ~f:
+                       (Formula.term_sort_env_of
+                       >> Set.for_all ~f:(snd >> Term.is_bool_sort));
+              shp;
+              ubc = !param.ubc;
+              ubd = !param.ubd;
+              s = !param.s;
+            }
+            { bec = Option.map config.bound_each_coeff ~f:Z.of_int }
+            hspace.params
+      | None ->
+          Templ.gen_dnf ~eq_atom:false ~br_bools:false ~only_bools:false
+            {
+              terms = [];
+              quals = Set.to_list hspace.quals;
+              shp = List.init !param.nd ~f:(fun _ -> 0);
+              ubc = None;
+              ubd = None;
+              s = Set.Poly.empty;
+            }
+            { bec = None } hspace.params
     in
     Debug.print
     @@ lazy
@@ -192,11 +199,12 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
          (sprintf "[%s] quals_bounds:\n  %s"
             (Ident.name_of_tvar Arg.name)
             (Formula.str_of template.quals_bounds));
-    (* if false then
-       Debug.print
-       @@ lazy
-            ("qdeps:\n"
-            ^ String.concat_map_list ~sep:"\n" qdeps ~f:QualDep.str_of); *)
+    if false then
+      Debug.print
+      @@ lazy
+           (sprintf "qdeps:\n%s"
+           @@ String.concat_map_list ~sep:"\n" (Map.data hspace.qdeps)
+                ~f:QualDep.str_of);
     let qual_qdeps_env = Templ.qual_env_of_hole_map template.hole_quals_map in
     let tmpl =
       Logic.(Term.mk_lambda (of_old_sort_env_list hspace.params))

@@ -19,13 +19,14 @@ module Make (Config : Config.ConfigType) = struct
 
   module MBcgen = MBcgen.Make ((
     struct
-      let config = MBcgen.Config.{ verbose = config.verbose }
+      let config =
+        MBcgen.Config.{ verbose = config.verbose; for_cps_trans = false }
     end :
       MBcgen.Config.ConfigType))
 
   module MBcsol = MBcsol.Make ((
     struct
-      let config = MBcsol.Config.{ verbose = config.verbose; elim_pure = false }
+      let config = MBcsol.Config.{ verbose = config.verbose }
     end :
       MBcsol.Config.ConfigType))
 
@@ -102,7 +103,10 @@ module Make (Config : Config.ConfigType) = struct
               generated"
              cons_name
     | None ->
-        let svs = Datatype.svs_of dt (* ToDo: does it work for GADTs? *) in
+        let svs =
+          Datatype.svs_of dt
+          (* ToDo: does it work for GADTs? *)
+        in
         let pvenv, svmap =
           if config.enable_pred_poly_for_constructors then
             let svpvs =
@@ -578,7 +582,10 @@ module Make (Config : Config.ConfigType) = struct
           subst_comp (Map.Poly.singleton x1 @@ Pattern.term_of pat1) c1
         in
         let x2 = mk_fresh_tvar_with "x2_" in
-        let renv2' = Env.set_ty renv2 x2 t2 (* [t2] can depend on x2 *) in
+        let renv2' =
+          Env.set_ty renv2 x2 t2
+          (* [t2] can depend on x2 *)
+        in
         let constrs, c3 =
           if true then
             let c3 =
@@ -922,7 +929,8 @@ module Make (Config : Config.ConfigType) = struct
                         "[cgen_pattern_match] pattern: %s\n\
                          renv:\n\
                          %s\n\
-                         constraints: %s" (Pattern.str_of pat)
+                         constraints: %s"
+                        (Pattern.str_of pat)
                         (Env.str_of ~config pat_renv)
                         (String.concat_map_set ~sep:"\n" ~f:Formula.str_of
                            constrs_params));
@@ -1014,7 +1022,10 @@ module Make (Config : Config.ConfigType) = struct
           else Map.Poly.empty
         in
         let rty =
-          let refine = not is_fun (*ToDo*) in
+          let refine =
+            not is_fun
+            (*ToDo*)
+          in
           Rtype.val_of_sort ~config ~refine ~svmap dom sort
         in
         let adm_pvars =
@@ -1031,7 +1042,9 @@ module Make (Config : Config.ConfigType) = struct
               then
                 let _, phi = Rtype.pred_of_val rett in
                 Set.Poly.map ~f:(fun (p, sorts) -> (p, with_cond, sorts))
-                @@ (*ToDo:check if rett are props*) Formula.pred_sort_env_of phi
+                @@
+                (*ToDo:check if rett are props*)
+                Formula.pred_sort_env_of phi
               else Set.Poly.empty
           | OCaml -> Set.Poly.empty
         in
@@ -1057,7 +1070,10 @@ module Make (Config : Config.ConfigType) = struct
           let name =
             if is_top_level then Some (name_of_tvar x, "", 0) else None
           in
-          let refine = not is_fun (*ToDo*) in
+          let refine =
+            not is_fun
+            (*ToDo*)
+          in
           Rtype.val_of_sort ~config ~refine ~svmap ~name dom sort
         in
         let adm_pvars =
@@ -1074,7 +1090,9 @@ module Make (Config : Config.ConfigType) = struct
               then
                 let _, phi = Rtype.pred_of_val rett in
                 Set.Poly.map ~f:(fun (p, sorts) -> (p, with_cond, sorts))
-                @@ (*ToDo:check if rett are props*) Formula.pred_sort_env_of phi
+                @@
+                (*ToDo:check if rett are props*)
+                Formula.pred_sort_env_of phi
               else Set.Poly.empty
           | OCaml -> Set.Poly.empty
         in
@@ -1121,7 +1139,8 @@ module Make (Config : Config.ConfigType) = struct
       Preprocessor.Config.make config.enable_pvar_elim false (*config.verbose*)
         Int.max_value
         (* [fixpoint] assumes that any intermediate predicate variables are eliminated for GFP predicate generation*)
-        4 false
+        4
+        false
   end)
 
   type envs = {
@@ -1136,30 +1155,36 @@ module Make (Config : Config.ConfigType) = struct
 
   let pcsp_of ?(skolem_pred = false) ?(sol_space = Map.Poly.empty) envs constrs
       =
-    if false then (
-      Debug.print @@ lazy (sprintf "\n*** original:");
+    if false then
       Debug.print
-      @@ lazy (String.concat_map_set ~sep:"\n" constrs ~f:Formula.str_of));
+      @@ lazy
+           (sprintf "\n*** original:\n%s"
+              (String.concat_map_set ~sep:"\n" constrs ~f:Formula.str_of));
     let phis =
       Set.Poly.map (Set.union envs.constrs constrs) ~f:(fun phi ->
           let phi = Evaluator.simplify phi in
           let tvs =
-            Formula.term_sort_env_of (*ToDo: use sort_env_of instead?*) phi
+            (*ToDo: use sort_env_of instead?*)
+            Formula.term_sort_env_of phi
           in
           Formula.mk_forall_if_bounded (Set.to_list tvs) phi)
     in
-    if false then (
-      Debug.print @@ lazy (sprintf "\n*** simplified:");
+    if false then
       Debug.print
-      @@ lazy (String.concat_map_set ~sep:"\n" phis ~f:Formula.str_of));
+      @@ lazy
+           (sprintf "\n*** simplified and quantified:\n%s"
+              (String.concat_map_set ~sep:"\n" phis ~f:Formula.str_of));
     let phis =
-      Typeinf.typeinf ~print:(fun _ -> () (*Debug.print*)) ~to_sus:true
+      Typeinf.typeinf
+        ~print:(fun _ -> () (*Debug.print*))
+        ~default:None ~to_sus:true
       @@ Set.to_list phis
     in
-    if false then (
-      Debug.print @@ lazy (sprintf "\n*** type inferred:");
+    if false then
       Debug.print
-      @@ lazy (String.concat_map_list ~sep:"\n" phis ~f:Formula.str_of));
+      @@ lazy
+           (sprintf "\n*** type inferred:\n%s"
+              (String.concat_map_list ~sep:"\n" phis ~f:Formula.str_of));
     let pcsp =
       let exi_senv, kind_map =
         (* ToDo: given exi_senv and kind_map are incomplete? *)
@@ -1298,7 +1323,7 @@ module Make (Config : Config.ConfigType) = struct
               (Map.Poly.of_alist_exn env)
               t
           in
-          assert (Set.is_empty @@ Set.inter (Formula.pvs_of phi) pvs_dummy);
+          assert (Set.disjoint (Formula.pvs_of phi) pvs_dummy);
           let env = Logic.to_old_sort_env_list env in
           Debug.print
           @@ lazy
@@ -1323,7 +1348,7 @@ module Make (Config : Config.ConfigType) = struct
               (Map.Poly.of_alist_exn env)
               t
           in
-          assert (Set.is_empty @@ Set.inter (Formula.pvs_of phi) pvs_dummy);
+          assert (Set.disjoint (Formula.pvs_of phi) pvs_dummy);
           let env = Logic.to_old_sort_env_list env in
           Debug.print
           @@ lazy
@@ -1553,7 +1578,7 @@ module Make (Config : Config.ConfigType) = struct
 
   let cgen_expr ~config mode fenv dtenv senv (expr : expression) =
     let open Rtype in
-    MBcgen.fold_expr dtenv senv expr
+    MBcgen.fold_expr dtenv false senv expr
       ~f:
         (object
            method f_annot (attrs, next) kind_map maps renv ty =
@@ -1583,7 +1608,10 @@ module Make (Config : Config.ConfigType) = struct
              let sort = Term.subst_sort maps sort in
              (* *)
              let use_adm_pred = true in
-             let enable_lhs_param = true (*ToDo*) in
+             let enable_lhs_param =
+               true
+               (*ToDo*)
+             in
              Debug.print
              @@ lazy (sprintf "[rcaml:unif] %s\n" @@ str_of_comp ~config ty);
              let y = Ident.mk_fresh_tvar () in
@@ -1961,8 +1989,9 @@ module Make (Config : Config.ConfigType) = struct
                  ],
                kind_map )
 
-           method f_apply (pure1, next1, opsig1s, opsig1, cont1s, cont1)
-               next2s_either kind_map maps renv ty =
+           method f_apply _is_handled
+               (pure1, next1, opsig1s, opsig1, cont1s, cont1) next2s_either
+               kind_map maps renv ty =
              let _opsig1s = List.map opsig1s ~f:(Term.subst_opsig maps) in
              let _opsig1 = Term.subst_opsig maps opsig1 in
              let cont1s = List.map cont1s ~f:(Term.subst_cont maps) in
@@ -2452,7 +2481,7 @@ module Make (Config : Config.ConfigType) = struct
                  temp_eff =
                    (if (*ToDo*) config.Rtype.enable_temp_eff then
                       mk_temp_fresh ~config dom
-                    else mk_temp_val ());
+                    else mk_temp_trivial ());
                  cont_eff =
                    (let x = mk_fresh_tvar_with "x" in
                     Eff
@@ -2465,9 +2494,10 @@ module Make (Config : Config.ConfigType) = struct
              in
              next1 kind_map maps renv c1
 
-           method f_perform attrs name sort_op_applied nexts_either kind_map
-               maps renv ty =
-             let sort_op_applied = Term.subst_sort maps sort_op_applied in
+           method f_perform _is_atp attrs (op_name, op_sort, op_cont)
+               nexts_either kind_map maps renv ty =
+             let op_sort = Term.subst_sort maps op_sort in
+             let op_cont = Term.subst_cont maps op_cont in
              let nexts_either =
                List.map nexts_either ~f:(subst_all_either maps)
              in
@@ -2500,15 +2530,15 @@ module Make (Config : Config.ConfigType) = struct
                Map.Poly.of_alist_exn
                @@ List.zip_exn x_args (List.map ~f:fst3 res)
              in
-             let t_op_applied, c_pfm, t_pfm =
-               match sort_op_applied with
-               | Sort.SArrow (Sort.SArrow (sort, cret1), cret2) ->
+             let t_op, c_pfm, t_pfm =
+               match op_cont with
+               | Sort.Eff (cret1, cret2) ->
                    let x = Ident.mk_fresh_tvar () in
                    let y = Ident.mk_fresh_tvar () in
-                   let t_y = val_of_sort ~config ~refine:true dom' sort in
+                   let t_y = val_of_sort ~config ~refine:true dom' op_sort in
                    let c1 =
                      let refine, dom =
-                       (true, dom' @ [ (Term.mk_var y sort, sort) ])
+                       (true, dom' @ [ (Term.mk_var y op_sort, op_sort) ])
                      in
                      let temp, opsig, cont =
                        (true (*ToDo*), `Sort cret1.op_sig, cret1.cont_eff)
@@ -2517,7 +2547,7 @@ module Make (Config : Config.ConfigType) = struct
                        cret1.val_type
                    in
                    let c2 =
-                     let sort = Sort.mk_arrow sort cret1.val_type in
+                     let sort = Sort.mk_arrow op_sort cret1.val_type in
                      let refine, dom =
                        (true, dom' @ [ (Term.mk_var x sort, sort) ])
                      in
@@ -2527,34 +2557,38 @@ module Make (Config : Config.ConfigType) = struct
                      comp_of_sort ~config ~refine ~temp ~opsig ~cont dom
                        cret2.val_type
                    in
-                   ( mk_rarrow x
-                       (mk_rarrow y t_y c1 (mk_fresh_trivial_pred ()))
-                       c2 (mk_fresh_trivial_pred ()),
+                   let t_pfm = rename_val ~config ren t_y in
+                   let c_pfm =
                      {
                        op_sig = ty.op_sig;
-                       val_type = rename_val ~config ren t_y;
-                       temp_eff = mk_temp_val ();
+                       val_type = t_pfm;
+                       temp_eff =
+                         (if config.enable_temp_eff then
+                            mk_temp_fresh ~config dom
+                          else mk_temp_trivial ());
                        cont_eff = rename_cont ~config ren @@ Eff (y, c1, c2);
-                     },
-                     rename_val ~config ren t_y )
+                     }
+                   in
+                   if false then
+                     Debug.print
+                     @@ lazy ("c_pfm: " ^ Rtype.str_of_comp ~config c_pfm);
+                   let t_op =
+                     (* ToDo *)
+                     trd3
+                     @@ of_args_ret ~config dom x_args t_args
+                     @@ mk_rarrow x
+                          (mk_rarrow y t_y c1 (mk_fresh_trivial_pred ()))
+                          c2 (mk_fresh_trivial_pred ())
+                   in
+                   if false then
+                     Debug.print
+                     @@ lazy ("t_op: " ^ Rtype.str_of_val ~config t_op);
+                   (t_op, c_pfm, t_pfm)
                | _ -> assert false
              in
-             (*Debug.print @@ lazy ("t_op_applied: " ^ Rtype.str_of_val ~config t_op_applied);
-               Debug.print @@ lazy ("c_pfm: " ^ Rtype.str_of_comp ~config c_pfm);*)
-             let _ (*ToDo*), _ (*ToDo*), t_op =
-               let temp, opsig, cont =
-                 ( true,
-                   `Refined (ALMap.empty (*ToDo*), None (*ToDo*)),
-                   None (*ToDo*) )
-               in
-               of_args_ret ~config ~temp ~opsig ~cont dom x_args t_args
-                 t_op_applied
-             in
-
-             let t_op_o = ALMap.find_exn name (fst ty.op_sig) in
-
-             (*Debug.print @@ lazy ("t_op: " ^ Rtype.str_of_val ~config t_op);
-               Debug.print @@ lazy ("t_op_o: " ^ Rtype.str_of_val ~config t_op_o);*)
+             let t_op_o = ALMap.find_exn op_name (fst ty.op_sig) in
+             if false then
+               Debug.print @@ lazy ("t_op_o: " ^ Rtype.str_of_val ~config t_op_o);
              let t_op_annot_opt =
                match
                  MBcgen.find_val_attrs ~config ~renv ~dtenv
@@ -2567,7 +2601,7 @@ module Make (Config : Config.ConfigType) = struct
                         @@ str_of_val ~config ty);
                    Some ty
                | None -> (
-                   match Env.look_up renv @@ Tvar (name ^ "_arm") with
+                   match Env.look_up renv @@ Tvar (op_name ^ "_arm") with
                    | Some ty ->
                        Debug.print
                        @@ lazy
@@ -2605,10 +2639,11 @@ module Make (Config : Config.ConfigType) = struct
                  ],
                kind_map )
 
-           method f_handling (next_b, c_b) (next_r, xr, c_r) op_names nexts
-               clauses kind_map maps renv ty =
+           method f_handling (next_b, c_b) (next_r, x_r, c_r) op_handlers
+               kind_map maps renv ty =
              let c_b = Term.subst_triple maps c_b in
              let c_r = Term.subst_triple maps c_r in
+             let names, _kinds, nexts, clauses = List.unzip4 op_handlers in
              let clauses =
                List.map clauses ~f:(fun (x_args, sort_args, k_opt, sort_k, c) ->
                    let sort_args =
@@ -2624,7 +2659,7 @@ module Make (Config : Config.ConfigType) = struct
 
              let t_b = val_of_sort ~config ~refine:true dom c_b.val_type in
 
-             let renv_r = Env.set_ty renv xr t_b in
+             let renv_r = Env.set_ty renv x_r t_b in
              let c_r =
                let refine, dom_r = (true, Env.dep_args_of renv_r) in
                let temp, opsig, cont = (true, `Sort c_r.op_sig, c_r.cont_eff) in
@@ -2669,12 +2704,8 @@ module Make (Config : Config.ConfigType) = struct
 
                    let constrs', kind_map = next kind_map maps renv'' c in
                    ( (Set.union constrs constrs', kind_map),
-                     let temp, opsig, cont =
-                       (false, `Refined (ALMap.empty, None), None)
-                     in
-                     (* ToDo *)
-                     (trd3
-                     @@ of_args_ret ~config ~temp ~opsig ~cont [] x_args t_args
+                     ((* ToDo *) trd3
+                     @@ of_args_ret ~config [] x_args t_args
                      @@ mk_rarrow k t_k c @@ mk_fresh_trivial_pred ())
                      :: t_ops ))
              in
@@ -2683,13 +2714,13 @@ module Make (Config : Config.ConfigType) = struct
                let c_b =
                  {
                    op_sig =
-                     (ALMap.of_alist_exn @@ List.zip_exn op_names t_ops, None);
+                     (ALMap.of_alist_exn @@ List.zip_exn names t_ops, None);
                    val_type = t_b;
                    temp_eff =
                      (if config.Rtype.enable_temp_eff then
                         mk_temp_fresh ~config dom
-                      else mk_temp_val ());
-                   cont_eff = Eff (xr, c_r, ty);
+                      else mk_temp_trivial ());
+                   cont_eff = Eff (x_r, c_r, ty);
                  }
                in
                next_b kind_map maps renv c_b
@@ -2902,7 +2933,29 @@ module Make (Config : Config.ConfigType) = struct
                 Debug.print
                 @@ lazy (Term.str_of_opsig o1 ^ " <: " ^ Term.str_of_opsig o2));
             let sol = MBcsol.solve eff_constrs opsig_constrs in
-            (sol.otheta, Map.force_merge !MBcgen.ref_id sol.stheta, sol.etheta)
+            let stheta =
+              let stheta =
+                Map.Poly.map sol.stheta
+                  ~f:(Term.subst_sorts_sort !MBcgen.ref_id)
+              in
+              let ref_id =
+                Map.Poly.map !MBcgen.ref_id ~f:(Term.subst_sorts_sort stheta)
+              in
+              try Map.force_merge ref_id stheta
+              with _ ->
+                failwith
+                @@ sprintf "fail to force merge:\nref_id: %s\nstheta: %s"
+                     (str_of_sort_subst Term.str_of_sort ref_id)
+                     (str_of_sort_subst Term.str_of_sort stheta)
+            in
+            let maps = (sol.otheta, stheta, sol.etheta) in
+            Debug.print (lazy "==== MB type inferred:");
+            List.iter2_exn pats defs ~f:(fun pat (_, _, c) ->
+                Debug.print
+                @@ lazy
+                     (Pattern.str_of pat ^ ": " ^ Term.str_of_triple
+                    @@ Term.subst_triple maps c));
+            maps
           in
           let emap' =
             Map.Poly.map ~f:(Term.subst_conts_cont emap)
@@ -3106,7 +3159,8 @@ module Make (Config : Config.ConfigType) = struct
                 ~dtenv:envs.dtenv content
             in
             let constrs' =
-              Set.Poly.map ~f:(Typeinf.typeinf_formula ~print:Debug.print)
+              Set.Poly.map
+                ~f:(Typeinf.typeinf_formula ~print:Debug.print ~default:None)
               @@ Set.Poly.of_list constrs'
             in
             update_fenv envs'.fenv;
@@ -3126,7 +3180,8 @@ module Make (Config : Config.ConfigType) = struct
               Rtype.cgen_config := config;
               Rtype.renv_ref := envs.renv;
               set_dtenv envs.dtenv;
-              Set.Poly.map ~f:(Typeinf.typeinf_formula ~print:Debug.print)
+              Set.Poly.map
+                ~f:(Typeinf.typeinf_formula ~print:Debug.print ~default:None)
               @@ Set.Poly.of_list
               @@ RtypeParser.constraints RtypeLexer.token
               @@ Lexing.from_string content
@@ -3328,7 +3383,19 @@ module Make (Config : Config.ConfigType) = struct
         ^ MBcgen.str_of_stdbuf ~f:Location.print_report
         @@ Typecore.report_error ~loc env err
 
-  let from_ml_file config =
-    In_channel.create >> Lexing.from_channel >> Parse.implementation
-    >> top_level ~config
+  let from_ml_file config filename =
+    let res =
+      let ic = In_channel.create filename in
+      let lexbuf = Lexing.from_channel ic in
+      Lexing.set_filename lexbuf filename;
+      try
+        let res = Parse.implementation lexbuf in
+        In_channel.close ic;
+        res
+      with e ->
+        LexingHelper.print_error_information lexbuf;
+        In_channel.close ic;
+        raise e
+    in
+    top_level ~config res
 end

@@ -1,5 +1,7 @@
 open Core
 open Common.Ext
+open Common.Util
+open Common.Combinator
 open LogicOld
 
 (*val eval_term: Term.t -> Value.t*)
@@ -32,15 +34,39 @@ let rec eval_term ?(env = Map.Poly.empty) =
               "a conditional expression must be evaluated to a boolean value")
   | FunApp (T_int.Int i, [], _) -> Value.Int i
   | FunApp (T_real.Real r, [], _) -> Value.Real r
+  | FunApp (T_bv.BVNum (size, i), [], _) -> Value.BV (size, i)
+  | FunApp (T_array.AConst (si, _), [ t ], _) ->
+      Value.Arr
+        (eval_term ~env @@ Term.mk_dummy si, eval_term ~env t, Map.Poly.empty)
+  | FunApp (T_array.AStore _, [ t1; t2; t3 ], _) -> (
+      match eval_term ~env t1 with
+      | Value.Arr (dummy, v, m) ->
+          let v2 = eval_term ~env t2 in
+          let v3 = eval_term ~env t3 in
+          if Value.equal v v3 then Value.Arr (dummy, v, m)
+          else Value.Arr (dummy, v, Map.Poly.set m ~key:v2 ~data:v3)
+      | _ ->
+          failwith @@ "Array store: first term must be an array, but got "
+          ^ Term.str_of t1)
+  | FunApp (T_tuple.TupleCons sorts, ts, _) ->
+      let ts' = List.map ~f:(eval_term ~env) ts in
+      if List.length ts' <> List.length sorts then
+        failwith "Tuple constructor: number of terms does not match sorts";
+      Value.TupleCons ts'
+  | FunApp (T_dt.DTCons (name, sorts, dt), ts, _) ->
+      let vs = List.map ~f:(eval_term ~env) ts in
+      if List.length vs <> List.length sorts then
+        failwith "Datatype constructor: number of terms does not match sorts";
+      Value.DTCons
+        ( name,
+          List.map (Datatype.params_of dt) ~f:(Term.mk_dummy >> eval_term ~env),
+          vs )
   | FunApp (T_irb.RealToInt, [ FunApp (T_real.Real r, [], _) ], _) ->
       Value.Int (Q.to_bigint r (* ToDo: conforms to the semantics of smtlib? *))
   | FunApp (T_irb.IntToReal, [ FunApp (T_int.Int i, [], _) ], _) ->
       Value.Real (Q.of_bigint i)
   | FunApp ((T_int.Neg | T_real.RNeg), [ t1 ], _) ->
       Value.neg (eval_term ~env t1)
-  | FunApp (T_int.Nop, [ t1 ], _) -> eval_term ~env t1
-  | FunApp ((T_int.Abs | T_real.RAbs), [ t1 ], _) ->
-      Value.abs (eval_term ~env t1)
   | FunApp ((T_int.Add | T_real.RAdd), [ t1; t2 ], _) ->
       Value.add (eval_term ~env t1) (eval_term ~env t2)
   | FunApp ((T_int.Sub | T_real.RSub), [ t1; t2 ], _) ->
@@ -53,68 +79,254 @@ let rec eval_term ?(env = Map.Poly.empty) =
       Value.rdiv (eval_term ~env t1) (eval_term ~env t2)
   | FunApp (T_int.Rem m, [ t1; t2 ], _) ->
       Value.rem m (eval_term ~env t1) (eval_term ~env t2)
+  | FunApp (T_int.Nop, [ t1 ], _) -> eval_term ~env t1
+  | FunApp ((T_int.Abs | T_real.RAbs), [ t1 ], _) ->
+      Value.abs (eval_term ~env t1)
   | FunApp (T_int.Power, [ t1; t2 ], _) ->
       Value.pow (eval_term ~env t1) (eval_term ~env t2)
+  | FunApp
+      (T_bv.BVNot _ (*ToDo*), [ FunApp (T_bv.BVNum (Some size, i), [], _) ], _)
+    ->
+      Value.BV (Some size, bvnot size i)
+  | FunApp
+      ( T_bv.BVAnd _ (*ToDo*),
+        [
+          FunApp (T_bv.BVNum (size1, i1), [], _);
+          FunApp (T_bv.BVNum (size2, i2), [], _);
+        ],
+        _ )
+    when T_bv.eq_size size1 size2 ->
+      let size = T_bv.merge_size size1 size2 in
+      Value.BV (size, bvand (T_bv.bits_of size) i1 i2)
+  | FunApp
+      ( T_bv.BVOr _ (*ToDo*),
+        [
+          FunApp (T_bv.BVNum (size1, i1), [], _);
+          FunApp (T_bv.BVNum (size2, i2), [], _);
+        ],
+        _ )
+    when T_bv.eq_size size1 size2 ->
+      let size = T_bv.merge_size size1 size2 in
+      Value.BV (size, bvor (T_bv.bits_of size) i1 i2)
+  | FunApp
+      ( T_bv.BVXor _ (*ToDo*),
+        [
+          FunApp (T_bv.BVNum (size1, i1), [], _);
+          FunApp (T_bv.BVNum (size2, i2), [], _);
+        ],
+        _ )
+    when T_bv.eq_size size1 size2 ->
+      let size = T_bv.merge_size size1 size2 in
+      Value.BV (size, bvxor (T_bv.bits_of size) i1 i2)
+  | FunApp (T_bv.BVNeg _ (*ToDo*), [ FunApp (T_bv.BVNum (size1, i1), [], _) ], _)
+    ->
+      Value.BV (size1, bvneg (T_bv.bits_of size1) i1)
+  | FunApp
+      ( T_bv.BVAdd _ (*ToDo*),
+        [
+          FunApp (T_bv.BVNum (size1, i1), [], _);
+          FunApp (T_bv.BVNum (size2, i2), [], _);
+        ],
+        _ )
+    when T_bv.eq_size size1 size2 ->
+      let size = T_bv.merge_size size1 size2 in
+      Value.BV (size, bvadd (T_bv.bits_of size) i1 i2)
+  | FunApp
+      ( T_bv.BVSub _ (*ToDo*),
+        [
+          FunApp (T_bv.BVNum (size1, i1), [], _);
+          FunApp (T_bv.BVNum (size2, i2), [], _);
+        ],
+        _ )
+    when T_bv.eq_size size1 size2 ->
+      let size = T_bv.merge_size size1 size2 in
+      Value.BV (size, bvsub (T_bv.bits_of size) i1 i2)
+  | FunApp
+      ( T_bv.BVMul _ (*ToDo*),
+        [
+          FunApp (T_bv.BVNum (size1, i1), [], _);
+          FunApp (T_bv.BVNum (size2, i2), [], _);
+        ],
+        _ )
+    when T_bv.eq_size size1 size2 ->
+      let size = T_bv.merge_size size1 size2 in
+      Value.BV (size, bvmul (T_bv.bits_of size) i1 i2)
+  | FunApp
+      ( T_bv.BVDiv (_ (*ToDo*), Some signed),
+        [
+          FunApp (T_bv.BVNum (size1, i1), [], _);
+          FunApp (T_bv.BVNum (size2, i2), [], _);
+        ],
+        _ )
+    when T_bv.eq_size size1 size2 ->
+      let size = T_bv.merge_size size1 size2 in
+      Value.BV
+        (size, (if signed then bvsdiv else bvudiv) (T_bv.bits_of size) i1 i2)
+  | FunApp
+      ( T_bv.BVSHL _ (*ToDo*),
+        [
+          FunApp (T_bv.BVNum (size1, i1), [], _);
+          FunApp (T_bv.BVNum (size2, i2), [], _);
+        ],
+        _ )
+    when T_bv.eq_size size1 size2
+         &&
+         try
+           let _ = Z.to_int i2 in
+           true
+         with _ -> false ->
+      let size = T_bv.merge_size size1 size2 in
+      Value.BV (size, bvshl (T_bv.bits_of size) i1 i2)
+  | FunApp
+      ( T_bv.BVLSHR _ (*ToDo*),
+        [
+          FunApp (T_bv.BVNum (size1, i1), [], _);
+          FunApp (T_bv.BVNum (size2, i2), [], _);
+        ],
+        _ )
+    when T_bv.eq_size size1 size2
+         &&
+         try
+           let _ = Z.to_int i2 in
+           true
+         with _ -> false ->
+      let size = T_bv.merge_size size1 size2 in
+      Value.BV (size, bvlshr i1 i2)
+  | FunApp
+      ( T_bv.BVASHR _ (*ToDo*),
+        [
+          FunApp (T_bv.BVNum (size1, i1), [], _);
+          FunApp (T_bv.BVNum (size2, i2), [], _);
+        ],
+        _ )
+    when T_bv.eq_size size1 size2
+         &&
+         try
+           let _ = Z.to_int i2 in
+           true
+         with _ -> false ->
+      let size = T_bv.merge_size size1 size2 in
+      Value.BV (size, bvashr (T_bv.bits_of size) i1 i2)
+  | FunApp
+      ( T_bv.BVEXTRACT (_ (*ToDo*), h, l),
+        [ FunApp (T_bv.BVNum (size, i), [], _) ],
+        _ ) ->
+      let bvextract size h l i =
+        let size' = h - l + 1 in
+        if size' <= 0 then
+          failwith
+            "getbit_range: the range is not valid (h must be greater than or \
+             equal to l)"
+        else if size' > size then
+          failwith "getbit_range: the range is larger than the bitvector size"
+        else
+          let mask = Z.(shift_left (of_int 1) size' - one) in
+          let i' = Z.(shift_right i l land mask) in
+          Value.BV (Some size', i')
+      in
+      bvextract (T_bv.bits_of size) h l i
+  | FunApp
+      ( T_bv.BVCONCAT (_ (*ToDo*), _ (*ToDo*)),
+        [
+          FunApp (T_bv.BVNum (size1, i1), [], _);
+          FunApp (T_bv.BVNum (size2, i2), [], _);
+        ],
+        _ ) ->
+      let i = Z.(shift_left i1 (T_bv.bits_of size2) + i2) in
+      Value.BV (T_bv.add_size size1 size2, i)
   | LetTerm (var, _, def, body, _) ->
       let subst =
-        Map.Poly.singleton var @@ Term.of_value @@ eval_term ~env def
+        Map.Poly.singleton var
+        @@ Term.of_value (get_dtenv ())
+        @@ eval_term ~env def
       in
       eval_term ~env @@ Term.subst subst body
   | _ -> failwith "[eval_term] not supported"
 
 (*val eval_pred: pred_sym -> Term.t list -> bool*)
 and eval_pred ?(env = Map.Poly.empty) psym terms =
-  match (psym, List.map ~f:(eval_term ~env) terms) with
-  | T_int.Leq, [ t1; t2 ] | T_real.RLeq, [ t1; t2 ] ->
-      Value.compare Z.Compare.( <= ) Q.( <= ) t1 t2
-  | T_int.Geq, [ t1; t2 ] | T_real.RGeq, [ t1; t2 ] ->
-      Value.compare Z.Compare.( >= ) Q.( >= ) t1 t2
-  | T_int.Lt, [ t1; t2 ] | T_real.RLt, [ t1; t2 ] ->
-      Value.compare Z.Compare.( < ) Q.( < ) t1 t2
-  | T_int.Gt, [ t1; t2 ] | T_real.RGt, [ t1; t2 ] ->
-      Value.compare Z.Compare.( > ) Q.( > ) t1 t2
-  | T_bool.Eq, [ t1; t2 ] ->
-      Value.compare Z.Compare.( = ) Q.( = ) ~opb:Stdlib.( = ) t1 t2
-  | T_bool.Neq, [ t1; t2 ] ->
-      Value.compare Z.Compare.( <> ) Q.( <> ) ~opb:Stdlib.( <> ) t1 t2
-  | T_int.PDiv, [ t1; t2 ] ->
-      Value.compare Z.Compare.( = ) Q.( = )
-        (Value.rem Euclidean t2 t1)
-        (Value.Int Z.zero)
-  | T_int.NotPDiv, [ t1; t2 ] ->
-      Value.compare Z.Compare.( <> ) Q.( <> )
-        (Value.rem Euclidean t2 t1)
-        (Value.Int Z.zero)
-  | _ -> failwith "[eval_pred] not supported"
+  match (psym, terms) with
+  | T_tuple.IsTuple _, [ Term.FunApp (T_tuple.TupleCons _, _, _) ] -> true
+  | T_tuple.NotIsTuple _, [ Term.FunApp (T_tuple.TupleCons _, _, _) ] -> false
+  | T_dt.IsCons (n1, _), [ Term.FunApp (T_dt.DTCons (n2, _, _), _, _) ] ->
+      String.(n1 = n2)
+  | T_dt.NotIsCons (n1, _), [ Term.FunApp (T_dt.DTCons (n2, _, _), _, _) ] ->
+      String.(n1 <> n2)
+  | _ -> (
+      match (psym, List.map ~f:(eval_term ~env) terms) with
+      | T_bool.Eq, [ BV (size1, i1); BV (size2, i2) ]
+        when T_bv.eq_size size1 size2 ->
+          Z.Compare.(i1 = i2)
+      | T_bool.Eq, [ t1; t2 ] -> Value.equal t1 t2
+      | T_bool.Neq, [ BV (size1, i1); BV (size2, i2) ]
+        when T_bv.eq_size size1 size2 ->
+          Z.Compare.(i1 <> i2)
+      | T_bool.Neq, [ t1; t2 ] ->
+          Value.compare Z.Compare.( <> ) Q.( <> ) ~opb:Stdlib.( <> ) t1 t2
+      | (T_int.Leq | T_real.RLeq | T_bv.BVLeq (_, Some false)), [ t1; t2 ] ->
+          Value.compare Z.Compare.( <= ) Q.( <= ) t1 t2
+      | ( T_bv.BVLeq (_ (*Some s*), Some true),
+          [ Value.BV (s1, i1); Value.BV (s2, i2) ] )
+        when (*s = s1 &&*) T_bv.eq_size s1 s2 -> (
+          match
+            ( Z.testbit i1 (T_bv.bits_of s1 - 1),
+              Z.testbit i2 (T_bv.bits_of s2 - 1) )
+          with
+          | false, true -> false
+          | true, false -> true
+          | _ -> Z.Compare.(i1 <= i2))
+      | (T_int.Geq | T_real.RGeq | T_bv.BVGeq (_, Some false)), [ t1; t2 ] ->
+          Value.compare Z.Compare.( >= ) Q.( >= ) t1 t2
+      | ( T_bv.BVGeq (_ (*Some s*), Some true),
+          [ Value.BV (s1, i1); Value.BV (s2, i2) ] )
+        when (*s = s1 &&*) T_bv.eq_size s1 s2 -> (
+          match
+            ( Z.testbit i1 (T_bv.bits_of s1 - 1),
+              Z.testbit i2 (T_bv.bits_of s2 - 1) )
+          with
+          | false, true -> true
+          | true, false -> false
+          | _ -> Z.Compare.(i1 >= i2))
+      | (T_int.Lt | T_real.RLt | T_bv.BVLt (_, Some false)), [ t1; t2 ] ->
+          Value.compare Z.Compare.( < ) Q.( < ) t1 t2
+      | ( T_bv.BVLt (_ (*Some s*), Some true),
+          [ Value.BV (s1, i1); Value.BV (s2, i2) ] )
+        when (*s = s1 &&*) T_bv.eq_size s1 s2 -> (
+          match
+            ( Z.testbit i1 (T_bv.bits_of s1 - 1),
+              Z.testbit i2 (T_bv.bits_of s2 - 1) )
+          with
+          | false, true -> false
+          | true, false -> true
+          | _ -> Z.Compare.(i1 < i2))
+      | (T_int.Gt | T_real.RGt | T_bv.BVGt (_, Some false)), [ t1; t2 ] ->
+          Value.compare Z.Compare.( > ) Q.( > ) t1 t2
+      | ( T_bv.BVGt (_ (*Some s*), Some true),
+          [ Value.BV (s1, i1); Value.BV (s2, i2) ] )
+        when (*s = s1 &&*) T_bv.eq_size s1 s2 -> (
+          match
+            ( Z.testbit i1 (T_bv.bits_of s1 - 1),
+              Z.testbit i2 (T_bv.bits_of s2 - 1) )
+          with
+          | false, true -> true
+          | true, false -> false
+          | _ -> Z.Compare.(i1 > i2))
+      | T_int.PDiv, [ t1; t2 ] ->
+          Value.compare Z.Compare.( = ) Q.( = )
+            (Value.rem Euclidean t2 t1)
+            (Value.Int Z.zero)
+      | T_int.NotPDiv, [ t1; t2 ] ->
+          Value.compare Z.Compare.( <> ) Q.( <> )
+            (Value.rem Euclidean t2 t1)
+            (Value.Int Z.zero)
+      | _ -> failwith "[eval_pred] not supported")
 
 (*val eval_atom: Atom.t -> bool*)
-and eval_atom ?(env = Map.Poly.empty) =
-  let open Atom in
-  function
-  | True _ -> true
+and eval_atom ?(env = Map.Poly.empty) = function
+  | Atom.True _ -> true
   | False _ -> false
-  | App
-      ( Predicate.Psym (T_dt.IsCons (name, _)),
-        [ Term.FunApp (T_dt.DTCons (name1, _, _), _, _) ],
-        _ ) ->
-      Stdlib.(name1 = name)
-  | App
-      ( Predicate.Psym (T_dt.NotIsCons (name, _)),
-        [ Term.FunApp (T_dt.DTCons (name1, _, _), _, _) ],
-        _ ) ->
-      Stdlib.(name1 <> name)
-  | App
-      ( Predicate.Psym (T_tuple.IsTuple _),
-        [ Term.FunApp (T_tuple.TupleCons _, _, _) ],
-        _ ) ->
-      true
-  | App
-      ( Predicate.Psym (T_tuple.NotIsTuple _),
-        [ Term.FunApp (T_tuple.TupleCons _, _, _) ],
-        _ ) ->
-      false
   | App (Predicate.Psym psym, terms, _) -> eval_pred ~env psym terms
-  | App ((Predicate.Var (_, _) | Predicate.Fixpoint _), _, _) ->
+  | App (Predicate.(Var (_, _) | Fixpoint _), _, _) ->
       failwith "Predicate variables and fixpoints applications not supported"
 
 (*val eval: Formula.t -> bool*)
@@ -167,30 +379,18 @@ and simplify_term = function
       else LetTerm (tvar, sort, def', body', info)
   | FunApp (fsym, ts, info) -> (
       let ts' = List.map ~f:simplify_term ts in
-      try Term.of_value @@ eval_term @@ FunApp (fsym, ts', info)
+      try Term.of_value (get_dtenv ()) @@ eval_term @@ FunApp (fsym, ts', info)
       with _ -> (
         match (fsym, ts') with
         | T_bool.Formula phi, [] -> T_bool.of_formula (simplify phi) ~info
         | T_int.Neg, [ t ] -> (
             match t with
-            | FunApp (T_int.Int n, [], _) ->
-                FunApp (T_int.Int (Z.neg n), [], info)
+            | FunApp (T_int.Int n, [], _) -> FunApp (T_int.Int Z.(-n), [], info)
             | FunApp (T_int.Neg, [ t1 ], _) -> t1
             | FunApp (T_int.Mul, [ Term.FunApp (T_int.Int n, [], _); t1 ], _)
             | FunApp (T_int.Mul, [ t1; Term.FunApp (T_int.Int n, [], _) ], _) ->
                 (* n is not 0, 1, -1 *)
                 T_int.mk_mul (T_int.mk_int Z.(-n)) t1
-            | _ -> FunApp (fsym, [ t ], info))
-        | T_real.RNeg, [ t ] -> (
-            match t with
-            | FunApp (T_real.Real r, [], _) ->
-                FunApp (T_real.Real (Q.neg r), [], info)
-            | FunApp (T_real.RNeg, [ t1 ], _) -> t1
-            | FunApp (T_real.RMul, [ Term.FunApp (T_real.Real r, [], _); t1 ], _)
-            | FunApp (T_real.RMul, [ t1; Term.FunApp (T_real.Real r, [], _) ], _)
-              ->
-                (* r is not 0, 1, -1 *)
-                T_real.mk_rmul (T_real.mk_real Q.(-r)) t1
             | _ -> FunApp (fsym, [ t ], info))
         | ( T_int.Add,
             [ FunApp (T_int.Neg, [ t1 ], _); FunApp (T_int.Neg, [ t2 ], _) ] )
@@ -200,22 +400,14 @@ and simplify_term = function
             simplify_term (T_int.mk_sub t2 t1)
         | T_int.Add, [ t1; FunApp (T_int.Neg, [ t2 ], _) ] ->
             simplify_term (T_int.mk_sub t1 t2)
-        | T_int.Add, [ t1; t2 ] ->
+        | T_int.Add, [ t1; t2 ] -> (
             if T_int.is_zero t2 then t1
             else if T_int.is_zero t1 then t2
-            else FunApp (fsym, [ t1; t2 ], info)
-        | ( T_real.RAdd,
-            [ FunApp (T_real.RNeg, [ t1 ], _); FunApp (T_real.RNeg, [ t2 ], _) ]
-          ) ->
-            T_real.mk_rneg @@ simplify_term (T_real.mk_radd t1 t2)
-        | T_real.RAdd, [ FunApp (T_real.RNeg, [ t1 ], _); t2 ] ->
-            simplify_term (T_real.mk_rsub t2 t1)
-        | T_real.RAdd, [ t1; FunApp (T_real.RNeg, [ t2 ], _) ] ->
-            simplify_term (T_real.mk_rsub t1 t2)
-        | T_real.RAdd, [ t1; t2 ] ->
-            if T_real.is_rzero t2 then t1
-            else if T_real.is_rzero t1 then t2
-            else FunApp (fsym, [ t1; t2 ], info)
+            else
+              match (t1, t2) with
+              | FunApp (T_int.Int n1, [], _), FunApp (T_int.Int n2, [], _) ->
+                  FunApp (T_int.Int Z.(n1 + n2), [], info)
+              | _, _ -> FunApp (fsym, [ t1; t2 ], info))
         | ( T_int.Sub,
             [ FunApp (T_int.Neg, [ t1 ], _); FunApp (T_int.Neg, [ t2 ], _) ] )
           ->
@@ -224,11 +416,82 @@ and simplify_term = function
             T_int.mk_neg @@ simplify_term (T_int.mk_add t1 t2)
         | T_int.Sub, [ t1; FunApp (T_int.Neg, [ t2 ], _) ] ->
             simplify_term (T_int.mk_add t1 t2)
-        | T_int.Sub, [ t1; t2 ] ->
+        | T_int.Sub, [ t1; t2 ] -> (
             if T_int.is_zero t2 then t1
             else if T_int.is_zero t1 then T_int.mk_neg t2
             else if Stdlib.(t1 = t2) then T_int.zero ()
-            else FunApp (fsym, [ t1; t2 ], info)
+            else
+              match (t1, t2) with
+              | FunApp (T_int.Int n1, [], _), FunApp (T_int.Int n2, [], _) ->
+                  FunApp (T_int.Int Z.(n1 - n2), [], info)
+              | _, _ -> FunApp (fsym, [ t1; t2 ], info))
+        | ( T_int.Mul,
+            [ FunApp (T_int.Neg, [ t1 ], _); FunApp (T_int.Neg, [ t2 ], _) ] )
+          ->
+            simplify_term (T_int.mk_mul t1 t2)
+        | T_int.Mul, [ FunApp (T_int.Neg, [ t1 ], _); t2 ]
+        | T_int.Mul, [ t1; FunApp (T_int.Neg, [ t2 ], _) ] ->
+            T_int.mk_neg @@ simplify_term (T_int.mk_mul t1 t2)
+        | T_int.Mul, [ t1; t2 ] -> (
+            if T_int.is_zero t1 || T_int.is_zero t2 then T_int.zero ()
+            else if T_int.is_unit t1 then t2
+            else if T_int.is_unit t2 then t1
+            else if T_int.is_minus_one t1 then T_int.mk_neg t2
+            else if T_int.is_minus_one t2 then T_int.mk_neg t1
+            else
+              match (t1, t2) with
+              | FunApp (T_int.Int n1, [], _), FunApp (T_int.Int n2, [], _) ->
+                  FunApp (T_int.Int Z.(n1 * n2), [], info)
+              | _, _ -> FunApp (fsym, [ t1; t2 ], info))
+        | T_int.Div m, [ t1; t2 ] -> (
+            if T_int.is_zero t1 then T_int.zero ()
+            else if T_int.is_unit t2 then t1
+            else if T_int.is_minus_one t2 then T_int.mk_neg t1
+            else
+              match (t1, t2) with
+              | FunApp (T_int.Int n1, [], _), FunApp (T_int.Int n2, [], _)
+                when Z.Compare.(n2 <> Z.zero) ->
+                  FunApp (T_int.Int (Value.div_of m n1 n2), [], info)
+              | _, _ -> FunApp (fsym, [ t1; t2 ], info))
+        | T_int.Rem m, [ t1; t2 ] -> (
+            if T_int.is_zero t1 then T_int.zero ()
+            else if T_int.is_unit t2 then T_int.zero ()
+            else if T_int.is_minus_one t2 then T_int.mk_neg t1
+            else
+              match (t1, t2) with
+              | FunApp (T_int.Int n1, [], _), FunApp (T_int.Int n2, [], _)
+                when Z.Compare.(n2 <> Z.zero) ->
+                  FunApp (T_int.Int (Value.rem_of m n1 n2), [], info)
+              | _, _ -> FunApp (fsym, [ t1; t2 ], info))
+        | T_int.Nop, [ t ] -> t
+        | T_real.RNeg, [ t ] -> (
+            match t with
+            | FunApp (T_real.Real r, [], _) ->
+                FunApp (T_real.Real Q.(-r), [], info)
+            | FunApp (T_real.RNeg, [ t1 ], _) -> t1
+            | FunApp (T_real.RMul, [ Term.FunApp (T_real.Real r, [], _); t1 ], _)
+            | FunApp (T_real.RMul, [ t1; Term.FunApp (T_real.Real r, [], _) ], _)
+              ->
+                (* r is not 0, 1, -1 *)
+                T_real.mk_rmul (T_real.mk_real Q.(-r)) t1
+            | _ -> FunApp (fsym, [ t ], info))
+        | ( T_real.RAdd,
+            [ FunApp (T_real.RNeg, [ t1 ], _); FunApp (T_real.RNeg, [ t2 ], _) ]
+          ) ->
+            T_real.mk_rneg @@ simplify_term (T_real.mk_radd t1 t2)
+        | T_real.RAdd, [ FunApp (T_real.RNeg, [ t1 ], _); t2 ] ->
+            simplify_term (T_real.mk_rsub t2 t1)
+        | T_real.RAdd, [ t1; FunApp (T_real.RNeg, [ t2 ], _) ] ->
+            simplify_term (T_real.mk_rsub t1 t2)
+        | T_real.RAdd, [ t1; t2 ] -> (
+            if T_real.is_rzero t2 then t1
+            else if T_real.is_rzero t1 then t2
+            else
+              match (t1, t2) with
+              | FunApp (T_real.Real r1, [], _), FunApp (T_real.Real r2, [], _)
+                ->
+                  FunApp (T_real.Real Q.(r1 + r2), [], info)
+              | _, _ -> FunApp (fsym, [ t1; t2 ], info))
         | ( T_real.RSub,
             [ FunApp (T_real.RNeg, [ t1 ], _); FunApp (T_real.RNeg, [ t2 ], _) ]
           ) ->
@@ -237,25 +500,16 @@ and simplify_term = function
             T_real.mk_rneg @@ simplify_term (T_real.mk_radd t1 t2)
         | T_real.RSub, [ t1; FunApp (T_real.RNeg, [ t2 ], _) ] ->
             simplify_term (T_real.mk_radd t1 t2)
-        | T_real.RSub, [ t1; t2 ] ->
+        | T_real.RSub, [ t1; t2 ] -> (
             if T_real.is_rzero t2 then t1
             else if T_real.is_rzero t1 then T_real.mk_rneg t2
             else if Stdlib.(t1 = t2) then T_real.rzero ()
-            else FunApp (fsym, [ t1; t2 ], info)
-        | ( T_int.Mul,
-            [ FunApp (T_int.Neg, [ t1 ], _); FunApp (T_int.Neg, [ t2 ], _) ] )
-          ->
-            simplify_term (T_int.mk_mul t1 t2)
-        | T_int.Mul, [ FunApp (T_int.Neg, [ t1 ], _); t2 ]
-        | T_int.Mul, [ t1; FunApp (T_int.Neg, [ t2 ], _) ] ->
-            T_int.mk_neg @@ simplify_term (T_int.mk_mul t1 t2)
-        | T_int.Mul, [ t1; t2 ] ->
-            if T_int.is_zero t1 || T_int.is_zero t2 then T_int.zero ()
-            else if T_int.is_unit t1 then t2
-            else if T_int.is_unit t2 then t1
-            else if T_int.is_minus_one t1 then T_int.mk_neg t2
-            else if T_int.is_minus_one t2 then T_int.mk_neg t1
-            else FunApp (fsym, [ t1; t2 ], info)
+            else
+              match (t1, t2) with
+              | FunApp (T_real.Real r1, [], _), FunApp (T_real.Real r2, [], _)
+                ->
+                  FunApp (T_real.Real Q.(r1 - r2), [], info)
+              | _, _ -> FunApp (fsym, [ t1; t2 ], info))
         | ( T_real.RMul,
             [ FunApp (T_real.RNeg, [ t1 ], _); FunApp (T_real.RNeg, [ t2 ], _) ]
           ) ->
@@ -275,16 +529,6 @@ and simplify_term = function
                 ->
                   FunApp (T_real.Real Q.(r1 * r2), [], info)
               | _, _ -> FunApp (fsym, [ t1; t2 ], info))
-        | T_int.Div m, [ t1; t2 ] -> (
-            if T_int.is_zero t1 then T_int.zero ()
-            else if T_int.is_unit t2 then t1
-            else if T_int.is_minus_one t2 then T_int.mk_neg t1
-            else
-              match (t1, t2) with
-              | FunApp (T_int.Int n1, [], _), FunApp (T_int.Int n2, [], _)
-                when Z.Compare.(n2 <> Z.zero) ->
-                  FunApp (T_int.Int (Value.div_of m n1 n2), [], info)
-              | _, _ -> FunApp (fsym, [ t1; t2 ], info))
         | T_real.RDiv, [ t1; t2 ] -> (
             if T_real.is_rzero t1 then T_real.rzero ()
             else if T_real.is_runit t2 then t1
@@ -293,44 +537,41 @@ and simplify_term = function
               match (t1, t2) with
               | FunApp (T_real.Real r1, [], _), FunApp (T_real.Real r2, [], _)
                 when Q.(r2 <> zero) ->
-                  FunApp (T_real.Real Q.(div r1 r2), [], info)
+                  FunApp (T_real.Real Q.(r1 / r2), [], info)
               | _, _ -> FunApp (fsym, [ t1; t2 ], info))
-        | T_int.Rem m, [ t1; t2 ] -> (
-            if T_int.is_zero t1 then T_int.zero ()
-            else if T_int.is_unit t2 then T_int.zero ()
-            else if T_int.is_minus_one t2 then T_int.mk_neg t1
+        | T_bv.BVAdd _size, [ t1; t2 ] ->
+            if T_bv.is_bvzero t2 then t1
+            else if T_bv.is_bvzero t1 then t2
+            else FunApp (fsym, [ t1; t2 ], info)
+        | T_bv.BVSub size, [ t1; t2 ] ->
+            if T_bv.is_bvzero t2 then t1
+            else if T_bv.is_bvzero t1 then T_bv.mk_bvneg ~size t2
+            else if Stdlib.(t1 = t2) then T_bv.bvzero ~size ()
+            else FunApp (fsym, [ t1; t2 ], info)
+        | T_bv.BVMul size, [ t1; t2 ] ->
+            if T_bv.is_bvzero t1 || T_bv.is_bvzero t2 then T_bv.bvzero ~size ()
+            else if T_bv.is_bvunit t1 then t2
+            else if T_bv.is_bvunit t2 then t1
+            else FunApp (fsym, [ t1; t2 ], info)
+        | T_bv.BVDiv (size, _signed), [ t1; t2 ] ->
+            if T_bv.is_bvzero t1 then T_bv.bvzero ~size ()
+            else if T_bv.is_bvunit t2 then t1
+            else FunApp (fsym, [ t1; t2 ], info)
+        | T_irb.RealToInt, [ FunApp (T_real.Real r, [], _) ] ->
+            T_int.mk_int
+              (Q.to_bigint r (* ToDo: conforms to the semantics of smtlib? *))
+        | T_irb.IntToReal, [ FunApp (T_int.Int i, [], _) ] ->
+            T_real.mk_real (Q.of_bigint i)
+        | T_irb.IntToBV size, [ FunApp (T_int.Int i, [], _) ] ->
+            T_bv.mk_bvnum ~size i
+        | ( T_irb.BVToInt (_size, Some signed),
+            [ FunApp (T_bv.BVNum (Some s, i), [], _) ] ) ->
+            if s = 0 then T_int.mk_int Z.zero
             else
-              match (t1, t2) with
-              | FunApp (T_int.Int n1, [], _), FunApp (T_int.Int n2, [], _)
-                when Z.Compare.(n2 <> Z.zero) ->
-                  FunApp (T_int.Int (Value.rem_of m n1 n2), [], info)
-              | _, _ -> FunApp (fsym, [ t1; t2 ], info))
-        | T_ref.Deref _, [ t ] -> (
-            match T_ref.eval_select t with
-            | Some te -> simplify_term te
-            | None -> FunApp (fsym, ts', info))
-        | ( T_array.AStore _,
-            [ (FunApp (T_array.AConst (_, _), [ t1 ], _) as t); _; t2 ] )
-          when Stdlib.(t1 = t2) ->
-            t
-        | T_array.ASelect _, [ FunApp (T_array.AStore _, [ _; t1; t2 ], _); ti ]
-          when Stdlib.(ti = t1) ->
-            t2
-        | T_array.ASelect _, [ FunApp (T_array.AConst (_, _), [ t ], _); _ti ]
-          ->
-            t
-        | T_array.ASelect _, [ arr; ti ] -> (
-            match T_array.eval_select arr ti with
-            | Some te -> simplify_term te
-            | None -> FunApp (fsym, ts', info))
-        | T_tuple.TupleSel (_, i), [ t ] -> (
-            match T_tuple.eval_select t i with
-            | Some te -> simplify_term te
-            | None -> FunApp (fsym, ts', info))
-        | T_dt.DTSel (sel_name, dt, _), [ t ] -> (
-            match T_dt.eval_select sel_name dt t with
-            | Some te -> simplify_term te
-            | None -> FunApp (fsym, ts', info))
+              T_int.mk_int
+                (if signed && Z.testbit i (s - 1) then
+                   Z.sub i (Z.shift_left Z.one s)
+                 else i)
         | T_sequence.SeqConcat _, [ FunApp (T_sequence.SeqEpsilon, [], _); t ]
         | T_sequence.SeqConcat _, [ t; FunApp (T_sequence.SeqEpsilon, [], _) ]
           ->
@@ -382,6 +623,36 @@ and simplify_term = function
         | T_regex.RegConcat, [ FunApp (T_regex.RegEpsilon, [], _); t1 ]
         | T_regex.RegConcat, [ t1; FunApp (T_regex.RegEpsilon, [], _) ] ->
             t1
+        | ( T_array.AStore _,
+            [ (FunApp (T_array.AConst _, [ t1 ], _) as t); _; t2 ] )
+          when Stdlib.(t1 = t2) ->
+            t
+        | ( T_array.AStore _,
+            [ FunApp (T_array.AStore (s1, s2), [ t1; t2; _ ], _); t3; t4 ] )
+          when Stdlib.(t2 = t3) ->
+            T_array.mk_store s1 s2 t1 t3 t4
+        | ( T_array.AStore (s1, s2),
+            [
+              FunApp (T_array.AStore (s3, s4), [ tarr; ti1; te1 ], _); ti2; te2;
+            ] )
+          when Stdlib.(ti1 > ti2) ->
+            T_array.mk_store s3 s4 (T_array.mk_store s1 s2 tarr ti2 te2) ti1 te1
+        | T_array.ASelect _, [ arr; ti ] -> (
+            match T_array.eval_select arr ti with
+            | Some te -> simplify_term te
+            | None -> FunApp (fsym, ts', info))
+        | T_tuple.TupleSel (_, i), [ t ] -> (
+            match T_tuple.eval_select t i with
+            | Some te -> simplify_term te
+            | None -> FunApp (fsym, ts', info))
+        | T_dt.DTSel (sel_name, dt, _), [ t ] -> (
+            match T_dt.eval_select sel_name dt t with
+            | Some te -> simplify_term te
+            | None -> FunApp (fsym, ts', info))
+        | T_ref.Deref _, [ t ] -> (
+            match T_ref.eval_select t with
+            | Some te -> simplify_term te
+            | None -> FunApp (fsym, ts', info))
         | fsym, ts -> FunApp (fsym, ts, info)))
 (* including T_int.int, T_real.Real *)
 
@@ -412,6 +683,7 @@ and can_simplify = function
   | Term.FunApp (FVar _, _, _) -> false
   | Term.FunApp (T_dt.DTSel _, _, _) -> false
   | Term.FunApp (T_tuple.TupleSel _, _, _) -> false
+  | Term.FunApp (T_array.ASelect _, _, _) -> false
   | _ -> true
 
 and simplify_atom = function
@@ -423,6 +695,18 @@ and simplify_atom = function
           Formula.mk_true ()
       | Predicate.Psym T_bool.Neq, [ t1; t2 ] when Stdlib.(t1 = t2) ->
           Formula.mk_false ()
+      | ( Predicate.Psym psym,
+          [ t1; FunApp (T_bool.IfThenElse, [ t21; t22; t23 ], _) ] ) ->
+          Formula.of_bool_term
+          @@ T_bool.mk_if_then_else t21
+               (T_bool.of_atom @@ Atom.mk_psym_app psym [ t1; t22 ])
+               (T_bool.of_atom @@ Atom.mk_psym_app psym [ t1; t23 ])
+      | ( Predicate.Psym psym,
+          [ FunApp (T_bool.IfThenElse, [ t21; t22; t23 ], _); t1 ] ) ->
+          Formula.of_bool_term
+          @@ T_bool.mk_if_then_else t21
+               (T_bool.of_atom @@ Atom.mk_psym_app psym [ t22; t1 ])
+               (T_bool.of_atom @@ Atom.mk_psym_app psym [ t23; t1 ])
       (*| (Predicate.Psym T_bool.Eq, [t1; t2] | Predicate.Psym T_bool.Neq, [t1; t2])
         when Stdlib.(Term.sort_of t1 <> Term.sort_of t2) ->
         failwith @@ sprintf "inconsistent sorts of %s and %s"
@@ -450,74 +734,51 @@ and simplify_atom = function
       | Predicate.Psym T_bool.Eq, [ t1; t2 ]
         when Term.is_bool_sort @@ Term.sort_of t1 ->
           (*ToDo*)
-          if can_simplify t1 && can_simplify t2 then
+          if Stdlib.(t1 = T_bool.negate t2) then Formula.mk_false ()
+          else if
+            can_simplify t1 && can_simplify t2
+            && not (T_bool.is_atom t1 && T_bool.is_atom t2)
+          then
             let p1 = Formula.of_bool_term t1 in
             let p2 = Formula.of_bool_term t2 in
             simplify
-            @@ Formula.mk_or (Formula.mk_and p1 p2)
+            @@ Formula.mk_or ~info (Formula.mk_and p1 p2)
                  (Formula.mk_and (Formula.mk_neg p1) (Formula.mk_neg p2))
-                 ~info
+          else if
+            can_simplify t1 && can_simplify t2
+            && not (T_bool.is_atom t1 && T_bool.is_atom t2)
+          then
+            let p1 = Formula.of_bool_term t1 in
+            let p2 = Formula.of_bool_term t2 in
+            simplify
+            @@ Formula.mk_or ~info (Formula.mk_and p1 p2)
+                 (Formula.mk_and (Formula.mk_neg p1) (Formula.mk_neg p2))
           else
             Formula.mk_atom (App (Predicate.Psym T_bool.Eq, [ t1; t2 ], info))
             (*ToDo*)
       | Predicate.Psym T_bool.Neq, [ t1; t2 ]
         when Term.is_bool_sort @@ Term.sort_of t1 ->
           (*ToDo*)
-          if can_simplify t1 && can_simplify t2 then
+          if Stdlib.(t1 = T_bool.negate t2) then Formula.mk_true ()
+          else if
+            can_simplify t1 && can_simplify t2
+            && not (T_bool.is_atom t1 && T_bool.is_atom t2)
+          then
             let p1 = Formula.of_bool_term t1 in
             let p2 = Formula.of_bool_term t2 in
             simplify
-            @@ Formula.mk_or
+            @@ Formula.mk_or ~info
                  (Formula.mk_and (Formula.mk_neg p1) p2)
                  (Formula.mk_and p1 (Formula.mk_neg p2))
-                 ~info
           else
             Formula.mk_atom (App (Predicate.Psym T_bool.Neq, [ t1; t2 ], info))
             (*ToDo*)
-      | ( Predicate.Psym ((T_bool.Eq | T_bool.Neq) as psym),
+      | ( Predicate.Psym (T_bool.(Eq | Neq) as psym),
           [
             Term.FunApp (T_int.Neg, [ t1 ], _);
             t2 (*| [ t2; Term.FunApp (T_int.Neg, [ t1 ], _) ]*);
           ] ) ->
           simplify_atom (Atom.mk_psym_app psym [ t1; T_int.mk_neg t2 ])
-      | ( Predicate.Psym ((T_bool.Eq | T_bool.Neq) as psym),
-          [
-            Term.FunApp (T_real.RNeg, [ t1 ], _);
-            t2 (* | [ t2; Term.FunApp (T_real.RNeg, [ t1 ], _) ] *);
-          ] ) ->
-          simplify_atom (Atom.mk_psym_app psym [ t1; T_real.mk_rneg t2 ])
-      | ( Predicate.Psym ((T_bool.Eq | T_bool.Neq) as psym),
-          [
-            Term.FunApp
-              ( T_int.Mul,
-                ( [ Term.FunApp (T_int.Int n, [], _); t1 ]
-                | [ t1; Term.FunApp (T_int.Int n, [], _) ] ),
-                _ );
-            t2;
-          ] ) ->
-          if Z.Compare.(n = Z.one) then
-            simplify_atom (Atom.mk_psym_app psym [ t1; t2 ])
-          else if Z.Compare.(n = Z.minus_one) then
-            simplify_atom (Atom.mk_psym_app psym [ t1; T_int.mk_neg t2 ])
-          else
-            Formula.mk_atom
-            @@ Atom.mk_psym_app psym [ T_int.mk_mul (T_int.mk_int n) t1; t2 ]
-      | ( Predicate.Psym ((T_bool.Eq | T_bool.Neq) as psym),
-          [
-            Term.FunApp
-              ( T_real.RMul,
-                ( [ Term.FunApp (T_real.Real r, [], _); t1 ]
-                | [ t1; Term.FunApp (T_real.Real r, [], _) ] ),
-                _ );
-            t2;
-          ] ) ->
-          if Q.(r = Q.one) then simplify_atom (Atom.mk_psym_app psym [ t1; t2 ])
-          else if Q.(r = Q.minus_one) then
-            simplify_atom (Atom.mk_psym_app psym [ t1; T_real.mk_rneg t2 ])
-          else
-            Formula.mk_atom
-            @@ Atom.mk_psym_app psym
-                 [ T_real.mk_rmul (T_real.mk_real r) t1; t2 ]
       | ( Predicate.Psym (T_int.(Lt | Leq) as op),
           [ Term.FunApp (T_int.Abs, [ t1 ], _); t2 ] ) ->
           Formula.mk_and
@@ -528,6 +789,12 @@ and simplify_atom = function
           Formula.mk_and
             (Formula.mk_atom @@ Atom.mk_psym_app op [ t1; t2 ])
             (simplify_atom @@ Atom.mk_psym_app op [ t2; T_int.mk_neg t1 ])
+      | ( Predicate.Psym (T_bool.(Eq | Neq) as psym),
+          [
+            Term.FunApp (T_real.RNeg, [ t1 ], _);
+            t2 (* | [ t2; Term.FunApp (T_real.RNeg, [ t1 ], _) ] *);
+          ] ) ->
+          simplify_atom (Atom.mk_psym_app psym [ t1; T_real.mk_rneg t2 ])
       | ( Predicate.Psym (T_real.(RLt | RLeq) as op),
           [ Term.FunApp (T_real.RAbs, [ t1 ], _); t2 ] ) ->
           Formula.mk_and
@@ -538,6 +805,86 @@ and simplify_atom = function
           Formula.mk_and
             (Formula.mk_atom @@ Atom.mk_psym_app op [ t1; t2 ])
             (simplify_atom @@ Atom.mk_psym_app op [ t2; T_real.mk_rneg t1 ])
+      | ( Predicate.Psym T_bool.Eq,
+          [
+            Term.FunApp (T_array.AConst _, [ t1 ], _);
+            Term.FunApp (T_array.AConst _, [ t2 ], _);
+          ] ) ->
+          simplify @@ Formula.eq t1 t2
+      | ( Predicate.Psym T_bool.Eq,
+          ( [
+              (Term.FunApp (T_array.AConst _, [ t1 ], _) as t);
+              Term.FunApp (T_array.AStore _, [ t21; t22; t23 ], _);
+            ]
+          | [
+              Term.FunApp (T_array.AStore _, [ t21; t22; t23 ], _);
+              (Term.FunApp (T_array.AConst _, [ t1 ], _) as t);
+            ] ) )
+        when T_array.non_stored t21 t22 ->
+          simplify @@ Formula.mk_and (Formula.eq t1 t23) (Formula.eq t t21)
+      | ( Predicate.Psym T_bool.Eq,
+          [
+            Term.FunApp (T_array.AStore _, [ t11; t12; t13 ], _);
+            Term.FunApp (T_array.AStore _, [ t21; t22; t23 ], _);
+          ] )
+        when T_array.non_stored t11 t12 && T_array.non_stored t21 t22
+             && Stdlib.(t12 = t22) ->
+          simplify @@ Formula.mk_and (Formula.eq t11 t21) (Formula.eq t13 t23)
+      | ( Predicate.Psym T_bool.Eq,
+          [ (Term.FunApp (T_array.AStore _, [ t11; t12; t13 ], _) as t1); t2 ] )
+        when T_array.non_stored t11 t12 && T_array.non_stored t2 t12 -> (
+          match T_array.eval_select t2 t12 with
+          | Some te ->
+              simplify @@ Formula.mk_and (Formula.eq t13 te) (Formula.eq t11 t2)
+          | None -> Formula.eq t1 t2)
+      | ( Predicate.Psym T_bool.Eq,
+          [ t1; (Term.FunApp (T_array.AStore _, [ t21; t22; t23 ], _) as t2) ] )
+        when T_array.non_stored t21 t22 && T_array.non_stored t1 t22 -> (
+          match T_array.eval_select t1 t22 with
+          | Some te ->
+              simplify @@ Formula.mk_and (Formula.eq te t23) (Formula.eq t1 t21)
+          | None -> Formula.eq t1 t2)
+      | ( Predicate.Psym T_bool.Neq,
+          [
+            Term.FunApp (T_array.AConst _, [ t1 ], _);
+            Term.FunApp (T_array.AConst _, [ t2 ], _);
+          ] ) ->
+          simplify @@ Formula.neq t1 t2
+      | ( Predicate.Psym T_bool.Neq,
+          ( [
+              (Term.FunApp (T_array.AConst _, [ t1 ], _) as t);
+              Term.FunApp (T_array.AStore _, [ t21; t22; t23 ], _);
+            ]
+          | [
+              Term.FunApp (T_array.AStore _, [ t21; t22; t23 ], _);
+              (Term.FunApp (T_array.AConst _, [ t1 ], _) as t);
+            ] ) )
+        when T_array.non_stored t21 t22 ->
+          simplify @@ Formula.mk_or (Formula.neq t1 t23) (Formula.neq t t21)
+      | ( Predicate.Psym T_bool.Neq,
+          [
+            Term.FunApp (T_array.AStore _, [ t11; t12; t13 ], _);
+            Term.FunApp (T_array.AStore _, [ t21; t22; t23 ], _);
+          ] )
+        when T_array.non_stored t11 t12 && T_array.non_stored t21 t22
+             && Stdlib.(t12 = t22) ->
+          simplify @@ Formula.mk_or (Formula.neq t11 t21) (Formula.neq t13 t23)
+      | ( Predicate.Psym T_bool.Neq,
+          [ (Term.FunApp (T_array.AStore _, [ t11; t12; t13 ], _) as t1); t2 ] )
+        when T_array.non_stored t11 t12 && T_array.non_stored t2 t12 -> (
+          match T_array.eval_select t2 t12 with
+          | Some te ->
+              simplify
+              @@ Formula.mk_or (Formula.neq t13 te) (Formula.neq t11 t2)
+          | None -> Formula.neq t1 t2)
+      | ( Predicate.Psym T_bool.Neq,
+          [ t1; (Term.FunApp (T_array.AStore _, [ t21; t22; t23 ], _) as t2) ] )
+        when T_array.non_stored t21 t22 && T_array.non_stored t1 t22 -> (
+          match T_array.eval_select t1 t22 with
+          | Some te ->
+              simplify
+              @@ Formula.mk_or (Formula.neq te t23) (Formula.neq t1 t21)
+          | None -> Formula.neq t1 t2)
       | ( Predicate.Psym (T_tuple.IsTuple _),
           [ Term.FunApp (T_tuple.TupleCons _, _, _) ] ) ->
           Formula.mk_true ()
@@ -550,12 +897,6 @@ and simplify_atom = function
             Term.FunApp (T_tuple.TupleCons _, ts2, _);
           ] ) ->
           simplify @@ Formula.and_of @@ List.map2_exn ts1 ts2 ~f:Formula.eq
-      | ( Predicate.Psym T_bool.Neq,
-          [
-            Term.FunApp (T_tuple.TupleCons _, ts1, _);
-            Term.FunApp (T_tuple.TupleCons _, ts2, _);
-          ] ) ->
-          simplify @@ Formula.or_of @@ List.map2_exn ts1 ts2 ~f:Formula.neq
       | ( Predicate.Psym T_bool.Eq,
           [ Term.FunApp (T_tuple.TupleCons sorts, ts, _); t ] )
       | ( Predicate.Psym T_bool.Eq,
@@ -563,6 +904,12 @@ and simplify_atom = function
           simplify @@ Formula.and_of
           @@ List.mapi ts ~f:(fun i ti ->
                  Formula.eq ti @@ T_tuple.mk_tuple_sel sorts t i)
+      | ( Predicate.Psym T_bool.Neq,
+          [
+            Term.FunApp (T_tuple.TupleCons _, ts1, _);
+            Term.FunApp (T_tuple.TupleCons _, ts2, _);
+          ] ) ->
+          simplify @@ Formula.or_of @@ List.map2_exn ts1 ts2 ~f:Formula.neq
       | ( Predicate.Psym T_bool.Neq,
           [ Term.FunApp (T_tuple.TupleCons sorts, ts, _); t ] )
       | ( Predicate.Psym T_bool.Neq,

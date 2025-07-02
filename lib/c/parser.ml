@@ -1,7 +1,7 @@
 open Core
 open Common.Ext
+open Common.Util
 open Common.Combinator
-open Common.Util.LexingHelper
 open CSyntax
 open Ast
 open Ast.LogicOld
@@ -524,15 +524,20 @@ let parse_cctl_from_lexbuf ~print lexbuf =
   | CSyntax.SyntaxError error ->
       Result.fail
         (Error.of_string
-           (sprintf "%s: syntax error: %s" (get_position_string lexbuf) error))
+           (sprintf "%s: syntax error: %s"
+              (LexingHelper.get_position_string lexbuf)
+              error))
   | CCtlParser.Error ->
       Result.fail
         (Error.of_string
-           (sprintf "%s: syntax error" (get_position_string lexbuf)))
+           (sprintf "%s: syntax error"
+              (LexingHelper.get_position_string lexbuf)))
   | CCtlLexer.SyntaxError error ->
       Result.fail
         (Error.of_string
-           (sprintf "%s: syntax error: %s" (get_position_string lexbuf) error))
+           (sprintf "%s: syntax error: %s"
+              (LexingHelper.get_position_string lexbuf)
+              error))
   | CCtlLexer.ErrorFormatted error -> Result.fail (Error.of_string error)
 
 let parse_cltl_from_lexbuf ~print lexbuf =
@@ -625,15 +630,20 @@ let parse_cltl_from_lexbuf ~print lexbuf =
   | CSyntax.SyntaxError error ->
       Result.fail
         (Error.of_string
-           (sprintf "%s: syntax error: %s" (get_position_string lexbuf) error))
+           (sprintf "%s: syntax error: %s"
+              (LexingHelper.get_position_string lexbuf)
+              error))
   | CLtlParser.Error ->
       Result.fail
         (Error.of_string
-           (sprintf "%s: syntax error" (get_position_string lexbuf)))
+           (sprintf "%s: syntax error"
+              (LexingHelper.get_position_string lexbuf)))
   | CLtlLexer.SyntaxError error ->
       Result.fail
         (Error.of_string
-           (sprintf "%s: syntax error: %s" (get_position_string lexbuf) error))
+           (sprintf "%s: syntax error: %s"
+              (LexingHelper.get_position_string lexbuf)
+              error))
   | CLtlLexer.ErrorFormatted error -> Result.fail (Error.of_string error)
 
 let read_file file =

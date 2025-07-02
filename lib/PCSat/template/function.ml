@@ -30,7 +30,11 @@ module type Type = sig
 
   val gen_template :
     tag:(Ident.tvar * Ident.tvar) option ->
-    ucore:bool ->
+    ucore:
+      (int list (* shape *)
+      * bool (* use equality *)
+      * bool (* only booleans *))
+      option ->
     hspace ->
     (parameter_update_type * Logic.term)
     * (parameter_update_type * Logic.term) list
@@ -47,12 +51,11 @@ module type Type = sig
   val sync : int -> unit
 end
 
-let qdep_constr_of (qdeps : (LogicOld.Formula.t, QualDep.t) Map.Poly.t) env =
-  ( QualDep,
-    Map.map qdeps ~f:(QualDep.condition_of env)
-    (* TODO: not empty map *)
-    |> Map.Poly.to_alist
-    |> List.unzip |> snd |> LogicOld.Formula.and_of
-    |> Logic.ExtTerm.of_old_formula )
-
-let qdep_constr_of_envs qdeps = List.map ~f:(qdep_constr_of qdeps)
+let qdep_constr_of_envs (qdeps : (LogicOld.Formula.t, QualDep.t) Map.Poly.t) =
+  List.map ~f:(fun env ->
+      ( QualDep,
+        Map.filter_map qdeps ~f:(fun qdep ->
+            try Some (QualDep.condition_of env qdep) with _ -> None)
+        (* TODO: not empty map *)
+        |> Map.Poly.data
+        |> LogicOld.Formula.and_of |> Logic.ExtTerm.of_old_formula ))

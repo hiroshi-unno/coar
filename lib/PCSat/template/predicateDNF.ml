@@ -166,7 +166,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     ignore tag;
     ignore ucore;
     let template =
-      Templ.gen_dnf ~eq_atom:config.eq_atom
+      Templ.gen_dnf ~eq_atom:config.eq_atom ~br_bools:false ~only_bools:false
         {
           terms =
             List.map ~f:(fun t -> (t, Term.sort_of t (*ToDo*)))
@@ -200,11 +200,12 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
          (sprintf "[%s] quals_bounds:\n  %s"
             (Ident.name_of_tvar Arg.name)
             (Formula.str_of template.quals_bounds));
-    (* if false then
-       Debug.print
-       @@ lazy
-            ("qdeps:\n"
-            ^ String.concat_map_list ~sep:"\n" qdeps ~f:QualDep.str_of); *)
+    if false then
+      Debug.print
+      @@ lazy
+           (sprintf "qdeps:\n%s"
+           @@ String.concat_map_list ~sep:"\n" (Map.data hspace.qdeps)
+                ~f:QualDep.str_of);
     let qual_qdeps_env = Templ.qual_env_of_hole_map template.hole_quals_map in
     let pred =
       Logic.(Term.mk_lambda (of_old_sort_env_list hspace.params))

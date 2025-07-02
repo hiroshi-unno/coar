@@ -72,11 +72,11 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
               @@ sprintf "%s" (PCSP.Problem.str_of_solution sol);
               Out_channel.flush stdout);
             Ok (sol, -1)
-      | SPrinter _ ->
-          fun ?bpvs ?(print_sol = false) _ ->
+      | SPrinter (module Printer) ->
+          fun ?bpvs ?(print_sol = false) pcsp ->
             ignore print_sol;
             ignore bpvs;
-            error_string "config printer need to call print function")
+            Printer.print_pcsp pcsp >>= fun _ -> Ok (PCSP.Problem.Unknown, -1))
     else fun ?bpvs ?(print_sol = false) pcsp ->
       ignore bpvs;
       ignore print_sol;
@@ -131,8 +131,7 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
           (fun () -> solve ~timeout ~bpvs ~print_sol ~preds ~copreds pcsp)
           (fun _ res -> res)
           (fun _ -> function
-            | Timer.Timeout -> Ok (PCSP.Problem.Timeout, -1)
-            | e -> raise e)
+            | Timer.Timeout -> Ok (PCSP.Problem.Timeout, -1) | e -> raise e)
     | _ -> solve ~bpvs ~print_sol ~preds ~copreds pcsp
 
   let preprocess =

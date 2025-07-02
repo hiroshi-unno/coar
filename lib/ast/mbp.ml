@@ -58,7 +58,11 @@ module LRA = struct
                 ~data:(T_real.mk_real (Q.of_bigint n))
               (*ToDo*)
           | Value.Real r ->
-              Map.Poly.add_exn model ~key:tvar ~data:(T_real.mk_real r))
+              Map.Poly.add_exn model ~key:tvar ~data:(T_real.mk_real r)
+          | Value.BV _ -> failwith "LRA: bitvector not supported"
+          | Value.Arr _ -> failwith "LRA: array not supported"
+          | Value.TupleCons _ -> failwith "LRA: tuple not supported"
+          | Value.DTCons _ -> failwith "LRA: datatype not supported")
 
   let eq_atom tvar = function
     | Atom.App (Predicate.Psym T_bool.Eq, [ t; _ ], _) -> (
@@ -196,7 +200,11 @@ module LIA = struct
               Map.Poly.add_exn model ~key:tvar ~data:(T_bool.make b)
           | Value.Int n ->
               Map.Poly.add_exn model ~key:tvar ~data:(T_int.mk_int n)
-          | Value.Real _ -> failwith "LIA")
+          | Value.Real _ -> failwith "LIA: real not supported"
+          | Value.BV _ -> failwith "LIA: bitvector not supported"
+          | Value.Arr _ -> failwith "LIA: array not supported"
+          | Value.TupleCons _ -> failwith "LIA: tuple not supported"
+          | Value.DTCons _ -> failwith "LIA: datatype not supported")
 
   let is_pdiv atom tvar =
     match atom with
@@ -228,7 +236,7 @@ module LIA = struct
       Evaluator.eval_term
       @@ T_int.mk_rem Value.Euclidean varmodel (T_int.mk_int lcm)
     in
-    let u = Term.of_value u_val in
+    let u = Term.of_value (get_dtenv ()) u_val in
     let newtvar = Ident.mk_fresh_tvar () in
     let newterm =
       T_int.mk_add u
@@ -236,7 +244,8 @@ module LIA = struct
     in
     let newmodel =
       let newvalue =
-        Term.of_value @@ Evaluator.eval_term
+        Term.of_value (get_dtenv ())
+        @@ Evaluator.eval_term
         @@ T_int.mk_div Value.Euclidean (T_int.mk_sub varmodel u)
              (T_int.mk_int lcm)
       in
@@ -254,7 +263,7 @@ module LIA = struct
               Normalizer.normalize_atom
               @@ Atom.mk_app (Predicate.Psym psym)
                    [
-                     Term.of_value d;
+                     Term.of_value (get_dtenv ()) d;
                      T_int.mk_add
                        (T_int.mk_int
                           Z.(mul (Value.int_of c) (Value.int_of u_val)))
@@ -516,8 +525,12 @@ module Boolean = struct
           match Evaluator.eval_term term with
           | Value.Bool b ->
               Map.Poly.add_exn model ~key:tvar ~data:(T_bool.make b)
-          | Value.Int _ -> failwith "Boolean"
-          | Value.Real _ -> failwith "Boolean")
+          | Value.Int _ -> failwith "Boolean: int not supported"
+          | Value.Real _ -> failwith "Boolean: real not supported"
+          | Value.BV _ -> failwith "Boolean: bitvector not supported"
+          | Value.Arr _ -> failwith "Boolean: array not supported"
+          | Value.TupleCons _ -> failwith "Boolean: tuple not supported"
+          | Value.DTCons _ -> failwith "Boolean: datatype not supported")
 
   let eq_atom tvar = function
     | Atom.App (Predicate.Psym T_bool.Eq, [ Term.Var (x, _, _); t ], _)

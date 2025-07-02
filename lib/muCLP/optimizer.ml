@@ -152,7 +152,8 @@ module Make (Config : Config.ConfigType) = struct
                            args
                     in
                     Formula.subst tsub
-                    @@ (* avoid variable capture *)
+                    @@
+                    (* avoid variable capture *)
                     Formula.aconv_tvar preds.(pred_id').body)
                   else Formula.mk_atom atm
               | atm -> Formula.mk_atom atm)
@@ -808,10 +809,12 @@ module Make (Config : Config.ConfigType) = struct
             | T_real.RDiv, [ ConstReal x; ConstReal y ] ->
                 ConstReal (Q.( / ) x y)
             | T_bv.BVNum (_, _), []
-            | T_bv.(BVNeg _ | BVSEXT _ | BVZEXT _), [ _ ]
+            | ( T_bv.(BVNot _ | BVNeg _ | BVEXTRACT _ | BVSEXT _ | BVZEXT _),
+                [ _ ] )
             | ( T_bv.(
-                  ( BVAdd _ | BVSub _ | BVMul _ | BVDiv _ | BVRem _ | BVSHL _
-                  | BVLSHR _ | BVASHR _ | BVOr _ | BVAnd _ )),
+                  ( BVAnd _ | BVOr _ | BVXor _ | BVNand _ | BVNor _ | BVXnor _
+                  | BVCONCAT _ | BVAdd _ | BVSub _ | BVMul _ | BVDiv _ | BVRem _
+                  | BVSMod _ | BVSHL _ | BVLSHR _ | BVASHR _ )),
                 [ _; _ ] ) ->
                 NonConst (*ToDo*)
             | _ ->
@@ -1015,22 +1018,21 @@ module Make (Config : Config.ConfigType) = struct
     if config.enable then
       muclp |> simplify
       |> (fun muclp ->
-           if print_log then
-             Debug.print @@ lazy ("simplified: " ^ Problem.str_of muclp);
-           muclp)
+      if print_log then
+        Debug.print @@ lazy ("simplified: " ^ Problem.str_of muclp);
+      muclp)
       |> InlineExtension.optimize
       |> (fun muclp ->
-           if print_log then
-             Debug.print @@ lazy ("\ninlined: " ^ Problem.str_of muclp);
-           muclp)
+      if print_log then
+        Debug.print @@ lazy ("\ninlined: " ^ Problem.str_of muclp);
+      muclp)
       |> (if config.erase_quantifiers then
             EraseQuantifiers.optimize ~elim_forall ~elim_exists
           else Fn.id)
       |> (fun muclp ->
-           if print_log then
-             Debug.print
-             @@ lazy ("\nquantifiers eliminated: " ^ Problem.str_of muclp);
-           muclp)
+      if print_log then
+        Debug.print @@ lazy ("\nquantifiers eliminated: " ^ Problem.str_of muclp);
+      muclp)
       |> EraseUnreachedPredicates.optimize
       |> (if elim_pvar_args then EraseConstVariables.optimize else Fn.id)
       |> CheckAndReplaceToTopOrBot.optimize ~id

@@ -183,9 +183,15 @@ module Make
                     ("size after: " ^ string_of_int
                    @@ Logic.ExtTerm.ast_size phi);
              let phi =
-               Logic.ExtTerm.to_old_fml Map.Poly.empty
-                 (Map.force_merge params_senv uni_senv)
-                 phi
+               try
+                 Logic.ExtTerm.to_old_fml Map.Poly.empty
+                   (Map.force_merge params_senv uni_senv)
+                   phi
+               with _ ->
+                 failwith
+                   (sprintf "failed to convert term %s to old formula: %s"
+                      (Logic.ExtTerm.str_of phi)
+                      (CandSol.str_of (params_senv, cand)))
              in
              let phi = Evaluator.simplify phi in
              let fvs = Formula.tvs_of phi in
@@ -202,7 +208,7 @@ module Make
           let result =
             check_clause_nonparam_smt ~timeout:config.smt_timeout fenv phi
           in
-          (([ (uni_senv, clause) ], phi, result), [ cl ]))
+          (([ (uni_senv, clause) ], phi, result), Set.Poly.singleton cl))
     in
     let cls_param =
       Set.to_list cls_param
@@ -213,7 +219,8 @@ module Make
              let (cls, params_senv', uni_senv', phi), cl =
                List.fold rs
                  ~init:
-                   (([], Map.Poly.empty, Map.Poly.empty, Formula.mk_true ()), [])
+                   ( ([], Map.Poly.empty, Map.Poly.empty, Formula.mk_true ()),
+                     Set.Poly.empty )
                  ~f:(fun
                      ((cls, params_senv, uni_senv, phi), srcs)
                      ( (uni_senv0, clause0, params_senv', uni_senv', phi'),
@@ -223,7 +230,7 @@ module Make
                        Map.force_merge params_senv params_senv',
                        Map.force_merge uni_senv uni_senv',
                        Formula.mk_and phi phi' ),
-                     src_cl :: srcs ))
+                     Set.add srcs src_cl ))
              in
              (* parametric candidate solution *)
              assert config.parametric_candidates;
@@ -254,10 +261,14 @@ module Make
                             (PCSP.Problem.senv_of APCSP.problem)
                             uni_senv clause
                         in
-                        ExClauseSet.of_model
-                          (PCSP.Problem.senv_of APCSP.problem)
-                          config.parametric_examples (uni_senv, phi_clause)
-                          model)
+                        Set.Poly.map
+                          ~f:
+                            (ExClause.simplify_wfpvs
+                               (PCSP.Problem.wfpvs_of APCSP.problem))
+                        @@ ExClauseSet.of_model
+                             (PCSP.Problem.senv_of APCSP.problem)
+                             config.parametric_examples (uni_senv, phi_clause)
+                             model)
                in
                if Fn.non Set.is_empty res then
                  Set.Poly.map res ~f:(fun ex -> (ex, src_cl))
@@ -282,14 +293,14 @@ module Make
                  (*dummy*)
                  Set.Poly.singleton
                    ( ExClause.mk_unit_pos @@ ExAtom.mk_true (),
-                     [ (ClauseGraph.Dummy, true) ] )
+                     Set.Poly.singleton (ClauseGraph.Dummy, true) )
            | `Unsat -> Set.Poly.empty
            | _ ->
                (*failwith "Z3 reported unknown or timeout in the validation phase"*)
                (*dummy*)
                Set.Poly.singleton
                  ( ExClause.mk_unit_pos @@ ExAtom.mk_true (),
-                   [ (ClauseGraph.Dummy, true) ] ))
+                   Set.Poly.singleton (ClauseGraph.Dummy, true) ))
 
   (** ToDo: fix to use real MaxSMT *)
   let find_common_counterexamples_for_clause fenv num_ex
@@ -360,12 +371,11 @@ module Make
         let violated_non_query_clauses =
           Set.concat_map cexs ~f:(fun (_, sources) ->
               (* filter out query clauses *)
-              Set.Poly.of_list
-              @@ List.filter_map sources ~f:(function
-                   | ClauseGraph.Clause c, _
-                     when not @@ Set.mem stable_clauses c ->
-                       Some c
-                   | _ -> None))
+              Set.Poly.filter_map sources ~f:(function
+                | ClauseGraph.Clause c, _ when not @@ Set.mem stable_clauses c
+                  ->
+                    Some c
+                | _ -> None))
         in
         if Set.is_empty violated_non_query_clauses then
           (*let _ = assert (Set.is_singleton cexs && Stdlib.(=) (snd @@ Set.choose_exn cexs)[ClauseGraph.Dummy, true]) in*)
@@ -425,7 +435,8 @@ module Make
                        lbs_opt ))
               else if
                 config.check_part_sol_with_lbs
-                || (* if [check_part_sol_with_lbs] is false, necessary to satisfy [is_qualified_partial_solution] for some target pvar *)
+                ||
+                (* if [check_part_sol_with_lbs] is false, necessary to satisfy [is_qualified_partial_solution] for some target pvar *)
                 Set.exists target_pvars ~f:(fun pvar ->
                     PCSP.Problem.is_qualified_partial_solution
                       ~print:Debug.print
@@ -556,7 +567,7 @@ module Make
                 in
                 let examples' =
                   Set.Poly.map examples' ~f:(fun ex ->
-                      (ex, [ (ClauseGraph.Clause cl, false) ]))
+                      (ex, Set.Poly.singleton (ClauseGraph.Clause cl, false)))
                 in
                 ( Set.union examples examples',
                   Set.union spurious_cands spurious_cands' ))

@@ -1,6 +1,6 @@
 opam-version: "2.0"
 name: "CoAR"
-version: "3.2"
+version: "3.3"
 maintainer: "Hiroshi Unno <hiroshi.unno@acm.org>"
 authors: "Hiroshi Unno <hiroshi.unno@acm.org>"
 homepage: "https://github.com/hiroshi-unno/coar"
@@ -24,6 +24,5 @@ depends: [
   "minisat"
   "libsvm" {= "0.10.0~modified"}
   "camlzip"
-  "apronext"
 ]
 build: ["dune" "build"]

@@ -223,10 +223,9 @@ end = struct
            (Set.Poly.filter_map dpos ~f:ExClause.atom_of_uclause)
            (Set.Poly.filter_map dneg ~f:ExClause.atom_of_uclause)
       |> (fun cs ->
-           print @@ lazy "********** simplified constraints ***********";
-           print
-           @@ lazy (PCSP.Problem.str_of (PCSP.Problem.of_clauses ~params cs));
-           cs)
+      print @@ lazy "********** simplified constraints ***********";
+      print @@ lazy (PCSP.Problem.str_of (PCSP.Problem.of_clauses ~params cs));
+      cs)
       |> classify_clauses exi_senv
       |> fun (c0, c1, c0x1) ->
       print
@@ -286,7 +285,8 @@ end = struct
            let new_examples =
              Set.Poly.union_list [ dpos'; dneg'; undecided ]
              |> (fun exs -> Set.diff exs (VersionSpace.examples_of vs))
-             |> Set.Poly.map ~f:(fun ex -> (ex, [ (ClauseGraph.Dummy, false) ]))
+             |> Set.Poly.map ~f:(fun ex ->
+                    (ex, Set.Poly.singleton (ClauseGraph.Dummy, false)))
            in
            (*TODO: add sources for new_undecided *)
            State.of_examples vs new_examples)

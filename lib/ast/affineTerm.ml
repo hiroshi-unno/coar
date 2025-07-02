@@ -28,8 +28,8 @@ let mk_int_term monomials =
     let l =
       Map.Poly.fold monomials ~init:[] ~f:(fun ~key:term ~data:c l ->
           match term with
-          | Some t -> (T_int.mk_mul t @@ Term.of_value c) :: l
-          | None -> Term.of_value c :: l)
+          | Some t -> (T_int.mk_mul t @@ Term.of_value (get_dtenv ()) c) :: l
+          | None -> Term.of_value (get_dtenv ()) c :: l)
     in
     if List.length l = 1 then List.hd_exn l
     else T_int.mk_sum (List.hd_exn l) (List.tl_exn l)
@@ -40,8 +40,8 @@ let mk_real_term monomials =
     let l =
       Map.Poly.fold monomials ~init:[] ~f:(fun ~key:term ~data:c l ->
           match term with
-          | Some t -> (T_real.mk_rmul t @@ Term.of_value c) :: l
-          | None -> Term.of_value c :: l)
+          | Some t -> (T_real.mk_rmul t @@ Term.of_value (get_dtenv ()) c) :: l
+          | None -> Term.of_value (get_dtenv ()) c :: l)
     in
     if List.length l = 1 then List.hd_exn l
     else T_real.mk_rsum (List.hd_exn l) (List.tl_exn l)
@@ -98,7 +98,7 @@ let subst_eqterm cterm eqterm tvar atom monomials_of =
       | Some (a, rest) ->
           let term =
             mk_add
-              (mk_mul (Term.of_value a) eqterm)
+              (mk_mul (Term.of_value (get_dtenv ()) a) eqterm)
               (mk_mul cterm (mk_int_term rest))
           in
           Atom.mk_psym_app sym [ term; t0 ]
@@ -111,7 +111,7 @@ let subst_eqterm cterm eqterm tvar atom monomials_of =
       | Some (a, rest) ->
           let term =
             mk_add
-              (mk_mul (Term.of_value a) eqterm)
+              (mk_mul (Term.of_value (get_dtenv ()) a) eqterm)
               (mk_mul cterm (mk_int_term rest))
           in
           if
@@ -128,7 +128,7 @@ let subst_eqterm cterm eqterm tvar atom monomials_of =
       | Some (a, rest) ->
           let term =
             mk_add
-              (mk_mul (Term.of_value a) eqterm)
+              (mk_mul (Term.of_value (get_dtenv ()) a) eqterm)
               (mk_mul cterm (mk_int_term rest))
           in
           Atom.mk_psym_app sym [ mk_mul cterm d; term ]

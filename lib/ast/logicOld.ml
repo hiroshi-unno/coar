@@ -39,7 +39,7 @@ module Sort = struct
 
   type c = { op_sig : o; val_type : t; cont_eff : e }
   type t += SVar of Ident.svar | SArrow of t * c | SPoly of Ident.svar_set * t
-  type e += EVar of Ident.evar | Pure | Closed | Eff of c * c
+  type e += EVar of Ident.evar | Pure | Eff of c * c
 
   type o +=
     | OpSig of
@@ -147,7 +147,6 @@ module Sort = struct
     | _ -> false
 
   let is_pure = function Pure -> true | _ -> false
-  let is_closed = function Closed -> true | _ -> false
   let is_eff = function Eff _ -> true | _ -> false
   let is_evar = function EVar _ -> true | _ -> false
   let is_svar = function SVar _ -> true | _ -> false
@@ -163,6 +162,9 @@ module Sort = struct
 
   let rec ret_of = function SArrow (_, c) -> ret_of c.val_type | sort -> sort
 
+  let rec ret_of_comp c =
+    match c.val_type with SArrow (_, c) -> ret_of_comp c | _ -> c
+
   let rec args_of = function
     | SArrow (s, c) -> s :: args_of c.val_type
     | _ -> []
@@ -172,6 +174,13 @@ module Sort = struct
         let args, ret = args_ret_of c.val_type in
         (s :: args, ret)
     | s -> ([], s)
+
+  let rec args_ret_of_comp c =
+    match c.val_type with
+    | SArrow (s, c) ->
+        let args, ret = args_ret_of_comp c in
+        (s :: args, ret)
+    | _ -> ([], c)
 
   let rec mono_type_of = function SPoly (_, s) -> mono_type_of s | s -> s
 
@@ -186,7 +195,7 @@ module Sort = struct
     | s -> s
 
   let rec num_conts = function
-    | EVar _ | Pure | Closed -> 0
+    | EVar _ | Pure -> 0
     | Eff (_, c) -> 1 + num_conts c.cont_eff
     | _ -> failwith "num_conts"
 end
@@ -335,10 +344,6 @@ module Type = struct
     val polar_rvs_of_sort : pos:bool -> Sort.t -> Ident.rvar_set
     val polar_rvs_of_opsig : pos:bool -> Sort.o -> Ident.rvar_set
     val polar_rvs_of_triple : pos:bool -> Sort.c -> Ident.rvar_set
-    val elim_pure_cont : Sort.e -> Sort.e
-    val elim_pure_opsig : Sort.o -> Sort.o
-    val elim_pure_val_type : Sort.t -> Sort.t
-    val elim_pure_comp_type : Sort.c -> Sort.c
     val subst_sorts_sort : sort_subst -> Sort.t -> Sort.t
     val subst_sorts_cont : sort_subst -> Sort.e -> Sort.e
     val subst_sorts_opsig : sort_subst -> Sort.o -> Sort.o
@@ -382,7 +387,7 @@ module Type = struct
 
     val mk_let_term : ?info:info -> Ident.tvar -> Sort.t -> t -> t -> t
     val mk_dummy : Sort.t -> t
-    val of_value : Value.t -> t
+    val of_value : dtenv -> Value.t -> t
     val of_sort_env : sort_env_list -> t list
 
     (** Destruction *)
@@ -1223,19 +1228,27 @@ module Type = struct
 
     type fun_sym +=
       | BVNum of size * Z.t
-      | BVNeg of size
-      | BVSEXT of int * int
-      | BVZEXT of int * int
-      | BVSHL of size
-      | BVLSHR of size
-      | BVASHR of size
-      | BVOr of size
+      | BVNot of size
       | BVAnd of size
+      | BVOr of size
+      | BVXor of size
+      | BVNand of size
+      | BVNor of size
+      | BVXnor of size
+      | BVNeg of size
       | BVAdd of size
       | BVSub of size
       | BVMul of size
       | BVDiv of size * signed
       | BVRem of size * signed
+      | BVSMod of size
+      | BVSHL of size
+      | BVLSHR of size
+      | BVASHR of size
+      | BVEXTRACT of size * int * int
+      | BVSEXT of size * int
+      | BVZEXT of size * int
+      | BVCONCAT of size * size
 
     type pred_sym +=
       | BVLeq of size * signed
@@ -1248,9 +1261,14 @@ module Type = struct
     (** Construction *)
 
     val mk_bvnum : ?info:info -> size:size -> Z.t -> bvterm
+    val mk_bvnot : ?info:info -> size:size -> bvterm -> bvterm
+    val mk_bvand : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
+    val mk_bvor : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
+    val mk_bvxor : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
+    val mk_bvnand : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
+    val mk_bvnor : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
+    val mk_bvxnor : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
     val mk_bvneg : ?info:info -> size:size -> bvterm -> bvterm
-    val mk_bvsext : ?info:info -> int -> int -> bvterm -> bvterm
-    val mk_bvzext : ?info:info -> int -> int -> bvterm -> bvterm
     val mk_bvadd : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
     val mk_bvsub : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
     val mk_bvmul : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
@@ -1261,11 +1279,16 @@ module Type = struct
     val mk_bvrem :
       ?info:info -> size:size -> signed:signed -> bvterm -> bvterm -> bvterm
 
+    val mk_bvsmod : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
     val mk_bvshl : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
     val mk_bvlshr : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
     val mk_bvashr : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
-    val mk_bvor : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
-    val mk_bvand : ?info:info -> size:size -> bvterm -> bvterm -> bvterm
+    val mk_bvextract : ?info:info -> size:size -> int -> int -> bvterm -> bvterm
+    val mk_bvsext : ?info:info -> size:size -> int -> bvterm -> bvterm
+    val mk_bvzext : ?info:info -> size:size -> int -> bvterm -> bvterm
+
+    val mk_bvconcat :
+      ?info:info -> size1:size -> size2:size -> bvterm -> bvterm -> bvterm
 
     val mk_bvleq :
       ?info:info -> size:size -> signed:signed -> bvterm -> bvterm -> bvatom
@@ -1279,22 +1302,34 @@ module Type = struct
     val mk_bvgt :
       ?info:info -> size:size -> signed:signed -> bvterm -> bvterm -> bvatom
 
+    val bvzero : ?info:info -> size:size -> unit -> bvterm
+    val bvone : ?info:info -> size:size -> unit -> bvterm
+    val mk_bvsum : ?info:info -> size:size -> bvterm -> bvterm list -> bvterm
+
     (** Destruction *)
 
     val let_bv : bvterm -> size * Z.t
+    val let_bvnot : bvterm -> size * bvterm * info
+    val let_bvand : bvterm -> size * bvterm * bvterm * info
+    val let_bvor : bvterm -> size * bvterm * bvterm * info
+    val let_bvxor : bvterm -> size * bvterm * bvterm * info
+    val let_bvnand : bvterm -> size * bvterm * bvterm * info
+    val let_bvnor : bvterm -> size * bvterm * bvterm * info
+    val let_bvxnor : bvterm -> size * bvterm * bvterm * info
     val let_bvneg : bvterm -> size * bvterm * info
-    val let_bvsext : bvterm -> int * int * bvterm * info
-    val let_bvzext : bvterm -> int * int * bvterm * info
     val let_bvadd : bvterm -> size * bvterm * bvterm * info
     val let_bvsub : bvterm -> size * bvterm * bvterm * info
     val let_bvmul : bvterm -> size * bvterm * bvterm * info
     val let_bvdiv : bvterm -> size * signed * bvterm * bvterm * info
     val let_bvrem : bvterm -> size * signed * bvterm * bvterm * info
+    val let_bvsmod : bvterm -> size * bvterm * bvterm * info
     val let_bvshl : bvterm -> size * bvterm * bvterm * info
     val let_bvlshr : bvterm -> size * bvterm * bvterm * info
     val let_bvashr : bvterm -> size * bvterm * bvterm * info
-    val let_bvor : bvterm -> size * bvterm * bvterm * info
-    val let_bvand : bvterm -> size * bvterm * bvterm * info
+    val let_bvextract : bvterm -> size * int * int * bvterm * info
+    val let_bvsext : bvterm -> size * int * bvterm * info
+    val let_bvzext : bvterm -> size * int * bvterm * info
+    val let_bvconcat : bvterm -> size * size * bvterm * bvterm * info
     val let_bvleq : bvatom -> size * signed * bvterm * bvterm * info
     val let_bvgeq : bvatom -> size * signed * bvterm * bvterm * info
     val let_bvlt : bvatom -> size * signed * bvterm * bvterm * info
@@ -1308,25 +1343,45 @@ module Type = struct
     val is_bv_psym : pred_sym -> bool
     val is_sbv : bvterm -> bool
     val is_bv : bvterm -> bool
+    val is_bvzero : bvterm -> bool
+    val is_bvunit : bvterm -> bool
+    val is_bvnot : bvterm -> bool
+    val is_bvand : bvterm -> bool
+    val is_bvor : bvterm -> bool
+    val is_bvxor : bvterm -> bool
+    val is_bvnand : bvterm -> bool
+    val is_bvnor : bvterm -> bool
+    val is_bvxnor : bvterm -> bool
     val is_bvneg : bvterm -> bool
-    val is_bvsext : bvterm -> bool
-    val is_bvzext : bvterm -> bool
     val is_bvadd : bvterm -> bool
     val is_bvsub : bvterm -> bool
     val is_bvmul : bvterm -> bool
     val is_bvdiv : bvterm -> bool
     val is_bvrem : bvterm -> bool
+    val is_bvsmod : bvterm -> bool
     val is_bvshl : bvterm -> bool
     val is_bvlshr : bvterm -> bool
     val is_bvashr : bvterm -> bool
-    val is_bvor : bvterm -> bool
-    val is_bvand : bvterm -> bool
+    val is_bvextract : bvterm -> bool
+    val is_bvsext : bvterm -> bool
+    val is_bvzext : bvterm -> bool
+    val is_bvconcat : bvterm -> bool
     val is_bvleq : bvatom -> bool
     val is_bvgeq : bvatom -> bool
     val is_bvlt : bvatom -> bool
     val is_bvgt : bvatom -> bool
     val str_of_size : size -> string
     val str_of_signed : signed -> string
+
+    (** Size manipulation *)
+
+    val eq_size : size -> size -> bool
+    val merge_size : size -> size -> size
+    val geq_size : size -> size -> bool
+    val ext_size : size -> int -> size
+    val add_size : size -> size -> size
+    val max_size : size -> size -> size
+    val max_size_list : size list -> size
   end
 
   module type T_irbType = sig
@@ -1375,13 +1430,21 @@ module Type = struct
     val let_is_int : atom -> term * info
     val origin_of : Sort.t list -> term list
 
-    (* *)
-    val sort_of : (term * Sort.t) list -> Sort.t
-    val eq_of : Sort.t -> (term * Sort.t) list -> (term list * term) * atom
-    val ineq_of : Sort.t -> (term * Sort.t) list -> (term list * term) * atom
+    (* Auxliary functions for templates *)
+    val bool_terms_of : (term * Sort.t) list -> (term * Sort.t) list
+    val num_terms_of : (term * Sort.t) list -> (term * Sort.t) list
+    val num_sort_of : (term * Sort.t) list -> Sort.t
 
-    val conj_with_bool_of :
-      (term * Sort.t) list -> (term list * term) list * formula
+    val eq_of :
+      Sort.t -> (term * Sort.t) list -> (term list * term) list * formula
+
+    val ineq_of :
+      Sort.t -> (term * Sort.t) list -> (term list * term) list * formula
+
+    val br_bools_of :
+      ((term * Sort.t) list -> (term list * term) list * formula) ->
+      (term * Sort.t) list ->
+      (term list * term) list * formula
   end
 
   module type T_numType = sig
@@ -1391,7 +1454,7 @@ module Type = struct
     type fun_sym +=
       | Value of string * Ident.svar
       | NNeg of Ident.svar
-      | NSEXT of int * Ident.svar * int * Ident.svar
+      | NSEXT of int option * Ident.svar * int * Ident.svar
       | NAdd of Ident.svar
       | NSub of Ident.svar
       | NMul of Ident.svar
@@ -1412,7 +1475,7 @@ module Type = struct
     val mk_value : ?info:info -> string -> term
     val mk_neg_value : ?info:info -> string -> term
     val mk_nneg : ?info:info -> term -> term
-    val mk_nsext : ?info:info -> int -> int -> term -> term
+    val mk_nsext : ?info:info -> size:int option -> int -> term -> term
     val mk_nadd : ?info:info -> term -> term -> term
     val mk_nsub : ?info:info -> term -> term -> term
     val mk_nmul : ?info:info -> term -> term -> term
@@ -1428,7 +1491,7 @@ module Type = struct
 
     val let_value : term -> string * info
     val let_nneg : term -> term * info
-    val let_nsext : term -> int * int * term * info
+    val let_nsext : term -> int option * int * term * info
     val let_nadd : term -> term * term * info
     val let_nsub : term -> term * term * info
     val let_nmul : term -> term * term * info
@@ -1484,14 +1547,15 @@ module Type = struct
     type atom
 
     type fun_sym +=
+      | AConst of Sort.t * Sort.t
       | AStore of Sort.t * Sort.t
       | ASelect of Sort.t * Sort.t
-      | AConst of Sort.t * Sort.t
 
     type Sort.t += SArray of Sort.t * Sort.t
 
     (** Sorts *)
 
+    val is_sarray : Sort.t -> bool
     val mk_array_sort : Sort.t -> Sort.t -> Sort.t
     val of_arrow : Sort.t -> Sort.t
     val index_sort_of : Sort.t -> Sort.t
@@ -1499,21 +1563,22 @@ module Type = struct
 
     (** Construction *)
 
-    val mk_select : Sort.t -> Sort.t -> term -> term -> term
-    val mk_store : Sort.t -> Sort.t -> term -> term -> term -> term
     val mk_const_array : Sort.t -> Sort.t -> term -> term
+    val mk_store : Sort.t -> Sort.t -> term -> term -> term -> term
+    val mk_select : Sort.t -> Sort.t -> term -> term -> term
     val of_fvar_app : term -> term
 
     (** Destruction *)
 
-    val let_select : term -> Sort.t * Sort.t * term * term * info
     val let_store : term -> Sort.t * Sort.t * term * term * term * info
+    val let_select : term -> Sort.t * Sort.t * term * term * info
 
     (** Observation *)
 
-    val is_select : term -> bool
     val is_store : term -> bool
+    val is_select : term -> bool
     val eval_select : term -> term -> term option
+    val non_stored : term -> term -> bool
   end
 
   module type T_tupleType = sig
@@ -1944,12 +2009,12 @@ module rec Term :
     | _ -> failwith "[occurs] unknown sort"
 
   and occurs_cont sv = function
-    | Sort.(EVar _ | Pure | Closed) -> false
+    | Sort.(EVar _ | Pure) -> false
     | Sort.Eff (c1, c2) -> occurs_triple sv c1 || occurs_triple sv c2
     | _ -> failwith "occurs_cont"
 
   and occurs_opsig sv = function
-    | Sort.OpSig (opmap, _) -> opmap |> ALMap.data |> List.exists ~f:(occurs sv)
+    | Sort.OpSig (opmap, _) -> List.exists (ALMap.data opmap) ~f:(occurs sv)
     | _ -> failwith "occurs_opsig"
 
   and occurs_triple sv c =
@@ -1971,9 +2036,9 @@ module rec Term :
     | Sort.SVar svar -> Ident.name_of_svar svar
     | Sort.SArrow (s, c) ->
         sprintf "%s -> %s"
-          (if Sort.is_arrow s || Term.is_array_sort s then
-             String.paren @@ str_of_sort s
-           else str_of_sort s)
+          ((if Sort.is_arrow s || Term.is_array_sort s then String.paren
+            else Fn.id)
+          @@ str_of_sort s)
           (str_of_triple c)
     | Sort.SPoly (svs, s) ->
         if Set.is_empty svs then
@@ -1996,9 +2061,9 @@ module rec Term :
     | T_regex.SRegEx -> "regex"
     | T_array.SArray (s1, s2) ->
         sprintf "%s ->> %s"
-          (if Sort.is_arrow s1 || Term.is_array_sort s1 then
-             String.paren @@ str_of_sort s1
-           else str_of_sort s1)
+          ((if Sort.is_arrow s1 || Term.is_array_sort s1 then String.paren
+            else Fn.id)
+          @@ str_of_sort s1)
           (str_of_sort s2)
     | T_tuple.STuple sorts ->
         String.paren @@ String.concat_map_list ~sep:" * " sorts ~f:str_of_sort
@@ -2017,7 +2082,6 @@ module rec Term :
   and str_of_cont = function
     | Sort.EVar evar -> Ident.name_of_evar evar
     | Sort.Pure -> "_"
-    | Sort.Closed -> "-"
     | Sort.Eff (c1, c2) ->
         sprintf "%s => %s" (str_of_triple c1) (str_of_triple c2)
     | _ -> failwith "[str_of_cont] unknown control effect"
@@ -2025,9 +2089,8 @@ module rec Term :
   and str_of_opsig = function
     | Sort.OpSig (map, rho_opt) ->
         let str_map =
-          map |> ALMap.to_alist
-          |> String.concat_map_list ~sep:", " ~f:(fun (op, sort) ->
-                 op ^ ": " ^ str_of_sort sort)
+          String.concat_map_list (ALMap.to_alist map) ~sep:", "
+            ~f:(fun (op, sort) -> sprintf "%s: %s" op (str_of_sort sort))
         in
         let str_rho =
           match rho_opt with
@@ -2095,7 +2158,7 @@ module rec Term :
     inner Set.Poly.empty sort
 
   let rec svs_of_cont = function
-    | Sort.(EVar _ | Pure | Closed) -> Set.Poly.empty
+    | Sort.(EVar _ | Pure) -> Set.Poly.empty
     | Sort.Eff (c1, c2) -> Set.union (svs_of_triple c1) (svs_of_triple c2)
     | _ -> failwith "[svs_of_cont]"
 
@@ -2117,7 +2180,7 @@ module rec Term :
 
   and svs_of_opsig = function
     | Sort.OpSig (map, _) ->
-        map |> ALMap.data |> List.map ~f:svs_of_sort |> Set.Poly.union_list
+        Set.Poly.union_list @@ List.map (ALMap.data map) ~f:svs_of_sort
     | _ -> failwith "[svs_of_opsig]"
 
   and svs_of_triple c =
@@ -2125,7 +2188,7 @@ module rec Term :
       [ svs_of_opsig c.op_sig; svs_of_sort c.val_type; svs_of_cont c.cont_eff ]
 
   let rec polar_svs_of_cont ~pos = function
-    | Sort.(EVar _ | Pure | Closed) -> Set.Poly.empty
+    | Sort.(EVar _ | Pure) -> Set.Poly.empty
     | Sort.Eff (c1, c2) ->
         Set.union
           (polar_svs_of_triple ~pos:(not pos) c1)
@@ -2157,9 +2220,8 @@ module rec Term :
 
   and polar_svs_of_opsig ~pos = function
     | Sort.OpSig (map, _) ->
-        map |> ALMap.data
-        |> List.map ~f:(polar_svs_of_sort ~pos)
-        |> Set.Poly.union_list
+        Set.Poly.union_list
+        @@ List.map (ALMap.data map) ~f:(polar_svs_of_sort ~pos)
     | _ -> failwith "[polar_svs_of_opsig]"
 
   and polar_svs_of_triple ~pos c =
@@ -2172,7 +2234,7 @@ module rec Term :
 
   let rec evs_of_cont = function
     | Sort.EVar evar -> Set.Poly.singleton evar
-    | Sort.Pure | Sort.Closed -> Set.Poly.empty
+    | Sort.Pure -> Set.Poly.empty
     | Sort.Eff (c1, c2) -> Set.union (evs_of_triple c1) (evs_of_triple c2)
     | _ -> failwith "[evs_of_cont]"
 
@@ -2194,7 +2256,7 @@ module rec Term :
 
   and evs_of_opsig = function
     | Sort.OpSig (map, _) ->
-        map |> ALMap.data |> List.map ~f:evs_of_sort |> Set.Poly.union_list
+        Set.Poly.union_list @@ List.map (ALMap.data map) ~f:evs_of_sort
     | _ -> failwith "[evs_of_opsig]"
 
   and evs_of_triple c =
@@ -2203,7 +2265,7 @@ module rec Term :
 
   let rec polar_evs_of_cont ~pos = function
     | Sort.EVar evar -> if pos then Set.Poly.singleton evar else Set.Poly.empty
-    | Sort.Pure | Sort.Closed -> Set.Poly.empty
+    | Sort.Pure -> Set.Poly.empty
     | Sort.Eff (c1, c2) ->
         Set.union
           (polar_evs_of_triple ~pos:(not pos) c1)
@@ -2235,9 +2297,8 @@ module rec Term :
 
   and polar_evs_of_opsig ~pos = function
     | Sort.OpSig (map, _) ->
-        map |> ALMap.data
-        |> List.map ~f:(polar_evs_of_sort ~pos)
-        |> Set.Poly.union_list
+        Set.Poly.union_list
+        @@ List.map (ALMap.data map) ~f:(polar_evs_of_sort ~pos)
     | _ -> failwith "[polar_evs_of_opsig]"
 
   and polar_evs_of_triple ~pos c =
@@ -2249,7 +2310,7 @@ module rec Term :
       ]
 
   let rec rvs_of_cont = function
-    | Sort.(EVar _ | Pure | Closed) -> Set.Poly.empty
+    | Sort.(EVar _ | Pure) -> Set.Poly.empty
     | Sort.Eff (c1, c2) -> Set.union (rvs_of_triple c1) (rvs_of_triple c2)
     | _ -> failwith "[rvs_of_cont]"
 
@@ -2275,7 +2336,7 @@ module rec Term :
         @@ (match rv_opt with
            | Some rv -> Set.Poly.singleton rv
            | None -> Set.Poly.empty)
-           :: (List.map ~f:rvs_of_sort @@ ALMap.data map)
+           :: List.map (ALMap.data map) ~f:rvs_of_sort
     | _ -> failwith "[rvs_of_opsig]"
 
   and rvs_of_triple c =
@@ -2283,7 +2344,7 @@ module rec Term :
       [ rvs_of_opsig c.op_sig; rvs_of_sort c.val_type; rvs_of_cont c.cont_eff ]
 
   let rec polar_rvs_of_cont ~pos = function
-    | Sort.(EVar _ | Pure | Closed) -> Set.Poly.empty
+    | Sort.(EVar _ | Pure) -> Set.Poly.empty
     | Sort.Eff (c1, c2) ->
         Set.union
           (polar_rvs_of_triple ~pos:(not pos) c1)
@@ -2319,7 +2380,7 @@ module rec Term :
         @@ (match rv_opt with
            | Some rv -> if pos then Set.Poly.singleton rv else Set.Poly.empty
            | None -> Set.Poly.empty)
-           :: (List.map ~f:(polar_rvs_of_sort ~pos) @@ ALMap.data map)
+           :: List.map (ALMap.data map) ~f:(polar_rvs_of_sort ~pos)
     | _ -> failwith "[polar_rvs_of_opsig]"
 
   and polar_rvs_of_triple ~pos c =
@@ -2329,74 +2390,6 @@ module rec Term :
         polar_rvs_of_sort ~pos c.val_type;
         polar_rvs_of_cont ~pos c.cont_eff;
       ]
-
-  let rec elim_pure_dt dt =
-    {
-      dt with
-      Datatype.conses =
-        List.map (Datatype.conses_of_dt dt) ~f:(fun cons ->
-            {
-              cons with
-              sels =
-                List.map (Datatype.sels_of_cons cons) ~f:(function
-                  | InSel (name, ret_name, params) ->
-                      Datatype.InSel
-                        (name, ret_name, List.map params ~f:elim_pure_val_type)
-                  | Sel (name, ret_sort) ->
-                      Sel (name, elim_pure_val_type ret_sort));
-            });
-      params = List.map (Datatype.params_of_dt dt) ~f:elim_pure_val_type;
-    }
-
-  and elim_pure_opsig = function
-    | Sort.OpSig (opmap, r) ->
-        Sort.OpSig (ALMap.map opmap ~f:elim_pure_val_type, r)
-    | _ -> failwith "[elim_pure_opsig] unknown operation signature"
-
-  and elim_pure_cont = function
-    | Sort.EVar _ -> failwith "evar not supported"
-    | Sort.Pure ->
-        let c =
-          Sort.
-            {
-              op_sig = empty_closed_opsig;
-              val_type = mk_fresh_svar ();
-              cont_eff = Sort.Closed;
-            }
-        in
-        Sort.mk_cont_eff c c
-    | Sort.Closed -> Sort.Closed
-    | Sort.Eff (c1, c2) ->
-        Sort.mk_cont_eff (elim_pure_comp_type c1) (elim_pure_comp_type c2)
-    | _ -> failwith "[elim_pure_cont] unknown control effect"
-
-  and elim_pure_comp_type c =
-    Sort.
-      {
-        op_sig = elim_pure_opsig c.op_sig;
-        val_type = elim_pure_val_type c.val_type;
-        cont_eff = elim_pure_cont c.cont_eff;
-      }
-
-  and elim_pure_val_type = function
-    | Sort.SVar sv -> Sort.SVar sv
-    | Sort.SArrow (s, c) ->
-        Sort.SArrow (elim_pure_val_type s, elim_pure_comp_type c)
-    | Sort.SPoly (svs, s) -> Sort.SPoly (svs, elim_pure_val_type s)
-    | ( T_bool.SBool | T_int.SInt | T_real.SReal | T_bv.SBV _ | T_string.SString
-      | T_sequence.SSequence _ | T_regex.SRegEx ) as s ->
-        s
-    | T_array.SArray (s1, s2) ->
-        T_array.SArray (elim_pure_val_type s1, elim_pure_val_type s2)
-    | T_tuple.STuple sorts ->
-        T_tuple.STuple (List.map ~f:elim_pure_val_type sorts)
-    | T_dt.SDT t ->
-        T_dt.SDT (Datatype.update_dt t (elim_pure_dt (Datatype.dt_of t)))
-    | T_dt.SUS (str, sorts) ->
-        T_dt.SUS (str, List.map ~f:elim_pure_val_type sorts)
-    | T_int.SRefInt -> T_int.SRefInt
-    | T_ref.SRef sort -> T_ref.SRef (elim_pure_val_type sort)
-    | _ -> failwith "[elim_pure_val_type] unknown sort"
 
   let rec subst_sorts_sort map = function
     | Sort.SVar svar -> (
@@ -2422,7 +2415,7 @@ module rec Term :
     | sort (*ToDo*) -> sort (*failwith "subst_sorts_sort"*)
 
   and subst_sorts_cont map = function
-    | Sort.(EVar _ | Pure | Closed) as e -> e
+    | Sort.(EVar _ | Pure) as e -> e
     | Sort.Eff (c1, c2) ->
         Sort.mk_cont_eff (subst_sorts_triple map c1) (subst_sorts_triple map c2)
     | _ -> failwith "subst_sorts_cont"
@@ -2455,7 +2448,6 @@ module rec Term :
     | Sort.EVar evar -> (
         match Map.Poly.find map evar with Some e -> e | None -> Sort.EVar evar)
     | Sort.Pure -> Sort.Pure
-    | Sort.Closed -> Sort.Closed
     | Sort.Eff (c1, c2) ->
         Sort.mk_cont_eff (subst_conts_triple map c1) (subst_conts_triple map c2)
     | _ -> failwith "subst_conts_cont"
@@ -2485,7 +2477,7 @@ module rec Term :
     | sort -> sort (*failwith "subst_opsigs_sort"*)
 
   and subst_opsigs_cont map = function
-    | Sort.(EVar _ | Pure | Closed) as e -> e
+    | Sort.(EVar _ | Pure) as e -> e
     | Sort.Eff (c1, c2) ->
         Sort.mk_cont_eff
           (subst_opsigs_triple map c1)
@@ -2559,7 +2551,7 @@ module rec Term :
     | _ -> failwith "[fresh_conts_sort] unknown sort"
 
   let rec fresh_rvs_cont = function
-    | Sort.(EVar _ | Pure | Closed) as e -> e
+    | Sort.(EVar _ | Pure) as e -> e
     | Sort.Eff (c1, c2) ->
         Sort.mk_cont_eff (fresh_rvs_triple c1) (fresh_rvs_triple c2)
     | _ -> failwith "fresh_rvs_cont"
@@ -2730,10 +2722,7 @@ module rec Term :
 
   let rec mk_dummy = function
     | Sort.SVar (Ident.Svar name) as sort ->
-        let name =
-          "dummy_" ^ name
-          (*ToDo*)
-        in
+        let name = (*ToDo*) "dummy_" ^ name in
         add_dummy_term (Ident.Tvar name) sort;
         Term.mk_var (Ident.Tvar name) sort
     | Sort.SArrow _ as sort ->
@@ -2743,7 +2732,7 @@ module rec Term :
     | T_bool.SBool -> T_bool.mk_false ()
     | T_int.SInt -> T_int.zero ()
     | T_real.SReal -> T_real.rzero ()
-    | T_bv.SBV size -> T_bv.mk_bvnum ~size Z.zero
+    | T_bv.SBV size -> T_bv.bvzero ~size ()
     | T_string.SString -> mk_fsym_app (T_string.StrConst "") []
     | T_sequence.SSequence true -> T_sequence.mk_eps ()
     | T_sequence.SSequence false ->
@@ -2757,10 +2746,35 @@ module rec Term :
     | T_ref.SRef sort -> T_ref.mk_ref sort @@ mk_dummy sort
     | s -> failwith @@ "[mk_dummy] not supported: " ^ str_of_sort s
 
-  let of_value = function
+  let rec of_value dtenv = function
+    | Value.Bool b -> T_bool.of_atom @@ Atom.mk_bool b
     | Value.Int i -> T_int.mk_int i
     | Value.Real r -> T_real.mk_real r
-    | Value.Bool b -> T_bool.of_atom @@ Atom.mk_bool b
+    | Value.BV (size, bits) -> T_bv.mk_bvnum ~size bits
+    | Value.Arr (dummy, v, m) ->
+        let default = of_value dtenv v in
+        let elem_sort = Term.sort_of default in
+        let index_sort =
+          match Map.Poly.keys m with
+          | [] -> Term.sort_of @@ of_value dtenv dummy
+          | v :: _ -> Term.sort_of @@ of_value dtenv v
+        in
+        Map.Poly.fold m
+          ~init:(T_array.mk_const_array index_sort elem_sort default)
+          ~f:(fun ~key ~data acc ->
+            let key = of_value dtenv key in
+            let data = of_value dtenv data in
+            T_array.mk_store index_sort elem_sort acc key data)
+    | Value.TupleCons vs ->
+        let ts = List.map vs ~f:(of_value dtenv) in
+        T_tuple.mk_tuple_cons (List.map ts ~f:Term.sort_of) ts
+    | Value.DTCons (name, pvs, vs) ->
+        let t =
+          Datatype.update_params
+            (Option.value_exn (DTEnv.look_up_dt_by_cons_name dtenv name))
+            (List.map pvs ~f:(of_value dtenv >> Term.sort_of))
+        in
+        T_dt.mk_cons t name (List.map vs ~f:(of_value dtenv))
 
   let of_sort_env = List.map ~f:(uncurry mk_var)
 
@@ -2823,9 +2837,14 @@ module rec Term :
     | T_real.RDiv -> "/."
     | T_real.RPower -> "^."
     | T_bv.BVNum (_size, n) -> Z.to_string n
+    | T_bv.BVNot size -> sprintf "not%s" (T_bv.str_of_size size)
+    | T_bv.BVAnd size -> sprintf "and%s" (T_bv.str_of_size size)
+    | T_bv.BVOr size -> sprintf "or%s" (T_bv.str_of_size size)
+    | T_bv.BVXor size -> sprintf "xor%s" (T_bv.str_of_size size)
+    | T_bv.BVNand size -> sprintf "nand%s" (T_bv.str_of_size size)
+    | T_bv.BVNor size -> sprintf "nor%s" (T_bv.str_of_size size)
+    | T_bv.BVXnor size -> sprintf "xnor%s" (T_bv.str_of_size size)
     | T_bv.BVNeg size -> sprintf "neg%s" (T_bv.str_of_size size)
-    | T_bv.BVSEXT (from, to_) -> sprintf "sext%d>%d" from to_
-    | T_bv.BVZEXT (from, to_) -> sprintf "zext%d>%d" from to_
     | T_bv.BVAdd size -> sprintf "add%s" (T_bv.str_of_size size)
     | T_bv.BVSub size -> sprintf "sub%s" (T_bv.str_of_size size)
     | T_bv.BVMul size -> sprintf "mul%s" (T_bv.str_of_size size)
@@ -2833,24 +2852,32 @@ module rec Term :
         sprintf "%sdiv%s" (T_bv.str_of_signed signed) (T_bv.str_of_size size)
     | T_bv.BVRem (size, signed) ->
         sprintf "%srem%s" (T_bv.str_of_signed signed) (T_bv.str_of_size size)
+    | T_bv.BVSMod size -> sprintf "smod%s" (T_bv.str_of_size size)
     | T_bv.BVSHL size -> sprintf "shl%s" (T_bv.str_of_size size)
     | T_bv.BVLSHR size -> sprintf "lshr%s" (T_bv.str_of_size size)
     | T_bv.BVASHR size -> sprintf "ashr%s" (T_bv.str_of_size size)
-    | T_bv.BVOr size -> sprintf "or%s" (T_bv.str_of_size size)
-    | T_bv.BVAnd size -> sprintf "and%s" (T_bv.str_of_size size)
+    | T_bv.BVEXTRACT (size, h, l) ->
+        sprintf "extract%s[%d:%d]" (T_bv.str_of_size size) h l
+    | T_bv.BVSEXT (size, ext) -> sprintf "sext%s+%d" (T_bv.str_of_size size) ext
+    | T_bv.BVZEXT (size, ext) -> sprintf "zext%s+%d" (T_bv.str_of_size size) ext
+    | T_bv.BVCONCAT (size1, size2) ->
+        sprintf "concat%s,%s" (T_bv.str_of_size size1) (T_bv.str_of_size size2)
     | T_irb.IntToReal -> "int_to_real"
     | T_irb.RealToInt -> "real_to_int"
-    | T_irb.IntToBV _ -> "int_to_bv"
-    | T_irb.BVToInt _ -> "bv_to_int"
+    | T_irb.IntToBV size -> sprintf "int_to_bv%s" (T_bv.str_of_size size)
+    | T_irb.BVToInt (size, signed) ->
+        sprintf "bv_to_%sint%s"
+          (T_bv.str_of_signed signed)
+          (T_bv.str_of_size size)
     | T_num.Value (v, svar) ->
         sprintf "value(%s:%s)" v (Ident.name_of_svar svar)
     | T_num.NNeg svar ->
         if true then "'-" else sprintf "-_%s" (Ident.name_of_svar svar)
-    | T_num.NSEXT (from, svar1, to_, svar2) ->
+    | T_num.NSEXT (size, svar1, ext, svar2) ->
         if true then "'sext"
         else
-          sprintf "sext_%d:%s>%d:%s" from (Ident.name_of_svar svar1) to_
-            (Ident.name_of_svar svar2)
+          sprintf "sext%s+%d:%s->%s" (T_bv.str_of_size size) ext
+            (Ident.name_of_svar svar1) (Ident.name_of_svar svar2)
     | T_num.NAdd svar ->
         if true then "'+" else sprintf "+_%s" (Ident.name_of_svar svar)
     | T_num.NSub svar ->
@@ -2883,11 +2910,11 @@ module rec Term :
     | T_regex.RegConcat -> "concat"
     | T_regex.RegUnion -> "union"
     | T_regex.RegInter -> "inter"
-    | T_array.ASelect _ -> "select"
-    | T_array.AStore _ -> "store"
     | T_array.AConst (s1, s2) ->
         if true then "const"
         else sprintf "const_array[%s>>%s]" (str_of_sort s1) (str_of_sort s2)
+    | T_array.AStore _ -> "store"
+    | T_array.ASelect _ -> "select"
     | T_tuple.TupleCons _ -> "t_cons"
     | T_tuple.TupleSel (_, i) -> sprintf "t_sel.%d" i
     | T_dt.DTCons (name, args, dt) ->
@@ -2968,14 +2995,14 @@ module rec Term :
             Term.subst_sorts_sort map @@ Sort.SVar svar2;
           ]
     | T_bool.Formula phi -> T_bool.Formula (Formula.subst_sorts map phi)
-    | T_array.ASelect (s1, s2) ->
-        T_array.ASelect
+    | T_array.AConst (s1, s2) ->
+        T_array.AConst
           (Term.subst_sorts_sort map s1, Term.subst_sorts_sort map s2)
     | T_array.AStore (s1, s2) ->
         T_array.AStore
           (Term.subst_sorts_sort map s1, Term.subst_sorts_sort map s2)
-    | T_array.AConst (s1, s2) ->
-        T_array.AConst
+    | T_array.ASelect (s1, s2) ->
+        T_array.ASelect
           (Term.subst_sorts_sort map s1, Term.subst_sorts_sort map s2)
     | T_tuple.TupleCons sorts ->
         T_tuple.TupleCons (List.map ~f:(Term.subst_sorts_sort map) sorts)
@@ -3015,14 +3042,14 @@ module rec Term :
             Term.subst_conts_sort map @@ Sort.SVar svar1;
             Term.subst_conts_sort map @@ Sort.SVar svar2;
           ]
-    | T_array.ASelect (s1, s2) ->
-        T_array.ASelect
+    | T_array.AConst (s1, s2) ->
+        T_array.AConst
           (Term.subst_conts_sort map s1, Term.subst_conts_sort map s2)
     | T_array.AStore (s1, s2) ->
         T_array.AStore
           (Term.subst_conts_sort map s1, Term.subst_conts_sort map s2)
-    | T_array.AConst (s1, s2) ->
-        T_array.AConst
+    | T_array.ASelect (s1, s2) ->
+        T_array.ASelect
           (Term.subst_conts_sort map s1, Term.subst_conts_sort map s2)
     | T_tuple.TupleCons sorts ->
         T_tuple.TupleCons (List.map sorts ~f:(Term.subst_conts_sort map))
@@ -3062,14 +3089,14 @@ module rec Term :
             Term.subst_opsigs_sort map @@ Sort.SVar svar1;
             Term.subst_opsigs_sort map @@ Sort.SVar svar2;
           ]
-    | T_array.ASelect (s1, s2) ->
-        T_array.ASelect
+    | T_array.AConst (s1, s2) ->
+        T_array.AConst
           (Term.subst_opsigs_sort map s1, Term.subst_opsigs_sort map s2)
     | T_array.AStore (s1, s2) ->
         T_array.AStore
           (Term.subst_opsigs_sort map s1, Term.subst_opsigs_sort map s2)
-    | T_array.AConst (s1, s2) ->
-        T_array.AConst
+    | T_array.ASelect (s1, s2) ->
+        T_array.ASelect
           (Term.subst_opsigs_sort map s1, Term.subst_opsigs_sort map s2)
     | T_tuple.TupleCons sorts ->
         T_tuple.TupleCons (List.map sorts ~f:(Term.subst_opsigs_sort map))
@@ -3227,19 +3254,20 @@ module rec Term :
                    (string_of_int n)
              | T_bv.BVNum (size, n), [] ->
                  Priority.add_paren priority Priority.fun_app
-                 @@ sprintf "bv(%s : %s)" (Z.to_string n)
-                      (T_bv.str_of_size size)
+                 @@ sprintf "%s0b%s"
+                      (if Option.is_none size then "?" else "")
+                      (z_to_bin_string_fixed (T_bv.bits_of size) n)
              | T_num.Value _, _ -> str_of_funsym fsym
              | ( ( T_int.(Nop | Abs)
                  | T_real.RAbs
-                 | T_bv.(BVSEXT _ | BVZEXT _)
+                 | T_bv.(BVNot _ | BVNeg _ | BVEXTRACT _ | BVSEXT _ | BVZEXT _)
                  | T_irb.(IntToReal | RealToInt | IntToBV _ | BVToInt _)
                  | T_num.NSEXT _ ),
                  [ t ] ) ->
                  Priority.add_paren priority Priority.fun_app
                  @@ sprintf "%s %s" (str_of_funsym fsym)
                       (t (Priority.fun_app + 1))
-             | (T_int.Neg | T_real.RNeg | T_bv.BVNeg _ | T_num.NNeg _), [ t ] ->
+             | (T_int.Neg | T_real.RNeg | T_num.NNeg _), [ t ] ->
                  Priority.add_paren priority Priority.neg_deref
                  @@ sprintf "%s%s" (str_of_funsym fsym)
                       (t (Priority.neg_deref + 1))
@@ -3254,7 +3282,7 @@ module rec Term :
                       (t2 (Priority.add_sub + 1))
              | ( ( T_int.(Mul | Div _ | Rem _)
                  | T_real.(RMul | RDiv)
-                 | T_bv.(BVMul _ | BVDiv _ | BVRem _)
+                 | T_bv.(BVMul _ | BVDiv _ | BVRem _ | BVSMod _)
                  | T_num.(NMul _ | NDiv _ | NRem _) ),
                  [ t1; t2 ] ) ->
                  Priority.add_paren priority Priority.mul_div_mod
@@ -3266,7 +3294,9 @@ module rec Term :
                  @@ sprintf "%s %s %s"
                       (t1 (Priority.append_power + 1))
                       (str_of_funsym fsym) (t2 Priority.append_power)
-             | ( T_bv.(BVSHL _ | BVLSHR _ | BVASHR _ | BVOr _ | BVAnd _),
+             | ( T_bv.(
+                   ( BVAnd _ | BVOr _ | BVXor _ | BVNand _ | BVNor _ | BVXnor _
+                   | BVSHL _ | BVLSHR _ | BVASHR _ | BVCONCAT _ )),
                  [ t1; t2 ] ) ->
                  Priority.add_paren priority Priority.fun_app
                  @@ sprintf "%s %s %s" (str_of_funsym fsym)
@@ -3275,8 +3305,9 @@ module rec Term :
              | ( ( T_int.(Add | Sub | Mul | Div _ | Rem _ | Power)
                  | T_real.(RAdd | RSub | RMul | RDiv | RPower)
                  | T_bv.(
-                     ( BVAdd _ | BVSub _ | BVMul _ | BVDiv _ | BVRem _ | BVSHL _
-                     | BVLSHR _ | BVASHR _ | BVOr _ | BVAnd _ ))
+                     ( BVAnd _ | BVOr _ | BVXor _ | BVNand _ | BVNor _
+                     | BVXnor _ | BVAdd _ | BVSub _ | BVMul _ | BVDiv _
+                     | BVRem _ | BVSMod _ | BVSHL _ | BVLSHR _ | BVASHR _ ))
                  | T_num.(NAdd _ | NSub _ | NMul _ | NDiv _ | NRem _ | NPower _)
                    ),
                  _ ) ->
@@ -3308,15 +3339,15 @@ module rec Term :
                  Priority.add_paren priority Priority.fun_app
                  @@ sprintf "%s %s" (str_of_funsym fsym)
                       (t1 (Priority.fun_app + 1))
-             | T_array.ASelect _, [ t1; t2 ] ->
-                 Priority.add_paren priority Priority.fun_app
-                 @@ sprintf "%s[%s]" (t1 Priority.highest) (t2 Priority.lowest)
              | T_array.AStore _, [ t1; t2; t3 ] ->
                  Priority.add_paren priority Priority.fun_app
                  @@ sprintf "%s %s %s %s" (str_of_funsym fsym)
                       (t1 (Priority.fun_app + 1))
                       (t2 (Priority.fun_app + 1))
                       (t3 (Priority.fun_app + 1))
+             | T_array.ASelect _, [ t1; t2 ] ->
+                 Priority.add_paren priority Priority.fun_app
+                 @@ sprintf "%s[%s]" (t1 Priority.highest) (t2 Priority.lowest)
              | T_tuple.TupleCons sorts, args ->
                  Priority.add_paren priority Priority.comma
                  @@ String.concat_map_list ~sep:"," (List.zip_exn args sorts)
@@ -3435,7 +3466,7 @@ module rec Term :
     | FunApp
         ( ( T_int.(Neg | Nop | Abs)
           | T_real.(RNeg | RAbs)
-          | T_bv.(BVNeg _ | BVSEXT _ | BVZEXT _)
+          | T_bv.(BVNot _ | BVNeg _ | BVEXTRACT _ | BVSEXT _ | BVZEXT _)
           | T_irb.(IntToReal | RealToInt | IntToBV _ | BVToInt _)
           | T_num.(NNeg _ | NSEXT _) ),
           [ t ],
@@ -3599,15 +3630,39 @@ module rec Term :
     Set.union (term_sort_env_of t)
     @@ pred_to_sort_env @@ pred_sort_env_of ~bpvs t
 
-  let value_of = function
-    | FunApp (T_int.Int n, _, _) -> Value.Int n
-    | FunApp (T_real.Real r, _, _) -> Value.Real r
-    | FunApp (T_bv.BVNum (_size, _n), _, _) as t ->
-        failwith @@ "[value_of] " ^ str_of t
+  let rec value_of = function
     | FunApp (T_bool.Formula (Formula.Atom (Atom.True _, _)), _, _) ->
         Value.Bool true
     | FunApp (T_bool.Formula (Formula.Atom (Atom.False _, _)), _, _) ->
         Value.Bool false
+    | FunApp (T_int.Int n, _, _) -> Value.Int n
+    | FunApp (T_real.Real r, _, _) -> Value.Real r
+    | FunApp (T_bv.BVNum (size, i), [], _) -> Value.BV (size, i)
+    | FunApp (T_array.AConst (si, _), [ t ], _) ->
+        Value.Arr (value_of @@ mk_dummy si, value_of t, Map.Poly.empty)
+    | FunApp (T_array.AStore _, [ t1; t2; t3 ], _) -> (
+        match value_of t1 with
+        | Value.Arr (dummy, v, m) ->
+            let v2 = value_of t2 in
+            let v3 = value_of t3 in
+            if Value.equal v v3 then Value.Arr (dummy, v, m)
+            else Value.Arr (dummy, v, Map.Poly.set m ~key:v2 ~data:v3)
+        | _ ->
+            failwith @@ "Array store: first term must be an array, but got "
+            ^ Term.str_of t1)
+    | FunApp (T_tuple.TupleCons sorts, ts, _) ->
+        let ts' = List.map ~f:value_of ts in
+        if List.length ts' <> List.length sorts then
+          failwith "Tuple constructor: number of terms does not match sorts";
+        Value.TupleCons ts'
+    | FunApp (T_dt.DTCons (name, sorts, dt), ts, _) ->
+        let vs = List.map ~f:value_of ts in
+        if List.length vs <> List.length sorts then
+          failwith "Datatype constructor: number of terms does not match sorts";
+        Value.DTCons
+          ( name,
+            List.map (Datatype.params_of dt) ~f:(Term.mk_dummy >> value_of),
+            vs )
     | t -> failwith @@ "[value_of] " ^ str_of t
 
   let funsyms_of =
@@ -3774,24 +3829,34 @@ module rec Term :
     | FunApp (T_real.(RAdd | RSub | RPower | RMul | RDiv), _, _) ->
         T_real.SReal
     | FunApp (T_bv.BVNum (size, _), [], _)
-    | FunApp ((T_bv.BVNeg size | T_irb.IntToBV size), [ _ ], _)
+    | FunApp ((T_bv.BVNot size | T_bv.BVNeg size | T_irb.IntToBV size), [ _ ], _)
     | FunApp
         ( T_bv.(
-            ( BVAdd size
+            ( BVNot size
+            | BVAnd size
+            | BVOr size
+            | BVXor size
+            | BVNand size
+            | BVNor size
+            | BVXnor size
+            | BVAdd size
             | BVSub size
             | BVMul size
             | BVDiv (size, _)
             | BVRem (size, _)
+            | BVSMod size
             | BVSHL size
             | BVLSHR size
-            | BVASHR size
-            | BVOr size
-            | BVAnd size )),
+            | BVASHR size )),
           _,
           _ ) ->
         T_bv.SBV size
-    | FunApp (T_bv.(BVSEXT (_, to_) | BVZEXT (_, to_)), [ _ ], _) ->
-        T_bv.SBV (Some to_)
+    | FunApp (T_bv.BVEXTRACT (_size, h, l), [ _ ], _) ->
+        T_bv.SBV (Some (h - l + 1))
+    | FunApp (T_bv.(BVSEXT (size, ext) | BVZEXT (size, ext)), [ _ ], _) ->
+        T_bv.SBV (T_bv.ext_size size ext)
+    | FunApp (T_bv.BVCONCAT (size1, size2), _, _) ->
+        T_bv.SBV (T_bv.add_size size1 size2)
     | FunApp (T_num.Value (_, sv), [], _)
     | FunApp (T_num.(NNeg sv | NSEXT (_, _, _, sv)), [ _ ], _)
     | FunApp
@@ -3821,9 +3886,9 @@ module rec Term :
         T_regex.SRegEx
     | FunApp (T_regex.(RegConcat | RegUnion | RegInter), [ _; _ ], _) ->
         T_regex.SRegEx
+    | FunApp (T_array.AConst (s1, s2), _, _) -> T_array.SArray (s1, s2)
     | FunApp (T_array.AStore (s1, s2), [ _; _; _ ], _) -> T_array.SArray (s1, s2)
     | FunApp (T_array.ASelect (_s1, s2), [ _; _ ], _) -> s2
-    | FunApp (T_array.AConst (s1, s2), _, _) -> T_array.SArray (s1, s2)
     | FunApp (T_tuple.TupleCons sorts, _, _) -> T_tuple.STuple sorts
     | FunApp (T_tuple.TupleSel (sorts, i), [ _ ], _) -> List.nth_exn sorts i
     | FunApp (T_dt.DTCons (_, _, dt), _, _) -> Datatype.sort_of dt
@@ -4194,7 +4259,7 @@ module rec Term :
           (fsym, List.map ts ~f:(elim_let_with_unknowns ~map unknowns), info)
     | LetTerm (var, sort, def, body, info) ->
         let def' = elim_let_with_unknowns ~map unknowns def in
-        if Set.is_empty @@ Set.inter (Term.fvs_of def') unknowns then
+        if Set.disjoint (Term.fvs_of def') unknowns then
           LetTerm
             (var, sort, def', elim_let_with_unknowns ~map unknowns body, info)
         else
@@ -5381,8 +5446,8 @@ and Atom :
         ( Psym
             (( T_bool.(Eq | Neq)
              | T_int.(Leq | Geq | Lt | Gt)
-             | T_bv.(BVLeq _ | BVGeq _ | BVLt _ | BVGt _)
-             | T_real.(RLeq | RGeq | RLt | RGt) ) as psym),
+             | T_real.(RLeq | RGeq | RLt | RGt)
+             | T_bv.(BVLeq _ | BVGeq _ | BVLt _ | BVGt _) ) as psym),
           [ t1; t2 ],
           _ ) ->
         List.cartesian_product (Term.elim_ite t1) (Term.elim_ite t2)
@@ -5411,8 +5476,8 @@ and Atom :
         ( Psym
             (( T_bool.(Eq | Neq)
              | T_int.(Leq | Geq | Lt | Gt)
-             | T_bv.(BVLeq _ | BVGeq _ | BVLt _ | BVGt _)
-             | T_real.(RLeq | RGeq | RLt | RGt) ) as psym),
+             | T_real.(RLeq | RGeq | RLt | RGt)
+             | T_bv.(BVLeq _ | BVGeq _ | BVLt _ | BVGt _) ) as psym),
           [ t1; t2 ],
           _ ) ->
         List.cartesian_product (Term.elim_ite t1) (Term.elim_ite t2)
@@ -5566,13 +5631,13 @@ and Formula :
   (** Sorts *)
 
   let subst_sorts_bounds map =
-    List.map ~f:(fun (x, s) -> (x, Term.subst_sorts_sort map s))
+    List.map ~f:(fun (x, s) -> (x, Term.subst_sorts_sort map s)) >> List.unique
 
   let subst_conts_bounds map =
-    List.map ~f:(fun (x, s) -> (x, Term.subst_conts_sort map s))
+    List.map ~f:(fun (x, s) -> (x, Term.subst_conts_sort map s)) >> List.unique
 
   let subst_opsigs_bounds map =
-    List.map ~f:(fun (x, s) -> (x, Term.subst_opsigs_sort map s))
+    List.map ~f:(fun (x, s) -> (x, Term.subst_opsigs_sort map s)) >> List.unique
 
   (** Binders *)
 
@@ -7234,7 +7299,7 @@ and Formula :
   let rec elim_let_with_unknowns ?(map = Map.Poly.empty) unknowns = function
     | LetFormula (var, sort, def, body, info) ->
         let def' = Term.elim_let_with_unknowns ~map unknowns def in
-        if Set.is_empty @@ Set.inter (Term.fvs_of def') unknowns then
+        if Set.disjoint (Term.fvs_of def') unknowns then
           LetFormula
             (var, sort, def', elim_let_with_unknowns ~map unknowns body, info)
         else
@@ -7596,7 +7661,7 @@ and Formula :
         Set.Poly.empty
     | phi
       when (not process_pure)
-           && (Set.is_empty @@ Set.inter (fvs_of phi) (Map.key_set exi_senv)) ->
+           && Set.disjoint (fvs_of phi) (Map.key_set exi_senv) ->
         Set.Poly.singleton
           (Set.Poly.empty, Set.Poly.empty, Set.Poly.singleton phi)
     | Atom ((Atom.App (Predicate.Var (Ident.Pvar name, _), _, _) as atom), _)
@@ -7714,7 +7779,7 @@ and Formula :
         Set.Poly.singleton (Set.Poly.empty, Set.Poly.empty, Set.Poly.empty)
     | phi
       when (not process_pure)
-           && (Set.is_empty @@ Set.inter (fvs_of phi) (Map.key_set exi_senv)) ->
+           && Set.disjoint (fvs_of phi) (Map.key_set exi_senv) ->
         Set.Poly.singleton
           (Set.Poly.empty, Set.Poly.empty, Set.Poly.singleton phi)
     | Atom ((Atom.App (Predicate.Var (Ident.Pvar name, _), _, _) as atom), _)
@@ -8239,13 +8304,8 @@ and T_real :
      mk_mul (mk_int (Z.neg Z.one) ~info) t ~info*)
   let mk_rabs ?(info = Dummy) t = Term.mk_fsym_app RAbs [ t ] ~info
   let mk_rpower ?(info = Dummy) t1 t2 = Term.mk_fsym_app RPower [ t1; t2 ] ~info
-
-  let mk_rsum ?(info = Dummy) t ts =
-    List.fold ~init:t ts ~f:(fun t1 t2 -> mk_radd t1 t2 ~info)
-
-  let mk_rprod ?(info = Dummy) t ts =
-    List.fold ~init:t ts ~f:(fun t1 t2 -> mk_rmul t1 t2 ~info)
-
+  let mk_rsum ?(info = Dummy) t ts = List.fold ~init:t ts ~f:(mk_radd ~info)
+  let mk_rprod ?(info = Dummy) t ts = List.fold ~init:t ts ~f:(mk_rmul ~info)
   let mk_rleq ?(info = Dummy) t1 t2 = Atom.mk_psym_app RLeq [ t1; t2 ] ~info
   let mk_rgeq ?(info = Dummy) t1 t2 = Atom.mk_psym_app RGeq [ t1; t2 ] ~info
   let mk_rlt ?(info = Dummy) t1 t2 = Atom.mk_psym_app RLt [ t1; t2 ] ~info
@@ -8356,19 +8416,27 @@ and T_bv :
 
   type fun_sym +=
     | BVNum of size * Z.t
-    | BVNeg of size
-    | BVSEXT of int * int
-    | BVZEXT of int * int
-    | BVSHL of size
-    | BVLSHR of size
-    | BVASHR of size
-    | BVOr of size
+    | BVNot of size
     | BVAnd of size
+    | BVOr of size
+    | BVXor of size
+    | BVNand of size
+    | BVNor of size
+    | BVXnor of size
+    | BVNeg of size
     | BVAdd of size
     | BVSub of size
     | BVMul of size
     | BVDiv of size * signed
     | BVRem of size * signed
+    | BVSMod of size
+    | BVSHL of size
+    | BVLSHR of size
+    | BVASHR of size
+    | BVEXTRACT of size * int * int
+    | BVSEXT of size * int
+    | BVZEXT of size * int
+    | BVCONCAT of size * size
 
   type pred_sym +=
     | BVLeq of size * signed
@@ -8378,19 +8446,38 @@ and T_bv :
 
   type Sort.t += SBV of size
 
+  (** Observation *)
+
+  let bits_of = function None -> 32 (*ToDo*) | Some bits -> bits
+
   (** Construction *)
 
   let mk_bvnum ?(info = Dummy) ~size n =
-    Term.mk_fsym_app (BVNum (size, n)) [] ~info
+    Term.mk_fsym_app (BVNum (size, int2bv (bits_of size) n)) [] ~info
+
+  let mk_bvnot ?(info = Dummy) ~size t =
+    Term.mk_fsym_app (BVNot size) [ t ] ~info
+
+  let mk_bvand ?(info = Dummy) ~size t1 t2 =
+    Term.mk_fsym_app (BVAnd size) [ t1; t2 ] ~info
+
+  let mk_bvor ?(info = Dummy) ~size t1 t2 =
+    Term.mk_fsym_app (BVOr size) [ t1; t2 ] ~info
+
+  let mk_bvxor ?(info = Dummy) ~size t1 t2 =
+    Term.mk_fsym_app (BVXor size) [ t1; t2 ] ~info
+
+  let mk_bvnand ?(info = Dummy) ~size t1 t2 =
+    Term.mk_fsym_app (BVNand size) [ t1; t2 ] ~info
+
+  let mk_bvnor ?(info = Dummy) ~size t1 t2 =
+    Term.mk_fsym_app (BVNor size) [ t1; t2 ] ~info
+
+  let mk_bvxnor ?(info = Dummy) ~size t1 t2 =
+    Term.mk_fsym_app (BVXnor size) [ t1; t2 ] ~info
 
   let mk_bvneg ?(info = Dummy) ~size t =
     Term.mk_fsym_app (BVNeg size) [ t ] ~info
-
-  let mk_bvsext ?(info = Dummy) from to_ t1 =
-    Term.mk_fsym_app (BVSEXT (from, to_)) [ t1 ] ~info
-
-  let mk_bvzext ?(info = Dummy) from to_ t1 =
-    Term.mk_fsym_app (BVZEXT (from, to_)) [ t1 ] ~info
 
   let mk_bvadd ?(info = Dummy) ~size t1 t2 =
     Term.mk_fsym_app (BVAdd size) [ t1; t2 ] ~info
@@ -8407,6 +8494,9 @@ and T_bv :
   let mk_bvrem ?(info = Dummy) ~size ~signed t1 t2 =
     Term.mk_fsym_app (BVRem (size, signed)) [ t1; t2 ] ~info
 
+  let mk_bvsmod ?(info = Dummy) ~size t1 t2 =
+    Term.mk_fsym_app (BVSMod size) [ t1; t2 ] ~info
+
   let mk_bvshl ?(info = Dummy) ~size t1 t2 =
     Term.mk_fsym_app (BVSHL size) [ t1; t2 ] ~info
 
@@ -8416,11 +8506,17 @@ and T_bv :
   let mk_bvashr ?(info = Dummy) ~size t1 t2 =
     Term.mk_fsym_app (BVASHR size) [ t1; t2 ] ~info
 
-  let mk_bvor ?(info = Dummy) ~size t1 t2 =
-    Term.mk_fsym_app (BVOr size) [ t1; t2 ] ~info
+  let mk_bvextract ?(info = Dummy) ~size h l t1 =
+    Term.mk_fsym_app (BVEXTRACT (size, h, l)) [ t1 ] ~info
 
-  let mk_bvand ?(info = Dummy) ~size t1 t2 =
-    Term.mk_fsym_app (BVAnd size) [ t1; t2 ] ~info
+  let mk_bvsext ?(info = Dummy) ~size ext t1 =
+    Term.mk_fsym_app (BVSEXT (size, ext)) [ t1 ] ~info
+
+  let mk_bvzext ?(info = Dummy) ~size ext t1 =
+    Term.mk_fsym_app (BVZEXT (size, ext)) [ t1 ] ~info
+
+  let mk_bvconcat ?(info = Dummy) ~size1 ~size2 t1 t2 =
+    Term.mk_fsym_app (BVCONCAT (size1, size2)) [ t1; t2 ] ~info
 
   let mk_bvleq ?(info = Dummy) ~size ~signed t1 t2 =
     Atom.mk_psym_app (BVLeq (size, signed)) [ t1; t2 ] ~info
@@ -8434,22 +8530,50 @@ and T_bv :
   let mk_bvgt ?(info = Dummy) ~size ~signed t1 t2 =
     Atom.mk_psym_app (BVGt (size, signed)) [ t1; t2 ] ~info
 
+  (** Observation *)
+
+  let bvzero ?(info = Dummy) ~size () = mk_bvnum ~info ~size Z.zero
+  let bvone ?(info = Dummy) ~size () = mk_bvnum ~info ~size Z.one
+
+  let mk_bvsum ?(info = Dummy) ~size t ts =
+    List.fold ~init:t ts ~f:(mk_bvadd ~info ~size)
+
   (** Destruction *)
 
   let let_bv = function
     | Term.FunApp (BVNum (size, n), [], _) -> (size, n)
     | _ -> assert false
 
+  let let_bvnot = function
+    | Term.FunApp (BVNot size, [ t1 ], info) -> (size, t1, info)
+    | _ -> assert false
+
+  let let_bvand = function
+    | Term.FunApp (BVAnd size, [ t1; t2 ], info) -> (size, t1, t2, info)
+    | _ -> assert false
+
+  let let_bvor = function
+    | Term.FunApp (BVOr size, [ t1; t2 ], info) -> (size, t1, t2, info)
+    | _ -> assert false
+
+  let let_bvxor = function
+    | Term.FunApp (BVXor size, [ t1; t2 ], info) -> (size, t1, t2, info)
+    | _ -> assert false
+
+  let let_bvnand = function
+    | Term.FunApp (BVNand size, [ t1; t2 ], info) -> (size, t1, t2, info)
+    | _ -> assert false
+
+  let let_bvnor = function
+    | Term.FunApp (BVNor size, [ t1; t2 ], info) -> (size, t1, t2, info)
+    | _ -> assert false
+
+  let let_bvxnor = function
+    | Term.FunApp (BVXnor size, [ t1; t2 ], info) -> (size, t1, t2, info)
+    | _ -> assert false
+
   let let_bvneg = function
     | Term.FunApp (BVNeg size, [ t1 ], info) -> (size, t1, info)
-    | _ -> assert false
-
-  let let_bvsext = function
-    | Term.FunApp (BVSEXT (from, to_), [ t1 ], info) -> (from, to_, t1, info)
-    | _ -> assert false
-
-  let let_bvzext = function
-    | Term.FunApp (BVZEXT (from, to_), [ t1 ], info) -> (from, to_, t1, info)
     | _ -> assert false
 
   let let_bvadd = function
@@ -8474,6 +8598,10 @@ and T_bv :
         (size, signed, t1, t2, info)
     | _ -> assert false
 
+  let let_bvsmod = function
+    | Term.FunApp (BVSMod size, [ t1; t2 ], info) -> (size, t1, t2, info)
+    | _ -> assert false
+
   let let_bvshl = function
     | Term.FunApp (BVSHL size, [ t1; t2 ], info) -> (size, t1, t2, info)
     | _ -> assert false
@@ -8486,12 +8614,22 @@ and T_bv :
     | Term.FunApp (BVASHR size, [ t1; t2 ], info) -> (size, t1, t2, info)
     | _ -> assert false
 
-  let let_bvor = function
-    | Term.FunApp (BVOr size, [ t1; t2 ], info) -> (size, t1, t2, info)
+  let let_bvextract = function
+    | Term.FunApp (BVEXTRACT (size, h, l), [ t1 ], info) ->
+        (size, h, l, t1, info)
     | _ -> assert false
 
-  let let_bvand = function
-    | Term.FunApp (BVAnd size, [ t1; t2 ], info) -> (size, t1, t2, info)
+  let let_bvsext = function
+    | Term.FunApp (BVSEXT (size, ext), [ t1 ], info) -> (size, ext, t1, info)
+    | _ -> assert false
+
+  let let_bvzext = function
+    | Term.FunApp (BVZEXT (size, ext), [ t1 ], info) -> (size, ext, t1, info)
+    | _ -> assert false
+
+  let let_bvconcat = function
+    | Term.FunApp (BVCONCAT (size1, size2), [ t1; t2 ], info) ->
+        (size1, size2, t1, t2, info)
     | _ -> assert false
 
   let let_bvleq = function
@@ -8516,12 +8654,13 @@ and T_bv :
 
   (** Observation *)
 
-  let bits_of = function None -> 32 (*ToDo*) | Some bits -> bits
   let signed_of = function None -> true (*ToDo*) | Some signed -> signed
 
   let is_bv_fsym = function
-    | BVNum _ | BVNeg _ | BVSEXT _ | BVZEXT _ | BVSHL _ | BVLSHR _ | BVASHR _
-    | BVOr _ | BVAnd _ | BVAdd _ | BVSub _ | BVMul _ | BVDiv _ | BVRem _ ->
+    | BVNum _ | BVNot _ | BVAnd _ | BVOr _ | BVXor _ | BVNand _ | BVNor _
+    | BVXnor _ | BVNeg _ | BVAdd _ | BVSub _ | BVMul _ | BVDiv _ | BVRem _
+    | BVSMod _ | BVSHL _ | BVLSHR _ | BVASHR _ | BVEXTRACT _ | BVSEXT _
+    | BVZEXT _ | BVCONCAT _ ->
         true
     | _ -> false
 
@@ -8531,19 +8670,43 @@ and T_bv :
 
   let is_sbv t = Term.is_bv_sort @@ Term.sort_of t
   let is_bv = function Term.FunApp (BVNum _, [], _) -> true | _ -> false
+
+  let is_bvzero = function
+    | Term.FunApp (BVNum (_size, i), _, _) when Z.Compare.(i = Z.zero) -> true
+    | _ -> false
+
+  let is_bvunit = function
+    | Term.FunApp (BVNum (_size, i), _, _) when Z.Compare.(i = Z.one) -> true
+    | _ -> false
+
+  let is_bvnot = function Term.FunApp (BVNot _, _, _) -> true | _ -> false
+  let is_bvand = function Term.FunApp (BVAnd _, _, _) -> true | _ -> false
+  let is_bvor = function Term.FunApp (BVOr _, _, _) -> true | _ -> false
+  let is_bvxor = function Term.FunApp (BVXor _, _, _) -> true | _ -> false
+  let is_bvnand = function Term.FunApp (BVNand _, _, _) -> true | _ -> false
+  let is_bvnor = function Term.FunApp (BVNor _, _, _) -> true | _ -> false
+  let is_bvxnor = function Term.FunApp (BVXnor _, _, _) -> true | _ -> false
   let is_bvneg = function Term.FunApp (BVNeg _, _, _) -> true | _ -> false
-  let is_bvsext = function Term.FunApp (BVSEXT _, _, _) -> true | _ -> false
-  let is_bvzext = function Term.FunApp (BVZEXT _, _, _) -> true | _ -> false
   let is_bvadd = function Term.FunApp (BVAdd _, _, _) -> true | _ -> false
   let is_bvsub = function Term.FunApp (BVSub _, _, _) -> true | _ -> false
   let is_bvmul = function Term.FunApp (BVMul _, _, _) -> true | _ -> false
   let is_bvdiv = function Term.FunApp (BVDiv _, _, _) -> true | _ -> false
   let is_bvrem = function Term.FunApp (BVRem _, _, _) -> true | _ -> false
+  let is_bvsmod = function Term.FunApp (BVSMod _, _, _) -> true | _ -> false
   let is_bvshl = function Term.FunApp (BVSHL _, _, _) -> true | _ -> false
   let is_bvlshr = function Term.FunApp (BVLSHR _, _, _) -> true | _ -> false
   let is_bvashr = function Term.FunApp (BVASHR _, _, _) -> true | _ -> false
-  let is_bvor = function Term.FunApp (BVOr _, _, _) -> true | _ -> false
-  let is_bvand = function Term.FunApp (BVAnd _, _, _) -> true | _ -> false
+
+  let is_bvextract = function
+    | Term.FunApp (BVEXTRACT _, _, _) -> true
+    | _ -> false
+
+  let is_bvsext = function Term.FunApp (BVSEXT _, _, _) -> true | _ -> false
+  let is_bvzext = function Term.FunApp (BVZEXT _, _, _) -> true | _ -> false
+
+  let is_bvconcat = function
+    | Term.FunApp (BVCONCAT _, _, _) -> true
+    | _ -> false
 
   let is_bvleq = function
     | Atom.App (Predicate.Psym (BVLeq _), _, _) -> true
@@ -8563,11 +8726,48 @@ and T_bv :
 
   (** Printing *)
 
-  let str_of_size = function None -> "N/A" | Some bits -> sprintf "%d" bits
+  let str_of_size = function None -> "?" | Some bits -> sprintf "%d" bits
 
   let str_of_signed = function
-    | None -> "N/A"
+    | None -> "?"
     | Some signed -> if signed then "s" else "u"
+
+  (** Size manipulation *)
+
+  let eq_size size1 size2 =
+    (* Stdlib.(bits_of size1 = bits_of size2) *)
+    match (size1, size2) with
+    | Some s1, Some s2 -> Stdlib.(s1 = s2)
+    | _ -> true (*ToDo*)
+
+  let merge_size size1 size2 =
+    match (size1, size2) with
+    | Some s1, Some s2 ->
+        assert (s1 = s2);
+        Some s1
+    | _ -> None
+
+  let geq_size size1 size2 =
+    (* Stdlib.(bits_of size1 >= bits_of size2) *)
+    match (size1, size2) with
+    | Some s1, Some s2 -> Stdlib.(s1 >= s2)
+    | _ -> true (*ToDo*)
+
+  let ext_size size ext =
+    match size with Some s -> Some (s + ext) | None -> None
+
+  let add_size size1 size2 =
+    match (size1, size2) with Some s1, Some s2 -> Some (s1 + s2) | _ -> None
+
+  let max_size size1 size2 =
+    match (size1, size2) with
+    | None, _ -> size2 (* ToDo *)
+    | _, None -> size1 (* ToDo *)
+    | Some s1, Some s2 -> Some (Stdlib.max s1 s2)
+
+  let max_size_list = function
+    | [] -> None
+    | size :: sizes -> List.fold ~init:size sizes ~f:max_size
 end
 
 and T_irb :
@@ -8672,32 +8872,54 @@ and T_irb :
       | T_bool.SBool -> T_bool.mk_false ()
       | T_int.SInt -> T_int.zero ()
       | T_real.SReal -> T_real.rzero ()
+      | T_bv.SBV size -> T_bv.bvzero ~size ()
       | _ -> failwith "not supported")
 
   let zero_of = function
     | T_int.SInt -> T_int.zero ()
     | T_real.SReal -> T_real.rzero ()
+    | T_bv.SBV size -> T_bv.bvzero ~size ()
     | sort -> failwith ("not supported: " ^ Term.str_of_sort sort)
 
   let mul = function
     | T_int.SInt -> T_int.mk_mul
     | T_real.SReal -> T_real.mk_rmul
+    | T_bv.SBV size -> T_bv.mk_bvmul ~size
     | sort -> failwith ("not supported: " ^ Term.str_of_sort sort)
 
   let sum = function
     | T_int.SInt -> T_int.mk_sum
     | T_real.SReal -> T_real.mk_rsum
+    | T_bv.SBV size -> T_bv.mk_bvsum ~size
     | sort -> failwith ("not supported: " ^ Term.str_of_sort sort)
 
   let geq = function
     | T_int.SInt -> T_int.mk_geq
     | T_real.SReal -> T_real.mk_rgeq
+    | T_bv.SBV size -> T_bv.mk_bvgeq ~size ~signed:(Some true (*ToDo*))
     | sort -> failwith ("not supported: " ^ Term.str_of_sort sort)
 
   let cast = function
     | T_int.SInt, T_int.SInt | T_real.SReal, T_real.SReal -> Fn.id
+    | T_bv.SBV size1, T_bv.SBV size2 ->
+        if T_bv.eq_size size1 size2 then Fn.id
+        else if T_bv.geq_size size2 size1 then fun t ->
+          T_bv.mk_bvsext ~size:size1 (T_bv.bits_of size2 - T_bv.bits_of size1) t
+        else
+          failwith @@ "not supported: "
+          ^ Term.str_of_sort (T_bv.SBV size1)
+          ^ ", "
+          ^ Term.str_of_sort (T_bv.SBV size2)
     | T_int.SInt, T_real.SReal -> fun t -> mk_int_to_real t
+    | T_int.SInt, T_bv.SBV size -> fun t -> mk_int_to_bv ~size t
     | T_real.SReal, T_int.SInt -> fun t -> mk_real_to_int t
+    | T_real.SReal, T_bv.SBV size ->
+        fun t -> mk_int_to_bv ~size @@ mk_real_to_int t
+    | T_bv.SBV size, T_int.SInt ->
+        fun t -> mk_bv_to_int ~size ~signed:(Some true (*ToDo*)) t
+    | T_bv.SBV size, T_real.SReal ->
+        fun t ->
+          mk_int_to_real @@ mk_bv_to_int ~size ~signed:(Some true (*ToDo*)) t
     | sort1, sort2 ->
         failwith
         @@ sprintf "not supported: %s, %s" (Term.str_of_sort sort1)
@@ -8715,35 +8937,84 @@ and T_irb :
   let ineq_of sort ts =
     let negb = Term.mk_var (Ident.mk_fresh_parameter ()) T_int.SInt in
     let term = cast (T_int.SInt, sort) negb in
-    let coeffs, term' = sum_of sort term ts in
-    ((coeffs, negb), geq sort term' (zero_of sort))
+    let coeffs, term' =
+      match sort with
+      | T_bv.SBV size ->
+          let coeffs, terms =
+            List.unzip
+            @@ List.map ts ~f:(fun (t, s) ->
+                   let coeff =
+                     Term.mk_var (Ident.mk_fresh_parameter ()) T_int.SInt
+                   in
+                   let t = cast (s, sort) t in
+                   ( coeff,
+                     T_bool.ifte
+                       (Formula.gt coeff (T_int.zero ()))
+                       t
+                       (T_bool.ifte
+                          (Formula.lt coeff (T_int.zero ()))
+                          (T_bv.mk_bvneg ~size t) (T_bv.bvzero ~size ())) ))
+          in
+          (coeffs, sum sort term terms)
+      | _ -> sum_of sort term ts
+    in
+    ([ (coeffs, negb) ], Formula.mk_atom @@ geq sort term' (zero_of sort))
 
   let eq_of sort ts =
     let negb = Term.mk_var (Ident.mk_fresh_parameter ()) T_int.SInt in
     let term = cast (T_int.SInt, sort) negb in
-    let coeffs, term' = sum_of sort term ts in
-    ((coeffs, negb), T_bool.mk_eq term' (zero_of sort))
+    let coeffs, term' =
+      match sort with
+      | T_bv.SBV size ->
+          let coeffs, terms =
+            List.unzip
+            @@ List.map ts ~f:(fun (t, s) ->
+                   let coeff =
+                     Term.mk_var (Ident.mk_fresh_parameter ()) T_int.SInt
+                   in
+                   let t = cast (s, sort) t in
+                   ( coeff,
+                     T_bool.ifte
+                       (Formula.gt coeff (T_int.zero ()))
+                       t
+                       (T_bool.ifte
+                          (Formula.lt coeff (T_int.zero ()))
+                          (T_bv.mk_bvneg ~size t) (T_bv.bvzero ~size ())) ))
+          in
+          (coeffs, sum sort term terms)
+      | _ -> sum_of sort term ts
+    in
+    ([ (coeffs, negb) ], Formula.mk_atom @@ T_bool.mk_eq term' (zero_of sort))
 
-  let sort_of ts =
-    let sorts = Set.Poly.of_list @@ List.map ~f:snd ts in
+  (* Auxliary functions for templates *)
+
+  let bool_terms_of =
+    List.filter ~f:(function _, T_bool.SBool -> true | _, _ -> false)
+
+  let num_terms_of =
+    List.filter ~f:(function
+      | _, T_int.SInt | _, T_real.SReal | _, T_bv.SBV _ -> true
+      | _, _ -> false)
+
+  let num_sort_of terms =
+    let sorts = Set.Poly.of_list @@ List.map ~f:snd terms in
     if Set.mem sorts T_real.SReal then T_real.SReal
     else if Set.mem sorts T_int.SInt then T_int.SInt
-    else T_int.SInt (* failwith "no int/real term" *)
+    else
+      match
+        Set.to_list
+        @@ Set.Poly.filter_map sorts ~f:(function
+             | T_bv.SBV size -> Some size
+             | _ -> None)
+      with
+      | [] -> T_int.SInt (* failwith "no int/real/bv term" *)
+      | sizes -> T_bv.SBV (T_bv.max_size_list sizes)
 
-  let conj_with_bool_of ts =
-    let sort = sort_of ts in
-    let bool_ts =
-      List.filter ts ~f:(function _, T_bool.SBool -> true | _, _ -> false)
-    in
-    let num_ts =
-      List.filter ts ~f:(function
-        | _, T_int.SInt | _, T_real.SReal -> true
-        | _, _ -> false)
-    in
+  let br_bools_of f ts =
+    let bool_ts = bool_terms_of ts in
+    let num_ts = num_terms_of ts in
     let rec aux = function
-      | [] ->
-          let params, templ = ineq_of sort num_ts in
-          ([ params ], Formula.mk_atom templ)
+      | [] -> f num_ts
       | (t, _) :: ts ->
           let params1, tmpl1 = aux ts in
           let params2, tmpl2 = aux ts in
@@ -8763,7 +9034,7 @@ struct
   type fun_sym +=
     | Value of string * Ident.svar
     | NNeg of Ident.svar
-    | NSEXT of int * Ident.svar * int * Ident.svar
+    | NSEXT of int option * Ident.svar * int * Ident.svar
     | NAdd of Ident.svar
     | NSub of Ident.svar
     | NMul of Ident.svar
@@ -8814,31 +9085,28 @@ struct
       || String.is_prefix num_str ~prefix:"_"
     then raise NotValue
     else
-      try
-        let n = Z.of_string num_str in
-        Term.mk_fsym_app
-          (Value (Z.to_string (Z.neg n), Ident.mk_fresh_svar ()))
-          [] ~info
-      with _ -> (
+      let z =
         try
-          let r = Q.of_string num_str in
-          Term.mk_fsym_app
-            (Value (Q.to_string (Q.neg r), Ident.mk_fresh_svar ()))
-            [] ~info
+          let n = Z.of_string num_str in
+          Z.to_string (Z.neg n)
         with _ -> (
           try
-            let r = Q.of_float @@ float_of_string num_str in
-            Term.mk_fsym_app
-              (Value (Q.to_string (Q.neg r), Ident.mk_fresh_svar ()))
-              [] ~info
-          with _ -> raise NotValue))
+            let r = Q.of_string num_str in
+            Q.to_string (Q.neg r)
+          with _ -> (
+            try
+              let r = Q.of_float @@ float_of_string num_str in
+              Q.to_string (Q.neg r)
+            with _ -> raise NotValue))
+      in
+      Term.mk_fsym_app (Value (z, Ident.mk_fresh_svar ())) [] ~info
 
   let mk_nneg ?(info = Dummy) t1 =
     Term.mk_fsym_app (NNeg (Ident.mk_fresh_svar ())) [ t1 ] ~info
 
-  let mk_nsext ?(info = Dummy) from to_ t1 =
+  let mk_nsext ?(info = Dummy) ~size ext t1 =
     Term.mk_fsym_app
-      (NSEXT (from, Ident.mk_fresh_svar (), to_, Ident.mk_fresh_svar ()))
+      (NSEXT (size, Ident.mk_fresh_svar (), ext, Ident.mk_fresh_svar ()))
       [ t1 ] ~info
 
   let mk_nadd ?(info = Dummy) t1 t2 =
@@ -8882,8 +9150,8 @@ struct
     | _ -> assert false
 
   let let_nsext = function
-    | Term.FunApp (NSEXT (from, _, to_, _), [ t1 ], info) ->
-        (from, to_, t1, info)
+    | Term.FunApp (NSEXT (size, _, ext, _), [ t1 ], info) ->
+        (size, ext, t1, info)
     | _ -> assert false
 
   let let_nadd = function
@@ -8971,7 +9239,7 @@ struct
                     (Z.of_int @@ Q.to_int @@ Q.of_float @@ float_of_string value)
                 with _ -> raise NotValue)))
         | NNeg _ -> T_int.Neg
-        | NSEXT (_from, _, _to_, _) -> failwith "not supported @ 1"
+        | NSEXT (_, _, _, _) -> failwith "not supported @ 1"
         | NAdd _ -> T_int.Add
         | NSub _ -> T_int.Sub
         | NMul _ -> T_int.Mul
@@ -8980,7 +9248,7 @@ struct
         | NPower _ -> T_int.Power
         | _ -> fsym)
     | [ T_int.SInt; T_int.SInt ] -> (
-        match fsym with NSEXT (_from, _, _to_, _) -> T_int.Nop | _ -> fsym)
+        match fsym with NSEXT (_, _, _, _) -> T_int.Nop | _ -> fsym)
     | [ T_real.SReal ] -> (
         match fsym with
         | Value (value, _) -> (
@@ -8989,7 +9257,7 @@ struct
               try T_real.Real (Q.of_float @@ float_of_string value)
               with _ -> raise NotValue))
         | NNeg _ -> T_real.RNeg
-        | NSEXT (_from, _, _to_, _) -> failwith "not supported @ 2"
+        | NSEXT (_, _, _, _) -> failwith "not supported @ 2"
         | NAdd _ -> T_real.RAdd
         | NSub _ -> T_real.RSub
         | NMul _ -> T_real.RMul
@@ -8999,35 +9267,35 @@ struct
         | _ -> fsym)
     | [ T_bv.SBV size ] -> (
         match fsym with
-        | Value (value, _) -> (
-            try T_bv.BVNum (size, Z.of_string value)
-            with _ -> (
-              try T_bv.BVNum (size, Z.of_int @@ Q.to_int @@ Q.of_string value)
+        | Value (value, _) ->
+            let z =
+              try Z.of_string value
               with _ -> (
-                try
-                  T_bv.BVNum
-                    ( size,
-                      Z.of_int @@ Q.to_int @@ Q.of_float
-                      @@ float_of_string value )
-                with _ -> raise NotValue)))
+                try Z.of_int @@ Q.to_int @@ Q.of_string value
+                with _ -> (
+                  try
+                    Z.of_int @@ Q.to_int @@ Q.of_float @@ float_of_string value
+                  with _ -> raise NotValue))
+            in
+            let bits = T_bv.bits_of size in
+            if required_bits z <= bits then T_bv.BVNum (size, int2bv bits z)
+            else
+              failwith
+              @@ sprintf "%s is not representable in %d bits" value bits
         | NNeg _ -> T_bv.BVNeg size
-        | NSEXT (_from, _, _to_, _) -> failwith "not supported @ 4"
+        | NSEXT (_, _, _, _) -> failwith "not supported @ 4"
         | NAdd _ -> T_bv.BVAdd size
         | NSub _ -> T_bv.BVSub size
         | NMul _ -> T_bv.BVMul size
         | NDiv _ -> T_bv.BVDiv (size, Some true (*ToDo*))
-        | NRem _ -> T_bv.BVRem (size, Some true (*ToDo*))
+        | NRem _ -> T_bv.BVRem (*ToDo*) (size, Some true (*ToDo*))
         | NPower _ -> failwith "not supported @ 5"
         | _ -> fsym)
     | [ T_bv.SBV _size1; T_bv.SBV _size2 ] -> (
         match fsym with
-        | NSEXT (from, _, to_, _) ->
-            (* assert (size1 = from && size2 = to_); *) T_bv.BVSEXT (from, to_)
-        | _ -> fsym)
-    | [ T_int.SInt; T_bv.SBV _size ] -> (
-        (* ToDo: failure of type inference? *)
-        match fsym with
-        | NSEXT (_from, _, to_, _) -> T_irb.BVToInt (Some to_, Some true)
+        | NSEXT (size, _, ext, _) ->
+            (* assert (size1 = size && size2 = size + ext); *)
+            T_bv.BVSEXT (size, ext)
         | _ -> fsym)
     | [ sort ] ->
         failwith @@ sprintf "sort %s is not num" (Term.str_of_sort sort)
@@ -9084,12 +9352,13 @@ end
 and T_array :
   (Type.T_arrayType with type term := Term.t and type atom := Atom.t) = struct
   type fun_sym +=
+    | AConst of Sort.t * Sort.t
     | AStore of Sort.t * Sort.t
     | ASelect of Sort.t * Sort.t
-    | AConst of Sort.t * Sort.t
 
   type Sort.t += SArray of Sort.t * Sort.t
 
+  let is_sarray = function SArray _ -> true | _ -> false
   let mk_array_sort s1 s2 = SArray (s1, s2)
 
   let rec of_arrow = function
@@ -9107,9 +9376,9 @@ and T_array :
 
   (** Construction *)
 
-  let mk_select s1 s2 a i = Term.mk_fsym_app (ASelect (s1, s2)) [ a; i ]
-  let mk_store s1 s2 a i e = Term.mk_fsym_app (AStore (s1, s2)) [ a; i; e ]
   let mk_const_array s1 s2 v = Term.mk_fsym_app (AConst (s1, s2)) [ v ]
+  let mk_store s1 s2 a i e = Term.mk_fsym_app (AStore (s1, s2)) [ a; i; e ]
+  let mk_select s1 s2 a i = Term.mk_fsym_app (ASelect (s1, s2)) [ a; i ]
 
   let of_fvar_app = function
     | Term.FunApp (FVar (tvar, sargs, sret), ts, _) ->
@@ -9122,29 +9391,46 @@ and T_array :
 
   (** Destruction *)
 
-  let let_select = function
-    | Term.FunApp (ASelect (s1, s2), [ a; i ], info) -> (s1, s2, a, i, info)
-    | _ -> assert false
-
   let let_store = function
     | Term.FunApp (AStore (s1, s2), [ a; i; e ], info) -> (s1, s2, a, i, e, info)
     | _ -> assert false
 
+  let let_select = function
+    | Term.FunApp (ASelect (s1, s2), [ a; i ], info) -> (s1, s2, a, i, info)
+    | _ -> assert false
+
   (** Observation *)
 
-  let is_select = function Term.FunApp (ASelect _, _, _) -> true | _ -> false
   let is_store = function Term.FunApp (AStore _, _, _) -> true | _ -> false
+  let is_select = function Term.FunApp (ASelect _, _, _) -> true | _ -> false
 
-  let eval_select arr i =
+  let rec eval_select arr i =
     match arr with
-    | Term.FunApp (AStore _, [ _; i1; e1 ], _) ->
-        if Stdlib.(i = i1) then
-          (* print_endline @@ sprintf "eval select : %s [%s]->%s" (Term.str_of arr) (Term.str_of i) (Term.str_of e1); *)
-          Some e1
-        else None
     | Term.FunApp (AConst _, [ e1 ], _) ->
-        (* print_endline @@ sprintf "eval select : %s [%s]->%s" (Term.str_of arr) (Term.str_of i) (Term.str_of e1);  *)
+        if false then
+          print_endline
+          @@ sprintf "eval select : %s [%s]->%s" (Term.str_of arr)
+               (Term.str_of i) (Term.str_of e1);
         Some e1
+    | Term.FunApp (AStore _, [ arr1; i1; e1 ], _) -> (
+        if Stdlib.(i = i1) then (
+          if false then
+            print_endline
+            @@ sprintf "eval select : %s [%s]->%s" (Term.str_of arr)
+                 (Term.str_of i) (Term.str_of e1);
+          Some e1)
+        else
+          match (i, i1) with
+          | ( Term.FunApp (T_dt.DTCons (name1, _, _), _, _),
+              Term.FunApp (T_dt.DTCons (name2, _, _), _, _) )
+            when String.(name1 <> name2) ->
+              eval_select arr1 i
+          | _ -> (
+              try
+                if Stdlib.(Term.value_of i <> Term.value_of i1) then
+                  eval_select arr1 i
+                else None
+              with _ -> None))
     (* | Term.FunApp (T_bool.Formula (Formula.Atom (atm, _)), _, _) when is_select_bool atm->
         let arr', i', _ = let_select_bool atm in
         aux @@ mk_select arr' i'
@@ -9152,6 +9438,25 @@ and T_array :
         let arr', i', _ = let_select_bool_neg atm in
         aux @@ mk_select arr' i' *)
     | _ -> None
+
+  let rec non_stored arr i =
+    match arr with
+    | Term.FunApp (AConst _, [ _ ], _) -> true
+    | Term.FunApp (AStore _, [ arr1; i1; _ ], _) -> (
+        if Stdlib.(i = i1) then false
+        else
+          match (i, i1) with
+          | ( Term.FunApp (T_dt.DTCons (name1, _, _), _, _),
+              Term.FunApp (T_dt.DTCons (name2, _, _), _, _) )
+            when String.(name1 <> name2) ->
+              non_stored arr1 i
+          | _ -> (
+              try
+                if Stdlib.(Term.value_of i <> Term.value_of i1) then
+                  non_stored arr1 i
+                else false
+              with _ -> false))
+    | _ -> false
 end
 
 and T_tuple :

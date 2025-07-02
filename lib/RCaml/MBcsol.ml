@@ -7,7 +7,7 @@ open Ast.Ident
 open Ast.LogicOld
 
 module Config = struct
-  type t = { verbose : bool; elim_pure : bool } [@@deriving yojson]
+  type t = { verbose : bool } [@@deriving yojson]
 
   module type ConfigType = sig
     val config : t
@@ -147,7 +147,7 @@ module Make (Config : Config.ConfigType) = struct
       @ List.map c.sub_opsig_ov ~f:(fun ((map, opt), ovar) ->
             Set.add (Term.rvs_of_opsig (Sort.OpSig (map, opt))) ovar)
 
-    let constrained_ovars_of c =
+    let upper_constrained_ovars_of c =
       Set.Poly.union_list
       @@ List.map c.sub_evs_eff ~f:(snd >> Term.polar_rvs_of_cont ~pos:false)
       @ List.map c.sub_effs_eff ~f:(fun (effs, eff) ->
@@ -169,8 +169,8 @@ module Make (Config : Config.ConfigType) = struct
       @ List.map c.sub_opsig_ov ~f:(fun ((map, opt), _) ->
             Term.polar_rvs_of_opsig ~pos:true (Sort.OpSig (map, opt)))
 
-    let unconstrained_ovars_of c =
-      Set.diff (ovars_of c) (constrained_ovars_of c)
+    let upper_unconstrained_ovars_of c =
+      Set.diff (ovars_of c) (upper_constrained_ovars_of c)
 
     let evars_of c =
       Set.Poly.union_list
@@ -187,7 +187,7 @@ module Make (Config : Config.ConfigType) = struct
       @ List.map c.sub_opsig_ov ~f:(fun ((map, opt), _) ->
             Term.evs_of_opsig (Sort.OpSig (map, opt)))
 
-    let constrained_evars_of c =
+    let lower_constrained_evars_of c =
       Set.Poly.union_list
       @@ List.map c.sub_evs_eff ~f:(fun (evs, eff) ->
              if List.is_empty evs && Sort.is_evar eff then Set.Poly.empty
@@ -208,8 +208,8 @@ module Make (Config : Config.ConfigType) = struct
       @ List.map c.sub_opsig_ov ~f:(fun ((map, opt), _) ->
             Term.polar_evs_of_opsig ~pos:false (Sort.OpSig (map, opt)))
 
-    let unconstrained_evars_of c =
-      Set.diff (evars_of c) (constrained_evars_of c)
+    let lower_unconstrained_evars_of c =
+      Set.diff (evars_of c) (lower_constrained_evars_of c)
   end
 
   module SimplResult = struct
@@ -305,7 +305,7 @@ module Make (Config : Config.ConfigType) = struct
         if Stdlib.(e1 = e2) then simplify_esubs state
         else
           match (e1, e2) with
-          | _, (Sort.Pure | Sort.Closed) | Sort.Closed, Sort.EVar _ ->
+          | _, Sort.Pure ->
               state
               |> SimplState.map_res (SimplResult.add_eeqls [ (e1, e2) ])
               |> simplify_esubs
@@ -330,7 +330,6 @@ module Make (Config : Config.ConfigType) = struct
               |> simplify_esubs
           | Sort.Pure, Sort.Eff (c1, c2) ->
               state |> SimplState.add_subs c1 c2 |> simplify_esubs
-          | Sort.Closed, Sort.Eff (_, _) -> assert false
           | Sort.Eff (c11, c12), Sort.Eff (c21, c22) ->
               state
               |> SimplState.add_subs c21 c11
@@ -560,41 +559,119 @@ module Make (Config : Config.ConfigType) = struct
                 |> simplify_osubs
           | _ -> failwith "unknown opsig")
 
+  let print_ecomps ecomps =
+    Debug.print @@ lazy "==== ecomps:";
+    List.iter ecomps ~f:(fun (effs, (c1, c2)) ->
+        Debug.print
+        @@ lazy
+             (sprintf "%s <: %s => %s"
+                (String.concat_map_list ~sep:" " effs ~f:(fun (c1, c2) ->
+                     Term.str_of_cont (Sort.mk_cont_eff c1 c2)))
+                (Term.str_of_triple c1) (Term.str_of_triple c2)))
+
+  let print_ov_ov sub_ov_ov =
+    Debug.print @@ lazy "==== sub_ov_ov:";
+    List.iter sub_ov_ov ~f:(fun (ovar1, ovar2) ->
+        Debug.print
+        @@ lazy
+             (sprintf "%s <: %s"
+                (Ast.Ident.name_of_rvar ovar1)
+                (Ast.Ident.name_of_rvar ovar2)))
+
+  let print_ov_opsig sub_ov_opsig =
+    Debug.print @@ lazy "==== sub_ov_opsig:";
+    List.iter sub_ov_opsig ~f:(fun (ovar, (map, opt)) ->
+        Debug.print
+        @@ lazy
+             (sprintf "%s <: %s"
+                (Ast.Ident.name_of_rvar ovar)
+                (Term.str_of_opsig (Sort.OpSig (map, opt)))))
+
+  let print_opsig_ov sub_opsig_ov =
+    Debug.print @@ lazy "==== sub_opsig_ov:";
+    List.iter sub_opsig_ov ~f:(fun ((map, opt), ovar) ->
+        Debug.print
+        @@ lazy
+             (sprintf "%s <: %s"
+                (Term.str_of_opsig (Sort.OpSig (map, opt)))
+                (Ast.Ident.name_of_rvar ovar)))
+
+  let print_ev_ev sub_ev_ev =
+    Debug.print @@ lazy "==== sub_ev_ev:";
+    List.iter sub_ev_ev ~f:(fun (evar1, evar2) ->
+        Debug.print
+        @@ lazy
+             (sprintf "%s <: %s"
+                (Ast.Ident.name_of_evar evar1)
+                (Ast.Ident.name_of_evar evar2)))
+
+  let print_evs_eff sub_evs_eff =
+    Debug.print @@ lazy "==== sub_evs_eff:";
+    List.iter sub_evs_eff ~f:(fun (evs, eff) ->
+        Debug.print
+        @@ lazy
+             (sprintf "%s <: %s"
+                (String.concat_map_list ~sep:" " evs ~f:Ast.Ident.name_of_evar)
+                (Term.str_of_cont eff)))
+
+  let print_effs_eff sub_effs_eff =
+    Debug.print @@ lazy "==== sub_effs_eff:";
+    List.iter sub_effs_eff ~f:(fun (effs, eff) ->
+        Debug.print
+        @@ lazy
+             (sprintf "%s <: %s"
+                (String.concat_map_list ~sep:" " effs ~f:Term.str_of_cont)
+                (Term.str_of_cont eff)))
+
+  let print_esubs esubs =
+    Debug.print @@ lazy "==== esubs:";
+    List.iter esubs ~f:(fun (e1, e2) ->
+        Debug.print
+        @@ lazy (sprintf "%s <: %s" (Term.str_of_cont e1) (Term.str_of_cont e2)))
+
+  let print_ssubs ssubs =
+    Debug.print @@ lazy "==== ssubs:";
+    List.iter ssubs ~f:(fun (s1, s2) ->
+        Debug.print
+        @@ lazy (sprintf "%s <: %s" (Term.str_of_sort s1) (Term.str_of_sort s2)))
+
+  let print_osubs osubs =
+    Debug.print @@ lazy "==== osubs:";
+    List.iter osubs ~f:(fun (o1, o2) ->
+        Debug.print
+        @@ lazy
+             (sprintf "%s <: %s" (Term.str_of_opsig o1) (Term.str_of_opsig o2)))
+
+  let print_ecompsubs ecompsubs =
+    Debug.print @@ lazy "==== ecompsubs:";
+    List.iter ecompsubs ~f:(fun (effs, eff) ->
+        Debug.print
+        @@ lazy
+             (sprintf "%s <: %s"
+                (String.concat_map_list ~sep:" " effs ~f:Term.str_of_cont)
+                (Term.str_of_cont eff)))
+
   let rec fully_simplify_subs (state : SimplState.t) =
     if
       List.is_empty state.esubs && List.is_empty state.ssubs
       && List.is_empty state.osubs
     then state.res
     else (
+      if print_log then Debug.print @@ lazy "#### fully_simplify_subs";
       if print_log then (
-        Debug.print @@ lazy "==== esubs:";
-        List.iter state.esubs ~f:(fun (e1, e2) ->
-            Debug.print
-            @@ lazy
-                 (sprintf "%s <: %s" (Term.str_of_cont e1) (Term.str_of_cont e2)));
-        Debug.print @@ lazy "==== ssubs:";
-        List.iter state.ssubs ~f:(fun (s1, s2) ->
-            Debug.print
-            @@ lazy
-                 (sprintf "%s <: %s" (Term.str_of_sort s1) (Term.str_of_sort s2)));
-        Debug.print @@ lazy "==== osubs:";
-        List.iter state.osubs ~f:(fun (o1, o2) ->
-            Debug.print
-            @@ lazy
-                 (sprintf "%s <: %s" (Term.str_of_opsig o1)
-                    (Term.str_of_opsig o2))));
+        print_esubs state.esubs;
+        print_ssubs state.ssubs;
+        print_osubs state.osubs);
       let state = state |> simplify_esubs |> simplify_ssubs |> simplify_osubs in
       fully_simplify_subs state)
 
-  let simplify_ecompsubs (res : SimplResult.t) =
+  let simplify_ecompsubs (res : SimplResult.t) ecompsubs =
+    if print_log then (
+      Debug.print @@ lazy "#### simplify_ecompsubs";
+      print_ecompsubs ecompsubs);
     let rec go (res : SimplResult.t) = function
       | [] -> res
-      | ([], Sort.Closed) :: ecompsubs -> go res ecompsubs
-      | ([ Sort.Closed ], eff | [ eff ], Sort.Closed) :: ecompsubs ->
-          let res = SimplResult.add_eeqls [ (Sort.Closed, eff) ] res in
-          go res ecompsubs
       | (effs, eff) :: ecompsubs ->
-          assert (List.for_all (eff :: effs) ~f:(Sort.is_closed >> not));
           let effs = List.filter effs ~f:(Sort.is_pure >> not) in
           if Sort.is_pure eff then
             let res =
@@ -624,7 +701,7 @@ module Make (Config : Config.ConfigType) = struct
             in
             go res ecompsubs
     in
-    go res
+    go res ecompsubs
 
   let map_eql eql ~f = List.map eql ~f:(fun (a1, a2) -> (f a1, f a2))
   let subst_cont_cont (ev, e) = Term.subst_conts_cont (Map.Poly.singleton ev e)
@@ -655,6 +732,11 @@ module Make (Config : Config.ConfigType) = struct
       otheta : (rvar, Sort.o) Map.Poly.t;
     }
 
+    let equal s1 s2 =
+      Map.Poly.equal Stdlib.( = ) s1.etheta s2.etheta
+      && Map.Poly.equal Stdlib.( = ) s1.stheta s2.stheta
+      && Map.Poly.equal Stdlib.( = ) s1.otheta s2.otheta
+
     let empty =
       {
         etheta = Map.Poly.empty;
@@ -663,52 +745,63 @@ module Make (Config : Config.ConfigType) = struct
       }
 
     let add_subst_cont (ev, e) sb =
-      if print_log then
-        Debug.print
-        @@ lazy
-             (sprintf "adding %s |-> %s"
-                (Ast.Ident.name_of_evar ev)
-                (Term.str_of_cont e));
-      {
-        etheta =
-          sb.etheta
-          |> Map.Poly.map ~f:(subst_cont_cont (ev, e))
-          |> Map.Poly.add_exn ~key:ev ~data:e;
-        stheta = Map.Poly.map sb.stheta ~f:(subst_cont_sort (ev, e));
-        otheta = Map.Poly.map sb.otheta ~f:(subst_cont_opsig (ev, e));
-      }
+      match e with
+      | Sort.EVar ev' when Stdlib.(ev = ev') -> sb
+      | _ ->
+          if print_log then
+            Debug.print
+            @@ lazy
+                 (sprintf "adding %s |-> %s"
+                    (Ast.Ident.name_of_evar ev)
+                    (Term.str_of_cont e));
+          {
+            etheta =
+              sb.etheta
+              |> Map.Poly.map ~f:(subst_cont_cont (ev, e))
+              |> Map.Poly.add_exn ~key:ev ~data:e;
+            stheta = Map.Poly.map sb.stheta ~f:(subst_cont_sort (ev, e));
+            otheta = Map.Poly.map sb.otheta ~f:(subst_cont_opsig (ev, e));
+          }
 
     let add_subst_sort (sv, s) sb =
-      if print_log then
-        Debug.print
-        @@ lazy
-             (sprintf "adding %s |-> %s"
-                (Ast.Ident.name_of_svar sv)
-                (Term.str_of_sort s));
-      {
-        etheta = Map.Poly.map sb.etheta ~f:(subst_sort_cont (sv, s));
-        stheta =
-          sb.stheta
-          |> Map.Poly.map ~f:(subst_sort_sort (sv, s))
-          |> Map.Poly.add_exn ~key:sv ~data:s;
-        otheta = Map.Poly.map sb.otheta ~f:(subst_sort_opsig (sv, s));
-      }
+      match s with
+      | Sort.SVar sv' when Stdlib.(sv = sv') -> sb
+      | _ ->
+          if print_log then
+            Debug.print
+            @@ lazy
+                 (sprintf "adding %s |-> %s"
+                    (Ast.Ident.name_of_svar sv)
+                    (Term.str_of_sort s));
+          {
+            etheta = Map.Poly.map sb.etheta ~f:(subst_sort_cont (sv, s));
+            stheta =
+              sb.stheta
+              |> Map.Poly.map ~f:(subst_sort_sort (sv, s))
+              |> Map.Poly.add_exn ~key:sv ~data:s;
+            otheta = Map.Poly.map sb.otheta ~f:(subst_sort_opsig (sv, s));
+          }
 
     let add_subst_opsig (rv, o) sb =
-      if print_log then
-        Debug.print
-        @@ lazy
-             (sprintf "adding %s |-> %s"
-                (Ast.Ident.name_of_rvar rv)
-                (Term.str_of_opsig o));
-      {
-        etheta = Map.Poly.map sb.etheta ~f:(subst_opsig_cont (rv, o));
-        stheta = Map.Poly.map sb.stheta ~f:(subst_opsig_sort (rv, o));
-        otheta =
-          sb.otheta
-          |> Map.Poly.map ~f:(subst_opsig_opsig (rv, o))
-          |> Map.Poly.add_exn ~key:rv ~data:o;
-      }
+      match o with
+      | Sort.OpSig (map, Some rv') when Stdlib.(rv = rv') ->
+          assert (ALMap.is_empty map);
+          sb
+      | _ ->
+          if print_log then
+            Debug.print
+            @@ lazy
+                 (sprintf "adding %s |-> %s"
+                    (Ast.Ident.name_of_rvar rv)
+                    (Term.str_of_opsig o));
+          {
+            etheta = Map.Poly.map sb.etheta ~f:(subst_opsig_cont (rv, o));
+            stheta = Map.Poly.map sb.stheta ~f:(subst_opsig_sort (rv, o));
+            otheta =
+              sb.otheta
+              |> Map.Poly.map ~f:(subst_opsig_opsig (rv, o))
+              |> Map.Poly.add_exn ~key:rv ~data:o;
+          }
 
     let subst_to_sort sb =
       Term.subst_opsigs_sort sb.otheta
@@ -825,7 +918,6 @@ module Make (Config : Config.ConfigType) = struct
         if Stdlib.(e1 = e2) then unify_eeqls state
         else
           match (e1, e2) with
-          | Sort.Pure, Sort.Closed | Sort.Closed, Sort.Pure -> unify_eeqls state
           | Sort.Eff (c11, c12), Sort.Eff (c21, c22) ->
               state |> UniState.add_eqls c11 c21 |> UniState.add_eqls c12 c22
               |> unify_eeqls
@@ -946,6 +1038,7 @@ module Make (Config : Config.ConfigType) = struct
     then state.res
     else (
       if print_log then (
+        Debug.print @@ lazy "#### fully_unify_eqls";
         Debug.print @@ lazy "==== eeqls:";
         List.iter state.eeqls ~f:(fun (e1, e2) ->
             Debug.print
@@ -995,6 +1088,7 @@ module Make (Config : Config.ConfigType) = struct
     (*let add_ecompsubs x state = { state with ecompsubs = x @ state.ecompsubs }*)
 
     let from_subst_constr (subst : Subst.t) (constr : Constr.t) : t =
+      if print_log then Debug.print @@ lazy "#### from_subst_constr";
       let subst_to_cont = Subst.subst_to_cont subst in
       (*let subst_to_sort = Subst.subst_to_sort subst in*)
       let subst_to_opsig = Subst.subst_to_opsig subst in
@@ -1010,14 +1104,13 @@ module Make (Config : Config.ConfigType) = struct
       in
       let sub_effs_eff =
         List.unique
-        @@ List.map
-             (List.map constr.sub_evs_eff ~f:(fun (evs, eff) ->
-                  (List.map evs ~f:(fun evar -> Sort.EVar evar), eff))
-             @ constr.sub_effs_eff)
-             ~f:(fun (effs, eff) ->
+        @@ List.map ~f:(fun (effs, eff) ->
                ( List.filter ~f:(Sort.is_pure >> not)
                  @@ List.map effs ~f:subst_to_cont,
                  subst_to_cont eff ))
+        @@ List.map constr.sub_evs_eff ~f:(fun (evs, eff) ->
+               (List.map evs ~f:(fun evar -> Sort.EVar evar), eff))
+        @ constr.sub_effs_eff
       in
       (*let esubs, sub_effs_eff =
           List.partition_map sub_effs_eff ~f:(fun (effs, eff) ->
@@ -1031,7 +1124,6 @@ module Make (Config : Config.ConfigType) = struct
               `Fst (List.map effs ~f:Sort.let_eff, Sort.let_eff eff)
             else if
               Sort.is_pure eff
-              || List.exists (eff :: effs) ~f:Sort.is_closed
               || (Sort.is_evar eff && List.exists effs ~f:Sort.is_eff)
             then `Snd (effs, eff)
             else `Trd (effs, eff))
@@ -1064,19 +1156,51 @@ module Make (Config : Config.ConfigType) = struct
               ( Map.Poly.find subst.otheta ovar1,
                 Map.Poly.find subst.otheta ovar2 )
             with
+            | ( Some (Sort.OpSig (map1, Some ov1)),
+                Some (Sort.OpSig (map2, Some ov2)) )
+              when ALMap.is_empty map1 && ALMap.is_empty map2 ->
+                Second (ov1, ov2)
             | Some opsig1, Some opsig2 -> First (opsig1, opsig2)
+            | Some (Sort.OpSig (map1, Some ov1)), None when ALMap.is_empty map1
+              ->
+                Second (ov1, ovar2)
             | Some opsig1, None -> First (opsig1, Sort.OpSig ([], Some ovar2))
+            | None, Some (Sort.OpSig (map2, Some ov2)) when ALMap.is_empty map2
+              ->
+                Second (ovar1, ov2)
             | None, Some opsig2 -> First (Sort.OpSig ([], Some ovar1), opsig2)
             | None, None -> Second (ovar1, ovar2))
       in
+      let sub_ov_ov = List.filter sub_ov_ov ~f:(uncurry2 Stdlib.( <> )) in
+      let sub_ov_opsig =
+        constr.sub_ov_opsig
+        |> List.classify (fun (ovar, _) (ovar', _) -> Stdlib.(ovar = ovar'))
+        |> List.concat_map ~f:(fun sub_ov_opsig ->
+               let sub_ov_opsig1, sub_ov_opsig2 =
+                 List.partition_tf sub_ov_opsig ~f:(snd >> snd >> Option.is_none)
+               in
+               match sub_ov_opsig1 with
+               | [] -> sub_ov_opsig2
+               | (ovar, _) :: _ -> (
+                   try
+                     ( ovar,
+                       ( ALMap.force_merge_list
+                         @@ List.map ~f:(snd >> fst) sub_ov_opsig1,
+                         None ) )
+                     :: sub_ov_opsig2
+                   with _ -> sub_ov_opsig))
+      in
       let osubs_from_ov_opsig, sub_ov_opsig =
-        List.partition_map constr.sub_ov_opsig ~f:(fun (ov, (map, opt)) ->
+        List.partition_map sub_ov_opsig ~f:(fun (ov, (map, opt)) ->
             match
-              ( subst_to_opsig (Sort.OpSig (map, opt)),
-                Map.Poly.find subst.otheta ov )
+              ( Map.Poly.find subst.otheta ov,
+                subst_to_opsig (Sort.OpSig (map, opt)) )
             with
-            | opsig, Some opsig' -> First (opsig', opsig)
-            | Sort.OpSig (map, opt), None -> Second (ov, (map, opt))
+            | Some (Sort.OpSig (map', Some ov')), Sort.OpSig (map, opt)
+              when ALMap.is_empty map' ->
+                Second (ov', (map, opt))
+            | Some opsig', opsig -> First (opsig', opsig)
+            | None, Sort.OpSig (map, opt) -> Second (ov, (map, opt))
             | _ -> failwith "")
       in
       let osubs_from_opsig_ov, sub_opsig_ov =
@@ -1085,6 +1209,9 @@ module Make (Config : Config.ConfigType) = struct
               ( subst_to_opsig (Sort.OpSig (map, opt)),
                 Map.Poly.find subst.otheta ov )
             with
+            | Sort.OpSig (map, opt), Some (Sort.OpSig (map', Some ov'))
+              when ALMap.is_empty map' ->
+                Second ((map, opt), ov')
             | opsig, Some opsig' -> First (opsig, opsig')
             | Sort.OpSig (map, opt), None -> Second ((map, opt), ov)
             | _ -> failwith "")
@@ -1122,30 +1249,7 @@ module Make (Config : Config.ConfigType) = struct
       && List.is_empty state.ecompsubs
     then state.res
     else (
-      if print_log then (
-        Debug.print @@ lazy "==== esubs:";
-        List.iter state.esubs ~f:(fun (e1, e2) ->
-            Debug.print
-            @@ lazy
-                 (sprintf "%s <: %s" (Term.str_of_cont e1) (Term.str_of_cont e2)));
-        Debug.print @@ lazy "==== ssubs:";
-        List.iter state.ssubs ~f:(fun (s1, s2) ->
-            Debug.print
-            @@ lazy
-                 (sprintf "%s <: %s" (Term.str_of_sort s1) (Term.str_of_sort s2)));
-        Debug.print @@ lazy "==== osubs:";
-        List.iter state.osubs ~f:(fun (o1, o2) ->
-            Debug.print
-            @@ lazy
-                 (sprintf "%s <: %s" (Term.str_of_opsig o1)
-                    (Term.str_of_opsig o2)));
-        Debug.print @@ lazy "==== ecompsubs:";
-        List.iter state.ecompsubs ~f:(fun (effs, eff) ->
-            Debug.print
-            @@ lazy
-                 (sprintf "%s <: %s"
-                    (String.concat_map_list ~sep:" " effs ~f:Term.str_of_cont)
-                    (Term.str_of_cont eff))));
+      if print_log then Debug.print @@ lazy "\n### preprocess";
       let simpl_res =
         fully_simplify_subs
           {
@@ -1175,27 +1279,42 @@ module Make (Config : Config.ConfigType) = struct
       preprocess (PreprocState.from_subst_constr uni_res.subst simpl_res.constr))
 
   module SearchState = struct
-    type t = { constr : Constr.t; subst : Subst.t; embedded : evar Set.Poly.t }
+    type t = { constr : Constr.t; subst : Subst.t }
 
     let init (res : PreprocResult.t) =
-      { constr = res.constr; subst = res.subst; embedded = Set.Poly.empty }
+      { constr = res.constr; subst = res.subst }
 
     let add_subst_conts sub state =
-      let subst =
-        Set.fold sub ~init:state.subst ~f:(fun subst (ev, e) ->
-            Subst.add_subst_cont (ev, e) subst)
+      let rec aux sub =
+        let sub' =
+          Set.fold ~init:sub sub ~f:(fun sub subst ->
+              Set.Poly.map sub ~f:(fun (ev, e) -> (ev, subst_cont_cont subst e)))
+        in
+        if Set.equal sub sub' then sub' else aux sub'
       in
-      PreprocState.from_subst_constr subst state.constr
+      PreprocState.from_subst_constr
+        (Set.fold ~init:state.subst (aux sub) ~f:(Fn.flip Subst.add_subst_cont))
+        state.constr
 
     let add_subst_opsigs sub state =
-      let subst =
-        Set.fold sub ~init:state.subst ~f:(fun subst (rv, o) ->
-            Subst.add_subst_opsig (rv, o) subst)
+      let rec aux sub =
+        let sub' =
+          Set.fold ~init:sub sub ~f:(fun sub subst ->
+              Set.Poly.map sub ~f:(fun (ov, o) ->
+                  (ov, subst_opsig_opsig subst o)))
+        in
+        if Set.equal sub sub' then sub' else aux sub'
       in
-      PreprocState.from_subst_constr subst state.constr
+      PreprocState.from_subst_constr
+        (Set.fold ~init:state.subst (aux sub)
+           ~f:(Fn.flip Subst.add_subst_opsig))
+        state.constr
   end
 
-  let rec search_ecomps ~embed (state : SearchState.t) =
+  let rec solve_ecomps ~embed (state : SearchState.t) =
+    if print_log then (
+      Debug.print @@ lazy "#### solve_ecomps";
+      print_ecomps state.constr.ecomps);
     match state.constr.ecomps with
     | [] -> state
     | (es, (c_first, c_last)) :: ecomps -> (
@@ -1217,12 +1336,8 @@ module Make (Config : Config.ConfigType) = struct
               @@ PreprocState.from_subst_constr (*uni_res.subst*) state.subst
                    state.constr
             in
-            search_ecomps ~embed
-              {
-                state with
-                constr = preproc_res.constr;
-                subst = preproc_res.subst;
-              }
+            solve_ecomps ~embed
+              { constr = preproc_res.constr; subst = preproc_res.subst }
         | (c1, c2) :: es ->
             (*let uni_res =
                 fully_unify_eqls
@@ -1246,14 +1361,11 @@ module Make (Config : Config.ConfigType) = struct
               @@ PreprocState.from_subst_constr (*uni_res.subst*) state.subst
                    state.constr
             in
-            search_ecomps ~embed
-              {
-                state with
-                constr = preproc_res.constr;
-                subst = preproc_res.subst;
-              })
+            solve_ecomps ~embed
+              { constr = preproc_res.constr; subst = preproc_res.subst })
 
-  let rec search_effs_eff ~embed acc (state : SearchState.t) =
+  let rec solve_effs_eff ~embed acc (state : SearchState.t) =
+    if print_log then Debug.print @@ lazy "#### solve_effs_eff";
     match state.constr.sub_effs_eff with
     | [] ->
         assert (List.is_empty acc);
@@ -1263,7 +1375,7 @@ module Make (Config : Config.ConfigType) = struct
         let state =
           { state with constr = { state.constr with sub_effs_eff } }
         in
-        search_effs_eff ~embed acc state*)
+        solve_effs_eff ~embed acc state*)
     | (es, (Sort.EVar _ as e)) :: sub_effs_eff
       when List.for_all es ~f:Sort.is_evar ->
         let state =
@@ -1275,7 +1387,7 @@ module Make (Config : Config.ConfigType) = struct
                 { state.constr with sub_effs_eff };
           }
         in
-        search_effs_eff ~embed acc state
+        solve_effs_eff ~embed acc state
     | (es, (Sort.Eff (c_first, c_last) as e)) :: sub_effs_eff -> (
         let state =
           { state with constr = { state.constr with sub_effs_eff } }
@@ -1297,12 +1409,8 @@ module Make (Config : Config.ConfigType) = struct
               @@ PreprocState.from_subst_constr (*uni_res.subst*) state.subst
                    state.constr
             in
-            search_effs_eff ~embed acc
-              {
-                state with
-                constr = preproc_res.constr;
-                subst = preproc_res.subst;
-              }
+            solve_effs_eff ~embed acc
+              { constr = preproc_res.constr; subst = preproc_res.subst }
         | Sort.Eff (c1, c2) :: es ->
             (*let uni_res =
                 fully_unify_eqls
@@ -1330,12 +1438,8 @@ module Make (Config : Config.ConfigType) = struct
               @@ PreprocState.from_subst_constr (*uni_res.subst*) state.subst
                    state.constr
             in
-            search_effs_eff ~embed acc
-              {
-                state with
-                constr = preproc_res.constr;
-                subst = preproc_res.subst;
-              }
+            solve_effs_eff ~embed acc
+              { constr = preproc_res.constr; subst = preproc_res.subst }
         | Sort.EVar _ :: _ ->
             let es1, es2 = List.split_while es ~f:Sort.is_evar in
             if List.is_empty es2 then
@@ -1355,12 +1459,8 @@ module Make (Config : Config.ConfigType) = struct
                 preprocess
                 @@ PreprocState.from_subst_constr state.subst state.constr
               in
-              search_effs_eff ~embed acc
-                {
-                  state with
-                  constr = preproc_res.constr;
-                  subst = preproc_res.subst;
-                }
+              solve_effs_eff ~embed acc
+                { constr = preproc_res.constr; subst = preproc_res.subst }
             else
               let c = Sort.mk_fresh_triple () in
               if print_log then
@@ -1384,12 +1484,8 @@ module Make (Config : Config.ConfigType) = struct
                 preprocess
                 @@ PreprocState.from_subst_constr state.subst state.constr
               in
-              search_effs_eff ~embed acc
-                {
-                  state with
-                  constr = preproc_res.constr;
-                  subst = preproc_res.subst;
-                }
+              solve_effs_eff ~embed acc
+                { constr = preproc_res.constr; subst = preproc_res.subst }
             (* let assume_eff () =
                 let ov1, sv1, ev1 = Sort.mk_fresh_triple () in
                   let ov2, sv2, ev2 = Sort.mk_fresh_triple () in
@@ -1408,11 +1504,10 @@ module Make (Config : Config.ConfigType) = struct
                     @@ SearchState.add_subst_conts [ (ev, cont) ]
                        { state with constr = { state.constr with sub_effs_eff } }
                   in
-                  search_effs_eff ~embed acc
+                  solve_effs_eff ~embed acc
                     {
                       constr = preproc_res.constr;
                       subst = preproc_res.subst;
-                      embedded = Set.add state.embedded ev;
                     }
                 in
                 let assume_pure () =
@@ -1427,11 +1522,10 @@ module Make (Config : Config.ConfigType) = struct
                     @@ SearchState.add_subst_conts [ (ev, Sort.Pure) ]
                        { state with constr = { state.constr with sub_effs_eff } }
                   in
-                  search_effs_eff ~embed acc
+                  solve_effs_eff ~embed acc
                   {
                        constr = preproc_res.constr;
                        subst = preproc_res.subst;
-                       embedded = state.embedded;
                   }
                 in
 
@@ -1443,312 +1537,554 @@ module Make (Config : Config.ConfigType) = struct
         | _ -> failwith "unknown effect")
     | _ -> assert false
 
-  let rec fully_search ~embed (state : SearchState.t) =
+  let rec solve_main ~embed (state : SearchState.t) =
+    if print_log then Debug.print @@ lazy "\n### solve_main";
     if Fn.non List.is_empty state.constr.ecomps then (
-      if print_log then (
-        Debug.print @@ lazy "==== ecomps:";
-        List.iter state.constr.ecomps ~f:(fun (effs, (c1, c2)) ->
-            Debug.print
-            @@ lazy
-                 (sprintf "%s <: %s => %s"
-                    (String.concat_map_list ~sep:" " effs ~f:(fun (c1, c2) ->
-                         Term.str_of_cont (Sort.mk_cont_eff c1 c2)))
-                    (Term.str_of_triple c1) (Term.str_of_triple c2))));
-      let state = search_ecomps ~embed state in
+      Debug.print @@ lazy "@ solve ecomps";
+      let state = solve_ecomps ~embed state in
       let preproc_res =
         preprocess (PreprocState.from_subst_constr state.subst state.constr)
       in
-      fully_search ~embed
-        { state with constr = preproc_res.constr; subst = preproc_res.subst })
+      solve_main ~embed
+        { constr = preproc_res.constr; subst = preproc_res.subst })
     else
-      let uovars =
-        (*Set.diff*)
-        Constr.unconstrained_ovars_of state.constr
-        (*(Subst.ovars_of state.subst)*)
-      in
-      if Fn.non Set.is_empty uovars then (
-        if print_log then (
-          Debug.print @@ lazy "==== unconstrained ovars:";
-          Debug.print
-          @@ lazy
-               (String.concat_map_set ~sep:"," ~f:Ast.Ident.name_of_rvar uovars));
-        let preproc_res =
-          preprocess
-          @@ SearchState.add_subst_opsigs
-               (Set.Poly.map uovars ~f:(fun ovar ->
-                    (ovar, Sort.empty_closed_opsig)))
-               state
+      let oeqs =
+        (* ToDo: construction of transitive closure is not required? *)
+        let tc =
+          PartOrd.transitive_closure_of
+            (Set.Poly.of_list state.constr.sub_ov_ov)
         in
-        fully_search ~embed
-          { state with constr = preproc_res.constr; subst = preproc_res.subst })
+        let nodes =
+          List.unique @@ uncurry2 ( @ ) (List.unzip state.constr.sub_ov_ov)
+        in
+        let dict =
+          Map.Poly.of_alist_exn @@ List.mapi nodes ~f:(fun i n -> (n, i))
+        in
+        let uf = UnionFind.mk_size_uf ~size:(List.length nodes) in
+        List.iter state.constr.sub_ov_ov ~f:(fun (ovar1, ovar2) ->
+            if Set.mem tc (ovar1, ovar2) && Set.mem tc (ovar2, ovar1) then
+              UnionFind.unite
+                (Map.Poly.find_exn dict ovar1)
+                (Map.Poly.find_exn dict ovar2)
+                uf);
+        let groups = UnionFind.get_groups uf in
+        Set.Poly.of_list
+        @@ List.concat_map groups ~f:(fun ids ->
+               let id, ids = List.hd_tl ids in
+               List.map ids ~f:(fun id' ->
+                   ( List.nth_exn nodes id',
+                     Sort.mk_empty_open_opsig_from_rvar @@ List.nth_exn nodes id
+                   )))
+      in
+      if Fn.non Set.is_empty oeqs then (
+        Debug.print @@ lazy "@ remove ovar cycles";
+        if print_log then print_ov_ov state.constr.sub_ov_ov;
+        let preproc_res =
+          preprocess @@ SearchState.add_subst_opsigs oeqs state
+        in
+        solve_main ~embed
+          { constr = preproc_res.constr; subst = preproc_res.subst })
       else
         let oeqs =
-          let tc =
-            PartOrd.transitive_closure_of
-              (Set.Poly.of_list state.constr.sub_ov_ov)
-          in
-          let nodes =
-            List.unique @@ uncurry2 ( @ ) (List.unzip state.constr.sub_ov_ov)
-          in
-          let dict =
-            Map.Poly.of_alist_exn @@ List.mapi nodes ~f:(fun i n -> (n, i))
-          in
-          let uf = UnionFind.mk_size_uf ~size:(List.length nodes) in
-          List.iter state.constr.sub_ov_ov ~f:(fun (ovar1, ovar2) ->
-              if Set.mem tc (ovar1, ovar2) && Set.mem tc (ovar2, ovar1) then
-                UnionFind.unite
-                  (Map.Poly.find_exn dict ovar1)
-                  (Map.Poly.find_exn dict ovar2)
-                  uf);
-          let groups = UnionFind.get_groups uf in
-          Set.Poly.of_list
-          @@ List.concat_map groups ~f:(fun ids ->
-                 let id, ids = List.hd_tl ids in
-                 List.map ids ~f:(fun id' ->
-                     ( List.nth_exn nodes id',
-                       Sort.mk_empty_open_opsig_from_rvar
-                       @@ List.nth_exn nodes id )))
+          Set.Poly.map ~f:(fun (ovar, (map, opt)) ->
+              (ovar, Sort.OpSig (map, opt)))
+          @@ Set.inter
+               (Set.Poly.of_list @@ state.constr.sub_ov_opsig)
+               (Set.Poly.of_list
+               @@ List.map state.constr.sub_opsig_ov ~f:(fun (opsig, ovar) ->
+                      (ovar, opsig)))
         in
         if Fn.non Set.is_empty oeqs then (
+          Debug.print @@ lazy "@ remove ovar opsig cycles";
           if print_log then (
-            Debug.print @@ lazy "==== sub_ov_ov:";
-            List.iter state.constr.sub_ov_ov ~f:(fun (ovar1, ovar2) ->
-                Debug.print
-                @@ lazy
-                     (sprintf "%s <: %s"
-                        (Ast.Ident.name_of_rvar ovar1)
-                        (Ast.Ident.name_of_rvar ovar2))));
+            print_ov_ov state.constr.sub_ov_ov;
+            print_ov_opsig state.constr.sub_ov_opsig;
+            print_opsig_ov state.constr.sub_opsig_ov);
           let preproc_res =
             preprocess @@ SearchState.add_subst_opsigs oeqs state
           in
-          fully_search ~embed
-            {
-              state with
-              constr = preproc_res.constr;
-              subst = preproc_res.subst;
-            })
+          solve_main ~embed
+            { constr = preproc_res.constr; subst = preproc_res.subst })
         else
-          let covars =
-            Set.Poly.union_list
-            @@ List.map state.constr.sub_ov_ov ~f:(fun (ovar1, _ovar2) ->
-                   Set.Poly.singleton ovar1)
-            @ List.map state.constr.sub_opsig_ov ~f:(fun ((map, opt), _ovar) ->
-                  Term.rvs_of_opsig (Sort.OpSig (map (*ToDo*), opt)))
+          let uovars, oeqs =
+            let uovars =
+              (*Set.diff*)
+              Constr.upper_unconstrained_ovars_of state.constr
+              (*(Subst.ovars_of state.subst)*)
+            in
+            ( uovars,
+              Set.Poly.map uovars ~f:(fun ovar ->
+                  (ovar, Sort.empty_closed_opsig)) )
           in
-          let oeqs =
-            Set.Poly.of_list
-            @@ List.map ~f:(fun ov_opsigs ->
-                   let ov_opsigs = List.unique ov_opsigs in
-                   let ov = fst @@ List.hd_exn ov_opsigs in
-                   let ops =
-                     List.unique
-                     @@ List.concat_map ov_opsigs
-                          ~f:(snd >> fst >> List.map ~f:fst)
-                   in
-                   let opsig =
-                     Sort.OpSig
-                       ( ALMap.of_alist_exn
-                         @@ List.map ops ~f:(fun op ->
-                                (op, Sort.mk_fresh_svar ())),
-                         None )
-                   in
-                   if print_log then
-                     Debug.print
-                     @@ lazy ("introducing " ^ Term.str_of_opsig opsig);
-                   (ov, opsig)
-                   (*match List.unique ov_opsigs with
-                     | [ (ov, (map, opt)) ] -> (ov, Sort.OpSig (map, opt))
-                     | _ -> failwith (string_of_int @@ List.length ov_opsigs)*))
-            @@ List.classify (fun (ov1, _) (ov2, _) ->
-                   Ast.Ident.rvar_equal ov1 ov2)
-            @@ List.filter state.constr.sub_ov_opsig
-                 ~f:(fst >> Set.mem covars >> not)
-          in
-          if Fn.non Set.is_empty oeqs then (
+          if Fn.non Set.is_empty uovars then (
+            Debug.print @@ lazy "@ remove upper unconstrained ovars";
             if print_log then (
-              Debug.print @@ lazy "==== sub_ov_ov:";
-              List.iter state.constr.sub_ov_ov ~f:(fun (ovar1, ovar2) ->
-                  Debug.print
-                  @@ lazy
-                       (sprintf "%s <: %s"
-                          (Ast.Ident.name_of_rvar ovar1)
-                          (Ast.Ident.name_of_rvar ovar2)));
-              Debug.print @@ lazy "==== sub_ov_opsig:";
-              List.iter state.constr.sub_ov_opsig ~f:(fun (ovar, (map, opt)) ->
-                  Debug.print
-                  @@ lazy
-                       (sprintf "%s <: %s"
-                          (Ast.Ident.name_of_rvar ovar)
-                          (Term.str_of_opsig (Sort.OpSig (map, opt)))));
-              Debug.print @@ lazy "==== sub_opsig_ov:";
-              List.iter state.constr.sub_opsig_ov ~f:(fun ((map, opt), ovar) ->
-                  Debug.print
-                  @@ lazy
-                       (sprintf "%s <: %s"
-                          (Term.str_of_opsig (Sort.OpSig (map, opt)))
-                          (Ast.Ident.name_of_rvar ovar))));
+              print_ov_ov state.constr.sub_ov_ov;
+              print_ov_opsig state.constr.sub_ov_opsig;
+              print_opsig_ov state.constr.sub_opsig_ov;
+              print_evs_eff state.constr.sub_evs_eff;
+              print_effs_eff state.constr.sub_effs_eff;
+              Debug.print @@ lazy "==== upper unconstrained ovars:";
+              Debug.print
+              @@ lazy
+                   (String.concat_map_set ~sep:"," ~f:Ast.Ident.name_of_rvar
+                      uovars));
             let preproc_res =
               preprocess @@ SearchState.add_subst_opsigs oeqs state
             in
-            fully_search ~embed
-              {
-                state with
-                constr = preproc_res.constr;
-                subst = preproc_res.subst;
-              })
+            solve_main ~embed
+              { constr = preproc_res.constr; subst = preproc_res.subst })
           else
-            let uevars =
-              (*Set.diff*)
-              Constr.unconstrained_evars_of state.constr
-              (*(Subst.evars_of state.subst)*)
+            let oeqs =
+              let covars =
+                Set.Poly.union_list
+                @@ List.map state.constr.sub_opsig_ov
+                     ~f:(fun ((map, opt), _ovar) ->
+                       Term.rvs_of_opsig (Sort.OpSig (map (*ToDo*), opt)))
+                @ List.map state.constr.sub_ov_opsig
+                    ~f:(fun (ovar, (_map, _opt)) -> Set.Poly.singleton ovar)
+              in
+              Set.Poly.of_list
+              @@ List.filter_map ~f:(function
+                   | [ (ov, ov') ] ->
+                       let opsig = Sort.OpSig (ALMap.empty, Some ov') in
+                       if print_log then
+                         Debug.print
+                         @@ lazy ("introducing " ^ Term.str_of_opsig opsig);
+                       Some (ov, opsig)
+                   | _ -> None)
+              @@ List.classify (fun (ov1, _) (ov2, _) ->
+                     Ast.Ident.rvar_equal ov1 ov2)
+              @@ List.filter state.constr.sub_ov_ov
+                   ~f:(fst >> Set.mem covars >> not)
             in
-            if Fn.non Set.is_empty uevars then (
+            if Fn.non Set.is_empty oeqs then (
+              Debug.print @@ lazy "@ assign singleton ovar upper bound";
               if print_log then (
-                Debug.print @@ lazy "==== unconstrained evars:";
-                Debug.print
-                @@ lazy
-                     (String.concat_map_set ~sep:"," ~f:Ast.Ident.name_of_evar
-                        uevars));
+                print_ov_ov state.constr.sub_ov_ov;
+                print_ov_opsig state.constr.sub_ov_opsig;
+                print_opsig_ov state.constr.sub_opsig_ov);
               let preproc_res =
-                preprocess
-                @@ SearchState.add_subst_conts
-                     (Set.Poly.map uevars ~f:(fun ev -> (ev, Sort.Pure)))
-                     state
+                preprocess @@ SearchState.add_subst_opsigs oeqs state
               in
-              fully_search ~embed
-                {
-                  state with
-                  constr = preproc_res.constr;
-                  subst = preproc_res.subst;
-                })
+              solve_main ~embed
+                { constr = preproc_res.constr; subst = preproc_res.subst })
             else
-              let sub_ev_ev =
-                List.filter_map state.constr.sub_evs_eff ~f:(function
-                  | [ ev ], eff when Sort.is_evar eff ->
-                      Some (ev, Sort.let_evar eff)
-                  | _ -> None)
-              in
-              let eeqs =
-                let tc =
-                  PartOrd.transitive_closure_of (Set.Poly.of_list sub_ev_ev)
+              let oeqs =
+                let covars =
+                  Set.Poly.union_list
+                  @@ List.map state.constr.sub_ov_ov ~f:(fun (ovar1, _ovar2) ->
+                         Set.Poly.singleton ovar1)
+                  @ List.map state.constr.sub_opsig_ov
+                      ~f:(fun ((map, opt), _ovar) ->
+                        Term.rvs_of_opsig (Sort.OpSig (map (*ToDo*), opt)))
+                  @ List.filter_map state.constr.sub_ov_opsig
+                      ~f:(fun (ovar, (_map, opt)) ->
+                        if Option.is_some opt then
+                          Some (Set.Poly.singleton ovar)
+                        else None)
                 in
-                let nodes =
-                  List.unique @@ uncurry2 ( @ ) (List.unzip sub_ev_ev)
-                in
-                let dict =
-                  Map.Poly.of_alist_exn
-                  @@ List.mapi nodes ~f:(fun i n -> (n, i))
-                in
-                let uf = UnionFind.mk_size_uf ~size:(List.length nodes) in
-                List.iter sub_ev_ev ~f:(fun (evar1, evar2) ->
-                    if Set.mem tc (evar1, evar2) && Set.mem tc (evar2, evar1)
-                    then
-                      UnionFind.unite
-                        (Map.Poly.find_exn dict evar1)
-                        (Map.Poly.find_exn dict evar2)
-                        uf);
-                let groups = UnionFind.get_groups uf in
                 Set.Poly.of_list
-                @@ List.concat_map groups ~f:(fun ids ->
-                       let id, ids = List.hd_tl ids in
-                       List.map ids ~f:(fun id' ->
-                           ( List.nth_exn nodes id',
-                             Sort.EVar (List.nth_exn nodes id) )))
+                @@ List.map ~f:(fun ov_opsigs ->
+                       let ov_opsigs = List.unique ov_opsigs in
+                       let ov = fst @@ List.hd_exn ov_opsigs in
+                       let ops =
+                         List.unique
+                         @@ List.concat_map ov_opsigs
+                              ~f:(snd >> fst >> List.map ~f:fst)
+                       in
+                       let opsig =
+                         Sort.OpSig
+                           ( ALMap.of_alist_exn
+                             @@ List.map ops ~f:(fun op ->
+                                    (op, Sort.mk_fresh_svar ())),
+                             None )
+                       in
+                       if print_log then
+                         Debug.print
+                         @@ lazy ("introducing " ^ Term.str_of_opsig opsig);
+                       (ov, opsig))
+                @@ List.classify (fun (ov1, _) (ov2, _) ->
+                       Ast.Ident.rvar_equal ov1 ov2)
+                @@ List.filter state.constr.sub_ov_opsig
+                     ~f:(fst >> Set.mem covars >> not)
               in
-              if Fn.non Set.is_empty eeqs then (
+              if Fn.non Set.is_empty oeqs then (
+                Debug.print @@ lazy "@ assign opsig upper boundd";
                 if print_log then (
-                  Debug.print @@ lazy "==== sub_ev_ev:";
-                  List.iter sub_ev_ev ~f:(fun (evar1, evar2) ->
-                      Debug.print
-                      @@ lazy
-                           (sprintf "%s <: %s"
-                              (Ast.Ident.name_of_evar evar1)
-                              (Ast.Ident.name_of_evar evar2))));
+                  print_ov_ov state.constr.sub_ov_ov;
+                  print_ov_opsig state.constr.sub_ov_opsig;
+                  print_opsig_ov state.constr.sub_opsig_ov);
                 let preproc_res =
-                  preprocess @@ SearchState.add_subst_conts eeqs state
+                  preprocess @@ SearchState.add_subst_opsigs oeqs state
                 in
-                fully_search ~embed
-                  {
-                    state with
-                    constr = preproc_res.constr;
-                    subst = preproc_res.subst;
-                  })
-              else if
-                List.is_empty state.constr.sub_ov_ov
-                && List.is_empty state.constr.sub_ov_opsig
-                && List.is_empty state.constr.sub_opsig_ov
-                && List.for_all state.constr.sub_effs_eff ~f:(fun (effs, eff) ->
-                       List.for_all (eff :: effs) ~f:Sort.is_evar)
-              then state
-              else (
-                if print_log then (
-                  Debug.print @@ lazy "==== sub_ov_ov:";
-                  List.iter state.constr.sub_ov_ov ~f:(fun (ovar1, ovar2) ->
-                      Debug.print
-                      @@ lazy
-                           (sprintf "%s <: %s"
-                              (Ast.Ident.name_of_rvar ovar1)
-                              (Ast.Ident.name_of_rvar ovar2)));
-                  Debug.print @@ lazy "==== sub_ov_opsig:";
-                  List.iter state.constr.sub_ov_opsig
-                    ~f:(fun (ovar, (map, opt)) ->
-                      Debug.print
-                      @@ lazy
-                           (sprintf "%s <: %s"
-                              (Ast.Ident.name_of_rvar ovar)
-                              (Term.str_of_opsig (Sort.OpSig (map, opt)))));
-                  Debug.print @@ lazy "==== sub_opsig_ov:";
-                  List.iter state.constr.sub_opsig_ov
-                    ~f:(fun ((map, opt), ovar) ->
-                      Debug.print
-                      @@ lazy
-                           (sprintf "%s <: %s"
-                              (Term.str_of_opsig (Sort.OpSig (map, opt)))
-                              (Ast.Ident.name_of_rvar ovar)));
-                  Debug.print @@ lazy "==== sub_evs_eff:";
-                  List.iter state.constr.sub_evs_eff ~f:(fun (evs, eff) ->
-                      Debug.print
-                      @@ lazy
-                           (sprintf "%s <: %s"
-                              (String.concat_map_list ~sep:" " evs
-                                 ~f:Ast.Ident.name_of_evar)
-                              (Term.str_of_cont eff)));
-                  Debug.print @@ lazy "==== sub_effs_eff:";
-                  List.iter state.constr.sub_effs_eff ~f:(fun (effs, eff) ->
-                      Debug.print
-                      @@ lazy
-                           (sprintf "%s <: %s"
-                              (String.concat_map_list ~sep:" " effs
-                                 ~f:Term.str_of_cont)
-                              (Term.str_of_cont eff))));
-                let state = search_effs_eff ~embed [] state in
-                let preproc_res =
-                  preprocess
-                  @@ PreprocState.from_subst_constr state.subst state.constr
+                solve_main ~embed
+                  { constr = preproc_res.constr; subst = preproc_res.subst })
+              else
+                let eeqs =
+                  let ev_eff_lst1, sub_evs_eff =
+                    List.partition_map state.constr.sub_evs_eff
+                      ~f:(fun (evs, eff) ->
+                        if Sort.is_evar eff then
+                          let ev = Sort.let_evar eff in
+                          match evs with
+                          | [] -> First (ev, Sort.Pure)
+                          | [ ev' ] -> First (ev, Sort.EVar ev')
+                          | _ -> Second (evs, eff)
+                        else Second (evs, eff))
+                  in
+                  let ev_eff_lst2, sub_effs_eff =
+                    List.partition_map state.constr.sub_effs_eff
+                      ~f:(fun (effs, eff) ->
+                        if Sort.is_evar eff then
+                          let ev = Sort.let_evar eff in
+                          match effs with
+                          | [] -> First (ev, Sort.Pure)
+                          | [ eff ] -> First (ev, eff)
+                          | _ -> Second (effs, eff)
+                        else Second (effs, eff))
+                  in
+                  let cevars =
+                    Set.Poly.union_list
+                    @@ List.map sub_evs_eff
+                         ~f:(snd >> Term.polar_evs_of_cont ~pos:true)
+                    @ List.map sub_effs_eff ~f:(fun (effs, eff) ->
+                          Set.Poly.union_list
+                          @@ Term.polar_evs_of_cont ~pos:true eff
+                             :: List.map effs
+                                  ~f:(Term.polar_evs_of_cont ~pos:false))
+                    (* state.constr.ecomps is empty *)
+                    @ List.map state.constr.sub_ov_opsig
+                        ~f:(fun (_, (map, opt)) ->
+                          Term.polar_evs_of_opsig ~pos:true
+                            (Sort.OpSig (map, opt)))
+                    @ List.map state.constr.sub_opsig_ov
+                        ~f:(fun ((map, opt), _) ->
+                          Term.polar_evs_of_opsig ~pos:false
+                            (Sort.OpSig (map, opt)))
+                  in
+                  Set.Poly.of_list
+                  @@ List.filter_map ~f:(function
+                       | [ (ev, eff) ] -> Some (ev, eff)
+                       | _ -> None)
+                  @@ List.classify (fun (ev1, _) (ev2, _) -> Stdlib.(ev1 = ev2))
+                  @@ List.filter ~f:(fst >> Set.mem cevars >> not)
+                  @@ ev_eff_lst1 @ ev_eff_lst2
                 in
-                fully_search ~embed
-                  {
-                    state with
-                    constr = preproc_res.constr;
-                    subst = preproc_res.subst;
-                  })
+                if Fn.non Set.is_empty eeqs then (
+                  Debug.print @@ lazy "@ assign singleton effect lower bound";
+                  if print_log then (
+                    print_evs_eff state.constr.sub_evs_eff;
+                    print_effs_eff state.constr.sub_effs_eff);
+                  let preproc_res =
+                    preprocess @@ SearchState.add_subst_conts eeqs state
+                  in
+                  solve_main ~embed
+                    { constr = preproc_res.constr; subst = preproc_res.subst })
+                else
+                  let sub_ev_ev, eeqs =
+                    (* ToDo: construction of transitive closure is not required? *)
+                    let sub_ev_ev =
+                      List.filter_map state.constr.sub_evs_eff ~f:(function
+                        | [ ev ], eff when Sort.is_evar eff ->
+                            Some (ev, Sort.let_evar eff)
+                        | _ -> None)
+                    in
+                    let tc =
+                      PartOrd.transitive_closure_of (Set.Poly.of_list sub_ev_ev)
+                    in
+                    let nodes =
+                      List.unique @@ uncurry2 ( @ ) (List.unzip sub_ev_ev)
+                    in
+                    let dict =
+                      Map.Poly.of_alist_exn
+                      @@ List.mapi nodes ~f:(fun i n -> (n, i))
+                    in
+                    let uf = UnionFind.mk_size_uf ~size:(List.length nodes) in
+                    List.iter sub_ev_ev ~f:(fun (evar1, evar2) ->
+                        if Set.mem tc (evar1, evar2) && Set.mem tc (evar2, evar1)
+                        then
+                          UnionFind.unite
+                            (Map.Poly.find_exn dict evar1)
+                            (Map.Poly.find_exn dict evar2)
+                            uf);
+                    let groups = UnionFind.get_groups uf in
+                    ( sub_ev_ev,
+                      Set.Poly.of_list
+                      @@ List.concat_map groups ~f:(fun ids ->
+                             let id, ids = List.hd_tl ids in
+                             List.map ids ~f:(fun id' ->
+                                 ( List.nth_exn nodes id',
+                                   Sort.EVar (List.nth_exn nodes id) ))) )
+                  in
+                  if Fn.non Set.is_empty eeqs then (
+                    Debug.print @@ lazy "@ remove evar cycles";
+                    if print_log then print_ev_ev sub_ev_ev;
+                    let preproc_res =
+                      preprocess @@ SearchState.add_subst_conts eeqs state
+                    in
+                    solve_main ~embed
+                      { constr = preproc_res.constr; subst = preproc_res.subst })
+                  else
+                    let uevars, eeqs =
+                      let uevars =
+                        (*Set.diff*)
+                        Constr.lower_unconstrained_evars_of state.constr
+                        (*(Subst.evars_of state.subst)*)
+                      in
+                      ( uevars,
+                        Set.Poly.map uevars ~f:(fun ev -> (ev, Sort.Pure)) )
+                    in
+                    if Fn.non Set.is_empty uevars then (
+                      Debug.print @@ lazy "@ remove lower unconstrained evars";
+                      if print_log then (
+                        print_ov_ov state.constr.sub_ov_ov;
+                        print_ov_opsig state.constr.sub_ov_opsig;
+                        print_opsig_ov state.constr.sub_opsig_ov;
+                        print_evs_eff state.constr.sub_evs_eff;
+                        print_effs_eff state.constr.sub_effs_eff;
+                        Debug.print @@ lazy "==== lower unconstrained evars:";
+                        Debug.print
+                        @@ lazy
+                             (String.concat_map_set ~sep:","
+                                ~f:Ast.Ident.name_of_evar uevars));
+                      let preproc_res =
+                        preprocess @@ SearchState.add_subst_conts eeqs state
+                      in
+                      solve_main ~embed
+                        {
+                          constr = preproc_res.constr;
+                          subst = preproc_res.subst;
+                        })
+                    else if
+                      not
+                        (List.for_all state.constr.sub_effs_eff
+                           ~f:(fun (effs, eff) ->
+                             List.for_all (eff :: effs) ~f:Sort.is_evar))
+                    then (
+                      if print_log then (
+                        print_ov_ov state.constr.sub_ov_ov;
+                        print_ov_opsig state.constr.sub_ov_opsig;
+                        print_opsig_ov state.constr.sub_opsig_ov;
+                        print_evs_eff state.constr.sub_evs_eff;
+                        print_effs_eff state.constr.sub_effs_eff);
+                      let state = solve_effs_eff ~embed [] state in
+                      let preproc_res =
+                        preprocess
+                        @@ PreprocState.from_subst_constr state.subst
+                             state.constr
+                      in
+                      solve_main ~embed
+                        {
+                          constr = preproc_res.constr;
+                          subst = preproc_res.subst;
+                        })
+                    else (* ToDo: make the following heuristics complete *)
+                      let eeqs =
+                        Set.Poly.of_list
+                        @@ List.filter_map state.constr.sub_evs_eff ~f:(function
+                             | [ ev ], eff
+                               when true || Set.mem (Term.evs_of_cont eff) ev ->
+                                 (* recursive effect constraints are solved here *)
+                                 Some (ev, Sort.Pure)
+                             | _ -> None)
+                      in
+                      if Fn.non Set.is_empty eeqs then (
+                        Debug.print
+                        @@ lazy
+                             "@ WARNING: heuristically solve recursive effect \
+                              constraints";
+                        if print_log then print_evs_eff state.constr.sub_evs_eff;
+                        let preproc_res =
+                          preprocess @@ SearchState.add_subst_conts eeqs state
+                        in
+                        solve_main ~embed
+                          {
+                            constr = preproc_res.constr;
+                            subst = preproc_res.subst;
+                          })
+                      else if
+                        List.is_empty state.constr.sub_ov_ov
+                        && List.is_empty state.constr.sub_ov_opsig
+                        && List.is_empty state.constr.sub_opsig_ov
+                      then
+                        if
+                          List.for_all state.constr.sub_evs_eff
+                            ~f:(snd >> Sort.is_evar)
+                        then state
+                        else (
+                          if print_log then
+                            print_evs_eff state.constr.sub_evs_eff;
+                          failwith "reachable here?")
+                      else (* ToDo: make the following heuristics complete *)
+                        let oeqs =
+                          Set.Poly.of_list
+                          @@ List.filter_map state.constr.sub_opsig_ov
+                               ~f:(function
+                               | (opsig, ovar), ov
+                                 when Set.mem
+                                        (Term.rvs_of_opsig
+                                           (Sort.OpSig (opsig, ovar)))
+                                        ov ->
+                                   (* recursive opsig constraints are solved here *)
+                                   Some (ov, Sort.empty_closed_opsig)
+                               | _ -> None)
+                        in
+                        if Fn.non Set.is_empty oeqs then (
+                          Debug.print
+                          @@ lazy
+                               "@ WARNING: heuristically solve recursive opsig \
+                                constraints";
+                          if print_log then (
+                            print_ov_ov state.constr.sub_ov_ov;
+                            print_ov_opsig state.constr.sub_ov_opsig;
+                            print_opsig_ov state.constr.sub_opsig_ov);
+                          let preproc_res =
+                            preprocess
+                            @@ SearchState.add_subst_opsigs oeqs state
+                          in
+                          solve_main ~embed
+                            {
+                              constr = preproc_res.constr;
+                              subst = preproc_res.subst;
+                            })
+                        else if false then
+                          (* ToDo: make the following heuristics complete *)
+                          let oeqs =
+                            Set.Poly.of_list
+                            @@ List.map ~f:(fun ov_opsigs ->
+                                   let ov_opsigs = List.unique ov_opsigs in
+                                   let ov = fst @@ List.hd_exn ov_opsigs in
+                                   let ops =
+                                     List.unique
+                                     @@ List.concat_map ov_opsigs
+                                          ~f:(snd >> fst >> List.map ~f:fst)
+                                   in
+                                   let opsig =
+                                     Sort.OpSig
+                                       ( ALMap.of_alist_exn
+                                         @@ List.map ops ~f:(fun op ->
+                                                (op, Sort.mk_fresh_svar ())),
+                                         None )
+                                   in
+                                   if print_log then
+                                     Debug.print
+                                     @@ lazy
+                                          ("introducing "
+                                         ^ Term.str_of_opsig opsig);
+                                   (ov, opsig))
+                            @@ List.classify
+                                 (fun (ov1, _) (ov2, _) ->
+                                   Ast.Ident.rvar_equal ov1 ov2)
+                                 state.constr.sub_ov_opsig
+                          in
+                          if Fn.non Set.is_empty oeqs then (
+                            Debug.print
+                            @@ lazy
+                                 "@ WARNING: speculatively assign opsig upper \
+                                  boundd";
+                            if print_log then (
+                              print_ov_ov state.constr.sub_ov_ov;
+                              print_ov_opsig state.constr.sub_ov_opsig;
+                              print_opsig_ov state.constr.sub_opsig_ov);
+                            let preproc_res =
+                              preprocess
+                              @@ SearchState.add_subst_opsigs oeqs state
+                            in
+                            solve_main ~embed
+                              {
+                                constr = preproc_res.constr;
+                                subst = preproc_res.subst;
+                              })
+                          else (
+                            if print_log then (
+                              print_ov_ov state.constr.sub_ov_ov;
+                              print_ov_opsig state.constr.sub_ov_opsig;
+                              print_opsig_ov state.constr.sub_opsig_ov);
+                            failwith "reachable here?")
+                        else
+                          (* ToDo: this prevents us to obtain the least solution *)
+                          let covars =
+                            Set.Poly.union_list
+                            @@ List.map state.constr.sub_evs_eff
+                                 ~f:(snd >> Term.polar_rvs_of_cont ~pos:true)
+                            @ List.map state.constr.sub_effs_eff
+                                ~f:(fun (effs, eff) ->
+                                  Set.Poly.union_list
+                                  @@ Term.polar_rvs_of_cont ~pos:true eff
+                                     :: List.map effs
+                                          ~f:(Term.polar_rvs_of_cont ~pos:false))
+                            (* state.constr.ecomps is empty *)
+                            @ List.map state.constr.sub_ov_opsig
+                                ~f:(fun (_, (map, opt)) ->
+                                  Term.polar_rvs_of_opsig ~pos:true
+                                    (Sort.OpSig (map, opt)))
+                            @ List.map state.constr.sub_opsig_ov
+                                ~f:(fun ((map, opt), _) ->
+                                  Term.polar_rvs_of_opsig ~pos:false
+                                    (Sort.OpSig (map, opt)))
+                          in
+                          let oeqs =
+                            Set.Poly.of_list
+                            @@ List.filter_map ~f:(function
+                                 | [ (ov, opsig) ] -> Some (ov, opsig)
+                                 | _ -> None)
+                            @@ List.classify (fun (ov1, _) (ov2, _) ->
+                                   Stdlib.(ov1 = ov2))
+                            @@ List.filter ~f:(fst >> Set.mem covars >> not)
+                            @@ (if false then
+                                  List.map state.constr.sub_ov_ov
+                                    ~f:(fun (ovar1, ovar2) ->
+                                      ( ovar2,
+                                        Sort.mk_empty_open_opsig_from_rvar ovar1
+                                      ))
+                                else [])
+                            @ List.map state.constr.sub_opsig_ov
+                                ~f:(fun ((map, opt), ovar) ->
+                                  (ovar, Sort.OpSig (map, opt)))
+                          in
+                          if Fn.non Set.is_empty oeqs then (
+                            Debug.print
+                            @@ lazy
+                                 "@ WARNING: assign singleton opsig lower bound";
+                            if print_log then (
+                              print_ov_ov state.constr.sub_ov_ov;
+                              print_ov_opsig state.constr.sub_ov_opsig;
+                              print_opsig_ov state.constr.sub_opsig_ov;
+                              Debug.print @@ lazy "==== covars:";
+                              Debug.print
+                              @@ lazy
+                                   (String.concat_map_set ~sep:","
+                                      ~f:Ast.Ident.name_of_rvar covars);
+                              Debug.print @@ lazy "==== oeqs:";
+                              Debug.print
+                              @@ lazy
+                                   (String.concat_map_set ~sep:","
+                                      ~f:(fun (ov, opsig) ->
+                                        Ast.Ident.name_of_rvar ov ^ "="
+                                        ^ Ast.LogicOld.Term.str_of_opsig opsig)
+                                      oeqs));
+                            let preproc_res =
+                              preprocess
+                              @@ SearchState.add_subst_opsigs oeqs state
+                            in
+                            solve_main ~embed
+                              {
+                                constr = preproc_res.constr;
+                                subst = preproc_res.subst;
+                              })
+                          else (
+                            if print_log then (
+                              print_ov_ov state.constr.sub_ov_ov;
+                              print_ov_opsig state.constr.sub_ov_opsig;
+                              print_opsig_ov state.constr.sub_opsig_ov);
+                            failwith "reachable here?")
 
   let resolve_evs (constr : Constr.t) =
+    if print_log then Debug.print @@ lazy "### resolve_evs";
     if print_log then (
-      Debug.print @@ lazy "==== sub_evs_eff:";
-      List.iter constr.sub_evs_eff ~f:(fun (evs, eff) ->
-          Debug.print
-          @@ lazy
-               (sprintf "%s <: %s"
-                  (String.concat_map_list ~sep:" " evs ~f:Ast.Ident.name_of_evar)
-                  (Term.str_of_cont eff)));
-      Debug.print @@ lazy "==== sub_effs_eff:";
-      List.iter constr.sub_effs_eff ~f:(fun (effs, eff) ->
-          Debug.print
-          @@ lazy
-               (sprintf "%s <: %s"
-                  (String.concat_map_list ~sep:" " effs ~f:Term.str_of_cont)
-                  (Term.str_of_cont eff))));
+      print_evs_eff constr.sub_evs_eff;
+      print_effs_eff constr.sub_effs_eff);
     assert (
       List.for_all constr.sub_evs_eff ~f:(snd >> Sort.is_evar)
       && List.for_all constr.sub_effs_eff ~f:(fun (effs, eff) ->
@@ -1762,6 +2098,7 @@ module Make (Config : Config.ConfigType) = struct
       ]
 
   let resolve_svs ~init_svs (constr : Constr.t) =
+    if print_log then Debug.print @@ lazy "### resolve_svs";
     let rec go subst = function
       | [] ->
           Map.Poly.fold subst ~init:[] ~f:(fun ~key ~data s ->
@@ -1827,6 +2164,7 @@ module Make (Config : Config.ConfigType) = struct
     Term.subst_opsigs_opsig sbs o
 
   let resolve ~init_svs (state : SearchState.t) : Subst.t =
+    if print_log then Debug.print @@ lazy "### resolve";
     let subst_ev_pure = List.unique @@ resolve_evs state.constr in
     let subst_sv_svs =
       resolve_svs ~init_svs state.constr
@@ -1915,12 +2253,14 @@ module Make (Config : Config.ConfigType) = struct
     { etheta; stheta; otheta }
 
   let eliminate ~init_evs ~init_svs ~init_rvs (subst : Subst.t) : Subst.t =
+    if print_log then Debug.print @@ lazy "### eliminate";
     let etheta = Map.Poly.filter_keys subst.etheta ~f:(Set.mem init_evs) in
     let stheta = Map.Poly.filter_keys subst.stheta ~f:(Set.mem init_svs) in
     let otheta = Map.Poly.filter_keys subst.otheta ~f:(Set.mem init_rvs) in
     { etheta; stheta; otheta }
 
   let squash ~init_evs ~init_rvs (subst : Subst.t) : Subst.t =
+    if print_log then Debug.print @@ lazy "### squash";
     let etheta =
       Map.Poly.map subst.etheta ~f:(squash_evs_cont <<< squash_rvs_cont)
     in
@@ -1944,21 +2284,11 @@ module Make (Config : Config.ConfigType) = struct
     in
     { etheta; stheta; otheta }
 
-  let elim_pure th =
-    Subst.
-      {
-        etheta = Map.Poly.map ~f:Term.elim_pure_cont th.etheta;
-        (*ToDo*)
-        stheta = Map.Poly.map ~f:Term.elim_pure_val_type th.stheta;
-        otheta = Map.Poly.map ~f:Term.elim_pure_opsig th.otheta;
-        (*ToDo*)
-      }
-
   let postprocess ~init_evs ~init_svs ~init_rvs =
+    if print_log then Debug.print @@ lazy "### postprocess";
     resolve ~init_svs
     >> eliminate ~init_evs ~init_svs ~init_rvs
     >> squash ~init_evs ~init_rvs
-    >> if config.elim_pure then elim_pure else Fn.id
 
   let solve eff_constrs opsig_constrs =
     let ecompsubs = Set.to_list eff_constrs in
@@ -1986,7 +2316,7 @@ module Make (Config : Config.ConfigType) = struct
     in
     let sol =
       PreprocState.init ecompsubs osubs
-      |> preprocess |> SearchState.init |> fully_search ~embed:false
+      |> preprocess |> SearchState.init |> solve_main ~embed:false
       |> postprocess ~init_evs ~init_svs ~init_rvs
     in
     Debug.print @@ lazy "==== found solution:";

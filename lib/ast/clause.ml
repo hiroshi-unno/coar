@@ -129,10 +129,8 @@ let simplify_with positive negative ((senv, c_pos, c_neg, c_phi) : t) =
   (* ToDo: improve this to exploit parametric examples *)
   let positive = Set.Poly.map ~f:snd positive in
   let negative = Set.Poly.map ~f:snd negative in
-  if
-    Set.is_empty (Set.inter positive c_pos)
-    && Set.is_empty (Set.inter negative c_neg)
-  then Some (senv, Set.diff c_pos negative, Set.diff c_neg positive, c_phi)
+  if Set.disjoint c_pos positive && Set.disjoint c_neg negative then
+    Some (senv, Set.diff c_pos negative, Set.diff c_neg positive, c_phi)
   else None
 
 (* param_senv and uni_senv are disjoint *)
@@ -307,10 +305,11 @@ let normalize_uni_senv ((senv, ps, ns, phi) : t) =
     List.map ~f:fst
     @@ List.sort
          ~compare:
-           (curry @@ function
-            | (_, Some n1), (_, Some n2) -> Int.compare n1 n2
-            | (v1, _), (v2, _) ->
-                String.compare (Ident.name_of_tvar v1) (Ident.name_of_tvar v2))
+           ( curry @@ function
+             | (_, Some n1), (_, Some n2) -> Int.compare n1 n2
+             | (v1, _), (v2, _) ->
+                 String.compare (Ident.name_of_tvar v1) (Ident.name_of_tvar v2)
+           )
     @@
     let reg_number = Str.regexp "[^0-9]*" in
     List.map (Map.Poly.keys senv) ~f:(fun x ->

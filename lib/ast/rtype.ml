@@ -97,7 +97,7 @@ let rec map_formula_cont ~f = function
 and map_formula_temp ~f (p1, p2) = (map_pred ~f p1, map_pred ~f p2)
 
 and map_formula_opsig ~f (map, opt) =
-  (ALMap.map ~f:(map_formula_val ~f) map, opt)
+  (ALMap.map map ~f:(map_formula_val ~f), opt)
 
 and map_formula_comp ~f c =
   {
@@ -210,7 +210,7 @@ and tvs_of_pred (x, phi) = Set.remove (Formula.tvs_of phi) x
 and tvs_of_temp (p1, p2) = Set.union (tvs_of_pred p1) (tvs_of_pred p2)
 
 and tvs_of_opsig opmap =
-  opmap |> fst |> ALMap.data |> List.map ~f:tvs_of_val |> Set.Poly.union_list
+  Set.Poly.union_list @@ List.map (ALMap.data (fst opmap)) ~f:tvs_of_val
 
 and tvs_of_comp c =
   Set.Poly.union_list
@@ -241,7 +241,7 @@ and pvs_of_pred (_, phi) = Formula.pvs_of phi
 and pvs_of_temp (p1, p2) = Set.union (pvs_of_pred p1) (pvs_of_pred p2)
 
 and pvs_of_opsig opmap =
-  opmap |> fst |> ALMap.data |> List.map ~f:pvs_of_val |> Set.Poly.union_list
+  Set.Poly.union_list @@ List.map (ALMap.data (fst opmap)) ~f:pvs_of_val
 
 and pvs_of_comp c =
   Set.Poly.union_list
@@ -278,10 +278,9 @@ and pred_sort_env_of_pred ?(bpvs = Set.Poly.empty) (_, phi) =
 and pred_sort_env_of_temp ?(bpvs = Set.Poly.empty) (p1, p2) =
   Set.union (pred_sort_env_of_pred ~bpvs p1) (pred_sort_env_of_pred ~bpvs p2)
 
-and pred_sort_env_of_opsig ?(bpvs = Set.Poly.empty) =
-  fst >> ALMap.data
-  >> List.map ~f:(pred_sort_env_of_val ~bpvs)
-  >> Set.Poly.union_list
+and pred_sort_env_of_opsig ?(bpvs = Set.Poly.empty) opmap =
+  Set.Poly.union_list
+  @@ List.map (ALMap.data (fst opmap)) ~f:(pred_sort_env_of_val ~bpvs)
 
 and pred_sort_env_of_comp ?(bpvs = Set.Poly.empty) c =
   Set.Poly.union_list
@@ -410,7 +409,7 @@ and str_of_cont ~config = function
 and str_of_opsig ~config (map, _ (*ToDo*)) =
   sprintf "{%s}"
   @@ String.concat_map_list (ALMap.to_alist map) ~sep:", " ~f:(fun (op, t) ->
-         op ^ ": " ^ str_of_val ~config t)
+         sprintf "%s: %s" op (str_of_val ~config t))
 
 and str_of_comp ~config c =
   let b = (not config.enable_temp_eff) || is_pure_temp c.temp_eff in
@@ -613,38 +612,41 @@ let rec simple_val_of_sort ~config ?(svmap = Map.Poly.empty) = function
   | sort -> mk_rbase sort @@ mk_fresh_trivial_pred ()
 
 and simple_comp_of_val ~config ?(svmap = Map.Poly.empty) ?(temp = false)
-    ?(opsig = `Refined ALMap.empty) ?(cont = Sort.Pure) val_type =
+    ?(opsig = `Refined (ALMap.empty, None (*ToDo*))) ?(cont = Sort.Pure)
+    val_type =
   {
     op_sig =
       (match opsig with
-      | `Refined ropsig -> (ropsig, None (*ToDo*))
+      | `Refined ropsig -> ropsig
       | `Sort (Sort.OpSig (opmap, r)) ->
           (ALMap.map opmap ~f:(simple_val_of_sort ~config ~svmap), r)
       | _ -> failwith "[simple_comp_of_val]");
     val_type;
     temp_eff = mk_temp_trivial ();
-    cont_eff =
-      (match cont with
-      | Sort.Pure | Sort.Closed -> Pure
-      | Sort.Eff (c1, c2) ->
-          let x = mk_fresh_tvar_with "x" in
-          let c1 =
-            simple_comp_of_sort ~config ~svmap ~temp ~opsig:(`Sort c1.op_sig)
-              ~cont:c1.cont_eff c1.val_type
-          in
-          let c2 =
-            simple_comp_of_sort ~config ~svmap ~temp ~opsig:(`Sort c2.op_sig)
-              ~cont:c2.cont_eff c2.val_type
-          in
-          Eff (x, c1, c2)
-      | Sort.EVar ev -> EVar ev
-      | _ ->
-          failwith
-          @@ sprintf "[comp_of_val] %s not supported" (Term.str_of_cont cont));
+    cont_eff = simple_cont_of ~config ~svmap ~temp cont;
   }
 
+and simple_cont_of ~config ~svmap ~temp = function
+  | Sort.Pure -> Pure
+  | Sort.Eff (c1, c2) ->
+      let x = mk_fresh_tvar_with "x" in
+      let c1 =
+        simple_comp_of_sort ~config ~svmap ~temp ~opsig:(`Sort c1.op_sig)
+          ~cont:c1.cont_eff c1.val_type
+      in
+      let c2 =
+        simple_comp_of_sort ~config ~svmap ~temp ~opsig:(`Sort c2.op_sig)
+          ~cont:c2.cont_eff c2.val_type
+      in
+      Eff (x, c1, c2)
+  | Sort.EVar ev -> EVar ev
+  | cont ->
+      failwith
+      @@ sprintf "[simple_cont_of] %s not supported" (Term.str_of_cont cont)
+
 and simple_pure_comp_of_val ~config ?(svmap = Map.Poly.empty) =
-  simple_comp_of_val ~config ~svmap ~temp:false ~opsig:(`Refined ALMap.empty)
+  simple_comp_of_val ~config ~svmap ~temp:false
+    ~opsig:(`Refined (ALMap.empty, None))
     ~cont:Sort.Pure
 
 and simple_comp_of_sort ~config ?(svmap = Map.Poly.empty) ~temp ~opsig ~cont
@@ -701,7 +703,7 @@ let rec val_of_sort ~(*~print*) config ?(refine = true)
            && Sort.is_arrow c.val_type)
         in
         let opsig = `Sort c.op_sig in
-        let refine = true (*ToDo*) in
+        let refine = (*ToDo*) true in
         comp_of_sort ~config ~refine ~svmap ~temp ~opsig ~cont:c.cont_eff
           ~name:name_ret dom' c.val_type
       in
@@ -713,7 +715,7 @@ let rec val_of_sort ~(*~print*) config ?(refine = true)
           papp_of ~config (First name) dom v sort
         else Formula.mk_true () )
   | Sort.SPoly (svs, s) ->
-      let refine = refine (*ToDo*) in
+      let refine = (*ToDo*) refine in
       mk_type_poly ~config svs
       @@ pure_comp_of_sort ~config ~refine ~svmap ~name dom s
   | T_tuple.STuple sorts as sort ->
@@ -771,7 +773,7 @@ let rec val_of_sort ~(*~print*) config ?(refine = true)
         if refine then papp_of ~config (First name) dom v sort
         else Formula.mk_true () )
   | T_ref.SRef s as sort ->
-      let refine = true (*ToDo*) in
+      let refine = (*ToDo*) true in
       let name_elem =
         match name with
         | Some (base, position, id) -> Some (base, position_of position id, 0)
@@ -801,7 +803,7 @@ and comp_of_val ~config ?(svmap = Map.Poly.empty) ?(temp = false)
       (match opsig with
       | `Refined (rmap, opt) -> (rmap, opt)
       | `Sort (Sort.OpSig (opmap, r)) ->
-          let refine = true (*ToDo*) in
+          let refine = (*ToDo*) true in
           (ALMap.map opmap ~f:(val_of_sort ~config ~refine ~svmap dom), r)
       | _ -> failwith "[comp_of_val]");
     val_type;
@@ -810,32 +812,35 @@ and comp_of_val ~config ?(svmap = Map.Poly.empty) ?(temp = false)
          if temp then mk_temp_fresh ~config dom else mk_temp_val ()
        else mk_temp_trivial ());
     cont_eff =
-      (match cont with
-      | Sort.Pure -> Pure
-      | Sort.Eff (c1, c2) ->
-          let x = mk_fresh_tvar_with "x" in
-          let c1 =
-            let dom' =
-              let sort = sort_of_val val_type in
-              dom @ [ (Term.mk_var x sort, sort) ]
-            in
-            let refine = true (*ToDo*) in
-            let opsig = `Sort c1.op_sig in
-            comp_of_sort ~config ~refine ~svmap ~temp ~opsig ~cont:c1.cont_eff
-              dom' c1.val_type
-          in
-          let c2 =
-            let refine = true (*ToDo*) in
-            let opsig = `Sort c2.op_sig in
-            comp_of_sort ~config ~refine ~svmap ~temp ~opsig ~cont:c2.cont_eff
-              dom c2.val_type
-          in
-          Eff (x, c1, c2)
-      | Sort.EVar ev -> EVar ev
-      | _ ->
-          failwith
-          @@ sprintf "[comp_of_val] %s not supported" (Term.str_of_cont cont));
+      to_cont ~config ~svmap dom ~temp ~sort:(Some (sort_of_val val_type)) cont;
   }
+
+and to_cont ~config ~svmap dom ~temp ~sort = function
+  | Sort.Pure -> Pure
+  | Sort.Eff (c1, c2) ->
+      let x = mk_fresh_tvar_with "x" in
+      let c1 =
+        let dom' =
+          match sort with
+          | None -> dom
+          | Some sort -> dom @ [ (Term.mk_var x sort, sort) ]
+        in
+        let refine = (*ToDo*) true in
+        let opsig = `Sort c1.op_sig in
+        comp_of_sort ~config ~refine ~svmap ~temp ~opsig ~cont:c1.cont_eff dom'
+          c1.val_type
+      in
+      let c2 =
+        let refine = (*ToDo*) true in
+        let opsig = `Sort c2.op_sig in
+        comp_of_sort ~config ~refine ~svmap ~temp ~opsig ~cont:c2.cont_eff dom
+          c2.val_type
+      in
+      Eff (x, c1, c2)
+  | Sort.EVar ev -> EVar ev
+  | cont ->
+      failwith
+      @@ sprintf "[comp_of_val] %s not supported" (Term.str_of_cont cont)
 
 and pure_comp_of_val ~config =
   comp_of_val ~config ~svmap:Map.Poly.empty ~temp:false
@@ -873,6 +878,18 @@ let rec of_args_ret ~config ?(temp = false)
       in
       let c = comp_of_val ~config ~temp ~opsig ~cont:cont'' dom ret' in
       (c :: cs, dom'', mk_rarrow x arg c @@ mk_fresh_trivial_pred ())
+  | _ -> assert false
+
+let rec of_args_ret_comp ~config dom xs args ret =
+  match (xs, args) with
+  | [], [] -> ret
+  | x :: xs', arg :: args' ->
+      let dom' =
+        let sort = sort_of_val arg in
+        dom @ [ (Term.mk_var x sort, sort) ]
+      in
+      let c = of_args_ret_comp ~config dom' xs' args' ret in
+      pure_comp_of_val ~config @@ mk_rarrow x arg c @@ mk_fresh_trivial_pred ()
   | _ -> assert false
 
 let rec val_of_term ~config ?(top = true) term = function
@@ -997,13 +1014,14 @@ let rec set_sort_temp ~print subst ((x1, phi1), (x2, phi2)) =
         Map.Poly.set subst ~key:x1
           ~data:(Term.mk_var x1 @@ T_sequence.SSequence true)
       in
-      Typeinf.typeinf_formula ~print @@ Formula.subst sub phi1 ),
+      Typeinf.typeinf_formula ~print ~default:None @@ Formula.subst sub phi1 ),
     ( x2,
       let sub =
         Map.Poly.set subst ~key:x2
           ~data:(Term.mk_var x2 @@ T_sequence.SSequence false)
       in
-      Typeinf.typeinf_formula ~print @@ Formula.subst sub phi2 ) )
+      Typeinf.typeinf_formula ~print ~default:None @@ Formula.subst sub phi2 )
+  )
 
 and set_sort_cont ~print subst sort = function
   | Pure -> Pure
@@ -1031,7 +1049,7 @@ and set_sort_val ~print subst = function
   | RGeneral (params, sort, (x, phi)) ->
       let params = List.map params ~f:(set_sort_val ~print subst) in
       let phi =
-        Typeinf.typeinf_formula ~print
+        Typeinf.typeinf_formula ~print ~default:None
         @@ Formula.subst
              (Map.Poly.set subst ~key:x ~data:(Term.mk_var x sort))
              phi
@@ -1041,7 +1059,7 @@ and set_sort_val ~print subst = function
       let sort = sort_of_val ty in
       let elems = List.map elems ~f:(set_sort_val ~print subst) in
       let phi =
-        Typeinf.typeinf_formula ~print
+        Typeinf.typeinf_formula ~print ~default:None
         @@ Formula.subst
              (Map.Poly.set subst ~key:x ~data:(Term.mk_var x sort))
              phi
@@ -1051,7 +1069,7 @@ and set_sort_val ~print subst = function
       let sort = sort_of_val ty in
       let elem = set_sort_val ~print subst elem in
       let phi =
-        Typeinf.typeinf_formula ~print
+        Typeinf.typeinf_formula ~print ~default:None
         @@ Formula.subst
              (Map.Poly.set subst ~key:x ~data:(Term.mk_var x sort))
              phi
@@ -1067,7 +1085,7 @@ and set_sort_val ~print subst = function
         set_sort_comp ~print subst c
       in
       let phi =
-        Typeinf.typeinf_formula ~print
+        Typeinf.typeinf_formula ~print ~default:None
         @@ Formula.subst
              (Map.Poly.set subst ~key:x ~data:(Term.mk_var x sort))
              phi
@@ -1076,7 +1094,8 @@ and set_sort_val ~print subst = function
   | RForall (penv, phis, c) ->
       let phis =
         Set.Poly.map phis
-          ~f:(Formula.subst subst >> Typeinf.typeinf_formula ~print)
+          ~f:
+            (Formula.subst subst >> Typeinf.typeinf_formula ~print ~default:None)
       in
       RForall (penv, phis, set_sort_comp ~print subst c)
   | RPoly (svs, c) -> RPoly (svs, set_sort_comp ~print subst c)
@@ -1492,12 +1511,12 @@ and tsub_of_val ~config sub = function
       tsub_of_comp ~config sub (c, Sort.mk_fresh_pure_triple_from_sort sort')
   | RPoly (svs1, c), Sort.SPoly (svs2, sort)
   (*ToDo: remove this*)
-    when Fn.non Set.is_empty @@ Set.inter svs1 svs2 ->
+    when not @@ Set.disjoint svs1 svs2 ->
       tsub_of_val ~config sub
         ( mk_type_poly ~config (Set.diff svs1 svs2) c,
           Sort.mk_poly (Set.diff svs2 svs1) sort )
   | RPoly (svs, c), sort' ->
-      assert (Set.is_empty @@ Set.inter svs @@ Map.key_set sub);
+      assert (Set.disjoint svs @@ Map.key_set sub);
       let sub' =
         tsub_of_comp ~config sub (c, Sort.mk_fresh_pure_triple_from_sort sort')
       in
@@ -1515,7 +1534,7 @@ let update_svmap_with_sub ~config dom svmap sub =
            let refine =
              true (*not config.gen_ref_pred_for_type_vars(*ToDo*)*)
            in
-           let svmap = Map.Poly.empty (*ToDo*) in
+           let svmap = (*ToDo*) Map.Poly.empty in
            Option.some @@ val_of_sort ~config ~refine ~svmap dom data)
 
 let rec instantiate_cont ~print ~config dom kind_map (sub, svmap) sort =
@@ -1721,7 +1740,7 @@ and instantiate_val ~print ~config dom kind_map (sub, svmap) = function
       else failwith "not supported"
   | RPoly (svs1, c), Sort.SPoly (svs2, sort)
   (*ToDo: remove this*)
-    when Fn.non Set.is_empty @@ Set.inter svs1 svs2 ->
+    when not @@ Set.disjoint svs1 svs2 ->
       instantiate_val ~print ~config dom kind_map (sub, svmap)
         ( mk_type_poly ~config (Set.diff svs1 svs2) c,
           Sort.mk_poly (Set.diff svs2 svs1) sort )

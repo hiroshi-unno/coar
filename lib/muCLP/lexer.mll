@@ -1,7 +1,5 @@
 {
   open Core
-  open Lexing
-  open Common.Util
   open Ast.LogicOld
 
   exception SyntaxError of string
@@ -9,10 +7,10 @@
 
 rule main = parse
   (* ignore spacing and newline characters *)
-  [' ' '\t' '\r']+     { main lexbuf }
+  [' ' '\t' '\r']+ { main lexbuf }
 | '\n'
-| "//"[^'\n']*?'\n' { LexingHelper.update_loc lexbuf; main lexbuf }
-| "/*" { comment (lexeme_start_p lexbuf) lexbuf; main lexbuf }
+| "//"[^'\n']*?'\n' { Lexing.new_line lexbuf; main lexbuf }
+| "/*" { comment (Lexing.lexeme_start_p lexbuf) lexbuf; main lexbuf }
 
 | "true" { Parser.TRUE }
 | "false" { Parser.FALSE }
@@ -72,7 +70,7 @@ rule main = parse
 
 and comment openingpos = parse
 | '\n'
-    { LexingHelper.update_loc lexbuf; comment openingpos lexbuf }
+    { Lexing.new_line lexbuf; comment openingpos lexbuf }
 | "*/"
     { () }
 | eof {

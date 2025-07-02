@@ -152,7 +152,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
               @@ LogicOld.Formula.or_of (*ToDo*) @@ Set.to_list
               @@ Set.Poly.map (Set.union ps ns) ~f:(fun atm ->
                      let fvs_atm = Logic.Term.fvs_of atm in
-                     if Set.is_empty @@ Set.inter fvs_phi fvs_atm then
+                     if Set.disjoint fvs_phi fvs_atm then
                        LogicOld.Formula.mk_false ()
                      else (
                        if print_log then (

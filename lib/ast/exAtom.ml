@@ -191,7 +191,8 @@ let normalize_papp (target, terms) =
           Normalizer.normalize_term
           @@ Evaluator.simplify_term term (*ToDo: check*)
         in
-        try Term.of_value @@ Evaluator.eval_term term' with _ -> term') )
+        try Term.of_value (get_dtenv ()) @@ Evaluator.eval_term term'
+        with _ -> term') )
 
 let normalize = function
   | FCon pred as t -> FCon (normalize_pred (tvs_of t) pred)
@@ -208,11 +209,22 @@ let instantiate = function
   | PPApp ((param_senv, phi), (target, terms)) -> (
       (*ToDo: find one that satisfies phi*)
       let sub = Map.Poly.map param_senv ~f:T_dt.mk_dummy in
-      let phi = Formula.subst sub phi in
-      let terms = List.map terms ~f:(Term.subst sub) in
+      let phi = Evaluator.simplify @@ Formula.subst sub phi in
+      let terms =
+        List.map terms
+          ~f:(Term.subst sub >> Term.elim_let >> Evaluator.simplify_term)
+      in
       try
-        if Evaluator.eval phi then
-          PApp (target, List.map terms ~f:(Evaluator.eval_term >> Term.of_value))
+        if
+          Evaluator.eval phi
+          && List.for_all terms ~f:(Term.fvs_of >> Set.is_empty)
+          (*ToDo*)
+        then
+          PApp
+            ( target,
+              terms
+              (*List.map terms ~f:(Evaluator.eval_term >> Term.of_value (get_dtenv ()))*)
+            )
         else PPApp ((Map.Poly.empty, Formula.mk_false ()), (target, terms))
       with _ -> PPApp ((Map.Poly.empty, phi), (target, terms)))
 
@@ -303,7 +315,7 @@ let exists ~f = function
   | FCon _ -> false
   | PApp (_, terms) | PPApp (_, (_, terms)) -> List.exists ~f terms
 
-let is_empty_atm nepvs atm =
+let is_non_empty_atm nepvs atm =
   match to_old_atom_with_phi atm with
   | _, None -> false
   | _, Some (_, atm) ->

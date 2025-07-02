@@ -3,7 +3,7 @@
     {
         "solver": [
             "Filename",
-            "./config/solver/printer_smt2.json"
+            "./config/solver/printer_smt2_wopp.json"
         ],
         "optimizer": [
             "Filename",
@@ -29,7 +29,7 @@
             "instantiate_svars_to_int": true
         },
         "verbose": false,
-        "enable_pvar_elim": true,
+        "enable_pvar_elim": false,
         "timeout": null
     }
 ]

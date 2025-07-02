@@ -66,7 +66,7 @@ let problem =
 let default_config_file = "./config/solver/muval_parallel_exc_tbq_ar.json"
 
 let cmd =
-  Command.basic_spec ~summary:""
+  Command.basic_spec ~summary:"CoAR: Collection of Automated Reasoners"
     Command.Spec.(
       empty
       +> anon ("filename" %: string)
@@ -172,7 +172,7 @@ let load_pcsp ~print filename =
       Ok
         (PCSP.Parser.from_gzipped_smt2_file ~print ~inline:true (*ToDo*)
            ~skolem_pred:true filename)
-  | _, Some "clp" -> Ok (PCSP.Parser.from_clp_file filename)
+  | _, Some "clp" -> Ok (PCSP.Parser.from_clp_file ~print filename)
   | _ -> Or_error.unimplemented "load_pcsp"
 
 let load_sygus filename =
@@ -284,4 +284,4 @@ let main filename solver problem verbose () =
           Solver.solve_plts ~print:Debug.print (plts, PLTS.Problem.NonTerm)
       | POCaml -> Solver.solve_ml filename )
 
-let () = Command_unix.run @@ cmd main
+let () = Command_unix.run ~version:Version.version @@ cmd main

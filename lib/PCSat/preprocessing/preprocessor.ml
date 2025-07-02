@@ -240,6 +240,12 @@ module Make (Config : Config.ConfigType) = struct
       if print_pcsp then (
         Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
         Debug.print @@ lazy "");
+      let pcsp = PCSP.Problem.normalize pcsp in
+      Debug.print @@ lazy "normalized:";
+      Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
+      if print_pcsp then (
+        Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
+        Debug.print @@ lazy "");
       let pcsp =
         PCSP.Problem.(
           remove_unused_params

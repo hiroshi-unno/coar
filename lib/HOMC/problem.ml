@@ -15,50 +15,68 @@ let str_of_solution = function
   | Unknown -> "unknown"
 
 let from_hors_file ~print filename =
-  let parse_buf filename lb =
-    lb.Lexing.lex_curr_p <-
-      {
-        Lexing.pos_fname = filename;
-        Lexing.pos_lnum = 1;
-        Lexing.pos_cnum = 0;
-        Lexing.pos_bol = 0;
-      };
-    Parser.hors Lexer.token lb
-  in
   let rules, (ta : TreeAutomaton.t) =
     if true then (
       print @@ lazy (sprintf "--------------------\nFile: %s" filename);
-      let inchan = In_channel.create filename in
-      let tl =
-        parse_buf (Filename.basename filename) @@ Lexing.from_channel inchan
+      let res =
+        let ic = In_channel.create filename in
+        let lexbuf = Lexing.from_channel ic in
+        Lexing.set_filename lexbuf (Filename.basename filename);
+        try
+          let res = Parser.hors Lexer.token lexbuf in
+          In_channel.close ic;
+          res
+        with e ->
+          LexingHelper.print_error_information lexbuf;
+          In_channel.close ic;
+          raise e
       in
-      In_channel.close inchan;
-      tl)
-    else parse_buf "" @@ Lexing.from_string @@ input_lines In_channel.stdin
+      res)
+    else
+      let res =
+        let lexbuf = Lexing.from_string @@ input_lines In_channel.stdin in
+        Lexing.set_filename lexbuf "stdin";
+        try
+          let res = Parser.hors Lexer.token lexbuf in
+          res
+        with e ->
+          LexingHelper.print_error_information lexbuf;
+          raise e
+      in
+      res
   in
   RSFD ([], EHMTT.rsfd_of [] rules, ta)
 
 let from_ehmtt_file ~print filename =
-  let parse_buf filename lb =
-    lb.Lexing.lex_curr_p <-
-      {
-        Lexing.pos_fname = filename;
-        Lexing.pos_lnum = 1;
-        Lexing.pos_cnum = 0;
-        Lexing.pos_bol = 0;
-      };
-    Parser.hmtt Lexer.token lb
-  in
   let rules, (trs : TTA.pre_trs), (*spec.*) (id_nt, main_typ) =
     if true then (
       print @@ lazy (sprintf "--------------------\nFile: %s" filename);
-      let inchan = In_channel.create filename in
-      let tl =
-        parse_buf (Filename.basename filename) @@ Lexing.from_channel inchan
+      let res =
+        let ic = In_channel.create filename in
+        let lexbuf = Lexing.from_channel ic in
+        Lexing.set_filename lexbuf (Filename.basename filename);
+        try
+          let res = Parser.hmtt Lexer.token lexbuf in
+          In_channel.close ic;
+          res
+        with e ->
+          LexingHelper.print_error_information lexbuf;
+          In_channel.close ic;
+          raise e
       in
-      In_channel.close inchan;
-      tl)
-    else parse_buf "" @@ Lexing.from_string @@ input_lines In_channel.stdin
+      res)
+    else
+      let res =
+        let lexbuf = Lexing.from_string @@ input_lines In_channel.stdin in
+        Lexing.set_filename lexbuf "stdin";
+        try
+          let res = Parser.hmtt Lexer.token lexbuf in
+          res
+        with e ->
+          LexingHelper.print_error_information lexbuf;
+          raise e
+      in
+      res
   in
   EHMTT (rules, trs, (id_nt, main_typ))
 

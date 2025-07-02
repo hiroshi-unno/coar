@@ -10,7 +10,7 @@ module Sort = struct
 
   type c = { op_sig : o; val_type : t; cont_eff : e }
   type t += SVar of Ident.svar | SArrow of t * c | SForAll of Ident.svar * t
-  type e += EVar of Ident.evar | Pure | Closed | Eff of c * c
+  type e += EVar of Ident.evar | Pure | Eff of c * c
 
   type o +=
     | OpSig of
@@ -28,7 +28,6 @@ module Sort = struct
     | _ -> false
 
   let is_pure = function Pure -> true | _ -> false
-  let is_closed = function Closed -> true | _ -> false
   let is_eff = function Eff _ -> true | _ -> false
   let is_pure_triple c = is_pure c.cont_eff && is_empty_opsig c.op_sig
   let mk_cont_eff c1 c2 = Eff (c1, c2)
@@ -317,17 +316,13 @@ module Term : TermType = struct
           (String.paren @@ open_str_of str_of_sort str_of_sym term)
 
   let rec open_str_of_sort str_of_sort = function
-    | Sort.SArrow (s, c) when Sort.is_pure c.cont_eff ->
-        sprintf "%s -> %s%s"
-          (open_str_of_sort str_of_sort s)
-          (if Sort.is_empty_opsig c.op_sig then "" else "_ |> ")
-          (open_str_of_sort str_of_sort c.val_type)
-    | Sort.SArrow (s, c) when Sort.is_eff c.cont_eff ->
-        sprintf "%s -> %s%s / _"
-          (open_str_of_sort str_of_sort s)
-          (if Sort.is_empty_opsig c.op_sig then "" else "_ |> ")
-          (open_str_of_sort str_of_sort c.val_type)
     | Sort.SVar (Ident.Svar s) -> s
+    | Sort.SArrow (s, c) ->
+        sprintf "(%s) -> %s%s%s"
+          (open_str_of_sort str_of_sort s)
+          (if Sort.is_empty_opsig c.op_sig then "" else "_ |> ")
+          (open_str_of_sort str_of_sort c.val_type)
+          (if Sort.is_pure c.cont_eff then "" else " / _")
     | Sort.SForAll (Ident.Svar v, s) ->
         String.paren
         @@ sprintf "forall %s. %s" v (open_str_of_sort str_of_sort s)
@@ -1097,7 +1092,7 @@ module BoolTerm : BoolTermType = struct
     | Con (True, _) | App (Con (Not, _), Con (False, _), _) -> k Set.Poly.empty
     | Con (False, _) | App (Con (Not, _), Con (True, _), _) ->
         k @@ Set.Poly.singleton (Set.Poly.empty, Set.Poly.empty, Set.Poly.empty)
-    | t when Set.is_empty @@ Set.inter (fvs_of t) (Map.key_set exi_senv) ->
+    | t when Set.disjoint (fvs_of t) (Map.key_set exi_senv) ->
         k
         @@ Set.Poly.singleton
              (Set.Poly.empty, Set.Poly.empty, Set.Poly.singleton t)
@@ -1152,7 +1147,7 @@ module BoolTerm : BoolTermType = struct
           k
           @@ Set.Poly.singleton
                (Set.Poly.singleton t, Set.Poly.empty, Set.Poly.empty)
-        else if Set.is_empty @@ Set.inter (fvs_of t) (Map.key_set exi_senv) then
+        else if Set.disjoint (fvs_of t) (Map.key_set exi_senv) then
           k
           @@ Set.Poly.singleton
                (Set.Poly.empty, Set.Poly.empty, Set.Poly.singleton t)
@@ -1582,19 +1577,27 @@ module type BVTermType = sig
 
   type sym +=
     | BVNum of size * Z.t
-    | BVNeg of size
-    | BVSEXT of int * int
-    | BVZEXT of int * int
-    | BVSHL of size
-    | BVLSHR of size
-    | BVASHR of size
-    | BVOr of size
+    | BVNot of size
     | BVAnd of size
+    | BVOr of size
+    | BVXor of size
+    | BVNand of size
+    | BVNor of size
+    | BVXnor of size
+    | BVNeg of size
     | BVAdd of size
     | BVSub of size
     | BVMul of size
     | BVDiv of size * signed
     | BVRem of size * signed
+    | BVSMod of size
+    | BVSHL of size
+    | BVLSHR of size
+    | BVASHR of size
+    | BVEXTRACT of size * int * int
+    | BVSEXT of size * int
+    | BVZEXT of size * int
+    | BVCONCAT of size * size
 
   type Sort.t += SBV of size
 
@@ -1606,19 +1609,27 @@ module type BVTermType = sig
   (** Construction *)
 
   val mk_bvnum : size:size -> Z.t -> term
+  val mk_bvnot : size:size -> term
+  val mk_bvand : size:size -> term
+  val mk_bvor : size:size -> term
+  val mk_bvxor : size:size -> term
+  val mk_bvnand : size:size -> term
+  val mk_bvnor : size:size -> term
+  val mk_bvxnor : size:size -> term
   val mk_bvneg : size:size -> term
-  val mk_bvsext : int -> int -> term
-  val mk_bvzext : int -> int -> term
   val mk_bvadd : size:size -> term
   val mk_bvsub : size:size -> term
   val mk_bvmul : size:size -> term
   val mk_bvdiv : size:size -> signed:signed -> term
   val mk_bvrem : size:size -> signed:signed -> term
+  val mk_bvsmod : size:size -> term
   val mk_bvshl : size:size -> term
   val mk_bvlshr : size:size -> term
   val mk_bvashr : size:size -> term
-  val mk_bvor : size:size -> term
-  val mk_bvand : size:size -> term
+  val mk_bvextract : size:size -> int -> int -> term
+  val mk_bvsext : size:size -> int -> term
+  val mk_bvzext : size:size -> int -> term
+  val mk_bvconcat : size1:size -> size2:size -> term
 
   (** Observation *)
 
@@ -1635,19 +1646,27 @@ module BVTerm : BVTermType = struct
 
   type sym +=
     | BVNum of size * Z.t
-    | BVNeg of size
-    | BVSEXT of int * int
-    | BVZEXT of int * int
-    | BVSHL of size
-    | BVLSHR of size
-    | BVASHR of size
-    | BVOr of size
+    | BVNot of size
     | BVAnd of size
+    | BVOr of size
+    | BVXor of size
+    | BVNand of size
+    | BVNor of size
+    | BVXnor of size
+    | BVNeg of size
     | BVAdd of size
     | BVSub of size
     | BVMul of size
     | BVDiv of size * signed
     | BVRem of size * signed
+    | BVSMod of size
+    | BVSHL of size
+    | BVLSHR of size
+    | BVASHR of size
+    | BVEXTRACT of size * int * int
+    | BVSEXT of size * int
+    | BVZEXT of size * int
+    | BVCONCAT of size * size
 
   type Sort.t += SBV of size
 
@@ -1655,19 +1674,34 @@ module BVTerm : BVTermType = struct
 
   let sort_of_sym = function
     | BVNum (size, _) -> SBV size
-    | BVNeg size -> Sort.mk_arrow (SBV size) (SBV size)
-    | BVSEXT (from, to_) | BVZEXT (from, to_) ->
-        Sort.mk_arrow (SBV (Some from)) (SBV (Some to_))
-    | BVSHL size
-    | BVLSHR size
-    | BVASHR size
-    | BVOr size
+    | BVNot size | BVNeg size -> Sort.mk_arrow (SBV size) (SBV size)
+    | BVEXTRACT (size, h, l) ->
+        Sort.mk_arrow (SBV size) (SBV (Some (h - l + 1)))
+    | BVSEXT (size, ext) | BVZEXT (size, ext) ->
+        Sort.mk_arrow (SBV size)
+          (SBV (match size with Some size -> Some (size + ext) | None -> None))
+    | BVCONCAT (size1, size2) ->
+        Sort.mk_arrow (SBV size1)
+          (Sort.mk_arrow (SBV size2)
+             (SBV
+                (match (size1, size2) with
+                | Some size1, Some size2 -> Some (size1 + size2)
+                | _ -> None)))
     | BVAnd size
+    | BVOr size
+    | BVXor size
+    | BVNand size
+    | BVNor size
+    | BVXnor size
     | BVAdd size
     | BVSub size
     | BVMul size
     | BVDiv (size, _)
-    | BVRem (size, _) ->
+    | BVRem (size, _)
+    | BVSMod size
+    | BVSHL size
+    | BVLSHR size
+    | BVASHR size ->
         Sort.mk_arrow (SBV size) (Sort.mk_arrow (SBV size) (SBV size))
     | _ -> failwith "BVTerm.sort_of_sym"
 
@@ -1675,27 +1709,35 @@ module BVTerm : BVTermType = struct
 
   (** Printing *)
 
-  let str_of_size = function None -> "N/A" | Some bits -> sprintf "%d" bits
+  let str_of_size = function None -> "?" | Some bits -> sprintf "%d" bits
 
   let str_of_signed = function
-    | None -> "N/A"
+    | None -> "?"
     | Some signed -> if signed then "s" else "u"
 
   let str_of_sym = function
-    | BVNum (_size, n) -> sprintf "Int %s" @@ Z.to_string n
-    | BVNeg _size -> "BVNeg"
-    | BVSEXT _ -> "BVSEXT"
-    | BVZEXT _ -> "BVZEXT"
-    | BVSHL _size -> "BVSHL"
-    | BVLSHR _size -> "BVLSHR"
-    | BVASHR _size -> "BVASHR"
-    | BVOr _size -> "BVOr"
+    | BVNum (_size, n) -> sprintf "Bv %s" @@ Z.to_string n
+    | BVNot _size -> "BVNot"
     | BVAnd _size -> "BVAnd"
+    | BVOr _size -> "BVOr"
+    | BVXor _size -> "BVXor"
+    | BVNand _size -> "BVNand"
+    | BVNor _size -> "BVNor"
+    | BVXnor _size -> "BVXnor"
+    | BVNeg _size -> "BVNeg"
     | BVAdd _size -> "BVAdd"
     | BVSub _size -> "BVSub"
     | BVMul _size -> "BVMul"
-    | BVDiv (_size, _signed) -> "BVDiv"
-    | BVRem (_size, _signed) -> "BVRem"
+    | BVDiv (_size, signed) -> sprintf "BV%sDiv" (str_of_signed signed)
+    | BVRem (_size, signed) -> sprintf "BV%sRem" (str_of_signed signed)
+    | BVSMod _size -> "BVSMod"
+    | BVSHL _size -> "BVSHL"
+    | BVLSHR _size -> "BVLSHR"
+    | BVASHR _size -> "BVASHR"
+    | BVEXTRACT _ -> "BVEXTRACT"
+    | BVSEXT _ -> "BVSEXT"
+    | BVZEXT _ -> "BVZEXT"
+    | BVCONCAT _ -> "BVCONCAT"
     | _ -> failwith "BVTerm.str_of_sym"
 
   let str_of_sort_theory = function
@@ -1705,26 +1747,37 @@ module BVTerm : BVTermType = struct
   let str_of_sort = open_str_of_sort str_of_sort_theory
   let str_of = open_str_of str_of_sort str_of_sym
 
+  (** Observation *)
+
+  let bits_of = function None -> 32 (*ToDo*) | Some bits -> bits
+
   (** Construction *)
 
-  let mk_bvnum ~size n = mk_con (BVNum (size, n))
+  let mk_bvnum ~size n = mk_con (BVNum (size, int2bv (bits_of size) n))
+  let mk_bvnot ~size = mk_con (BVNot size)
+  let mk_bvand ~size = mk_con (BVAnd size)
+  let mk_bvor ~size = mk_con (BVOr size)
+  let mk_bvxor ~size = mk_con (BVXor size)
+  let mk_bvnand ~size = mk_con (BVNand size)
+  let mk_bvnor ~size = mk_con (BVNor size)
+  let mk_bvxnor ~size = mk_con (BVXnor size)
   let mk_bvneg ~size = mk_con (BVNeg size)
-  let mk_bvsext from to_ = mk_con (BVSEXT (from, to_))
-  let mk_bvzext from to_ = mk_con (BVZEXT (from, to_))
   let mk_bvadd ~size = mk_con (BVAdd size)
   let mk_bvsub ~size = mk_con (BVSub size)
   let mk_bvmul ~size = mk_con (BVMul size)
   let mk_bvdiv ~size ~signed = mk_con (BVDiv (size, signed))
   let mk_bvrem ~size ~signed = mk_con (BVRem (size, signed))
+  let mk_bvsmod ~size = mk_con (BVSMod size)
   let mk_bvshl ~size = mk_con (BVSHL size)
   let mk_bvlshr ~size = mk_con (BVLSHR size)
   let mk_bvashr ~size = mk_con (BVASHR size)
-  let mk_bvor ~size = mk_con (BVOr size)
-  let mk_bvand ~size = mk_con (BVAnd size)
+  let mk_bvextract ~size h l = mk_con (BVEXTRACT (size, h, l))
+  let mk_bvsext ~size ext = mk_con (BVSEXT (size, ext))
+  let mk_bvzext ~size ext = mk_con (BVZEXT (size, ext))
+  let mk_bvconcat ~size1 ~size2 = mk_con (BVCONCAT (size1, size2))
 
   (** Observation *)
 
-  let bits_of = function None -> 32 (*ToDo*) | Some bits -> bits
   let signed_of = function None -> true (*ToDo*) | Some signed -> signed
   let is_bv_sort = function SBV _ -> true | _ -> false
 end
@@ -2507,9 +2560,9 @@ module type ArrayTermType = sig
   include TermType
 
   type sym +=
+    | AConst of Sort.t * Sort.t
     | AStore of Sort.t * Sort.t
     | ASelect of Sort.t * Sort.t
-    | AConst of Sort.t * Sort.t
 
   type Sort.t += SArray of Sort.t * Sort.t
 
@@ -2531,19 +2584,19 @@ module ArrayTerm : ArrayTermType = struct
   include Term
 
   type sym +=
+    | AConst of Sort.t * Sort.t
     | AStore of Sort.t * Sort.t
     | ASelect of Sort.t * Sort.t
-    | AConst of Sort.t * Sort.t
 
   type Sort.t += SArray of Sort.t * Sort.t
 
   (** Sorts *)
 
   let sort_of_sym = function
+    | AConst (s1, s2) -> Sort.mk_fun [ s2; SArray (s1, s2) ]
     | AStore (s1, s2) ->
         Sort.mk_fun [ SArray (s1, s2); s1; s2; SArray (s1, s2) ]
     | ASelect (s1, s2) -> Sort.mk_fun [ SArray (s1, s2); s1; s2 ]
-    | AConst (s1, s2) -> Sort.mk_fun [ s2; SArray (s1, s2) ]
     | _ -> failwith "ArrayTerm.sort_of_sym"
 
   let index_sort_of = function
@@ -2559,17 +2612,17 @@ module ArrayTerm : ArrayTermType = struct
   (** Printing *)
 
   let str_of_sym = function
+    | AConst _ -> "array_const"
     | AStore _ -> "store"
     | ASelect _ -> "select"
-    | AConst _ -> "array_const"
     | _ -> failwith "ArrayTerm.str_of_sym"
 
   (** Construction *)
 
   let mk_array_sort s1 s2 = SArray (s1, s2)
-  let mk_select s1 s2 = Term.mk_con (ASelect (s1, s2))
-  let mk_store s1 s2 = Term.mk_con (AStore (s1, s2))
   let mk_const_array s1 s2 = Term.mk_con (AConst (s1, s2))
+  let mk_store s1 s2 = Term.mk_con (AStore (s1, s2))
+  let mk_select s1 s2 = Term.mk_con (ASelect (s1, s2))
 end
 
 module type StringTermType = sig
@@ -2956,7 +3009,7 @@ module ExtTerm :
     | _ -> failwith "[ExtTerm.svs_of_sort] unknown sort"
 
   and svs_of_cont = function
-    | Sort.(EVar _ | Pure | Closed) -> Set.Poly.empty
+    | Sort.(EVar _ | Pure) -> Set.Poly.empty
     | Sort.Eff (c1, c2) -> Set.union (svs_of_triple c1) (svs_of_triple c2)
     | _ -> failwith "[svs_of_cont]"
 
@@ -2970,7 +3023,7 @@ module ExtTerm :
       [ svs_of_opsig c.op_sig; svs_of_sort c.val_type; svs_of_cont c.cont_eff ]
 
   let rec subst_sorts_cont (svar, sort) = function
-    | Sort.(EVar _ | Pure | Closed) as e -> e
+    | Sort.(EVar _ | Pure) as e -> e
     | Sort.Eff (c1, c2) ->
         Sort.mk_cont_eff
           (subst_sorts_triple (svar, sort) c1)
@@ -3079,13 +3132,15 @@ module ExtTerm :
   let rec str_of_sort_theory = function
     | Sort.SVar (Ident.Svar svar) -> sprintf "'%s" svar
     | Sort.SArrow (s, c) ->
-        sprintf "%s%s -> %s%s"
-          (if Sort.is_empty_opsig c.op_sig then "" else "_ |> ")
+        sprintf "%s -> %s%s%s"
           ((if Sort.is_arrow s || ArrayTerm.is_array_sort s then String.paren
             else Fn.id)
-          @@ open_str_of_sort str_of_sort_theory s)
-          (open_str_of_sort str_of_sort_theory c.val_type)
+          @@ str_of_sort_theory s)
+          (if Sort.is_empty_opsig c.op_sig then "" else "_ |> ")
+          (str_of_sort_theory c.val_type)
           (if Sort.is_pure c.cont_eff then "" else " / _")
+    | Sort.SForAll (Ident.Svar v, s) ->
+        String.paren @@ sprintf "forall %s. %s" v (str_of_sort s)
     | SBool -> "bool"
     | SInt -> "int"
     | SReal -> "real"
@@ -3098,27 +3153,23 @@ module ExtTerm :
         sprintf "%s ->> %s"
           ((if Sort.is_arrow s1 || ArrayTerm.is_array_sort s1 then String.paren
             else Fn.id)
-          @@ open_str_of_sort str_of_sort_theory s1)
-          (open_str_of_sort str_of_sort_theory s2)
+          @@ str_of_sort_theory s1)
+          (str_of_sort_theory s2)
     | STuple sorts ->
         String.paren
-        @@ String.concat_map_list ~sep:" * " sorts
-             ~f:(open_str_of_sort str_of_sort_theory)
-    | SDT dt -> Datatype.full_name_of (open_str_of_sort str_of_sort_theory) dt
+        @@ String.concat_map_list ~sep:" * " sorts ~f:str_of_sort_theory
+    | SDT dt -> Datatype.full_name_of str_of_sort_theory dt
     | SUS (name, params) ->
         if List.is_empty params then name
         else
           sprintf "%s %s"
             (String.paren
-            @@ String.concat_map_list ~sep:", " params
-                 ~f:(open_str_of_sort str_of_sort_theory))
+            @@ String.concat_map_list ~sep:", " params ~f:str_of_sort_theory)
             name
-    | SRef sort ->
-        sprintf "%s ref"
-          (String.paren @@ open_str_of_sort str_of_sort_theory sort)
+    | SRef sort -> sprintf "%s ref" (String.paren @@ str_of_sort_theory sort)
     | _ -> failwith "[ExtTerm.str_of_sort_theory] unknown sort"
 
-  let str_of_sort = open_str_of_sort str_of_sort_theory
+  let str_of_sort = (*open_str_of_sort*) str_of_sort_theory
   let str_of = open_str_of str_of_sort str_of_sym
 
   (** Evaluation *)
@@ -3274,7 +3325,6 @@ module ExtTerm :
   let rec of_old_cont = function
     | LogicOld.Sort.EVar x -> Sort.EVar x
     | LogicOld.Sort.Pure -> Sort.Pure
-    | LogicOld.Sort.Closed -> Sort.Closed
     | LogicOld.Sort.Eff (c1, c2) ->
         Sort.mk_cont_eff (of_old_triple c1) (of_old_triple c2)
     | _ -> failwith "[of_old_cont]"
@@ -3344,19 +3394,28 @@ module ExtTerm :
     | LogicOld.T_real.RDiv, [ _; _ ] -> mk_rdiv ()
     | LogicOld.T_real.RPower, [ _; _ ] -> mk_rpower ()
     | LogicOld.T_bv.BVNum (size, n), [] -> mk_bvnum ~size n
+    | LogicOld.T_bv.BVNot size, [ _ ] -> mk_bvnot ~size
+    | LogicOld.T_bv.BVAnd size, [ _; _ ] -> mk_bvand ~size
+    | LogicOld.T_bv.BVOr size, [ _; _ ] -> mk_bvor ~size
+    | LogicOld.T_bv.BVXor size, [ _; _ ] -> mk_bvxor ~size
+    | LogicOld.T_bv.BVNand size, [ _; _ ] -> mk_bvnand ~size
+    | LogicOld.T_bv.BVNor size, [ _; _ ] -> mk_bvnor ~size
+    | LogicOld.T_bv.BVXnor size, [ _; _ ] -> mk_bvxnor ~size
     | LogicOld.T_bv.BVNeg size, [ _ ] -> mk_bvneg ~size
-    | LogicOld.T_bv.BVSEXT (from, to_), [ _ ] -> mk_bvsext from to_
-    | LogicOld.T_bv.BVZEXT (from, to_), [ _ ] -> mk_bvzext from to_
     | LogicOld.T_bv.BVAdd size, [ _; _ ] -> mk_bvadd ~size
     | LogicOld.T_bv.BVSub size, [ _; _ ] -> mk_bvsub ~size
     | LogicOld.T_bv.BVMul size, [ _; _ ] -> mk_bvmul ~size
     | LogicOld.T_bv.BVDiv (size, signed), [ _; _ ] -> mk_bvdiv ~size ~signed
     | LogicOld.T_bv.BVRem (size, signed), [ _; _ ] -> mk_bvrem ~size ~signed
+    | LogicOld.T_bv.BVSMod size, [ _; _ ] -> mk_bvsmod ~size
     | LogicOld.T_bv.BVSHL size, [ _; _ ] -> mk_bvshl ~size
     | LogicOld.T_bv.BVLSHR size, [ _; _ ] -> mk_bvlshr ~size
     | LogicOld.T_bv.BVASHR size, [ _; _ ] -> mk_bvashr ~size
-    | LogicOld.T_bv.BVOr size, [ _; _ ] -> mk_bvor ~size
-    | LogicOld.T_bv.BVAnd size, [ _; _ ] -> mk_bvand ~size
+    | LogicOld.T_bv.BVEXTRACT (size, h, l), [ _ ] -> mk_bvextract ~size h l
+    | LogicOld.T_bv.BVSEXT (size, ext), [ _ ] -> mk_bvsext ~size ext
+    | LogicOld.T_bv.BVZEXT (size, ext), [ _ ] -> mk_bvzext ~size ext
+    | LogicOld.T_bv.BVCONCAT (size1, size2), [ _; _ ] ->
+        mk_bvconcat ~size1 ~size2
     | LogicOld.T_irb.IntToReal, [ _ ] -> mk_int_to_real ()
     | LogicOld.T_irb.RealToInt, [ _ ] -> mk_real_to_int ()
     | LogicOld.T_irb.IntToBV size, [ _ ] -> mk_int_to_bv ~size
@@ -3390,12 +3449,12 @@ module ExtTerm :
     | LogicOld.T_regex.RegConcat, _ -> mk_con RegConcat
     | LogicOld.T_regex.RegUnion, _ -> mk_con RegUnion
     | LogicOld.T_regex.RegInter, _ -> mk_con RegInter
+    | LogicOld.T_array.AConst (s1, s2), _ ->
+        mk_const_array (of_old_sort s1) (of_old_sort s2)
     | LogicOld.T_array.AStore (s1, s2), _ ->
         mk_store (of_old_sort s1) (of_old_sort s2)
     | LogicOld.T_array.ASelect (s1, s2), _ ->
         mk_select (of_old_sort s1) (of_old_sort s2)
-    | LogicOld.T_array.AConst (s1, s2), _ ->
-        mk_const_array (of_old_sort s1) (of_old_sort s2)
     | LogicOld.T_tuple.TupleCons sorts, _ ->
         mk_tuple_cons (of_old_sort_list sorts)
     | LogicOld.T_tuple.TupleSel (sorts, i), _ ->
@@ -3504,7 +3563,6 @@ module ExtTerm :
   let rec to_old_cont = function
     | Sort.EVar x -> LogicOld.Sort.EVar x
     | Sort.Pure -> LogicOld.Sort.Pure
-    | Sort.Closed -> LogicOld.Sort.Closed
     | Sort.Eff (c1, c2) ->
         LogicOld.Sort.mk_cont_eff (to_old_triple c1) (to_old_triple c2)
     | _ -> failwith "to_old_cont"
@@ -3572,19 +3630,29 @@ module ExtTerm :
     | RDiv -> LogicOld.T_real.RDiv |> Option.some
     | RPower -> LogicOld.T_real.RPower |> Option.some
     | BVNum (size, n) -> LogicOld.T_bv.BVNum (size, n) |> Option.some
-    | BVNeg size -> LogicOld.T_bv.BVNeg size |> Option.some
-    | BVSEXT (from, to_) -> LogicOld.T_bv.BVSEXT (from, to_) |> Option.some
-    | BVZEXT (from, to_) -> LogicOld.T_bv.BVZEXT (from, to_) |> Option.some
-    | BVSHL size -> LogicOld.T_bv.BVSHL size |> Option.some
-    | BVLSHR size -> LogicOld.T_bv.BVLSHR size |> Option.some
-    | BVASHR size -> LogicOld.T_bv.BVASHR size |> Option.some
-    | BVOr size -> LogicOld.T_bv.BVOr size |> Option.some
+    | BVNot size -> LogicOld.T_bv.BVNot size |> Option.some
     | BVAnd size -> LogicOld.T_bv.BVAnd size |> Option.some
+    | BVOr size -> LogicOld.T_bv.BVOr size |> Option.some
+    | BVXor size -> LogicOld.T_bv.BVXor size |> Option.some
+    | BVNand size -> LogicOld.T_bv.BVNand size |> Option.some
+    | BVNor size -> LogicOld.T_bv.BVNor size |> Option.some
+    | BVXnor size -> LogicOld.T_bv.BVXnor size |> Option.some
+    | BVNeg size -> LogicOld.T_bv.BVNeg size |> Option.some
     | BVAdd size -> LogicOld.T_bv.BVAdd size |> Option.some
     | BVSub size -> LogicOld.T_bv.BVSub size |> Option.some
     | BVMul size -> LogicOld.T_bv.BVMul size |> Option.some
     | BVDiv (size, signed) -> LogicOld.T_bv.BVDiv (size, signed) |> Option.some
     | BVRem (size, signed) -> LogicOld.T_bv.BVRem (size, signed) |> Option.some
+    | BVSMod size -> LogicOld.T_bv.BVSMod size |> Option.some
+    | BVSHL size -> LogicOld.T_bv.BVSHL size |> Option.some
+    | BVLSHR size -> LogicOld.T_bv.BVLSHR size |> Option.some
+    | BVASHR size -> LogicOld.T_bv.BVASHR size |> Option.some
+    | BVEXTRACT (size, h, l) ->
+        LogicOld.T_bv.BVEXTRACT (size, h, l) |> Option.some
+    | BVSEXT (size, ext) -> LogicOld.T_bv.BVSEXT (size, ext) |> Option.some
+    | BVZEXT (size, ext) -> LogicOld.T_bv.BVZEXT (size, ext) |> Option.some
+    | BVCONCAT (size1, size2) ->
+        LogicOld.T_bv.BVCONCAT (size1, size2) |> Option.some
     | IntToReal -> LogicOld.T_irb.IntToReal |> Option.some
     | RealToInt -> LogicOld.T_irb.RealToInt |> Option.some
     | IntToBV size -> LogicOld.T_irb.IntToBV size |> Option.some
@@ -3609,12 +3677,12 @@ module ExtTerm :
     | RegConcat -> LogicOld.T_regex.RegConcat |> Option.some
     | RegUnion -> LogicOld.T_regex.RegUnion |> Option.some
     | RegInter -> LogicOld.T_regex.RegInter |> Option.some
+    | AConst (s1, s2) ->
+        LogicOld.T_array.AConst (to_old_sort s1, to_old_sort s2) |> Option.some
     | AStore (s1, s2) ->
         LogicOld.T_array.AStore (to_old_sort s1, to_old_sort s2) |> Option.some
     | ASelect (s1, s2) ->
         LogicOld.T_array.ASelect (to_old_sort s1, to_old_sort s2) |> Option.some
-    | AConst (s1, s2) ->
-        LogicOld.T_array.AConst (to_old_sort s1, to_old_sort s2) |> Option.some
     | TupleCons sorts ->
         LogicOld.T_tuple.TupleCons (List.map sorts ~f:to_old_sort)
         |> Option.some

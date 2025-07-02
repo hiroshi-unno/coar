@@ -5,6 +5,7 @@ type t = {
   timeout : int option;
   use_z3_native_mbp : bool;
   enable_global_guidance : bool;
+  enable_z3_validation : bool;
   check_validity : bool;
   conservative_check : bool;
   solve_again_if_invalid : bool;

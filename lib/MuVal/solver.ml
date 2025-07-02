@@ -1037,57 +1037,60 @@ module Make (Cfg : Config.ConfigType) = struct
     @@ lazy (sprintf "******* Generated PQEs:\n%s" @@ PCSP.Problem.str_of pqes);
     let open Or_error.Monad_infix in
     pcsp_solver ~primal:true >>= fun (module PCSPSolver) ->
-    (PCSPSolver.solve pqes >>= function
-     | PCSP.Problem.Sat model, num_iters ->
-         let tsub =
-           Logic.ExtTerm.to_old_subst Map.Poly.empty Map.Poly.empty model
-         in
-         let prefp =
-           List.map prefp ~f:(fun (name, (args, prob_pred)) ->
-               ( name,
-                 (args, Evaluator.simplify_term @@ Term.subst tsub prob_pred) ))
-         in
-         let rank =
-           List.map rank ~f:(fun (name, (args, prob_pred)) ->
-               ( name,
-                 (args, Evaluator.simplify_term @@ Term.subst tsub prob_pred) ))
-         in
-         let postfp =
-           List.map postfp ~f:(fun (name, (args, prob_pred)) ->
-               ( name,
-                 (args, Evaluator.simplify_term @@ Term.subst tsub prob_pred) ))
-         in
-         (match ua_preds with
-         | None -> ()
-         | Some ua_preds ->
-             let ua_preds =
-               List.map ua_preds ~f:(fun pred ->
-                   { pred with body = Term.subst tsub pred.body })
-             in
-             Debug.print ~id:None
-             @@ lazy
-                  (sprintf "\nunderapproximated:\n%s"
-                  @@ ProbMuCLP.Pred.str_of_list ua_preds));
-         if not @@ List.is_empty prefp then (
-           Debug.print @@ lazy "\nsynthesized prefixpoint:";
-           print_templ prefp);
-         if not @@ List.is_empty rank then (
-           Debug.print @@ lazy "\nsynthesized ranking supermartingales:";
-           print_templ rank);
-         if not @@ List.is_empty postfp then (
-           Debug.print @@ lazy "\nsynthesized postfixpoint:";
-           print_templ postfp);
-         Ok (MuCLP.Problem.Valid, num_iters)
-     | Unsat _, num_iters ->
-         print_endline "the templates used may not be expressive enough";
-         Ok (Unknown, num_iters)
-     | Unknown, num_iters ->
-         print_endline
-           "the backend PQE solver failed or the templates used may not be \
-            expressive enough";
-         Ok (Unknown, num_iters)
-     | OutSpace _, _ -> failwith "out of space" (* TODO *)
-     | Timeout, num_iters -> Ok (Timeout, num_iters))
+    ( PCSPSolver.solve pqes >>= function
+      | PCSP.Problem.Sat model, num_iters ->
+          let tsub =
+            Logic.ExtTerm.to_old_subst Map.Poly.empty Map.Poly.empty model
+          in
+          let prefp =
+            List.map prefp ~f:(fun (name, (args, prob_pred)) ->
+                ( name,
+                  (args, Evaluator.simplify_term @@ Term.subst tsub prob_pred)
+                ))
+          in
+          let rank =
+            List.map rank ~f:(fun (name, (args, prob_pred)) ->
+                ( name,
+                  (args, Evaluator.simplify_term @@ Term.subst tsub prob_pred)
+                ))
+          in
+          let postfp =
+            List.map postfp ~f:(fun (name, (args, prob_pred)) ->
+                ( name,
+                  (args, Evaluator.simplify_term @@ Term.subst tsub prob_pred)
+                ))
+          in
+          (match ua_preds with
+          | None -> ()
+          | Some ua_preds ->
+              let ua_preds =
+                List.map ua_preds ~f:(fun pred ->
+                    { pred with body = Term.subst tsub pred.body })
+              in
+              Debug.print ~id:None
+              @@ lazy
+                   (sprintf "\nunderapproximated:\n%s"
+                   @@ ProbMuCLP.Pred.str_of_list ua_preds));
+          if not @@ List.is_empty prefp then (
+            Debug.print @@ lazy "\nsynthesized prefixpoint:";
+            print_templ prefp);
+          if not @@ List.is_empty rank then (
+            Debug.print @@ lazy "\nsynthesized ranking supermartingales:";
+            print_templ rank);
+          if not @@ List.is_empty postfp then (
+            Debug.print @@ lazy "\nsynthesized postfixpoint:";
+            print_templ postfp);
+          Ok (MuCLP.Problem.Valid, num_iters)
+      | Unsat _, num_iters ->
+          print_endline "the templates used may not be expressive enough";
+          Ok (Unknown, num_iters)
+      | Unknown, num_iters ->
+          print_endline
+            "the backend PQE solver failed or the templates used may not be \
+             expressive enough";
+          Ok (Unknown, num_iters)
+      | OutSpace _, _ -> failwith "out of space" (* TODO *)
+      | Timeout, num_iters -> Ok (Timeout, num_iters) )
     >>= function
     | sol, num_iters ->
         Debug.print @@ lazy "=========================";

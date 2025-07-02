@@ -57,87 +57,11 @@ let rec cgen_term ~print senv term =
               Set.Poly.of_list [ CEq (ty1, T_bool.SBool); CEq (ty2, ty3) ];
             ] )
     | FunApp (T_int.Int _, [], _) -> (senv, T_int.SInt, Set.Poly.empty)
-    | FunApp (T_real.Real _, [], _) -> (senv, T_real.SReal, Set.Poly.empty)
-    | FunApp (T_real.Alge _, [ t ], _) ->
-        let senv, ty, constrs = cgen_term ~print senv t in
-        ( senv,
-          T_real.SReal,
-          Set.union constrs (Set.Poly.singleton (CEq (ty, T_real.SReal))) )
-    | FunApp (T_bv.BVNum (size, _), [], _) ->
-        let ty = Sort.mk_fresh_svar () in
-        (senv, ty, Set.Poly.singleton (CEq (ty, T_bv.SBV size)))
-    | FunApp (T_num.Value (_, svar), [], _) ->
-        (senv, Sort.SVar svar, Set.Poly.singleton (CNum svar))
     | FunApp (T_int.(Neg | Nop | Abs), [ t1 ], _) ->
         let senv, ty, constrs = cgen_term ~print senv t1 in
         ( senv,
           T_int.SInt,
           Set.union constrs (Set.Poly.singleton (CEq (ty, T_int.SInt))) )
-    | FunApp (T_irb.RealToInt, [ t ], _) ->
-        let senv, ty, constrs = cgen_term ~print senv t in
-        ( senv,
-          T_int.SInt,
-          Set.union constrs (Set.Poly.singleton (CEq (ty, T_real.SReal))) )
-    | FunApp (T_real.(RNeg | RAbs), [ t1 ], _) ->
-        let senv, ty, constrs = cgen_term ~print senv t1 in
-        ( senv,
-          T_real.SReal,
-          Set.union constrs (Set.Poly.singleton (CEq (ty, T_real.SReal))) )
-    | FunApp (T_irb.IntToReal, [ t ], _) ->
-        let senv, ty, constrs = cgen_term ~print senv t in
-        ( senv,
-          T_real.SReal,
-          Set.union constrs (Set.Poly.singleton (CEq (ty, T_int.SInt))) )
-    | FunApp (T_irb.IntToBV size, [ t ], _) ->
-        let senv, ty, constrs = cgen_term ~print senv t in
-        let ty' = Sort.mk_fresh_svar () in
-        ( senv,
-          ty',
-          Set.union constrs
-            (Set.Poly.of_list
-               [ CEq (ty, T_int.SInt); CEq (ty', T_bv.SBV size) ]) )
-    | FunApp (T_irb.BVToInt (size, _signed), [ t ], _) ->
-        let senv, ty, constrs = cgen_term ~print senv t in
-        ( senv,
-          T_int.SInt,
-          Set.union constrs (Set.Poly.singleton (CEq (ty, T_bv.SBV size))) )
-    | FunApp (T_bv.BVNeg size, [ t1 ], _) ->
-        let senv, ty1, constrs1 = cgen_term ~print senv t1 in
-        let ty = Sort.mk_fresh_svar () in
-        ( senv,
-          ty,
-          Set.Poly.union_list
-            [
-              constrs1;
-              Set.Poly.of_list [ CEq (ty, T_bv.SBV size); CEq (ty, ty1) ];
-            ] )
-    | FunApp (T_bv.(BVSEXT (from, to_) | BVZEXT (from, to_)), [ t1 ], _) ->
-        let senv, ty1, constrs1 = cgen_term ~print senv t1 in
-        ( senv,
-          T_bv.SBV (Some to_),
-          Set.Poly.union_list
-            [ constrs1; Set.Poly.of_list [ CEq (T_bv.SBV (Some from), ty1) ] ]
-        )
-    | FunApp (T_num.NNeg svar, [ t1 ], _) ->
-        let senv, ty1, constrs1 = cgen_term ~print senv t1 in
-        ( senv,
-          ty1,
-          Set.Poly.union_list
-            [
-              constrs1;
-              Set.Poly.of_list [ CNum svar; CEq (ty1, Sort.SVar svar) ];
-            ] )
-    | FunApp (T_num.NSEXT (_from, svar1, _to_, svar2), [ t1 ], _) ->
-        let senv, ty1, constrs1 = cgen_term ~print senv t1 in
-        (* ToDo: from and to_ are not used *)
-        ( senv,
-          Sort.SVar svar2,
-          Set.Poly.union_list
-            [
-              constrs1;
-              Set.Poly.of_list
-                [ CNum svar1; CNum svar2; CEq (ty1, Sort.SVar svar1) ];
-            ] )
     | FunApp (T_int.(Add | Sub | Mul | Div _ | Rem _ | Power), [ t1; t2 ], _) ->
         let senv, ty1, constrs1 = cgen_term ~print senv t1 in
         let senv, ty2, constrs2 = cgen_term ~print senv t2 in
@@ -149,6 +73,17 @@ let rec cgen_term ~print senv term =
               constrs2;
               Set.Poly.of_list [ CEq (ty1, T_int.SInt); CEq (ty1, ty2) ];
             ] )
+    | FunApp (T_real.Real _, [], _) -> (senv, T_real.SReal, Set.Poly.empty)
+    | FunApp (T_real.Alge _, [ t ], _) ->
+        let senv, ty, constrs = cgen_term ~print senv t in
+        ( senv,
+          T_real.SReal,
+          Set.union constrs (Set.Poly.singleton (CEq (ty, T_real.SReal))) )
+    | FunApp (T_real.(RNeg | RAbs), [ t1 ], _) ->
+        let senv, ty, constrs = cgen_term ~print senv t1 in
+        ( senv,
+          T_real.SReal,
+          Set.union constrs (Set.Poly.singleton (CEq (ty, T_real.SReal))) )
     | FunApp (T_real.(RAdd | RSub | RMul | RDiv | RPower), [ t1; t2 ], _) ->
         let senv, ty1, constrs1 = cgen_term ~print senv t1 in
         let senv, ty2, constrs2 = cgen_term ~print senv t2 in
@@ -160,18 +95,56 @@ let rec cgen_term ~print senv term =
               constrs2;
               Set.Poly.of_list [ CEq (ty1, T_real.SReal); CEq (ty1, ty2) ];
             ] )
+    | FunApp (T_bv.BVNum (size, _), [], _) ->
+        let ty = Sort.mk_fresh_svar () in
+        (senv, ty, Set.Poly.singleton (CEq (ty, T_bv.SBV size)))
+    | FunApp ((T_bv.BVNot size | T_bv.BVNeg size), [ t1 ], _) ->
+        let senv, ty1, constrs1 = cgen_term ~print senv t1 in
+        let ty = Sort.mk_fresh_svar () in
+        ( senv,
+          ty,
+          Set.Poly.union_list
+            [
+              constrs1;
+              Set.Poly.of_list [ CEq (ty, T_bv.SBV size); CEq (ty, ty1) ];
+            ] )
+    | FunApp (T_bv.BVEXTRACT (size, h, l), [ t1 ], _) ->
+        let senv, ty1, constrs1 = cgen_term ~print senv t1 in
+        ( senv,
+          T_bv.SBV (Some (h - l + 1)),
+          Set.Poly.union_list
+            [ constrs1; Set.Poly.of_list [ CEq (T_bv.SBV size, ty1) ] ] )
+    | FunApp (T_bv.(BVSEXT (size, ext) | BVZEXT (size, ext)), [ t1 ], _) ->
+        let senv, ty1, constrs1 = cgen_term ~print senv t1 in
+        let ty = Sort.mk_fresh_svar () in
+        ( senv,
+          ty,
+          Set.Poly.union_list
+            [
+              constrs1;
+              Set.Poly.of_list
+                [
+                  CEq (ty, T_bv.SBV (T_bv.ext_size size ext));
+                  CEq (T_bv.SBV size, ty1);
+                ];
+            ] )
     | FunApp
         ( T_bv.(
-            ( BVAdd size
+            ( BVAnd size
+            | BVOr size
+            | BVXor size
+            | BVNand size
+            | BVNor size
+            | BVXnor size
+            | BVAdd size
             | BVSub size
             | BVMul size
             | BVDiv (size, _)
             | BVRem (size, _)
+            | BVSMod size
             | BVSHL size
             | BVLSHR size
-            | BVASHR size
-            | BVOr size
-            | BVAnd size )),
+            | BVASHR size )),
           [ t1; t2 ],
           _ ) ->
         let senv, ty1, constrs1 = cgen_term ~print senv t1 in
@@ -185,6 +158,40 @@ let rec cgen_term ~print senv term =
               constrs2;
               Set.Poly.of_list
                 [ CEq (ty, T_bv.SBV size); CEq (ty, ty1); CEq (ty, ty2) ];
+            ] )
+    | FunApp (T_bv.(BVCONCAT (size1, size2)), [ t1; t2 ], _) ->
+        let senv, ty1, constrs1 = cgen_term ~print senv t1 in
+        let senv, ty2, constrs2 = cgen_term ~print senv t2 in
+        ( senv,
+          T_bv.SBV (T_bv.add_size size1 size2),
+          Set.Poly.union_list
+            [
+              constrs1;
+              constrs2;
+              Set.Poly.of_list
+                [ CEq (ty1, T_bv.SBV size1); CEq (ty2, T_bv.SBV size2) ];
+            ] )
+    | FunApp (T_num.Value (_, svar), [], _) ->
+        (senv, Sort.SVar svar, Set.Poly.singleton (CNum svar))
+    | FunApp (T_num.NNeg svar, [ t1 ], _) ->
+        let senv, ty1, constrs1 = cgen_term ~print senv t1 in
+        ( senv,
+          ty1,
+          Set.Poly.union_list
+            [
+              constrs1;
+              Set.Poly.of_list [ CNum svar; CEq (ty1, Sort.SVar svar) ];
+            ] )
+    | FunApp (T_num.NSEXT (_, svar1, _, svar2), [ t1 ], _) ->
+        let senv, ty1, constrs1 = cgen_term ~print senv t1 in
+        (* ToDo: from and to_ are not used *)
+        ( senv,
+          Sort.SVar svar2,
+          Set.Poly.union_list
+            [
+              constrs1;
+              Set.Poly.of_list
+                [ CNum svar1; CNum svar2; CEq (ty1, Sort.SVar svar1) ];
             ] )
     | FunApp
         ( T_num.(
@@ -207,6 +214,29 @@ let rec cgen_term ~print senv term =
               Set.Poly.of_list
                 [ CNum svar; CEq (ty1, Sort.SVar svar); CEq (ty1, ty2) ];
             ] )
+    | FunApp (T_irb.RealToInt, [ t ], _) ->
+        let senv, ty, constrs = cgen_term ~print senv t in
+        ( senv,
+          T_int.SInt,
+          Set.union constrs (Set.Poly.singleton (CEq (ty, T_real.SReal))) )
+    | FunApp (T_irb.IntToReal, [ t ], _) ->
+        let senv, ty, constrs = cgen_term ~print senv t in
+        ( senv,
+          T_real.SReal,
+          Set.union constrs (Set.Poly.singleton (CEq (ty, T_int.SInt))) )
+    | FunApp (T_irb.IntToBV size, [ t ], _) ->
+        let senv, ty, constrs = cgen_term ~print senv t in
+        let ty' = Sort.mk_fresh_svar () in
+        ( senv,
+          ty',
+          Set.union constrs
+            (Set.Poly.of_list
+               [ CEq (ty, T_int.SInt); CEq (ty', T_bv.SBV size) ]) )
+    | FunApp (T_irb.BVToInt (size, _signed), [ t ], _) ->
+        let senv, ty, constrs = cgen_term ~print senv t in
+        ( senv,
+          T_int.SInt,
+          Set.union constrs (Set.Poly.singleton (CEq (ty, T_bv.SBV size))) )
     | FunApp (T_string.StrConst _, [], _) ->
         (senv, T_string.SString, Set.Poly.empty)
     | FunApp (T_sequence.(SeqEpsilon | SeqSymbol _), [], _) ->
@@ -261,18 +291,6 @@ let rec cgen_term ~print senv term =
         ( senv,
           T_array.SArray (s1, s2),
           Set.union constrs (Set.Poly.singleton (CEq (s2, ty))) )
-    | FunApp (T_array.ASelect (s1, s2), [ t1; t2 ], _) ->
-        let senv, ty1, constrs1 = cgen_term ~print senv t1 in
-        let senv, ty2, constrs2 = cgen_term ~print senv t2 in
-        ( senv,
-          s2,
-          Set.Poly.union_list
-            [
-              constrs1;
-              constrs2;
-              Set.Poly.of_list
-                [ CEq (ty1, T_array.SArray (ty2, s2)); CEq (s1, ty2) ];
-            ] )
     | FunApp (T_array.AStore (s1, s2), [ t1; t2; t3 ], _) ->
         let senv, ty1, constrs1 = cgen_term ~print senv t1 in
         let senv, ty2, constrs2 = cgen_term ~print senv t2 in
@@ -290,6 +308,18 @@ let rec cgen_term ~print senv term =
                   CEq (s1, ty2);
                   CEq (ty3, s2);
                 ];
+            ] )
+    | FunApp (T_array.ASelect (s1, s2), [ t1; t2 ], _) ->
+        let senv, ty1, constrs1 = cgen_term ~print senv t1 in
+        let senv, ty2, constrs2 = cgen_term ~print senv t2 in
+        ( senv,
+          s2,
+          Set.Poly.union_list
+            [
+              constrs1;
+              constrs2;
+              Set.Poly.of_list
+                [ CEq (ty1, T_array.SArray (ty2, s2)); CEq (s1, ty2) ];
             ] )
     | FunApp (T_tuple.TupleCons sorts, ts, _) ->
         let senv, tys, constrss = cgen_terms ~print senv ts in
@@ -625,16 +655,25 @@ let rec subtype map s1 s2 =
         let map, econstrs1, oconstrs1 = subtype map s21 s11 in
         let map, econstrs2, oconstrs2 = subeff map se12 se22 in
         (map, Set.union econstrs1 econstrs2, Set.union oconstrs1 oconstrs2)
-    | T_bv.SBV size1, T_bv.SBV size2
-      when match (size1, size2) with
-           | None, _ | _, None -> true (*ToDo*)
-           | Some s1, Some s2 -> Stdlib.(s1 = s2) ->
+    | T_bv.SBV size1, T_bv.SBV size2 when T_bv.eq_size size1 size2 ->
         (map, Set.Poly.empty, Set.Poly.empty)
     | T_array.SArray (s11, s12), T_array.SArray (s21, s22) ->
-        let map, econstrs1, oconstrs1 = subtype map s21 s11 (*ToDo*) in
-        let map, econstrs2, oconstrs2 = subtype map s11 s21 (*ToDo*) in
-        let map, econstrs3, oconstrs3 = subtype map s12 s22 (*ToDo*) in
-        let map, econstrs4, oconstrs4 = subtype map s22 s12 (*ToDo*) in
+        let map, econstrs1, oconstrs1 =
+          subtype map s21 s11
+          (*ToDo*)
+        in
+        let map, econstrs2, oconstrs2 =
+          subtype map s11 s21
+          (*ToDo*)
+        in
+        let map, econstrs3, oconstrs3 =
+          subtype map s12 s22
+          (*ToDo*)
+        in
+        let map, econstrs4, oconstrs4 =
+          subtype map s22 s12
+          (*ToDo*)
+        in
         ( map,
           Set.Poly.union_list [ econstrs1; econstrs2; econstrs3; econstrs4 ],
           Set.Poly.union_list [ oconstrs1; oconstrs2; oconstrs3; oconstrs4 ] )
@@ -647,26 +686,38 @@ let rec subtype map s1 s2 =
         List.fold2_exn (Datatype.params_of dt1) (Datatype.params_of dt2)
           ~init:(map, Set.Poly.empty, Set.Poly.empty)
           ~f:(fun (map, econstrs, oconstrs) s1 s2 ->
-            let map, econstrs', oconstrs' = subtype map s1 s2 (*ToDo*) in
+            let map, econstrs', oconstrs' =
+              subtype map s1 s2
+              (*ToDo*)
+            in
             (map, Set.union econstrs econstrs', Set.union oconstrs oconstrs'))
     | T_dt.SDT dt1, T_dt.SUS (name2, sorts2) when String.(dt1.name = name2) ->
         (*ToDo: fix the ad hoc use of SUS*)
         List.fold2_exn (Datatype.params_of dt1) sorts2
           ~init:(map, Set.Poly.empty, Set.Poly.empty)
           ~f:(fun (map, econstrs, oconstrs) s1 s2 ->
-            let map, econstrs', oconstrs' = subtype map s1 s2 (*ToDo*) in
+            let map, econstrs', oconstrs' =
+              subtype map s1 s2
+              (*ToDo*)
+            in
             (map, Set.union econstrs econstrs', Set.union oconstrs oconstrs'))
     | T_dt.SUS (name1, sorts1), T_dt.SDT dt2 when String.(name1 = dt2.name) ->
         (*ToDo: fix the ad hoc use of SUS*)
         List.fold2_exn sorts1 (Datatype.params_of dt2)
           ~init:(map, Set.Poly.empty, Set.Poly.empty)
           ~f:(fun (map, econstrs, oconstrs) s1 s2 ->
-            let map, econstrs', oconstrs' = subtype map s1 s2 (*ToDo*) in
+            let map, econstrs', oconstrs' =
+              subtype map s1 s2
+              (*ToDo*)
+            in
             (map, Set.union econstrs econstrs', Set.union oconstrs oconstrs'))
     | T_dt.SUS (n1, sorts1), T_dt.SUS (n2, sorts2) when String.(n1 = n2) ->
         List.fold2_exn sorts1 sorts2 ~init:(map, Set.Poly.empty, Set.Poly.empty)
           ~f:(fun (map, econstrs, oconstrs) s1 s2 ->
-            let map, econstrs', oconstrs' = subtype map s1 s2 (*ToDo*) in
+            let map, econstrs', oconstrs' =
+              subtype map s1 s2
+              (*ToDo*)
+            in
             (map, Set.union econstrs econstrs', Set.union oconstrs oconstrs'))
     | T_ref.SRef s1, T_ref.SRef s2 ->
         let map, econstrs1, oconstrs1 = subtype map s1 s2 in
@@ -758,7 +809,7 @@ let rec instantiate = function
 
 let rec unify_eff e1 e2 =
   match (e1, e2) with
-  | (Sort.Pure | Sort.Closed), (Sort.Pure | Sort.Closed) -> []
+  | Sort.Pure, Sort.Pure -> []
   | Sort.Eff (c11, c12), Sort.Eff (c21, c22) ->
       unify_triple c11 c21 @ unify_triple c12 c22
   | _ -> failwith "unify_eff"
@@ -791,10 +842,7 @@ let rec unify_sort ~print map = function
         match (s1, s2) with
         | Sort.SArrow (s1, t1), Sort.SArrow (s2, t2) ->
             unify_sort ~print map (((s1, s2) :: unify_triple t1 t2) @ eqs)
-        | T_bv.SBV size1, T_bv.SBV size2
-          when match (size1, size2) with
-               | None, _ | _, None -> true (*ToDo*)
-               | Some s1, Some s2 -> Stdlib.(s1 = s2) ->
+        | T_bv.SBV size1, T_bv.SBV size2 when T_bv.eq_size size1 size2 ->
             unify_sort ~print map eqs
         | T_array.SArray (s11, s12), T_array.SArray (s21, s22) ->
             unify_sort ~print map ((s11, s21) :: (s12, s22) :: eqs)
@@ -884,24 +932,25 @@ let solve ~print cs =
             failwith @@ sprintf "%s is not Num sort" @@ Term.str_of_sort sort),
     map )
 
-let elim_nums ?(to_sus = false) ?(instantiate_num_to_int = false) nums map =
-  (*assert (Set.is_empty @@ Set.inter nums (Map.Poly.key_set map));*)
+let elim_nums ?(to_sus = false) ~default nums map =
+  (*assert (Set.disjoint nums (Map.Poly.key_set map));*)
   let map_nums =
     Map.of_set_exn
     @@ Set.Poly.map nums ~f:(fun svar ->
            ( svar,
-             if instantiate_num_to_int (* instantiate Num to Int *) then
-               T_int.SInt
-             else if (*ToDo*) false && to_sus then
-               T_dt.SUS (Ident.name_of_svar svar, [])
-             else Sort.SVar svar
-               (* ToDo: z3 does not support polymophic (in)equalities *) ))
+             match default with
+             | Some sort -> sort
+             | None ->
+                 if (*ToDo*) false && to_sus then
+                   T_dt.SUS (Ident.name_of_svar svar, [])
+                 else (* ToDo: z3 does not support polymophic (in)equalities *)
+                   Sort.SVar svar ))
   in
   Map.force_merge map_nums
     (Map.Poly.map map ~f:(Term.subst_sorts_sort map_nums))
 
-let typeinf_term ~print ?(to_sus = false) ?(instantiate_num_to_int = false)
-    ?(senv_opt = Map.Poly.empty) ?(sort_opt = None) ?(constrs_opt = None) term =
+let typeinf_term ~print ?(to_sus = false) ~default ?(senv_opt = Map.Poly.empty)
+    ?(sort_opt = None) ?(constrs_opt = None) term =
   let _, s, constrs = cgen_term ~print senv_opt term in
   let constrs =
     match sort_opt with
@@ -912,24 +961,22 @@ let typeinf_term ~print ?(to_sus = false) ?(instantiate_num_to_int = false)
     match constrs_opt with None -> constrs | Some cs -> Set.union constrs cs
   in
   let nums, map = solve ~print constrs in
-  let map = elim_nums ~to_sus ~instantiate_num_to_int nums map in
+  let map = elim_nums ~to_sus ~default nums map in
   Term.subst_sorts map term
 
-let typeinf_atom ~print ?(to_sus = false) ?(instantiate_num_to_int = false) atom
-    =
+let typeinf_atom ~print ?(to_sus = false) ~default atom =
   let _, constrs = cgen_atom ~print Map.Poly.empty atom in
   let nums, map = solve ~print constrs in
-  let map = elim_nums ~to_sus ~instantiate_num_to_int nums map in
+  let map = elim_nums ~to_sus ~default nums map in
   Atom.subst_sorts map atom
 
-let typeinf_formula ~print ?(to_sus = false) ?(instantiate_num_to_int = false)
-    phi =
+let typeinf_formula ~print ?(to_sus = false) ~default phi =
   let _, constrs = cgen_formula ~print Map.Poly.empty phi in
   let nums, map = solve ~print constrs in
-  let map = elim_nums ~to_sus ~instantiate_num_to_int nums map in
+  let map = elim_nums ~to_sus ~default nums map in
   Formula.subst_sorts map phi
 
-let typeinf ~print ?(to_sus = false) ?(instantiate_num_to_int = false) phis =
+let typeinf ~print ?(to_sus = false) ~default phis =
   print @@ lazy "============== inference start ===================";
   let phis' =
     if true (* *) then
@@ -937,7 +984,7 @@ let typeinf ~print ?(to_sus = false) ?(instantiate_num_to_int = false) phis =
         cgen_formula ~print Map.Poly.empty (Formula.and_of phis)
       in
       let nums, map = solve ~print constrs in
-      let map = elim_nums ~to_sus ~instantiate_num_to_int nums map in
+      let map = elim_nums ~to_sus ~default nums map in
       List.map phis ~f:(Formula.subst_sorts map)
     else
       List.map phis ~f:(fun phi ->
@@ -946,7 +993,7 @@ let typeinf ~print ?(to_sus = false) ?(instantiate_num_to_int = false) phis =
             try solve ~print constrs
             with Failure s -> failwith @@ s ^ " @ " ^ Formula.str_of phi
           in
-          let map = elim_nums ~to_sus ~instantiate_num_to_int nums map in
+          let map = elim_nums ~to_sus ~default nums map in
           Formula.subst_sorts map phi)
   in
   print @@ lazy "============== inference end =====================";

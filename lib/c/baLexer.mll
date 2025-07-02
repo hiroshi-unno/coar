@@ -1,7 +1,5 @@
 {
   open Core
-  open Lexing
-  open Common.Util.LexingHelper
 
   exception SyntaxError of string
   exception ErrorFormatted of string
@@ -11,8 +9,8 @@ rule main = parse
   (* ignore spacing and newline characters *)
   [' ' '\009' '\012']+ { main lexbuf }
 | '\n'
-| "//"[' ''#'][^'\n']*?'\n' { update_loc lexbuf; main lexbuf }
-| "/*" { comment (lexeme_start_p lexbuf) lexbuf; main lexbuf }
+| "//"[' ''#'][^'\n']*?'\n' { Lexing.new_line lexbuf; main lexbuf }
+| "/*" { comment (Lexing.lexeme_start_p lexbuf) lexbuf; main lexbuf }
 
 | "never" { BaParsing.NEVER }
 | "(" { BaParsing.LPAREN }
@@ -47,7 +45,7 @@ rule main = parse
 
 and comment openingpos = parse
 | '\n'
-    { update_loc lexbuf; comment openingpos lexbuf }
+    { Lexing.new_line lexbuf; comment openingpos lexbuf }
 | "*/"
     { () }
 | eof {

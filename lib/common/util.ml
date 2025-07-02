@@ -1,6 +1,86 @@
 open Core
 open Ext
 
+let bvnot n x =
+  let mask = Z.(shift_left one n - one) in
+  Z.logand (Z.lognot x) mask
+
+let bvand n x y =
+  let mask = Z.(shift_left one n - one) in
+  Z.logand (Z.logand x y) mask
+
+let bvor n x y =
+  let mask = Z.(shift_left one n - one) in
+  Z.logand (Z.logor x y) mask
+
+let bvxor n x y =
+  let mask = Z.(shift_left one n - one) in
+  Z.logand (Z.logxor x y) mask
+
+let bvneg n x =
+  let mask = Z.(shift_left one n - one) in
+  Z.(logand (lognot x + one) mask)
+
+let bvadd n x y =
+  let mask = Z.(shift_left one n - one) in
+  Z.((x + y) land mask)
+
+let bvsub n x y =
+  let mask = Z.(shift_left one n - one) in
+  Z.((x + bvneg n y) land mask)
+
+let bvmul n x y =
+  let mask = Z.(shift_left one n - one) in
+  Z.(x * y land mask)
+
+let bvsdiv n x y =
+  let two_n = Z.shift_left Z.one n in
+  let half = Z.shift_left Z.one (n - 1) in
+  let to_signed z = if Z.geq z half then Z.sub z two_n else z in
+  let from_signed z = Z.erem z two_n in
+  let sx = to_signed x in
+  let sy = to_signed y in
+  if Z.equal sy Z.zero then Z.zero else from_signed (Z.div sx sy)
+
+let bvudiv n x y =
+  let two_n = Z.shift_left Z.one n in
+  if Z.equal y Z.zero then Z.zero else Z.erem (Z.div x y) two_n
+
+let bvshl n x y =
+  let mask = Z.(shift_left one n - one) in
+  Z.(shift_left x (Z.to_int y) land mask)
+
+let bvlshr x y = Z.(shift_right x (Z.to_int y))
+
+let bvashr n x y =
+  let mask = Z.(shift_left one n - one) in
+  let i = Z.(shift_right x (Z.to_int y)) in
+  let i' =
+    if Z.testbit x (n - 1) then Z.logor i (Z.shift_left mask (n - Z.to_int y))
+    else i
+  in
+  Z.logand i' mask
+
+let int2bv n x =
+  let two_n = Z.shift_left Z.one n in
+  Z.erem x two_n
+
+let z_to_bin_string_fixed n (x : Z.t) : string =
+  let raw = Z.format "%b" x in
+  let len = String.length raw in
+  if len >= n then String.sub raw ~pos:(len - n) ~len:n
+  else String.make (n - len) '0' ^ raw
+
+let required_bits (z : Z.t) : int =
+  if Z.equal z Z.zero then 1
+  else if Z.sign z > 0 then
+    (* minimum bits needed to represent positive z in binary (unsigned) *)
+    Z.numbits z
+  else
+    (* minimum bits needed to represent z in 2's complement, using
+     abs(z + 1) since 2's complement encodes -z as ~z + 1 *)
+    Z.numbits (Z.abs (Z.add z Z.one)) + 1
+
 module ExtFile = struct
   type 'a t = Filename of string | Instance of 'a [@@deriving yojson]
 
@@ -20,14 +100,17 @@ end
 type 'a ext_file = 'a ExtFile.t [@@deriving yojson]
 
 module LexingHelper = struct
-  let update_loc (lexbuf : Lexing.lexbuf) =
-    let pos = lexbuf.lex_curr_p in
-    lexbuf.lex_curr_p <-
-      { pos with pos_lnum = pos.pos_lnum + 1; pos_bol = pos.pos_cnum }
-
   let get_position_string (lexbuf : Lexing.lexbuf) =
     let pos = lexbuf.lex_curr_p in
     sprintf "%d:%d" pos.pos_lnum (pos.pos_cnum - pos.pos_bol + 1)
+
+  let print_error_information lexbuf =
+    let st = Lexing.lexeme_start_p lexbuf in
+    let en = Lexing.lexeme_end_p lexbuf in
+    Printf.fprintf stderr "File \"%s\", line %d, characters %d-%d:\n"
+      st.Lexing.pos_fname st.Lexing.pos_lnum
+      (st.Lexing.pos_cnum - st.Lexing.pos_bol)
+      (en.Lexing.pos_cnum - en.Lexing.pos_bol)
 end
 
 let rec map_channel_lines (f : string -> 'a) (chan : In_channel.t) : 'a list =
@@ -276,16 +359,13 @@ module Vector = struct
   let array_of = Array.of_list
   let of_array = Array.to_list
 
-  (** [multiply \[x1; ... ; xm\] \[y1; ... ; yn\]]
-      returns [\[f x1 y1; ... ; f x1 yn;
-                 ... ;
-                 f xm y1; ... ; f xm yn\]] *)
+  (** [multiply [x1; ... ; xm] [y1; ... ; yn]] returns
+      [[f x1 y1; ... ; f x1 yn; ... ; f xm y1; ... ; f xm yn]] *)
   let multiply f xs ys = List.concat_map ~f:(fun x -> List.map ~f:(f x) ys) xs
 
-  (** [product f \[\[1; 2; 3\]; \[4\]; \[5; 6\]\]] returns
-      [\[f \[1; 4; 5\]; f \[1; 4; 6\];
-         f \[2; 4; 5\]; f \[2; 4; 6\];
-         f \[3; 4; 5\]; f \[3; 4; 6\]\]] *)
+  (** [product f [[1; 2; 3]; [4]; [5; 6]]] returns
+      [[f [1; 4; 5]; f [1; 4; 6]; f [2; 4; 5]; f [2; 4; 6]; f [3; 4; 5]; f [3;
+       4; 6]]] *)
   let product f xss =
     let rec aux ac = function
       | [] -> [ f ac ]
@@ -553,7 +633,8 @@ module Combination = struct
         List.map ~f:(Pair.make x) (List.drop xs (i + 1)))
 end
 
-(** Map implemented with asocc list ( Stdlib.(=) can be used for equality check ) *)
+(** Map implemented with asocc list ( Stdlib.(=) can be used for equality check
+    ) *)
 module ALMap = struct
   type ('k, 'd) t = ('k * 'd) list
 
@@ -568,6 +649,14 @@ module ALMap = struct
         else if Stdlib.(key < k) then (key, data) :: l
         else (k, d) :: add_exn ~key ~data tl
 
+  let rec add_force_exn ~key ~data = function
+    | [] -> [ (key, data) ]
+    | (k, d) :: tl as l ->
+        if Stdlib.(key = k) then
+          if Stdlib.(data = d) then l else failwith "key already exists"
+        else if Stdlib.(key < k) then (key, data) :: l
+        else (k, d) :: add_force_exn ~key ~data tl
+
   let singleton key data = add_exn ~key ~data empty
   let find_exn = Stdlib.List.assoc
   let to_alist m = m
@@ -580,7 +669,10 @@ module ALMap = struct
   let mapi ~f m = List.map m ~f:(fun (k, d) -> (k, f k d))
 
   let force_merge m1 m2 =
-    List.fold m2 ~init:m1 ~f:(fun acc (key, data) -> add_exn ~key ~data acc)
+    List.fold m2 ~init:m1 ~f:(fun acc (key, data) ->
+        add_force_exn ~key ~data acc)
+
+  let force_merge_list = List.fold ~init:empty ~f:force_merge
 
   let split_lbr m1 m2 =
     let rec aux m1 m2 lefts boths rights =

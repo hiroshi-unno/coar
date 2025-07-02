@@ -199,12 +199,8 @@ let gen_from_qualifiers (params, quals) =
            Formula.rename ren qual
          in
          let key = Term.mk_var templ_param T_int.SInt in
-         let pos = Formula.mk_imply (Formula.gt key (T_int.zero ())) qual in
-         let neg =
-           Formula.mk_imply
-             (Formula.lt key (T_int.zero ()))
-             (Formula.mk_neg qual)
-         in
+         let pos = Formula.(mk_imply (gt key (T_int.zero ())) qual) in
+         let neg = Formula.(mk_imply (lt key (T_int.zero ())) (mk_neg qual)) in
          [ pos; neg ])
 
 (** Templates for function variables *)
@@ -839,16 +835,20 @@ type pred_tfp = {
 
 type pred_tfsp = { bec : Z.t option }
 
-let gen_dnf ?(eq_atom = false) tf_params tfs_params params : templ_pred =
-  let sort, num_ts =
+let gen_dnf ?(eq_atom = false) ~br_bools ~only_bools tf_params tfs_params params
+    : templ_pred =
+  let terms =
     let terms =
       List.map params ~f:(fun (x, s) -> (Term.mk_var x s, s)) @ tf_params.terms
     in
-    ( T_irb.sort_of terms,
-      List.filter terms ~f:(function
-        | _, T_int.SInt | _, T_real.SReal -> true
-        | _, _ -> false) )
+    if only_bools then List.filter terms ~f:(snd >> Term.is_bool_sort)
+    else terms
   in
+  let f =
+    (* generate template affine equality (if eq_atom) or inequality (otherwise) *)
+    T_irb.(if eq_atom then eq_of else ineq_of) @@ T_irb.num_sort_of terms
+  in
+  let num_ts = T_irb.num_terms_of terms in
   let ( templ_paramss,
         hole_quals_map,
         disjuncs,
@@ -857,31 +857,43 @@ let gen_dnf ?(eq_atom = false) tf_params tfs_params params : templ_pred =
         quals_bounds ) =
     List.unzip6
     @@ List.init (List.length tf_params.shp) ~f:(fun idx ->
-           let templ_paramss, atoms, coeffs_bounds, consts_bounds, quals_bounds
+           let templ_paramss, preds, coeffs_bounds, consts_bounds, quals_bounds
                =
-             (* generate affine equality (if eq_atom) or inequality (otherwise) templates *)
              List.unzip5
              @@ List.init (List.nth_exn tf_params.shp idx) ~f:(fun _ ->
-                    let (coeffs, const), pred =
-                      T_irb.(if eq_atom then eq_of else ineq_of) sort num_ts
+                    let coeffs_const_list, pred =
+                      if br_bools then T_irb.br_bools_of f terms else f num_ts
                     in
-                    let pos_neg_map, coeffs_bounds =
-                      mk_coeffs_bounds_of_int 1 coeffs None tf_params.ubc
-                        tfs_params.bec
+                    let ( templ_paramss,
+                          coeffs_bounds,
+                          consts_bounds,
+                          quals_bounds ) =
+                      List.unzip4
+                      @@ List.map coeffs_const_list ~f:(fun (coeffs, const) ->
+                             let pos_neg_map, coeffs_bound =
+                               mk_coeffs_bounds_of_int 1 coeffs None
+                                 tf_params.ubc tfs_params.bec
+                             in
+                             let consts_bound =
+                               mk_const_bounds_int const None tf_params.ubd
+                                 tf_params.s
+                             in
+                             let quals_bound = (*ToDo*) Formula.mk_true () in
+                             let templ_params =
+                               Set.union pos_neg_map @@ Set.Poly.of_list
+                               @@ List.map ~f:(Term.let_var >> fst)
+                                    (const :: coeffs)
+                             in
+                             ( templ_params,
+                               coeffs_bound,
+                               consts_bound,
+                               quals_bound ))
                     in
-                    let consts_bounds =
-                      mk_const_bounds_int const None tf_params.ubd tf_params.s
-                    in
-                    let quals_bounds = (*ToDo*) Formula.mk_true () in
-                    let templ_params =
-                      Set.union pos_neg_map @@ Set.Poly.of_list
-                      @@ List.map ~f:(Term.let_var >> fst) (const :: coeffs)
-                    in
-                    ( templ_params,
-                      Formula.mk_atom pred,
-                      coeffs_bounds,
-                      consts_bounds,
-                      quals_bounds ))
+                    ( Set.Poly.union_list templ_paramss,
+                      pred,
+                      Formula.and_of coeffs_bounds,
+                      Formula.and_of consts_bounds,
+                      Formula.and_of quals_bounds ))
            in
            let templ_params_quals, quals, hole =
              gen_hole_for_qualifiers (params, tf_params.quals)
@@ -889,7 +901,7 @@ let gen_dnf ?(eq_atom = false) tf_params tfs_params params : templ_pred =
            ( Set.Poly.union_list (templ_params_quals :: templ_paramss),
              (hole, quals),
              Formula.and_of
-               (mk_pvar_app (Ident.name_of_tvar hole) params :: atoms),
+               (mk_pvar_app (Ident.name_of_tvar hole) params :: preds),
              Formula.and_of coeffs_bounds,
              Formula.and_of consts_bounds,
              Formula.and_of quals_bounds ))
@@ -1661,17 +1673,22 @@ let size_fun_apps =
 let gen_simplified_wf_predicate tfp tsfp params : templ_wf_pred =
   assert (List.length params mod 2 = 0);
   let params_x, params_y = List.split_n params (List.length params / 2) in
-  let x_terms, y_terms, _ =
-    let txs = Set.Poly.of_list @@ List.map ~f:fst params_x in
-    let tys = Set.Poly.of_list @@ List.map ~f:fst params_y in
-    List.partition3_map ~f:(fun t ->
-        let tvs = Term.tvs_of t in
-        if Set.is_subset tvs ~of_:txs then `Fst t
-        else if Set.is_subset tvs ~of_:tys then `Snd t
-        else `Trd t)
-    @@ size_fun_apps params
-    @ List.filter tfp.terms ~f:T_irb.is_sirb
+  let x_terms, y_terms =
+    let rename_x_y = Term.rename (ren_of_sort_env_list params_x params_y) in
+    let rename_y_x = Term.rename (ren_of_sort_env_list params_y params_x) in
+    let x_terms =
+      List.unique @@ List.map ~f:rename_y_x
+      @@ List.filter ~f:(Term.fvs_of >> Set.is_empty >> not)
+      @@ size_fun_apps params
+      @ List.filter tfp.terms ~f:T_irb.is_sirb
+    in
+    (x_terms, List.map ~f:rename_x_y x_terms)
   in
+  if false then
+    print_endline
+    @@ sprintf "gen_simplified_wf_predicate x_terms: %s, y_terms: %s"
+         (String.concat_map_list ~sep:"," ~f:Term.str_of x_terms)
+         (String.concat_map_list ~sep:"," ~f:Term.str_of y_terms);
   (* ToDo: does not hold for arbitrary terms *)
   assert (List.length x_terms = List.length y_terms);
   let irb_params = List.filter params ~f:(snd >> Term.is_irb_sort) in

@@ -66,3 +66,6 @@
 [submodule "benchmarks/chc-comp24"]
 	path = benchmarks/chc-comp24
 	url = https://github.com/chc-comp/chc-comp24-benchmarks.git
+[submodule "benchmarks/chc-comp25"]
+	path = benchmarks/chc-comp25
+	url = https://github.com/chc-comp/chc-comp25-benchmarks.git

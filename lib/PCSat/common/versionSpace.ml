@@ -358,16 +358,16 @@ let vec_of_exatom ?(enc_bool_to_float = 100.0) ?(ignore_bool_args = false) map a
   | Some pvar, Some sorts, Some args ->
       ( List.mapi ~f:(fun i x -> (i, x))
         @@ List.filter_map ~f:Fn.id
-        @@ List.map2_exn args sorts ~f:(fun t -> function
-             | T_int.SInt -> Some (Z.to_float @@ Value.int_of @@ Term.value_of t)
-             | T_real.SReal ->
-                 Some (Q.to_float @@ Value.real_of @@ Term.value_of t)
-             | T_bool.SBool ->
-                 if ignore_bool_args then None
-                 else if Value.bool_of @@ Term.value_of t then
-                   Some enc_bool_to_float
-                 else Some (-.enc_bool_to_float)
-             | _ -> assert false),
+        @@ List.map2_exn args sorts ~f:(fun t s ->
+               match (s, Term.value_of t) with
+               | T_bool.SBool, Value.Bool v ->
+                   if ignore_bool_args then None
+                   else if v then Some enc_bool_to_float
+                   else Some (-.enc_bool_to_float)
+               | T_int.SInt, Value.Int v -> Some (Z.to_float v)
+               | T_real.SReal, Value.Real v -> Some (Q.to_float v)
+               | T_bv.SBV _, Value.BV (_, v) -> Some (Z.to_float v) (*ToDo*)
+               | _ -> assert false),
         Hashtbl.find_exn map @@ Ident.name_of_pvar pvar )
   | _ -> assert false
 

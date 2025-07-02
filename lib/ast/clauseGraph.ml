@@ -216,7 +216,7 @@ let add_ex_from t ex srcs =
     Hash_set.Poly.remove t.hide_vertexs v_ex;
     G.add_vertex t.graph v_ex;
     add_example t v_ex;
-    List.iter srcs ~f:(fun (src, hide_und) ->
+    Set.iter srcs ~f:(fun (src, hide_und) ->
         if not @@ V.equal src v_ex then
           match src with
           | Example ex when hide_und && (not @@ ExClause.is_unit ex) ->
@@ -311,29 +311,24 @@ let output_graph ?(pre = "") ~id t senv =
 
 (** Porting from Clause/ClauseSet *)
 let simplify_with pos neg =
-  let simplify_with positive negative ((senv, c_pos, c_neg, c_phi), source) =
-    (* ToDo: improve this to exploit parametric examples *)
-    let positive1 = Set.Poly.map ~f:(fst >> snd) positive in
-    let negative1 = Set.Poly.map ~f:(fst >> snd) negative in
-    if
-      Set.is_empty (Set.inter positive1 c_pos)
-      && Set.is_empty (Set.inter negative1 c_neg)
-    then
-      let source =
-        (Set.to_list
-        @@ Set.Poly.filter_map negative ~f:(fun ((_, term), src) ->
-               if not @@ Set.mem c_pos term then Some src else None))
-        @ Set.to_list
-        @@ Set.Poly.filter_map positive ~f:(fun ((_, term), src) ->
-               if not @@ Set.mem c_neg term then Some src else None)
-        |> List.concat |> List.append source
-      in
-      Some
-        ( (senv, Set.diff c_pos negative1, Set.diff c_neg positive1, c_phi),
-          source )
-    else None
-  in
-  Set.Poly.filter_map ~f:(simplify_with pos neg)
+  (* ToDo: improve this to exploit parametric examples *)
+  let pos1 = Set.Poly.map ~f:(fst >> snd) pos in
+  let neg1 = Set.Poly.map ~f:(fst >> snd) neg in
+  Set.Poly.filter_map ~f:(fun ((senv, c_pos, c_neg, c_phi), source) ->
+      if Set.disjoint c_pos pos1 && Set.disjoint c_neg neg1 then
+        let source =
+          let neg' =
+            Set.Poly.filter_map neg ~f:(fun ((_, term), src) ->
+                if Set.mem c_pos term then None else Some src)
+          in
+          let pos' =
+            Set.Poly.filter_map pos ~f:(fun ((_, term), src) ->
+                if Set.mem c_neg term then None else Some src)
+          in
+          Set.concat @@ Set.add (Set.union neg' pos') source
+        in
+        Some ((senv, Set.diff c_pos neg1, Set.diff c_neg pos1, c_phi), source)
+      else None)
 
 let resolve_one_step ~print mode ((param_senv, (papp : term)), source) exi_senv
     (((uni_senv, c_pos, c_neg, c_phi) as cl), source1) =
@@ -382,7 +377,7 @@ let resolve_one_step ~print mode ((param_senv, (papp : term)), source) exi_senv
          let cl' = (uni_senv', c_pos', c_neg', c_phi') in
          print @@ lazy ("substituted clause: " ^ Clause.str_of exi_senv cl');
          Some
-           ( (cl', source @ source1),
+           ( (cl', Set.union source source1),
              Map.Poly.map theta ~f:(ExtTerm.to_old_trm exi_senv uni_senv') ))
 
 (* val resolve: Atom.t Set.Poly.t -> Atom.t Set.Poly.t -> t -> t Set.Poly.t *)

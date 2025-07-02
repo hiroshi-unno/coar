@@ -25,7 +25,7 @@ let eqcs_of phi =
              let updated = ref false in
              let eqcs' =
                Set.Poly.map eqcs ~f:(fun (eqc1, ty1) ->
-                   if Fn.non Set.is_empty @@ Set.inter eqc2 eqc1 then (
+                   if not @@ Set.disjoint eqc2 eqc1 then (
                      updated := true;
                      (Set.union eqc1 eqc2, ty1))
                    else (eqc1, ty1))

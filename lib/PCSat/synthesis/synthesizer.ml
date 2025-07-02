@@ -200,8 +200,9 @@ module Make
             refine_cands iters @@ State.of_examples vs
             @@ Set.Poly.map ~f:(fun (ex, srcs) ->
                    ( ex,
-                     List.map srcs ~f:(fun c ->
-                         (ClauseGraph.mk_example c, true)) ))
+                     Set.Poly.of_list
+                     @@ List.map srcs ~f:(fun c ->
+                            (ClauseGraph.mk_example c, true)) ))
             @@ Set.Poly.union_list [ pos; neg; und ])
     | _ -> assert false
 

@@ -30,11 +30,10 @@ let mk_func_app_terms
 
 let bool_quals_of terms params =
   let quals, qdeps =
-    Set.Poly.filter_map terms ~f:(fun (term, dep) ->
+    Set.filter terms ~f:(fun (term, _dep) ->
         match term with
-        | Term.Var (x, _, _) when List.Assoc.mem params ~equal:Stdlib.( = ) x ->
-            None
-        | _ -> Some (term, dep))
+        | Term.Var (x, _, _) -> not @@ List.Assoc.mem params ~equal:Stdlib.( = ) x
+        | _ -> true)
     |> Set.Poly.map ~f:(fun (t, dep) ->
            QualDep.qual_and_deps_of (Formula.eq t (T_bool.mk_true ())) dep)
     |> Set.to_list

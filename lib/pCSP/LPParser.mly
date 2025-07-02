@@ -1,8 +1,8 @@
 %{
-  open Ast
-  open Ast.LogicOld
+open Ast
+open Ast.LogicOld
 
-  (* Logic Program Parser *)
+(* Logic Program Parser *)
 %}
 
 %token FALSE TRUE
@@ -39,12 +39,6 @@ clause:
   | head ASSUME body DOT { $1, $3 }
   | head DECLARE body DOT { $1, $3 }
   | QUERY body DOT { Formula.mk_false (), $2 }
-  | error {
-        let message = Printf.sprintf "clause parse error near characters %d-%d"
-                                     (Parsing.symbol_start ())
-                                     (Parsing.symbol_end ())
-        in failwith message
-      }
 
 atoms: separated_list(COMMA, atom) { $1 }
 
@@ -69,18 +63,10 @@ atom:
   | BOT { Formula.mk_false () }
   | VAR { Formula.mk_atom (Atom.of_bool_var (Ident.Tvar $1) )}
   | PVAR LPAREN terms RPAREN {
-   let pred = Predicate.Var (Ident.Pvar $1, List.map Term.sort_of $3) in
-   Formula.mk_atom (Atom.mk_app pred $3)
-   }
-  | error {
-       let message = Printf.sprintf "atom parse error near characters %d-%d"
-                                    (Parsing.symbol_start ())
-                                    (Parsing.symbol_end ())
-       in failwith message
+        let pred = Predicate.Var (Ident.Pvar $1, List.map Term.sort_of $3) in
+        Formula.mk_atom (Atom.mk_app pred $3)
+        (* let sorts = List.map (Logic.AstUtil.sort_of_term []) $3 in (* BUG *) *)
   }
-(*
-   let sorts = List.map (Logic.AstUtil.sort_of_term []) $3 in (* BUG *)
-*)
 
 term:
  | LPAREN term RPAREN { $2 }

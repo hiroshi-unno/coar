@@ -5,6 +5,14 @@ open LogicOld
 
 type t = { positive : ExAtom.t Set.Poly.t; negative : ExAtom.t Set.Poly.t }
 
+let mk_false () = { positive = Set.Poly.empty; negative = Set.Poly.empty }
+
+let mk_true () =
+  {
+    positive = Set.Poly.singleton (ExAtom.mk_true ());
+    negative = Set.Poly.empty;
+  }
+
 let mk_unit_neg atm =
   { positive = Set.Poly.empty; negative = Set.Poly.singleton atm }
 
@@ -84,7 +92,7 @@ let is_unit (clause : t) =
   Set.length clause.positive + Set.length clause.negative = 1
 
 (* contradiction *)
-let is_empty (clause : t) =
+let is_false (clause : t) =
   Set.(is_empty clause.positive && is_empty clause.negative)
 
 let pvs_of (clause : t) : Ident.pvar_set =
@@ -277,28 +285,56 @@ let simplify unknowns pos neg (clause, srcs) =
     || Set.exists cl_neg
          ~f:(matched_by unknowns neg ~check_inst:true >> Option.is_some)
     (* clause is subsumed by neg *)
-    || (*ToDo: this never holds?*)
-    (Fn.non Set.is_empty @@ Set.inter cl_pos cl_neg (* clause is tautology *))
+    ||
+    (*ToDo: this never holds?*)
+    (not @@ Set.disjoint cl_pos cl_neg (* clause is tautology *))
   then None
   else
     Some
       (normalize_params unknowns { positive = cl_pos; negative = cl_neg }, !srcs)
 
+let has_self_loop terms =
+  let size = List.length terms / 2 in
+  let ts1, ts2 = List.split_n terms size in
+  let eq t1 t2 =
+    match (t1, t2) with
+    | LogicOld.(
+        ( Term.FunApp (T_bv.BVNum (size1, i1), _, _),
+          Term.FunApp (T_bv.BVNum (size2, i2), _, _) )) ->
+        (*ToDo*)
+        LogicOld.T_bv.eq_size size1 size2 && Z.equal i1 i2
+    | _ -> Stdlib.( = ) t1 t2
+  in
+  List.equal eq ts1 ts2
+
+let has_self_loop_exatom wfpvs = function
+  | ExAtom.PApp ((pvar, _), args) ->
+      (Set.mem wfpvs @@ Ident.pvar_to_tvar pvar) && has_self_loop args
+  | _ -> false
+
+let simplify_wfpvs wfpvs clause =
+  if Set.exists clause.negative ~f:(has_self_loop_exatom wfpvs) then mk_true ()
+  else
+    {
+      clause with
+      positive =
+        Set.filter clause.positive ~f:(has_self_loop_exatom wfpvs >> not);
+    }
+
 let rec simplify_nepvs nepvs clause =
   if
-    Fn.non Set.is_empty clause.positive
-    || not
-         (Set.for_all clause.negative ~f:(fun atm ->
-              match ExAtom.pvar_of atm with
-              | None -> false
-              | Some p -> Set.mem nepvs @@ Ident.pvar_to_tvar p))
-  then clause
-  else
-    match Set.find clause.negative ~f:(ExAtom.is_empty_atm nepvs) with
+    Set.is_empty clause.positive
+    && Set.for_all clause.negative ~f:(fun atm ->
+           match ExAtom.pvar_of atm with
+           | None -> false
+           | Some p -> Set.mem nepvs @@ Ident.pvar_to_tvar p)
+  then
+    match Set.find clause.negative ~f:(ExAtom.is_non_empty_atm nepvs) with
     | None -> clause
     | Some neatm ->
         simplify_nepvs nepvs
           { clause with negative = Set.remove clause.negative neatm }
+  else clause
 
 let subst sub clause =
   {

@@ -96,8 +96,8 @@ expr:
   | expr REM expr { T_num.mk_nrem Value.Truncated $1 $3 }
   | expr SREM expr { T_num.mk_nrem Value.Truncated $1 $3 }
   | expr UREM expr { T_bv.mk_bvrem ~size:None ~signed:(Some false) $1 $3 }
-  | SEXT LPAREN INT COMMA INT COMMA expr RPAREN { T_num.mk_nsext $3 $5 $7 }
-  | ZEXT LPAREN INT COMMA INT COMMA expr RPAREN { T_bv.mk_bvzext $3 $5 $7 }
+  | SEXT LPAREN INT COMMA INT COMMA expr RPAREN { T_num.mk_nsext ~size:(Some $3) ($5 - $3) $7 }
+  | ZEXT LPAREN INT COMMA INT COMMA expr RPAREN { T_bv.mk_bvzext ~size:(Some $3) ($5 - $3) $7 }
   | SHL LPAREN expr COMMA expr RPAREN { T_bv.mk_bvshl ~size:None $3 $5 }
   | LSHR LPAREN expr COMMA expr RPAREN { T_bv.mk_bvlshr ~size:None $3 $5 }
   | ASHR LPAREN expr COMMA expr RPAREN { T_bv.mk_bvashr ~size:None $3 $5 }

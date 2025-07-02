@@ -21,11 +21,13 @@ module Config = struct
     | NEG_BIASED_SAT (* Negatively biased SAT solving *)
     | RAND_MAX_SAT of
         (* Randomly weighted MAX-SAT solving *)
-        float (* cut-off lower-bound *)
+        float
+        (* cut-off lower-bound *)
         * float (* cut-off upper-bound *)
     | BMI_MAX_SAT of
         (* BMI weighted MAX-SAT solving *)
-        int (* num *)
+        int
+        (* num *)
         * int (* bound *)
         * float (* ratio *)
         * perturbation
@@ -36,11 +38,13 @@ module Config = struct
     | ORACLE_MAX_SAT of strategy
     | POS_BIASED_MAX_SAT of
         (* Positively biased MAX-SAT solving *)
-        bool (* use examples *)
+        bool
+        (* use examples *)
         * float (* weight *)
     | NEG_BIASED_MAX_SAT of
         (* Negatively biased MAX-SAT solving *)
-        bool (* use examples *)
+        bool
+        (* use examples *)
         * float (* weight *)
     | Mixed of (strategy * bool (* enable sampling *)) list
     | CBandit (* Contextual bandit *)
@@ -183,24 +187,24 @@ module Make
         in
         if Set.is_empty sample then learn_clauses_to_remove_cycles pos res wfpvs
         else
-          let has_self_loop (_, terms) =
-            let size = List.length terms / 2 in
-            List.(Stdlib.( = ) (take terms size) (drop terms size))
-          in
           (* ToDo: Better add all? *)
-          match Set.find sample ~f:has_self_loop with
+          match Set.find sample ~f:(snd >> ExClause.has_self_loop) with
           | Some ((_pvar, sorts), terms) ->
               let res' =
                 Set.add res
                   (ExClause.mk_unit_neg (ExAtom.PApp ((pvar, sorts), terms)))
               in
+              if false then (
+                print_endline @@ "in: "
+                ^ ExAtom.str_of (ExAtom.PApp ((pvar, sorts), terms));
+                print_endline @@ "out: " ^ ExClauseSet.str_of res');
               learn_clauses_to_remove_cycles pos res' wfpvs
           | None ->
               let open Graph in
               let open Pack.Digraph in
               LoopDetector.gen_graph sample
               |> (fun (graph, node_map_rev) ->
-                   (graph, Components.scc_list graph, node_map_rev))
+              (graph, Components.scc_list graph, node_map_rev))
               |> LoopDetector.detect res pvar sorts
               |> Fn.flip (learn_clauses_to_remove_cycles pos) wfpvs)
 
@@ -231,7 +235,7 @@ module Make
               let open Pack.Digraph in
               NWFLoopDetector.gen_graph (sorts, sorts_l, sorts_r) sample
               |> (fun (graph, node_map_rev) ->
-                   (graph, Components.scc_list graph, node_map_rev))
+              (graph, Components.scc_list graph, node_map_rev))
               |> NWFLoopDetector.detect ~print:Debug.print res pvar
                    (sorts, sorts_l, sorts_r)
               |> Fn.flip (learn_clauses_to_remove_cycles_for_nwf pos) nwfpvs)
@@ -260,7 +264,7 @@ module Make
       PropLogic.Formula.mk_atom ("A" ^ string_of_int !prop_count)
 
   let mk_labels pos neg und =
-    assert (Set.is_empty (Set.inter pos neg));
+    assert (Set.disjoint pos neg);
     Map.of_set_exn
     @@ Set.Poly.union_list
          [
@@ -379,7 +383,10 @@ module Make
             Debug.print @@ lazy ">>> heat map generation";
             let tm = Timer.make () in
             let exs1 =
-              let dw = 1.0 (* default weight for counterexamples *) in
+              let dw =
+                1.0
+                (* default weight for counterexamples *)
+              in
               VersionSpace.examples_of vs
               |> Set.Poly.map ~f:(fun cl -> (cl, dw))
               |> Set.to_list
@@ -560,7 +567,8 @@ module Make
     in
     aux iters
 
-  (** ToDo: extend to support the case where [undecided] contains function variables *)
+  (** ToDo: extend to support the case where [undecided] contains function
+      variables *)
   let check_sat_main iters vs nwfpvs wfpvs fnpvs pos_atms neg_atms undecided =
     let und_atms = ExClauseSet.exatoms_of undecided in
     let map = mk_labels pos_atms neg_atms und_atms in
@@ -644,7 +652,7 @@ module Make
       |> Map.Poly.to_alist
       |> List.map ~f:(fun (Ident.Tvar n, sort) ->
              ( Ident.Pvar n,
-               Logic.Sort.args_of sort |> List.map ~f:Logic.ExtTerm.to_old_sort
+               List.map (Logic.Sort.args_of sort) ~f:Logic.ExtTerm.to_old_sort
              ))
     in
     let fnpvs =
@@ -652,7 +660,7 @@ module Make
       |> Map.Poly.to_alist
       |> List.map ~f:(fun (Ident.Tvar n, sort) ->
              ( Ident.Pvar n,
-               List.map ~f:Logic.ExtTerm.to_old_sort @@ Logic.Sort.args_of sort
+               List.map (Logic.Sort.args_of sort) ~f:Logic.ExtTerm.to_old_sort
              ))
     in
     let nwfpvs =
@@ -668,10 +676,12 @@ module Make
     let pos_atms, neg_atms, undecided_inst =
       (*ToDo: extend satisfiability checker to support parametric examples*)
       ( ExClauseSet.exatoms_of_uclauses
-        @@ (*ExClauseSet.normalize @@*)
+        @@
+        (*ExClauseSet.normalize @@*)
         ExClauseSet.instantiate dpos,
         ExClauseSet.exatoms_of_uclauses
-        @@ (*ExClauseSet.normalize @@*)
+        @@
+        (*ExClauseSet.normalize @@*)
         ExClauseSet.instantiate dneg,
         (*ExClauseSet.normalize @@*) ExClauseSet.instantiate undecided )
     in
@@ -688,11 +698,11 @@ module Make
           let _ =
             if true then ()
             else
-              (* adding determinacy and acyclicity constraints are useless *)
+              (* ToDo: adding determinacy and acyclicity constraints are useless? *)
               let new_undecided = Set.diff loop_cls undecided in
               VersionSpace.add_examples vs
               @@ Set.Poly.map new_undecided ~f:(fun ex ->
-                     (ex, [ (ClauseGraph.Dummy, false) ]))
+                     (ex, Set.Poly.singleton (ClauseGraph.Dummy, false)))
             (*TODO: add sources for new_undecided *)
           in
           let vs' =
@@ -717,18 +727,24 @@ module Make
   let unit_propagation vs () =
     Debug.print @@ lazy ">>> unit propagation";
     let dpos, dneg, undecided = VersionSpace.pos_neg_und_examples_of vs in
-    let undecided =
-      Set.Poly.map
-        ~f:(ExClause.simplify_nepvs (PCSP.Problem.nepvs_of APCSP.problem))
-        undecided
+    let simplify =
+      if true (*ToDo*) then Fn.id
+      else ExClause.simplify_wfpvs (PCSP.Problem.wfpvs_of APCSP.problem)
     in
-    let dpos = Set.Poly.map dpos ~f:(fun ex -> (ex, [ ex ])) in
-    let dneg = Set.Poly.map dneg ~f:(fun ex -> (ex, [ ex ])) in
-    let undecided = Set.Poly.map undecided ~f:(fun ex -> (ex, [ ex ])) in
+    let dpos = Set.Poly.map dpos ~f:simplify in
+    let dneg = Set.Poly.map dneg ~f:simplify in
+    let undecided =
+      Set.Poly.map undecided
+        ~f:
+          (simplify
+          >> ExClause.simplify_nepvs (PCSP.Problem.nepvs_of APCSP.problem))
+    in
     let res =
       ExClauseSet.unit_propagation
         (Map.key_set @@ PCSP.Problem.senv_of APCSP.problem)
-        dpos dneg undecided
+        (Set.Poly.map dpos ~f:(fun ex -> (ex, [ ex ])))
+        (Set.Poly.map dneg ~f:(fun ex -> (ex, [ ex ])))
+        (Set.Poly.map undecided ~f:(fun ex -> (ex, [ ex ])))
     in
     Debug.print @@ lazy "<<< unit propagation";
     match res with
@@ -744,7 +760,10 @@ module Make
         let new_examples =
           Set.Poly.union_list [ dpos'; dneg'; undecided' ]
           |> Set.Poly.map ~f:(fun (ex, srcs) ->
-                 (ex, List.map srcs ~f:(fun e -> (ClauseGraph.Example e, true))))
+                 ( ex,
+                   Set.Poly.of_list
+                   @@ List.map srcs ~f:(fun e -> (ClauseGraph.Example e, true))
+                 ))
         in
         Ok (State.of_examples vs new_examples)
 

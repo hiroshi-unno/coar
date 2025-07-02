@@ -126,7 +126,7 @@ module Make (Config : Config.ConfigType) : SolverType = struct
                     Typeinf.typeinf_term
                       ~print:(fun _ -> ())
                       ~sort_opt:(Some LogicOld.T_real.SReal)
-                      ~instantiate_num_to_int:false
+                      ~default:(Some LogicOld.T_real.SReal (*ToDo*))
                     @@ SMT.Smtlib2.of_term ~print:Debug.print ~inline:true
                          SMT.Problem.
                            {

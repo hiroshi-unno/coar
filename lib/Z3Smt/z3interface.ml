@@ -292,32 +292,12 @@ and term_of ctx (senv : sort_env_list)
   else if Z3.Arithmetic.is_algebraic_number expr then
     let t, n = parse_root_obj @@ Sexp.of_string @@ Z3.Expr.to_string expr in
     T_real.mk_alge t n
-  else if Z3.BitVector.is_bv_numeral expr then
-    let size = Some (Z3.BitVector.get_size (Z3.Expr.get_sort expr)) in
-    T_bv.mk_bvnum ~size @@ Z.of_string @@ Z3.BitVector.numeral_to_string expr
   else if Z3.Arithmetic.is_uminus expr then
     apply_uop ctx senv penv dtenv T_int.mk_neg expr
   else if Z3.Arithmetic.is_int2real expr then
     apply_uop ctx senv penv dtenv T_irb.mk_int_to_real expr
   else if Z3.Arithmetic.is_real2int expr then
     apply_uop ctx senv penv dtenv T_irb.mk_real_to_int expr
-  else if Z3.BitVector.is_bv_uminus expr then
-    let size = Some (Z3.BitVector.get_size (Z3.Expr.get_sort expr)) in
-    apply_uop ctx senv penv dtenv (T_bv.mk_bvneg ~size) expr
-  else if Z3.BitVector.is_int2bv expr then
-    let size = Some (Z3.BitVector.get_size (Z3.Expr.get_sort expr)) in
-    apply_uop ctx senv penv dtenv (T_irb.mk_int_to_bv ~size) expr
-  else if Z3.BitVector.is_bv2int expr then
-    let size =
-      match Z3.Expr.get_args expr with
-      | [ e ] -> Some (Z3.BitVector.get_size (Z3.Expr.get_sort e))
-      | _ -> failwith "[z3:term_of]"
-    in
-    let signed =
-      Some true
-      (*ToDo*)
-    in
-    apply_uop ctx senv penv dtenv (T_irb.mk_bv_to_int ~size ~signed) expr
   else if Z3.Arithmetic.is_add expr then
     match sort_of dtenv @@ Z3.Expr.get_sort expr with
     | T_int.SInt -> apply ctx senv penv dtenv T_int.mk_add expr
@@ -346,23 +326,47 @@ and term_of ctx (senv : sort_env_list)
     apply_bop ctx senv penv dtenv
       (T_int.mk_rem Value.Euclidean (*ToDo: z3 rem is different from mod*))
       expr
+  else if Z3.BitVector.is_bv_numeral expr then
+    let size = Some (Z3.BitVector.get_size (Z3.Expr.get_sort expr)) in
+    T_bv.mk_bvnum ~size @@ Z.of_string @@ Z3.BitVector.numeral_to_string expr
   else if Z3.BitVector.is_bv_uminus expr then
     let size = Some (Z3.BitVector.get_size (Z3.Expr.get_sort expr)) in
     apply_uop ctx senv penv dtenv (T_bv.mk_bvneg ~size) expr
-  else if Z3.BitVector.is_bv_signextension expr then
-    let from =
-      Z3.BitVector.get_size @@ Z3.Expr.get_sort @@ List.hd_exn
-      @@ Z3.Expr.get_args expr
+  else if Z3.BitVector.is_bv_not expr then
+    let size = Some (Z3.BitVector.get_size (Z3.Expr.get_sort expr)) in
+    apply_uop ctx senv penv dtenv (T_bv.mk_bvnot ~size) expr
+  else if Z3.BitVector.is_int2bv expr then
+    let size = Some (Z3.BitVector.get_size (Z3.Expr.get_sort expr)) in
+    apply_uop ctx senv penv dtenv (T_irb.mk_int_to_bv ~size) expr
+  else if Z3.BitVector.is_bv2int expr then
+    let size =
+      match Z3.Expr.get_args expr with
+      | [ e ] -> Some (Z3.BitVector.get_size (Z3.Expr.get_sort e))
+      | _ -> failwith "[z3:term_of]"
     in
-    let to_ = Z3.BitVector.get_size @@ Z3.Expr.get_sort expr in
-    apply_uop ctx senv penv dtenv (T_bv.mk_bvsext from to_) expr
-  else if Z3.BitVector.is_bv_zeroextension expr then
-    let from =
-      Z3.BitVector.get_size @@ Z3.Expr.get_sort @@ List.hd_exn
-      @@ Z3.Expr.get_args expr
+    let signed =
+      Some true
+      (*ToDo*)
     in
-    let to_ = Z3.BitVector.get_size @@ Z3.Expr.get_sort expr in
-    apply_uop ctx senv penv dtenv (T_bv.mk_bvzext from to_) expr
+    apply_uop ctx senv penv dtenv (T_irb.mk_bv_to_int ~size ~signed) expr
+  else if Z3.BitVector.is_bv_and expr then
+    let size = Some (Z3.BitVector.get_size (Z3.Expr.get_sort expr)) in
+    apply_bop ctx senv penv dtenv (T_bv.mk_bvand ~size) expr
+  else if Z3.BitVector.is_bv_or expr then
+    let size = Some (Z3.BitVector.get_size (Z3.Expr.get_sort expr)) in
+    apply_bop ctx senv penv dtenv (T_bv.mk_bvor ~size) expr
+  else if Z3.BitVector.is_bv_xor expr then
+    let size = Some (Z3.BitVector.get_size (Z3.Expr.get_sort expr)) in
+    apply_bop ctx senv penv dtenv (T_bv.mk_bvxor ~size) expr
+  else if Z3.BitVector.is_bv_nand expr then
+    let size = Some (Z3.BitVector.get_size (Z3.Expr.get_sort expr)) in
+    apply_bop ctx senv penv dtenv (T_bv.mk_bvnand ~size) expr
+  else if Z3.BitVector.is_bv_nor expr then
+    let size = Some (Z3.BitVector.get_size (Z3.Expr.get_sort expr)) in
+    apply_bop ctx senv penv dtenv (T_bv.mk_bvnor ~size) expr
+  else if Z3.BitVector.is_bv_xnor expr then
+    let size = Some (Z3.BitVector.get_size (Z3.Expr.get_sort expr)) in
+    apply_bop ctx senv penv dtenv (T_bv.mk_bvxnor ~size) expr
   else if Z3.BitVector.is_bv_add expr then
     let size = Some (Z3.BitVector.get_size (Z3.Expr.get_sort expr)) in
     apply_bop ctx senv penv dtenv (T_bv.mk_bvadd ~size) expr
@@ -388,6 +392,9 @@ and term_of ctx (senv : sort_env_list)
     let size = Some (Z3.BitVector.get_size (Z3.Expr.get_sort expr)) in
     let signed = Some false in
     apply_bop ctx senv penv dtenv (T_bv.mk_bvrem ~size ~signed) expr
+  else if Z3.BitVector.is_bv_smod expr then
+    let size = Some (Z3.BitVector.get_size (Z3.Expr.get_sort expr)) in
+    apply_bop ctx senv penv dtenv (T_bv.mk_bvsmod ~size) expr
   else if Z3.BitVector.is_bv_shiftleft expr then
     let size = Some (Z3.BitVector.get_size (Z3.Expr.get_sort expr)) in
     apply_bop ctx senv penv dtenv (T_bv.mk_bvshl ~size) expr
@@ -397,12 +404,38 @@ and term_of ctx (senv : sort_env_list)
   else if Z3.BitVector.is_bv_shiftrightarithmetic expr then
     let size = Some (Z3.BitVector.get_size (Z3.Expr.get_sort expr)) in
     apply_bop ctx senv penv dtenv (T_bv.mk_bvashr ~size) expr
-  else if Z3.BitVector.is_bv_or expr then
-    let size = Some (Z3.BitVector.get_size (Z3.Expr.get_sort expr)) in
-    apply_bop ctx senv penv dtenv (T_bv.mk_bvor ~size) expr
-  else if Z3.BitVector.is_bv_and expr then
-    let size = Some (Z3.BitVector.get_size (Z3.Expr.get_sort expr)) in
-    apply_bop ctx senv penv dtenv (T_bv.mk_bvand ~size) expr
+  else if Z3.BitVector.is_bv_extract expr then
+    let size =
+      Z3.BitVector.get_size @@ Z3.Expr.get_sort @@ List.hd_exn
+      @@ Z3.Expr.get_args expr
+    in
+    let h, l = failwith "not supported" in
+    apply_uop ctx senv penv dtenv (T_bv.mk_bvextract ~size:(Some size) h l) expr
+  else if Z3.BitVector.is_bv_signextension expr then
+    let size =
+      Z3.BitVector.get_size @@ Z3.Expr.get_sort @@ List.hd_exn
+      @@ Z3.Expr.get_args expr
+    in
+    let size' = Z3.BitVector.get_size @@ Z3.Expr.get_sort expr in
+    apply_uop ctx senv penv dtenv
+      (T_bv.mk_bvsext ~size:(Some size) (size' - size))
+      expr
+  else if Z3.BitVector.is_bv_zeroextension expr then
+    let size =
+      Z3.BitVector.get_size @@ Z3.Expr.get_sort @@ List.hd_exn
+      @@ Z3.Expr.get_args expr
+    in
+    let size' = Z3.BitVector.get_size @@ Z3.Expr.get_sort expr in
+    apply_uop ctx senv penv dtenv
+      (T_bv.mk_bvzext ~size:(Some size) (size' - size))
+      expr
+  else if Z3.BitVector.is_bv_concat expr then
+    match Z3.Expr.get_args expr with
+    | [ e1; e2 ] ->
+        let size1 = Some (Z3.BitVector.get_size (Z3.Expr.get_sort e1)) in
+        let size2 = Some (Z3.BitVector.get_size (Z3.Expr.get_sort e2)) in
+        apply_bop ctx senv penv dtenv (T_bv.mk_bvconcat ~size1 ~size2) expr
+    | _ -> failwith "[z3:term_of] bv_concat requires two arguments"
   else if Z3.Z3Array.is_store expr then
     match
       ( List.map ~f:(term_of ctx senv penv dtenv) @@ Z3.Expr.get_args expr,
@@ -485,7 +518,7 @@ and term_of ctx (senv : sort_env_list)
         try sort_of dtenv @@ Z3.FuncDecl.get_range func
         with Failure err ->
           Debug.print @@ lazy ("error: " ^ err);
-          raise (Failure err)
+          failwith err
       in
       let ts =
         List.map ~f:(term_of ctx senv penv dtenv) @@ Z3.Expr.get_args expr
@@ -642,16 +675,16 @@ and
   else if Z3.Arithmetic.is_real_is_int expr then
     apply_urel ctx senv penv dtenv T_irb.mk_is_int expr
   else if Z3.Arithmetic.is_le expr then
-    Typeinf.typeinf_atom ~print:Debug.print
+    Typeinf.typeinf_atom ~print:Debug.print ~default:None
     @@ apply_brel ctx senv penv dtenv T_num.mk_nleq expr
   else if Z3.Arithmetic.is_ge expr then
-    Typeinf.typeinf_atom ~print:Debug.print
+    Typeinf.typeinf_atom ~print:Debug.print ~default:None
     @@ apply_brel ctx senv penv dtenv T_num.mk_ngeq expr
   else if Z3.Arithmetic.is_lt expr then
-    Typeinf.typeinf_atom ~print:Debug.print
+    Typeinf.typeinf_atom ~print:Debug.print ~default:None
     @@ apply_brel ctx senv penv dtenv T_num.mk_nlt expr
   else if Z3.Arithmetic.is_gt expr then
-    Typeinf.typeinf_atom ~print:Debug.print
+    Typeinf.typeinf_atom ~print:Debug.print ~default:None
     @@ apply_brel ctx senv penv dtenv T_num.mk_ngt expr
   else if Z3.BitVector.is_bv_sle expr then
     let size =
@@ -1308,16 +1341,9 @@ and of_term ~id ctx (env : sort_env_list)
                 (Z3.Arithmetic.Real.mk_numeral_i ctx 0))
       | T_real.Alge _, [ _ ] ->
           Z3.Arithmetic.Real.mk_numeral_s ctx @@ Term.str_of t (*ToDo*)
-      | T_bv.BVNum (size, n), [] ->
-          Z3.BitVector.mk_numeral ctx (Z.to_string n) (T_bv.bits_of size)
       | (T_int.Neg | T_real.RNeg), [ n ] ->
           if Z3.Expr.is_const n then (*ToDo*) Z3.Arithmetic.mk_unary_minus ctx n
           else Z3.Arithmetic.mk_unary_minus ctx n
-      | T_bv.BVNeg _size, [ n ] -> Z3.BitVector.mk_neg ctx n
-      | T_bv.BVSEXT (from, to_), [ n ] ->
-          Z3.BitVector.mk_sign_ext ctx (to_ - from) n
-      | T_bv.BVZEXT (from, to_), [ n ] ->
-          Z3.BitVector.mk_zero_ext ctx (to_ - from) n
       | T_int.Nop, [ n ] -> n
       | ((T_int.Abs | T_real.RAbs) as op), [ n ] ->
           (*ToDo*)
@@ -1335,13 +1361,10 @@ and of_term ~id ctx (env : sort_env_list)
           Z3.Boolean.mk_ite ctx is_minus minus_n n
       | (T_int.Add | T_real.RAdd), [ t1; t2 ] ->
           Z3.Arithmetic.mk_add ctx [ t1; t2 ]
-      | T_bv.BVAdd _size, [ t1; t2 ] -> Z3.BitVector.mk_add ctx t1 t2
       | (T_int.Sub | T_real.RSub), [ t1; t2 ] ->
           Z3.Arithmetic.mk_sub ctx [ t1; t2 ]
-      | T_bv.BVSub _size, [ t1; t2 ] -> Z3.BitVector.mk_sub ctx t1 t2
       | (T_int.Mul | T_real.RMul), [ t1; t2 ] ->
           Z3.Arithmetic.mk_mul ctx [ t1; t2 ]
-      | T_bv.BVMul _size, [ t1; t2 ] -> Z3.BitVector.mk_mul ctx t1 t2
       | T_int.Div (Euclidean | Truncated (*ToDo*)), [ t1; t2 ] ->
           Z3.Arithmetic.mk_div ctx t1 t2
       | T_real.RDiv, [ t1; t2 ] ->
@@ -1353,29 +1376,47 @@ and of_term ~id ctx (env : sort_env_list)
             (if Z3.Arithmetic.is_int t2 then
                Z3.Arithmetic.Integer.mk_int2real ctx t2
              else t2)
-      | T_bv.BVDiv (_, signed), [ t1; t2 ] ->
-          (if T_bv.signed_of signed then Z3.BitVector.mk_sdiv
-           else Z3.BitVector.mk_udiv)
-            ctx t1 t2
       | T_int.Rem (Euclidean | Truncated (*ToDo*)), [ t1; t2 ] ->
           Z3.Arithmetic.Integer.mk_mod ctx t1 t2
-      | T_bv.BVRem (_, signed), [ t1; t2 ] ->
-          (if T_bv.signed_of signed then Z3.BitVector.mk_srem
-           else Z3.BitVector.mk_urem)
-            ctx t1 t2
       | (T_int.Power | T_real.RPower), [ t1; t2 ] ->
           Z3.Arithmetic.mk_power ctx t1 t2
-      | T_bv.BVSHL _size, [ t1; t2 ] -> Z3.BitVector.mk_shl ctx t1 t2
-      | T_bv.BVLSHR _size, [ t1; t2 ] -> Z3.BitVector.mk_lshr ctx t1 t2
-      | T_bv.BVASHR _size, [ t1; t2 ] -> Z3.BitVector.mk_ashr ctx t1 t2
-      | T_bv.BVOr _size, [ t1; t2 ] -> Z3.BitVector.mk_or ctx t1 t2
-      | T_bv.BVAnd _size, [ t1; t2 ] -> Z3.BitVector.mk_and ctx t1 t2
       | T_irb.IntToReal, [ t ] -> Z3.Arithmetic.Integer.mk_int2real ctx t
       | T_irb.RealToInt, [ t ] -> Z3.Arithmetic.Real.mk_real2int ctx t
       | T_irb.IntToBV size, [ t ] ->
           Z3.Arithmetic.Integer.mk_int2bv ctx (T_bv.bits_of size) t
       | T_irb.BVToInt (_size, signed), [ t ] ->
           Z3.BitVector.mk_bv2int ctx t (T_bv.signed_of signed)
+      | T_bv.BVNum (size, n), [] ->
+          Z3.BitVector.mk_numeral ctx (Z.to_string n) (T_bv.bits_of size)
+      | T_bv.BVNot _size, [ t1 ] -> Z3.BitVector.mk_not ctx t1
+      | T_bv.BVAnd _size, [ t1; t2 ] -> Z3.BitVector.mk_and ctx t1 t2
+      | T_bv.BVOr _size, [ t1; t2 ] -> Z3.BitVector.mk_or ctx t1 t2
+      | T_bv.BVXor _size, [ t1; t2 ] -> Z3.BitVector.mk_xor ctx t1 t2
+      | T_bv.BVNand _size, [ t1; t2 ] -> Z3.BitVector.mk_nand ctx t1 t2
+      | T_bv.BVNor _size, [ t1; t2 ] -> Z3.BitVector.mk_nor ctx t1 t2
+      | T_bv.BVXnor _size, [ t1; t2 ] -> Z3.BitVector.mk_xnor ctx t1 t2
+      | T_bv.BVNeg _size, [ t1 ] -> Z3.BitVector.mk_neg ctx t1
+      | T_bv.BVAdd _size, [ t1; t2 ] -> Z3.BitVector.mk_add ctx t1 t2
+      | T_bv.BVSub _size, [ t1; t2 ] -> Z3.BitVector.mk_sub ctx t1 t2
+      | T_bv.BVMul _size, [ t1; t2 ] -> Z3.BitVector.mk_mul ctx t1 t2
+      | T_bv.BVDiv (_size, signed), [ t1; t2 ] ->
+          (if T_bv.signed_of signed then Z3.BitVector.mk_sdiv
+           else Z3.BitVector.mk_udiv)
+            ctx t1 t2
+      | T_bv.BVRem (_size, signed), [ t1; t2 ] ->
+          (if T_bv.signed_of signed then Z3.BitVector.mk_srem
+           else Z3.BitVector.mk_urem)
+            ctx t1 t2
+      | T_bv.BVSMod _size, [ t1; t2 ] -> Z3.BitVector.mk_smod ctx t1 t2
+      | T_bv.BVSHL _size, [ t1; t2 ] -> Z3.BitVector.mk_shl ctx t1 t2
+      | T_bv.BVLSHR _size, [ t1; t2 ] -> Z3.BitVector.mk_lshr ctx t1 t2
+      | T_bv.BVASHR _size, [ t1; t2 ] -> Z3.BitVector.mk_ashr ctx t1 t2
+      | T_bv.BVEXTRACT (_size, h, l), [ t1 ] ->
+          Z3.BitVector.mk_extract ctx h l t1
+      | T_bv.BVSEXT (_size, ext), [ t1 ] -> Z3.BitVector.mk_sign_ext ctx ext t1
+      | T_bv.BVZEXT (_size, ext), [ t1 ] -> Z3.BitVector.mk_zero_ext ctx ext t1
+      | T_bv.BVCONCAT (_size1, _size2), [ t1; t2 ] ->
+          Z3.BitVector.mk_concat ctx t1 t2
       | T_string.StrConst str, [] -> Z3.Seq.mk_string ctx str
       | T_sequence.SeqEpsilon, [] -> Z3.FuncDecl.apply (z3_epsilon ctx) []
       | T_sequence.SeqSymbol str, [] ->
@@ -1406,11 +1447,11 @@ and of_term ~id ctx (env : sort_env_list)
                (List.map ~f:(of_sort ctx dtenv) sargs)
                (of_sort ctx dtenv sret))
             ts
+      | T_array.AConst (si, _se), [ t1 ] ->
+          Z3.Z3Array.mk_const_array ctx (of_sort ctx dtenv si) t1
       | T_array.AStore (_si, _se), [ t1; t2; t3 ] ->
           Z3.Z3Array.mk_store ctx t1 t2 t3
       | T_array.ASelect (_si, _se), [ t1; t2 ] -> Z3.Z3Array.mk_select ctx t1 t2
-      | T_array.AConst (si, _se), [ t1 ] ->
-          Z3.Z3Array.mk_const_array ctx (of_sort ctx dtenv si) t1
       | T_tuple.TupleSel (sorts, i), [ t ] ->
           let sort = of_sort ctx dtenv @@ T_tuple.STuple sorts in
           Z3.FuncDecl.apply

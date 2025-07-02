@@ -212,9 +212,12 @@ and normalize_term ?(drop_coeff = false) = function
           |> (if drop_coeff then PolyTerm.div_by_gcd else Fn.id)
           |> Map.Poly.to_alist
           |> List.map ~f:(fun (m, c) ->
-                 if Map.Poly.is_empty m then Term.of_value c
+                 if Map.Poly.is_empty m then Term.of_value (get_dtenv ()) c
                  else if Stdlib.(c = Value.Int Z.one) then PolyTerm.int_prod m
-                 else T_int.mk_mul (Term.of_value c) (PolyTerm.int_prod m))
+                 else
+                   T_int.mk_mul
+                     (Term.of_value (get_dtenv ()) c)
+                     (PolyTerm.int_prod m))
           |> function
           | [] -> T_int.zero ()
           | [ t ] -> t
@@ -225,9 +228,12 @@ and normalize_term ?(drop_coeff = false) = function
           |> (if false (*drop_coeff*) then PolyTerm.div_by_gcd else Fn.id)
           |> Map.Poly.to_alist
           |> List.map ~f:(fun (m, c) ->
-                 if Map.Poly.is_empty m then Term.of_value c
+                 if Map.Poly.is_empty m then Term.of_value (get_dtenv ()) c
                  else if Stdlib.(c = Value.Real Q.one) then PolyTerm.real_prod m
-                 else T_real.mk_rmul (Term.of_value c) (PolyTerm.real_prod m))
+                 else
+                   T_real.mk_rmul
+                     (Term.of_value (get_dtenv ()) c)
+                     (PolyTerm.real_prod m))
           |> function
           | [] -> T_real.rzero ()
           | [ t ] -> t
@@ -458,9 +464,13 @@ let homogenize_term term =
       int_monomials_of (Value.Int Z.one) term
       |> PolyTerm.int_simplify |> Map.Poly.to_alist
       |> List.map ~f:(fun (m, c) ->
-             if Map.Poly.is_empty m then (*Term.of_value c*) T_int.zero ()
+             if Map.Poly.is_empty m then (*Term.of_value (get_dtenv ())c*)
+               T_int.zero ()
              else if Stdlib.(c = Value.Int Z.one) then PolyTerm.int_prod m
-             else T_int.mk_mul (Term.of_value c) (PolyTerm.int_prod m))
+             else
+               T_int.mk_mul
+                 (Term.of_value (get_dtenv ()) c)
+                 (PolyTerm.int_prod m))
       |> function
       | [] -> T_int.zero ()
       | [ t ] -> t
@@ -469,9 +479,13 @@ let homogenize_term term =
       real_monomials_of (Value.Real Q.one) term
       |> PolyTerm.real_simplify |> Map.Poly.to_alist
       |> List.map ~f:(fun (m, c) ->
-             if Map.Poly.is_empty m then (*Term.of_value c*) T_real.rzero ()
+             if Map.Poly.is_empty m then (*Term.of_value (get_dtenv ())c*)
+               T_real.rzero ()
              else if Stdlib.(c = Value.Real Q.one) then PolyTerm.real_prod m
-             else T_real.mk_rmul (Term.of_value c) (PolyTerm.real_prod m))
+             else
+               T_real.mk_rmul
+                 (Term.of_value (get_dtenv ()) c)
+                 (PolyTerm.real_prod m))
       |> function
       | [] -> T_real.rzero ()
       | [ t ] -> t

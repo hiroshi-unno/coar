@@ -1,13 +1,7 @@
 open Core
 open Common.Ext
+open Common.Combinator
 open LogicOld
-
-let split_sels dt =
-  List.partition_tf ~f:(function
-    | Datatype.Sel _ -> true
-    | Datatype.InSel (_, dt_name, dt_args) ->
-        (not String.(dt_name = Datatype.name_of dt))
-        || not Stdlib.(dt_args = Datatype.params_of dt))
 
 let update_term_map ~depth sort (terms : (Term.t * Formula.t list) Set.Poly.t)
     (term_map : (Sort.t, (Term.t * Formula.t list) Set.Poly.t) Map.Poly.t) =
@@ -18,17 +12,19 @@ let update_term_map ~depth sort (terms : (Term.t * Formula.t list) Set.Poly.t)
         Set.fold terms ~init:term_map ~f:(fun term_map (term, conds) ->
             let sel_terms =
               List.concat_map (Datatype.conses_of dt) ~f:(fun cons ->
-                  let sels = Datatype.sels_of_cons cons in
-                  let sels, insels = split_sels dt sels in
-                  let in_terms =
-                    List.map insels ~f:(fun sel ->
-                        T_dt.mk_sel dt (Datatype.name_of_sel sel) term)
-                  in
                   let sel_terms =
-                    in_terms
-                    @ List.concat_map sels ~f:(fun sel ->
-                          List.map [ term ]
-                            ~f:(T_dt.mk_sel dt @@ Datatype.name_of_sel sel))
+                    let sels, insels =
+                      let split_sels dt =
+                        List.partition_tf ~f:(function
+                          | Datatype.Sel _ -> true
+                          | Datatype.InSel (_, dt_name, dt_args) ->
+                              (not String.(dt_name = Datatype.name_of dt))
+                              || not Stdlib.(dt_args = Datatype.params_of dt))
+                      in
+                      split_sels dt @@ Datatype.sels_of_cons cons
+                    in
+                    List.map (insels @ sels) ~f:(fun sel ->
+                        T_dt.mk_sel dt (Datatype.name_of_sel sel) term)
                   in
                   List.map sel_terms ~f:(fun sel_term ->
                       ( sel_term,
@@ -49,28 +45,31 @@ let update_term_map ~depth sort (terms : (Term.t * Formula.t list) Set.Poly.t)
                       ~data:(Set.Poly.singleton (sel_term, conds))))
     | _ -> term_map
 
-let rec is_sub_term t2 t1 =
-  match t1 with
+let rec is_sub_term t = function
   | Term.FunApp (_, ts, _) ->
-      if List.mem ts t2 ~equal:Stdlib.( = ) then true
-      else List.mem ts t2 ~equal:is_sub_term
+      if List.mem ts t ~equal:Stdlib.( = ) then true
+      else List.mem ts t ~equal:is_sub_term
   | _ -> false
 
 let is_cyclic t1 t2 = is_sub_term t1 t2 || is_sub_term t2 t1
 
 let mk_eqs (ts : (Term.t * Formula.t list) list) =
-  List.concat_mapi ts ~f:(fun i (t, conds) ->
+  List.concat_mapi ts ~f:(fun i2 (t2, conds2) ->
       List.foldi ts ~init:[] ~f:(fun i1 ret (t1, conds1) ->
-          let conds = conds @ conds1 in
           if
-            i1 <= i
-            || Stdlib.(Term.sort_of t <> Term.sort_of t1)
-            || Stdlib.(t = t1)
-            || is_cyclic t t1
+            i1 <= i2
+            || Stdlib.(Term.sort_of t2 <> Term.sort_of t1)
+            || Stdlib.(t2 = t1)
+            || is_cyclic t2 t1
           then ret
-          else QualDep.qual_and_deps_of (Formula.eq t t1) conds :: ret))
+          else
+            QualDep.qual_and_deps_of (Formula.eq t2 t1) (conds2 @ conds1) :: ret))
 
 let qualifiers_of sort (terms : (Term.t * Formula.t list) Set.Poly.t) =
+  if false then
+    assert (
+      T_dt.is_sdt sort
+      && Set.for_all terms ~f:(fst >> Term.sort_of >> Stdlib.( = ) sort));
   match sort with
   | T_dt.SDT dt ->
       let testers =
@@ -85,7 +84,7 @@ let qualifiers_of sort (terms : (Term.t * Formula.t list) Set.Poly.t) =
       let eqs =
         mk_eqs @@ Set.to_list
         @@ Set.filter terms ~f:(fun (t, _) ->
-               Term.is_var t || (T_dt.is_sdt @@ Term.sort_of t))
+               (*ToDo*) Term.is_var t (*|| (T_dt.is_sdt @@ Term.sort_of t)*))
       in
       let qdep_env =
         try Map.Poly.of_alist_exn @@ List.unique @@ testers @ eqs

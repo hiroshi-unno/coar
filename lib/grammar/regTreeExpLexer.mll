@@ -1,6 +1,5 @@
 {
 open Core
-open Lexing
 open RegTreeExpParser
 }
 
@@ -13,10 +12,7 @@ rule token = parse
 | space+
     { token lexbuf }
 | '\n'
-    { let ln = lexbuf.lex_curr_p.pos_lnum
-      and off = lexbuf.lex_curr_p.pos_cnum in
-      lexbuf.lex_curr_p <- { lexbuf.lex_curr_p with
-                               pos_lnum = ln + 1; pos_bol = off };
+    { Lexing.new_line lexbuf;
       token lexbuf }
 | "(*"
     { comment lexbuf; token lexbuf}
@@ -47,19 +43,16 @@ rule token = parse
 | eof
     { EOF }
 | _
-    { raise (Failure ("unknown token: " ^ Lexing.lexeme lexbuf)) }
+    { failwith ("unknown token: " ^ Lexing.lexeme lexbuf) }
 and comment = parse
 | '\n'
-    { let ln = lexbuf.lex_curr_p.pos_lnum
-      and off = lexbuf.lex_curr_p.pos_cnum in
-      lexbuf.lex_curr_p <- { lexbuf.lex_curr_p with
-                               pos_lnum = ln + 1; pos_bol = off };
+    { Lexing.new_line lexbuf;
       comment lexbuf }
 | "*)"
     { () }
 | "(*"
     { comment lexbuf; comment lexbuf }
 | eof
-    { raise (Failure "unterminated comment") }
+    { failwith "unterminated comment" }
 | _
     { comment lexbuf }

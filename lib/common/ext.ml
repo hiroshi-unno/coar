@@ -142,12 +142,20 @@ module Float = struct
 
   let sum =
     List.fold_left
-      ~f:(fun x1 x2 -> x1 +. (*/*) x2)
+      ~f:(fun x1 x2 ->
+        x1
+        +.
+        (*/*)
+        x2)
       ~init:0. (*Num.num_of_int 0*)
 
   let prod =
     List.fold_left
-      ~f:(fun x1 x2 -> x1 *. (*/*) x2)
+      ~f:(fun x1 x2 ->
+        x1
+        *.
+        (*/*)
+        x2)
       ~init:1. (*Num.num_of_int 1*)
 
   (** @return the sum of floating point numbers *)
@@ -1038,7 +1046,8 @@ module List = struct
             List.concat_map ~f:(interleave x) @@ permutation_of tl)
     | [] -> [ [] ]
 
-  (** permutations \[1; 2; 3\] = \[\[1; 2; 3\]; \[2; 1; 3\]; \[2; 3; 1\]; \[1; 3; 2\]; \[3; 1; 2\]; \[3; 2; 1\]\] *)
+  (** permutations \[1; 2; 3\] = \[\[1; 2; 3\]; \[2; 1; 3\]; \[2; 3; 1\]; \[1;
+      3; 2\]; \[3; 1; 2\]; \[3; 2; 1\]\] *)
   let rec permutations = function
     | hd :: tl -> List.concat_map ~f:(interleave hd) (permutations tl)
     | lst -> [ lst ]
@@ -1595,6 +1604,10 @@ module Set = struct
   let is_singleton s = length s = 1
   let eqlen b1 b2 = Set.length b1 = Set.length b2
   let of_map m = Set.Poly.of_list @@ Map.Poly.to_alist m
+
+  (* s1 is recommended to be smaller than s2 for efficiency *)
+  (*Set.is_empty (Set.inter s1 s2)*)
+  let disjoint s1 s2 = Set.for_all s1 ~f:(fun x -> not @@ Set.mem s2 x)
 
   let subsets_with_duplicates lst n =
     List.fold_left ~init:(Set.Poly.singleton [])

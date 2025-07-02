@@ -94,6 +94,8 @@ let rec sort_of_sexp ~print dtenv = function
   | Sexp.Atom "Real" -> T_real.SReal
   | Sexp.Atom "Bool" -> T_bool.SBool
   | Sexp.Atom "String" -> T_string.SString
+  | Sexp.List [ Sexp.Atom "_"; Sexp.Atom "BitVec"; Sexp.Atom size ] ->
+      T_bv.SBV (Some (int_of_string size))
   | Sexp.List [ Sexp.Atom "Array"; s1; s2 ] ->
       T_array.mk_array_sort
         (sort_of_sexp ~print dtenv s1)
@@ -126,8 +128,8 @@ let bind_of_sexp ~print dtenv = function
 
 let of_params ~print uni_senv sexps dtenv =
   List.rev sexps
-  |> List.fold ~init:(uni_senv, Map.Poly.empty) ~f:(fun (uni_senv, acc) ->
-       function
+  |> List.fold ~init:(uni_senv, Map.Poly.empty)
+       ~f:(fun (uni_senv, acc) -> function
        | Sexp.List [ Sexp.Atom name; sort ] -> (
            try
              ( Map.Poly.add_exn uni_senv ~key:(Ident.Tvar name)
@@ -155,8 +157,9 @@ let of_pred_sym1 = function
   | op -> failwith @@ "parse error : unknown pred sym " ^ op
 
 let is_fun_sym1 = function
-  | "-" | "to_real" | "to_int" | "str.to.re" | "re.comp" | "re.*" | "re.+"
-  | "re.opt" ->
+  | "-" | "to_real" | "to_int" | "int_to_bv" | "bv_to_uint" | "bv_to_sint"
+  | "ubv_to_int" | "sbv_to_int" | "bvnot" | "bvneg" | "str.to.re" | "re.comp"
+  | "re.*" | "re.+" | "re.opt" ->
       true
   | _ -> false
 
@@ -164,6 +167,13 @@ let of_fun_sym1 = function
   | "-" -> T_num.mk_nneg
   | "to_real" -> T_irb.mk_int_to_real
   | "to_int" -> T_irb.mk_real_to_int
+  | "int_to_bv" -> T_irb.mk_int_to_bv ~size:None
+  | "bv_to_uint" | "ubv_to_int" ->
+      T_irb.mk_bv_to_int ~size:None ~signed:(Some false)
+  | "bv_to_sint" | "sbv_to_int" ->
+      T_irb.mk_bv_to_int ~size:None ~signed:(Some true)
+  | "bvnot" -> T_bv.mk_bvnot ~size:None
+  | "bvneg" -> T_bv.mk_bvneg ~size:None
   | "str.to.re" -> T_regex.mk_str_to_re
   | "re.comp" -> T_regex.mk_complement
   | "re.*" -> T_regex.mk_star
@@ -172,7 +182,9 @@ let of_fun_sym1 = function
   | op -> failwith @@ "parse error : unknown fun sym " ^ op
 
 let is_pred_sym2 = function
-  | "=" | "<" | ">" | "<=" | ">=" | "str.in.re" -> true
+  | "=" | "<" | ">" | "<=" | ">=" | "bvule" | "bvsle" | "bvuge" | "bvsge"
+  | "bvult" | "bvslt" | "bvugt" | "bvsgt" | "str.in.re" ->
+      true
   | _ -> false
 
 let of_pred_sym2 = function
@@ -181,12 +193,23 @@ let of_pred_sym2 = function
   | ">" -> T_num.mk_ngt
   | "<=" -> T_num.mk_nleq
   | ">=" -> T_num.mk_ngeq
+  | "bvule" -> T_bv.mk_bvleq ~size:None ~signed:(Some false)
+  | "bvsle" -> T_bv.mk_bvleq ~size:None ~signed:(Some true)
+  | "bvuge" -> T_bv.mk_bvgeq ~size:None ~signed:(Some false)
+  | "bvsge" -> T_bv.mk_bvgeq ~size:None ~signed:(Some true)
+  | "bvult" -> T_bv.mk_bvlt ~size:None ~signed:(Some false)
+  | "bvslt" -> T_bv.mk_bvlt ~size:None ~signed:(Some true)
+  | "bvugt" -> T_bv.mk_bvgt ~size:None ~signed:(Some false)
+  | "bvsgt" -> T_bv.mk_bvgt ~size:None ~signed:(Some true)
   | "str.in.re" -> T_regex.mk_str_in_regexp
   | op -> failwith @@ "parse error : unknown pred sym " ^ op
 
 let is_fun_sym2 = function
   | "+" | "-" | "*" | "/" | "div" | "mod" | "rem" | "^" | "re.++" | "re.union"
-  | "re.inter" ->
+  | "re.inter" | "bvand" | "bvor" | "bvxor" | "bvnand" | "bvnor" | "bvxnor"
+  | "bvadd" | "bvsub" | "bvmul" | "bvudiv" | "bvudiv_i" | "bvsdiv" | "bvsdiv_i"
+  | "bvurem" | "bvurem_i" | "bvsrem" | "bvsrem_i" | "bvsmod" | "bvsmod_i"
+  | "bvshl" | "bvlshr" | "bvashr" | "concat" ->
       true
   | _ -> false
 
@@ -199,6 +222,28 @@ let of_fun_sym2 = function
   | "mod" -> T_int.mk_rem Value.Euclidean
   | "rem" -> T_int.mk_rem Value.Euclidean (*ToDo: z3 rem is different from mod*)
   | "^" -> T_num.mk_npower ~info:Dummy
+  | "bvand" -> T_bv.mk_bvand ~info:Dummy ~size:None
+  | "bvor" -> T_bv.mk_bvor ~info:Dummy ~size:None
+  | "bvxor" -> T_bv.mk_bvxor ~info:Dummy ~size:None
+  | "bvnand" -> T_bv.mk_bvnand ~info:Dummy ~size:None
+  | "bvnor" -> T_bv.mk_bvnor ~info:Dummy ~size:None
+  | "bvxnor" -> T_bv.mk_bvxnor ~info:Dummy ~size:None
+  | "bvadd" -> T_bv.mk_bvadd ~info:Dummy ~size:None
+  | "bvsub" -> T_bv.mk_bvsub ~info:Dummy ~size:None
+  | "bvmul" -> T_bv.mk_bvmul ~info:Dummy ~size:None
+  | "bvudiv" | "bvudiv_i" ->
+      T_bv.mk_bvdiv ~info:Dummy ~size:None ~signed:(Some false)
+  | "bvsdiv" | "bvsdiv_i" ->
+      T_bv.mk_bvdiv ~info:Dummy ~size:None ~signed:(Some true)
+  | "bvurem" | "bvurem_i" ->
+      T_bv.mk_bvrem ~info:Dummy ~size:None ~signed:(Some false)
+  | "bvsrem" | "bvsrem_i" ->
+      T_bv.mk_bvrem ~info:Dummy ~size:None ~signed:(Some true)
+  | "bvsmod" | "bvsmod_i" -> T_bv.mk_bvsmod ~info:Dummy ~size:None
+  | "bvshl" -> T_bv.mk_bvshl ~info:Dummy ~size:None
+  | "bvlshr" -> T_bv.mk_bvlshr ~info:Dummy ~size:None
+  | "bvashr" -> T_bv.mk_bvashr ~info:Dummy ~size:None
+  | "concat" -> T_bv.mk_bvconcat ~info:Dummy ~size1:None ~size2:None
   | "re.++" -> T_regex.mk_concat ~info:Dummy
   | "re.union" -> T_regex.mk_union ~info:Dummy
   | "re.inter" -> T_regex.mk_inter ~info:Dummy
@@ -431,28 +476,55 @@ and of_term ~print ~inline envs =
         String.is_prefix name ~prefix:"\"" && String.is_suffix name ~suffix:"\""
       then T_string.make @@ String.sub name ~pos:1 ~len:(String.length name - 2)
       else
-        try (* case on integer/decimal constants *) T_num.mk_value name
+        try
+          if String.length name < 3 || not (String.is_prefix name ~prefix:"#x")
+          then invalid_arg "Not a valid #x... bitvector literal";
+          let hex_part = String.slice name 2 (String.length name) in
+          let bitwidth = String.length hex_part * 4 in
+          T_bv.mk_bvnum ~size:(Some bitwidth) (Z.of_string ("0x" ^ hex_part))
         with _ -> (
-          (* other cases *)
-          match Map.Poly.find envs.uni_senv (Ident.Tvar name) with
-          | Some sort -> mk_var (Ident.Tvar name) sort
-          | None -> (
-              match Map.Poly.find envs.exi_senv (Ident.Tvar name) with
-              | Some sort -> mk_var (Ident.Tvar name) sort
-              | None -> (
-                  match Map.Poly.find envs.fenv (Ident.Tvar name) with
-                  | Some ([], sret, t, false, _) ->
-                      if inline then t
-                      else Term.mk_fvar_app (Ident.Tvar name) [] sret []
-                  | Some ([], sret, _, true, _) ->
-                      Term.mk_fvar_app (Ident.Tvar name) [] sret []
-                  | Some _ -> failwith ""
-                  | None -> (
-                      match DTEnv.look_up_func envs.dtenv name with
-                      | Some (dt, Datatype.FCons cons)
-                        when List.is_empty @@ Datatype.sels_of_cons cons ->
-                          T_dt.mk_cons dt name []
-                      | _ -> failwith @@ sprintf "%s is not bound" name)))))
+          try
+            if
+              String.length name < 3 || not (String.is_prefix name ~prefix:"#o")
+            then invalid_arg "Not a valid #o... bitvector literal";
+            let oct_part = String.slice name 2 (String.length name) in
+            let bitwidth = String.length oct_part * 3 in
+            T_bv.mk_bvnum ~size:(Some bitwidth) (Z.of_string ("0o" ^ oct_part))
+          with _ -> (
+            try
+              if
+                String.length name < 3
+                || not (String.is_prefix name ~prefix:"#b")
+              then invalid_arg "Not a valid #b... bitvector literal";
+              let bin_part = String.slice name 2 (String.length name) in
+              let bitwidth = String.length bin_part in
+              T_bv.mk_bvnum ~size:(Some bitwidth)
+                (Z.of_string ("0b" ^ bin_part))
+            with _ -> (
+              try (* case on integer/decimal constants *) T_num.mk_value name
+              with _ -> (
+                (* other cases *)
+                match Map.Poly.find envs.uni_senv (Ident.Tvar name) with
+                | Some sort -> mk_var (Ident.Tvar name) sort
+                | None -> (
+                    match Map.Poly.find envs.exi_senv (Ident.Tvar name) with
+                    | Some sort -> mk_var (Ident.Tvar name) sort
+                    | None -> (
+                        match Map.Poly.find envs.fenv (Ident.Tvar name) with
+                        | Some ([], sret, t, false, _) ->
+                            if inline then t
+                            else Term.mk_fvar_app (Ident.Tvar name) [] sret []
+                        | Some ([], sret, _, true, _) ->
+                            Term.mk_fvar_app (Ident.Tvar name) [] sret []
+                        | Some _ -> failwith ""
+                        | None -> (
+                            match DTEnv.look_up_func envs.dtenv name with
+                            | Some (dt, Datatype.FCons cons)
+                              when List.is_empty @@ Datatype.sels_of_cons cons
+                              ->
+                                T_dt.mk_cons dt name []
+                            | _ -> failwith @@ sprintf "%s is not bound" name)))))))
+      )
   (* unary function symbol application *)
   | Sexp.List [ Sexp.Atom op; t ] when is_fun_sym1 op ->
       of_fun_sym1 op @@ of_term ~print ~inline envs t
@@ -468,6 +540,22 @@ and of_term ~print ~inline envs =
   | Sexp.List (Sexp.Atom "*" :: arg :: args) ->
       List.fold args ~init:(of_term ~print ~inline envs arg) ~f:(fun acc ->
           of_term ~print ~inline envs >> T_num.mk_nmul acc)
+  | Sexp.List (Sexp.Atom "bvand" :: arg :: args) ->
+      List.fold args ~init:(of_term ~print ~inline envs arg) ~f:(fun acc ->
+          of_term ~print ~inline envs >> T_bv.mk_bvand ~size:None acc)
+  | Sexp.List (Sexp.Atom "bvor" :: arg :: args) ->
+      List.fold args ~init:(of_term ~print ~inline envs arg) ~f:(fun acc ->
+          of_term ~print ~inline envs >> T_bv.mk_bvor ~size:None acc)
+  | Sexp.List (Sexp.Atom "bvadd" :: arg :: args) ->
+      List.fold args ~init:(of_term ~print ~inline envs arg) ~f:(fun acc ->
+          of_term ~print ~inline envs >> T_bv.mk_bvadd ~size:None acc)
+  | Sexp.List (Sexp.Atom "bvmul" :: arg :: args) ->
+      List.fold args ~init:(of_term ~print ~inline envs arg) ~f:(fun acc ->
+          of_term ~print ~inline envs >> T_bv.mk_bvmul ~size:None acc)
+  | Sexp.List (Sexp.Atom "concat" :: arg :: args) ->
+      List.fold args ~init:(of_term ~print ~inline envs arg) ~f:(fun acc ->
+          of_term ~print ~inline envs
+          >> T_bv.mk_bvconcat ~size1:None ~size2:None acc)
   | Sexp.List (Sexp.Atom "re.++" :: arg :: args) ->
       List.fold args ~init:(of_term ~print ~inline envs arg) ~f:(fun acc ->
           of_term ~print ~inline envs >> T_regex.mk_concat acc)
@@ -504,6 +592,27 @@ and of_term ~print ~inline envs =
       match arr_sort with
       | T_array.SArray (s1, s2) -> T_array.mk_const_array s1 s2 arr_value
       | _ -> failwith "")
+  (* bitvector function application *)
+  | Sexp.List
+      [
+        Sexp.List
+          [ Sexp.Atom "_"; Sexp.Atom "extract"; Sexp.Atom h; Sexp.Atom l ];
+        t1;
+      ] ->
+      let t1 = of_term ~print ~inline envs t1 in
+      T_bv.mk_bvextract ~size:None (int_of_string h) (int_of_string l) t1
+  | Sexp.List
+      [
+        Sexp.List [ Sexp.Atom "_"; Sexp.Atom "sign_extend"; Sexp.Atom ext ]; t1;
+      ] ->
+      let t1 = of_term ~print ~inline envs t1 in
+      T_bv.mk_bvsext ~size:None (int_of_string ext) t1
+  | Sexp.List
+      [
+        Sexp.List [ Sexp.Atom "_"; Sexp.Atom "zero_extend"; Sexp.Atom ext ]; t1;
+      ] ->
+      let t1 = of_term ~print ~inline envs t1 in
+      T_bv.mk_bvzext ~size:None (int_of_string ext) t1
   (* function variable application *)
   | Sexp.List (Sexp.Atom name :: args) as t -> (
       match Map.Poly.find envs.fenv (Tvar name) with
@@ -697,7 +806,7 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
           let fenv =
             (* ToDo *)
             let phi =
-              Typeinf.typeinf_formula ~print ~to_sus:true
+              Typeinf.typeinf_formula ~print ~default:None ~to_sus:true
               @@ of_formula ~print ~inline envs t
             in
             Map.Poly.set envs.fenv ~key:(Tvar name)
@@ -846,7 +955,10 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
         Map.Poly.add_exn envs.exi_senv ~key:(Ident.Tvar name)
           ~data:(sort_of_sexp ~print envs.dtenv ty)
       in
-      let kind_map' = envs.kind_map (*ToDo*) in
+      let kind_map' =
+        envs.kind_map
+        (*ToDo*)
+      in
       toplevel ~print ~inline acc
         { envs with exi_senv = exi_senv'; kind_map = kind_map' }
         es
@@ -862,7 +974,7 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
             Map.force_merge envs.uni_senv (Map.Poly.of_alist_exn fargs')
           in
           let envs = { envs with uni_senv = uni_senv' } in
-          Typeinf.typeinf_term ~print ~to_sus:true
+          Typeinf.typeinf_term ~print ~default:None ~to_sus:true
           @@
           if Term.is_bool_sort sort then
             T_bool.of_formula @@ of_formula ~print ~inline envs body
@@ -884,12 +996,15 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
             Map.force_merge envs.uni_senv (Map.Poly.of_alist_exn fargs')
           in
           let fenv' =
-            let body_rec = Term.mk_var (Tvar name) sort (*ToDo*) in
+            let body_rec =
+              Term.mk_var (Tvar name) sort
+              (*ToDo*)
+            in
             Map.Poly.add_exn envs.fenv ~key:(Tvar name)
               ~data:(fargs', sort, body_rec, true, Formula.mk_true ())
           in
           let envs = { envs with uni_senv = uni_senv'; fenv = fenv' } in
-          Typeinf.typeinf_term ~print ~to_sus:true
+          Typeinf.typeinf_term ~print ~default:None ~to_sus:true
           @@
           if Term.is_bool_sort sort then
             T_bool.of_formula @@ of_formula ~print ~inline envs body
@@ -955,7 +1070,7 @@ let from_smt2_file ~print ~inline ?(uni_senv = Map.Poly.empty)
   in
   let phi = Formula.and_of phis in
   print @@ lazy (sprintf "before typeinf: %s" @@ Formula.str_of phi);
-  let phi' = Typeinf.typeinf_formula ~print ~to_sus:true phi in
+  let phi' = Typeinf.typeinf_formula ~print ~default:None ~to_sus:true phi in
   print @@ lazy (sprintf "after typeinf: %s" @@ Formula.str_of phi');
   phi'
 
