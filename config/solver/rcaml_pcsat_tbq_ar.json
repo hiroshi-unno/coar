@@ -3,7 +3,7 @@
     {
         "solver": [
             "Filename",
-            "./config/solver/pcsat_tb_ar.json"
+            "./config/solver/pcsat_tbq_ar.json"
         ],
         "optimizer": [
             "Filename",
