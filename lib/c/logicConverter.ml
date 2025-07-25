@@ -113,4 +113,4 @@ let hmes_of_ba ba =
             (hmesfunc_of_transition transition.(state))
           :: mu_preds)
   in
-  HMES.mk_hmes (mu_preds @ nu_preds) (hmespvar_of_state initial_state)
+  HMES.mk_hmes (nu_preds @ mu_preds) (hmespvar_of_state initial_state)
