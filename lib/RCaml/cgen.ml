@@ -1822,7 +1822,8 @@ module Make (Config : Config.ConfigType) = struct
                  [ cgen_subtype_comp ~config renv' c' ty; constrs; constrs' ],
                kind_map )
 
-           method f_var (x, sort) kind_map maps renv ty =
+           method f_var (_is_handled, _rec_vars) (x, sort) kind_map maps renv ty
+               =
              let sort = Term.subst_sort maps sort in
              (* *)
              (*print_endline @@ Ident.name_of_tvar x ^ ": " ^ Term.str_of_sort sort;*)
@@ -1989,9 +1990,8 @@ module Make (Config : Config.ConfigType) = struct
                  ],
                kind_map )
 
-           method f_apply _is_handled
-               (pure1, next1, opsig1s, opsig1, cont1s, cont1) next2s_either
-               kind_map maps renv ty =
+           method f_apply (pure1, next1, opsig1s, opsig1, cont1s, cont1)
+               next2s_either kind_map maps renv ty =
              let _opsig1s = List.map opsig1s ~f:(Term.subst_opsig maps) in
              let _opsig1 = Term.subst_opsig maps opsig1 in
              let cont1s = List.map cont1s ~f:(Term.subst_cont maps) in

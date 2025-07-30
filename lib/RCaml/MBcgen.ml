@@ -470,7 +470,7 @@ module Make (Config : Config.ConfigType) = struct
   let rec_vars = ref Set.Poly.empty
 
   let rec fold_expr ~f dtenv is_handled senv expr c0 =
-    let call_fold = fold_expr ~f dtenv false in
+    let call_fold = fold_expr ~f dtenv is_handled in
     let call_fold_handled = fold_expr ~f dtenv true in
     let mk_either senv e =
       let sort = sort_of_expr ~lift:true dtenv e in
@@ -595,7 +595,9 @@ module Make (Config : Config.ConfigType) = struct
                   failwith
                   @@ sprintf "[fold_expr] %s cannot be used as an identifier"
                        name
-                else f#f_var (Ast.Ident.Tvar name, x_sort (*c0.val_type*)) )
+                else
+                  f#f_var (is_handled, !rec_vars)
+                    (Ast.Ident.Tvar name, x_sort (*c0.val_type*)) )
           | Texp_apply (e, [ (_, Some e') ]) when is_ is_shift0 e -> (
               match e'.exp_desc with
               | Texp_function (param :: params, body) -> (
@@ -1269,7 +1271,11 @@ module Make (Config : Config.ConfigType) = struct
                         }
                         c_r
                     in
-                    (econstrs, oconstrs, f#f_var (x_r, s_body), x_r, c_r)
+                    ( econstrs,
+                      oconstrs,
+                      f#f_var (false, Set.Poly.empty) (x_r, s_body),
+                      x_r,
+                      c_r )
                 | Some e_retc ->
                     let pat0, body =
                       match e_retc.exp_desc with
@@ -1456,7 +1462,7 @@ module Make (Config : Config.ConfigType) = struct
                    @@ (ovar1 :: ovars')
                    @ List.filter_map nexts_either ~f:ovar_of_either)
                    :: oconstrs1 :: oconstrss,
-                f#f_apply is_handled
+                f#f_apply
                   (is_pure e1.exp_desc, next1, ovars', ovar1, evars', evar1)
                   nexts_either )
           | Texp_ifthenelse (e1, e2, e3_opt) -> (
@@ -1878,7 +1884,7 @@ module Make (Config : Config.ConfigType) = struct
                       let res =
                         (*ToDo*)
                         ( true,
-                          f#f_var (Tvar name, sort_fun),
+                          f#f_var (false, Set.Poly.empty) (Tvar name, sort_fun),
                           List.map sort_args
                             ~f:(Fn.const Sort.empty_closed_opsig),
                           Sort.empty_closed_opsig,
@@ -1887,7 +1893,7 @@ module Make (Config : Config.ConfigType) = struct
                       in
                       ( Set.Poly.union_list (econstrs_args :: econstrss),
                         Set.Poly.union_list (oconstrs_args :: oconstrss),
-                        f#f_apply false res nexts_either )))
+                        f#f_apply res nexts_either )))
           | Texp_tuple es ->
               let econstrss, oconstrss, nexts_either =
                 List.unzip3 @@ List.map es ~f:(mk_either senv)

@@ -402,15 +402,18 @@ module Make (Config : Config.ConfigType) = struct
              ignore (next, sort, ctx);
              failwith "[effcaml:unif] uniform distribution not supported"
 
-           method f_var (x, sort) ctx =
+           method f_var (is_handled, rec_vars) (x, sort) ctx =
              let xt = lookup ctx.ntenv x in
              let sort = Term.subst_sort ctx.maps sort in
              (* *)
+             let is_rec = Set.mem rec_vars x in
              Debug.print
              @@ lazy
-                  (sprintf "[effcaml:var] %s : %s <: %s\n" (name_of_tvar x)
-                     (Term.str_of_sort sort)
-                     (Term.str_of_triple ctx.ty));
+                  (sprintf "[effcaml:var] %s : %s <: %s %s %s\n"
+                     (name_of_tvar x) (Term.str_of_sort sort)
+                     (Term.str_of_triple ctx.ty)
+                     (if is_handled then "[handled]" else "")
+                     (if is_rec then "[recursive]" else ""));
              if false then
                Debug.print
                @@ lazy
@@ -420,7 +423,47 @@ module Make (Config : Config.ConfigType) = struct
                           (Sort.ret_of_comp (Sort.mk_triple_from_sort sort))
                             .cont_eff)
                        (Term.str_of_cont (Sort.ret_of_comp ctx.ty).cont_eff));
-             (apply_cont_if_any ctx @@ xt, [])
+             let xt, cast_rules =
+               if is_handled && is_rec then
+                 let cast1 = Ident.mk_fresh_tvar ~prefix:(Some "Cast1") () in
+                 let cast2 = Ident.mk_fresh_tvar ~prefix:(Some "Cast2") () in
+                 let cast1_sort = (*ToDo*) Sort.mk_fresh_svar () in
+                 let cast2_sort = (*ToDo*) Sort.mk_fresh_svar () in
+                 let cast_rules =
+                   let f = Ident.Tvar "f" in
+                   let x = Ident.Tvar "x" in
+                   let ops = get_ops ctx.ty.op_sig in
+                   let hs1 =
+                     List.init (List.length ops) ~f:(fun i ->
+                         Ident.Tvar ("h1_" ^ string_of_int i))
+                   in
+                   let k1 = Ident.Tvar "k1" in
+                   let hs2 =
+                     List.init (List.length ops) ~f:(fun i ->
+                         Ident.Tvar ("h2_" ^ string_of_int i))
+                   in
+                   let k2 = Ident.Tvar "k2" in
+                   [
+                     ( (cast1, cast1_sort),
+                       ( (f :: x :: hs1) @ (k1 :: hs2) @ [ k2 ],
+                         EHMTT.apps (EHMTT.mk_var f)
+                           (List.map (x :: hs2) ~f:EHMTT.mk_var
+                           @ [
+                               EHMTT.apps (EHMTT.Nonterm cast2)
+                                 (List.map
+                                    ((k1 :: hs2) @ [ k2 ])
+                                    ~f:EHMTT.mk_var);
+                             ]) ) );
+                     ( (cast2, cast2_sort),
+                       ( (k1 :: hs2) @ [ k2; x ],
+                         EHMTT.apps (EHMTT.mk_var k1)
+                           (List.map ~f:EHMTT.mk_var ((x :: hs2) @ [ k2 ])) ) );
+                   ]
+                 in
+                 (EHMTT.app (EHMTT.Nonterm cast1) xt, cast_rules)
+               else (xt, [])
+             in
+             (apply_cont_if_any ctx @@ xt, cast_rules)
 
            method f_const term ctx =
              let term = Term.subst_all ctx.maps term in
@@ -476,9 +519,8 @@ module Make (Config : Config.ConfigType) = struct
                (apply_cont_if_any ctx term, [])
              else failwith "a constructor with arguments is not allowed"
 
-           method f_apply is_handled
-               (_pure1, next1, opsig1s, opsig1, cont1s, cont1) next2s_either ctx
-               =
+           method f_apply (_pure1, next1, opsig1s, opsig1, cont1s, cont1)
+               next2s_either ctx =
              let opsig1s = List.map opsig1s ~f:(Term.subst_opsig ctx.maps) in
              let opsig1 = Term.subst_opsig ctx.maps opsig1 in
              let cont1s = List.map cont1s ~f:(Term.subst_cont ctx.maps) in
@@ -544,107 +586,12 @@ module Make (Config : Config.ConfigType) = struct
                                 | _ -> false
                               in
                               if true || is_non_pure then
-                                (* To fill the gap between CBV and CBN, the following needs to be used *)
-                                let cast =
-                                  Ident.mk_fresh_tvar ~prefix:(Some "Cast") ()
-                                in
-                                let cast_rules =
-                                  (*
-                                  match (c_b.cont_eff, c_b.cont_eff) with
-                                  | e1, e2 when Stdlib.(e1 = e2) ->
-                                      let cast_sort =
-                                        let s = Sort.mk_fresh_svar () in
-                                        Sort.mk_fun [ s; s ]
-                                      in
-                                      let x = Ident.Tvar "x" in
-                                      [ ((cast, cast_sort), ([ x ], EHMTT.mk_var x)) ]
-                                  | Sort.Pure, Sort.Eff (c1, c2)
-                                    when Sort.is_pure c1.cont_eff && Sort.is_pure c2.cont_eff ->
-                                      *)
-                                  let cast_sort =
-                                    (*ToDo*) Sort.mk_fresh_svar ()
-                                  in
-                                  let hs_nt =
-                                    List.map (get_ops ctx.ty.op_sig)
-                                      ~f:(fun _ ->
-                                        Ident.mk_fresh_tvar ~prefix:(Some "H")
-                                          ())
-                                  in
-                                  let hs_sort =
-                                    List.map hs_nt ~f:(fun _ ->
-                                        (*ToDo*) Sort.mk_fresh_svar ())
-                                  in
-                                  let k_nt =
-                                    Ident.mk_fresh_tvar ~prefix:(Some "K") ()
-                                  in
-                                  let k_sort = (*ToDo*) Sort.mk_fresh_svar () in
-                                  let x = Ident.Tvar "x" in
-                                  let hs1 =
-                                    List.init (List.length hs_nt) ~f:(fun i ->
-                                        Ident.Tvar ("h1_" ^ string_of_int i))
-                                  in
-                                  let k1 = Ident.Tvar "k1" in
-                                  let hs2 =
-                                    List.init (List.length hs_nt) ~f:(fun i ->
-                                        Ident.Tvar ("h2_" ^ string_of_int i))
-                                  in
-                                  let k2 = Ident.Tvar "k2" in
-                                  let ignore = Ident.Tvar "Ignore" in
-                                  let ignore_sort = Sort.mk_fresh_svar () in
-                                  let k_param = Ident.Tvar "k" in
-                                  [
-                                    ( (cast, cast_sort),
-                                      ( (x :: hs1) @ (k1 :: hs2) @ [ k2 ],
-                                        EHMTT.apps (EHMTT.mk_var x)
-                                          (List.map2_exn hs_nt hs1
-                                             ~f:(fun h_nt h1 ->
-                                               EHMTT.apps (EHMTT.Nonterm h_nt)
-                                                 (List.map ~f:EHMTT.mk_var
-                                                    ((h1 :: hs2) @ [ k2 ])))
-                                          @ [
-                                              EHMTT.apps (EHMTT.Nonterm k_nt)
-                                                (List.map ~f:EHMTT.mk_var
-                                                   ((k1 :: hs2) @ [ k2 ]));
-                                            ]) ) );
-                                    ( (k_nt, k_sort),
-                                      ( (k1 :: hs2) @ [ k2; x ],
-                                        EHMTT.apps (EHMTT.mk_var k1)
-                                          (List.map ~f:EHMTT.mk_var
-                                             ((x :: hs2) @ [ k2 ])) ) );
-                                    ( (ignore, ignore_sort),
-                                      ( (k_param :: x :: hs2) @ [ k2 ],
-                                        EHMTT.app (EHMTT.mk_var k_param)
-                                          (EHMTT.mk_var x) ) );
-                                  ]
-                                  @
-                                  let h1 = Ident.Tvar "h1" in
-                                  List.map2_exn hs_nt hs_sort ~f:(fun h s ->
-                                      ( (h, s),
-                                        ( ((h1 :: hs2) @ [ k2 ]) @ [ k_param ],
-                                          EHMTT.apps (EHMTT.mk_var h1)
-                                            (EHMTT.app (EHMTT.Nonterm ignore)
-                                               (EHMTT.mk_var k_param)
-                                            :: List.map (hs2 @ [ k2 ])
-                                                 ~f:EHMTT.mk_var) ) ))
-                                  (*| _ -> failwith "not supported"*)
-                                in
                                 let k_body =
-                                  let papp_t2 =
-                                    if is_handled && !MBcgen.is_hrec then (
-                                      assert (List.length ts2 = 1);
-                                      EHMTT.app (EHMTT.mk_var cast)
-                                        (EHMTT.app (EHMTT.mk_var papp) t2))
-                                    else EHMTT.app (EHMTT.mk_var papp) t2
-                                  in
-                                  EHMTT.apps papp_t2
+                                  EHMTT.apps (EHMTT.app (EHMTT.mk_var papp) t2)
                                   @@ (ALMap.data @@ from_opsig hs opsig)
                                   @ [ k_nt ]
                                 in
-                                ((k, k_sort), (k_args, k_body))
-                                ::
-                                (if is_handled && !MBcgen.is_hrec then
-                                   cast_rules
-                                 else [])
+                                [ ((k, k_sort), (k_args, k_body)) ]
                               else
                                 let k_id =
                                   Ident.mk_fresh_tvar ~prefix:(Some "Id") ()
@@ -873,8 +820,7 @@ module Make (Config : Config.ConfigType) = struct
              (* *)
              let num_conts =
                match ctx.ty.op_sig with
-               | Sort.OpSig (map, _) ->
-                   if List.is_empty map || !MBcgen.is_hrec then 0 else 1
+               | Sort.OpSig (map, _) -> if List.is_empty map then 0 else 1
                | _ -> 0 (* ToDo *)
              in
              Debug.print
@@ -961,8 +907,7 @@ module Make (Config : Config.ConfigType) = struct
              (* *)
              let num_conts =
                match ctx.ty.op_sig with
-               | Sort.OpSig (map, _) ->
-                   if List.is_empty map || !MBcgen.is_hrec then 0 else 1
+               | Sort.OpSig (map, _) -> if List.is_empty map then 0 else 1
                | _ -> 0 (* ToDo *)
              in
              let args_eta_exp =
