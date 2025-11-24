@@ -635,7 +635,9 @@ and simplify_term = function
             [
               FunApp (T_array.AStore (s3, s4), [ tarr; ti1; te1 ], _); ti2; te2;
             ] )
-          when Stdlib.(ti1 > ti2) ->
+          when (try Stdlib.(Term.value_of ti1 <> Term.value_of ti2)
+                with _ -> false)
+               && Stdlib.(ti1 > ti2) ->
             T_array.mk_store s3 s4 (T_array.mk_store s1 s2 tarr ti2 te2) ti1 te1
         | T_array.ASelect _, [ arr; ti ] -> (
             match T_array.eval_select arr ti with
