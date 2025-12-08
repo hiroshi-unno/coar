@@ -18,8 +18,8 @@ rule main = parse
 | "{" { BaParsing.LBLOCK }
 | "}" { BaParsing.RBLOCK }
 
-| "::" { BaParsing.CORONCORON }
-| ":" { BaParsing.CORON }
+| "::" { BaParsing.COLONCOLON }
+| ":" { BaParsing.COLON }
 | ";" { BaParsing.SEMI }
 
 | "->" { BaParsing.ARROW }

@@ -3,37 +3,24 @@
   open Ast
   open Ast.LogicOld
   open CSyntax
-
-  let funname_nondet_int = "__VERIFIER_nondet_int"
-  let funname_nondet_bool = "__VERIFIER_nondet_bool"
-  let stmt_of_statements = Statement.of_statements
-  let formula_of_term term = Formula.neq term (T_int.zero ())
-  let term_of_string str = let varname = sprintf "\"%s\"" str in Term.mk_var (Ident.Tvar varname) T_int.SRefInt ~info:Dummy
-  let is_nondet_int term =
-    if Term.is_funcall term then
-      let funname, _, _ = Term.let_funcall term in
-      Stdlib.(funname = funname_nondet_int)
-    else false
-  let is_nondet_bool term =
-    if Term.is_funcall term then
-      let funname, _, _ = Term.let_funcall term in
-      Stdlib.(funname = funname_nondet_bool)
-    else false
 %}
 
 %token IF ELSE DO WHILE WHILE_TRUE FOR BREAK RETURN GOTO
 %token LPAREN RPAREN LBLOCK RBLOCK EOF
 %token EQUAL
 %token NOT AND OR IMPLY
-%token CORON SEMI COMMA
-%token UNSIGNED VOID INT EXTERN CONST STATIC VOLATILE SIZEOF
+%token COLON SEMI COMMA
+%token UNSIGNED VOID CHAR SHORT INT LONG EXTERN CONST STATIC VOLATILE SIZEOF
+%token BOX DIAMOND X AP U R WU
 %token MAIN
-%token NONDET_INT NONDET_BOOL ASSUME ERROR ATTRIBUTE NORETURN
-%token <string> LTLDECLARE
+%token NONDET_BOOL NONDET_CHAR NONDET_UCHAR NONDET_SHORT NONDET_USHORT NONDET_INT NONDET_UINT NONDET_LONG NONDET_ULONG
+%token ASSUME ERROR ABORT ASSERT_FAIL
+%token ATTRIBUTE NORETURN NOTHROW LEAF
 %token ADD MINUS ASTERISK DIV MOD ADDR
 %token PLUSPLUS MINUSMINUS
+
+%token <string> LTLDECLARE
 %token <Ast.LogicOld.pred_sym> PREDSYM
-%token BOX DIAMOND X AP U R WU
 %token <int> INTL
 %token <string> ID
 %token <string> STRINGL
@@ -70,63 +57,90 @@ Decls:
   }
 
 Decl:
-  /* ignore: extern void __VERIFIER_error() __attribute__ ((__noreturn__)); */
-    EXTERN VOID ERROR LPAREN RPAREN ATTRIBUTE LPAREN LPAREN NORETURN RPAREN RPAREN SEMI { None, [], [], None, [], [] }
+  /* ignore: extern void __VERIFIER_error(); */
+    EXTERN VOID ERROR LPAREN RPAREN Attributes SEMI { None, [], [], None, [], [] }
   /* ignore: extern void __VERIFIER_assume(); */
-  | EXTERN VOID ASSUME LPAREN RPAREN SEMI { None, [], [], None, [], [] }
-  /* ignore: extern void __VERIFIER_assume() __attribute__ ((__noreturn__)); */
-  | EXTERN VOID ASSUME LPAREN RPAREN ATTRIBUTE LPAREN LPAREN NORETURN RPAREN RPAREN SEMI { None, [], [], None, [], [] }
-  /* ignore: extern int __VERIFIER_nondet_int(); */
-  | EXTERN INT NONDET_INT LPAREN RPAREN SEMI { None, [], [], None, [], [] }
-  /* ignore: extern int __VERIFIER_nondet_int() __attribute__ ((__noreturn__)); */
-  | EXTERN INT NONDET_INT LPAREN RPAREN ATTRIBUTE LPAREN LPAREN NORETURN RPAREN RPAREN SEMI { None, [], [], None, [], [] }
+  | EXTERN VOID ASSUME LPAREN RPAREN Attributes SEMI { None, [], [], None, [], [] }
   /* ignore: extern int __VERIFIER_nondet_bool(); */
-  | EXTERN INT NONDET_BOOL LPAREN RPAREN SEMI { None, [], [], None, [], [] }
-  /* ignore: extern int __VERIFIER_nondet_bool() __attribute__ ((__noreturn__)); */
-  | EXTERN INT NONDET_BOOL LPAREN RPAREN ATTRIBUTE LPAREN LPAREN NORETURN RPAREN RPAREN SEMI { None, [], [], None, [], [] }
+  | EXTERN INT NONDET_BOOL LPAREN RPAREN Attributes SEMI { None, [], [], None, [], [] }
+  /* ignore: extern char __VERIFIER_nondet_char(); */
+  | EXTERN CHAR NONDET_CHAR LPAREN RPAREN Attributes SEMI { None, [], [], None, [], [] }
+  /* ignore: extern unsigned char __VERIFIER_nondet_uchar(); */
+  | EXTERN UNSIGNED CHAR NONDET_UCHAR LPAREN RPAREN Attributes SEMI { None, [], [], None, [], [] }
+  /* ignore: extern short __VERIFIER_nondet_short(); */
+  | EXTERN SHORT NONDET_SHORT LPAREN RPAREN Attributes SEMI { None, [], [], None, [], [] }
+  /* ignore: extern unsigned short __VERIFIER_nondet_ushort(); */
+  | EXTERN UNSIGNED SHORT NONDET_USHORT LPAREN RPAREN Attributes SEMI { None, [], [], None, [], [] }
+  /* ignore: extern int __VERIFIER_nondet_int(); */
+  | EXTERN INT NONDET_INT LPAREN RPAREN Attributes SEMI { None, [], [], None, [], [] }
+  /* ignore: extern unsigned int __VERIFIER_nondet_uint(); */
+  | EXTERN UNSIGNED INT NONDET_UINT LPAREN RPAREN Attributes SEMI { None, [], [], None, [], [] }
+  /* ignore: extern long __VERIFIER_nondet_long(); */
+  | EXTERN LONG NONDET_LONG LPAREN RPAREN Attributes SEMI { None, [], [], None, [], [] }
+  /* ignore: extern unsigned long __VERIFIER_nondet_ulong(); */
+  | EXTERN UNSIGNED LONG NONDET_ULONG LPAREN RPAREN Attributes SEMI { None, [], [], None, [], [] }
+  /* ignore: extern void abort(); */
+  | EXTERN VOID ABORT LPAREN RPAREN Attributes SEMI { None, [], [], None, [], [] }
+  /* ignore: extern int abort(); */
+  | EXTERN INT ABORT LPAREN RPAREN Attributes SEMI { None, [], [], None, [], [] }
+  /* ignore: extern void __assert_fail(const char *, const char *, unsigned int, const char *); */
+  | EXTERN VOID ASSERT_FAIL LPAREN CONST CHAR ASTERISK COMMA CONST CHAR ASTERISK COMMA UNSIGNED INT COMMA CONST CHAR ASTERISK RPAREN Attributes SEMI { None, [], [], None, [], [] }
+  /* //@ ltl invariant <name>: <>[]AP(x==1); */
+  | label=LTLDECLARE phi=Phi SEMI { ignore label; Some phi, [], [], None, [], [] }
+
   /* int a, b, c; */
   | decls=VarDecl {
       let decls, inits = decls in
       None, decls, inits, None, [], []
     }
-  /* //@ ltl invariant <name>: <>[]AP(x==1); */
-  | label=LTLDECLARE phi=Phi SEMI { ignore label; Some phi, [], [], None, [], [] }
   /* p = 0; */
   | inits=Init { None, [], inits, None, [], [] }
   /* void main() { ... } */
-  | VOID MAIN LPAREN RPAREN LBLOCK stmts=Statements RBLOCK { None, [], [], Some (stmt_of_statements stmts), [], [] }
-  | VOID MAIN LPAREN VOID RPAREN LBLOCK stmts=Statements RBLOCK { None, [], [], Some (stmt_of_statements stmts), [], [] }
-  | INT MAIN LPAREN RPAREN LBLOCK stmts=Statements RBLOCK { None, [], [], Some (stmt_of_statements stmts), [], [] }
-  | INT MAIN LPAREN VOID RPAREN LBLOCK stmts=Statements RBLOCK { None, [], [], Some (stmt_of_statements stmts), [], [] }
-  /* int f(int a, int *b) { ... } */
-  | INT funname=ID LPAREN params=Parameters RPAREN LBLOCK stmts=Statements RBLOCK
-  | VOID ASTERISK funname=ID LPAREN params=Parameters RPAREN LBLOCK stmts=Statements RBLOCK {
-    None, [], [], None, [], [FunDecl.mk_fun_int funname params (stmt_of_statements stmts)]
+  | VOID MAIN LPAREN VOID? RPAREN LBLOCK stmts=Statements RBLOCK {
+    None, [], [], Some (Statement.of_statements stmts), [], []
+  }
+  /* int main() { ... } */
+  | Int MAIN LPAREN VOID? RPAREN LBLOCK stmts=Statements RBLOCK {
+    None, [], [], Some (Statement.of_statements stmts), [], []
   }
   /* void f(int a, int *b) { ... } */
   | VOID funname=ID LPAREN params=Parameters RPAREN LBLOCK stmts=Statements RBLOCK {
-    None, [], [], None, [], [FunDecl.mk_fun_void funname params (stmt_of_statements stmts)]
+    None, [], [], None, [], [FunDecl.mk_fun_void funname params (Statement.of_statements stmts)]
   }
+  /* int f(int a, int *b) { ... } */
+  | Int funname=ID LPAREN params=Parameters RPAREN LBLOCK stmts=Statements RBLOCK
+  | VOID ASTERISK funname=ID LPAREN params=Parameters RPAREN LBLOCK stmts=Statements RBLOCK {
+    None, [], [], None, [], [FunDecl.mk_fun_int funname params (Statement.of_statements stmts)]
+  }
+
+Int: CHAR | SHORT | INT | LONG | LONG LONG { () }
 
 /* int a, b, c = 0; */
 VarDecl:
-    INT decls=IntVarDecls SEMI
-    | VOID decls=IntVarDecls SEMI
-    | VarDeclIntType decls=IntVarDecls SEMI {
-      let varnames, stmts = decls in
-      List.map ~f:(fun varname -> Declare.mk_int varname) varnames,
-      match stmts with
-        [] -> []
-      | stmts -> stmt_of_statements stmts |> Init.of_stmt_exn []
-    }
+    VOID decls=IntVarDecls SEMI
+  | Int decls=IntVarDecls SEMI
+  | VarDeclIntType decls=IntVarDecls SEMI {
+    let varnames, stmts = decls in
+    List.map varnames ~f:(fun varname -> Declare.mk_int varname),
+    match stmts with
+      [] -> []
+    | stmts -> Statement.of_statements stmts |> Init.of_stmt_exn []
+  }
 
 VarDeclIntType:
-    UNSIGNED INT
-  | CONST INT
-  | STATIC INT
-  | STATIC CONST INT
-  | STATIC VOLATILE INT
+    UNSIGNED Int
+  | CONST Int
+  | STATIC Int
+  | STATIC CONST Int
+  | STATIC VOLATILE Int
   | STATIC VOID { () }
+
+Attributes:
+    { () }
+  /* ignore: __attribute__ ((__noreturn__)) */
+  | ATTRIBUTE LPAREN LPAREN NORETURN RPAREN RPAREN Attributes { () }
+  /* ignore: __attribute__ ((__nothrow__ , __leaf__)) */
+  | ATTRIBUTE LPAREN LPAREN NOTHROW COMMA LEAF RPAREN RPAREN Attributes { () }
 
 /* int a, int* b */
 Parameters:
@@ -150,8 +164,8 @@ ArguementsOneOrMore:
   | t=Term COMMA args=ArguementsOneOrMore { t :: args }
 
 Type:
-    INT { T_int.SInt }
-  | INT ASTERISK { T_int.SRefInt }
+    Int { T_int.SInt }
+  | Int ASTERISK { T_int.SRefInt }
 
 /* CAG( CAP(x > 1) ) */
 Phi:
@@ -194,13 +208,12 @@ Init:
 InitOne:
   | data=MultipleAssignInit {
     let varnames, term = data in
-    if is_nondet_int term then begin
+    match type_of_nondet term with
+    | Some (32, true) ->
       assert (List.length varnames <= 1);
       List.map ~f:(fun varname -> Init.mk_nondet_assign varname) varnames
-    end else if is_nondet_bool term then
-      failwith "nondet_bool not supported in init"
-    else
-      List.map ~f:(fun varname -> Init.mk_assign varname term) varnames
+    | None -> List.map ~f:(fun varname -> Init.mk_assign varname term) varnames
+    | _ -> failwith "only nondet_int supported in init"
   }
   /* | ASSUME LPAREN fml=Formula RPAREN SEMI inits=Init { Init.mk_assume fml :: inits } */
 
@@ -225,7 +238,7 @@ Statement:
       let tvar = Ident.Tvar varname in
       let term = Term.mk_var tvar T_int.SInt ~info:Dummy in
       let cond_fml = Formula.neq term (T_int.zero ()) in
-      stmt_of_statements [
+      Statement.of_statements [
         cond_assign_stmt;
         Statement.mk_if cond_fml t_stmt (Statement.mk_nop ())
       ]
@@ -248,7 +261,7 @@ IfElse:
       let term = Term.mk_var tvar T_int.SInt ~info:Dummy in
       let cond_fml = Formula.neq term (T_int.zero ()) in
       fun f_stmt ->
-        stmt_of_statements [
+        Statement.of_statements [
           cond_assign_stmt;
           Statement.mk_if cond_fml t_stmt f_stmt
         ]
@@ -269,8 +282,8 @@ While:
 /* do { ... } while (...); */
 DoWhile:
     DO LBLOCK stmts=Statements RBLOCK WHILE LPAREN cond_fml=Formula RPAREN SEMI {
-      stmt_of_statements [
-        stmt_of_statements stmts;
+      Statement.of_statements [
+        Statement.of_statements stmts;
         Statement.mk_if cond_fml (Statement.mk_nop ()) (Statement.mk_break ())
       ]
       |> Statement.mk_loop
@@ -280,10 +293,10 @@ For:
     /* TODO */
     FOR LPAREN init_stmt=ForInit SEMI cond_fml=ForCond SEMI step_var=ID PLUSPLUS RPAREN {
       fun stmt ->
-        stmt_of_statements [
+        Statement.of_statements [
           init_stmt;
           Statement.mk_if cond_fml
-            (stmt_of_statements [
+            (Statement.of_statements [
               stmt;
               let tvar = Ident.Tvar step_var in
               Statement.mk_assign step_var
@@ -298,7 +311,7 @@ For:
     }
   | FOR LPAREN init_stmt=ForInit SEMI cond_fml=ForCond SEMI RPAREN {
       fun stmt ->
-        stmt_of_statements [
+        Statement.of_statements [
           init_stmt;
           Statement.mk_if cond_fml stmt (Statement.mk_break ())
           |> Statement.mk_loop
@@ -319,7 +332,7 @@ ForInits:
 
 ForInit:
     { Statement.mk_nop () }
-  | stmts=ForInits { stmt_of_statements stmts }
+  | stmts=ForInits { Statement.of_statements stmts }
 
 IntVarDeclOne:
     varname=ID {
@@ -327,13 +340,14 @@ IntVarDeclOne:
     }
   | ASTERISK varname=ID { varname, (*ToDo*)None }
   | varname=ID EQUAL term=Term {
-      if is_nondet_int term then
-        varname, None
-      else if is_nondet_bool term then
+      match type_of_nondet term with
+      | Some (1, false) ->
         let x = Term.mk_var (Ident.Tvar varname) T_int.SInt ~info:Dummy in
-        varname, Some (Statement.mk_assume (Formula.or_of [Formula.eq x (T_int.zero ()); Formula.eq x (T_int.one ())]))
-      else
-        varname, Some (Statement.mk_assign varname term)
+        varname,
+        Some (Statement.mk_assume (Formula.or_of [Formula.eq x (T_int.zero ()); Formula.eq x (T_int.one ())]))
+      | Some (32, true) -> varname, None (*ToDo*)
+      | None -> varname, Some (Statement.mk_assign varname term)
+      | _ -> failwith "only nondet_int and nondet_bool supported in var decl"
     }
 
 IntVarDecls:
@@ -357,44 +371,58 @@ IntVarDecls:
 
 StatementGeneral:
     varname=ID EQUAL term=Term SEMI {
-      if is_nondet_int term then
-        Statement.mk_nondet_assign varname
-      else if is_nondet_bool term then
+      match type_of_nondet term with
+      | Some (1, false) ->
         let x = Term.mk_var (Ident.Tvar varname) T_int.SInt ~info:Dummy in
-        Statement.mk_compound (Statement.mk_nondet_assign varname)
+        Statement.mk_compound
+          (Statement.mk_nondet_assign varname)
           (Statement.mk_assume (Formula.or_of [Formula.eq x (T_int.zero ()); Formula.eq x (T_int.one ())]))
-      else
-        Statement.mk_assign varname term
+      | Some (_(*16*), false) ->
+        let x = Term.mk_var (Ident.Tvar varname) T_int.SInt ~info:Dummy in
+        Statement.mk_compound
+          (Statement.mk_nondet_assign varname)
+          (Statement.mk_assume (Formula.geq x (T_int.zero ()))) (*ToDo*)
+      | Some (_(*32*), true) -> Statement.mk_nondet_assign varname (*ToDo*)
+      | None -> Statement.mk_assign varname term
     }
+  /*| varname=ID EQUAL fml=Formula SEMI {
+      Statement.mk_assign varname (T_bool.ifte fml (T_int.one ()) (T_int.zero ()) ~info:Dummy)
+    }*/
   /* TODO */
-  | varname1=ID EQUAL varname2=ID EQUAL term=Term SEMI { Statement.mk_compound (Statement.mk_assign varname1 term) (Statement.mk_assign varname2 term) }
-  | LPAREN ASTERISK varname=ID RPAREN EQUAL term=Term SEMI { Statement.mk_unref_assign varname term }
+  | varname1=ID EQUAL varname2=ID EQUAL term=Term SEMI {
+      Statement.mk_compound (Statement.mk_assign varname1 term) (Statement.mk_assign varname2 term)
+    }
+  | LPAREN ASTERISK varname=ID RPAREN EQUAL term=Term SEMI {
+      Statement.mk_unref_assign varname term
+    }
   | stmt=DoWhile { stmt }
   /* int a = 3, b = 2; */
-  | INT decls=IntVarDecls SEMI | CONST INT decls=IntVarDecls SEMI
+  | Int decls=IntVarDecls SEMI | CONST Int decls=IntVarDecls SEMI
   | VOID decls=IntVarDecls SEMI
   | CONST VOID decls=IntVarDecls SEMI {
       let varnames, stmts = decls in
       List.map ~f:(fun varname -> Statement.mk_vardecl varname T_int.SInt) varnames
       @ stmts
-      |> stmt_of_statements
+      |> Statement.of_statements
     }
   | BREAK SEMI { Statement.mk_break () }
   | RETURN term=Term SEMI {
-      if is_nondet_int term then
-        Statement.mk_return_nondet ()
-      else if is_nondet_bool term then
-        failwith "nondet_bool not supported in return"
-      else
-        Statement.mk_return_int term
+      match type_of_nondet term with
+      | Some (32, true) -> Statement.mk_return_nondet () (*ToDo*)
+      | None -> Statement.mk_return_int term
+      | _ -> failwith "only nondet_int supported in return"
     }
   | RETURN SEMI { Statement.mk_return_void () }
-  | LBLOCK stmts=Statements RBLOCK { stmt_of_statements stmts }
+  | LBLOCK stmts=Statements RBLOCK { Statement.of_statements stmts }
   /* goto */
   | GOTO label_name=ID SEMI { Statement.mk_goto label_name }
   /* label */
-  | label_name=ID CORON { Statement.mk_label label_name }
+  | label_name=ID COLON { Statement.mk_label label_name }
   | ASSUME LPAREN fml=Formula RPAREN SEMI { Statement.mk_assume fml }
+  /* abort */
+  | ERROR LPAREN RPAREN SEMI { Statement.mk_nop ()(*ToDo*) }
+  | ABORT LPAREN RPAREN SEMI { Statement.mk_nop ()(*ToDo*) }
+  | ASSERT_FAIL LPAREN args=Arguements RPAREN SEMI { ignore args; Statement.mk_nop ()(*ToDo*) }
   /* nops */
   | t=Term SEMI {
     if Term.is_funcall t then
@@ -468,26 +496,52 @@ T_intAtom:
   | funname=ID LPAREN args=Arguements RPAREN {
     Term.mk_fsym_app (FunCall funname) args ~info:Dummy
   }
+  | funname=ID LPAREN t1=T_int op=PREDSYM t2=T_int RPAREN { (* ToDo *)
+    let cond = Formula.mk_atom @@ Atom.mk_app (Predicate.mk_psym op) [t1; t2] ~info:Dummy in
+    Term.mk_fsym_app (FunCall funname) [T_bool.ifte cond (T_int.one ()) (T_int.zero ()) ~info:Dummy] ~info:Dummy
+  }
   | ADDR varname=ID { Term.mk_var (Ident.Tvar varname) T_int.SRefInt ~info:Dummy }
   | ASTERISK varname=ID { Term.mk_var (Ident.Tvar varname) T_int.SUnrefInt ~info:Dummy }
+  /* sizeof(char) -> 1 */
+  | SIZEOF LPAREN CHAR RPAREN { T_int.from_int 1 ~info:Dummy }
+  /* sizeof(short) -> 2 */
+  | SIZEOF LPAREN SHORT RPAREN { T_int.from_int 2 ~info:Dummy }
   /* sizeof(int) -> 4 */
   | SIZEOF LPAREN INT RPAREN { T_int.from_int 4 ~info:Dummy }
+  /* sizeof(long) -> 8 */
+  | SIZEOF LPAREN LONG RPAREN { T_int.from_int 8 ~info:Dummy }
   /* --x, ++x */
-  | MINUSMINUS varname=ID { Term.mk_fsym_app (FunCall "#dec") [Term.mk_var (Ident.Tvar varname) T_int.SRefInt ~info:Dummy] ~info:Dummy }
-  | PLUSPLUS varname=ID { Term.mk_fsym_app (FunCall "#inc") [Term.mk_var (Ident.Tvar varname) T_int.SRefInt ~info:Dummy] ~info:Dummy }
+  | MINUSMINUS varname=ID {
+    Term.mk_fsym_app (FunCall "#dec") [Term.mk_var (Ident.Tvar varname) T_int.SRefInt ~info:Dummy] ~info:Dummy
+  }
+  | PLUSPLUS varname=ID {
+    Term.mk_fsym_app (FunCall "#inc") [Term.mk_var (Ident.Tvar varname) T_int.SRefInt ~info:Dummy] ~info:Dummy
+  }
   /* x--, x++ */
-  | varname=ID MINUSMINUS { T_int.mk_add (Term.mk_fsym_app (FunCall "#dec") [Term.mk_var (Ident.Tvar varname) T_int.SRefInt ~info:Dummy] ~info:Dummy) (T_int.one ()) ~info:Dummy }
-  | varname=ID PLUSPLUS { T_int.mk_sub (Term.mk_fsym_app (FunCall "#inc") [Term.mk_var (Ident.Tvar varname) T_int.SRefInt ~info:Dummy] ~info:Dummy) (T_int.one ()) ~info:Dummy }
+  | varname=ID MINUSMINUS {
+    T_int.mk_add (Term.mk_fsym_app (FunCall "#dec") [Term.mk_var (Ident.Tvar varname) T_int.SRefInt ~info:Dummy] ~info:Dummy) (T_int.one ()) ~info:Dummy
+  }
+  | varname=ID PLUSPLUS {
+    T_int.mk_sub (Term.mk_fsym_app (FunCall "#inc") [Term.mk_var (Ident.Tvar varname) T_int.SRefInt ~info:Dummy] ~info:Dummy) (T_int.one ()) ~info:Dummy
+  }
   /* "hoge" */
   | str=STRINGL { term_of_string str }
   /* "hoge" "fuga" */
   | str1=STRINGL str2=STRINGL { term_of_string (str1 ^ str2) }
   /* nondet() */
-  | NONDET_INT LPAREN RPAREN { Term.mk_fsym_app (FunCall funname_nondet_int) [] ~info:Dummy }
   | NONDET_BOOL LPAREN RPAREN { Term.mk_fsym_app (FunCall funname_nondet_bool) [] ~info:Dummy }
+  | NONDET_CHAR LPAREN RPAREN { Term.mk_fsym_app (FunCall funname_nondet_char) [] ~info:Dummy }
+  | NONDET_UCHAR LPAREN RPAREN { Term.mk_fsym_app (FunCall funname_nondet_uchar) [] ~info:Dummy }
+  | NONDET_SHORT LPAREN RPAREN { Term.mk_fsym_app (FunCall funname_nondet_short) [] ~info:Dummy }
+  | NONDET_USHORT LPAREN RPAREN { Term.mk_fsym_app (FunCall funname_nondet_ushort) [] ~info:Dummy }
+  | NONDET_INT LPAREN RPAREN { Term.mk_fsym_app (FunCall funname_nondet_int) [] ~info:Dummy }
+  | NONDET_UINT LPAREN RPAREN { Term.mk_fsym_app (FunCall funname_nondet_uint) [] ~info:Dummy }
+  | NONDET_LONG LPAREN RPAREN { Term.mk_fsym_app (FunCall funname_nondet_long) [] ~info:Dummy }
+  | NONDET_ULONG LPAREN RPAREN { Term.mk_fsym_app (FunCall funname_nondet_ulong) [] ~info:Dummy }
 
 Cast:
-    LPAREN UNSIGNED INT RPAREN
+    LPAREN Int RPAREN
+  | LPAREN UNSIGNED Int RPAREN
   | LPAREN VOID RPAREN { () }
 
 /* Ast.LogicOld.T_bool */

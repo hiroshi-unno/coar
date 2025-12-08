@@ -12,8 +12,8 @@ rule main = parse
     { CLtlParser.LTLDECLARE label }
   (* ignore spacing and newline characters *)
 | [' ' '\009' '\012' '\r']+ { main lexbuf }
-| "//"'\n'
-| '\n' { Lexing.new_line lexbuf; main lexbuf }
+| '\n'
+| "//"'\n' { Lexing.new_line lexbuf; main lexbuf }
 (* Safe/Unsafe *)
 | "//"[^'@''\n'][^'\n']* { main lexbuf }
 (* comments *)
@@ -46,23 +46,30 @@ rule main = parse
 | "break" { CLtlParser.BREAK }
 | "return" { CLtlParser.RETURN }
 | "goto" { CLtlParser.GOTO }
-| "__VERIFIER_error" { CLtlParser.ERROR }
 | "__VERIFIER_assume" { CLtlParser.ASSUME }
+| "assume" { CLtlParser.ASSUME }
+| "__VERIFIER_error" { CLtlParser.ERROR }
+| "abort" { CLtlParser.ABORT }
+| "__assert_fail" { CLtlParser.ASSERT_FAIL }
 | "__attribute__" { CLtlParser.ATTRIBUTE }
 | "__noreturn__" { CLtlParser.NORETURN }
+| "__nothrow__" { CLtlParser.NOTHROW }
+| "__leaf__" { CLtlParser.LEAF }
+(* symbols *)
 | "(" { CLtlParser.LPAREN }
 | ")" { CLtlParser.RPAREN }
 | "{" { CLtlParser.LBLOCK }
 | "}" { CLtlParser.RBLOCK }
 | "=" { CLtlParser.EQUAL }
 | "," { CLtlParser.COMMA }
-| ":" { CLtlParser.CORON }
+| ":" { CLtlParser.COLON }
 | ";" { CLtlParser.SEMI }
 | "extern" { CLtlParser.EXTERN }
 | "unsigned" { CLtlParser.UNSIGNED }
-| "char"
-| "short"
+| "char" { CLtlParser.CHAR }
+| "short" { CLtlParser.SHORT }
 | "int" { CLtlParser.INT }
+| "long" { CLtlParser.LONG }
 | "void" { CLtlParser.VOID }
 | "const" { CLtlParser.CONST }
 | "static" { CLtlParser.STATIC }
@@ -94,8 +101,15 @@ rule main = parse
 | "main" { CLtlParser.MAIN }
 
 (* non-deterministic *)
-| "__VERIFIER_nondet_int" { CLtlParser.NONDET_INT }
 | "__VERIFIER_nondet_bool" { CLtlParser.NONDET_BOOL }
+| "__VERIFIER_nondet_char" { CLtlParser.NONDET_CHAR }
+| "__VERIFIER_nondet_uchar" { CLtlParser.NONDET_UCHAR }
+| "__VERIFIER_nondet_short" { CLtlParser.NONDET_SHORT }
+| "__VERIFIER_nondet_ushort" { CLtlParser.NONDET_USHORT }
+| "__VERIFIER_nondet_int" { CLtlParser.NONDET_INT }
+| "__VERIFIER_nondet_uint" { CLtlParser.NONDET_UINT }
+| "__VERIFIER_nondet_long" { CLtlParser.NONDET_LONG }
+| "__VERIFIER_nondet_ulong" { CLtlParser.NONDET_ULONG }
 
 | ['a'-'z''A'-'Z''_']['a'-'z''A'-'Z''0'-'9'''''_']*
     {

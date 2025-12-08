@@ -203,7 +203,9 @@ end = struct
   and elim_funcall_rep nxt_label_id fundecls stmt =
     if Statement.is_call_assign stmt then
       let varname, funname, args = Statement.let_call_assign stmt in
-      let fundecl = FunDecl.find_fundecl funname fundecls in
+      let fundecl =
+        FunDecl.rename_labels @@ FunDecl.find_fundecl funname fundecls
+      in
       if FunDecl.is_fun_nondet fundecl then
         (Statement.mk_nondet_assign varname, nxt_label_id)
       else if FunDecl.is_fun_int fundecl then
@@ -229,7 +231,9 @@ end = struct
       else assert false
     else if Statement.is_call_voidfun stmt then
       let funname, args = Statement.let_call_voidfun stmt in
-      let fundecl = FunDecl.find_fundecl funname fundecls in
+      let fundecl =
+        FunDecl.rename_labels @@ FunDecl.find_fundecl funname fundecls
+      in
       let _, params, body = FunDecl.let_fun fundecl in
       if Statement.is_nop body then (body, nxt_label_id)
       else
@@ -577,7 +581,20 @@ let parse_cltl_from_lexbuf ~print lexbuf =
                Statement.mk_return_int
                  (Term.mk_var tvar T_int.SUnrefInt ~info:Dummy);
              ]);
-        FunDecl.mk_fun_int "__VERIFIER_nondet_int" []
+        FunDecl.mk_fun_int funname_nondet_char []
+          (Statement.mk_return_nondet ());
+        FunDecl.mk_fun_int funname_nondet_uchar []
+          (Statement.mk_return_nondet ());
+        FunDecl.mk_fun_int funname_nondet_short []
+          (Statement.mk_return_nondet ());
+        FunDecl.mk_fun_int funname_nondet_ushort []
+          (Statement.mk_return_nondet ());
+        FunDecl.mk_fun_int funname_nondet_int [] (Statement.mk_return_nondet ());
+        FunDecl.mk_fun_int funname_nondet_uint []
+          (Statement.mk_return_nondet ());
+        FunDecl.mk_fun_int funname_nondet_long []
+          (Statement.mk_return_nondet ());
+        FunDecl.mk_fun_int funname_nondet_ulong []
           (Statement.mk_return_nondet ());
       ]
       @ fundecls

@@ -587,14 +587,16 @@ end = struct
                in
                match value with
                | T_VALID ->
-                   failwith
-                   @@ sprintf
-                        "internal error: can't reach the statement:\n\
-                         %s\n\n\
-                         original:\n\
-                         %s\n\n\
-                         varname: %s\n"
-                        (string_of stmt) (string_of stmt_key) varname
+                   if true (*ToDo*) then (query_stmt_key, new_stmts)
+                   else
+                     failwith
+                     @@ sprintf
+                          "internal error: can't reach the statement:\n\
+                           %s\n\n\
+                           original:\n\
+                           %s\n\n\
+                           varname: %s\n"
+                          (string_of stmt) (string_of stmt_key) varname
                | T_NONDET ->
                    if check_nondet_if tvar stmt then
                      let _, t_stmt, f_stmt = let_if stmt in
@@ -629,7 +631,8 @@ end = struct
         let tvar = Ident.Tvar varname in
         if
           ReadGraph.rgenv_mem tvar rgenv
-          && (*ToDo*)
+          &&
+          (*ToDo*)
           Stdlib.(
             ReadGraph.rgenv_get tvar rgenv
             |> ReadGraph.rg_get !nxt_stmt_key

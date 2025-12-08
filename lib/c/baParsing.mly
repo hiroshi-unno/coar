@@ -5,7 +5,7 @@
 
 %token NEVER LBLOCK RBLOCK EOF
 %token LPAREN RPAREN
-%token CORON CORONCORON SEMI
+%token COLON COLONCOLON SEMI
 %token ARROW GOTO IF FI SKIP TRUE FALSE
 %token NOT AND OR
 %token <string> ID
@@ -22,8 +22,8 @@ states:
   | t1=state t2=states { t1 @ t2 }
 
 state:
-    id=ID CORON SKIP { [id, id, Formula.mk_atom (Atom.mk_true () ~info:Dummy) ~info:Dummy] }
-  | id=ID CORON toes=transition SEMI {
+    id=ID COLON SKIP { [id, id, Formula.mk_atom (Atom.mk_true () ~info:Dummy) ~info:Dummy] }
+  | id=ID COLON toes=transition SEMI {
     List.map (fun (to_id, fml) -> id, to_id, fml) toes
   }
 
@@ -36,7 +36,7 @@ conds:
   | c=cond toes=conds { c :: toes }
 
 cond:
-    CORONCORON fml=formula ARROW GOTO id=ID { (id, fml) }
+    COLONCOLON fml=formula ARROW GOTO id=ID { (id, fml) }
 
 formula:
     fml=formula_or { fml }

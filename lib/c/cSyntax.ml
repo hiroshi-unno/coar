@@ -6,6 +6,36 @@ open Ast.LogicOld
 exception SyntaxError of string
 exception SemanticError of string
 
+let funname_nondet_bool = "__VERIFIER_nondet_bool"
+let funname_nondet_char = "__VERIFIER_nondet_char"
+let funname_nondet_uchar = "__VERIFIER_nondet_uchar"
+let funname_nondet_short = "__VERIFIER_nondet_short"
+let funname_nondet_ushort = "__VERIFIER_nondet_ushort"
+let funname_nondet_int = "__VERIFIER_nondet_int"
+let funname_nondet_uint = "__VERIFIER_nondet_uint"
+let funname_nondet_long = "__VERIFIER_nondet_long"
+let funname_nondet_ulong = "__VERIFIER_nondet_ulong"
+let formula_of_term term = Formula.neq term (T_int.zero ())
+
+let term_of_string str =
+  let varname = sprintf "\"%s\"" str in
+  Term.mk_var (Ident.Tvar varname) T_int.SRefInt ~info:Dummy
+
+let type_of_nondet term =
+  if Term.is_funcall term then
+    let funname, _, _ = Term.let_funcall term in
+    if String.(funname = funname_nondet_bool) then Some (1, false)
+    else if String.(funname = funname_nondet_char) then Some (8, true)
+    else if String.(funname = funname_nondet_uchar) then Some (8, false)
+    else if String.(funname = funname_nondet_short) then Some (16, true)
+    else if String.(funname = funname_nondet_ushort) then Some (16, false)
+    else if String.(funname = funname_nondet_int) then Some (32, true)
+    else if String.(funname = funname_nondet_uint) then Some (32, false)
+    else if String.(funname = funname_nondet_long) then Some (64, true)
+    else if String.(funname = funname_nondet_ulong) then Some (64, false)
+    else None
+  else None
+
 module Define = struct
   type t = DEF of (string * int)
 
@@ -747,6 +777,7 @@ module rec Statement : sig
   val varname_of_assign : t -> string
   val string_of : ?indent:int -> t -> string
   val subst : TermSubst.t -> t -> t
+  val rename_labels : (string, string) Map.Poly.t -> t -> t
   val get_inner_statements : t -> t list
   val get_read_vars : t -> Variables.t
 
@@ -948,6 +979,33 @@ end = struct
     | LABEL _ | GOTO _ | RETURN_VOID | RETURN_NONDET | NONDET_ASSIGN _ | BREAK
     | EXIT | NOP ->
         stmt
+
+  let rec rename_labels ren stmt =
+    match stmt with
+    | IF (cond_fml, t_stmt, f_stmt) ->
+        let t_stmt = rename_labels ren t_stmt in
+        let f_stmt = rename_labels ren f_stmt in
+        mk_if cond_fml t_stmt f_stmt
+    | LOOP stmt' ->
+        let stmt' = rename_labels ren stmt' in
+        mk_loop stmt'
+    | NONDET (stmt1, stmt2) ->
+        let stmt1 = rename_labels ren stmt1 in
+        let stmt2 = rename_labels ren stmt2 in
+        mk_nondet stmt1 stmt2
+    | COMPOUND (stmt1, stmt2) ->
+        let stmt1 = rename_labels ren stmt1 in
+        let stmt2 = rename_labels ren stmt2 in
+        mk_compound stmt1 stmt2
+    | LABEL lab ->
+        LABEL
+          (try Map.Poly.find_exn ren lab
+           with _ -> failwith ("undefined label: " ^ lab))
+    | GOTO lab ->
+        GOTO
+          (try Map.Poly.find_exn ren lab
+           with _ -> failwith ("undefined label: " ^ lab))
+    | _ -> stmt
 
   let get_inner_statements = function
     | IF (_, stmt1, stmt2) | NONDET (stmt1, stmt2) | COMPOUND (stmt1, stmt2) ->
@@ -1235,6 +1293,7 @@ module FunDecl : sig
   val find_fundecl : string -> t list -> t
   val is_non_recursive : t list -> t -> bool
   val string_of : t -> string
+  val rename_labels : t -> t
 end = struct
   type t =
     | FUN_NONDET of string * (string * Sort.t) list
@@ -1282,9 +1341,8 @@ end = struct
 
   let find_fundecl funname fundecls =
     match
-      List.find
-        ~f:(fun fundecl -> String.equal (get_funname fundecl) funname)
-        fundecls
+      List.find fundecls ~f:(fun fundecl ->
+          String.equal (get_funname fundecl) funname)
     with
     | Some fundecl -> fundecl
     | None ->
@@ -1309,8 +1367,7 @@ end = struct
 
   let rec is_non_recursive_rep fundecls fundecl ancestors used =
     get_next_funnames fundecl
-    |> List.fold_left
-         ~f:(fun (res, used) funname' ->
+    |> List.fold_left ~init:(true, used) ~f:(fun (res, used) funname' ->
            let fundecl' = find_fundecl funname' fundecls in
            if not res then (false, used)
            else if Variables.is_mem ancestors funname' then (true, used)
@@ -1319,7 +1376,6 @@ end = struct
              is_non_recursive_rep fundecls fundecl'
                (Variables.add funname' ancestors)
                (Variables.add funname' used))
-         ~init:(true, used)
 
   let is_non_recursive fundecls fundecl =
     let funname = get_funname fundecl in
@@ -1343,6 +1399,29 @@ end = struct
     | FUN_INT (funname, args, stmt) ->
         sprintf "int %s(%s) {\n%s\n}" funname (string_of_args args)
           (Statement.string_of stmt)
+
+  let cnt = ref 0
+
+  let rename_labels = function
+    | FUN_NONDET (funname, args) -> FUN_NONDET (funname, args)
+    | FUN_VOID (funname, args, stmt) ->
+        cnt := !cnt + 1;
+        let labels = Statement.get_all_labels stmt in
+        let ren =
+          Map.Poly.of_alist_exn
+          @@ List.map labels ~f:(fun lab ->
+                 (lab, lab ^ "_" ^ Int.to_string !cnt))
+        in
+        FUN_VOID (funname, args, Statement.rename_labels ren stmt)
+    | FUN_INT (funname, args, stmt) ->
+        cnt := !cnt + 1;
+        let labels = Statement.get_all_labels stmt in
+        let ren =
+          Map.Poly.of_alist_exn
+          @@ List.map labels ~f:(fun lab ->
+                 (lab, lab ^ "_" ^ Int.to_string !cnt))
+        in
+        FUN_INT (funname, args, Statement.rename_labels ren stmt)
 end
 
 type cctl = Ctl.t * Declare.t list * Init.t list * Statement.t
