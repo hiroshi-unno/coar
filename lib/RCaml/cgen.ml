@@ -17,18 +17,18 @@ module Make (Config : Config.ConfigType) = struct
 
   let _ = Debug.set_module_name "Cgen"
 
-  module MBcgen = MBcgen.Make ((
+  module MBcgen = MBcgen.Make (
     struct
       let config =
         MBcgen.Config.{ verbose = config.verbose; for_cps_trans = false }
     end :
-      MBcgen.Config.ConfigType))
+      MBcgen.Config.ConfigType)
 
-  module MBcsol = MBcsol.Make ((
+  module MBcsol = MBcsol.Make (
     struct
       let config = MBcsol.Config.{ verbose = config.verbose }
     end :
-      MBcsol.Config.ConfigType))
+      MBcsol.Config.ConfigType)
 
   type mode = OCaml | HFL_Expectation of bool (* whether conditional *)
   type constr = Formula.t
@@ -116,14 +116,14 @@ module Make (Config : Config.ConfigType) = struct
               @@ Set.Poly.map svpvs ~f:(fun (sv, pv) -> (pv, [ Sort.SVar sv ])),
               Map.of_set_exn
               @@ Set.Poly.map svpvs ~f:(fun (sv, pv) ->
-                     ( sv,
-                       let sort = Sort.SVar sv in
-                       Rtype.mk_rbase sort
-                       @@
-                       let tv = Ident.mk_fresh_tvar () in
-                       ( tv,
-                         Formula.mk_atom
-                         @@ Atom.pvar_app_of_senv pv [ (tv, sort) ] ) )) )
+                  ( sv,
+                    let sort = Sort.SVar sv in
+                    Rtype.mk_rbase sort
+                    @@
+                    let tv = Ident.mk_fresh_tvar () in
+                    ( tv,
+                      Formula.mk_atom @@ Atom.pvar_app_of_senv pv [ (tv, sort) ]
+                    ) )) )
           else (Map.Poly.empty, Map.Poly.empty)
         in
         let t =
@@ -146,9 +146,9 @@ module Make (Config : Config.ConfigType) = struct
     let open Datatype in
     update_dtrenv_with_renv @@ Map.Poly.of_alist_exn
     @@ List.concat_map dts ~f:(fun datatype ->
-           List.concat_map datatype.dts ~f:(fun dt ->
-               List.map dt.conses ~f:(fun cons ->
-                   (cons.name, of_constructor ~config cons.name datatype))))
+        List.concat_map datatype.dts ~f:(fun dt ->
+            List.map dt.conses ~f:(fun cons ->
+                (cons.name, of_constructor ~config cons.name datatype))))
 
   (** auxiliary functions for constraint generation *)
 
@@ -165,11 +165,11 @@ module Make (Config : Config.ConfigType) = struct
         when String.(Datatype.name_of dt1 = Datatype.name_of dt2) ->
           Map.Poly.of_alist_exn
           @@ List.filter_map ~f:(function
-               | Sort.SVar svar, t -> Some (svar, t)
-               | sort, t ->
-                   (* ToDo: check that t is without refinement *)
-                   assert (Stdlib.(sort = sort_of_val t));
-                   None)
+            | Sort.SVar svar, t -> Some (svar, t)
+            | sort, t ->
+                (* ToDo: check that t is without refinement *)
+                assert (Stdlib.(sort = sort_of_val t));
+                None)
           @@ List.zip_exn (Datatype.params_of dt1) params
       | _ -> failwith "instantiate_val_con"
     in
@@ -222,72 +222,70 @@ module Make (Config : Config.ConfigType) = struct
     let css, phis' =
       Set.unzip
       @@ Set.Poly.filter_map (Map.to_set renv) ~f:(fun (x, ty) ->
-             let x_term = Term.mk_var x @@ sort_of_val ty in
-             match ty with
-             | RGeneral (_, T_dt.SDT dt, pred) ->
-                 let css, phis =
-                   if depth <= 0 then ([], [])
-                   else
-                     let renv_wo_x = (Map.Poly.remove renv x, phis) in
-                     let dom = Env.dep_args_of renv_wo_x in
-                     (*let dt = Datatype.update_params dt @@ List.map params ~f:sort_of_val in*)
-                     List.unzip
-                     @@ List.map (Datatype.conses_of dt) ~f:(fun cons ->
-                            (*print @@ lazy cons.name;*)
-                            let cty, constrs, _kind_map (*ToDo*) =
-                              let cty = Map.Poly.find_exn !dtrenv cons.name in
-                              instantiate_val_con false ~config dom
-                                Map.Poly.empty (*ToDo*) (cty, None, ty)
-                            in
-                            let args, _ret =
-                              args_ret_of_val @@ aconv_val Map.Poly.empty cty
-                            in
-                            let t_cons =
-                              T_dt.mk_cons dt cons.name
-                              @@ List.map args ~f:(fun (x, t) ->
-                                     Term.mk_var x @@ Rtype.sort_of_val t)
-                            in
-                            let renv_args =
-                              ( Map.Poly.of_alist_exn args,
-                                Set.Poly.singleton @@ Formula.eq x_term t_cons
-                              )
-                            in
-                            let constrs_args, phi_args =
-                              constr_of ~config ~depth:(depth - 1) renv_args
-                            in
-                            ( Set.Poly.union_list [ constrs; constrs_args ],
-                              Formula.mk_imply (Formula.eq x_term t_cons)
-                                phi_args ))
-                 in
-                 Option.return
-                   ( Set.Poly.union_list css,
-                     Formula.and_of (Formula.apply_pred pred x_term :: phis) )
-             | RTuple (elems, pred) ->
-                 let args =
-                   List.map elems ~f:(fun t -> (mk_fresh_tvar_with "v", t))
-                 in
-                 let constrs_elems, phi_elems =
-                   constr_of ~config ~depth
-                     ( Map.Poly.of_alist_exn args,
-                       Set.Poly.singleton @@ Formula.eq x_term
-                       @@ T_tuple.mk_tuple_cons (List.map elems ~f:sort_of_val)
-                       @@ List.map args ~f:(fun (x, t) ->
-                              Term.mk_var x @@ sort_of_val t) )
-                 in
-                 Option.return
-                   ( constrs_elems,
-                     Formula.and_of
-                       [ Formula.apply_pred pred x_term; phi_elems ] )
-             | RGeneral (_params, T_dt.SUS (_name, _), pred) ->
-                 (* ToDo: SUS can be promoted to SDT? *)
-                 Some (Set.Poly.empty, Formula.apply_pred pred x_term)
-             | RGeneral (_params, _sort, pred) ->
-                 Some (Set.Poly.empty, Formula.apply_pred pred x_term)
-             | RRef (_, pred) ->
-                 Some (Set.Poly.empty, Formula.apply_pred pred x_term)
-             | RArrow (_y, _t, _c, pred) ->
-                 Some (Set.Poly.empty, Formula.apply_pred pred x_term)
-             | _ -> None)
+          let x_term = Term.mk_var x @@ sort_of_val ty in
+          match ty with
+          | RGeneral (_, T_dt.SDT dt, pred) ->
+              let css, phis =
+                if depth <= 0 then ([], [])
+                else
+                  let renv_wo_x = (Map.Poly.remove renv x, phis) in
+                  let dom = Env.dep_args_of renv_wo_x in
+                  (*let dt = Datatype.update_params dt @@ List.map params ~f:sort_of_val in*)
+                  List.unzip
+                  @@ List.map (Datatype.conses_of dt) ~f:(fun cons ->
+                      (*print @@ lazy cons.name;*)
+                      let cty, constrs, _kind_map (*ToDo*) =
+                        let cty = Map.Poly.find_exn !dtrenv cons.name in
+                        instantiate_val_con false ~config dom Map.Poly.empty
+                          (*ToDo*) (cty, None, ty)
+                      in
+                      let args, _ret =
+                        args_ret_of_val @@ aconv_val Map.Poly.empty cty
+                      in
+                      let t_cons =
+                        T_dt.mk_cons dt cons.name
+                        @@ List.map args ~f:(fun (x, t) ->
+                            Term.mk_var x @@ Rtype.sort_of_val t)
+                      in
+                      let renv_args =
+                        ( Map.Poly.of_alist_exn args,
+                          Set.Poly.singleton @@ Formula.eq x_term t_cons )
+                      in
+                      let constrs_args, phi_args =
+                        constr_of ~config ~depth:(depth - 1) renv_args
+                      in
+                      ( Set.Poly.union_list [ constrs; constrs_args ],
+                        Formula.mk_imply (Formula.eq x_term t_cons) phi_args ))
+              in
+              Option.return
+                ( Set.Poly.union_list css,
+                  Formula.and_of (Formula.apply_pred pred x_term :: phis) )
+          | RTuple (elems, pred) ->
+              let args =
+                List.map elems ~f:(fun t -> (mk_fresh_tvar_with "v", t))
+              in
+              let constrs_elems, phi_elems =
+                constr_of ~config ~depth
+                  ( Map.Poly.of_alist_exn args,
+                    Set.Poly.singleton @@ Formula.eq x_term
+                    @@ T_tuple.mk_tuple_cons (List.map elems ~f:sort_of_val)
+                    @@ List.map args ~f:(fun (x, t) ->
+                        Term.mk_var x @@ sort_of_val t) )
+              in
+              Option.return
+                ( constrs_elems,
+                  Formula.and_of [ Formula.apply_pred pred x_term; phi_elems ]
+                )
+          | RGeneral (_params, T_dt.SUS (_name, _), pred) ->
+              (* ToDo: SUS can be promoted to SDT? *)
+              Some (Set.Poly.empty, Formula.apply_pred pred x_term)
+          | RGeneral (_params, _sort, pred) ->
+              Some (Set.Poly.empty, Formula.apply_pred pred x_term)
+          | RRef (_, pred) ->
+              Some (Set.Poly.empty, Formula.apply_pred pred x_term)
+          | RArrow (_y, _t, _c, pred) ->
+              Some (Set.Poly.empty, Formula.apply_pred pred x_term)
+          | _ -> None)
     in
     (Set.concat css, Formula.and_of @@ Set.to_list @@ Set.union phis phis')
 
@@ -714,8 +712,8 @@ module Make (Config : Config.ConfigType) = struct
     @@ lazy
          (sprintf "[cgen_subeff]\n%s"
          @@ List.fold_right tys ~init ~f:(fun (pat, _renv, c) ->
-                sprintf "let %s : %s in\n%s" (Pattern.str_of pat)
-                  (str_of_comp ~config c)));
+             sprintf "let %s : %s in\n%s" (Pattern.str_of pat)
+               (str_of_comp ~config c)));
     let constrs =
       (* assume that all opsigs in [tys] are empty or the same as [o]
          (i.e. they are supertypes of [o]) *)
@@ -776,13 +774,13 @@ module Make (Config : Config.ConfigType) = struct
         let renvs, constrss, not_matched, args, sorts, targs =
           List.unzip6
           @@ List.map2_exn pats elems ~f:(fun pi ti ->
-                 let arg = Ident.mk_fresh_tvar () in
-                 let sort = Rtype.sort_of_val ti in
-                 let targ = Term.mk_var arg sort in
-                 let renv, constrs, not_matched =
-                   pattern_match_with ~config renv pi (targ, ti)
-                 in
-                 (renv, constrs, not_matched, (arg, ti), sort, targ))
+              let arg = Ident.mk_fresh_tvar () in
+              let sort = Rtype.sort_of_val ti in
+              let targ = Term.mk_var arg sort in
+              let renv, constrs, not_matched =
+                pattern_match_with ~config renv pi (targ, ti)
+              in
+              (renv, constrs, not_matched, (arg, ti), sort, targ))
         in
         let renv_args =
           ( Map.Poly.of_alist_exn args,
@@ -823,7 +821,7 @@ module Make (Config : Config.ConfigType) = struct
         let renvs, constrss_args, not_matched =
           List.unzip3
           @@ List.map3_exn pats ts args ~f:(fun pi ti argi ->
-                 pattern_match_with renv ~config pi (ti, snd argi))
+              pattern_match_with renv ~config pi (ti, snd argi))
         in
         ( Rtype.Env.add_phi
             (Rtype.Env.disj_union_list (* assume distinct *)
@@ -1012,13 +1010,13 @@ module Make (Config : Config.ConfigType) = struct
           then
             Map.of_set_exn
             @@ Set.Poly.map (Term.svs_of_sort sort) ~f:(fun sv ->
-                   let pv = Ident.mk_fresh_pvar ~prefix:(Some "$sv") () in
-                   ( sv,
-                     let sort = Sort.SVar sv in
-                     Rtype.mk_rbase sort
-                     @@
-                     let tv = Ident.mk_fresh_tvar () in
-                     (tv, Rtype.mk_refpred ~config pv dom tv sort) ))
+                let pv = Ident.mk_fresh_pvar ~prefix:(Some "$sv") () in
+                ( sv,
+                  let sort = Sort.SVar sv in
+                  Rtype.mk_rbase sort
+                  @@
+                  let tv = Ident.mk_fresh_tvar () in
+                  (tv, Rtype.mk_refpred ~config pv dom tv sort) ))
           else Map.Poly.empty
         in
         let rty =
@@ -1057,13 +1055,13 @@ module Make (Config : Config.ConfigType) = struct
           then
             Map.of_set_exn
             @@ Set.Poly.map (Term.svs_of_sort sort) ~f:(fun sv ->
-                   let pv = Ident.mk_fresh_pvar () in
-                   ( sv,
-                     let sort = Sort.SVar sv in
-                     Rtype.mk_rbase sort
-                     @@
-                     let tv = Ident.mk_fresh_tvar () in
-                     (tv, Rtype.mk_refpred ~config pv dom tv sort) ))
+                let pv = Ident.mk_fresh_pvar () in
+                ( sv,
+                  let sort = Sort.SVar sv in
+                  Rtype.mk_rbase sort
+                  @@
+                  let tv = Ident.mk_fresh_tvar () in
+                  (tv, Rtype.mk_refpred ~config pv dom tv sort) ))
           else Map.Poly.empty
         in
         let rty =
@@ -1104,7 +1102,7 @@ module Make (Config : Config.ConfigType) = struct
         let renvs, rtys, adm_pvarss =
           List.unzip3
           @@ List.map2_exn pats sorts ~f:(fun pat sort ->
-                 env_and_rty_of_pat ~config mode dom (pat, is_fun, is_rec, sort))
+              env_and_rty_of_pat ~config mode dom (pat, is_fun, is_rec, sort))
         in
         let tup_ty, phi =
           let terms, sorts = List.unzip dom in
@@ -1220,16 +1218,16 @@ module Make (Config : Config.ConfigType) = struct
   let pren_of penv_dtrenv bpvs constrs =
     Map.of_set_exn
     @@ Set.Poly.filter_map ~f:(fun (Ident.Pvar n, sorts) ->
-           if
-             Set.exists penv_dtrenv ~f:(fun (pvar, sorts') ->
-                 Stdlib.(pvar = Ident.Pvar n && sorts <> sorts'))
-           then
-             let name_inst =
-               n ^ String.bracket
-               @@ String.concat_map_list ~sep:"," sorts ~f:Term.str_of_sort
-             in
-             Some ((n, sorts), Ident.Pvar name_inst)
-           else None)
+        if
+          Set.exists penv_dtrenv ~f:(fun (pvar, sorts') ->
+              Stdlib.(pvar = Ident.Pvar n && sorts <> sorts'))
+        then
+          let name_inst =
+            n ^ String.bracket
+            @@ String.concat_map_list ~sep:"," sorts ~f:Term.str_of_sort
+          in
+          Some ((n, sorts), Ident.Pvar name_inst)
+        else None)
     @@ Set.concat_map ~f:(Formula.pred_sort_env_of ~bpvs)
     @@ constrs
 
@@ -1449,10 +1447,10 @@ module Make (Config : Config.ConfigType) = struct
         let cs', pvmapss =
           List.unzip
           @@ List.map cs ~f:(fun c ->
-                 let val_type, pvmap =
-                   fresh_eff_pvars_val ~print:Debug.print c.val_type
-                 in
-                 (rename_comp ~config map { c with val_type }, pvmap))
+              let val_type, pvmap =
+                fresh_eff_pvars_val ~print:Debug.print c.val_type
+              in
+              (rename_comp ~config map { c with val_type }, pvmap))
         in
         (cs', Map.force_merge_list pvmapss)
       in
@@ -1639,33 +1637,32 @@ module Make (Config : Config.ConfigType) = struct
                    in
                    List.unzip3
                    @@ List.init num ~f:(fun _ ->
-                          let pvar =
-                            Ident.mk_fresh_pvar ~prefix:(Some "PARAM_") ()
-                          in
-                          let phi =
-                            let args =
-                              dom @ [ (yt, T_real.SReal); (vt, T_real.SReal) ]
-                            in
-                            Formula.mk_atom
-                            @@ Atom.mk_pvar_app pvar (List.map ~f:snd args)
-                                 (List.map ~f:fst args)
-                          in
-                          let phi' =
-                            let args =
-                              dom
-                              @ [
-                                  ( T_real.mk_real Q.(one / of_int 2),
-                                    T_real.SReal );
-                                  (vt, T_real.SReal);
-                                ]
-                            in
-                            Formula.mk_atom
-                            @@ Atom.mk_pvar_app pvar (List.map ~f:snd args)
-                                 (List.map ~f:fst args)
-                          in
-                          ( Rtype.mk_rbase T_real.SReal (v, phi),
-                            Rtype.mk_rbase T_real.SReal (v, phi'),
-                            pvar ))
+                       let pvar =
+                         Ident.mk_fresh_pvar ~prefix:(Some "PARAM_") ()
+                       in
+                       let phi =
+                         let args =
+                           dom @ [ (yt, T_real.SReal); (vt, T_real.SReal) ]
+                         in
+                         Formula.mk_atom
+                         @@ Atom.mk_pvar_app pvar (List.map ~f:snd args)
+                              (List.map ~f:fst args)
+                       in
+                       let phi' =
+                         let args =
+                           dom
+                           @ [
+                               (T_real.mk_real Q.(one / of_int 2), T_real.SReal);
+                               (vt, T_real.SReal);
+                             ]
+                         in
+                         Formula.mk_atom
+                         @@ Atom.mk_pvar_app pvar (List.map ~f:snd args)
+                              (List.map ~f:fst args)
+                       in
+                       ( Rtype.mk_rbase T_real.SReal (v, phi),
+                         Rtype.mk_rbase T_real.SReal (v, phi'),
+                         pvar ))
                  in
                  ( renv,
                    (match (ts, ts') with
@@ -1687,71 +1684,71 @@ module Make (Config : Config.ConfigType) = struct
                      (if true (*ToDo*) then List.map ~f:T_real.mk_rabs
                       else Fn.id)
                      @@ List.filter_map dom ~f:(fun (t, s) ->
-                            if Term.is_real_sort s then Some t
-                            else if Term.is_int_sort s then
-                              Some (T_irb.mk_int_to_real t)
-                            else None)
+                         if Term.is_real_sort s then Some t
+                         else if Term.is_int_sort s then
+                           Some (T_irb.mk_int_to_real t)
+                         else None)
                    in
                    List.unzip4
                    @@ List.init num ~f:(fun _ ->
-                          let lhs_coeff = Ident.mk_fresh_parameter () in
-                          let lhs_coeff_t =
-                            T_irb.mk_int_to_real
-                            @@ Term.mk_var lhs_coeff T_int.SInt
-                          in
-                          let coeff = Ident.mk_fresh_parameter () in
-                          let coeff_t =
-                            T_irb.mk_int_to_real @@ Term.mk_var coeff T_int.SInt
-                          in
-                          let const = Ident.mk_fresh_parameter () in
-                          let const_t =
-                            T_irb.mk_int_to_real @@ Term.mk_var const T_int.SInt
-                          in
-                          let coeffs =
-                            List.init (List.length args) ~f:(fun _ ->
-                                Ident.mk_fresh_parameter ())
-                          in
-                          let coeffs_t =
-                            List.map coeffs ~f:(fun c ->
-                                T_irb.mk_int_to_real @@ Term.mk_var c T_int.SInt)
-                          in
-                          let cx =
-                            List.fold ~init:const_t
-                              (List.map2_exn coeffs_t args ~f:T_real.mk_rmul)
-                              ~f:T_real.mk_radd
-                          in
-                          let phi =
-                            Formula.mk_and
-                              (Formula.mk_atom
-                              @@ T_real.mk_rleq (T_real.rzero ()) vt)
-                              (Formula.mk_atom
-                              @@ T_real.mk_rleq
-                                   (if enable_lhs_param then
-                                      T_real.mk_rmul lhs_coeff_t vt
-                                    else vt)
-                              @@ T_real.mk_radd cx (T_real.mk_rmul coeff_t yt))
-                          in
-                          let phi' =
-                            Formula.mk_and
-                              (Formula.mk_atom
-                              @@ T_real.mk_rleq (T_real.rzero ()) vt)
-                              (Formula.mk_atom
-                              @@ T_real.mk_rleq
-                                   (if enable_lhs_param then
-                                      T_real.mk_rmul lhs_coeff_t vt
-                                    else vt)
-                              @@ T_real.mk_radd cx
-                                   (T_real.mk_rmul coeff_t
-                                      (T_real.mk_real Q.(one / of_int 2))))
-                          in
-                          Debug.print
-                          @@ lazy
-                               (sprintf "%s is integrated to %s"
-                                  (Formula.str_of phi) (Formula.str_of phi'));
-                          ( Rtype.mk_rbase T_real.SReal (v, phi),
-                            Rtype.mk_rbase T_real.SReal (v, phi'),
-                            (if enable_lhs_param then [ lhs_coeff ] else []),
-                            coeff :: const :: coeffs ))
+                       let lhs_coeff = Ident.mk_fresh_parameter () in
+                       let lhs_coeff_t =
+                         T_irb.mk_int_to_real
+                         @@ Term.mk_var lhs_coeff T_int.SInt
+                       in
+                       let coeff = Ident.mk_fresh_parameter () in
+                       let coeff_t =
+                         T_irb.mk_int_to_real @@ Term.mk_var coeff T_int.SInt
+                       in
+                       let const = Ident.mk_fresh_parameter () in
+                       let const_t =
+                         T_irb.mk_int_to_real @@ Term.mk_var const T_int.SInt
+                       in
+                       let coeffs =
+                         List.init (List.length args) ~f:(fun _ ->
+                             Ident.mk_fresh_parameter ())
+                       in
+                       let coeffs_t =
+                         List.map coeffs ~f:(fun c ->
+                             T_irb.mk_int_to_real @@ Term.mk_var c T_int.SInt)
+                       in
+                       let cx =
+                         List.fold ~init:const_t
+                           (List.map2_exn coeffs_t args ~f:T_real.mk_rmul)
+                           ~f:T_real.mk_radd
+                       in
+                       let phi =
+                         Formula.mk_and
+                           (Formula.mk_atom
+                           @@ T_real.mk_rleq (T_real.rzero ()) vt)
+                           (Formula.mk_atom
+                           @@ T_real.mk_rleq
+                                (if enable_lhs_param then
+                                   T_real.mk_rmul lhs_coeff_t vt
+                                 else vt)
+                           @@ T_real.mk_radd cx (T_real.mk_rmul coeff_t yt))
+                       in
+                       let phi' =
+                         Formula.mk_and
+                           (Formula.mk_atom
+                           @@ T_real.mk_rleq (T_real.rzero ()) vt)
+                           (Formula.mk_atom
+                           @@ T_real.mk_rleq
+                                (if enable_lhs_param then
+                                   T_real.mk_rmul lhs_coeff_t vt
+                                 else vt)
+                           @@ T_real.mk_radd cx
+                                (T_real.mk_rmul coeff_t
+                                   (T_real.mk_real Q.(one / of_int 2))))
+                       in
+                       Debug.print
+                       @@ lazy
+                            (sprintf "%s is integrated to %s"
+                               (Formula.str_of phi) (Formula.str_of phi'));
+                       ( Rtype.mk_rbase T_real.SReal (v, phi),
+                         Rtype.mk_rbase T_real.SReal (v, phi'),
+                         (if enable_lhs_param then [ lhs_coeff ] else []),
+                         coeff :: const :: coeffs ))
                  in
                  let lhs_params = List.concat lhs_paramss in
                  let rhs_params = List.concat rhs_paramss in
@@ -1766,21 +1763,21 @@ module Make (Config : Config.ConfigType) = struct
                  let constrs_lhs_pvars =
                    Set.Poly.of_list
                    @@ List.map2_exn lhs_pvars lhs_params ~f:(fun p x ->
-                          let xt = Term.mk_var x T_int.SInt in
-                          Formula.mk_imply
-                            (Formula.mk_atom
-                            @@ Atom.pvar_app_of_senv p [ (x, T_int.SInt) ])
-                          @@ Formula.leq (T_int.one ()) xt)
+                       let xt = Term.mk_var x T_int.SInt in
+                       Formula.mk_imply
+                         (Formula.mk_atom
+                         @@ Atom.pvar_app_of_senv p [ (x, T_int.SInt) ])
+                       @@ Formula.leq (T_int.one ()) xt)
                  in
                  let constrs_rhs_pvars =
                    if true (*ToDo*) then
                      Set.Poly.of_list
                      @@ List.map2_exn rhs_pvars rhs_params ~f:(fun p x ->
-                            let xt = Term.mk_var x T_int.SInt in
-                            Formula.mk_imply
-                              (Formula.mk_atom
-                              @@ Atom.pvar_app_of_senv p [ (x, T_int.SInt) ])
-                            @@ Formula.leq (T_int.zero ()) xt)
+                         let xt = Term.mk_var x T_int.SInt in
+                         Formula.mk_imply
+                           (Formula.mk_atom
+                           @@ Atom.pvar_app_of_senv p [ (x, T_int.SInt) ])
+                         @@ Formula.leq (T_int.zero ()) xt)
                    else Set.Poly.empty
                  in
                  ( Rtype.Env.add_phis renv
@@ -2364,7 +2361,7 @@ module Make (Config : Config.ConfigType) = struct
                (Pattern.PAny (sort_of_comp c_body), renv_body, c_body)
                :: (List.rev
                   @@ List.map2_exn pats cs ~f:(fun pat c ->
-                         (pat, renv_bound, c)))
+                      (pat, renv_bound, c)))
              in
              let constrs2, kind_map = next2 kind_map maps renv_body c_body in
              ( Set.Poly.union_list
@@ -2524,7 +2521,7 @@ module Make (Config : Config.ConfigType) = struct
              let dom' =
                dom
                @ List.map2_exn x_args t_args ~f:(fun x t ->
-                     (Term.mk_var x (sort_of_val t), sort_of_val t))
+                   (Term.mk_var x (sort_of_val t), sort_of_val t))
              in
              let ren =
                Map.Poly.of_alist_exn
@@ -2861,40 +2858,39 @@ module Make (Config : Config.ConfigType) = struct
         let is_pures, is_funs, pats, defs =
           List.unzip4
           @@ List.map vbs ~f:(fun vb ->
-                 let pat = MBcgen.pattern_of envs.dtenv vb.vb_pat in
-                 let t_annot_MB_opt =
-                   MBcgen.find_val_attrs ~config ~renv:envs.renv
-                     ~dtenv:envs.dtenv ~attr_name:"annot_MB" vb.vb_attributes
-                 in
-                 let t_annot_opt =
-                   MBcgen.find_val_attrs ~config ~renv:envs.renv
-                     ~dtenv:envs.dtenv ~attr_name:"annot" vb.vb_attributes
-                 in
-                 if
-                   List.exists vb.vb_attributes ~f:(fun at ->
-                       String.(at.attr_name.txt = "annot_rty"))
-                   || Option.is_some t_annot_opt
-                 then
-                   failwith
-                     "rtype annotations on let-bindings are not supported";
-                 (*ToDo*)
-                 let sort =
-                   match (t_annot_MB_opt, t_annot_opt) with
-                   | Some t, _ | None, Some t -> Rtype.sort_of_val t
-                   | None, None ->
-                       MBcgen.sort_of_expr ~lift:true envs.dtenv vb.vb_expr
-                 in
-                 ( MBcgen.is_pure vb.vb_expr.exp_desc,
-                   MBcgen.is_fun vb.vb_expr.exp_desc,
-                   pat,
-                   ( Pattern.senv_of pat sort,
-                     vb.vb_expr,
-                     Sort.
-                       {
-                         op_sig = Sort.mk_fresh_empty_open_opsig ();
-                         val_type = sort;
-                         cont_eff = Sort.mk_fresh_evar ();
-                       } ) ))
+              let pat = MBcgen.pattern_of envs.dtenv vb.vb_pat in
+              let t_annot_MB_opt =
+                MBcgen.find_val_attrs ~config ~renv:envs.renv ~dtenv:envs.dtenv
+                  ~attr_name:"annot_MB" vb.vb_attributes
+              in
+              let t_annot_opt =
+                MBcgen.find_val_attrs ~config ~renv:envs.renv ~dtenv:envs.dtenv
+                  ~attr_name:"annot" vb.vb_attributes
+              in
+              if
+                List.exists vb.vb_attributes ~f:(fun at ->
+                    String.(at.attr_name.txt = "annot_rty"))
+                || Option.is_some t_annot_opt
+              then
+                failwith "rtype annotations on let-bindings are not supported";
+              (*ToDo*)
+              let sort =
+                match (t_annot_MB_opt, t_annot_opt) with
+                | Some t, _ | None, Some t -> Rtype.sort_of_val t
+                | None, None ->
+                    MBcgen.sort_of_expr ~lift:true envs.dtenv vb.vb_expr
+              in
+              ( MBcgen.is_pure vb.vb_expr.exp_desc,
+                MBcgen.is_fun vb.vb_expr.exp_desc,
+                pat,
+                ( Pattern.senv_of pat sort,
+                  vb.vb_expr,
+                  Sort.
+                    {
+                      op_sig = Sort.mk_fresh_empty_open_opsig ();
+                      val_type = sort;
+                      cont_eff = Sort.mk_fresh_evar ();
+                    } ) ))
         in
         let maps, next1s =
           let senv = Rtype.Env.to_sort_env envs.renv in
@@ -2907,8 +2903,8 @@ module Make (Config : Config.ConfigType) = struct
           let eff_constrss, opsig_constrss, next1s =
             List.unzip3
             @@ List.map defs ~f:(fun (_, expr, c) ->
-                   cgen_expr ~config envs.mode envs.fenv envs.dtenv senv_bounds
-                     expr c)
+                cgen_expr ~config envs.mode envs.fenv envs.dtenv senv_bounds
+                  expr c)
           in
           let omap, smap, emap =
             let eff_constrs = Set.Poly.union_list eff_constrss in
@@ -3290,36 +3286,33 @@ module Make (Config : Config.ConfigType) = struct
             let dir_maps, _frontss, priorities, constrss, space_constrss =
               List.unzip5
               @@ List.map objs ~f:(fun (tvar, sorted_dir_map, space_constrs) ->
-                     let rty = Rtype.Env.look_up_exn envs.renv tvar in
-                     Debug.print_log ~tag:"cgen_dir_map/fronts/prior"
-                     @@ lazy (Rtype.str_of_val ~config rty);
-                     let dir_map =
-                       if List.is_empty sorted_dir_map then
-                         cgen_dir_map ~is_up:false rty
-                       else Map.Poly.of_alist_exn sorted_dir_map
-                     in
-                     let _rty_def, constr, _kind_map (*ToDo*) =
-                       match Rtype.Env.look_up envs.renv tvar with
-                       | Some rty_def ->
-                           let dom = Rtype.Env.dep_args_of envs.renv in
-                           Rtype.instantiate_val ~print:Debug.print ~config dom
-                             envs.kind_map
-                             (Map.Poly.empty, Map.Poly.empty)
-                             (rty_def, Rtype.sort_of_val rty)
-                       | None ->
-                           failwith @@ Ident.name_of_tvar tvar
-                           ^ " not defined" (*Set.Poly.empty*)
-                     in
-                     let fronts =
-                       cgen_fronts ~renv:envs.renv ~is_up:false rty
-                     in
-                     let priority =
-                       if List.is_empty sorted_dir_map then
-                         CHCOpt.Problem.topological_sort (Map.Poly.keys dir_map)
-                           []
-                       else List.map sorted_dir_map ~f:fst
-                     in
-                     (dir_map, fronts, priority, [ constr ], space_constrs))
+                  let rty = Rtype.Env.look_up_exn envs.renv tvar in
+                  Debug.print_log ~tag:"cgen_dir_map/fronts/prior"
+                  @@ lazy (Rtype.str_of_val ~config rty);
+                  let dir_map =
+                    if List.is_empty sorted_dir_map then
+                      cgen_dir_map ~is_up:false rty
+                    else Map.Poly.of_alist_exn sorted_dir_map
+                  in
+                  let _rty_def, constr, _kind_map (*ToDo*) =
+                    match Rtype.Env.look_up envs.renv tvar with
+                    | Some rty_def ->
+                        let dom = Rtype.Env.dep_args_of envs.renv in
+                        Rtype.instantiate_val ~print:Debug.print ~config dom
+                          envs.kind_map
+                          (Map.Poly.empty, Map.Poly.empty)
+                          (rty_def, Rtype.sort_of_val rty)
+                    | None ->
+                        failwith @@ Ident.name_of_tvar tvar
+                        ^ " not defined" (*Set.Poly.empty*)
+                  in
+                  let fronts = cgen_fronts ~renv:envs.renv ~is_up:false rty in
+                  let priority =
+                    if List.is_empty sorted_dir_map then
+                      CHCOpt.Problem.topological_sort (Map.Poly.keys dir_map) []
+                    else List.map sorted_dir_map ~f:fst
+                  in
+                  (dir_map, fronts, priority, [ constr ], space_constrs))
             in
             let dir_map = Map.force_merge_list dir_maps in
             let fronts = Map.Poly.empty in
@@ -3376,8 +3369,9 @@ module Make (Config : Config.ConfigType) = struct
         failwith @@ "Typemod.Error:\n"
         ^ MBcgen.str_of_stdbuf ~f:Location.print_report
         @@ Typemod.report_error ~loc env err
-    | Env.Error err ->
-        failwith @@ "Env.Error:" ^ MBcgen.str_of_stdbuf ~f:Env.report_error err
+    | Env.Error _err ->
+        failwith
+        @@ "Env.Error:" (*^ MBcgen.str_of_stdbuf ~f:Env.report_error err*)
     | Typecore.Error (loc, env, err) ->
         failwith @@ "Typecore.Error:\n"
         ^ MBcgen.str_of_stdbuf ~f:Location.print_report

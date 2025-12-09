@@ -35,18 +35,18 @@ let rec replace_any_pat = function
 module Make (Config : Config.ConfigType) = struct
   let config = Config.config
 
-  module MBcgen = RCaml.MBcgen.Make ((
+  module MBcgen = RCaml.MBcgen.Make (
     struct
       let config =
         RCaml.MBcgen.Config.{ verbose = config.verbose; for_cps_trans = true }
     end :
-      RCaml.MBcgen.Config.ConfigType))
+      RCaml.MBcgen.Config.ConfigType)
 
-  module MBcsol = RCaml.MBcsol.Make ((
+  module MBcsol = RCaml.MBcsol.Make (
     struct
       let config = RCaml.MBcsol.Config.{ verbose = config.verbose }
     end :
-      RCaml.MBcsol.Config.ConfigType))
+      RCaml.MBcsol.Config.ConfigType)
 
   module Debug =
     Debug.Make ((val Debug.Config.(if config.verbose then enable else disable)))
@@ -163,50 +163,50 @@ module Make (Config : Config.ConfigType) = struct
     in
     List.unzip
     @@ List.map ~f:(fun (op, sort) ->
-           let sort = try ALMap.find_exn op map with _ -> sort in
-           let nt = Ident.Tvar ("Top" ^ String.capitalize op) in
-           let t = EHMTT.Term (Ident.Tvar ("op" ^ String.capitalize op)) in
-           let k = Ident.Tvar "k" in
-           ( (op, EHMTT.Nonterm nt),
-             match Sort.args_ret_of sort with
-             | Sort.SArrow (s_arity, _) :: sargs, _ ->
-                 let ps =
-                   List.init (List.length sargs) ~f:(fun i ->
-                       Ident.Tvar ("p" ^ string_of_int i))
-                 in
-                 ( nt,
-                   ( k :: ps,
-                     EHMTT.apps t
-                     @@ List.map ~f:(fun v ->
-                            EHMTT.apps (EHMTT.mk_var k)
-                              (v :: List.map ps ~f:EHMTT.mk_var))
-                     @@ enum_values s_arity ) )
-             | _s_param :: Sort.SArrow (s_arity, _) :: sargs, _ ->
-                 let x = Ident.Tvar "x" in
-                 let ps =
-                   List.init (List.length sargs) ~f:(fun i ->
-                       Ident.Tvar ("p" ^ string_of_int i))
-                 in
-                 ( nt,
-                   ( x :: k :: ps,
-                     EHMTT.apps t
-                     @@ EHMTT.mk_var x
-                        :: (List.map ~f:(fun v ->
-                                EHMTT.apps (EHMTT.mk_var k)
-                                  (v :: List.map ps ~f:EHMTT.mk_var))
-                           @@ enum_values s_arity) ) )
-             (*ToDo*)
-             | [], s_arity ->
-                 (* ATP handlers *)
-                 ( nt,
-                   ( [ k ],
-                     EHMTT.apps t
-                     @@ List.map ~f:(EHMTT.app (EHMTT.mk_var k))
-                     @@ enum_values s_arity ) )
-             | _ ->
-                 failwith
-                   (sprintf "[tl_handlers_of] %s not supported"
-                      (Term.str_of_sort sort)) ))
+        let sort = try ALMap.find_exn op map with _ -> sort in
+        let nt = Ident.Tvar ("Top" ^ String.capitalize op) in
+        let t = EHMTT.Term (Ident.Tvar ("op" ^ String.capitalize op)) in
+        let k = Ident.Tvar "k" in
+        ( (op, EHMTT.Nonterm nt),
+          match Sort.args_ret_of sort with
+          | Sort.SArrow (s_arity, _) :: sargs, _ ->
+              let ps =
+                List.init (List.length sargs) ~f:(fun i ->
+                    Ident.Tvar ("p" ^ string_of_int i))
+              in
+              ( nt,
+                ( k :: ps,
+                  EHMTT.apps t
+                  @@ List.map ~f:(fun v ->
+                      EHMTT.apps (EHMTT.mk_var k)
+                        (v :: List.map ps ~f:EHMTT.mk_var))
+                  @@ enum_values s_arity ) )
+          | _s_param :: Sort.SArrow (s_arity, _) :: sargs, _ ->
+              let x = Ident.Tvar "x" in
+              let ps =
+                List.init (List.length sargs) ~f:(fun i ->
+                    Ident.Tvar ("p" ^ string_of_int i))
+              in
+              ( nt,
+                ( x :: k :: ps,
+                  EHMTT.apps t
+                  @@ EHMTT.mk_var x
+                     :: (List.map ~f:(fun v ->
+                             EHMTT.apps (EHMTT.mk_var k)
+                               (v :: List.map ps ~f:EHMTT.mk_var))
+                        @@ enum_values s_arity) ) )
+          (*ToDo*)
+          | [], s_arity ->
+              (* ATP handlers *)
+              ( nt,
+                ( [ k ],
+                  EHMTT.apps t
+                  @@ List.map ~f:(EHMTT.app (EHMTT.mk_var k))
+                  @@ enum_values s_arity ) )
+          | _ ->
+              failwith
+                (sprintf "[tl_handlers_of] %s not supported"
+                   (Term.str_of_sort sort)) ))
     @@ match eff_map with Some eff_map -> eff_map | None -> map
 
   type ctx = {
@@ -224,10 +224,10 @@ module Make (Config : Config.ConfigType) = struct
     let pat_senvs, tl_pat_senvs, cs =
       List.unzip3
       @@ List.map3_exn is_pures pats c1s ~f:(fun is_pure pat c ->
-             ( env_of_pat (pat, c.Sort.val_type),
-               (if is_pure then Some (env_of_pat (nt_of_pat pat, c.val_type))
-                else None),
-               c ))
+          ( env_of_pat (pat, c.Sort.val_type),
+            (if is_pure then Some (env_of_pat (nt_of_pat pat, c.val_type))
+             else None),
+            c ))
     in
     let ntenv_body =
       List.fold_left ~init:ntenv (List.zip_exn is_pures pats)
@@ -388,8 +388,8 @@ module Make (Config : Config.ConfigType) = struct
     let gen_hts op_sig =
       List.unzip3
       @@ List.map (get_map op_sig) ~f:(fun (name, sort) ->
-             let h = Ident.mk_fresh_tvar ~prefix:(Some "h") () in
-             ((name, EHMTT.mk_var h), h, sort))
+          let h = Ident.mk_fresh_tvar ~prefix:(Some "h") () in
+          ((name, EHMTT.mk_var h), h, sort))
     in
     MBcgen.fold_expr dtenv0 false senv0 expr
       ~f:
@@ -535,16 +535,14 @@ module Make (Config : Config.ConfigType) = struct
              let xs2, ts2, ruless =
                List.unzip3
                @@ List.map next2s_either ~f:(function
-                    | First (pure, next, ty) ->
-                        if pure then
-                          let t, rs = next { ctx with ty; conts_opt = None } in
-                          (None, t, rs)
-                        else
-                          let x = Ident.mk_fresh_tvar ~prefix:(Some "arg") () in
-                          ( Some ((x, ty.val_type), ty.cont_eff),
-                            EHMTT.mk_var x,
-                            [] )
-                    | Second (x, _sort) -> (None, lookup ctx.ntenv x, []))
+                 | First (pure, next, ty) ->
+                     if pure then
+                       let t, rs = next { ctx with ty; conts_opt = None } in
+                       (None, t, rs)
+                     else
+                       let x = Ident.mk_fresh_tvar ~prefix:(Some "arg") () in
+                       (Some ((x, ty.val_type), ty.cont_eff), EHMTT.mk_var x, [])
+                 | Second (x, _sort) -> (None, lookup ctx.ntenv x, []))
              in
              let term, rules =
                match ctx.conts_opt with
@@ -690,16 +688,14 @@ module Make (Config : Config.ConfigType) = struct
              let xs, ts, ruless =
                List.unzip3
                @@ List.map nexts_either ~f:(function
-                    | First (pure, next, ty) ->
-                        if pure then
-                          let t, rs = next { ctx with ty; conts_opt = None } in
-                          (None, t, rs)
-                        else
-                          let x =
-                            Ident.mk_fresh_tvar ~prefix:(Some "elem") ()
-                          in
-                          (Some (x, ty.Sort.val_type), EHMTT.mk_var x, [])
-                    | Second (x, _sort) -> (None, lookup ctx.ntenv x, []))
+                 | First (pure, next, ty) ->
+                     if pure then
+                       let t, rs = next { ctx with ty; conts_opt = None } in
+                       (None, t, rs)
+                     else
+                       let x = Ident.mk_fresh_tvar ~prefix:(Some "elem") () in
+                       (Some (x, ty.Sort.val_type), EHMTT.mk_var x, [])
+                 | Second (x, _sort) -> (None, lookup ctx.ntenv x, []))
              in
              snd
              @@ List.fold_right2_exn xs nexts_either
@@ -851,11 +847,11 @@ module Make (Config : Config.ConfigType) = struct
                in
                List.concat
                @@ List.init num_conts ~f:(fun _ ->
-                      map
-                      @ [
-                          ( Ident.mk_fresh_tvar ~prefix:(Some "k") (),
-                            Sort.mk_fresh_svar () );
-                        ])
+                   map
+                   @ [
+                       ( Ident.mk_fresh_tvar ~prefix:(Some "k") (),
+                         Sort.mk_fresh_svar () );
+                     ])
              in
              let then_t, rules2 =
                let ctx2 =
@@ -917,11 +913,11 @@ module Make (Config : Config.ConfigType) = struct
                in
                List.concat
                @@ List.init num_conts ~f:(fun _ ->
-                      map
-                      @ [
-                          ( Ident.mk_fresh_tvar ~prefix:(Some "k") (),
-                            Sort.mk_fresh_svar () );
-                        ])
+                   map
+                   @ [
+                       ( Ident.mk_fresh_tvar ~prefix:(Some "k") (),
+                         Sort.mk_fresh_svar () );
+                     ])
              in
              match (next_opt, args_eta_exp) with
              | None, [] ->
@@ -1119,17 +1115,15 @@ module Make (Config : Config.ConfigType) = struct
              let xs, ts, ruless =
                List.unzip3
                @@ List.map nexts_either ~f:(function
-                    | First (pure, next, ty) ->
-                        if pure then
-                          let ctx = { ctx with ty; conts_opt = None } in
-                          let t, rs = next ctx in
-                          (None, t, rs)
-                        else
-                          let x =
-                            Ident.mk_fresh_tvar ~prefix:(Some "elem") ()
-                          in
-                          (Some (x, ty.val_type), EHMTT.mk_var x, [])
-                    | Second (x, _sort) -> (None, lookup ctx.ntenv x, []))
+                 | First (pure, next, ty) ->
+                     if pure then
+                       let ctx = { ctx with ty; conts_opt = None } in
+                       let t, rs = next ctx in
+                       (None, t, rs)
+                     else
+                       let x = Ident.mk_fresh_tvar ~prefix:(Some "elem") () in
+                       (Some (x, ty.val_type), EHMTT.mk_var x, [])
+                 | Second (x, _sort) -> (None, lookup ctx.ntenv x, []))
              in
              let rules = List.concat ruless in
              let term, rules =
@@ -1156,7 +1150,7 @@ module Make (Config : Config.ConfigType) = struct
                          ( (k, k_sort),
                            ( k_arg
                              :: List.map (*ToDo*) hs ~f:(fun _ ->
-                                    Ident.mk_fresh_tvar ~prefix:(Some "h") ()),
+                                 Ident.mk_fresh_tvar ~prefix:(Some "h") ()),
                              k_body ) )
                        in
                        ( EHMTT.apps
@@ -1282,65 +1276,63 @@ module Make (Config : Config.ConfigType) = struct
              let terms_h, ruless_h =
                List.unzip
                @@ List.map (get_ops c_b.op_sig) ~f:(fun op ->
-                      let i, _ =
-                        try List.findi_exn names ~f:(fun _ -> String.( = ) op)
-                        with _ -> failwith @@ op ^ " not found"
-                      in
-                      let next = List.nth_exn nexts i in
-                      let x_args, sort_args, k_opt, sort_k, c_h =
-                        List.nth_exn clauses i
-                      in
-                      let senv'', k_arg =
-                        let senv' =
-                          List.fold2_exn x_args sort_args ~init:ctx.senv
-                            ~f:(fun senv x s ->
-                              try Map.Poly.add_exn senv ~key:x ~data:s
-                              with _ ->
-                                failwith @@ Ident.name_of_tvar x
-                                ^ " already defined")
-                        in
-                        match k_opt with
-                        | Some k ->
-                            (Map.Poly.add_exn senv' ~key:k ~data:sort_k, k)
-                        | None ->
-                            ( senv',
-                              mk_fresh_tvar ~prefix:(Some "k") () (*dummy*) )
-                      in
-                      let ksort =
-                        Sort.mk_fresh_svar ()
-                        (*ToDo*)
-                      in
-                      let k = Ident.mk_fresh_tvar ~prefix:(Some "k") () in
-                      let hts, hs, hsorts = gen_hts c_h.op_sig in
-                      let ctx_h =
-                        {
-                          ctx with
-                          args = ctx.args @ x_args @ (k_arg :: hs) @ [ k ];
-                          senv =
-                            Map.update_with senv'' @@ Map.Poly.of_alist_exn
-                            @@ ((k, ksort) :: List.zip_exn hs hsorts);
-                          ty = c_h;
-                          conts_opt = Some (hts, EHMTT.mk_var k);
-                        }
-                      in
-                      let term_h, rules_h = next ctx_h in
-                      let khnd = Ident.mk_fresh_tvar ~prefix:(Some "Khnd") () in
-                      let khnd_rule =
-                        let khnd_sort =
-                          Sort.mk_fun
-                          @@ List.map ctx.args ~f:(Map.Poly.find_exn ctx.senv)
-                          @ sort_args @ (sort_k :: hsorts)
-                          @ [ ksort; Datatype.mk_unit_sort () ]
-                        in
-                        let khnd_args =
-                          ctx.args @ x_args @ (k_arg :: hs) @ [ k ]
-                        in
-                        ((khnd, khnd_sort), (khnd_args, term_h))
-                      in
-                      ( ( op,
-                          EHMTT.apps (EHMTT.Nonterm khnd)
-                          @@ List.map ctx.args ~f:EHMTT.mk_var ),
-                        khnd_rule :: rules_h ))
+                   let i, _ =
+                     try List.findi_exn names ~f:(fun _ -> String.( = ) op)
+                     with _ -> failwith @@ op ^ " not found"
+                   in
+                   let next = List.nth_exn nexts i in
+                   let x_args, sort_args, k_opt, sort_k, c_h =
+                     List.nth_exn clauses i
+                   in
+                   let senv'', k_arg =
+                     let senv' =
+                       List.fold2_exn x_args sort_args ~init:ctx.senv
+                         ~f:(fun senv x s ->
+                           try Map.Poly.add_exn senv ~key:x ~data:s
+                           with _ ->
+                             failwith @@ Ident.name_of_tvar x
+                             ^ " already defined")
+                     in
+                     match k_opt with
+                     | Some k -> (Map.Poly.add_exn senv' ~key:k ~data:sort_k, k)
+                     | None ->
+                         (senv', mk_fresh_tvar ~prefix:(Some "k") () (*dummy*))
+                   in
+                   let ksort =
+                     Sort.mk_fresh_svar ()
+                     (*ToDo*)
+                   in
+                   let k = Ident.mk_fresh_tvar ~prefix:(Some "k") () in
+                   let hts, hs, hsorts = gen_hts c_h.op_sig in
+                   let ctx_h =
+                     {
+                       ctx with
+                       args = ctx.args @ x_args @ (k_arg :: hs) @ [ k ];
+                       senv =
+                         Map.update_with senv'' @@ Map.Poly.of_alist_exn
+                         @@ ((k, ksort) :: List.zip_exn hs hsorts);
+                       ty = c_h;
+                       conts_opt = Some (hts, EHMTT.mk_var k);
+                     }
+                   in
+                   let term_h, rules_h = next ctx_h in
+                   let khnd = Ident.mk_fresh_tvar ~prefix:(Some "Khnd") () in
+                   let khnd_rule =
+                     let khnd_sort =
+                       Sort.mk_fun
+                       @@ List.map ctx.args ~f:(Map.Poly.find_exn ctx.senv)
+                       @ sort_args @ (sort_k :: hsorts)
+                       @ [ ksort; Datatype.mk_unit_sort () ]
+                     in
+                     let khnd_args =
+                       ctx.args @ x_args @ (k_arg :: hs) @ [ k ]
+                     in
+                     ((khnd, khnd_sort), (khnd_args, term_h))
+                   in
+                   ( ( op,
+                       EHMTT.apps (EHMTT.Nonterm khnd)
+                       @@ List.map ctx.args ~f:EHMTT.mk_var ),
+                     khnd_rule :: rules_h ))
              in
              let ctx_b =
                { ctx with ty = c_b; conts_opt = Some (terms_h, term_r) }
@@ -1396,29 +1388,29 @@ module Make (Config : Config.ConfigType) = struct
         let is_pures, pats, defs =
           List.unzip3
           @@ List.map vbs ~f:(fun vb ->
-                 let pat = MBcgen.pattern_of envs.dtenv vb.vb_pat in
-                 (*ToDo*)
-                 let sort =
-                   match
-                     ( MBcgen.find_val_attrs ~dtenv:envs.dtenv
-                         ~attr_name:"annot_MB" vb.vb_attributes,
-                       MBcgen.find_val_attrs ~dtenv:envs.dtenv
-                         ~attr_name:"annot" vb.vb_attributes )
-                   with
-                   | Some t, _ | None, Some t -> Rtype.sort_of_val t
-                   | None, None ->
-                       MBcgen.sort_of_expr ~lift:true envs.dtenv vb.vb_expr
-                 in
-                 ( MBcgen.is_pure vb.vb_expr.exp_desc,
-                   pat,
-                   ( Pattern.senv_of pat sort,
-                     vb.vb_expr,
-                     Sort.
-                       {
-                         op_sig = Sort.mk_fresh_empty_open_opsig ();
-                         val_type = sort;
-                         cont_eff = Sort.mk_fresh_evar ();
-                       } ) ))
+              let pat = MBcgen.pattern_of envs.dtenv vb.vb_pat in
+              (*ToDo*)
+              let sort =
+                match
+                  ( MBcgen.find_val_attrs ~dtenv:envs.dtenv
+                      ~attr_name:"annot_MB" vb.vb_attributes,
+                    MBcgen.find_val_attrs ~dtenv:envs.dtenv ~attr_name:"annot"
+                      vb.vb_attributes )
+                with
+                | Some t, _ | None, Some t -> Rtype.sort_of_val t
+                | None, None ->
+                    MBcgen.sort_of_expr ~lift:true envs.dtenv vb.vb_expr
+              in
+              ( MBcgen.is_pure vb.vb_expr.exp_desc,
+                pat,
+                ( Pattern.senv_of pat sort,
+                  vb.vb_expr,
+                  Sort.
+                    {
+                      op_sig = Sort.mk_fresh_empty_open_opsig ();
+                      val_type = sort;
+                      cont_eff = Sort.mk_fresh_evar ();
+                    } ) ))
         in
         let eff_map =
           match DTEnv.look_up_dt envs.dtenv "eff" with
@@ -1426,15 +1418,15 @@ module Make (Config : Config.ConfigType) = struct
           | Some dt ->
               Option.some
               @@ List.map (Datatype.conses_of dt) ~f:(fun cons ->
-                     match Datatype.params_of dt with
-                     | [ ret ] ->
-                         ( Datatype.name_of_cons cons,
-                           Sort.mk_fun
-                           @@ Datatype.sorts_of_cons dt cons
-                           @
-                           let ans = Sort.mk_fresh_svar () in
-                           [ Sort.mk_arrow ret ans; ans ] )
-                     | _ -> assert false)
+                  match Datatype.params_of dt with
+                  | [ ret ] ->
+                      ( Datatype.name_of_cons cons,
+                        Sort.mk_fun
+                        @@ Datatype.sorts_of_cons dt cons
+                        @
+                        let ans = Sort.mk_fresh_svar () in
+                        [ Sort.mk_arrow ret ans; ans ] )
+                  | _ -> assert false)
         in
         let maps, next1s =
           let senv_bounds =
@@ -1446,14 +1438,14 @@ module Make (Config : Config.ConfigType) = struct
           let eff_constrss, opsig_constrss, next1s =
             List.unzip3
             @@ List.map defs ~f:(fun (senv, expr, c) ->
-                   let old_rec_vars = !MBcgen.rec_vars in
-                   MBcgen.rec_vars :=
-                     if is_rec then Map.key_set senv else Set.Poly.empty;
-                   let res =
-                     cgen_expr eff_map envs.fenv envs.dtenv senv_bounds expr c
-                   in
-                   MBcgen.rec_vars := old_rec_vars;
-                   res)
+                let old_rec_vars = !MBcgen.rec_vars in
+                MBcgen.rec_vars :=
+                  if is_rec then Map.key_set senv else Set.Poly.empty;
+                let res =
+                  cgen_expr eff_map envs.fenv envs.dtenv senv_bounds expr c
+                in
+                MBcgen.rec_vars := old_rec_vars;
+                res)
           in
           let omap, smap, emap =
             let eff_constrs = Set.Poly.union_list eff_constrss in
@@ -1844,8 +1836,9 @@ module Make (Config : Config.ConfigType) = struct
         failwith @@ "Typemod.Error:\n"
         ^ MBcgen.str_of_stdbuf ~f:Location.print_report
         @@ Typemod.report_error ~loc env err
-    | Env.Error err ->
-        failwith @@ "Env.Error:" ^ MBcgen.str_of_stdbuf ~f:Env.report_error err
+    | Env.Error _err ->
+        failwith
+        @@ "Env.Error:" (*^ MBcgen.str_of_stdbuf ~f:Env.report_error err*)
     | Typecore.Error (loc, env, err) ->
         failwith @@ "Typecore.Error:\n"
         ^ MBcgen.str_of_stdbuf ~f:Location.print_report

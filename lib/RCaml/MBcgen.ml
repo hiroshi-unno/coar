@@ -9,13 +9,15 @@ open Ast.LogicOld
 let rec bvs pat acc =
   match pat.pat_desc with
   | Tpat_var (id, _, _) -> id :: acc
-  | Tpat_tuple pats | Tpat_array pats ->
+  | Tpat_tuple pats ->
+      List.fold_left ~init:acc pats ~f:(fun a (_, p) -> bvs p a)
+  | Tpat_array (_, pats) ->
       List.fold_left ~init:acc pats ~f:(fun a p -> bvs p a)
   | Tpat_construct (_, _, pats, _) ->
       List.fold_left ~init:acc pats ~f:(fun a p -> bvs p a)
   | Tpat_record (fields, _) ->
       List.fold_left ~init:acc fields ~f:(fun a (_, _, p) -> bvs p a)
-  | Tpat_alias (p, id, _, _) -> bvs p (id :: acc)
+  | Tpat_alias (p, id, _, _, _) -> bvs p (id :: acc)
   | Tpat_or (p1, p2, _) -> bvs p1 (bvs p2 acc)
   | _ -> acc
 
@@ -47,7 +49,7 @@ let occurs bound (target : Ident.t) (e : expression) =
                 expr c_rhs))
     | Texp_apply (f, args) ->
         expr f;
-        List.iter ~f:(function _, Some a -> expr a | _ -> ()) args
+        List.iter ~f:(function _, Arg a -> expr a | _ -> ()) args
     | Texp_ifthenelse (cond, then_expr, else_expr) ->
         expr cond;
         expr then_expr;
@@ -109,7 +111,7 @@ module Make (Config : Config.ConfigType) = struct
     | Texp_apply (e, es) ->
         "Texp_apply : " ^ String.concat ~sep:" "
         @@ str_of_expr e
-           :: List.map es ~f:(function _, Some e -> str_of_expr e | _ -> "")
+           :: List.map es ~f:(function _, Arg e -> str_of_expr e | _ -> "")
     | Texp_match _ -> "Texp_match"
     | Texp_try _ -> "Texp_try"
     | Texp_variant _ -> "Texp_variant"
@@ -138,6 +140,7 @@ module Make (Config : Config.ConfigType) = struct
     | Texp_open _ -> "Texp_open"
     | Texp_tuple _ -> "Texp_tuple"
     | Texp_construct _ -> "Texp_construct"
+    | Texp_atomic_loc _ -> "Texp_atomic_loc"
 
   let rec sort_of_core_type ?(rectyps = None) dtenv (ct : core_type) =
     match ct.ctyp_desc with
@@ -158,7 +161,8 @@ module Make (Config : Config.ConfigType) = struct
     | Ttyp_arrow ((Labelled _ | Optional _), _, _) ->
         failwith "[sort_of_core_type] Ttyp_arrow not supported"
     | Ttyp_tuple elems ->
-        T_tuple.STuple (List.map elems ~f:(sort_of_core_type ~rectyps dtenv))
+        T_tuple.STuple
+          (List.map elems ~f:(snd >> sort_of_core_type ~rectyps dtenv))
     | Ttyp_object (_, _) ->
         failwith "[sort_of_core_type] Ttyp_object not supported"
     | Ttyp_class (_, _, _) ->
@@ -273,7 +277,8 @@ module Make (Config : Config.ConfigType) = struct
         failwith @@ "unsupported type expr: tarrow "
         ^ str_of_stdbuf ty ~f:Printtyp.type_expr
     | Ttuple elems ->
-        T_tuple.STuple (List.map elems ~f:(sort_of_type_expr ~lift ~env dtenv))
+        T_tuple.STuple
+          (List.map elems ~f:(snd >> sort_of_type_expr ~lift ~env dtenv))
     | Tobject _ ->
         failwith @@ "unsupported type expr: tobject "
         ^ str_of_stdbuf ty ~f:Printtyp.type_expr
@@ -311,12 +316,12 @@ module Make (Config : Config.ConfigType) = struct
     | Tpat_tuple pats, T_tuple.STuple sorts ->
         Ast.Pattern.PTuple
           (List.map2_exn sorts pats ~f:(fun s ->
-               pattern_of dtenv ~sort:(Some s)))
+               snd >> pattern_of dtenv ~sort:(Some s)))
     | Tpat_tuple _, _ ->
         failwith
         @@ sprintf "[pattern_of] %s needs to be a tuple type"
         @@ Term.str_of_sort sort
-    | Tpat_alias (_pat' (*ToDo*), name, _, _), _ ->
+    | Tpat_alias (_pat' (*ToDo*), name, _, _, _), _ ->
         Ast.Pattern.PVar (Tvar (Ident.name name), sort)
     (* ToDo: pattern_of dtenv pat' *)
     (*failwith ((Ast.Pattern.str_of @@ pattern_of dtenv pat') ^ " and " ^ Ident.name name)*)
@@ -598,7 +603,7 @@ module Make (Config : Config.ConfigType) = struct
                 else
                   f#f_var (is_handled, !rec_vars)
                     (Ast.Ident.Tvar name, x_sort (*c0.val_type*)) )
-          | Texp_apply (e, [ (_, Some e') ]) when is_ is_shift0 e -> (
+          | Texp_apply (e, [ (_, Arg e') ]) when is_ is_shift0 e -> (
               match e'.exp_desc with
               | Texp_function (param :: params, body) -> (
                   match param.fp_kind with
@@ -647,7 +652,7 @@ module Make (Config : Config.ConfigType) = struct
                           failwith @@ "shift0 @ 2: " ^ Term.str_of_sort sort)
                   | _ -> failwith "shift0 @ 3")
               | _ -> failwith "shift0 @ 4")
-          | Texp_apply (e, [ (_, Some e') ]) when is_ is_shift e -> (
+          | Texp_apply (e, [ (_, Arg e') ]) when is_ is_shift e -> (
               match e'.exp_desc with
               | Texp_function (param :: params, body) -> (
                   match param.fp_kind with
@@ -719,7 +724,7 @@ module Make (Config : Config.ConfigType) = struct
                           failwith @@ "shift @ 3: " ^ Term.str_of_sort sort)
                   | _ -> failwith "shift @ 4")
               | _ -> failwith "shift @ 5")
-          | Texp_apply (e, [ (_, Some e') ]) when is_ is_reset e -> (
+          | Texp_apply (e, [ (_, Arg e') ]) when is_ is_reset e -> (
               match e'.exp_desc with
               | Texp_function (param :: params, body) -> (
                   match param.fp_kind with
@@ -759,7 +764,7 @@ module Make (Config : Config.ConfigType) = struct
                       (econstrs1, oconstrs1, f#f_reset (next1, sort1))
                   | _ -> failwith "reset @ 3")
               | _ -> failwith "reset @ 4")
-          | Texp_apply (e, [ (_, Some e') ])
+          | Texp_apply (e, [ (_, Arg e') ])
             when is_ (fun x -> is_perform x || is_perform_atp x || is_raise x) e
             -> (
               match e'.exp_desc with
@@ -812,9 +817,8 @@ module Make (Config : Config.ConfigType) = struct
               | _ -> failwith "perform")
           | Texp_apply
               ( e,
-                [
-                  (_, Some e_body_fun); (_, Some e_body_arg); (_, Some e_handler);
-                ] )
+                [ (_, Arg e_body_fun); (_, Arg e_body_arg); (_, Arg e_handler) ]
+              )
             when is_ (fun x -> is_try_with x || is_match_with x) e ->
               let e_retc_opt, e_exnc_opt, e_effc =
                 match e_handler.exp_desc with
@@ -944,9 +948,8 @@ module Make (Config : Config.ConfigType) = struct
                                  let is_cont_app e =
                                    match e.exp_desc with
                                    | Texp_apply
-                                       ( e,
-                                         [ (_, Some k); (_, Some arg) (*ToDo*) ]
-                                       ) ->
+                                       (e, [ (_, Arg k); (_, Arg arg) (*ToDo*) ])
+                                     ->
                                        is_ is_continue e
                                        && is_
                                             (fun k ->
@@ -1341,7 +1344,7 @@ module Make (Config : Config.ConfigType) = struct
                   {
                     e_body_fun with
                     exp_desc =
-                      Texp_apply (e_body_fun, [ (Nolabel, Some e_body_arg) ]);
+                      Texp_apply (e_body_fun, [ (Nolabel, Arg e_body_arg) ]);
                     exp_type =
                       (*dummy*)
                       (match Types.get_desc e_body_fun.exp_type with
@@ -1390,13 +1393,13 @@ module Make (Config : Config.ConfigType) = struct
                 Set.Poly.union_list (oconstrs_b :: oconstrs_r :: oconstrss),
                 f#f_handling (next_b, c_b) (next_r, x_r, c_r)
                 @@ List.zip4_exn names kinds nexts clauses )
-          | Texp_apply (e, [ (_, Some e') ]) when is_ is_continue e -> (
+          | Texp_apply (e, [ (_, Arg e') ]) when is_ is_continue e -> (
               match sort_of_expr ~lift:true dtenv e' with
               | T_dt.SDT dt when String.(Datatype.name_of dt = "continuation")
                 ->
                   call_fold senv e' c0
               | _ -> failwith "continue")
-          | Texp_apply (e, [ (_, Some e') ]) when is_ is_unif e ->
+          | Texp_apply (e, [ (_, Arg e') ]) when is_ is_unif e ->
               let sort = sort_of_expr ~lift:false dtenv e' in
               let econstrs, oconstrs, next =
                 call_fold senv e' (Sort.mk_triple_from_sort sort)
@@ -1433,8 +1436,8 @@ module Make (Config : Config.ConfigType) = struct
               let econstrss, oconstrss, nexts_either =
                 List.unzip3
                 @@ List.map es ~f:(function
-                     | _label, Some e -> mk_either senv e
-                     | _label, None -> failwith "default arg not supported")
+                     | _label, Arg e -> mk_either senv e
+                     | _label, _ -> failwith "default arg not supported")
               in
               let ovars', evars', sort_fun =
                 Sort.of_args_ret
@@ -1896,7 +1899,7 @@ module Make (Config : Config.ConfigType) = struct
                         f#f_apply res nexts_either )))
           | Texp_tuple es ->
               let econstrss, oconstrss, nexts_either =
-                List.unzip3 @@ List.map es ~f:(mk_either senv)
+                List.unzip3 @@ List.map es ~f:(snd >> mk_either senv)
               in
               let maps, econstrss', oconstrss' =
                 let sort_args = List.map nexts_either ~f:sort_of_either in
@@ -2003,7 +2006,8 @@ module Make (Config : Config.ConfigType) = struct
           | Texp_object (_, _)
           | Texp_pack _ | Texp_letop _
           | Texp_extension_constructor (_, _)
-          | Texp_open (_, _) ->
+          | Texp_open (_, _)
+          | Texp_atomic_loc (_, _, _) ->
               failwith @@ "[fold_expr] unsupported expr: " ^ str_of_expr expr)
 
   let subst_all_opt maps = function
