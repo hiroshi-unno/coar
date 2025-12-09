@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # building coar
-FROM ocaml/opam:ubuntu-24.10-ocaml-5.3 AS builder
+FROM ocaml/opam:ubuntu-25.10-ocaml-5.4 AS builder
 USER opam:opam
 RUN sudo apt update && sudo apt install -y \
         libblas-dev \
@@ -25,7 +25,7 @@ RUN opam update \
 COPY --chown=opam:opam . /home/opam/coar/
 RUN eval $(opam env) && dune build main.exe
 
-FROM ubuntu:24.10
+FROM ubuntu:25.10
 RUN apt update \
  && apt install -y \
         libblas-dev \
@@ -38,14 +38,14 @@ RUN apt update \
  && apt clean \
  && rm -rf /var/lib/apt/lists/*
 # Copy the stub library to call libz3 from coar
-COPY --from=builder /home/opam/.opam/5.3/lib/stublibs/libz3.so /usr/lib/x86_64-linux-gnu/
-COPY --from=builder /home/opam/.opam/5.3/lib/stublibs/libz3.so /usr/lib/aarch64-linux-gnu/
+COPY --from=builder /home/opam/.opam/5.4/lib/stublibs/libz3.so /usr/lib/x86_64-linux-gnu/
+COPY --from=builder /home/opam/.opam/5.4/lib/stublibs/libz3.so /usr/lib/aarch64-linux-gnu/
 # Copy coar
 COPY --from=builder /home/opam/coar/_build/default/main.exe /root/coar/
 COPY README.md LICENSE CoAR.opam /root/coar/
 COPY config /root/coar/config
 # Copy ocaml library for ocaml program verification
-COPY --from=builder /home/opam/.opam/5.3/lib/ocaml /home/opam/.opam/5.3/lib/ocaml
+COPY --from=builder /home/opam/.opam/5.4/lib/ocaml /home/opam/.opam/5.4/lib/ocaml
 
 ENV PATH="${PATH}:/root/coar"
 CMD ["/bin/bash"]

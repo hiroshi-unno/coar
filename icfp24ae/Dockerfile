@@ -1,4 +1,4 @@
-FROM ocaml/opam:ubuntu-24.10-ocaml-5.3
+FROM ocaml/opam:ubuntu-25.10-ocaml-5.4
 
 WORKDIR /home/opam/coar
 USER opam:opam

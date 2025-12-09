@@ -14,9 +14,9 @@ An overview of the fixed-point logic solvers MuVal, MuStrat, and MuCyc for $`\mu
 ## Installation from source code
 
 * Install opam2 (see [the official webpage](https://opam.ocaml.org/doc/Install.html)).
-* Install ocaml-5.3.0:
+* Install ocaml-5.4.0:
   ```bash
-  opam switch create 5.3.0
+  opam switch create 5.4.0
   ```
 * Install dune:
   ```bash
@@ -72,8 +72,6 @@ An overview of the fixed-point logic solvers MuVal, MuStrat, and MuCyc for $`\mu
 ## Installation with Docker
 
 ```bash
-docker pull docker.io/library/ubuntu:24.10
-docker pull docker.io/ocaml/opam:ubuntu-24.10-ocaml-5.3
 sudo docker build -t coar .
 ```
 

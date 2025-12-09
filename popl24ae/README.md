@@ -7,9 +7,9 @@ Fuga Kawamata, Hiroshi Unno, Taro Sekiyama, and Tachio Terauchi. Answer Refineme
 ## Installation from Source Code
 
 * Install opam2 (see [the official webpage](https://opam.ocaml.org/doc/Install.html)).
-* Install ocaml-5.3.0:
+* Install ocaml-5.4.0:
   ```bash
-  opam switch create 5.3.0
+  opam switch create 5.4.0
   ```
 * Install dune:
   ```bash
