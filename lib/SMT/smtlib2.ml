@@ -20,11 +20,13 @@ let str_of_fsym = function
   | FVar (x, _, _) -> Ident.name_of_tvar x
   | T_int.Int n -> Z.to_string n
   | T_int.Neg -> "-"
+  (*| T_int.Abs -> "abs"*)
   | T_int.Add -> "+"
   | T_int.Sub -> "-"
   | T_int.Mul -> "*"
   | T_int.Div _ (*ToDo*) -> "div"
   | T_int.Rem _ (*ToDo*) -> "mod"
+  (*| T_int.Power -> "pow"*)
   | T_real.Real r ->
       if true then
         if Z.equal (Q.den r) Z.one then Z.to_string (Q.num r)
@@ -32,13 +34,18 @@ let str_of_fsym = function
         else sprintf "(/ %s %s)" (Z.to_string (Q.num r)) (Z.to_string (Q.den r))
       else Q.to_string r
   | T_real.RNeg -> "-"
+  (*| T_real.RAbs -> "rabs"*)
   | T_real.RAdd -> "+"
   | T_real.RSub -> "-"
   | T_real.RMul -> "*"
   | T_real.RDiv -> "/"
+  (*| T_real.RPower -> "rpow"*)
   | T_irb.IntToReal -> "to_real"
   | T_irb.RealToInt -> "to_int"
-  | _ -> failwith "[str_of_fsym] unsupported function symbol"
+  | fsym ->
+      failwith
+        (sprintf "[str_of_fsym] unsupported function symbol: %s"
+           (Term.str_of_funsym fsym))
 
 let str_of_psym = function
   | T_bool.Eq -> "="
@@ -89,7 +96,7 @@ let str_of_formula =
          method flet _ _ _ _ = failwith "unsupported"
       end)
 
-let rec sort_of_sexp ~print dtenv = function
+let rec sort_of_sexp ~print dtenv params = function
   | Sexp.Atom "Int" -> T_int.SInt
   | Sexp.Atom "Real" -> T_real.SReal
   | Sexp.Atom "Bool" -> T_bool.SBool
@@ -98,15 +105,15 @@ let rec sort_of_sexp ~print dtenv = function
       T_bv.SBV (Some (int_of_string size))
   | Sexp.List [ Sexp.Atom "Array"; s1; s2 ] ->
       T_array.mk_array_sort
-        (sort_of_sexp ~print dtenv s1)
-        (sort_of_sexp ~print dtenv s2)
+        (sort_of_sexp ~print dtenv params s1)
+        (sort_of_sexp ~print dtenv params s2)
   | Sexp.List [ Sexp.Atom "RegEx"; Sexp.Atom "String" ] -> T_regex.SRegEx
   | Sexp.List (Sexp.Atom name :: args) as sexp -> (
       match DTEnv.look_up_dt dtenv name with
       | Some dt ->
           T_dt.SDT
             (Datatype.update_params (Datatype.fresh_of dt)
-            @@ List.map args ~f:(sort_of_sexp ~print dtenv))
+            @@ List.map args ~f:(sort_of_sexp ~print dtenv params))
       | _ ->
           failwith
           @@ sprintf "[sort_of_sexp] unknown sort: %s" (Sexp.to_string sexp))
@@ -114,14 +121,23 @@ let rec sort_of_sexp ~print dtenv = function
       print @@ lazy (sprintf "[sort_of_sexp] %s" name);
       match DTEnv.look_up_dt dtenv name with
       | Some dt -> Datatype.sort_of @@ Datatype.fresh_of dt
-      | _ -> Sort.SVar (Ident.Svar name))
+      | _ -> (
+          match params with
+          | None -> Sort.SVar (Ident.Svar name) (*ToDo*)
+          | Some params ->
+              if
+                List.exists params ~f:(function
+                  | Sort.SVar sv -> String.(Ident.name_of_svar sv = name)
+                  | _ -> false)
+              then Sort.SVar (Ident.Svar name)
+              else failwith @@ sprintf "%s is not defined" name))
   | sexp ->
       failwith
       @@ sprintf "[sort_of_sexp] unknown sort: %s" (Sexp.to_string sexp)
 
 let bind_of_sexp ~print dtenv = function
   | Sexp.List [ Sexp.Atom var; sort ] ->
-      (Ident.Tvar var, sort_of_sexp ~print dtenv sort)
+      (Ident.Tvar var, sort_of_sexp ~print dtenv None sort)
   | sexp ->
       failwith
       @@ sprintf "[bind_of_sexp] unknown bind: %s" (Sexp.to_string sexp)
@@ -133,9 +149,9 @@ let of_params ~print uni_senv sexps dtenv =
        | Sexp.List [ Sexp.Atom name; sort ] -> (
            try
              ( Map.Poly.add_exn uni_senv ~key:(Ident.Tvar name)
-                 ~data:(sort_of_sexp ~print dtenv sort),
+                 ~data:(sort_of_sexp ~print dtenv None sort),
                Map.Poly.add_exn acc ~key:(Ident.Tvar name)
-                 ~data:(sort_of_sexp ~print dtenv sort) )
+                 ~data:(sort_of_sexp ~print dtenv None sort) )
            with _ -> failwith @@ name ^ " is already bound")
        | t -> failwith @@ "invalid param: " ^ Sexp.to_string t)
 
@@ -157,9 +173,9 @@ let of_pred_sym1 = function
   | op -> failwith @@ "parse error : unknown pred sym " ^ op
 
 let is_fun_sym1 = function
-  | "-" | "to_real" | "to_int" | "int_to_bv" | "bv_to_uint" | "bv_to_sint"
-  | "ubv_to_int" | "sbv_to_int" | "bvnot" | "bvneg" | "str.to.re" | "re.comp"
-  | "re.*" | "re.+" | "re.opt" ->
+  | "-" | "to_real" | "to_int" | "bv_to_uint" | "bv_to_sint" | "ubv_to_int"
+  | "sbv_to_int" | "bvnot" | "bvneg" | "str.to.re" | "re.comp" | "re.*" | "re.+"
+  | "re.opt" ->
       true
   | _ -> false
 
@@ -167,7 +183,6 @@ let of_fun_sym1 = function
   | "-" -> T_num.mk_nneg
   | "to_real" -> T_irb.mk_int_to_real
   | "to_int" -> T_irb.mk_real_to_int
-  | "int_to_bv" -> T_irb.mk_int_to_bv ~size:None
   | "bv_to_uint" | "ubv_to_int" ->
       T_irb.mk_bv_to_int ~size:None ~signed:(Some false)
   | "bv_to_sint" | "sbv_to_int" ->
@@ -587,12 +602,17 @@ and of_term ~print ~inline envs =
       | _ -> failwith "")
   | Sexp.List [ Sexp.List [ Sexp.Atom "as"; Sexp.Atom "const"; sort ]; value ]
     -> (
-      let arr_sort = sort_of_sexp ~print envs.dtenv sort in
+      let arr_sort = sort_of_sexp ~print envs.dtenv None sort in
       let arr_value = of_term ~print ~inline envs value in
       match arr_sort with
       | T_array.SArray (s1, s2) -> T_array.mk_const_array s1 s2 arr_value
       | _ -> failwith "")
   (* bitvector function application *)
+  | Sexp.List
+      [ Sexp.List [ Sexp.Atom "_"; Sexp.Atom "int_to_bv"; Sexp.Atom bits ]; t1 ]
+    ->
+      let t1 = of_term ~print ~inline envs t1 in
+      T_irb.mk_int_to_bv ~size:(Some (int_of_string bits)) t1
   | Sexp.List
       [
         Sexp.List
@@ -704,11 +724,11 @@ let is_available str =
   in
   List.exists logiclist ~f:(String.( = ) str)
 
-let mk_dt_sel ~print dtenv dt dts = function
+let mk_dt_sel ~print dtenv params dt dts = function
   | Sexp.List [ Sexp.Atom name; (Sexp.Atom ret_name as ret) ] -> (
       match List.find dts ~f:(Datatype.name_of_dt >> String.( = ) ret_name) with
       | Some _ -> Datatype.mk_insel name ret_name (Datatype.params_of_dt dt)
-      | None -> Datatype.mk_sel name @@ sort_of_sexp ~print dtenv ret)
+      | None -> Datatype.mk_sel name @@ sort_of_sexp ~print dtenv params ret)
   | Sexp.List
       [ Sexp.Atom name; (Sexp.List (Sexp.Atom ret_name :: args) as ret) ] -> (
       match List.find dts ~f:(Datatype.name_of_dt >> String.( = ) ret_name) with
@@ -717,41 +737,53 @@ let mk_dt_sel ~print dtenv dt dts = function
           @@
           if String.(Datatype.name_of_dt dt = ret_name) then
             Datatype.params_of_dt dt (*ToDo: args?*)
-          else List.map args ~f:(sort_of_sexp ~print dtenv)
-      | None -> Datatype.mk_sel name @@ sort_of_sexp ~print dtenv ret)
+          else List.map args ~f:(sort_of_sexp ~print dtenv params)
+      | None -> Datatype.mk_sel name @@ sort_of_sexp ~print dtenv params ret)
   | sexp -> failwith @@ Sexp.to_string sexp
 
-let mk_dt_cons ~print dtenv dt dts = function
+let mk_dt_cons ~print dtenv params dt dts = function
   | Sexp.Atom name | Sexp.List [ Sexp.Atom name ] -> Datatype.mk_cons name
   | Sexp.List (Sexp.Atom name :: sels) ->
       Datatype.mk_cons name
-        ~sels:(List.map sels ~f:(mk_dt_sel ~print dtenv dt dts))
+        ~sels:(List.map sels ~f:(mk_dt_sel ~print dtenv params dt dts))
   | sexp -> failwith @@ sprintf "[mk_dt_cons] %s" (Sexp.to_string sexp)
 
 let mk_new_datatypes ~print dtenv dts funcs flag =
   let datatypes =
     List.map2_exn funcs dts ~f:(fun func -> function
-      | Sexp.List [ Sexp.Atom name; Sexp.Atom "0" ] -> Datatype.mk_dt name []
+      | Sexp.List [ Sexp.Atom name; Sexp.Atom "0" ] ->
+          ([], Datatype.mk_dt name [])
       | Sexp.List [ Sexp.Atom name; Sexp.Atom n ] -> (
           match func with
-          | Sexp.List (Sexp.Atom "par" :: Sexp.List args :: _)
-          | Sexp.List (Sexp.List [ Sexp.Atom "par"; Sexp.List args ] :: _) ->
-              assert (List.length args = int_of_string n);
-              Datatype.mk_dt name
-              @@ List.map args ~f:(function
-                   | Sexp.Atom name -> Sort.SVar (Ident.Svar name)
-                   | _ -> assert false)
-          | _ -> assert false)
-      | _ -> assert false)
+          | Sexp.List (Sexp.Atom "par" :: Sexp.List params :: _)
+          | Sexp.List (Sexp.List [ Sexp.Atom "par"; Sexp.List params ] :: _) ->
+              assert (List.length params = int_of_string n);
+              let params =
+                List.map params ~f:(function
+                  | Sexp.Atom name -> Sort.SVar (Ident.Svar name)
+                  | _ -> assert false)
+              in
+              (params, Datatype.mk_dt name params)
+          | _ ->
+              failwith
+              @@ sprintf "Invalid datatype declaration: %s"
+                   (Sexp.to_string_hum func))
+      | _ ->
+          failwith
+          @@ sprintf "Invalid datatype declaration: %s"
+               (Sexp.to_string_hum func))
   in
   let datatypes =
-    List.map2_exn datatypes funcs ~f:(fun dt -> function
+    List.map2_exn datatypes funcs ~f:(fun (params, dt) -> function
       | Sexp.List [ Sexp.Atom "par"; Sexp.List _; Sexp.List conses ]
       | Sexp.List (Sexp.List [ Sexp.Atom "par"; Sexp.List _ ] :: conses)
       | Sexp.List conses ->
           let conses =
             List.fold_left ~init:[] conses ~f:(fun conses cons ->
-                mk_dt_cons ~print dtenv dt datatypes cons :: conses)
+                mk_dt_cons ~print dtenv (Some params) dt
+                  (List.map ~f:snd datatypes)
+                  cons
+                :: conses)
           in
           { dt with conses }
       | _ -> assert false)
@@ -759,23 +791,26 @@ let mk_new_datatypes ~print dtenv dts funcs flag =
   List.map datatypes ~f:(fun dt ->
       Datatype.make (Datatype.name_of_dt dt) datatypes flag)
 
-let mk_old_datatypes ~print dtenv dts flag args =
-  let args =
-    List.map args ~f:(function
+let mk_old_datatypes ~print dtenv dts flag params =
+  let params =
+    List.map params ~f:(function
       | Sexp.Atom name -> Sort.SVar (Ident.Svar name)
       | _ -> assert false)
   in
   let datatypes =
     List.map dts ~f:(function
-      | Sexp.List (Sexp.Atom name :: _) -> Datatype.mk_dt name args
+      | Sexp.List (Sexp.Atom name :: _) -> (params, Datatype.mk_dt name params)
       | _ -> assert false)
   in
   let datatypes =
-    List.map2_exn datatypes dts ~f:(fun dt -> function
+    List.map2_exn datatypes dts ~f:(fun (params, dt) -> function
       | Sexp.List (_ :: conses) ->
           let conses =
             List.fold_left conses ~init:[] ~f:(fun conses cons ->
-                mk_dt_cons ~print dtenv dt datatypes cons :: conses)
+                mk_dt_cons ~print dtenv (Some params) dt
+                  (List.map ~f:snd datatypes)
+                  cons
+                :: conses)
           in
           { dt with conses }
       | _ -> assert false)
@@ -873,7 +908,7 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
         Map.Poly.add_exn envs.exi_senv ~key:(Ident.Tvar name)
           ~data:
             (Sort.mk_fun
-            @@ List.map args ~f:(sort_of_sexp ~print envs.dtenv)
+            @@ List.map args ~f:(sort_of_sexp ~print envs.dtenv None)
             @ [ T_bool.SBool ])
       in
       let kind_map' =
@@ -895,7 +930,7 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
         Map.Poly.add_exn envs.exi_senv ~key:(Ident.Tvar name)
           ~data:
             (Sort.mk_fun
-            @@ List.map args ~f:(sort_of_sexp ~print envs.dtenv)
+            @@ List.map args ~f:(sort_of_sexp ~print envs.dtenv None)
             @ [ T_bool.SBool ])
       in
       let kind_map' =
@@ -917,7 +952,7 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
         Map.Poly.add_exn envs.exi_senv ~key:(Ident.Tvar name)
           ~data:
             (Sort.mk_fun
-            @@ List.map args ~f:(sort_of_sexp ~print envs.dtenv)
+            @@ List.map args ~f:(sort_of_sexp ~print envs.dtenv None)
             @ [ T_bool.SBool ])
       in
       let kind_map' =
@@ -929,8 +964,8 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
   | Sexp.List [ Sexp.Atom "declare-fun"; Sexp.Atom name; Sexp.List args; ret ]
     :: es ->
       (*print @@ lazy ("adding " ^ name);*)
-      let args_sort = List.map args ~f:(sort_of_sexp ~print envs.dtenv) in
-      let sret = sort_of_sexp ~print envs.dtenv ret in
+      let args_sort = List.map args ~f:(sort_of_sexp ~print envs.dtenv None) in
+      let sret = sort_of_sexp ~print envs.dtenv None ret in
       let fun_sort = Sort.mk_fun @@ args_sort @ [ sret ] in
       let exi_senv' =
         Map.Poly.add_exn envs.exi_senv ~key:(Ident.Tvar name) ~data:fun_sort
@@ -938,6 +973,7 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
       let kind_map' =
         let kind =
           if Term.is_int_sort sret then Kind.IntFun
+          else if Term.is_real_sort sret then Kind.RealFun
           else if Term.is_regex_sort sret && List.is_empty args_sort then
             Kind.RegEx
           else
@@ -953,7 +989,7 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
   | Sexp.List [ Sexp.Atom "declare-const"; Sexp.Atom name; ty ] :: es ->
       let exi_senv' =
         Map.Poly.add_exn envs.exi_senv ~key:(Ident.Tvar name)
-          ~data:(sort_of_sexp ~print envs.dtenv ty)
+          ~data:(sort_of_sexp ~print envs.dtenv None ty)
       in
       let kind_map' =
         envs.kind_map
@@ -967,7 +1003,7 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
     :: es ->
       let fenv' =
         let fargs' = List.map fargs ~f:(bind_of_sexp ~print envs.dtenv) in
-        let sort = sort_of_sexp ~print envs.dtenv ty in
+        let sort = sort_of_sexp ~print envs.dtenv None ty in
         let body =
           (* the scope is within body *)
           let uni_senv' =
@@ -989,7 +1025,7 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
     :: es ->
       let fenv' =
         let fargs' = List.map fargs ~f:(bind_of_sexp ~print envs.dtenv) in
-        let sort = sort_of_sexp ~print envs.dtenv ty in
+        let sort = sort_of_sexp ~print envs.dtenv None ty in
         let body =
           (* the scope is within body *)
           let uni_senv' =
@@ -1022,7 +1058,7 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
   | Sexp.List [ Sexp.Atom "declare-var"; Sexp.Atom name; sort ] :: es ->
       let uni_senv' =
         Map.Poly.add_exn envs.uni_senv ~key:(Ident.Tvar name)
-          ~data:(sort_of_sexp ~print envs.dtenv sort)
+          ~data:(sort_of_sexp ~print envs.dtenv None sort)
       in
       toplevel ~print ~inline acc { envs with uni_senv = uni_senv' } es
   | Sexp.List [ Sexp.Atom "declare-rel"; Sexp.Atom name; Sexp.List args ] :: es
@@ -1032,7 +1068,7 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
         Map.Poly.add_exn envs.exi_senv ~key:(Ident.Tvar name)
           ~data:
             (Sort.mk_fun
-            @@ List.map args ~f:(sort_of_sexp ~print envs.dtenv)
+            @@ List.map args ~f:(sort_of_sexp ~print envs.dtenv None)
             @ [ T_bool.SBool ])
       in
       let kind_map' =
@@ -1054,7 +1090,7 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
       toplevel ~print ~inline (Formula.mk_forall bounds phi :: acc) envs es
   | Sexp.List [ Sexp.Atom "query"; phi ] :: es ->
       let phi = of_formula ~print ~inline envs phi in
-      assert (Set.is_empty @@ Formula.fvs_of phi)
+      assert (Formula.is_ground phi)
       (*ToDo: check that phi is a predicate variable without arguments*);
       toplevel ~print ~inline (Formula.mk_neg phi :: acc) envs es
   | sexps ->

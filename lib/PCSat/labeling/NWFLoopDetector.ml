@@ -86,29 +86,28 @@ let detect ~print res pvar (sorts, sorts_l, sorts_r)
         Set.iter component ~f:(fun v ->
             List.iter (succ graph v) ~f:(fun s ->
                 if Set.mem component s then add_edge subgraph v s else ()));
-        find_cycles subgraph component
-        |> List.fold ~init:acc ~f:(fun acc cycle ->
-               let rec get_papps acc = function
-                 | v1 :: v2 :: tl ->
-                     let t1, t2 =
-                       Map.Poly.
-                         (find_exn node_map_rev v1, find_exn node_map_rev v2)
-                     in
-                     let t2 = List.drop t2 (List.length sorts) in
-                     let papp =
-                       ExAtom.PApp ((pvar, sorts @ sorts_l @ sorts_r), t1 @ t2)
-                     in
-                     print @@ lazy (ExAtom.str_of papp ^ ",");
-                     let acc' = papp :: acc in
-                     get_papps acc' (v2 :: tl)
-                 | _ -> acc
-               in
-               print @@ lazy "find a cycle:[";
-               let papps = get_papps [] cycle in
-               print @@ lazy "]\n";
-               Set.add acc
-               @@ ExClause.
-                    {
-                      positive = Set.Poly.empty;
-                      negative = Set.Poly.of_list papps;
-                    }))
+        List.fold ~init:acc (find_cycles subgraph component)
+          ~f:(fun acc cycle ->
+            let rec get_papps acc = function
+              | v1 :: v2 :: tl ->
+                  let t1, t2 =
+                    Map.Poly.(find_exn node_map_rev v1, find_exn node_map_rev v2)
+                  in
+                  let t2 = List.drop t2 (List.length sorts) in
+                  let papp =
+                    ExAtom.PApp ((pvar, sorts @ sorts_l @ sorts_r), t1 @ t2)
+                  in
+                  print @@ lazy (ExAtom.str_of papp ^ ",");
+                  let acc' = papp :: acc in
+                  get_papps acc' (v2 :: tl)
+              | _ -> acc
+            in
+            print @@ lazy "find a cycle:[";
+            let papps = get_papps [] cycle in
+            print @@ lazy "]\n";
+            Set.add acc
+            @@ ExClause.
+                 {
+                   positive = Set.Poly.empty;
+                   negative = Set.Poly.of_list papps;
+                 }))

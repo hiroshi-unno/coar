@@ -2,9 +2,9 @@ open Core
 open Common
 open Common.Ext
 open Common.Util
+open Common.Combinator
 open Ast
 open Ast.LogicOld
-open Ast.HypSpace
 open Function
 
 module Config = struct
@@ -155,10 +155,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
   let name_of () = Arg.name
   let kind_of () = Kind.str_of Kind.WF
   let sort_of () = Sort.mk_fun @@ Arg.sorts @ [ T_bool.SBool ]
-
-  let params_of ~tag =
-    ignore tag;
-    sort_env_list_of_sorts Arg.sorts
+  let params_of () = sort_env_list_of_sorts Arg.sorts
 
   let show_state ?(config = PCSatCommon.RLConfig.disabled) labels =
     ignore config;
@@ -198,46 +195,35 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     && SolSpace.in_space Arg.name SolSpace.NL !param.nl Arg.sol_space
     && SolSpace.in_space Arg.name SolSpace.Depth !param.depth Arg.sol_space
 
-  let adjust_quals ~tag quals =
-    let params = params_of ~tag in
-    let params_x, params_y = List.split_n params (List.length params / 2) in
-    let rename_x_y =
-      Formula.rename (ren_of_sort_env_list params_x params_y)
+  let adjust_quals_terms (quals, terms) =
+    let params_x, params_y =
+      let params = params_of () in
+      List.split_n params (List.length params / 2)
     in
-    let rename_y_x =
-      Formula.rename (ren_of_sort_env_list params_y params_x)
-    in
-    Set.concat_map quals ~f:(fun phi ->
-        let qual1 =
-          Z3Smt.Z3interface.qelim ~timeout:(Some 1000) ~id ~fenv:Arg.fenv
-          @@ Formula.exists params_y phi
-        in
-        let qual2 =
-          Z3Smt.Z3interface.qelim ~timeout:(Some 1000) ~id ~fenv:Arg.fenv
-          @@ Formula.exists params_x phi
-        in
-        Set.union
-          (if Formula.is_bind qual1 || Set.is_empty (Formula.fvs_of qual1) then
-             Set.Poly.empty
-           else Set.Poly.of_list [ qual1; rename_x_y qual1 ])
-          (if Formula.is_bind qual2 || Set.is_empty (Formula.fvs_of qual2) then
-             Set.Poly.empty
-           else Set.Poly.of_list [ rename_y_x qual2; qual2 ]))
+    Qual.extract_wf_terms_from_quals_terms
+      ~qelim:(Z3Smt.Z3interface.qelim ~timeout:(Some 1000) ~id ~fenv:Arg.fenv)
+      params_x params_y (quals, terms)
 
-  let init_quals _ _ = ()
+  let update_hspace hspace =
+    HypSpace.qualifiers_of ~fenv:Arg.fenv !param.depth hspace
 
-  let update_hspace ~tag hspace =
-    ignore tag;
-    qualifiers_of ~fenv:Arg.fenv !param.depth hspace
-
-  let gen_template ~tag ~ucore hspace =
-    ignore tag;
-    ignore ucore;
+  let gen_template ~ucore:_ (hspace : HypSpace.hspace) =
     assert (List.length hspace.params mod 2 = 0);
+    if true then (
+      Debug.print @@ lazy "qualifiers and terms for template generation:";
+      Debug.print
+      @@ lazy
+           (sprintf "quals: %s"
+           @@ String.concat_map_set ~sep:"," hspace.quals ~f:Formula.str_of);
+      Debug.print
+      @@ lazy
+           (sprintf "terms: %s"
+           @@ String.concat_map_set ~sep:"," hspace.terms ~f:Term.str_of));
     let template =
       Templ.gen_simplified_wf_predicate
         (*config.use_ifte*)
         {
+          consts = Set.to_list hspace.consts;
           terms = Set.to_list hspace.terms;
           quals = Set.to_list hspace.quals;
           shp = List.init !param.np ~f:(fun _ -> !param.ndc);
@@ -264,23 +250,28 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
             (Formula.str_of template.pred));
     Debug.print
     @@ lazy
+         (sprintf "[%s] rfun_selectors_bounds:\n  %s"
+            (Ident.name_of_tvar Arg.name)
+            (Formula.str_of template.rfun_selectors_bounds));
+    Debug.print
+    @@ lazy
          (sprintf "[%s] rfun_coeffs_bounds:\n  %s"
-            (Ident.name_of_tvar @@ Arg.name)
+            (Ident.name_of_tvar Arg.name)
             (Formula.str_of template.rfun_coeffs_bounds));
     Debug.print
     @@ lazy
          (sprintf "[%s] rfun_const_bounds:\n  %s"
-            (Ident.name_of_tvar @@ Arg.name)
+            (Ident.name_of_tvar Arg.name)
             (Formula.str_of template.rfun_const_bounds));
     Debug.print
     @@ lazy
          (sprintf "[%s] disc_coeffs_bounds:\n  %s"
-            (Ident.name_of_tvar @@ Arg.name)
+            (Ident.name_of_tvar Arg.name)
             (Formula.str_of template.disc_coeffs_bounds));
     Debug.print
     @@ lazy
          (sprintf "[%s] disc_const_bounds:\n  %s"
-            (Ident.name_of_tvar @@ Arg.name)
+            (Ident.name_of_tvar Arg.name)
             (Formula.str_of template.disc_const_bounds));
     let pred =
       Logic.(Term.mk_lambda (of_old_sort_env_list hspace.params))
@@ -288,10 +279,21 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     in
     ( (LexicoPieceConj, pred),
       [
-        (RFunCoeff, Logic.ExtTerm.of_old_formula template.rfun_coeffs_bounds);
-        (RFunConst, Logic.ExtTerm.of_old_formula template.rfun_const_bounds);
-        (DiscCoeff, Logic.ExtTerm.of_old_formula template.disc_coeffs_bounds);
-        (DiscConst, Logic.ExtTerm.of_old_formula template.disc_const_bounds);
+        ( false,
+          RFunCoeff,
+          Logic.ExtTerm.of_old_formula template.rfun_coeffs_bounds );
+        ( false,
+          RFunConst,
+          Logic.ExtTerm.of_old_formula template.rfun_const_bounds );
+        ( false,
+          DiscCoeff,
+          Logic.ExtTerm.of_old_formula template.disc_coeffs_bounds );
+        ( false,
+          DiscConst,
+          Logic.ExtTerm.of_old_formula template.disc_const_bounds );
+        ( true,
+          LexicoPieceConj,
+          Logic.ExtTerm.of_old_formula template.rfun_selectors_bounds );
       ],
       template.templ_params,
       template.hole_quals_map )
@@ -590,26 +592,29 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
          ^ "***************");
     ({ param with ubdd = init.ubdd }, actions @ [ "init_disc_const" ])
 
-  let try_then f g =
+  (*let try_then f g =
     let res = f () in
     let backup = !param in
     param := fst res;
     if in_space () then (
       param := backup;
       res)
-    else g ()
+    else g ()*)
 
   let increase_lexico_piece_conj (param, actions) =
-    let f () =
-      increase_depth @@ increase_disc_conj @@ increase_rfun_pieces
-      @@ init_rfun_lexicos (param, actions)
-    in
-    let g () = increase_rfun_lexicos (param, actions) in
-    if param.nl >= param.np then try_then f g else try_then g f
+    if param.nl <= 1 && param.np <= 1 then
+      increase_disc_conj @@ increase_rfun_pieces
+      @@ increase_rfun_lexicos (param, actions)
+    else
+      (if param.nl >= 3 * (param.depth + 1) then increase_depth else Fn.id)
+      @@ (if param.nl >= 2 * param.np then
+            increase_rfun_pieces >> increase_disc_conj
+          else Fn.id)
+      @@ increase_rfun_lexicos (param, actions)
 
   let rec inner param_actions = function
     | [] -> param_actions
-    | LexicoPieceConj :: labels ->
+    | (LexicoPieceConj | Shape) :: labels ->
         inner
           (if config.fix_shape then param_actions
            else increase_lexico_piece_conj param_actions)

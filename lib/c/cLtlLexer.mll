@@ -70,6 +70,8 @@ rule main = parse
 | "short" { CLtlParser.SHORT }
 | "int" { CLtlParser.INT }
 | "long" { CLtlParser.LONG }
+| "float" { CLtlParser.FLOAT }
+| "double" { CLtlParser.DOUBLE }
 | "void" { CLtlParser.VOID }
 | "const" { CLtlParser.CONST }
 | "static" { CLtlParser.STATIC }
@@ -87,12 +89,12 @@ rule main = parse
 | "*" { CLtlParser.ASTERISK }
 | "/" { CLtlParser.DIV }
 | "%" { CLtlParser.MOD }
-| ">=" { CLtlParser.PREDSYM T_int.Geq }
-| ">" { CLtlParser.PREDSYM T_int.Gt }
-| "<=" { CLtlParser.PREDSYM T_int.Leq }
-| "<" { CLtlParser.PREDSYM T_int.Lt }
-| "==" { CLtlParser.PREDSYM T_bool.Eq }
-| "!=" { CLtlParser.PREDSYM T_bool.Neq }
+| ">=" { CLtlParser.PREDSYM (function T_int.SInt -> T_int.Geq | T_real.SReal -> T_real.RGeq | Sort.SVar s -> T_num.NGeq s | _ -> assert false) }
+| ">" { CLtlParser.PREDSYM (function T_int.SInt -> T_int.Gt | T_real.SReal -> T_real.RGt | Sort.SVar s -> T_num.NGt s | _ -> assert false) }
+| "<=" { CLtlParser.PREDSYM (function T_int.SInt -> T_int.Leq | T_real.SReal -> T_real.RLeq | Sort.SVar s -> T_num.NLeq s | _ -> assert false) }
+| "<" { CLtlParser.PREDSYM (function T_int.SInt -> T_int.Lt | T_real.SReal -> T_real.RLt | Sort.SVar s -> T_num.NLt s | _ -> assert false) }
+| "==" { CLtlParser.PREDSYM (fun _ -> T_bool.Eq) }
+| "!=" { CLtlParser.PREDSYM (fun _ -> T_bool.Neq) }
 
 (* conflicts *)
 | "&" { CLtlParser.ADDR }
@@ -110,6 +112,8 @@ rule main = parse
 | "__VERIFIER_nondet_uint" { CLtlParser.NONDET_UINT }
 | "__VERIFIER_nondet_long" { CLtlParser.NONDET_LONG }
 | "__VERIFIER_nondet_ulong" { CLtlParser.NONDET_ULONG }
+| "__VERIFIER_nondet_float" { CLtlParser.NONDET_FLOAT }
+| "__VERIFIER_nondet_double" { CLtlParser.NONDET_DOUBLE }
 
 | ['a'-'z''A'-'Z''_']['a'-'z''A'-'Z''0'-'9'''''_']*
     {
@@ -142,6 +146,12 @@ rule main = parse
         (Stdlib.String.to_seq str)
       in
       CLtlParser.INTL n
+    }
+| ['0'-'9']+ '.' ['0'-'9']+ (['e' 'E'] ['+' '-']? ['0'-'9']+)? 'f'?
+    {
+      let str = Lexing.lexeme lexbuf in
+      let f = float_of_string str in
+      CLtlParser.FLOATL f
     }
 
 | "//"eof

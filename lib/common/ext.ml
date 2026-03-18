@@ -1699,12 +1699,10 @@ module Map = struct
         else Map.Poly.add_exn acc ~key:newkey ~data)
 
   let force_add map key data =
-    try Map.Poly.add_exn map ~key ~data
-    with _ -> (
-      match Map.Poly.find map key with
-      | Some data' ->
-          if Stdlib.(data = data') then map else failwith "force_add"
-      | None -> assert false)
+    Map.Poly.update map key ~f:(function
+      | None -> data
+      | Some data' when Stdlib.(data = data') -> data
+      | _ -> failwith "force_add")
 
   (*let force_merge ?(catch_dup=ignore) =
     Map.Poly.merge ~f:(fun ~key -> function

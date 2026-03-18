@@ -11,6 +11,7 @@ let print _ = ()
 //%token <string> UNKNOWN
 %token <string> IDENT
 %token <string> IDENT_T
+%token <string> TYPEVAR
 %token <string> CONST
 %token <bool> BOOL
 %token <int> INT
@@ -381,10 +382,13 @@ formula:
 
 val_ty:
   | LPAREN val_ty RPAREN { $2 }
-  | IDENT {
-    fun _ ->
+  | IDENT { fun _ ->
     Rtype.simple_val_of_sort ~config:!Rtype.cgen_config @@
     Typeinf.sort_of_name (get_dtenv ()) $1
+  }
+  | TYPEVAR {fun _ ->
+    Rtype.simple_val_of_sort ~config:!Rtype.cgen_config @@
+    Sort.SVar (Ident.Svar $1)
   }
   | val_ty IDENT /*%prec prec_tyapp*/ {
     if String.($2 = "ref") then

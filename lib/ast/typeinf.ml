@@ -10,6 +10,13 @@ type constr = CEq of Sort.t * Sort.t | CNum of Ident.svar
 let is_ceq = function CEq _ -> true | _ -> false
 let is_cnum = function CNum _ -> true | _ -> false
 
+let svs_of_constr = function
+  | CEq (sort1, sort2) ->
+      Set.union (Term.svs_of_sort sort1) (Term.svs_of_sort sort2)
+  | CNum svar -> Set.Poly.singleton svar
+
+let svs_of_constrs = Set.concat_map ~f:svs_of_constr
+
 let str_of_constr = function
   | CEq (sort1, sort2) ->
       sprintf "  [CEq:%s = %s]" (Term.str_of_sort sort1)
@@ -73,6 +80,25 @@ let rec cgen_term ~print senv term =
               constrs2;
               Set.Poly.of_list [ CEq (ty1, T_int.SInt); CEq (ty1, ty2) ];
             ] )
+    | FunApp (T_int.Case _n, t1 :: branches, _) ->
+        let senv, ty1, constrs1 = cgen_term ~print senv t1 in
+        let senv, tys, constrss =
+          List.fold ~init:(senv, [], []) branches
+            ~f:(fun (senv, tys, constrss) t ->
+              let senv, ty, constrs = cgen_term ~print senv t in
+              (senv, ty :: tys, constrs :: constrss))
+        in
+        let ty2, tys = List.hd_tl tys in
+        ( senv,
+          ty2,
+          Set.Poly.union_list
+            ([
+               constrs1;
+               Set.Poly.of_list
+                 (CEq (ty1, T_int.SInt)
+                 :: List.map tys ~f:(fun ty3 -> CEq (ty2, ty3)));
+             ]
+            @ constrss) )
     | FunApp (T_real.Real _, [], _) -> (senv, T_real.SReal, Set.Poly.empty)
     | FunApp (T_real.Alge _, [ t ], _) ->
         let senv, ty, constrs = cgen_term ~print senv t in
@@ -181,17 +207,6 @@ let rec cgen_term ~print senv term =
             [
               constrs1;
               Set.Poly.of_list [ CNum svar; CEq (ty1, Sort.SVar svar) ];
-            ] )
-    | FunApp (T_num.NSEXT (_, svar1, _, svar2), [ t1 ], _) ->
-        let senv, ty1, constrs1 = cgen_term ~print senv t1 in
-        (* ToDo: from and to_ are not used *)
-        ( senv,
-          Sort.SVar svar2,
-          Set.Poly.union_list
-            [
-              constrs1;
-              Set.Poly.of_list
-                [ CNum svar1; CNum svar2; CEq (ty1, Sort.SVar svar1) ];
             ] )
     | FunApp
         ( T_num.(
@@ -949,9 +964,9 @@ let elim_nums ?(to_sus = false) ~default nums map =
   Map.force_merge map_nums
     (Map.Poly.map map ~f:(Term.subst_sorts_sort map_nums))
 
-let typeinf_term ~print ?(to_sus = false) ~default ?(senv_opt = Map.Poly.empty)
+let typeinf_term ~print ?(to_sus = false) ~default ?(senv = Map.Poly.empty)
     ?(sort_opt = None) ?(constrs_opt = None) term =
-  let _, s, constrs = cgen_term ~print senv_opt term in
+  let _, s, constrs = cgen_term ~print senv term in
   let constrs =
     match sort_opt with
     | None -> constrs
@@ -970,8 +985,9 @@ let typeinf_atom ~print ?(to_sus = false) ~default atom =
   let map = elim_nums ~to_sus ~default nums map in
   Atom.subst_sorts map atom
 
-let typeinf_formula ~print ?(to_sus = false) ~default phi =
-  let _, constrs = cgen_formula ~print Map.Poly.empty phi in
+let typeinf_formula ~print ?(senv = Map.Poly.empty) ?(to_sus = false) ~default
+    phi =
+  let _, constrs = cgen_formula ~print senv phi in
   let nums, map = solve ~print constrs in
   let map = elim_nums ~to_sus ~default nums map in
   Formula.subst_sorts map phi

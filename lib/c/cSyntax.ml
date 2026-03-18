@@ -15,24 +15,37 @@ let funname_nondet_int = "__VERIFIER_nondet_int"
 let funname_nondet_uint = "__VERIFIER_nondet_uint"
 let funname_nondet_long = "__VERIFIER_nondet_long"
 let funname_nondet_ulong = "__VERIFIER_nondet_ulong"
+let funname_nondet_float = "__VERIFIER_nondet_float"
+let funname_nondet_double = "__VERIFIER_nondet_double"
 let formula_of_term term = Formula.neq term (T_int.zero ())
 
 let term_of_string str =
-  let varname = sprintf "\"%s\"" str in
-  Term.mk_var (Ident.Tvar varname) T_int.SRefInt ~info:Dummy
+  Term.mk_var (Ident.Tvar (sprintf "\"%s\"" str)) T_int.SRefInt ~info:Dummy
 
 let type_of_nondet term =
   if Term.is_funcall term then
     let funname, _, _ = Term.let_funcall term in
-    if String.(funname = funname_nondet_bool) then Some (1, false)
-    else if String.(funname = funname_nondet_char) then Some (8, true)
-    else if String.(funname = funname_nondet_uchar) then Some (8, false)
-    else if String.(funname = funname_nondet_short) then Some (16, true)
-    else if String.(funname = funname_nondet_ushort) then Some (16, false)
-    else if String.(funname = funname_nondet_int) then Some (32, true)
-    else if String.(funname = funname_nondet_uint) then Some (32, false)
-    else if String.(funname = funname_nondet_long) then Some (64, true)
-    else if String.(funname = funname_nondet_ulong) then Some (64, false)
+    if String.(funname = funname_nondet_bool) then Some (T_int.SInt, 1, false)
+    else if String.(funname = funname_nondet_char) then
+      Some (T_int.SInt, 8, true)
+    else if String.(funname = funname_nondet_uchar) then
+      Some (T_int.SInt, 8, false)
+    else if String.(funname = funname_nondet_short) then
+      Some (T_int.SInt, 16, true)
+    else if String.(funname = funname_nondet_ushort) then
+      Some (T_int.SInt, 16, false)
+    else if String.(funname = funname_nondet_int) then
+      Some (T_int.SInt, 32, true)
+    else if String.(funname = funname_nondet_uint) then
+      Some (T_int.SInt, 32, false)
+    else if String.(funname = funname_nondet_long) then
+      Some (T_int.SInt, 64, true)
+    else if String.(funname = funname_nondet_ulong) then
+      Some (T_int.SInt, 64, false)
+    else if String.(funname = funname_nondet_float) then
+      Some (T_real.SReal, 32, true)
+    else if String.(funname = funname_nondet_double) then
+      Some (T_real.SReal, 64, true)
     else None
   else None
 
@@ -156,10 +169,7 @@ end = struct
     | AF phi | EF phi | AG phi | EG phi -> get_fv phi
     | OR (phi1, phi2) | AND (phi1, phi2) | IMP (phi1, phi2) ->
         Variables.union (get_fv phi1) (get_fv phi2)
-    | AP fml ->
-        Formula.tvs_of fml |> Set.to_list
-        |> List.map ~f:Ast.Ident.name_of_tvar
-        |> Variables.of_list
+    | AP fml -> Formula.term_sort_env_of fml |> Variables.of_tvarset
 
   let unwrap = function
     | AF phi | EF phi | AG phi | EG phi -> PHI phi
@@ -353,10 +363,7 @@ end = struct
     | F phi | G phi | X phi | NEG phi -> get_fv phi
     | U (phi1, phi2) | OR (phi1, phi2) | AND (phi1, phi2) ->
         Variables.union (get_fv phi1) (get_fv phi2)
-    | P fml ->
-        Formula.tvs_of fml |> Set.to_list
-        |> List.map ~f:Ident.name_of_tvar
-        |> Variables.of_list
+    | P fml -> Formula.term_sort_env_of fml |> Variables.of_tvarset
 
   let let_unop = function F phi | G phi | X phi -> phi | _ -> assert false
 
@@ -679,25 +686,33 @@ end = struct
     | True _ | False _ | Pvar _ -> Variables.empty
     | PredApp (_, args) ->
         List.fold_left ~init:Variables.empty args ~f:(fun vars term ->
-            Term.tvs_of term |> Set.to_list
-            |> List.map ~f:Ident.name_of_tvar
-            |> Variables.of_list |> Variables.union vars)
+            Term.term_sort_env_of term |> Variables.of_tvarset
+            |> Variables.union vars)
 end
 
 module rec Declare : sig
-  type t = INT of string
+  type t = INT of string | REAL of string
 
   val is_int : t -> bool
+  val is_real : t -> bool
   val mk_int : string -> t
+  val mk_real : string -> t
   val let_int : t -> string
+  val let_real : t -> string
   val string_of : t -> string
 end = struct
-  type t = INT of string
+  type t = INT of string | REAL of string
 
-  let is_int = function INT _ -> true
+  let is_int = function INT _ -> true | _ -> false
+  let is_real = function REAL _ -> true | _ -> false
   let mk_int varname = INT varname
-  let let_int = function INT varname -> varname
-  let string_of = function INT varname -> sprintf "int %s;" varname
+  let mk_real varname = REAL varname
+  let let_int = function INT varname -> varname | _ -> assert false
+  let let_real = function REAL varname -> varname | _ -> assert false
+
+  let string_of = function
+    | INT varname -> sprintf "int %s;" varname
+    | REAL varname -> sprintf "real %s;" varname
 end
 
 module rec Statement : sig
@@ -705,7 +720,8 @@ module rec Statement : sig
     | IF of Formula.t * t * t
     | LOOP of t
     | ASSIGN of string * Term.t
-    | NONDET_ASSIGN of string
+    | NONDET_INT_ASSIGN of string
+    | NONDET_REAL_ASSIGN of string
     | UNREF_ASSIGN of string * Term.t
     | COMPOUND of t * t
     | NONDET of t * t
@@ -716,7 +732,9 @@ module rec Statement : sig
     | LABEL of string
     | GOTO of string
     | RETURN_INT of Term.t
-    | RETURN_NONDET
+    | RETURN_REAL of Term.t
+    | RETURN_NONDET_INT
+    | RETURN_NONDET_REAL
     | RETURN_VOID
     | BREAK
     | EXIT
@@ -725,7 +743,8 @@ module rec Statement : sig
   val is_if : t -> bool
   val is_loop : t -> bool
   val is_assign : t -> bool
-  val is_nondet_assign : t -> bool
+  val is_nondet_int_assign : t -> bool
+  val is_nondet_real_assign : t -> bool
   val is_unref_assign : t -> bool
   val is_compound : t -> bool
   val is_nondet : t -> bool
@@ -736,7 +755,9 @@ module rec Statement : sig
   val is_label : t -> bool
   val is_goto : t -> bool
   val is_return_int : t -> bool
-  val is_return_nondet : t -> bool
+  val is_return_real : t -> bool
+  val is_return_nondet_int : t -> bool
+  val is_return_nondet_real : t -> bool
   val is_return_void : t -> bool
   val is_break : t -> bool
   val is_exit : t -> bool
@@ -744,7 +765,8 @@ module rec Statement : sig
   val mk_if : Formula.t -> t -> t -> t
   val mk_loop : t -> t
   val mk_assign : string -> Term.t -> t
-  val mk_nondet_assign : string -> t
+  val mk_nondet_int_assign : string -> t
+  val mk_nondet_real_assign : string -> t
   val mk_unref_assign : string -> Term.t -> t
   val mk_compound : t -> t -> t
   val mk_nondet : t -> t -> t
@@ -755,7 +777,9 @@ module rec Statement : sig
   val mk_label : string -> t
   val mk_goto : string -> t
   val mk_return_int : Term.t -> t
-  val mk_return_nondet : unit -> t
+  val mk_return_real : Term.t -> t
+  val mk_return_nondet_int : unit -> t
+  val mk_return_nondet_real : unit -> t
   val mk_return_void : unit -> t
   val mk_break : unit -> t
   val mk_exit : unit -> t
@@ -763,7 +787,8 @@ module rec Statement : sig
   val let_if : t -> Formula.t * t * t
   val let_loop : t -> t
   val let_assign : t -> string * Term.t
-  val let_nondet_assign : t -> string
+  val let_nondet_int_assign : t -> string
+  val let_nondet_real_assign : t -> string
   val let_unref_assign : t -> string * Term.t
   val let_compound : t -> t * t
   val let_nondet : t -> t * t
@@ -774,7 +799,8 @@ module rec Statement : sig
   val let_label : t -> string
   val let_goto : t -> string
   val let_return_int : t -> Term.t
-  val varname_of_assign : t -> string
+  val let_return_real : t -> Term.t
+  val varname_of_assign : t -> string * Sort.t
   val string_of : ?indent:int -> t -> string
   val subst : TermSubst.t -> t -> t
   val rename_labels : (string, string) Map.Poly.t -> t -> t
@@ -782,14 +808,15 @@ module rec Statement : sig
   val get_read_vars : t -> Variables.t
 
   (* val get_label_references: t -> (string, t) Hashtbl.t *)
-  val get_all_labels : t -> string list
+  val get_all_labels : t -> (string * Sort.t) list
   val of_statements : t list -> t
 end = struct
   type t =
     | IF of Formula.t * t * t
     | LOOP of t
     | ASSIGN of string * Term.t
-    | NONDET_ASSIGN of string
+    | NONDET_INT_ASSIGN of string
+    | NONDET_REAL_ASSIGN of string
     | UNREF_ASSIGN of string * Term.t
     | COMPOUND of t * t
     | NONDET of t * t
@@ -800,7 +827,9 @@ end = struct
     | LABEL of string
     | GOTO of string
     | RETURN_INT of Term.t
-    | RETURN_NONDET
+    | RETURN_REAL of Term.t
+    | RETURN_NONDET_INT
+    | RETURN_NONDET_REAL
     | RETURN_VOID
     | BREAK
     | EXIT
@@ -809,7 +838,12 @@ end = struct
   let is_if = function IF _ -> true | _ -> false
   let is_loop = function LOOP _ -> true | _ -> false
   let is_assign = function ASSIGN _ -> true | _ -> false
-  let is_nondet_assign = function NONDET_ASSIGN _ -> true | _ -> false
+  let is_nondet_int_assign = function NONDET_INT_ASSIGN _ -> true | _ -> false
+
+  let is_nondet_real_assign = function
+    | NONDET_REAL_ASSIGN _ -> true
+    | _ -> false
+
   let is_unref_assign = function UNREF_ASSIGN _ -> true | _ -> false
   let is_compound = function COMPOUND _ -> true | _ -> false
   let is_nondet = function NONDET _ -> true | _ -> false
@@ -820,7 +854,9 @@ end = struct
   let is_label = function LABEL _ -> true | _ -> false
   let is_goto = function GOTO _ -> true | _ -> false
   let is_return_int = function RETURN_INT _ -> true | _ -> false
-  let is_return_nondet = function RETURN_NONDET -> true | _ -> false
+  let is_return_real = function RETURN_REAL _ -> true | _ -> false
+  let is_return_nondet_int = function RETURN_NONDET_INT -> true | _ -> false
+  let is_return_nondet_real = function RETURN_NONDET_REAL -> true | _ -> false
   let is_return_void = function RETURN_VOID -> true | _ -> false
   let is_break = function BREAK -> true | _ -> false
   let is_exit = function EXIT -> true | _ -> false
@@ -828,7 +864,8 @@ end = struct
   let mk_if cond_fml t_stmt f_stmt = IF (cond_fml, t_stmt, f_stmt)
   let mk_loop stmt = LOOP stmt
   let mk_assign varname term = ASSIGN (varname, term)
-  let mk_nondet_assign varname = NONDET_ASSIGN varname
+  let mk_nondet_int_assign varname = NONDET_INT_ASSIGN varname
+  let mk_nondet_real_assign varname = NONDET_REAL_ASSIGN varname
   let mk_unref_assign varname term = UNREF_ASSIGN (varname, term)
   let mk_compound stmt1 stmt2 = COMPOUND (stmt1, stmt2)
   let mk_nondet stmt1 stmt2 = NONDET (stmt1, stmt2)
@@ -839,7 +876,9 @@ end = struct
   let mk_label label_name = LABEL label_name
   let mk_goto label_name = GOTO label_name
   let mk_return_int term = RETURN_INT term
-  let mk_return_nondet () = RETURN_NONDET
+  let mk_return_real term = RETURN_REAL term
+  let mk_return_nondet_int () = RETURN_NONDET_INT
+  let mk_return_nondet_real () = RETURN_NONDET_REAL
   let mk_return_void () = RETURN_VOID
   let mk_break () = BREAK
   let mk_exit () = EXIT
@@ -855,8 +894,12 @@ end = struct
     | ASSIGN (varname, term) -> (varname, term)
     | _ -> assert false
 
-  let let_nondet_assign = function
-    | NONDET_ASSIGN varname -> varname
+  let let_nondet_int_assign = function
+    | NONDET_INT_ASSIGN varname -> varname
+    | _ -> assert false
+
+  let let_nondet_real_assign = function
+    | NONDET_REAL_ASSIGN varname -> varname
     | _ -> assert false
 
   let let_unref_assign = function
@@ -888,9 +931,12 @@ end = struct
   let let_label = function LABEL label_name -> label_name | _ -> assert false
   let let_goto = function GOTO label_name -> label_name | _ -> assert false
   let let_return_int = function RETURN_INT term -> term | _ -> assert false
+  let let_return_real = function RETURN_REAL term -> term | _ -> assert false
 
   let varname_of_assign = function
-    | ASSIGN (varname, _) | NONDET_ASSIGN varname -> varname
+    | ASSIGN (varname, t) -> (varname, Term.sort_of t)
+    | NONDET_INT_ASSIGN varname -> (varname, T_int.SInt)
+    | NONDET_REAL_ASSIGN varname -> (varname, T_real.SReal)
     | _ -> assert false
 
   let make_indent indent = String.make indent ' '
@@ -916,8 +962,10 @@ end = struct
           (make_indent indent)
     | ASSIGN (varname, term) ->
         sprintf "%s%s = %s;" (make_indent indent) varname (Term.str_of term)
-    | NONDET_ASSIGN varname ->
-        sprintf "%s%s = nondet();" (make_indent indent) varname
+    | NONDET_INT_ASSIGN varname ->
+        sprintf "%s%s = nondet_int();" (make_indent indent) varname
+    | NONDET_REAL_ASSIGN varname ->
+        sprintf "%s%s = nondet_real();" (make_indent indent) varname
     | UNREF_ASSIGN (varname, term) ->
         sprintf "%s*%s = %s;" (make_indent indent) varname (Term.str_of term)
     | COMPOUND (stmt1, stmt2) ->
@@ -942,8 +990,12 @@ end = struct
     | BREAK -> sprintf "%sbreak;" (make_indent indent)
     | RETURN_INT term ->
         sprintf "%sreturn %s;" (make_indent indent) (Term.str_of term)
+    | RETURN_REAL term ->
+        sprintf "%sreturn %s;" (make_indent indent) (Term.str_of term)
     | RETURN_VOID -> sprintf "%sreturn;" (make_indent indent)
-    | RETURN_NONDET -> sprintf "%sreturn nondet();" (make_indent indent)
+    | RETURN_NONDET_INT -> sprintf "%sreturn nondet_int();" (make_indent indent)
+    | RETURN_NONDET_REAL ->
+        sprintf "%sreturn nondet_real();" (make_indent indent)
     | EXIT -> sprintf "%sexit 0;" (make_indent indent)
     | NOP -> sprintf "%snop;" (make_indent indent)
 
@@ -976,8 +1028,9 @@ end = struct
         mk_call_assign varname funname (subst_args sub args)
     | VARDECL _ -> assert false (* TODO *)
     | RETURN_INT term -> mk_return_int (Term.subst sub term)
-    | LABEL _ | GOTO _ | RETURN_VOID | RETURN_NONDET | NONDET_ASSIGN _ | BREAK
-    | EXIT | NOP ->
+    | RETURN_REAL term -> mk_return_real (Term.subst sub term)
+    | LABEL _ | GOTO _ | RETURN_VOID | RETURN_NONDET_INT | RETURN_NONDET_REAL
+    | NONDET_INT_ASSIGN _ | NONDET_REAL_ASSIGN _ | BREAK | EXIT | NOP ->
         stmt
 
   let rec rename_labels ren stmt =
@@ -1011,9 +1064,10 @@ end = struct
     | IF (_, stmt1, stmt2) | NONDET (stmt1, stmt2) | COMPOUND (stmt1, stmt2) ->
         [ stmt1; stmt2 ]
     | LOOP stmt -> [ stmt ]
-    | VARDECL _ | GOTO _ | RETURN_INT _ | RETURN_NONDET | RETURN_VOID | LABEL _
-    | ASSIGN _ | UNREF_ASSIGN _ | ASSUME _ | CALL_VOIDFUN _ | CALL_ASSIGN _
-    | NONDET_ASSIGN _ | BREAK | EXIT | NOP ->
+    | VARDECL _ | GOTO _ | RETURN_INT _ | RETURN_REAL _ | RETURN_NONDET_INT
+    | RETURN_NONDET_REAL | RETURN_VOID | LABEL _ | ASSIGN _ | UNREF_ASSIGN _
+    | ASSUME _ | CALL_VOIDFUN _ | CALL_ASSIGN _ | NONDET_INT_ASSIGN _
+    | NONDET_REAL_ASSIGN _ | BREAK | EXIT | NOP ->
         []
 
   let rec get_label_references_rep ?(nxt_stmt = Statement.mk_nop ())
@@ -1030,18 +1084,19 @@ end = struct
     | LABEL label_name ->
         Hashtbl.Poly.add_exn res ~key:label_name ~data:nxt_stmt;
         res
-    | VARDECL _ | GOTO _ | RETURN_INT _ | RETURN_VOID | RETURN_NONDET | ASSIGN _
-    | UNREF_ASSIGN _ | ASSUME _ | CALL_VOIDFUN _ | CALL_ASSIGN _
-    | NONDET_ASSIGN _ | BREAK | EXIT | NOP ->
+    | VARDECL _ | GOTO _ | RETURN_INT _ | RETURN_REAL _ | RETURN_NONDET_INT
+    | RETURN_NONDET_REAL | RETURN_VOID | ASSIGN _ | UNREF_ASSIGN _ | ASSUME _
+    | CALL_VOIDFUN _ | CALL_ASSIGN _ | NONDET_INT_ASSIGN _
+    | NONDET_REAL_ASSIGN _ | BREAK | EXIT | NOP ->
         res
 
   let get_label_references stmt = get_label_references_rep stmt
 
   let rec get_all_labels_rep res = function
     | LABEL label_name ->
-        if Variables.is_mem res label_name then
+        if Variables.is_mem res (label_name, T_int.SInt (*Dummy*)) then
           failwith @@ sprintf "there are labels with the same name"
-        else Variables.add label_name res
+        else Variables.add (label_name, T_int.SInt (*Dummy*)) res
     | stmt ->
         List.fold_left
           ~f:(fun res stmt' -> get_all_labels_rep res stmt')
@@ -1059,11 +1114,13 @@ end = struct
         let vars2, used_labels =
           get_read_vars_rep label_refs used_labels f_stmt
         in
-        ( Formula.tvs_of cond_fml |> Variables.of_tvarset
-          |> Variables.union vars1 |> Variables.union vars2,
+        ( Formula.term_sort_env_of cond_fml
+          |> Variables.of_tvarset |> Variables.union vars1
+          |> Variables.union vars2,
           used_labels )
     | LOOP stmt' -> get_read_vars_rep label_refs used_labels stmt'
-    | ASSIGN (_, term) -> (Term.tvs_of term |> Variables.of_tvarset, used_labels)
+    | ASSIGN (_, term) ->
+        (Term.term_sort_env_of term |> Variables.of_tvarset, used_labels)
     | UNREF_ASSIGN _ -> assert false
     | NONDET (stmt1, stmt2) | COMPOUND (stmt1, stmt2) ->
         let vars1, used_labels =
@@ -1073,21 +1130,24 @@ end = struct
           get_read_vars_rep label_refs used_labels stmt2
         in
         (Variables.union vars1 vars2, used_labels)
-    | ASSUME fml -> (Formula.tvs_of fml |> Variables.of_tvarset, used_labels)
+    | ASSUME fml ->
+        (Formula.term_sort_env_of fml |> Variables.of_tvarset, used_labels)
     | CALL_VOIDFUN (_, args) | CALL_ASSIGN (_, _, args) ->
         ( List.fold_left ~init:Variables.empty args ~f:(fun vars arg ->
-              Term.tvs_of arg |> Variables.of_tvarset |> Variables.union vars),
+              Term.term_sort_env_of arg |> Variables.of_tvarset
+              |> Variables.union vars),
           used_labels )
     | VARDECL _ -> assert false (* TODO *)
     | GOTO label_name ->
-        if Variables.is_mem used_labels label_name then
+        if Variables.is_mem used_labels (label_name, T_int.SInt (*Dummy*)) then
           (Variables.empty, used_labels)
         else
           Hashtbl.find_exn label_refs label_name
           |> get_read_vars_rep label_refs used_labels
-    | RETURN_INT term -> (Term.tvs_of term |> Variables.of_tvarset, used_labels)
-    | RETURN_VOID | RETURN_NONDET | LABEL _ | NONDET_ASSIGN _ | BREAK | EXIT
-    | NOP ->
+    | RETURN_INT term | RETURN_REAL term ->
+        (Term.term_sort_env_of term |> Variables.of_tvarset, used_labels)
+    | RETURN_VOID | RETURN_NONDET_INT | RETURN_NONDET_REAL | LABEL _
+    | NONDET_INT_ASSIGN _ | NONDET_REAL_ASSIGN _ | BREAK | EXIT | NOP ->
         (Variables.empty, used_labels)
 
   let get_read_vars stmt =
@@ -1096,26 +1156,30 @@ end = struct
     vars
 
   let rec of_statements = function
-    | [] -> Statement.mk_nop ()
+    | [] -> mk_nop ()
     | stmt :: [] -> stmt
-    | stmt :: tail -> Statement.mk_compound stmt (of_statements tail)
+    | stmt :: tail -> mk_compound stmt (of_statements tail)
 end
 
 module rec Init : sig
   type t =
     | ASSIGN of string * Term.t
     | ASSUME of Formula.t
-    | NONDET_ASSIGN of string
+    | NONDET_INT_ASSIGN of string
+    | NONDET_REAL_ASSIGN of string
 
   val is_assign : t -> bool
   val is_assume : t -> bool
-  val is_nondet_assign : t -> bool
+  val is_nondet_int_assign : t -> bool
+  val is_nondet_real_assign : t -> bool
   val mk_assign : string -> Term.t -> t
   val mk_assume : Formula.t -> t
-  val mk_nondet_assign : string -> t
+  val mk_nondet_int_assign : string -> t
+  val mk_nondet_real_assign : string -> t
   val let_assign : t -> string * Term.t
   val let_assume : t -> Formula.t
-  val let_nondet_assign : t -> string
+  val let_nondet_int_assign : t -> string
+  val let_nondet_real_assign : t -> string
   val string_of : t -> string
   val update_state : State.t -> t -> State.t
   val update_formula_A : Formula.t -> t -> Formula.t
@@ -1128,14 +1192,21 @@ end = struct
   type t =
     | ASSIGN of string * Term.t
     | ASSUME of Formula.t
-    | NONDET_ASSIGN of string
+    | NONDET_INT_ASSIGN of string
+    | NONDET_REAL_ASSIGN of string
 
   let is_assign = function ASSIGN _ -> true | _ -> false
   let is_assume = function ASSUME _ -> true | _ -> false
-  let is_nondet_assign = function NONDET_ASSIGN _ -> true | _ -> false
+  let is_nondet_int_assign = function NONDET_INT_ASSIGN _ -> true | _ -> false
+
+  let is_nondet_real_assign = function
+    | NONDET_REAL_ASSIGN _ -> true
+    | _ -> false
+
   let mk_assign varname term = ASSIGN (varname, term)
   let mk_assume fml = ASSUME fml
-  let mk_nondet_assign varname = NONDET_ASSIGN varname
+  let mk_nondet_int_assign varname = NONDET_INT_ASSIGN varname
+  let mk_nondet_real_assign varname = NONDET_REAL_ASSIGN varname
 
   let let_assign = function
     | ASSIGN (varname, term) -> (varname, term)
@@ -1143,45 +1214,59 @@ end = struct
 
   let let_assume = function ASSUME fml -> fml | _ -> assert false
 
-  let let_nondet_assign = function
-    | NONDET_ASSIGN varname -> varname
+  let let_nondet_int_assign = function
+    | NONDET_INT_ASSIGN varname -> varname
+    | _ -> assert false
+
+  let let_nondet_real_assign = function
+    | NONDET_REAL_ASSIGN varname -> varname
     | _ -> assert false
 
   let update_varname varname = function
     | ASSIGN (_, term) -> ASSIGN (varname, term)
-    | NONDET_ASSIGN _ -> NONDET_ASSIGN varname
+    | NONDET_INT_ASSIGN _ -> NONDET_INT_ASSIGN varname
+    | NONDET_REAL_ASSIGN _ -> NONDET_REAL_ASSIGN varname
     | _ -> assert false
 
   let string_of = function
     | ASSIGN (varname, term) -> sprintf "%s = %s;" varname (Term.str_of term)
     | ASSUME fml -> sprintf "assume(%s);" (Formula.str_of fml)
-    | NONDET_ASSIGN varname -> sprintf "%s = nondet();" varname
+    | NONDET_INT_ASSIGN varname -> sprintf "%s = nondet_int();" varname
+    | NONDET_REAL_ASSIGN varname -> sprintf "%s = nondet_real();" varname
 
   let update_state state = function
     | ASSIGN (varname, term) -> State.update varname term state
     | ASSUME _ -> state
-    | NONDET_ASSIGN varname ->
+    | NONDET_INT_ASSIGN varname ->
         let term = Term.mk_var (Ident.Tvar varname) T_int.SInt ~info:Dummy in
+        State.update varname term state
+    | NONDET_REAL_ASSIGN varname ->
+        let term = Term.mk_var (Ident.Tvar varname) T_real.SReal ~info:Dummy in
         State.update varname term state
 
   let update_formula_A fml = function
     | ASSIGN _ -> fml
-    | NONDET_ASSIGN _ -> fml
+    | NONDET_INT_ASSIGN _ -> fml
+    | NONDET_REAL_ASSIGN _ -> fml
     | ASSUME fml' -> Formula.mk_imply fml' fml
 
   let update_formula_E fml = function
     | ASSIGN _ -> fml
-    | NONDET_ASSIGN _ -> fml
+    | NONDET_INT_ASSIGN _ -> fml
+    | NONDET_REAL_ASSIGN _ -> fml
     | ASSUME fml' -> Formula.mk_and fml' fml ~info:Dummy
 
   let subst sub = function
     | ASSIGN (varname, term) -> mk_assign varname (Term.subst sub term)
     | ASSUME fml -> mk_assume (Formula.subst sub fml)
-    | NONDET_ASSIGN varname -> mk_nondet_assign varname
+    | NONDET_INT_ASSIGN varname -> mk_nondet_int_assign varname
+    | NONDET_REAL_ASSIGN varname -> mk_nondet_real_assign varname
 
   let is_already_assigned inits varname =
     List.exists inits ~f:(function
-      | ASSIGN (varname', _) | NONDET_ASSIGN varname' ->
+      | ASSIGN (varname', _)
+      | NONDET_INT_ASSIGN varname'
+      | NONDET_REAL_ASSIGN varname' ->
           String.equal varname' varname
       | ASSUME _ -> false)
 
@@ -1196,10 +1281,14 @@ end = struct
       let varname, term = Statement.let_assign stmt in
       if is_already_assigned inits_rev varname then (inits_rev, Some stmt)
       else (ASSIGN (varname, term) :: inits_rev, None)
-    else if Statement.is_nondet_assign stmt then
-      let varname = Statement.let_nondet_assign stmt in
+    else if Statement.is_nondet_int_assign stmt then
+      let varname = Statement.let_nondet_int_assign stmt in
       if is_already_assigned inits_rev varname then (inits_rev, Some stmt)
-      else (NONDET_ASSIGN varname :: inits_rev, None)
+      else (NONDET_INT_ASSIGN varname :: inits_rev, None)
+    else if Statement.is_nondet_real_assign stmt then
+      let varname = Statement.let_nondet_real_assign stmt in
+      if is_already_assigned inits_rev varname then (inits_rev, Some stmt)
+      else (NONDET_REAL_ASSIGN varname :: inits_rev, None)
     else if Statement.is_assume stmt then
       let fml = Statement.let_assume stmt in
       (ASSUME fml :: inits_rev, None)
@@ -1231,8 +1320,8 @@ end = struct
   let of_variables variables =
     let state =
       Variables.to_list variables
-      |> List.map ~f:(fun varname ->
-             (varname, ref (Term.mk_var (Ident.Tvar varname) T_int.SInt)))
+      |> List.map ~f:(fun (varname, sort) ->
+             (varname, ref (Term.mk_var (Ident.Tvar varname) sort)))
     in
     STATE state
 
@@ -1251,11 +1340,12 @@ end = struct
 
   let bounds_of = function
     | STATE state ->
-        List.map ~f:(fun (varname, _) -> (Ident.Tvar varname, T_int.SInt)) state
+        List.map state ~f:(fun (varname, tr) ->
+            (Ident.Tvar varname, Term.sort_of !tr))
 
   let appformula_of pvar = function
     | STATE state ->
-        let sorts = List.map ~f:(fun _ -> T_int.SInt) state in
+        let sorts = List.map ~f:(fun (_, tr) -> Term.sort_of !tr) state in
         let args = List.map ~f:(fun (_, term) -> !term) state in
         Formula.mk_atom @@ Atom.mk_pvar_app pvar sorts args
 
@@ -1274,45 +1364,67 @@ end
 
 module FunDecl : sig
   type t =
-    | FUN_NONDET of string * (string * Sort.t) list (* TODO *)
+    | FUN_NONDET_INT of string * (string * Sort.t) list (* TODO *)
+    | FUN_NONDET_REAL of string * (string * Sort.t) list (* TODO *)
     | FUN_INT of string * (string * Sort.t) list * Statement.t
+    | FUN_REAL of string * (string * Sort.t) list * Statement.t
     | FUN_VOID of string * (string * Sort.t) list * Statement.t
 
-  val is_fun_nondet : t -> bool
+  val is_fun_nondet_int : t -> bool
+  val is_fun_nondet_real : t -> bool
   val is_fun_int : t -> bool
+  val is_fun_real : t -> bool
   val is_fun_void : t -> bool
-  val mk_fun_nondet : string -> (string * Sort.t) list -> t
+  val mk_fun_nondet_int : string -> (string * Sort.t) list -> t
+  val mk_fun_nondet_real : string -> (string * Sort.t) list -> t
   val mk_fun_int : string -> (string * Sort.t) list -> Statement.t -> t
+  val mk_fun_real : string -> (string * Sort.t) list -> Statement.t -> t
   val mk_fun_void : string -> (string * Sort.t) list -> Statement.t -> t
-  val let_fun_nondet : t -> string * (string * Sort.t) list
+  val let_fun_nondet_int : t -> string * (string * Sort.t) list
+  val let_fun_nondet_real : t -> string * (string * Sort.t) list
   val let_fun_int : t -> string * (string * Sort.t) list * Statement.t
+  val let_fun_real : t -> string * (string * Sort.t) list * Statement.t
   val let_fun_void : t -> string * (string * Sort.t) list * Statement.t
   val let_fun : t -> string * (string * Sort.t) list * Statement.t
-  val get_funname : t -> string
+  val get_funname : t -> string * Sort.t
   val get_params : t -> (string * Sort.t) list
-  val find_fundecl : string -> t list -> t
+  val find_fundecl : string * Sort.t -> t list -> t
   val is_non_recursive : t list -> t -> bool
   val string_of : t -> string
   val rename_labels : t -> t
 end = struct
   type t =
-    | FUN_NONDET of string * (string * Sort.t) list
+    | FUN_NONDET_INT of string * (string * Sort.t) list
+    | FUN_NONDET_REAL of string * (string * Sort.t) list
     | FUN_INT of string * (string * Sort.t) list * Statement.t
+    | FUN_REAL of string * (string * Sort.t) list * Statement.t
     | FUN_VOID of string * (string * Sort.t) list * Statement.t
 
-  let is_fun_nondet = function FUN_NONDET _ -> true | _ -> false
+  let is_fun_nondet_int = function FUN_NONDET_INT _ -> true | _ -> false
+  let is_fun_nondet_real = function FUN_NONDET_REAL _ -> true | _ -> false
   let is_fun_int = function FUN_INT _ -> true | _ -> false
+  let is_fun_real = function FUN_REAL _ -> true | _ -> false
   let is_fun_void = function FUN_VOID _ -> true | _ -> false
-  let mk_fun_nondet funname params = FUN_NONDET (funname, params)
+  let mk_fun_nondet_int funname params = FUN_NONDET_INT (funname, params)
+  let mk_fun_nondet_real funname params = FUN_NONDET_REAL (funname, params)
   let mk_fun_int funname params body = FUN_INT (funname, params, body)
+  let mk_fun_real funname params body = FUN_REAL (funname, params, body)
   let mk_fun_void funname params body = FUN_VOID (funname, params, body)
 
-  let let_fun_nondet = function
-    | FUN_NONDET (funname, params) -> (funname, params)
+  let let_fun_nondet_int = function
+    | FUN_NONDET_INT (funname, params) -> (funname, params)
+    | _ -> assert false
+
+  let let_fun_nondet_real = function
+    | FUN_NONDET_REAL (funname, params) -> (funname, params)
     | _ -> assert false
 
   let let_fun_int = function
     | FUN_INT (funname, params, body) -> (funname, params, body)
+    | _ -> assert false
+
+  let let_fun_real = function
+    | FUN_REAL (funname, params, body) -> (funname, params, body)
     | _ -> assert false
 
   let let_fun_void = function
@@ -1325,36 +1437,43 @@ end = struct
     | _ -> assert false
 
   let get_funbody = function
-    | FUN_INT (_, _, body) | FUN_VOID (_, _, body) -> body
-    | FUN_NONDET _ -> Statement.mk_return_nondet ()
+    | FUN_INT (_, _, body) | FUN_REAL (_, _, body) | FUN_VOID (_, _, body) ->
+        body
+    | FUN_NONDET_INT _ -> Statement.mk_return_nondet_int ()
+    | FUN_NONDET_REAL _ -> Statement.mk_return_nondet_real ()
 
   let get_funname = function
-    | FUN_INT (funname, _, _)
-    | FUN_NONDET (funname, _)
-    | FUN_VOID (funname, _, _) ->
-        funname
+    | FUN_INT (funname, _, _) -> (funname, T_int.SInt)
+    | FUN_REAL (funname, _, _) -> (funname, T_real.SReal)
+    | FUN_NONDET_INT (funname, _) -> (funname, T_int.SInt)
+    | FUN_NONDET_REAL (funname, _) -> (funname, T_real.SReal)
+    | FUN_VOID (funname, _, _) -> (funname, T_int.SInt (*Dummy*))
 
   let get_params = function
-    | FUN_INT (_, params, _) | FUN_NONDET (_, params) | FUN_VOID (_, params, _)
-      ->
+    | FUN_INT (_, params, _)
+    | FUN_REAL (_, params, _)
+    | FUN_VOID (_, params, _)
+    | FUN_NONDET_INT (_, params)
+    | FUN_NONDET_REAL (_, params) ->
         params
 
   let find_fundecl funname fundecls =
     match
       List.find fundecls ~f:(fun fundecl ->
-          String.equal (get_funname fundecl) funname)
+          String.(fst @@ get_funname fundecl = fst funname))
     with
     | Some fundecl -> fundecl
     | None ->
-        failwith @@ sprintf "function %s was not declared in this scope" funname
+        failwith
+        @@ sprintf "function %s was not declared in this scope" (fst funname)
 
   let rec get_next_funnames_rep stmt res =
     if Statement.is_call_assign stmt then
       let _, funname, _ = Statement.let_call_assign stmt in
-      Variables.add funname res
+      Variables.add (funname, T_int.SInt (*Dummy*)) res
     else if Statement.is_call_voidfun stmt then
       let funname, _ = Statement.let_call_voidfun stmt in
-      Variables.add funname res
+      Variables.add (funname, T_int.SInt (*Dummy*)) res
     else
       Statement.get_inner_statements stmt
       |> List.fold_left
@@ -1391,25 +1510,33 @@ end = struct
         sprintf "%s %s" (Term.str_of_sort sort) varname)
 
   let string_of = function
-    | FUN_NONDET (funname, args) ->
-        sprintf "int %s(%s) { return nondet(); }" funname (string_of_args args)
+    | FUN_NONDET_INT (funname, args) ->
+        sprintf "int %s(%s) { return nondet_int(); }" funname
+          (string_of_args args)
+    | FUN_NONDET_REAL (funname, args) ->
+        sprintf "float %s(%s) { return nondet_real(); }" funname
+          (string_of_args args)
     | FUN_VOID (funname, args, stmt) ->
         sprintf "void %s(%s) {\n%s\n}" funname (string_of_args args)
           (Statement.string_of stmt)
     | FUN_INT (funname, args, stmt) ->
         sprintf "int %s(%s) {\n%s\n}" funname (string_of_args args)
           (Statement.string_of stmt)
+    | FUN_REAL (funname, args, stmt) ->
+        sprintf "float %s(%s) {\n%s\n}" funname (string_of_args args)
+          (Statement.string_of stmt)
 
   let cnt = ref 0
 
   let rename_labels = function
-    | FUN_NONDET (funname, args) -> FUN_NONDET (funname, args)
+    | FUN_NONDET_INT (funname, args) -> FUN_NONDET_INT (funname, args)
+    | FUN_NONDET_REAL (funname, args) -> FUN_NONDET_REAL (funname, args)
     | FUN_VOID (funname, args, stmt) ->
         cnt := !cnt + 1;
         let labels = Statement.get_all_labels stmt in
         let ren =
           Map.Poly.of_alist_exn
-          @@ List.map labels ~f:(fun lab ->
+          @@ List.map labels ~f:(fun (lab, _) ->
                  (lab, lab ^ "_" ^ Int.to_string !cnt))
         in
         FUN_VOID (funname, args, Statement.rename_labels ren stmt)
@@ -1418,10 +1545,19 @@ end = struct
         let labels = Statement.get_all_labels stmt in
         let ren =
           Map.Poly.of_alist_exn
-          @@ List.map labels ~f:(fun lab ->
+          @@ List.map labels ~f:(fun (lab, _) ->
                  (lab, lab ^ "_" ^ Int.to_string !cnt))
         in
         FUN_INT (funname, args, Statement.rename_labels ren stmt)
+    | FUN_REAL (funname, args, stmt) ->
+        cnt := !cnt + 1;
+        let labels = Statement.get_all_labels stmt in
+        let ren =
+          Map.Poly.of_alist_exn
+          @@ List.map labels ~f:(fun (lab, _) ->
+                 (lab, lab ^ "_" ^ Int.to_string !cnt))
+        in
+        FUN_REAL (funname, args, Statement.rename_labels ren stmt)
 end
 
 type cctl = Ctl.t * Declare.t list * Init.t list * Statement.t

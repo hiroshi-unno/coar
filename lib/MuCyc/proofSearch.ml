@@ -235,7 +235,7 @@ let get_mbp ~config ~print model0 eliminated0 phi0 =
     @@ lazy
          ("model: "
          ^ String.concat_map_list ~sep:", " (Map.Poly.to_alist model0)
-               ~f:(function Ident.Tvar tvar, value ->
+             ~f:(function Ident.Tvar tvar, value ->
                sprintf "%s |-> %s" tvar (Term.str_of value)));
     let senv = Set.to_list @@ Formula.sort_env_of phi0 in
     let bounds, phi =
@@ -258,7 +258,7 @@ let get_mbp ~config ~print model0 eliminated0 phi0 =
     (*print @@ lazy ("eliminated': " ^ str_of_sort_env_list Term.str_of_sort @@ Set.to_list eliminated);*)
     let model =
       let phi = Formula.subst model0 phi in
-      if Set.is_empty @@ Formula.fvs_of phi then model0
+      if Formula.is_ground phi then model0
       else
         match
           Z3Smt.Z3interface.check_sat ~id:None (FunEnv.mk_empty ()) [ phi ]
@@ -277,7 +277,10 @@ let get_mbp ~config ~print model0 eliminated0 phi0 =
     let atoms =
       let tatoms, fatoms = Formula.atoms_of ~nrec:true phi in
       Set.concat_map
-        ~f:(Mbp.normalize_mbp model >> Set.Poly.map ~f:(Mbp.sign model))
+        ~f:
+          (Mbp.normalize_mbp model
+          >> Set.Poly.map
+               ~f:(Mbp.sign ~print model >> Formula.let_atom (*ToDo*) >> fst))
       @@ Set.union tatoms fatoms
     in
     let res =
@@ -288,7 +291,7 @@ let get_mbp ~config ~print model0 eliminated0 phi0 =
               Set.Poly.singleton
               @@
               if
-                Value.compare Z.Compare.( > ) Q.( > )
+                Value.compare true Z.Compare.( > ) Q.( > )
                   (Evaluator.eval_term @@ Term.subst model t1)
                   (Evaluator.eval_term @@ Term.subst model t2)
               then
@@ -433,7 +436,7 @@ let get_mbp ~config ~print model0 eliminated0 phi0 =
                    | T_int.SInt -> Mbp.LIA.model_based_projection
                    | T_real.SReal -> Mbp.LRA.model_based_projection
                    | _ -> failwith "not supported")
-                     model x atoms1
+                     ~print model x atoms1
               with Mbp.NotNormalized ->
                 if is_looping x atoms then failwith "loop detected"
                 else loop (eliminated' @ [ (x, s) ]) atoms
@@ -551,7 +554,8 @@ let empty_induct = Map.Poly.empty
 
 let merge_induct =
   Map.Poly.merge ~f:(fun ~key:_ -> function
-    | `Left s | `Right s -> Some s | `Both (s1, s2) -> Some (Set.union s1 s2))
+    | `Left s | `Right s -> Some s
+    | `Both (s1, s2) -> Some (Set.union s1 s2))
 
 let apply_induct_rule ~print seq_map penv trace induct =
   if Map.Poly.is_empty induct then (trace, induct)

@@ -34,16 +34,16 @@ module Make (Verbose : Debug.Config.ConfigType) = struct
   let str_of_erasure (e : erasure) =
     String.concat ~sep:"\n"
     @@ List.filter_map (Map.Poly.to_alist e) ~f:(fun (pvar, is) ->
-           if Set.is_empty is then None
-           else
-             Option.return @@ sprintf "{%s}"
-             @@ String.concat_map_set ~sep:", " is
-                  ~f:(uncurry @@ sprintf "(%s,%d(%d))" (Ident.name_of_pvar pvar)))
+        if Set.is_empty is then None
+        else
+          Option.return @@ sprintf "{%s}"
+          @@ String.concat_map_set ~sep:", " is
+               ~f:(uncurry @@ sprintf "(%s,%d(%d))" (Ident.name_of_pvar pvar)))
 
   let str_of_times times =
     sprintf "{%s}"
     @@ String.concat_map_list ~sep:";  " ~f:(fun (tvar, time) ->
-           sprintf "%s: %d" (Ident.name_of_tvar tvar) time)
+        sprintf "%s: %d" (Ident.name_of_tvar tvar) time)
     @@ Hashtbl.Poly.to_alist times
 
   let is_empty = Map.for_all ~f:Set.is_empty
@@ -92,9 +92,9 @@ module Make (Verbose : Debug.Config.ConfigType) = struct
   let init_param_logs_of =
     Map.Poly.to_alist
     >> List.map ~f:(fun (tvar, sort) ->
-           let args = Logic.Sort.args_of sort in
-           let arr = Array.init (List.length args) ~f:(fun _ -> true) in
-           (Ident.tvar_to_pvar tvar, (arr, args)))
+        let args = Logic.Sort.args_of sort in
+        let arr = Array.init (List.length args) ~f:(fun _ -> true) in
+        (Ident.tvar_to_pvar tvar, (arr, args)))
     >> Map.Poly.of_alist_exn
 
   let update_param_logs_with_erasure param_logs =
@@ -106,9 +106,9 @@ module Make (Verbose : Debug.Config.ConfigType) = struct
     Map.Poly.to_alist param_logs
     |> List.filter ~f:(fst >> Ident.pvar_to_tvar >> Map.Poly.mem senv)
     |> String.concat_map_list ~sep:"\n" ~f:(fun (pvar, (arr, _args)) ->
-           sprintf "%s(%s)" (Ident.name_of_pvar pvar)
-           @@ String.concat_mapi_list (Array.to_list arr) ~sep:","
-                ~f:(fun i tf -> if tf then sprintf "x%d" i else "_"))
+        sprintf "%s(%s)" (Ident.name_of_pvar pvar)
+        @@ String.concat_mapi_list (Array.to_list arr) ~sep:"," ~f:(fun i tf ->
+            if tf then sprintf "x%d" i else "_"))
 
   (*let deleted_sort = Sort.SVar (Ident.Svar "##deleted_sort##")
     let deleted_term = Term.mk_var (Ident.Tvar "##deleted_term##") deleted_sort
@@ -335,15 +335,16 @@ module Make (Verbose : Debug.Config.ConfigType) = struct
     else
       let penv = ref (PCSP.Problem.params_of pcsp).senv in
       let bpvs =
-        PCSP.Problem.pvs_of pcsp
-        |> Set.filter ~f:(fun t ->
-               Set.mem bpvs t
-               || PCSP.Problem.is_wf_pred pcsp t
-               || PCSP.Problem.is_nwf_pred pcsp t
-               || PCSP.Problem.is_ne_pred (*ToDo*) pcsp t
-               || PCSP.Problem.is_adm_pred (*ToDo*) pcsp t
-               || PCSP.Problem.is_integ_pred (*ToDo*) pcsp t
-               (*|| PCSP.Problem.is_int_fun pcsp t
+        Set.filter (PCSP.Problem.pvs_of pcsp) ~f:(fun t ->
+            Set.mem bpvs t
+            || PCSP.Problem.is_wf_pred pcsp t
+            || PCSP.Problem.is_dwf_pred pcsp t
+            || PCSP.Problem.is_nwf_pred pcsp t
+            || PCSP.Problem.is_parity_pred pcsp t
+            || PCSP.Problem.is_ne_pred (*ToDo*) pcsp t
+            || PCSP.Problem.is_adm_pred (*ToDo*) pcsp t
+            || PCSP.Problem.is_integ_pred (*ToDo*) pcsp t
+            (*|| PCSP.Problem.is_int_fun pcsp t
                  || PCSP.Problem.is_regex pcsp t*))
       in
       let fnpvs = PCSP.Problem.fnpvs_of pcsp in
@@ -366,12 +367,12 @@ module Make (Verbose : Debug.Config.ConfigType) = struct
                    Logic.(to_old_sort_env_map @@ PCSP.Problem.senv_of pcsp))
             |> elim_args param_logs bpvs fnpvs !penv
             |> (fun (penv', cls) ->
-                 penv := penv';
-                 cls)
+            penv := penv';
+            cls)
             |> Set.Poly.map ~f:(fun (ps, ns, phi) ->
-                   let senv, phi = ClauseOld.to_formula (senv, ps, ns, phi) in
-                   (* Debug.print @@ lazy (sprintf "[after elim pcsp args] senv: %s" (Logic.str_of_sort_env_list Logic.ExtTerm.str_of_sort (Map.Poly.to_alist senv))); *)
-                   (Logic.to_old_sort_env_map senv, phi)))
+                let senv, phi = ClauseOld.to_formula (senv, ps, ns, phi) in
+                (* Debug.print @@ lazy (sprintf "[after elim pcsp args] senv: %s" (Logic.str_of_sort_env_list Logic.ExtTerm.str_of_sort (Map.Poly.to_alist senv))); *)
+                (Logic.to_old_sort_env_map senv, phi)))
       in
       PCSP.Problem.update_params pcsp
         { (PCSP.Problem.params_of pcsp) with senv = !penv }

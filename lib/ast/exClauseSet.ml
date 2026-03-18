@@ -46,6 +46,9 @@ let of_model exi_senv pex (senv, phi) (* clause*) model : t =
   |> Set.Poly.filter_map ~f:(uncurry3 @@ ExClause.make exi_senv)
   |> Set.Poly.map ~f:(ExClause.normalize_params (Map.key_set exi_senv))
 
+let pvs_of (clauses : t) : Ident.pvar_set =
+  Set.concat_map clauses ~f:ExClause.pvs_of
+
 let exatoms_of = Set.concat_map ~f:ExClause.exatoms_of
 let exatoms_of_uclauses = Set.Poly.map ~f:ExClause.exatom_of_uclause
 
@@ -112,9 +115,8 @@ let unit_propagation unknowns
     if Fn.non Set.is_empty conflicts then `Unsat conflicts
     else
       let und =
-        Set.Poly.filter_map
+        Set.Poly.filter_map und
           ~f:(ExClause.simplify unknowns pos_atms neg_atms)
-          und
       in
       if Set.exists und ~f:(fst >> ExClause.is_false) then
         `Unsat Set.Poly.empty (* ToDo: recover conflicting literals *)

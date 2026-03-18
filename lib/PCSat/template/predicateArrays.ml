@@ -5,7 +5,6 @@ open Common.Util
 open Common.Combinator
 open Ast
 open Ast.LogicOld
-open Ast.HypSpace
 open Function
 
 module Config = struct
@@ -108,10 +107,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
   let name_of () = Arg.name
   let kind_of () = Kind.str_of Kind.Ord
   let sort_of () = Sort.mk_fun @@ Arg.sorts @ [ T_bool.SBool ]
-
-  let params_of ~tag =
-    ignore tag;
-    sort_env_list_of_sorts Arg.sorts
+  let params_of () = sort_env_list_of_sorts Arg.sorts
 
   let show_state ?(config = PCSatCommon.RLConfig.disabled) labels =
     ignore config;
@@ -132,28 +128,21 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
       (String.concat_map_set ~sep:"," !param.s ~f:Z.to_string)
 
   let in_space () = true (*ToDo*)
+  let adjust_quals_terms (quals, terms) = (quals, terms)
 
-  let adjust_quals ~tag quals =
-    ignore tag;
-    quals
+  let update_hspace hspace =
+    HypSpace.qualifiers_of ~fenv:Arg.fenv ~add_mod2_quals:false
+      ~add_bv_quals:true (*ToDo: use depth instead *) config.number_of_qpa
+      hspace
 
-  let init_quals _ _ = ()
-
-  let update_hspace ~tag hspace =
-    ignore tag;
-    qualifiers_of ~fenv:Arg.fenv ~add_mod2_quals:false
-      (*ToDo: use depth instead *) config.number_of_qpa hspace
-
-  let gen_template ~tag ~ucore hspace =
-    ignore tag;
+  let gen_template ~ucore (hspace : HypSpace.hspace) =
     let template =
       match ucore with
       | Some (shp, eq_atom, only_bools) ->
           Templ.gen_dnf ~eq_atom ~br_bools:false ~only_bools
             {
-              terms =
-                List.map ~f:(fun t -> (t, Term.sort_of t (*ToDo*)))
-                @@ Set.to_list hspace.terms;
+              consts = Set.to_list hspace.consts;
+              terms = Set.to_list hspace.terms;
               quals =
                 Set.to_list
                 @@ Set.filter hspace.quals
@@ -170,8 +159,9 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
       | None ->
           Templ.gen_dnf ~eq_atom:false ~br_bools:false ~only_bools:false
             {
+              consts = [];
               terms = [];
-              quals = Set.to_list hspace.quals;
+              quals = Formula.mk_false () :: Set.to_list hspace.quals;
               shp = List.init !param.nd ~f:(fun _ -> 0);
               ubc = None;
               ubd = None;
@@ -212,11 +202,20 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     in
     ( (DisjQPA, tmpl),
       (if Formula.is_true template.coeffs_bounds then []
-       else [ (Coeff, Logic.ExtTerm.of_old_formula template.coeffs_bounds) ])
+       else
+         [ (false, Coeff, Logic.ExtTerm.of_old_formula template.coeffs_bounds) ])
       @ (if Formula.is_true template.consts_bounds then []
-         else [ (Const, Logic.ExtTerm.of_old_formula template.consts_bounds) ])
+         else
+           [
+             (false, Const, Logic.ExtTerm.of_old_formula template.consts_bounds);
+           ])
       @ (if Formula.is_true template.quals_bounds then []
-         else [ (Qual, Logic.ExtTerm.of_old_formula template.quals_bounds) ])
+         else
+           [
+             ( true (*ToDo*),
+               Qual,
+               Logic.ExtTerm.of_old_formula template.quals_bounds );
+           ])
       @ qdep_constr_of_envs hspace.qdeps qual_qdeps_env,
       template.templ_params,
       template.hole_quals_map )
@@ -375,7 +374,8 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
 
   let rec inner param_actions = function
     | [] -> param_actions
-    | DisjQPA :: labels -> inner (increase_disj_qpa param_actions) labels
+    | (DisjQPA | Shape) :: labels ->
+        inner (increase_disj_qpa param_actions) labels
     | Coeff :: labels ->
         inner (increase_coeff config.threshold_coeff param_actions) labels
     | Const :: labels ->

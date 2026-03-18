@@ -1,5 +1,6 @@
 open Core
 open Common.Ext
+open Common.Util
 open Common.Combinator
 open LogicOld
 
@@ -115,7 +116,7 @@ let subst_eqterm cterm eqterm tvar atom monomials_of =
               (mk_mul cterm (mk_int_term rest))
           in
           if
-            Value.compare Z.Compare.( >= ) Q.( >= ) (Term.value_of cterm)
+            Value.compare true Z.Compare.( >= ) Q.( >= ) (Term.value_of cterm)
               (Value.Int Z.zero)
           then mk_geq term t0
           else mk_leq term t0
@@ -137,10 +138,9 @@ let subst_eqterm cterm eqterm tvar atom monomials_of =
 
 let str_of =
   Map.Poly.to_alist
-  >> List.to_string ~f:(fun (t, v) ->
-         match t with
-         | Some term -> Term.str_of term ^ "*" ^ Value.str_of v
-         | None -> Value.str_of v)
+  >> List.to_string ~f:(function
+       | Some term, v -> sprintf "%s*%s" (Term.str_of term) (Value.str_of v)
+       | None, v -> Value.str_of v)
 
 (* ToDo: merge the code below with the code above *)
 
@@ -154,37 +154,94 @@ let coeff_of v t =
   Term.iter_term t ~f:(fun t ->
       if Option.is_none !ret then
         match t with
+        | Term.Var (v', T_int.SInt, _) when Stdlib.(v = v') ->
+            ret := Some (Value.Int Z.one)
+        | Term.Var (v', T_real.SReal, _) when Stdlib.(v = v') ->
+            ret := Some (Value.Real Q.one)
+        | Term.Var (v', T_bv.SBV size, _) when Stdlib.(v = v') ->
+            ret := Some (Value.BV (size, Z.one))
         | Term.FunApp (T_int.Neg, [ Term.Var (v', _, _) ], _)
           when Stdlib.(v = v') ->
-            ret := Some (-1)
-        | Term.FunApp (T_int.Mul, [ t; Term.Var (v', _, _) ], _)
+            ret := Some (Value.Int Z.minus_one)
+        | Term.FunApp (T_real.RNeg, [ Term.Var (v', _, _) ], _)
+          when Stdlib.(v = v') ->
+            ret := Some (Value.Real Q.minus_one)
+        | Term.FunApp (T_bv.BVNeg size, [ Term.Var (v', _, _) ], _)
+          when Stdlib.(v = v') ->
+            ret := Some (Value.BV (size, Z.minus_one))
+        | Term.FunApp
+            ( (T_int.Mul | T_real.RMul | T_bv.BVMul _),
+              [ t; Term.Var (v', _, _) ],
+              _ )
           when Stdlib.(v = v') -> (
-            try
-              ret :=
-                Some (Z.to_int (*ToDo*) @@ Value.int_of @@ Evaluator.eval_term t)
-            with _ -> ())
+            try ret := Some (Evaluator.eval_term t) with _ -> ())
         | _ -> ());
   !ret
 
-let extract_term_from_affine v simplify affine =
-  let ret =
-    Term.map_term true affine ~f:(function
-      | Term.Var (x, _, _) when Stdlib.(v = x) -> T_int.zero ()
-      | t -> t)
-  in
-  if false then
-    print_endline @@ sprintf "affine after elim var: %s" @@ Term.str_of ret;
-  match coeff_of v affine with
-  | None ->
-      (* [v] does not occur in [affine] *)
-      Some (simplify @@ T_int.mk_neg ret)
-  | Some 1 -> Some (simplify @@ T_int.mk_neg ret)
-  | Some -1 -> Some (simplify ret)
-  | Some _ -> None
+let extract_term (vret, sret) simplify_term affine =
+  try
+    let ret =
+      Term.map_term true affine ~f:(function
+        | Term.Var (x, _, _) when Ident.tvar_equal vret x -> T_irb.zero_of sret
+        | t -> t)
+    in
+    if false then print_endline @@ sprintf "ret: %s" @@ Term.str_of ret;
+    match coeff_of vret affine with
+    | None
+    (* ToDo: [v] does not occur in [affine] or occurs under unsupported context *)
+      ->
+        Set.Poly.singleton (simplify_term @@ T_int.mk_neg ret)
+    | Some (Value.Int c) when Z.(Compare.(c = one)) ->
+        Set.Poly.singleton (simplify_term @@ T_int.mk_neg ret)
+    | Some (Value.Int c) when Z.(Compare.(c = minus_one)) ->
+        Set.Poly.singleton (simplify_term ret)
+    | Some (Value.Real c) when Q.(c <> zero) ->
+        Set.Poly.singleton
+          (simplify_term @@ T_real.mk_rdiv ret (T_real.mk_real Q.(-c)))
+    | Some (Value.BV (size, c)) when Z.(Compare.(c = one)) ->
+        Set.Poly.singleton (simplify_term @@ T_bv.mk_bvneg ~size ret)
+    | Some (Value.BV (siz, c))
+      when Z.(Compare.(c = int2bv (T_bv.bits_of siz) minus_one)) ->
+        Set.Poly.singleton (simplify_term ret)
+    | Some _ -> Set.Poly.empty
+  with _ -> Set.Poly.empty
 
-let extract_affine_term_from v simplify_term simplify_formula phi =
+let extract_terms_from_formula (vret, sret) simplify_term simplify_formula phi =
   match simplify_formula phi with
-  | Formula.Atom (Atom.App (Predicate.Psym T_bool.Eq, [ t1; _ ], _), _)
-    when T_int.is_sint t1 && is_affine t1 -> (
-      try extract_term_from_affine v simplify_term t1 with _ -> None)
-  | _ -> None
+  | Formula.Atom
+      ( Atom.App
+          ( Predicate.Psym
+              ( T_bool.Eq
+              | T_int.(Leq | Geq)
+              | T_real.(RLeq | RGeq)
+              | T_bv.(BVLeq _ | BVGeq _) ),
+            [ t1; t2 ],
+            _ ),
+        _ )
+    when T_irb.is_sirb t1 ->
+      extract_term (vret, sret) simplify_term (T_irb.sub_of sret t1 t2)
+  | Formula.Atom (Atom.App (Predicate.Psym T_bool.Neq, [ t1; t2 ], _), _)
+    when T_irb.is_sirb t1 ->
+      let t = T_irb.sub_of sret t1 t2 in
+      Set.union
+        (extract_term (vret, sret) simplify_term
+           (simplify_term @@ T_irb.add_of sret t (T_irb.one_of sret)))
+        (extract_term (vret, sret) simplify_term
+           (simplify_term @@ T_irb.sub_of sret t (T_irb.one_of sret)))
+  | Formula.Atom
+      ( Atom.App
+          (Predicate.Psym (T_int.Lt | T_real.RLt | T_bv.BVLt _), [ t1; t2 ], _),
+        _ )
+    when T_irb.is_sirb t1 ->
+      let t = T_irb.sub_of sret t1 t2 in
+      extract_term (vret, sret) simplify_term
+        (simplify_term @@ T_irb.add_of sret t (T_irb.one_of sret))
+  | Formula.Atom
+      ( Atom.App
+          (Predicate.Psym (T_int.Gt | T_real.RGt | T_bv.BVGt _), [ t1; t2 ], _),
+        _ )
+    when T_irb.is_sirb t1 ->
+      let t = T_irb.sub_of sret t1 t2 in
+      extract_term (vret, sret) simplify_term
+        (simplify_term @@ T_irb.sub_of sret t (T_irb.one_of sret))
+  | _ -> Set.Poly.empty

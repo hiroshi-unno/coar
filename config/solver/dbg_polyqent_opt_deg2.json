@@ -3,6 +3,7 @@
     {
         "path": "./polyqent/PolyQEnt",
         "config_path": "./config/solver/polyqent-config-opt-deg2.json",
+        "timeout": null,
         "verbose": true
     }
 ]

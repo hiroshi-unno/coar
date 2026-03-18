@@ -29,10 +29,20 @@ rule token = parse
 | "skip" { SKIP }
 | "assume" { ASSUME }
 
+| "sbv2real" { SBV_TO_REAL }
+| "ubv2real" { UBV_TO_REAL }
 | "int2real" { INT_TO_REAL }
 | "real2int" { REAL_TO_INT }
 
 | "nondet" { NONDET }
+| "nondet_char" { NONDET_CHAR }
+| "nondet_short" { NONDET_SHORT }
+| "nondet_int" { NONDET_INT }
+| "nondet_long" { NONDET_LONG }
+| "nondet_uchar" { NONDET_UCHAR }
+| "nondet_ushort" { NONDET_USHORT }
+| "nondet_uint" { NONDET_UINT }
+| "nondet_ulong" { NONDET_ULONG }
 
 | "shl" { SHL }
 | "lshr" { LSHR }
@@ -48,6 +58,7 @@ rule token = parse
 
 | "bv" { BV }
 
+| "extract" { EXTRACT }
 | "sign_extend" { SEXT }
 | "zero_extend" { ZEXT }
 

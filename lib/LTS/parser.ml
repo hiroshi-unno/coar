@@ -2,8 +2,9 @@ open Core
 open Common.Util
 open Common.Combinator
 
-let parse_from_lexbuf lexbuf =
-  try Ok (Problem.typeinf @@ T2Parser.main T2Lexer.token lexbuf) with
+let parse_from_lexbuf ~bv_mode lexbuf =
+  Problem.bv_mode := bv_mode;
+  try Ok (Problem.typeinf ~bv_mode @@ T2Parser.main T2Lexer.token lexbuf) with
   | T2Parser.Error ->
       Result.fail
       @@ Error.of_string
@@ -16,5 +17,7 @@ let parse_from_lexbuf lexbuf =
               (LexingHelper.get_position_string lexbuf)
               error)
 
-let from_file = In_channel.create >> Lexing.from_channel >> parse_from_lexbuf
-let from_string = Lexing.from_string >> parse_from_lexbuf
+let from_file ~bv_mode =
+  In_channel.create >> Lexing.from_channel >> parse_from_lexbuf ~bv_mode
+
+let from_string ~bv_mode = Lexing.from_string >> parse_from_lexbuf ~bv_mode

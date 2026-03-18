@@ -5,14 +5,16 @@ open LogicOld
 
 let int_add_update m t c =
   Map.Poly.update m t ~f:(function None -> c | Some c' -> Value.add c c')
-  let real_add_update m t c =
-    Map.Poly.update m t ~f:(function None -> c | Some c' -> Value.radd c c')
-  
+
+let real_add_update m t c =
+  Map.Poly.update m t ~f:(function None -> c | Some c' -> Value.radd c c')
+
 let int_add_monomials m1 m2 =
   Map.Poly.fold m1 ~init:m2 ~f:(fun ~key ~data m -> int_add_update m key data)
-  let real_add_monomials m1 m2 =
-    Map.Poly.fold m1 ~init:m2 ~f:(fun ~key ~data m -> real_add_update m key data)
-  
+
+let real_add_monomials m1 m2 =
+  Map.Poly.fold m1 ~init:m2 ~f:(fun ~key ~data m -> real_add_update m key data)
+
 let mul_update m t c =
   Map.Poly.update m t ~f:(function None -> c | Some c' -> c + c')
 

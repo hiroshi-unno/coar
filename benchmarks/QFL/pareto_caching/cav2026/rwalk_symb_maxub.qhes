@@ -1,0 +1,12 @@
+Inv 4.0 0.0 <= 106.0
+s.t.
+Inv (x : real) (y : real): real =mu
+   if x >= 2.0 then
+       max ( 1.0 + (2.0/3.0) * Inv (x - 1.0) y + (1.0/3.0) * Inv (x + 1.0) y )
+                ( Inv 0.0 y)
+   else if (y <= 10.0) then
+           if (x = 0.0) then 100.0 - (y * y)
+           else if (x = 1.0 ) then y * y
+           else 0.0
+   else 0.0;
+

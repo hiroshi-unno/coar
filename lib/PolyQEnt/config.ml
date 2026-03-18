@@ -1,7 +1,12 @@
 open Core
 open Common.Util
 
-type t = { path : string; config_path : string; verbose : bool }
+type t = {
+  path : string;
+  config_path : string;
+  timeout : int option;
+  verbose : bool;
+}
 [@@deriving yojson]
 
 module type ConfigType = sig

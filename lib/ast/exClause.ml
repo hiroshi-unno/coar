@@ -263,16 +263,16 @@ let matched_by ?(check_inst = false) unknowns atms atm =
 let simplify unknowns pos neg (clause, srcs) =
   let srcs = ref srcs in
   let cl_pos =
-    Set.filter clause.positive ~f:(fun cl ->
-        match matched_by unknowns neg cl with
+    Set.filter clause.positive ~f:(fun atm ->
+        match matched_by unknowns neg atm with
         | Some (_, src) ->
             srcs := src @ !srcs;
             false
         | None -> true)
   in
   let cl_neg =
-    Set.filter clause.negative ~f:(fun cl ->
-        match matched_by unknowns pos cl with
+    Set.filter clause.negative ~f:(fun atm ->
+        match matched_by unknowns pos atm with
         | Some (_, src) ->
             srcs := src @ !srcs;
             false

@@ -1,7 +1,9 @@
 open Core
 open Common.Util
+open Preprocessing
 
 type t = {
+  preprocessor : Preprocessor.Config.t ext_file;
   timeout : int option;
   use_z3_native_mbp : bool;
   enable_global_guidance : bool;
@@ -19,7 +21,10 @@ module type ConfigType = sig
   val config : t
 end
 
-let instantiate_ext_files cfg = Ok cfg
+let instantiate_ext_files cfg = 
+  let open Or_error in
+  Preprocessor.Config.load_ext_file cfg.preprocessor >>= fun preprocessor ->
+  Ok { cfg with preprocessor }
 
 let load_ext_file = function
   | ExtFile.Instance x -> Ok (ExtFile.Instance x)

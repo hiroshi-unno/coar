@@ -26,7 +26,10 @@ let parse_from_lexbuf ~print lexbuf =
     |> Map.Poly.partition_mapi
          ~f:(fun ~key ~data:(args, ret, def, is_rec, prop) ->
            assert (Term.is_bool_sort ret && (not is_rec) && Formula.is_true prop);
-           let phi = T_bool.let_formula def in
+           let phi =
+             try T_bool.let_formula def
+             with _ -> Formula.eq def (T_bool.mk_true ())
+           in
            let f = Ident.name_of_tvar key in
            let ff = String.sub f ~pos:5 ~len:(String.length f - 5) in
            if String.is_prefix f ~prefix:"init_" then

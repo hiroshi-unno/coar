@@ -55,6 +55,7 @@ val kind_map_of : t -> Kind.map
 val kind_of : t -> Ident.tvar -> Kind.t
 val dtenv_of : t -> LogicOld.DTEnv.t
 val fenv_of : t -> LogicOld.FunEnv.t
+val sol_space_of : t -> SolSpace.t
 val messenger_of : t -> Common.Messenger.t option
 val sol_for_eliminated_of : t -> term_subst_map
 val args_record_of : t -> (Ident.pvar, bool array * Sort.t list) Map.Poly.t
@@ -67,7 +68,6 @@ val fnpvs_senv_of : t -> sort_env_map
 val nepvs_senv_of : t -> sort_env_map
 val wfpvs_senv_of : t -> sort_env_map
 val dwfpvs_senv_of : t -> sort_env_map
-val sol_space_of : t -> SolSpace.t
 
 val nwfpvs_senv_of :
   t ->
@@ -80,11 +80,18 @@ val nwfpvs_senv_of :
     * Sort.t list )
   Map.Poly.t
 
+val paritypvs_senv_of :
+  t ->
+  ( Ident.tvar,
+    Ident.tvar * Ident.tvar * Sort.t list * Ident.tvar * Sort.t list )
+  Map.Poly.t
+
 val fnpvs_of : t -> Ident.tvar_set
 val nepvs_of : t -> Ident.tvar_set
 val wfpvs_of : t -> Ident.tvar_set
 val dwfpvs_of : t -> Ident.tvar_set
 val nwfpvs_of : t -> Ident.tvar_set
+val paritypvs_of : t -> Ident.tvar_set
 val admpvs_of : t -> Ident.tvar_set
 val integpvs_of : t -> Ident.tvar_set
 val num_constrs : t -> int
@@ -101,6 +108,7 @@ val is_ne_pred : t -> Ident.tvar -> bool
 val is_wf_pred : t -> Ident.tvar -> bool
 val is_dwf_pred : t -> Ident.tvar -> bool
 val is_nwf_pred : t -> Ident.tvar -> bool
+val is_parity_pred : t -> Ident.tvar -> bool
 val is_adm_pred : t -> Ident.tvar -> bool
 val is_adm_pred_with_cond : t -> Ident.tvar -> bool
 val is_integ_pred : t -> Ident.tvar -> bool
@@ -167,10 +175,13 @@ val extend_sol : solution -> term_subst_map -> solution
 
 val id_of : t -> int option
 val ast_size_of : t -> int
-val tag_of : t -> Ident.tvar -> (Ident.tvar * Ident.tvar) option
+
+val nwf_tag_of :
+  t -> Ident.tvar -> (Kind.nwf * (Ident.tvar * Ident.tvar)) option
+
 val instantiate_svars_to_int : t -> t
 val elim_ite : t -> t
-val elim_ite_prob : t -> t
+val elim_ite_quant : t -> t
 val normalize : t -> t
 val of_sygus : SyGuS.Problem.Make(SyGuS.Problem.ExtTerm).t -> t
 val of_lts : LTS.Problem.t -> t
@@ -202,7 +213,13 @@ val is_qualified_partial_solution :
   bool
 
 val check_valid : (sort_env_map -> term -> bool) -> t -> term_subst_map -> bool
-val make : ?skolem_pred:bool -> LogicOld.Formula.t list -> SMT.Problem.envs -> t
+
+val make :
+  ?skolem_pred:bool ->
+  ?prefix:string option ->
+  LogicOld.Formula.t list ->
+  SMT.Problem.envs ->
+  t
 
 module V : sig
   type t = Ident.tvar option

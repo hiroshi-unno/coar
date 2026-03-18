@@ -11,6 +11,11 @@ else
         date='date'
 fi
 
+if [ -z "$cmd" ]; then
+        # echo "e.g., cmd=_build/default/main.exe ... $0"
+        cmd="_build/default/main.exe"
+fi
+
 if [ "$1" != "--xargs" ]; then
         if [ -z "$timeout" ]; then
                 echo "e.g., timeout=10 ... $0"
@@ -22,7 +27,12 @@ if [ "$1" != "--xargs" ]; then
                 exit
         fi
 
-        find $@ | xargs -P 3 -n 1 $0 --xargs
+        if [ -z "$para" ]; then
+                echo "e.g., para=3 ... $0"
+                exit
+        fi
+
+        find $@ | xargs -P $para -n 1 $0 --xargs
         exit
 fi
 
@@ -30,7 +40,7 @@ fi
 
 run() {
         start_time=$($date +%s%N)
-        output=$(timeout $timeout _build/default/main.exe $options $2)
+        output=$(timeout $timeout $cmd $options $2)
         ret=$?
 
         if [ $ret = 124 ]; then
@@ -38,8 +48,6 @@ run() {
                 echo "$2,timeout,"
                 exit
         fi
-
-        echo "solved $2:$output" 1>&2
 
         IFS="," read result iterations <<<"$output"
 
@@ -56,11 +64,11 @@ run() {
                 [ "$result" = "YES" ] ||
                 [ "$result" = "NO" ] ||
                 [ "$result" = "MAYBE" ]; then
-
+                echo "solved $2,$elapsed,$output" 1>&2
                 echo "$2,$result,$elapsed,$iterations"
-        elif [$1 -gt 0]; then
+        elif [ "$1" -gt 0 ]; then
                 echo "$2 Abort, restart!" 1>&2
-                run $(expr $1 - 1) $2
+                run $(( $1 - 1 )) "$2"
         else
                 echo "solved $2,$elapsed,abort" 1>&2
                 echo "$2,abort,$elapsed,$iterations"

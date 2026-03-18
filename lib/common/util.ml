@@ -46,6 +46,17 @@ let bvudiv n x y =
   let two_n = Z.shift_left Z.one n in
   if Z.equal y Z.zero then Z.zero else Z.erem (Z.div x y) two_n
 
+let bvsrem n x y =
+  let two_n = Z.shift_left Z.one n in
+  let half = Z.shift_left Z.one (n - 1) in
+  let to_signed z = if Z.geq z half then Z.sub z two_n else z in
+  let from_signed z = Z.erem z two_n in
+  let sx = to_signed x in
+  let sy = to_signed y in
+  if Z.equal sy Z.zero then Z.zero else from_signed (Z.rem sx sy)
+
+let bvurem _n x y = if Z.equal y Z.zero then Z.zero else Z.rem x y
+
 let bvshl n x y =
   let mask = Z.(shift_left one n - one) in
   Z.(shift_left x (Z.to_int y) land mask)
@@ -80,6 +91,26 @@ let required_bits (z : Z.t) : int =
     (* minimum bits needed to represent z in 2's complement, using
      abs(z + 1) since 2's complement encodes -z as ~z + 1 *)
     Z.numbits (Z.abs (Z.add z Z.one)) + 1
+
+let min_num2s bits is_signed =
+  if is_signed then
+    let bits = bits - 1 in
+    Z.(one lsl bits)
+  else Z.zero
+
+let max_num2s bits is_signed =
+  if is_signed then
+    let bits = bits - 1 in
+    Z.((one lsl bits) - one)
+  else Z.((one lsl bits) - one)
+
+let min_num bits is_signed =
+  if is_signed then
+    let bits = bits - 1 in
+    Z.(-(one lsl bits))
+  else Z.zero
+
+let max_num bits is_signed = max_num2s bits is_signed
 
 module ExtFile = struct
   type 'a t = Filename of string | Instance of 'a [@@deriving yojson]
@@ -425,8 +456,8 @@ module Matrix = struct
   let thread xss =
     let minlength = Integer.min_list (List.map ~f:List.length xss) in
     List.map
-      ~f:(fun k -> List.map ~f:(fun ys -> List.nth ys k) xss)
       (List.from_to 0 (minlength - 1))
+      ~f:(fun k -> List.map ~f:(fun ys -> List.nth ys k) xss)
 
   let row i xss = List.nth xss i
 

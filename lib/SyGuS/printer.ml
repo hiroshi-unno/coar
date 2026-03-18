@@ -88,6 +88,7 @@ and str_of_funsym = function
   | T_int.Mul -> "*"
   | T_int.Div _ -> "div"
   | T_int.Rem _ -> "mod" (*ToDo*)
+  (*| T_int.Power _ -> "pow"*)
   | T_bool.IfThenElse -> "ite"
   | _ -> failwith "unknown function symbol"
 

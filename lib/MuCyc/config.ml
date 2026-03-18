@@ -1,6 +1,8 @@
 open Core
 open Common.Util
 
+(* definitions for software model checking [PLDI'24] *)
+
 type cex_typ = QE | Model | MBP of int
 (* 0 : use latest, 1 : use saved, 2 : use saved loop invariant *)
 [@@deriving yojson]
@@ -13,15 +15,20 @@ type com_typ =
 [@@deriving yojson]
 
 type strategy = Solve | Refine of cex_typ * com_typ [@@deriving yojson]
-
-type cshare =
-  | Level
-  | Global of bool (* use saved *)
-[@@deriving yojson]
+type cshare = Level | Global of bool (* use saved *) [@@deriving yojson]
 
 type induct =
   | Normal of bool (* use disjuncts *)
   | Light of bool (* use disjuncts *)
+[@@deriving yojson]
+
+(* definitions for QSMT solving *)
+
+type backtrack_strategy =
+  | Original
+  | Chronological
+  | NonChronological
+  | NonChronologicalRec
 [@@deriving yojson]
 
 type t = {
@@ -33,10 +40,10 @@ type t = {
   gen_lemmas_with_ai : bool;
   gen_determ_conjs : bool;
   pcsp_solver : PCSPSolver.Config.t ext_file;
-  refinement_strategy : strategy;
   timeout_check_valid : int;
   timeout_prove_each_conj : int;
-      (* options for software model checking [PLDI'24] *)
+  (* options for software model checking [PLDI'24] *)
+  refinement_strategy : strategy;
   top_down_search : bool;
       (* true: top-down proof search a la PPDP'09
          false: bottom-up proof search a la Spacer *)
@@ -56,6 +63,11 @@ type t = {
   normalize_lemma : bool;
   check_lemma_lhs : bool;
   fold_lemmas : bool;
+  (* options for QSMT solving *)
+  update_only_atoms_j_and_before : bool;
+  update_all_frames_j_and_after : bool;
+  reuse_prev_frame : bool;
+  backtrack_strategy : backtrack_strategy;
 }
 [@@deriving yojson]
 

@@ -1,0 +1,13 @@
+Inv 10.0 <= [30.0; 102.0; 53.0; 98.0; 143.0]
+s.t.
+Inv (x : real) : real =mu
+   if  x >= 10.0 then
+       max ( 10.0 + (1.0/3.0) * Inv (x+10.0) + (2.0/3.0) * Inv (x-10.0)  )
+           ( 1.0 +  (1.0/4.0) * Inv 3.0 + (1.0/4.0) * Inv x + (1.0/4.0) * Inv 5.0) 
+   else Post x;
+Post (x : real) : real =mu
+  [if x >= 4.0 then 0.0 else 0.0;
+   if x >= 4.0 then 200.0 else 0.0;
+   if x >= 4.0 then 50.0 else 0.0;
+   if x >= 4.0 then 150.0 else 0.0;
+   if x >= 4.0 then 250.0 else 0.0];

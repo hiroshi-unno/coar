@@ -5,9 +5,24 @@ open Logic
 
 type nwf = {
   name : Ident.tvar;
-  param_sorts : Sort.t list;
-  tag_infos : (Ident.tvar, Sort.t list) Hashtbl.Poly.t;
+  sorts_shared : Sort.t list;
+  sorts_map : (Ident.tvar, Sort.t list) Hashtbl.Poly.t;
+  max_pri : int; (* maximum priority *)
+  sigma : (Ident.tvar, int) Map.Poly.t; (* priority function *)
+  trunc : int -> int; (* truncation function *)
+  acc_set : int Set.Poly.t (* accepting states I *);
 }
+
+let dummy_nwf =
+  {
+    name = Ident.Tvar "";
+    sorts_shared = [];
+    sorts_map = Hashtbl.Poly.create ();
+    max_pri = 0;
+    sigma = Map.Poly.empty;
+    trunc = Fn.id;
+    acc_set = Set.Poly.empty;
+  }
 
 type t =
   | Ord
@@ -16,9 +31,11 @@ type t =
   | WF
   | DWF
   | NWF of nwf * (Ident.tvar * Ident.tvar)
+  | Parity of nwf * (Ident.tvar * Ident.tvar)
   | Adm of (* conditioning *) bool
   | Integ
   | IntFun
+  | RealFun
   | RegEx
 
 type map = (Ident.tvar, t) Map.Poly.t
@@ -29,17 +46,19 @@ let is_ne = function NE -> true | _ -> false
 let is_wf = function WF -> true | _ -> false
 let is_dwf = function DWF -> true | _ -> false
 let is_nwf = function NWF _ -> true | _ -> false
+let is_parity = function Parity _ -> true | _ -> false
 let is_adm = function Adm _ -> true | _ -> false
 let is_adm_with_cond = function Adm true -> true | _ -> false
 let is_integ = function Integ -> true | _ -> false
 let is_int_fun = function IntFun -> true | _ -> false
+let is_real_fun = function RealFun -> true | _ -> false
 let is_regex = function RegEx -> true | _ -> false
 
 let is_pred = function
   (* predicates *)
-  | Ord | FN | NE | WF | DWF | NWF _ | Adm _ | Integ -> true
+  | Ord | FN | NE | WF | DWF | NWF _ | Parity _ | Adm _ | Integ -> true
   (* functions *)
-  | IntFun | RegEx -> false
+  | IntFun | RealFun | RegEx -> false
 
 let str_of = function
   (* predicates *)
@@ -48,12 +67,14 @@ let str_of = function
   | NE -> "non-empty predicate"
   | WF -> "well-founded predicate"
   | DWF -> "disjunctively well-founded predicate"
-  | NWF _ -> "well-founded predicate"
+  | NWF _ -> "global well-founded predicate"
+  | Parity _ -> "parity predicate"
   | Adm true -> "admissible predicate w/ conditioning"
   | Adm false -> "admissible predicate w/o conditioning"
   | Integ -> "integrable predicate"
   (* functions *)
   | IntFun -> "integer function"
+  | RealFun -> "real function"
   | RegEx -> "regular expression"
 
 let short_str_of = function
@@ -64,11 +85,13 @@ let short_str_of = function
   | WF -> "WF"
   | DWF -> "DWF"
   | NWF _ -> "NWF"
+  | Parity _ -> "Prty"
   | Adm true -> "AdmC"
   | Adm false -> "Adm"
   | Integ -> "Itg"
   (* functions *)
   | IntFun -> "Int"
+  | RealFun -> "Real"
   | RegEx -> "Reg"
 
 let kind_of (kind_map : map) tv = Map.Poly.find_exn kind_map tv
@@ -95,9 +118,9 @@ let add_pred_env_set (exi_senv, kind_map) kind pvs =
   ( Map.force_merge exi_senv
       (Map.of_set_exn
       @@ Set.Poly.map pvs ~f:(fun (pvar, sargs) ->
-             ( Ident.pvar_to_tvar pvar,
-               Sort.mk_fun (ExtTerm.of_old_sort_list sargs @ [ ExtTerm.SBool ])
-             ))),
+          ( Ident.pvar_to_tvar pvar,
+            Sort.mk_fun (ExtTerm.of_old_sort_list sargs @ [ ExtTerm.SBool ]) ))
+      ),
     Map.force_merge kind_map
       (Map.of_set_exn
       @@ Set.Poly.map pvs ~f:(fun (pv, _) -> (Ident.pvar_to_tvar pv, kind))) )
@@ -105,9 +128,9 @@ let add_pred_env_set (exi_senv, kind_map) kind pvs =
 let pred_sort_env_map_of (exi_senv, kind_map) =
   Map.change_keys ~f:Ident.tvar_to_pvar
   @@ Map.Poly.filter_mapi exi_senv ~f:(fun ~key ~data ->
-         if is_pred @@ kind_of kind_map key then
-           Some (List.map ~f:ExtTerm.to_old_sort @@ Sort.args_of data)
-         else None)
+      if is_pred @@ kind_of kind_map key then
+        Some (List.map ~f:ExtTerm.to_old_sort @@ Sort.args_of data)
+      else None)
 
 let pvars_of (exi_senv, kind_map) =
   Set.Poly.map ~f:Ident.tvar_to_pvar
@@ -115,39 +138,37 @@ let pvars_of (exi_senv, kind_map) =
 
 (* NWF related *)
 
-let create_nwf tvar params_sorts : nwf =
-  {
-    name = tvar;
-    param_sorts = params_sorts;
-    tag_infos = Hashtbl.Poly.create ();
-  }
-
-let mk_nwf_tvar nwf = Ident.mk_nwf_tvar nwf.name
-let set_tag nwf tag sorts = Hashtbl.Poly.set nwf.tag_infos ~key:tag ~data:sorts
-let sorts_of_tag nwf = Hashtbl.Poly.find_exn nwf.tag_infos
-
 let kind_map_of_nwf nwf : map =
-  let tags = Hashtbl.Poly.to_alist nwf.tag_infos in
+  let sorts_map = Hashtbl.Poly.to_alist nwf.sorts_map in
   Map.Poly.of_alist_exn
-  @@ List.concat_map tags ~f:(fun (tag_l, _) ->
-         List.map tags ~f:(fun (tag_r, _) ->
-             (mk_nwf_tvar nwf tag_l tag_r, NWF (nwf, (tag_l, tag_r)))))
+  @@ List.concat_map sorts_map ~f:(fun (tag_l, _) ->
+      List.map sorts_map ~f:(fun (tag_r, _) ->
+          (Ident.mk_nwf_tvar nwf.name tag_l tag_r, NWF (nwf, (tag_l, tag_r)))))
 
 let app_nwf_predicate nwf params (tag_l, params_l) (tag_r, params_r) =
-  assert (List.length params = List.length nwf.param_sorts);
-  let wfp = mk_nwf_tvar nwf tag_l tag_r in
-  assert (
-    Hashtbl.Poly.mem nwf.tag_infos tag_l && Hashtbl.Poly.mem nwf.tag_infos tag_r);
-  let sorts_l = sorts_of_tag nwf tag_l in
-  let sorts_r = sorts_of_tag nwf tag_r in
+  assert (List.length params = List.length nwf.sorts_shared);
+  let wfp = Ident.mk_nwf_tvar nwf.name tag_l tag_r in
+  assert (Hashtbl.Poly.(mem nwf.sorts_map tag_l && mem nwf.sorts_map tag_r));
+  let sorts_l = Hashtbl.Poly.find_exn nwf.sorts_map tag_l in
+  let sorts_r = Hashtbl.Poly.find_exn nwf.sorts_map tag_r in
   assert (
     List.length sorts_l = List.length params_l
     && List.length sorts_r = List.length params_r);
   ( wfp,
-    Sort.mk_fun @@ nwf.param_sorts @ sorts_l @ sorts_r @ [ ExtTerm.SBool ],
+    Sort.mk_fun @@ nwf.sorts_shared @ sorts_l @ sorts_r @ [ ExtTerm.SBool ],
     ExtTerm.mk_var_app wfp @@ params @ params_l @ params_r )
 
-let app_nwf_predicate_old nwf params (tag_l, params_l) (tag_r, params_r) =
+(*
+let app_nwf_predicate_and_add_tag nwf params (tag_l, sorts_l, params_l)
+    (tag_r, sorts_r, params_r) =
+  Hashtbl.Poly.set nwf.sorts_map ~key:tag_l ~data:sorts_l;
+  Hashtbl.Poly.set nwf.sorts_map ~key:tag_r ~data:sorts_r;
+  app_nwf_predicate nwf params (tag_l, params_l) (tag_r, params_r)
+
+let app_nwf_predicate_and_add_tag_old nwf params (tag_l, sorts_l, params_l)
+    (tag_r, sorts_r, params_r) =
+  Hashtbl.Poly.set nwf.sorts_map ~key:tag_l ~data:sorts_l;
+  Hashtbl.Poly.set nwf.sorts_map ~key:tag_r ~data:sorts_r;
   let params_new = List.map params ~f:ExtTerm.of_old_term in
   let params_l_new = List.map params_l ~f:ExtTerm.of_old_term in
   let params_r_new = List.map params_r ~f:ExtTerm.of_old_term in
@@ -155,23 +176,39 @@ let app_nwf_predicate_old nwf params (tag_l, params_l) (tag_r, params_r) =
     app_nwf_predicate nwf params_new (tag_l, params_l_new) (tag_r, params_r_new)
   in
   let uni_senv =
-    params @ params_l @ params_r
-    |> List.map ~f:LogicOld.Term.sort_env_of
-    |> Set.Poly.union_list |> Set.to_list |> of_old_sort_env_list
-    |> Map.Poly.of_alist_exn
+    Map.of_set_exn @@ of_old_sort_env_set @@ Set.Poly.union_list
+    @@ List.map ~f:LogicOld.Term.sort_env_of (params @ params_l @ params_r)
   in
   ( wfp,
     ExtTerm.to_old_sort psort,
     ExtTerm.to_old_fml (Map.Poly.singleton wfp psort) uni_senv term )
+*)
 
-let app_nwf_predicate_and_add_tag nwf params (tag_l, sorts_l, params_l)
-    (tag_r, sorts_r, params_r) =
-  set_tag nwf tag_l sorts_l;
-  set_tag nwf tag_r sorts_r;
-  app_nwf_predicate nwf params (tag_l, params_l) (tag_r, params_r)
+(* Parity related *)
 
-let app_nwf_predicate_and_add_tag_old nwf params (tag_l, sorts_l, params_l)
-    (tag_r, sorts_r, params_r) =
-  set_tag nwf tag_l sorts_l;
-  set_tag nwf tag_r sorts_r;
-  app_nwf_predicate_old nwf params (tag_l, params_l) (tag_r, params_r)
+let kind_map_of_parity nwf : map =
+  let sorts_map = Hashtbl.Poly.to_alist nwf.sorts_map in
+  Map.Poly.of_alist_exn
+  @@ List.concat_map sorts_map ~f:(fun (tag_l, _) ->
+      List.map sorts_map ~f:(fun (tag_r, _) ->
+          ( Ident.mk_parity_tvar nwf.name
+              (Ident.Tvar
+                 (Ident.name_of_tvar tag_l ^ "@" ^ string_of_int
+                 @@ Map.Poly.find_exn nwf.sigma tag_l))
+              (Ident.Tvar
+                 (Ident.name_of_tvar tag_r ^ "@" ^ string_of_int
+                 @@ Map.Poly.find_exn nwf.sigma tag_r)),
+            Parity (nwf, (tag_l, tag_r)) )))
+
+let app_parity_predicate nwf (tag_l, params_l) (tag_r, params_r) =
+  assert (List.is_empty nwf.sorts_shared);
+  let wfp = Ident.mk_nwf_tvar nwf.name tag_l tag_r in
+  assert (Hashtbl.Poly.(mem nwf.sorts_map tag_l && mem nwf.sorts_map tag_r));
+  let sorts_l = Hashtbl.Poly.find_exn nwf.sorts_map tag_l in
+  let sorts_r = Hashtbl.Poly.find_exn nwf.sorts_map tag_r in
+  assert (
+    List.length sorts_l = List.length params_l
+    && List.length sorts_r = List.length params_r);
+  ( wfp,
+    Sort.mk_fun @@ sorts_l @ sorts_r @ [ ExtTerm.SBool ],
+    ExtTerm.mk_var_app wfp @@ params_l @ params_r )

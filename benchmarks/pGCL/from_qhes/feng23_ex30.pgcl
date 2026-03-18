@@ -1,0 +1,17 @@
+nat x;
+nat y;
+nat temp;
+
+while ( x < y || y < x ){
+	{
+		x := y;
+	}[1/3]{
+		{
+			temp := x;
+			x := y;
+			y := temp;
+		}[1/2]{
+			while(true){ skip; }
+		}
+	}
+}

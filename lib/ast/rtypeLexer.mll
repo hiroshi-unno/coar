@@ -147,6 +147,8 @@ rule token = parse
   | salpha lsnum* { IDENT (Lexing.lexeme lexbuf) }
   | salpha lsnum* ('['':' digit+ ']')* { IDENT_T (Lexing.lexeme lexbuf) }
 
+  | "'" ( '_' | ['a'-'z'] ) ['a'-'z' 'A'-'Z' '0'-'9' '_']* as id { TYPEVAR id }
+
   | eof { EOF }
 
   | space+ { token lexbuf }

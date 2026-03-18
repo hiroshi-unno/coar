@@ -1,0 +1,14 @@
+(menhir
+ (modules parser))
+
+(ocamllex
+ (modules lexer))
+
+(library
+ (name QFL)
+ (public_name CoAR.QFL)
+ (preprocess
+  (pps ppx_deriving_yojson))
+ (libraries core CoAR.pCSP CoAR.ast CoAR.common CoAR.LTS)
+ (modules pred problem lexer parser util)
+ (synopsis "The definition of quantitative muCLP"))

@@ -4,7 +4,6 @@ open Common.Ext
 open Common.Util
 open Ast
 open Ast.LogicOld
-open Ast.HypSpace
 open Function
 
 module Config = struct
@@ -182,10 +181,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
   let name_of () = Arg.name
   let kind_of () = Kind.str_of (Kind.Adm Arg.with_cond)
   let sort_of () = Sort.mk_fun @@ Arg.sorts @ [ T_bool.SBool ]
-
-  let params_of ~tag =
-    ignore tag;
-    sort_env_list_of_sorts Arg.sorts
+  let params_of () = sort_env_list_of_sorts Arg.sorts
 
   let show_state ?(config = PCSatCommon.RLConfig.disabled) labels =
     ignore config;
@@ -215,41 +211,25 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
 
   let in_space () = true (* TODO *)
 
-  let adjust_quals ~tag quals =
-    let params = params_of ~tag in
-    let eq_quals =
-      Qual.mk_eq_quals_for_ith_param params (List.length params - 1)
+  let adjust_quals_terms (quals, terms) =
+    let params = params_of () in
+    let quals', terms' =
+      Qual.extract_terms_from_quals
+        ~qelim:(Z3Smt.Z3interface.qelim ~id ~fenv:Arg.fenv)
+        params quals
     in
-    Set.union eq_quals
-    @@ Set.Poly.filter_map quals ~f:(fun phi ->
-           match Normalizer.normalize phi with
-           | Formula.Atom
-               ( Atom.App (Predicate.Psym (T_bool.Eq | T_int.Geq), [ t1; t2 ], _),
-                 _ ) ->
-               Some (Formula.eq t1 t2)
-           | phi ->
-               let qual =
-                 Z3Smt.Z3interface.qelim ~id ~fenv:Arg.fenv
-                 @@ Formula.exists [ List.last_exn params ] phi
-               in
-               if Formula.is_bind qual || Set.is_empty (Formula.fvs_of qual)
-               then None
-               else Some qual)
+    (quals', Set.union terms' (Templ.terms_over_set terms (List.initial params)))
 
-  let init_quals _ _ = ()
-
-  let update_hspace ~tag hspace =
-    ignore tag;
+  let update_hspace hspace =
     HypSpace.qualifiers_of ~fenv:Arg.fenv !param.depth hspace
 
-  let gen_template ~tag ~ucore hspace =
-    ignore tag;
-    ignore ucore;
+  let gen_template ~ucore:_ (hspace : HypSpace.hspace) =
     let template =
       Templ.gen_adm_predicate ~with_cond:Arg.with_cond
         ~ignore_bool:config.ignore_bool
         ~enable_lhs_param:config.enable_lhs_param
         {
+          consts = Set.to_list hspace.consts;
           terms = Set.to_list hspace.terms;
           quals = Set.to_list hspace.quals;
           shp = List.init !param.nd ~f:(fun _ -> !param.nc);
@@ -272,32 +252,32 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     Debug.print
     @@ lazy
          (sprintf "[%s] predicate template:\n  %s"
-            (Ident.name_of_tvar @@ Arg.name)
+            (Ident.name_of_tvar Arg.name)
             (Formula.str_of template.pred));
     Debug.print
     @@ lazy
-         (sprintf "[%s] expr_params_bounds:\n  %s"
-            (Ident.name_of_tvar @@ Arg.name)
-            (Formula.str_of template.expr_params_bounds));
+         (sprintf "[%s] expr_selectors_bounds:\n  %s"
+            (Ident.name_of_tvar Arg.name)
+            (Formula.str_of template.expr_selectors_bounds));
     Debug.print
     @@ lazy
          (sprintf "[%s] expr_coeffs_bounds:\n  %s"
-            (Ident.name_of_tvar @@ Arg.name)
+            (Ident.name_of_tvar Arg.name)
             (Formula.str_of template.expr_coeffs_bounds));
     Debug.print
     @@ lazy
          (sprintf "[%s] expr_const_bounds:\n  %s"
-            (Ident.name_of_tvar @@ Arg.name)
+            (Ident.name_of_tvar Arg.name)
             (Formula.str_of template.expr_const_bounds));
     Debug.print
     @@ lazy
          (sprintf "[%s] cond_coeffs_bounds:\n  %s"
-            (Ident.name_of_tvar @@ Arg.name)
+            (Ident.name_of_tvar Arg.name)
             (Formula.str_of template.cond_coeffs_bounds));
     Debug.print
     @@ lazy
          (sprintf "[%s] cond_const_bounds:\n  %s"
-            (Ident.name_of_tvar @@ Arg.name)
+            (Ident.name_of_tvar Arg.name)
             (Formula.str_of template.cond_const_bounds));
     let pred =
       let open Ast.Logic in
@@ -306,12 +286,21 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     in
     ( (ExprCondConjDepthExt, pred),
       [
-        (ExprCoeff, Logic.ExtTerm.of_old_formula template.expr_coeffs_bounds);
-        (ExprConst, Logic.ExtTerm.of_old_formula template.expr_const_bounds);
-        (CondCoeff, Logic.ExtTerm.of_old_formula template.cond_coeffs_bounds);
-        (CondConst, Logic.ExtTerm.of_old_formula template.cond_const_bounds);
-        ( ExprCondConjDepthExt,
-          Logic.ExtTerm.of_old_formula template.expr_params_bounds );
+        ( false,
+          ExprCoeff,
+          Logic.ExtTerm.of_old_formula template.expr_coeffs_bounds );
+        ( false,
+          ExprConst,
+          Logic.ExtTerm.of_old_formula template.expr_const_bounds );
+        ( false,
+          CondCoeff,
+          Logic.ExtTerm.of_old_formula template.cond_coeffs_bounds );
+        ( false,
+          CondConst,
+          Logic.ExtTerm.of_old_formula template.cond_const_bounds );
+        ( true,
+          ExprCondConjDepthExt,
+          Logic.ExtTerm.of_old_formula template.expr_selectors_bounds );
       ],
       template.templ_params,
       template.hole_quals_map )
@@ -645,7 +634,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
 
   let rec inner param_actions = function
     | [] -> param_actions
-    | ExprCondConjDepthExt :: labels ->
+    | (ExprCondConjDepthExt | Shape) :: labels ->
         inner
           (if config.fix_shape then increase_depth_ext param_actions
            else increase_expr_cond_conj param_actions)

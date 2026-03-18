@@ -97,8 +97,8 @@ let aconv_tvar muclp =
          let map, args =
            List.unzip
            @@ List.map pred.args ~f:(fun (x, sort) ->
-                  let x' = Ident.mk_fresh_tvar () in
-                  ((x, Term.mk_var x' sort), (x', sort)))
+               let x' = Ident.mk_fresh_tvar () in
+               ((x, Term.mk_var x' sort), (x', sort)))
          in
          {
            pred with

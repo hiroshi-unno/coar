@@ -28,26 +28,24 @@ struct
     let eqs, param_senvs, phis =
       List.unzip3
       @@ List.map clauses_pos ~f:(fun (param_senv, ps, ns, phi) ->
-             let _, _, args0, _ =
-               Atom.let_pvar_app @@ Set.find_exn ~f:is_resolved ps
-             in
-             let eq =
-               Formula.and_of @@ List.map2_exn args args0 ~f:Formula.eq
-             in
-             let ps' =
-               Set.filter ps ~f:(Atom.pvar_of >> Stdlib.( <> ) pv)
-               |> Set.to_list
-               |> List.map ~f:Formula.mk_atom
-             in
-             let ns' =
-               Set.to_list ns |> List.map ~f:(Formula.mk_atom >> Formula.mk_neg)
-             in
-             let param_senv' =
-               Map.Poly.to_alist param_senv |> Logic.to_old_sort_env_list
-             in
-             ( eq,
-               param_senv',
-               Formula.mk_neg @@ Formula.or_of @@ ps' @ ns' @ [ phi ] ))
+          let _, _, args0, _ =
+            Atom.let_pvar_app @@ Set.find_exn ~f:is_resolved ps
+          in
+          let eq = Formula.and_of @@ List.map2_exn args args0 ~f:Formula.eq in
+          let ps' =
+            Set.filter ps ~f:(Atom.pvar_of >> Stdlib.( <> ) pv)
+            |> Set.to_list
+            |> List.map ~f:Formula.mk_atom
+          in
+          let ns' =
+            Set.to_list ns |> List.map ~f:(Formula.mk_atom >> Formula.mk_neg)
+          in
+          let param_senv' =
+            Map.Poly.to_alist param_senv |> Logic.to_old_sort_env_list
+          in
+          ( eq,
+            param_senv',
+            Formula.mk_neg @@ Formula.or_of @@ ps' @ ns' @ [ phi ] ))
     in
     let params =
       List.map args
@@ -56,13 +54,13 @@ struct
     Logic.ExtTerm.mk_lambda params
     @@ Logic.ExtTerm.of_old_formula
     @@ (fun ret ->
-         Debug.print
-         @@ lazy
-              (sprintf "[resolve_solution_of] \n%s (%s) := %s"
-                 (Ident.name_of_pvar pv)
-                 (String.concat_map_list ~sep:"," args ~f:Term.str_of)
-                 (Formula.str_of ret));
-         ret)
+      Debug.print
+      @@ lazy
+           (sprintf "[resolve_solution_of] \n%s (%s) := %s"
+              (Ident.name_of_pvar pv)
+              (String.concat_map_list ~sep:"," args ~f:Term.str_of)
+              (Formula.str_of ret));
+      ret)
     @@ Z3Smt.Z3interface.qelim ~id:!id ~fenv:(LogicOld.get_fenv ())
     @@ Formula.exists (List.concat param_senvs)
     @@ Evaluator.simplify @@ Formula.and_of @@ eqs @ phis
@@ -102,16 +100,16 @@ struct
       @@ ClauseSetOld.simplify (Map.key_set exi_senv)
            (Z3Smt.Z3interface.is_valid ~id:!id (LogicOld.get_fenv ()))
       @@ Set.concat_map ~f:(fun cl ->
-             let senv, phi =
-               let senv, phi = ClauseOld.to_formula cl in
-               (* ToDo: the following can be a bottle neck *)
-               qelim (senv, Normalizer.normalize @@ Evaluator.simplify phi)
-             in
-             Set.Poly.map ~f:(fun (ps, ns, phi) -> (senv, ps, ns, phi))
-             @@ Formula.cnf_of Logic.(to_old_sort_env_map exi_senv)
-             @@ Normalizer.normalize @@ Evaluator.simplify phi)
+          let senv, phi =
+            let senv, phi = ClauseOld.to_formula cl in
+            (* ToDo: the following can be a bottle neck *)
+            qelim (senv, Normalizer.normalize @@ Evaluator.simplify phi)
+          in
+          Set.Poly.map ~f:(fun (ps, ns, phi) -> (senv, ps, ns, phi))
+          @@ Formula.cnf_of Logic.(to_old_sort_env_map exi_senv)
+          @@ Normalizer.normalize @@ Evaluator.simplify phi)
       @@ Set.Poly.map ~f:(fun (senv, ps, ns, phis) ->
-             (senv, ps, ns, Formula.or_of phis))
+          (senv, ps, ns, Formula.or_of phis))
       @@ Set.Poly.union_list
            [
              Set.cartesian_map clauses_pos_lin clauses_neg_lin
@@ -255,97 +253,96 @@ struct
     Pair.map (Set.Poly.filter_map ~f:Fn.id) (Set.Poly.filter_map ~f:Fn.id)
     @@ Set.unzip
     @@ Set.Poly.map clauses ~f:(fun (_, ps, ns, phi) ->
-           Debug.print @@ lazy (sprintf "[lbs_ubs_of] %s" @@ Formula.str_of phi);
-           (* assume that [phi] is alpha-renamed *)
-           let lenv = Set.of_map @@ Formula.let_sort_env_of phi in
-           (* let lenv = Set.Poly.empty in *)
-           if Set.is_singleton ps && Set.is_empty ns then
-             match Set.choose ps with
-             | Some (Atom.App (Predicate.Var (pvar, sorts), ts, _)) ->
-                 let xs = mk_fresh_sort_env_list sorts in
-                 let phi' =
-                   Formula.or_of
-                   @@ phi
-                      :: List.map2_exn ~f:Formula.neq ts (Term.of_sort_env xs)
-                 in
-                 let ys =
-                   Set.diff
-                     (Set.diff (Formula.sort_env_of phi') (Set.Poly.of_list xs))
-                     lenv
-                   |> Set.filter
-                        ~f:(fst >> Set.mem (Map.key_set exi_senv) >> not)
-                 in
-                 let senv =
-                   Map.of_set_exn @@ Logic.of_old_sort_env_set
-                   @@ Set.union (Set.Poly.of_list xs) ys
-                 in
-                 Debug.print
-                 @@ lazy
-                      (sprintf "[lbs_ubs_of] senv: %s"
-                      @@ Logic.(
-                           str_of_sort_env_list ExtTerm.str_of_sort
-                           @@ Map.Poly.to_alist senv));
-                 (* (exists ys. not phi /\ xs = ts) => pvar(xs) *)
-                 let lb =
-                   Formula.exists (Set.to_list ys)
-                   @@ Formula.elim_let_equi false
-                   @@ Normalizer.normalize_let ~rename:true
-                   @@ Formula.mk_neg @@ snd
-                   @@ Qelim.qelim_old
-                        (Map.Poly.of_alist_exn @@ Logic.of_old_sort_env_list xs)
-                        exi_senv (senv, phi')
-                 in
-                 Debug.print
-                 @@ lazy
-                      (sprintf "LB of %s(%s): %s" (Ident.name_of_pvar pvar)
-                         (str_of_sort_env_list LogicOld.Term.str_of_sort xs)
-                         (Formula.str_of lb));
-                 (Some (pvar, (xs, lb)), None)
-             | _ -> assert false
-           else if Set.is_empty ps && Set.is_singleton ns then
-             match Set.choose ns with
-             | Some (Atom.App (Predicate.Var (pvar, sorts), ts, _)) ->
-                 let xs = mk_fresh_sort_env_list sorts in
-                 let phi' =
-                   Formula.or_of
-                   @@ phi
-                      :: List.map2_exn ~f:Formula.neq ts (Term.of_sort_env xs)
-                 in
-                 let ys =
-                   Set.diff
-                     (Set.diff (Formula.sort_env_of phi') (Set.Poly.of_list xs))
-                     lenv
-                   |> Set.filter
-                        ~f:(fst >> Set.mem (Map.key_set exi_senv) >> not)
-                 in
-                 let senv =
-                   Map.of_set_exn @@ Logic.of_old_sort_env_set
-                   @@ Set.union (Set.Poly.of_list xs) ys
-                 in
-                 Debug.print
-                 @@ lazy
-                      (sprintf "[lbs_ubs_of] senv: %s"
-                      @@ Logic.(
-                           str_of_sort_env_list ExtTerm.str_of_sort
-                           @@ Map.Poly.to_alist senv));
-                 (* pvar(xs) => (forall ys. xs = ts => phi) *)
-                 let ub =
-                   Formula.forall (Set.to_list ys)
-                   @@ Formula.elim_let_equi true
-                   @@ Normalizer.normalize_let ~rename:true
-                   @@ snd
-                   @@ Qelim.qelim_old
-                        (Map.Poly.of_alist_exn @@ Logic.of_old_sort_env_list xs)
-                        exi_senv (senv, phi')
-                 in
-                 Debug.print
-                 @@ lazy
-                      (sprintf "UB of %s(%s): %s" (Ident.name_of_pvar pvar)
-                         (str_of_sort_env_list LogicOld.Term.str_of_sort xs)
-                         (Formula.str_of ub));
-                 (None, Some (pvar, (xs, ub)))
-             | _ -> assert false
-           else (None, None))
+        if false then
+          Debug.print @@ lazy (sprintf "[lbs_ubs_of] %s" @@ Formula.str_of phi);
+        (* assume that [phi] is alpha-renamed *)
+        let lenv = Set.of_map @@ Formula.let_sort_env_of phi in
+        (* let lenv = Set.Poly.empty in *)
+        if Set.is_singleton ps && Set.is_empty ns then
+          match Set.choose ps with
+          | Some (Atom.App (Predicate.Var (pvar, sorts), ts, _)) ->
+              let xs = mk_fresh_sort_env_list sorts in
+              let phi' =
+                Formula.or_of
+                @@ (phi :: List.map2_exn ~f:Formula.neq ts (Term.of_sort_env xs))
+              in
+              let ys =
+                Set.diff
+                  (Set.diff (Formula.sort_env_of phi') (Set.Poly.of_list xs))
+                  lenv
+                |> Set.filter ~f:(fst >> Set.mem (Map.key_set exi_senv) >> not)
+              in
+              let senv =
+                Map.of_set_exn @@ Logic.of_old_sort_env_set
+                @@ Set.union (Set.Poly.of_list xs) ys
+              in
+              if false then
+                Debug.print
+                @@ lazy
+                     (sprintf "[lbs_ubs_of] senv: %s"
+                     @@ Logic.(
+                          str_of_sort_env_list ExtTerm.str_of_sort
+                          @@ Map.Poly.to_alist senv));
+              (* (exists ys. not phi /\ xs = ts) => pvar(xs) *)
+              let lb =
+                Formula.exists (Set.to_list ys)
+                @@ Formula.elim_let_equi false
+                @@ Normalizer.normalize_let ~rename:true
+                @@ Formula.mk_neg @@ snd
+                @@ Qelim.qelim_old
+                     (Map.Poly.of_alist_exn @@ Logic.of_old_sort_env_list xs)
+                     exi_senv (senv, phi')
+              in
+              Debug.print
+              @@ lazy
+                   (sprintf "LB of %s(%s): %s" (Ident.name_of_pvar pvar)
+                      (str_of_sort_env_list LogicOld.Term.str_of_sort xs)
+                      (Formula.str_of lb));
+              (Some (pvar, (xs, lb)), None)
+          | _ -> assert false
+        else if Set.is_empty ps && Set.is_singleton ns then
+          match Set.choose ns with
+          | Some (Atom.App (Predicate.Var (pvar, sorts), ts, _)) ->
+              let xs = mk_fresh_sort_env_list sorts in
+              let phi' =
+                Formula.or_of
+                @@ (phi :: List.map2_exn ~f:Formula.neq ts (Term.of_sort_env xs))
+              in
+              let ys =
+                Set.diff
+                  (Set.diff (Formula.sort_env_of phi') (Set.Poly.of_list xs))
+                  lenv
+                |> Set.filter ~f:(fst >> Set.mem (Map.key_set exi_senv) >> not)
+              in
+              let senv =
+                Map.of_set_exn @@ Logic.of_old_sort_env_set
+                @@ Set.union (Set.Poly.of_list xs) ys
+              in
+              if false then
+                Debug.print
+                @@ lazy
+                     (sprintf "[lbs_ubs_of] senv: %s"
+                     @@ Logic.(
+                          str_of_sort_env_list ExtTerm.str_of_sort
+                          @@ Map.Poly.to_alist senv));
+              (* pvar(xs) => (forall ys. xs = ts => phi) *)
+              let ub =
+                Formula.forall (Set.to_list ys)
+                @@ Formula.elim_let_equi true
+                @@ Normalizer.normalize_let ~rename:true
+                @@ snd
+                @@ Qelim.qelim_old
+                     (Map.Poly.of_alist_exn @@ Logic.of_old_sort_env_list xs)
+                     exi_senv (senv, phi')
+              in
+              Debug.print
+              @@ lazy
+                   (sprintf "UB of %s(%s): %s" (Ident.name_of_pvar pvar)
+                      (str_of_sort_env_list LogicOld.Term.str_of_sort xs)
+                      (Formula.str_of ub));
+              (None, Some (pvar, (xs, ub)))
+          | _ -> assert false
+        else (None, None))
 
   let clause_of_lb pvar (senv, phi) =
     ( Map.Poly.of_alist_exn @@ Logic.of_old_sort_env_list senv,
@@ -362,12 +359,12 @@ struct
   let or_preds params preds =
     Formula.or_of @@ Set.to_list
     @@ Set.Poly.map preds ~f:(fun (params', phi) ->
-           Formula.rename (ren_of_sort_env_list params' params) phi)
+        Formula.rename (ren_of_sort_env_list params' params) phi)
 
   let and_preds params preds =
     Formula.and_of @@ Set.to_list
     @@ Set.Poly.map preds ~f:(fun (params', phi) ->
-           Formula.rename (ren_of_sort_env_list params' params) phi)
+        Formula.rename (ren_of_sort_env_list params' params) phi)
 
   let elim_pvars_with_lb_ub exi_senv eliminable_pvs clauses =
     let cls = ref Set.Poly.empty in
@@ -375,106 +372,105 @@ struct
       let lbs, ubs = lbs_ubs_of exi_senv clauses in
       Map.of_set_exn
       @@ Set.Poly.filter_map eliminable_pvs ~f:(fun pvar ->
-             let pvar_lbs =
-               Set.Poly.filter_map lbs ~f:(fun (pvar', lb) ->
-                   if Stdlib.(pvar = pvar') then Some lb else None)
-             in
-             let pvar_ubs =
-               Set.Poly.filter_map ubs ~f:(fun (pvar', ub) ->
-                   if Stdlib.(pvar = pvar') then Some ub else None)
-             in
-             let pvar_lbs_ubs = Set.union pvar_lbs pvar_ubs in
-             if Set.is_empty pvar_lbs_ubs then None
-             else
-               let params, _ = Set.choose_exn pvar_lbs_ubs in
-               let lb = or_preds params pvar_lbs in
-               let ok_lb =
-                 Set.(
+          let pvar_lbs =
+            Set.Poly.filter_map lbs ~f:(fun (pvar', lb) ->
+                if Stdlib.(pvar = pvar') then Some lb else None)
+          in
+          let pvar_ubs =
+            Set.Poly.filter_map ubs ~f:(fun (pvar', ub) ->
+                if Stdlib.(pvar = pvar') then Some ub else None)
+          in
+          let pvar_lbs_ubs = Set.union pvar_lbs pvar_ubs in
+          if Set.is_empty pvar_lbs_ubs then None
+          else
+            let params, _ = Set.choose_exn pvar_lbs_ubs in
+            let lb = or_preds params pvar_lbs in
+            let ok_lb =
+              LogicOld.Formula.is_quantifier_free lb
+              && Set.(
                    is_empty @@ inter (Formula.fvs_of lb) (Map.key_set exi_senv))
-               in
-               let ub = and_preds params pvar_ubs in
-               let ok_ub =
-                 Set.(
+            in
+            let ub = and_preds params pvar_ubs in
+            let ok_ub =
+              LogicOld.Formula.is_quantifier_free ub
+              && Set.(
                    is_empty @@ inter (Formula.fvs_of ub) (Map.key_set exi_senv))
-               in
-               if
-                 ok_lb
-                 && Z3Smt.Z3interface.is_valid ~id:!id (LogicOld.get_fenv ()) lb
-               then (
-                 Debug.print
-                 @@ lazy
-                      (sprintf "%s is assigned true because LB is true"
-                      @@ Ident.name_of_pvar pvar);
-                 let phi =
-                   Logic.(
-                     Term.mk_lambda (of_old_sort_env_list params)
-                     @@ ExtTerm.mk_bool true)
-                 in
-                 eliminated_pvars :=
-                   Map.Poly.add_exn !eliminated_pvars
-                     ~key:(Ident.pvar_to_tvar pvar) ~data:phi;
-                 Some
-                   ( pvar,
-                     (params, Formula.mk_true (), Formula.mk_false (), false) ))
-               else if
-                 ok_ub
-                 && Z3Smt.Z3interface.is_valid ~id:!id (LogicOld.get_fenv ())
-                    @@ Formula.mk_neg ub
-               then (
-                 Debug.print
-                 @@ lazy
-                      (sprintf "%s is assigned false because UB is false"
-                      @@ Ident.name_of_pvar pvar);
-                 let phi =
-                   Logic.(
-                     Term.mk_lambda (of_old_sort_env_list params)
-                     @@ ExtTerm.mk_bool false)
-                 in
-                 eliminated_pvars :=
-                   Map.Poly.add_exn !eliminated_pvars
-                     ~key:(Ident.pvar_to_tvar pvar) ~data:phi;
-                 Some
-                   ( pvar,
-                     (params, Formula.mk_false (), Formula.mk_true (), false) ))
-               else if
-                 Set.exists pvar_lbs ~f:(snd >> Formula.is_exists)
-                 || Set.exists pvar_ubs ~f:(snd >> Formula.is_forall)
-               then None
-               else if
-                 ok_lb && ok_ub
-                 && Z3Smt.Z3interface.is_valid ~id:!id (LogicOld.get_fenv ())
-                    @@ Formula.mk_iff lb ub
-               then (
-                 Debug.print
-                 @@ lazy
-                      (sprintf
-                         "%s is assigned %s because LB and UB are equivalent"
-                         (Ident.name_of_pvar pvar)
-                      @@ Formula.str_of lb);
-                 let phi =
-                   Logic.(
-                     Term.mk_lambda (of_old_sort_env_list params)
-                     @@ ExtTerm.of_old_formula lb (*ToDo: ub is ignored*))
-                 in
-                 eliminated_pvars :=
-                   Map.Poly.add_exn !eliminated_pvars
-                     ~key:(Ident.pvar_to_tvar pvar) ~data:phi;
-                 Some (pvar, (params, lb, Formula.mk_neg ub, false)))
-               else if Config.propagate_lb_ub then (
-                 Debug.print
-                 @@ lazy
-                      (sprintf "LB and UB of %s are propagated"
-                      @@ Ident.name_of_pvar pvar);
-                 (*ToDo: this may widen the solution space?*)
-                 cls :=
-                   Set.Poly.union_list
-                     [
-                       Set.Poly.map ~f:(clause_of_lb pvar) pvar_lbs;
-                       Set.Poly.map ~f:(clause_of_ub pvar) pvar_ubs;
-                       !cls;
-                     ];
-                 Some (pvar, (params, lb, Formula.mk_neg ub, true)))
-               else None)
+            in
+            if
+              ok_lb
+              && Z3Smt.Z3interface.is_valid ~id:!id (LogicOld.get_fenv ()) lb
+            then (
+              Debug.print
+              @@ lazy
+                   (sprintf "%s is assigned true because LB is true"
+                   @@ Ident.name_of_pvar pvar);
+              let phi =
+                Logic.(
+                  Term.mk_lambda (of_old_sort_env_list params)
+                  @@ ExtTerm.mk_bool true)
+              in
+              eliminated_pvars :=
+                Map.Poly.add_exn !eliminated_pvars
+                  ~key:(Ident.pvar_to_tvar pvar) ~data:phi;
+              Some
+                (pvar, (params, Formula.mk_true (), Formula.mk_false (), false)))
+            else if
+              ok_ub
+              && Z3Smt.Z3interface.is_valid ~id:!id (LogicOld.get_fenv ())
+                 @@ Formula.mk_neg ub
+            then (
+              Debug.print
+              @@ lazy
+                   (sprintf "%s is assigned false because UB is false"
+                   @@ Ident.name_of_pvar pvar);
+              let phi =
+                Logic.(
+                  Term.mk_lambda (of_old_sort_env_list params)
+                  @@ ExtTerm.mk_bool false)
+              in
+              eliminated_pvars :=
+                Map.Poly.add_exn !eliminated_pvars
+                  ~key:(Ident.pvar_to_tvar pvar) ~data:phi;
+              Some
+                (pvar, (params, Formula.mk_false (), Formula.mk_true (), false)))
+            else if
+              Set.exists pvar_lbs ~f:(snd >> Formula.is_exists)
+              || Set.exists pvar_ubs ~f:(snd >> Formula.is_forall)
+            then None
+            else if
+              ok_lb && ok_ub
+              && Z3Smt.Z3interface.is_valid ~id:!id (LogicOld.get_fenv ())
+                 @@ Formula.mk_iff lb ub
+            then (
+              Debug.print
+              @@ lazy
+                   (sprintf "%s is assigned %s because LB and UB are equivalent"
+                      (Ident.name_of_pvar pvar)
+                   @@ Formula.str_of lb);
+              let phi =
+                Logic.(
+                  Term.mk_lambda (of_old_sort_env_list params)
+                  @@ ExtTerm.of_old_formula lb (*ToDo: ub is ignored*))
+              in
+              eliminated_pvars :=
+                Map.Poly.add_exn !eliminated_pvars
+                  ~key:(Ident.pvar_to_tvar pvar) ~data:phi;
+              Some (pvar, (params, lb, Formula.mk_neg ub, false)))
+            else if Config.propagate_lb_ub then (
+              Debug.print
+              @@ lazy
+                   (sprintf "LB and UB of %s are propagated"
+                   @@ Ident.name_of_pvar pvar);
+              (*ToDo: this may widen the solution space?*)
+              cls :=
+                Set.Poly.union_list
+                  [
+                    Set.Poly.map ~f:(clause_of_lb pvar) pvar_lbs;
+                    Set.Poly.map ~f:(clause_of_ub pvar) pvar_ubs;
+                    !cls;
+                  ];
+              Some (pvar, (params, lb, Formula.mk_neg ub, true)))
+            else None)
     in
     let cls1, cls2 = subst_preds (Map.key_set exi_senv) psub clauses in
     Set.Poly.union_list [ !cls; cls1; cls2 ]
@@ -494,37 +490,35 @@ struct
             else None
           else None)
       |> Set.partition_tf ~f:(fun (pvar, _, (_, _, _)) ->
-             Set.fold clauses ~init:(true, true)
-               ~f:(fun (p, n) (senv, pos, neg, _phi) ->
-                 if p || n then
-                   match
-                     Set.find pos ~f:(Atom.pvs_of >> Fn.flip Set.mem pvar)
-                   with
-                   | Some atm ->
-                       ( p
-                         && Set.is_subset ~of_:(Atom.tvs_of atm)
-                              (ClauseOld.tvs_of
-                                 ( senv,
-                                   Set.remove pos atm,
-                                   neg,
-                                   Formula.mk_true () (*phi*) )),
-                         n )
-                   | None -> (
-                       match
-                         Set.find neg ~f:(Atom.pvs_of >> Fn.flip Set.mem pvar)
-                       with
-                       | Some atm ->
-                           ( p,
-                             n
-                             && Set.is_subset ~of_:(Atom.tvs_of atm)
-                                  (ClauseOld.tvs_of
-                                     ( senv,
-                                       pos,
-                                       Set.remove neg atm,
-                                       Formula.mk_true () (*phi*) )) )
-                       | None -> (p, n))
-                 else (p, n))
-             |> uncurry ( || ))
+          Set.fold clauses ~init:(true, true)
+            ~f:(fun (p, n) (senv, pos, neg, _phi) ->
+              if p || n then
+                match Set.find pos ~f:(Atom.pvs_of >> Fn.flip Set.mem pvar) with
+                | Some atm ->
+                    ( p
+                      && Set.is_subset ~of_:(Atom.tvs_of atm)
+                           (ClauseOld.tvs_of
+                              ( senv,
+                                Set.remove pos atm,
+                                neg,
+                                Formula.mk_true () (*phi*) )),
+                      n )
+                | None -> (
+                    match
+                      Set.find neg ~f:(Atom.pvs_of >> Fn.flip Set.mem pvar)
+                    with
+                    | Some atm ->
+                        ( p,
+                          n
+                          && Set.is_subset ~of_:(Atom.tvs_of atm)
+                               (ClauseOld.tvs_of
+                                  ( senv,
+                                    pos,
+                                    Set.remove neg atm,
+                                    Formula.mk_true () (*phi*) )) )
+                    | None -> (p, n))
+              else (p, n))
+          |> uncurry ( || ))
     in
     let safe = Fn.non Set.is_empty pvs_info1 in
     (if safe then pvs_info1 else pvs_info2)
@@ -561,11 +555,11 @@ struct
   let elim_pvs ?(bpvs = Set.Poly.empty) pcsp =
     eliminated_pvars := Map.Poly.empty;
     let rec inner iter pcsp0 =
+      Debug.print @@ lazy (sprintf "[elim_pvs] iter: %d" iter);
       let exi_senv = PCSP.Problem.senv_of pcsp0 in
       let eliminable_pvs =
-        PCSP.Problem.pvs_of pcsp0
-        |> Set.filter ~f:(fun t ->
-               PCSP.Problem.is_ord_pred pcsp0 t && not (Set.mem bpvs t))
+        Set.filter (PCSP.Problem.pvs_of pcsp0) ~f:(fun t ->
+            PCSP.Problem.is_ord_pred pcsp0 t && not (Set.mem bpvs t))
         |> Set.Poly.map ~f:Ident.tvar_to_pvar
       in
       let qelim = Qelim.qelim_old Map.Poly.empty exi_senv in
@@ -600,35 +594,69 @@ struct
               @@ lazy
                    (sprintf "[elim_pvs] bpvs: %s"
                       (String.concat_map_set ~sep:"," bpvs ~f:Ident.name_of_tvar));
-              Set.concat_map phis
-                ~f:
-                  (Formula.cnf_of (*ToDo*) Logic.(to_old_sort_env_map exi_senv))
-              |> Set.Poly.map ~f:(fun (ps, ns, phi) ->
-                     ClauseOld.reduce_sort_map (senv, ps, ns, phi))
-              |> (fun cls ->
-                   Debug.print @@ lazy "[elim_pvs] cls:";
-                   Set.iter cls ~f:(fun c ->
-                       Debug.print @@ lazy ("  " ^ ClauseOld.str_of c));
-                   cls)
+              Debug.print
+              @@ lazy (sprintf "[elim_pvs] cnf transformation in progress");
+              let cls =
+                let cnt = ref 0 in
+                Set.concat_map phis ~f:(fun phi ->
+                    cnt := !cnt + 1;
+                    Debug.print
+                    @@ lazy
+                         (sprintf
+                            "[elim_pvs] transforming %s clause (out of %d): %s"
+                            (Ordinal.string_of (Ordinal.make !cnt))
+                            (Set.length phis) (Formula.str_of phi));
+                    Formula.cnf_of
+                      (*ToDo*) Logic.(to_old_sort_env_map exi_senv)
+                      phi)
+                |> Set.Poly.map ~f:(fun (ps, ns, phi) ->
+                    ClauseOld.reduce_sort_map (senv, ps, ns, phi))
+              in
+              Debug.print
+              @@ lazy (sprintf "[elim_pvs] cnf transformation completed");
               (* begin: predicate variable elimination *)
+              Debug.print
+              @@ lazy
+                   (sprintf
+                      "[elim_pvs] begin elim_one_side_unbounded_pvars [%d]:\n%s"
+                      (Set.length cls) (ClauseSetOld.str_of cls));
+              cls
               |> elim_one_side_unbounded_pvars exi_senv eliminable_pvs
-              (* |> (fun cls -> Debug.print @@ lazy ("[elim_pvs]after elim_one_side_unbounded_pvars:"); Set.iter cls ~f:(fun c -> Debug.print @@ lazy ("  " ^ ClauseOld.str_of c)); cls) *)
+              |> (fun cls ->
+              Debug.print @@ lazy "[elim_pvs] end elim_one_side_unbounded_pvars";
+              Debug.print
+              @@ lazy
+                   (sprintf "[elim_pvs] begin elim_pvars_with_lb_ub [%d]:\n%s"
+                      (Set.length cls) (ClauseSetOld.str_of cls));
+              cls)
               |> elim_pvars_with_lb_ub exi_senv eliminable_pvs
-              (* |> (fun cls -> Debug.print @@ lazy ("[elim_pvs]after elim_pvars_with_lb_ub:"); Set.iter cls ~f:(fun c -> Debug.print @@ lazy ("  " ^ ClauseOld.str_of c)); cls) *)
+              |> (fun cls ->
+              Debug.print @@ lazy "[elim_pvs] end elim_pvars_with_lb_ub";
+              Debug.print
+              @@ lazy
+                   (sprintf
+                      "[elim_pvs] begin elim_pvars_by_resolution [%d]:\n%s"
+                      (Set.length cls) (ClauseSetOld.str_of cls));
+              cls)
               |> elim_pvars_by_resolution qelim exi_senv eliminable_pvs
-              (* |> (fun cls -> Debug.print @@ lazy ("[elim_pvs]after elim_pvars_by_resolution:"); Set.iter cls ~f:(fun c -> Debug.print @@ lazy ("  " ^ ClauseOld.str_of c)); cls) *)
+              |> (fun cls ->
+              Debug.print @@ lazy "[elim_pvs] end elim_pvars_with_lb_ub";
+              Debug.print
+              @@ lazy
+                   (sprintf "[elim_pvs] begin result [%d]:\n%s" (Set.length cls)
+                      (ClauseSetOld.str_of cls));
+              cls)
               (* end: predicate variable elimination *)
               |> Set.Poly.filter_map ~f:(fun cl ->
-                     let open Option in
-                     ClauseOld.simplify (Map.key_set exi_senv)
-                       (Z3Smt.Z3interface.is_valid ~id:!id
-                          (LogicOld.get_fenv ()))
-                       cl
-                     >>= fun cl ->
-                     let senv, phi =
-                       ClauseOld.to_formula @@ ClauseOld.reduce_sort_map cl
-                     in
-                     Some (Logic.to_old_sort_env_map senv, phi)))
+                  let open Option in
+                  ClauseOld.simplify (Map.key_set exi_senv)
+                    (Z3Smt.Z3interface.is_valid ~id:!id (LogicOld.get_fenv ()))
+                    cl
+                  >>= fun cl ->
+                  let senv, phi =
+                    ClauseOld.to_formula @@ ClauseOld.reduce_sort_map cl
+                  in
+                  Some (Logic.to_old_sort_env_map senv, phi)))
       in
       if
         Map.Poly.equal Stdlib.( = )
@@ -646,12 +674,12 @@ struct
   let solution_of_unit_clause clause =
     let _senv, ps, ns, phi = clause in
     let ftv = Formula.term_sort_env_of phi |> Set.elements in
-    let quantifiers = fst @@ refresh_sort_env_list ftv in
+    let quantifiers = fst @@ refresh_sort_env_list ~prefix:None ftv in
     let subst_map =
       List.zip_exn ftv quantifiers
       |> List.map ~f:(fun ((tvar, sort), (bvar, sort')) ->
-             assert (Stdlib.(sort = sort'));
-             (tvar, Term.mk_var bvar sort))
+          assert (Stdlib.(sort = sort'));
+          (tvar, Term.mk_var bvar sort))
       |> Map.Poly.of_alist_exn
     in
     let phi = Formula.subst subst_map phi in

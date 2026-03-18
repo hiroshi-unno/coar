@@ -113,6 +113,8 @@ rule main = parse
 | "__VERIFIER_nondet_uint" { CCtlParser.NONDET_UINT }
 | "__VERIFIER_nondet_long" { CCtlParser.NONDET_LONG }
 | "__VERIFIER_nondet_ulong" { CCtlParser.NONDET_ULONG }
+| "__VERIFIER_nondet_float" { CCtlParser.NONDET_FLOAT }
+| "__VERIFIER_nondet_double" { CCtlParser.NONDET_DOUBLE }
 
 (* docheck *)
 | "DOCHECK" { CCtlParser.DOCHECK }

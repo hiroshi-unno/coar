@@ -1,0 +1,22 @@
+ASAT s.t.
+X0_2 (x : real) : real =nu
+  if x >= 1.0 and x < 2.0 then
+    if x >= 1.0 then X0 (x - 1.0) else X1 2.0
+  else Y;
+X0_3 (x : real) : real =mu
+  if x >= 2.0 then
+    if x >= 1.0 then X0 (x - 1.0) else X1 2.0
+  else Y;
+X0_4 (x : real) : real =nu
+  if x >= 0.0 and x < 1.0 then
+    if x >= 1.0 then X0 (x - 1.0) else X1 2.0
+  else Y;
+X1_4 (x : real) : real =nu
+  if x >= 2.0 then
+    (1.0/2.0) * X1 (2.0 * x) + (1.0/2.0) * X0 x
+  else Y;
+X0 (x : real) : real =nu
+  if x >= 2.0 then X0_3 x else if x >= 1.0 then X0_2 x else if x >= 0.0 then X0_4 x else Y;
+X1 (x : real) : real =nu
+  if x >= 2.0 then X1_4 x else Y;
+Y : real =nu Y;

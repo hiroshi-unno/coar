@@ -1,0 +1,12 @@
+dist (Inv 4.0) ensures (x1 : real) (x2 : real) (x3 : real) -> ((1.0/1.0) * x1 * x1 + (1.0/4.0) * x2 * x2  + (1.0/5.0) * x3 * x3  <= 4.5/ 16.0)
+s.t.
+Inv (x : real) : real =mu
+   if x > 3.0 then
+       max ( (2.0/8.0) * Inv 0.0 + (3.0/8.0) * Inv 2.0  + (2.0/8.0) * Inv 3.0)
+           ( (1.0/5.0) * Inv 1.0 + (1.0/5.0) * Inv 2.0 + (2.0/5.0) * Inv 3.0 + (1.0/5.0) * Inv x )
+           ( (2.0/6.0) * Inv 0.0 + (1.0/6.0) * Inv 1.0  + (3.0/6.0) * Inv 3.0 )
+   else Post x;
+Post (x : real): real =mu
+   if 0.0 <= x and x < 1.0  then @1
+   else if 1.0 <= x and x < 2.0 then @2
+   else if 2.0 <= x and x < 3.0 then @3 else 0.0;

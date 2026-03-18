@@ -1,0 +1,9 @@
+(library
+ (name OptiMathSAT)
+ (public_name CoAR.OptiMathSAT)
+ (preprocess
+  (pps ppx_deriving_yojson))
+ (libraries core CoAR.Printer CoAR.SMT)
+ (modules
+  config
+  solver))

@@ -10,5 +10,6 @@
   CoAR.common
   CoAR.Z3Smt
   ;CoAR.Printer
-  CoAR.pCSP)
+  CoAR.pCSP
+  CoAR.PCSat.preprocessing)
  (modules config solver))

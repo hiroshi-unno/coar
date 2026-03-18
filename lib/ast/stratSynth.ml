@@ -476,10 +476,7 @@ module LIA = struct
           | _ -> assert false))
     | App (Con (BoolTerm.Not, _), t, _) ->
         Option.(formula_of_term t >>= fun f -> return (neg_formula neg_atom f))
-    | App (App (Con (r, _), t1, _), t2, _)
-      when match r with
-           | BoolTerm.And | BoolTerm.Or | BoolTerm.Imply -> true
-           | _ -> false -> (
+    | App (App (Con ((BoolTerm.(And | Or | Imply) as r), _), t1, _), t2, _) -> (
         Option.(
           formula_of_term t1 >>= fun f1 ->
           formula_of_term t2 >>= fun f2 ->
@@ -488,10 +485,8 @@ module LIA = struct
           | BoolTerm.Or -> return (Or [ f1; f2 ])
           | BoolTerm.Imply -> return (Or [ neg_formula neg_atom f1; f2 ])
           | _ -> assert false))
-    | App (App (Con (r, _), t1, _), t2, _)
-      when match r with
-           | ExtTerm.Gt | ExtTerm.Lt | ExtTerm.Geq | ExtTerm.Leq -> true
-           | _ -> false -> (
+    | App (App (Con ((ExtTerm.(Gt | Lt | Geq | Leq) as r), _), t1, _), t2, _)
+      -> (
         Option.(
           Affine.of_term t1 >>= fun a1 ->
           Affine.of_term t2 >>= fun a2 ->
@@ -501,8 +496,11 @@ module LIA = struct
           | ExtTerm.Geq -> return (Atom (Gt0 Affine.(a1 - a2 + of_z Z.one)))
           | ExtTerm.Leq -> return (Atom (Gt0 Affine.(a2 - a1 + of_z Z.one)))
           | _ -> assert false))
-    | App (App (TyApp (Con (r, _), IntTerm.SInt, _), t1, _), t2, _)
-      when match r with ExtTerm.Eq | ExtTerm.Neq -> true | _ -> false -> (
+    | App
+        ( App
+            (TyApp (Con ((ExtTerm.(Eq | Neq) as r), _), IntTerm.SInt, _), t1, _),
+          t2,
+          _ ) -> (
         Option.(
           Affine.of_term t1 >>= fun a1 ->
           Affine.of_term t2 >>= fun a2 ->
@@ -516,8 +514,13 @@ module LIA = struct
               let lt = Atom (Gt0 Affine.(a2 - a1)) in
               return (Or [ gt; lt ])
           | _ -> assert false))
-    | App (App (TyApp (Con (r, _), BoolTerm.SBool, _), t1, _), t2, _)
-      when match r with ExtTerm.Eq | ExtTerm.Neq -> true | _ -> false -> (
+    | App
+        ( App
+            ( TyApp (Con ((ExtTerm.(Eq | Neq) as r), _), BoolTerm.SBool, _),
+              t1,
+              _ ),
+          t2,
+          _ ) -> (
         Option.(
           formula_of_term t1 >>= fun a1 ->
           formula_of_term t2 >>= fun a2 ->
@@ -553,40 +556,37 @@ module LIA = struct
             ]
 
   let ub model tvar f =
-    atoms f
-    |> List.filter_map ~f:(function
-         | Gt0 a ->
-             if Z.Compare.(eval_affine model a > Z.zero) then
-               match find_var_affine tvar a with
-               | None -> None
-               | Some (c, s) ->
-                   if Z.Compare.(c < Z.zero) then Some (c, s) else None
-             else None
-         | _ -> None)
+    List.filter_map (atoms f) ~f:(function
+      | Gt0 a ->
+          if Z.Compare.(eval_affine model a > Z.zero) then
+            match find_var_affine tvar a with
+            | None -> None
+            | Some (c, s) ->
+                if Z.Compare.(c < Z.zero) then Some (c, s) else None
+          else None
+      | _ -> None)
 
   let lb model tvar f =
-    atoms f
-    |> List.filter_map ~f:(function
-         | Gt0 a ->
-             if Z.Compare.(eval_affine model a > Z.zero) then
-               match find_var_affine tvar a with
-               | None -> None
-               | Some (c, s) ->
-                   if Z.Compare.(c > Z.zero) then Some (c, s) else None
-             else None
-         | _ -> None)
+    List.filter_map (atoms f) ~f:(function
+      | Gt0 a ->
+          if Z.Compare.(eval_affine model a > Z.zero) then
+            match find_var_affine tvar a with
+            | None -> None
+            | Some (c, s) ->
+                if Z.Compare.(c > Z.zero) then Some (c, s) else None
+          else None
+      | _ -> None)
 
   let div model tvar f =
-    atoms f
-    |> List.filter_map ~f:(function
-         | Div (d, a) ->
-             if Z.(Compare.(erem (eval_affine model a) d = zero)) then
-               match find_var_affine tvar a with
-               | None -> None
-               | Some (c, s) ->
-                   if Z.Compare.(c <> Z.zero) then Some (d, (c, s)) else None
-             else None
-         | _ -> None)
+    List.filter_map (atoms f) ~f:(function
+      | Div (d, a) ->
+          if Z.(Compare.(erem (eval_affine model a) d = zero)) then
+            match find_var_affine tvar a with
+            | None -> None
+            | Some (c, s) ->
+                if Z.Compare.(c <> Z.zero) then Some (d, (c, s)) else None
+          else None
+      | _ -> None)
 
   let lcm_of_list l = List.fold ~init:Z.one ~f:Z.lcm l
 
@@ -597,40 +597,36 @@ module LIA = struct
 
   let lub model tvar f =
     let delta = delta model tvar f in
-    ub model tvar f
-    |> List.map ~f:(fun (a, t) ->
-           let a = Z.(~-a) in
-           let ev_tvar =
-             match Map.Poly.find model tvar with
-             | Some v -> v
-             | None -> default_value
-           in
-           let t_minus_one = Affine.(t - of_z Z.one) in
-           let b =
-             Z.(erem ((eval_affine model t_minus_one /< a) - ev_tvar) delta)
-           in
-           assert (Z.(Compare.( >= ) b zero));
-           let term = (t_minus_one, a, Z.(~-b)) in
-           term)
+    List.map (ub model tvar f) ~f:(fun (a, t) ->
+        let a = Z.(~-a) in
+        let ev_tvar =
+          match Map.Poly.find model tvar with
+          | Some v -> v
+          | None -> default_value
+        in
+        let t_minus_one = Affine.(t - of_z Z.one) in
+        let b =
+          Z.(erem ((eval_affine model t_minus_one /< a) - ev_tvar) delta)
+        in
+        assert (Z.(Compare.( >= ) b zero));
+        let term = (t_minus_one, a, Z.(~-b)) in
+        term)
     |> List.min_elt ~compare:(fun t1 t2 ->
            Z.compare (eval_term model t1) (eval_term model t2))
 
   let glb model tvar f =
     let delta = delta model tvar f in
-    lb model tvar f
-    |> List.map ~f:(fun (a, t) ->
-           let t = Affine.(~-t) in
-           let ev_tvar =
-             match Map.Poly.find model tvar with
-             | Some v -> v
-             | None -> default_value
-           in
-           let b =
-             Z.(erem (ev_tvar - (eval_affine model t /< a) - one) delta)
-           in
-           assert (Z.(Compare.( >= ) b zero));
-           let term = (t, a, Z.(b + one)) in
-           term)
+    List.map (lb model tvar f) ~f:(fun (a, t) ->
+        let t = Affine.(~-t) in
+        let ev_tvar =
+          match Map.Poly.find model tvar with
+          | Some v -> v
+          | None -> default_value
+        in
+        let b = Z.(erem (ev_tvar - (eval_affine model t /< a) - one) delta) in
+        assert (Z.(Compare.( >= ) b zero));
+        let term = (t, a, Z.(b + one)) in
+        term)
     |> List.max_elt ~compare:(fun t1 t2 ->
            Z.compare (eval_term model t1) (eval_term model t2))
 
@@ -739,7 +735,8 @@ module RTerm = struct
 
   let ( + ) a b =
     Map.Poly.merge a b ~f:(fun ~key:_ -> function
-      | `Left c | `Right c -> Some c | `Both (c1, c2) -> Some Q.(c1 + c2))
+      | `Left c | `Right c -> Some c
+      | `Both (c1, c2) -> Some Q.(c1 + c2))
 
   let ( ~- ) a = Map.Poly.map a ~f:Q.neg
   let ( - ) a b = a + ~-b
@@ -854,8 +851,7 @@ module LRA = struct
     | Gt0 t -> Gt0 (rename_var_term v v' t)
 
   let rec formula_of_term = function
-    | Bin (b, var, sort, term, _)
-      when match b with Forall | Exists -> true | _ -> false -> (
+    | Bin (((Forall | Exists) as b), var, sort, term, _) -> (
         Option.(
           formula_of_term term >>= fun f ->
           match b with
@@ -864,10 +860,7 @@ module LRA = struct
           | _ -> assert false))
     | App (Con (BoolTerm.Not, _), t, _) ->
         Option.(formula_of_term t >>= fun f -> return (neg_formula neg_atom f))
-    | App (App (Con (r, _), t1, _), t2, _)
-      when match r with
-           | BoolTerm.And | BoolTerm.Or | BoolTerm.Imply -> true
-           | _ -> false -> (
+    | App (App (Con ((BoolTerm.(And | Or | Imply) as r), _), t1, _), t2, _) -> (
         Option.(
           formula_of_term t1 >>= fun f1 ->
           formula_of_term t2 >>= fun f2 ->
@@ -876,28 +869,37 @@ module LRA = struct
           | BoolTerm.Or -> return (Or [ f1; f2 ])
           | BoolTerm.Imply -> return (Or [ neg_formula neg_atom f1; f2 ])
           | _ -> assert false))
-    | App (App (Con (r, _), t1, _), t2, _)
-      when match r with
-           | ExtTerm.Gt | ExtTerm.Lt | ExtTerm.Geq
-           | ExtTerm.Leq (*TODO: remove*)
-           | ExtTerm.RGt | ExtTerm.RLt | ExtTerm.RGeq | ExtTerm.RLeq ->
-               true
-           | _ -> false -> (
+    | App
+        ( App
+            ( Con
+                ( (ExtTerm.(
+                     ( Gt | Lt | Geq | Leq (*TODO: remove*)
+                     | RGt | RLt | RGeq | RLeq )) as r),
+                  _ ),
+              t1,
+              _ ),
+          t2,
+          _ ) -> (
         Option.(
           RTerm.of_term t1 >>= fun a1 ->
           RTerm.of_term t2 >>= fun a2 ->
           match r with
-          | ExtTerm.Gt | ExtTerm.RGt -> return (Atom (Gt0 RTerm.(a1 - a2)))
-          | ExtTerm.Lt | ExtTerm.RLt -> return (Atom (Gt0 RTerm.(a2 - a1)))
-          | ExtTerm.Geq | ExtTerm.RGeq ->
+          | ExtTerm.(Gt | RGt) -> return (Atom (Gt0 RTerm.(a1 - a2)))
+          | ExtTerm.(Lt | RLt) -> return (Atom (Gt0 RTerm.(a2 - a1)))
+          | ExtTerm.(Geq | RGeq) ->
               return
                 (Or [ Atom (Eq0 RTerm.(a1 - a2)); Atom (Gt0 RTerm.(a1 - a2)) ])
-          | ExtTerm.Leq | ExtTerm.RLeq ->
+          | ExtTerm.(Leq | RLeq) ->
               return
                 (Or [ Atom (Eq0 RTerm.(a2 - a1)); Atom (Gt0 RTerm.(a2 - a1)) ])
           | _ -> assert false))
-    | App (App (TyApp (Con (r, _), RealTerm.SReal, _), t1, _), t2, _)
-      when match r with ExtTerm.Eq | ExtTerm.Neq -> true | _ -> false -> (
+    | App
+        ( App
+            ( TyApp (Con ((ExtTerm.(Eq | Neq) as r), _), RealTerm.SReal, _),
+              t1,
+              _ ),
+          t2,
+          _ ) -> (
         Option.(
           RTerm.of_term t1 >>= fun a1 ->
           RTerm.of_term t2 >>= fun a2 ->
@@ -907,8 +909,13 @@ module LRA = struct
               return
                 (Or [ Atom (Gt0 RTerm.(a1 - a2)); Atom (Gt0 RTerm.(a2 - a1)) ])
           | _ -> assert false))
-    | App (App (TyApp (Con (r, _), BoolTerm.SBool, _), t1, _), t2, _)
-      when match r with ExtTerm.Eq | ExtTerm.Neq -> true | _ -> false -> (
+    | App
+        ( App
+            ( TyApp (Con ((ExtTerm.(Eq | Neq) as r), _), BoolTerm.SBool, _),
+              t1,
+              _ ),
+          t2,
+          _ ) -> (
         Option.(
           formula_of_term t1 >>= fun a1 ->
           formula_of_term t2 >>= fun a2 ->
@@ -924,7 +931,9 @@ module LRA = struct
               let ft = And [ neg_formula neg_atom a1; a2 ] in
               return (Or [ tf; ft ])
           | _ -> assert false))
-    | _ -> None
+    | t ->
+        if false then print_endline @@ Logic.ExtTerm.str_of t;
+        None
 
   let term_of_atom = function
     | Eq0 t ->
@@ -981,11 +990,7 @@ module LRA = struct
 
   let rec ub_and_lb model tvar = function
     | Atom a -> (ub_atom model tvar a, lb_atom model tvar a)
-    | And l ->
-        List.fold l ~init:(Set.Poly.empty, Set.Poly.empty) ~f:(fun (ub, lb) a ->
-            let newub, newlb = ub_and_lb model tvar a in
-            (Set.union ub newub, Set.union lb newlb))
-    | Or l ->
+    | And l | Or l ->
         List.fold l ~init:(Set.Poly.empty, Set.Poly.empty) ~f:(fun (ub, lb) a ->
             let newub, newlb = ub_and_lb model tvar a in
             (Set.union ub newub, Set.union lb newlb))

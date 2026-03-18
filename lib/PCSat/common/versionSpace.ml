@@ -3,12 +3,11 @@ open Common.Ext
 open Common.Combinator
 open Ast
 open Ast.LogicOld
-open Ast.HypSpace
 
 type examples = ClauseGraph.t
 
 (* hypothesis space of function variables *)
-type hspaces = (Ident.tvar, hspace) Hashtbl.Poly.t
+type hspaces = (Ident.tvar, HypSpace.hspace) Hashtbl.Poly.t
 type truth_table = TruthTable.t
 type labeling = (Ident.pvar, (int, int) Map.Poly.t) Map.Poly.t * bool
 
@@ -73,17 +72,204 @@ let hspace_of_pvar (Ident.Pvar name) t =
   | Some cs -> cs
   | None ->
       let new_comp =
-        {
-          depth = -1;
-          params = [];
-          quals = Set.Poly.empty;
-          qdeps = Map.Poly.empty;
-          terms = Set.Poly.empty;
-          consts = Set.Poly.empty;
-        }
+        HypSpace.
+          {
+            depth = -1;
+            params = [];
+            quals = Set.Poly.empty;
+            qdeps = Map.Poly.empty;
+            terms = Set.Poly.empty;
+            consts = Set.Poly.empty;
+          }
       in
       Hashtbl.Poly.add_exn t.hspaces ~key:(Ident.Tvar name) ~data:new_comp;
       new_comp
+
+(* begin ParityPredicate / NWFPredicate *)
+
+type parameter = {
+  np : int;
+  ndc : int;
+  nl : int;
+  depth : int;
+  ubrc : Z.t option;
+  ubrd : Z.t option;
+  ubdc : Z.t option;
+  ubdd : Z.t option;
+  ds : Z.t Set.Poly.t;
+}
+
+type templ =
+  | NWF of
+      ((Ident.tvar, Term.t array array array) Hashtbl.t
+      * (Ident.tvar, Term.t array array array) Hashtbl.t
+      * (Ident.tvar, Term.t array array) Hashtbl.t)
+  | Parity of
+      ((Ident.tvar, Term.t array array array array) Hashtbl.t
+      * (Ident.tvar, Term.t array array array array) Hashtbl.t
+      * (Ident.tvar, Term.t array array) Hashtbl.t)
+
+let shared_info :
+    ( int option * Ident.tvar,
+      (parameter ref * parameter ref)
+      * (templ
+        * (Ident.tvar, Formula.t Set.Poly.t * Term.t Set.Poly.t) Hashtbl.t) )
+    Hashtbl.t =
+  Hashtbl.Poly.create ()
+
+let initialize_predicates id t kind_map (*quals_terms_map*) =
+  Hashtbl.Poly.iteri t.hspaces ~f:(fun ~key ~data:_ ->
+      match Map.Poly.find kind_map key with
+      | Some (Kind.NWF (nwf, _)) -> (
+          match Hashtbl.Poly.find shared_info (id, nwf.name) with
+          | Some (_, (NWF (rcs, dcs, qds), qual_term_map)) ->
+              Hashtbl.Poly.(
+                clear rcs;
+                clear dcs;
+                clear qds;
+                clear qual_term_map)
+          | _ -> assert false)
+      | Some (Kind.Parity (nwf, _)) -> (
+          match Hashtbl.Poly.find shared_info (id, nwf.name) with
+          | Some (_, (Parity (rcs, dcs, qds), qual_term_map)) ->
+              Hashtbl.Poly.(
+                clear rcs;
+                clear dcs;
+                clear qds;
+                clear qual_term_map)
+          | _ -> assert false)
+      | _ -> ());
+  Hashtbl.Poly.iteri t.hspaces ~f:(fun ~key ~data ->
+      (*let ref_quals, ref_terms, _ref_consts =
+        Map.Poly.find_exn quals_terms_map key
+      in*)
+      let quals0 = (*if true (*ToDo*) then !ref_quals else*) data.quals in
+      let terms0 = (*if true (*ToDo*) then !ref_terms else*) data.terms in
+      if false then (
+        print_endline "qualifiers and terms for template generation:";
+        print_endline
+          (sprintf "quals: %s"
+          @@ String.concat_map_set ~sep:"," quals0 ~f:Formula.str_of);
+        print_endline
+          (sprintf "terms: %s"
+          @@ String.concat_map_set ~sep:"," terms0 ~f:Term.str_of));
+      match Map.Poly.find kind_map key with
+      | Some (Kind.NWF (nwf, (tag_l, tag_r))) ->
+          let sorts_l = Hashtbl.Poly.find_exn nwf.sorts_map tag_l in
+          let sorts_r = Hashtbl.Poly.find_exn nwf.sorts_map tag_r in
+          let params_shared =
+            LogicOld.sort_env_list_of_sorts ~pre:"" nwf.sorts_shared
+          in
+          let params_left =
+            LogicOld.sort_env_list_of_sorts ~pre:""
+              ~start:(List.length nwf.sorts_shared)
+              sorts_l
+          in
+          let params_right =
+            LogicOld.sort_env_list_of_sorts ~pre:""
+              ~start:(List.length nwf.sorts_shared + List.length sorts_l)
+              sorts_r
+          in
+          Hashtbl.Poly.update shared_info (id, nwf.name) ~f:(function
+            | Some (params, (NWF templ, qual_term_map)) ->
+                let _ =
+                  let quals' =
+                    Templ.quals_over_set quals0 (params_shared @ params_left)
+                  in
+                  let terms' =
+                    Templ.terms_over_set terms0 (params_shared @ params_left)
+                  in
+                  Hashtbl.Poly.update qual_term_map tag_l ~f:(function
+                    | Some (quals, terms) ->
+                        (Set.union quals quals', Set.union terms terms')
+                    | None -> (quals', terms'))
+                in
+                let ren =
+                  ren_of_sort_env_list params_right
+                    (LogicOld.sort_env_list_of_sorts ~pre:""
+                       ~start:(List.length nwf.sorts_shared)
+                       sorts_r)
+                in
+                let quals' =
+                  Set.Poly.map ~f:(Formula.rename ren)
+                  @@ Templ.quals_over_set quals0 (params_shared @ params_right)
+                in
+                let terms' =
+                  Set.Poly.map ~f:(Term.rename ren)
+                  @@ Templ.terms_over_set terms0 (params_shared @ params_right)
+                in
+                Hashtbl.Poly.update qual_term_map tag_r ~f:(function
+                  | Some (quals, terms) ->
+                      (Set.union quals quals', Set.union terms terms')
+                  | None -> (quals', terms'));
+                (params, (NWF templ, qual_term_map))
+            | _ -> assert false)
+      | Some (Kind.Parity (nwf, (tag_l, tag_r))) ->
+          assert (List.is_empty nwf.sorts_shared);
+          let sorts_l = Hashtbl.Poly.find_exn nwf.sorts_map tag_l in
+          let sorts_r = Hashtbl.Poly.find_exn nwf.sorts_map tag_r in
+          let params_left = LogicOld.sort_env_list_of_sorts ~pre:"" sorts_l in
+          let params_right =
+            LogicOld.sort_env_list_of_sorts ~pre:"" ~start:(List.length sorts_l)
+              sorts_r
+          in
+          Hashtbl.Poly.update shared_info (id, nwf.name) ~f:(function
+            | Some (params, (Parity templ, qual_term_map)) ->
+                let _ =
+                  let quals' = Templ.quals_over_set quals0 params_left in
+                  let terms' = Templ.terms_over_set terms0 params_left in
+                  if false then (
+                    print_endline
+                      (sprintf "quals0: %s"
+                      @@ String.concat_map_set ~sep:"," quals0 ~f:Formula.str_of
+                      );
+                    print_endline
+                      ("params_left: "
+                      ^ String.concat_map_list ~sep:","
+                          ~f:(fst >> Ident.name_of_tvar)
+                          params_left);
+                    print_endline
+                      (sprintf "adding quals: %s"
+                      @@ String.concat_map_set ~sep:"," quals' ~f:Formula.str_of
+                      ));
+                  Hashtbl.Poly.update qual_term_map tag_l ~f:(function
+                    | Some (quals, terms) ->
+                        (Set.union quals quals', Set.union terms terms')
+                    | None -> (quals', terms'))
+                in
+                let ren =
+                  ren_of_sort_env_list params_right
+                    (LogicOld.sort_env_list_of_sorts ~pre:"" sorts_r)
+                in
+                let quals' =
+                  Set.Poly.map ~f:(Formula.rename ren)
+                  @@ Templ.quals_over_set quals0 params_right
+                in
+                let terms' =
+                  Set.Poly.map ~f:(Term.rename ren)
+                  @@ Templ.terms_over_set terms0 params_right
+                in
+                if false then (
+                  print_endline
+                    (sprintf "quals0: %s"
+                    @@ String.concat_map_set ~sep:"," quals0 ~f:Formula.str_of);
+                  print_endline
+                    ("params_right: "
+                    ^ String.concat_map_list ~sep:","
+                        ~f:(fst >> Ident.name_of_tvar)
+                        params_left);
+                  print_endline
+                    (sprintf "adding quals: %s"
+                    @@ String.concat_map_set ~sep:"," quals' ~f:Formula.str_of));
+                Hashtbl.Poly.update qual_term_map tag_r ~f:(function
+                  | Some (quals, terms) ->
+                      (Set.union quals quals', Set.union terms terms')
+                  | None -> (quals', terms'));
+                (params, (Parity templ, qual_term_map))
+            | _ -> assert false)
+      | _ -> ())
+
+(* end ParityPredicate / NWFPredicate *)
 
 let terms_of_pvar pvar t = (hspace_of_pvar pvar t).terms
 let consts_of_pvar pvar t = (hspace_of_pvar pvar t).consts
@@ -107,21 +293,7 @@ let add_examples t examples =
 
 let set_examples examples t = { t with examples }
 let set_pos_neg_und_examples examples t = { t with examples }
-
-let update_hspace pvar hspace t =
-  match Hashtbl.Poly.find t.hspaces pvar with
-  | None -> Hashtbl.Poly.add_exn t.hspaces ~key:pvar ~data:hspace
-  | Some hspace' ->
-      Hashtbl.Poly.set t.hspaces ~key:pvar
-        ~data:
-          {
-            hspace with
-            quals = Set.union hspace.quals hspace'.quals;
-            qdeps = Map.force_merge hspace.qdeps hspace'.qdeps;
-            terms = Set.union hspace.terms hspace'.terms;
-            consts = Set.union hspace.consts hspace'.consts;
-          }
-
+let set_hspace pvar hspace t = Hashtbl.Poly.set t.hspaces ~key:pvar ~data:hspace
 let set_truth_table truth_table t = { t with truth_table }
 
 let update_truth_table ~id t =
@@ -246,14 +418,13 @@ let add_bound_as_learned_clause ~print id pfwcsp vs pvar
           List.filteri pred_params ~f:(fun i _ -> args_log.(i))
         in
         let uni_senv =
-          Map.force_merge param_senv @@ Map.Poly.of_alist_exn
-          @@ List.append pred_params
-          @@ List.map aux_params ~f:(fun (_, v2, s) -> (v2, s))
+          Map.force_merge param_senv @@ Map.Poly.of_alist_exn @@ pred_params
+          @ List.map aux_params ~f:(fun (_, v2, s) -> (v2, s))
         in
         let sub =
           Map.Poly.of_alist_exn
           @@ List.map aux_params ~f:(fun (v1, v2, _) ->
-                 (v1, Logic.ExtTerm.mk_var v2))
+              (v1, Logic.ExtTerm.mk_var v2))
         in
         (pred_params, uni_senv, Logic.ExtTerm.subst sub term)
       in
@@ -290,7 +461,7 @@ let add_bound_as_learned_clause ~print id pfwcsp vs pvar
             Set.Poly.empty,
             Logic.BoolTerm.neg_of term ))
 
-let str_of_hspace name hspace =
+let str_of_hspace name (hspace : HypSpace.hspace) =
   sprintf
     "\n\
      ===== [%s](%s) =====\n\n\
@@ -359,15 +530,15 @@ let vec_of_exatom ?(enc_bool_to_float = 100.0) ?(ignore_bool_args = false) map a
       ( List.mapi ~f:(fun i x -> (i, x))
         @@ List.filter_map ~f:Fn.id
         @@ List.map2_exn args sorts ~f:(fun t s ->
-               match (s, Term.value_of t) with
-               | T_bool.SBool, Value.Bool v ->
-                   if ignore_bool_args then None
-                   else if v then Some enc_bool_to_float
-                   else Some (-.enc_bool_to_float)
-               | T_int.SInt, Value.Int v -> Some (Z.to_float v)
-               | T_real.SReal, Value.Real v -> Some (Q.to_float v)
-               | T_bv.SBV _, Value.BV (_, v) -> Some (Z.to_float v) (*ToDo*)
-               | _ -> assert false),
+            match (s, Term.value_of t) with
+            | T_bool.SBool, Value.Bool v ->
+                if ignore_bool_args then None
+                else if v then Some enc_bool_to_float
+                else Some (-.enc_bool_to_float)
+            | T_int.SInt, Value.Int v -> Some (Z.to_float v)
+            | T_real.SReal, Value.Real v -> Some (Q.to_float v)
+            | T_bv.SBV _, Value.BV (_, v) -> Some (Z.to_float v) (*ToDo*)
+            | _ -> assert false),
         Hashtbl.find_exn map @@ Ident.name_of_pvar pvar )
   | _ -> assert false
 
@@ -396,8 +567,8 @@ let variance_of_vecs (pred_num, vecs) =
 let variances_of_bags bags (* ToDo: fix *) =
   List.map ~f:variance_of_vecs
   @@ List.map ~f:(fun a ->
-         ( snd @@ List.hd_exn a,
-           List.map a ~f:(fun (vecs, _) -> List.map ~f:snd vecs) ))
+      ( snd @@ List.hd_exn a,
+        List.map a ~f:(fun (vecs, _) -> List.map ~f:snd vecs) ))
   @@ List.classify (fun (_, pred_num1) (_, pred_num2) -> pred_num1 = pred_num2)
   @@ List.map ~f:fst
   @@ List.concat_map ~f:fst bags

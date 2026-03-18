@@ -1,0 +1,5 @@
+X 1.0 0.0 >= 2.0
+s.t.
+X (n : real) (b : real) : real =mu
+  if n >= 1.0 then 0.5 * X (n - 1.0) (b + 2.0) + 0.5 * X (n + 1.0) (b - 2.0)
+  else if b >= 0.0 then b else 0.0;

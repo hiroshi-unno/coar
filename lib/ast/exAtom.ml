@@ -116,7 +116,7 @@ let to_atom atm =
 
 let to_old_formula pos = function
   | FCon (param_senv, phi) ->
-      (param_senv, (if pos then Fn.id else Formula.mk_neg ~info:Dummy) @@ phi)
+      (param_senv, (if pos then Fn.id else Formula.mk_neg ~info:Dummy) phi)
   | PApp ((pvar, sorts), terms) ->
       ( Map.Poly.empty,
         (if pos then Fn.id else Formula.mk_neg ~info:Dummy)
@@ -166,7 +166,7 @@ let to_formula_and_cond atm =
 let str_of_papp ((Ident.Pvar ident, _), terms) =
   sprintf "%s(%s)" ident
   @@ String.concat_mapi_list ~sep:", " terms ~f:(fun _i ->
-         (*sprintf "[x%d] %s" (i+1) @@*) Term.str_of ~priority:Priority.comma)
+      (*sprintf "[x%d] %s" (i+1) @@*) Term.str_of ~priority:Priority.comma)
 
 let str_of = function
   | FCon (_, phi) -> Formula.str_of phi
@@ -307,7 +307,7 @@ let normalize_params atm =
   let map =
     Map.Poly.of_alist_exn
     @@ List.mapi tvs ~f:(fun i x ->
-           (x, Ident.mk_dontcare (string_of_int (i + 1))))
+        (x, Ident.mk_dontcare (string_of_int (i + 1))))
   in
   rename map atm
 

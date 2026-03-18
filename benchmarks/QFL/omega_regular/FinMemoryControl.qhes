@@ -1,0 +1,30 @@
+ASAT (a : real) (l : real) (m : real) (p : real) (q : real) s.t.
+X2_b0 (x : real) : real =nu
+  if x >= 100.0
+    then if p * x <= q then X_b1 (x + w - 1.0) else X_b0 (x + w - 1.0)
+    else Y;
+X2_b1 (x : real) : real =nu
+  if x >= 100.0
+    then if l * x <= m then X_b1 (x + a + w) else X_b0 (x + a + w)
+    else Y;
+X3_b0 (x : real) : real =mu
+  if x <= 0.0
+    then if p * x <= q then X_b1 (x + w - 1.0) else X_b0 (x + w - 1.0)
+    else Y;
+X3_b1 (x : real) : real =mu
+  if x <= 0.0
+    then if l * x <= m then X_b1 (x + a + w) else X_b0 (x + a + w)
+    else Y;
+X4_b0 (x : real) : real =nu
+  if 0.0 < x and x < 100.0
+    then if p * x <= q then X_b1 (x + w - 1.0) else X_b0 (x + w - 1.0)
+    else Y;
+X4_b1 (x : real) : real =nu
+  if 0.0 < x and x < 100.0
+    then if l * x <= m then X_b1 (x + a + w) else X_b0 (x + a + w)
+    else Y;
+X_b0 (x : real) : real =nu
+  if x >= 100.0 then X2_b0 x else if x <= 0.0 then X3_b0 x else X4_b0 x;
+X_b1 (x : real) : real =nu
+  if x >= 100.0 then X2_b1 x else if x <= 0.0 then X3_b1 x else X4_b1 x;
+Y : real =nu Y;

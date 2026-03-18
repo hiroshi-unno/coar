@@ -1,0 +1,10 @@
+ASAT s.t.
+X2 (x : real) : real =nu
+  if x <= 30.0 then if x > 40.0 then (1.0/2.0) * X (x - 6.0) + (1.0/2.0) * X (x - 4.0) else if x >= 25.0 then (1.0/2.0) * X (x - 1.5) + (1.0/2.0) * X (x + 0.5) else (1.0/2.0) * X (x - 1.1) + (1.0/2.0) * X (x + 0.9) else Y;
+X3 (x : real) : real =mu
+  if 30.0 < x and x <= 50.0 then if x > 40.0 then (1.0/2.0) * X (x - 6.0) + (1.0/2.0) * X (x - 4.0) else if x >= 25.0 then (1.0/2.0) * X (x - 1.5) + (1.0/2.0) * X (x + 0.5) else (1.0/2.0) * X (x - 1.1) + (1.0/2.0) * X (x + 0.9) else Y;
+X3_sink (x : real) : real =mu
+  if 60.0 < x and x <= 50.0 then if x > 40.0 then (1.0/2.0) * X3_sink (x - 6.0) + (1.0/2.0) * X3_sink (x - 4.0) else if x >= 25.0 then (1.0/2.0) * X3_sink (x - 1.5) + (1.0/2.0) * X3_sink (x + 0.5) else (1.0/2.0) * X3_sink (x - 1.1) + (1.0/2.0) * X3_sink (x + 0.9) else Y;
+X (x : real) : real =nu
+  if x <= 30.0 then X2 x else if x <= 60.0 then X3 x else X3_sink x;
+Y : real =nu Y;

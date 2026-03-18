@@ -9,18 +9,24 @@ open Problem
 (*val typeinf : print:(string lazy_t -> unit) -> t -> t*)
 let typeinf ~print muclp =
   (* ToDo: infer types of mutually recursive predicates *)
+  let senv =
+    Map.Poly.map_keys_exn
+      (Map.Poly.map (penv_of muclp) ~f:(fun sargs ->
+           Sort.mk_fun (sargs @ [ T_bool.SBool ])))
+      ~f:Ident.pvar_to_tvar
+  in
   {
     preds =
       List.map muclp.preds ~f:(fun pred ->
           let args, body, _ =
             Formula.mk_forall pred.args pred.body
-            |> Typeinf.typeinf_formula ~print
+            |> Typeinf.typeinf_formula ~print ~senv
                  ~default:(Some T_int.SInt (*ToDo*))
             |> Formula.let_forall
           in
           { pred with args; body });
     query =
-      Typeinf.typeinf_formula ~print ~default:(Some T_int.SInt (*ToDo*))
+      Typeinf.typeinf_formula ~print ~senv ~default:(Some T_int.SInt (*ToDo*))
         muclp.query;
   }
 
@@ -349,9 +355,8 @@ let rec of_lts ~print ?(live_vars = None) ?(cut_points = None) = function
       in
       print @@ lazy (sprintf "LTS:\n%s" @@ LTS.Problem.str_of_lts lts);
       let preds_nu, preds_mu =
-        List.classify
-          (fun (s1, _, _) (s2, _, _) -> String.(s1 = s2))
-          transitions
+        transitions
+        |> List.classify (fun (s1, _, _) (s2, _, _) -> String.(s1 = s2))
         |> List.partition_map ~f:(function
              | [] -> assert false
              | (from, c, to_) :: trs -> (
@@ -360,21 +365,8 @@ let rec of_lts ~print ?(live_vars = None) ?(cut_points = None) = function
                    |> List.map ~f:(fun (c, to_) ->
                           let pvar = pvar_of to_ in
                           let senv = tenv_of to_ in
-                          let phi =
-                            LTS.Problem.wp c
-                              (Formula.mk_atom
-                              @@ Atom.pvar_app_of_senv pvar senv)
-                          in
-                          let nondet_tenv =
-                            Set.to_list
-                            @@ Set.filter
-                                 (Formula.term_sort_env_of phi)
-                                 ~f:
-                                   (fst >> Ident.name_of_tvar
-                                   >> String.is_prefix
-                                        ~prefix:LTS.Problem.nondet_prefix)
-                          in
-                          Formula.mk_forall_if_bounded nondet_tenv phi)
+                          LTS.Problem.wp c
+                            (Formula.mk_atom @@ Atom.pvar_app_of_senv pvar senv))
                    |> Formula.and_of |> Evaluator.simplify
                    |> Normalizer.normalize
                  in

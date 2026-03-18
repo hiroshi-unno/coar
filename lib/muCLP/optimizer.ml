@@ -181,21 +181,35 @@ module Make (Config : Config.ConfigType) = struct
       | Term.Var (tvar, _, _) ->
           (* AV(a) = {a} *)
           Set.Poly.singleton tvar
-      | FunApp ((T_int.Add | T_int.Sub), [ a; b ], _) ->
-          (* AV(a + b) = AV(a - b) = AV(a) + AV(b) - (AV(a) and AV(b))
-             AV(a * b) = AV(a / b) = AV(a % b) = {}
-             AV(-a) = AV(a) *)
-          let av1 = adj_vars_of_term a in
-          let av2 = adj_vars_of_term b in
-          Set.diff (Set.union av1 av2) (Set.inter av1 av2)
-      | FunApp ((T_int.Mul | T_int.Div _ | T_int.Rem _), [ _; _ ], _)
       | FunApp
-          ( ( T_int.Int _
+          ( ( T_int.Int _ | T_real.Real _ | T_bv.BVNum _
             | T_bool.Formula (Formula.Atom (Atom.(True _ | False _), _)) ),
             [],
             _ ) ->
           Set.Poly.empty
-      | FunApp (T_int.Neg, [ a ], _) -> adj_vars_of_term a
+      | FunApp
+          ( ( T_int.(Neg | Abs)
+            | T_real.(RNeg | RAbs)
+            | T_bv.(BVNeg _ (*| BVAbs*)) ),
+            [ a ],
+            _ ) ->
+          (* AV(-a) = AV(|a|) = AV(a) *) adj_vars_of_term a
+      | FunApp
+          ( (T_int.(Add | Sub) | T_real.(RAdd | RSub) | T_bv.(BVAdd _ | BVSub _)),
+            [ a; b ],
+            _ ) ->
+          (* AV(a + b) = AV(a - b) = AV(a) + AV(b) - (AV(a) and AV(b)) *)
+          let av1 = adj_vars_of_term a in
+          let av2 = adj_vars_of_term b in
+          Set.diff (Set.union av1 av2) (Set.inter av1 av2)
+      | FunApp
+          ( ( T_int.(Mul | Div _ | Rem _ | Power)
+            | T_real.(RMul | RDiv | RPower)
+            | T_bv.(BVMul _ | BVDiv _ (*| BVPower _*)) ),
+            [ _; _ ],
+            _ ) ->
+          (* AV(a * b) = AV(a / b) = AV(a % b) = AV(a ^ b) = {} *)
+          Set.Poly.empty
       | term ->
           if true then (*ToDo*) Set.Poly.empty
           else failwith @@ sprintf "unknown operation: %s" (Term.str_of term)
@@ -808,6 +822,10 @@ module Make (Config : Config.ConfigType) = struct
                 ConstReal (Q.( * ) x y)
             | T_real.RDiv, [ ConstReal x; ConstReal y ] ->
                 ConstReal (Q.( / ) x y)
+            | T_real.RPower, [ ConstReal _x; ConstReal _y ] ->
+                NonConst
+                (*ToDo*)
+                (*ConstReal (Q.pow x y)*)
             | T_bv.BVNum (_, _), []
             | ( T_bv.(BVNot _ | BVNeg _ | BVEXTRACT _ | BVSEXT _ | BVZEXT _),
                 [ _ ] )
@@ -1007,12 +1025,13 @@ module Make (Config : Config.ConfigType) = struct
       Problem.make preds query
   end
 
-  let print_log = true
+  let print_log = false
 
   let f ?(id = None) ?(elim_forall = true) ?(elim_exists = true)
       ?(elim_pvar_args = true) muclp =
     let simplify =
-      Problem.map_formula Formula.(elim_unused_bounds >> elim_let (*ToDo*))
+      Problem.map_formula
+        Formula.(elim_redundant_quantifiers >> elim_let (*ToDo*))
     in
     Debug.set_id id;
     if config.enable then

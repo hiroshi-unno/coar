@@ -3,18 +3,23 @@ open Common.Ext
 open Common.Combinator
 open Logic
 
-let eqcs_of phi =
+let eqcs_of ?(only_bvs = None) phi =
   let eqcs, phis =
     List.partition_map (BoolTerm.disjuncts_of phi) ~f:(fun phi ->
         if BoolTerm.is_not phi then
           match Term.let_apps (BoolTerm.let_not phi) with
-          | TyApp (Con (BoolTerm.Eq, _), ty, _), [ Var (x1, _); Var (x2, _) ] ->
+          | TyApp (Con (BoolTerm.Eq, _), ty, _), [ Var (x1, _); Var (x2, _) ]
+            when match only_bvs with
+                 | None -> true
+                 | Some bvs -> Set.mem bvs x1 && Set.mem bvs x2 ->
               First (Set.Poly.of_list [ x1; x2 ], ty)
           | _ -> Second phi
         else
           match Term.let_apps phi with
           | TyApp (Con (BoolTerm.Neq, _), ty, _), [ Var (x1, _); Var (x2, _) ]
-            ->
+            when match only_bvs with
+                 | None -> true
+                 | Some bvs -> Set.mem bvs x1 && Set.mem bvs x2 ->
               First (Set.Poly.of_list [ x1; x2 ], ty)
           | _ -> Second phi)
   in
@@ -37,13 +42,13 @@ let eqcs_of phi =
 
 let elim_eqcls let_bounds bounds (uni_senv, defs, phi) =
   let eqcs, phis1 = eqcs_of phi in
-  let ttsub, phis2 =
+  let sub, phis2 =
     Set.Poly.map eqcs ~f:(fun (eqc, ty) ->
         let bvs, fvs = Set.partition_tf ~f:(Map.Poly.mem bounds) eqc in
         match (Set.to_list bvs, Set.to_list fvs) with
         | [], fv :: fvs' ->
             let tt = Term.mk_var fv in
-            (List.map fvs' ~f:(fun x -> (x, (tt, ty))), [])
+            (List.map fvs' ~f:(fun x -> (x, tt)), [])
         | (bv :: bvs' as bvs), fvs -> (
             match List.find bvs ~f:(Fn.non @@ Map.Poly.mem let_bounds) with
             | None -> (
@@ -55,28 +60,26 @@ let elim_eqcls let_bounds bounds (uni_senv, defs, phi) =
                           BoolTerm.neq_of ty tt (Term.mk_var x)) )
                 | fv :: fvs' ->
                     let tt = Term.mk_var fv in
-                    ( List.map fvs' ~f:(fun x -> (x, (tt, ty))),
+                    ( List.map fvs' ~f:(fun x -> (x, tt)),
                       List.map bvs ~f:(fun x ->
                           BoolTerm.neq_of ty tt (Term.mk_var x)) ))
             | Some bv ->
                 let bvs' = List.filter bvs ~f:(Stdlib.( <> ) bv) in
                 let tt = Term.mk_var bv in
-                ( List.map fvs ~f:(fun x -> (x, (tt, ty))),
+                ( List.map fvs ~f:(fun x -> (x, tt)),
                   List.map bvs' ~f:(fun x ->
                       BoolTerm.neq_of ty tt (Term.mk_var x)) ))
         | _, _ -> assert false)
     |> Set.to_list |> List.unzip
     |> Pair.map List.concat List.concat
   in
-  let sub =
-    Map.Poly.of_alist_exn @@ List.map ttsub ~f:(fun (x, (t, _)) -> (x, t))
-  in
+  let sub = Map.Poly.of_alist_exn sub in
   ( uni_senv,
     List.map defs ~f:(Term.subst sub),
     Term.subst sub @@ BoolTerm.or_of @@ phis1 @ phis2 )
 
 let consts_of bounds phi =
-  match Term.let_apps @@ BoolTerm.nnf_of phi with
+  match Term.let_apps phi with
   | Var (x, _), [] ->
       if Map.Poly.mem bounds x then Second phi
       else First (x, BoolTerm.False, BoolTerm.SBool)
@@ -98,216 +101,272 @@ let consts_of bounds phi =
 
 let elim_consts bounds (uni_senv, defs, phi) =
   let cm, phis1 =
-    List.partition_map (BoolTerm.disjuncts_of phi) ~f:(consts_of bounds)
+    List.map (BoolTerm.disjuncts_of phi) ~f:BoolTerm.nnf_of
+    |> List.partition_map ~f:(consts_of bounds)
   in
-  let ttsub =
-    List.dedup_and_sort ~compare:Stdlib.compare
-    @@ List.map cm ~f:(fun (x, sym, _ty) -> (x, Term.mk_con sym))
-  in
-  if List.contains_dup ~compare:Stdlib.compare @@ List.map ~f:fst ttsub then
-    (uni_senv, [], BoolTerm.mk_bool true)
-  else
-    let sub = Map.Poly.of_alist_exn ttsub in
+  try
+    let sub =
+      List.fold ~init:Map.Poly.empty cm ~f:(fun acc (x, sym, _ty) ->
+          Map.force_add acc x (Term.mk_con sym))
+    in
     ( uni_senv,
       List.map defs ~f:(Term.subst sub),
       Term.subst sub @@ BoolTerm.or_of phis1 )
+  with _ -> (uni_senv, [], BoolTerm.mk_bool true)
 
 let reduce (uni_senv, defs, body) =
   let fvs = Set.Poly.union_list @@ List.map ~f:Term.fvs_of (body :: defs) in
   (Map.Poly.filter_keys uni_senv ~f:(Set.mem fvs), defs, body)
 
 let rec qelim_aux1 let_bounds bounds exi_senv (uni_senv, defs, phi) =
-  let simplify (uni_senv, defs, body) =
-    ( uni_senv,
-      (*ToDo: simplify*) defs,
-      ExtTerm.simplify_formula exi_senv
-        (Map.force_merge let_bounds uni_senv)
-        body )
-  in
-  let bounds' = Map.force_merge_list [ exi_senv; let_bounds; bounds ] in
   let uni_senv', defs', phi' =
-    (uni_senv, defs, phi)
+    let bounds' = Map.force_merge_list [ exi_senv; let_bounds; bounds ] in
+    (uni_senv, defs, phi) |> elim_consts bounds'
     |> elim_eqcls let_bounds bounds'
-    |> elim_consts bounds' |> simplify |> reduce
+    |> reduce
   in
   if Map.Poly.length uni_senv > Map.Poly.length uni_senv' then
     qelim_aux1 let_bounds bounds exi_senv (uni_senv', defs', phi')
   else (uni_senv', defs', phi')
 
-let rec qelim_aux2 let_bounds bounds exi_senv (uni_senv, defs, phi) =
+let qelim_aux2 let_bounds bounds exi_senv (uni_senv, defs, phi0) =
   let bounds' = Map.force_merge_list [ exi_senv; let_bounds; bounds ] in
-  let has_no_inter x t =
-    Set.is_empty
-    @@ Set.inter (Term.fvs_of t) (Set.add (Map.key_set let_bounds) x)
+  let has_no_inter x s =
+    (not @@ Set.mem s x) && Set.disjoint (Map.key_set let_bounds) s
   in
-  let res =
-    List.find_map (BoolTerm.disjuncts_of phi) ~f:(fun phi ->
-        match Term.let_apps @@ BoolTerm.nnf_of phi with
-        | TyApp (Con (BoolTerm.Neq, _), _ty, _), [ Var (x, _); t ]
-          when (not (Map.Poly.mem bounds' x)) && has_no_inter x t ->
-            Some (x, t)
-        | TyApp (Con (BoolTerm.Neq, _), _ty, _), [ t; Var (x, _) ]
-          when (not (Map.Poly.mem bounds' x)) && has_no_inter x t ->
-            Some (x, t)
-        | TyApp (Con (BoolTerm.Eq, _), BoolTerm.SBool, _), [ Var (x, _); t ]
-          when (not (Map.Poly.mem bounds' x)) && has_no_inter x t ->
-            Some (x, BoolTerm.neg_of t)
-        | TyApp (Con (BoolTerm.Eq, _), BoolTerm.SBool, _), [ t; Var (x, _) ]
-          when (not (Map.Poly.mem bounds' x)) && has_no_inter x t ->
-            Some (x, BoolTerm.neg_of t)
-        (* for integers *)
-        | ( TyApp (Con (BoolTerm.Neq, _), _ty, _),
-            [ App (App (Con (s, _), Var (x, _), _), t1, _); t2 ] )
-          when (not (Map.Poly.mem bounds' x))
-               && (Stdlib.(s = IntTerm.Add) || Stdlib.(s = IntTerm.Sub))
-               && has_no_inter x t1 && has_no_inter x t2 ->
-            Some (x, Term.mk_sym_app (IntTerm.neg_sym s) [ t2; t1 ])
-        | ( TyApp (Con (BoolTerm.Neq, _), _ty, _),
-            [ App (App (Con (s, _), t1, _), Var (x, _), _); t2 ] )
-          when (not (Map.Poly.mem bounds' x))
-               && Stdlib.(s = IntTerm.Add)
-               && has_no_inter x t1 && has_no_inter x t2 ->
-            Some (x, Term.mk_sym_app (IntTerm.neg_sym s) [ t2; t1 ])
-        | ( TyApp (Con (BoolTerm.Neq, _), _ty, _),
-            [ App (App (Con (s, _), t1, _), Var (x, _), _); t2 ] )
-          when (not (Map.Poly.mem bounds' x))
-               && Stdlib.(s = IntTerm.Sub)
-               && has_no_inter x t1 && has_no_inter x t2 ->
-            Some (x, Term.mk_sym_app s [ t1; t2 ])
-        | ( TyApp (Con (BoolTerm.Neq, _), _ty, _),
-            [ t2; App (App (Con (s, _), Var (x, _), _), t1, _) ] )
-          when (not (Map.Poly.mem bounds' x))
-               && (Stdlib.(s = IntTerm.Add) || Stdlib.(s = IntTerm.Sub))
-               && has_no_inter x t1 && has_no_inter x t2 ->
-            Some (x, Term.mk_sym_app (IntTerm.neg_sym s) [ t2; t1 ])
-        | ( TyApp (Con (BoolTerm.Neq, _), _ty, _),
-            [ t2; App (App (Con (s, _), t1, _), Var (x, _), _) ] )
-          when (not (Map.Poly.mem bounds' x))
-               && Stdlib.(s = IntTerm.Add)
-               && has_no_inter x t1 && has_no_inter x t2 ->
-            Some (x, Term.mk_sym_app (IntTerm.neg_sym s) [ t2; t1 ])
-        | ( TyApp (Con (BoolTerm.Neq, _), _ty, _),
-            [ t2; App (App (Con (s, _), t1, _), Var (x, _), _) ] )
-          when (not (Map.Poly.mem bounds' x))
-               && Stdlib.(s = IntTerm.Sub)
-               && has_no_inter x t1 && has_no_inter x t2 ->
-            Some (x, Term.mk_sym_app s [ t1; t2 ])
-        (* for reals *)
-        | ( TyApp (Con (BoolTerm.Neq, _), _ty, _),
-            [ App (App (Con (s, _), Var (x, _), _), t1, _); t2 ] )
-          when (not (Map.Poly.mem bounds' x))
-               && (Stdlib.(s = RealTerm.RAdd) || Stdlib.(s = RealTerm.RSub))
-               && has_no_inter x t1 && has_no_inter x t2 ->
-            Some (x, Term.mk_sym_app (RealTerm.neg_sym s) [ t2; t1 ])
-        | ( TyApp (Con (BoolTerm.Neq, _), _ty, _),
-            [ App (App (Con (s, _), t1, _), Var (x, _), _); t2 ] )
-          when (not (Map.Poly.mem bounds' x))
-               && Stdlib.(s = RealTerm.RAdd)
-               && has_no_inter x t1 && has_no_inter x t2 ->
-            Some (x, Term.mk_sym_app (RealTerm.neg_sym s) [ t2; t1 ])
-        | ( TyApp (Con (BoolTerm.Neq, _), _ty, _),
-            [ App (App (Con (s, _), t1, _), Var (x, _), _); t2 ] )
-          when (not (Map.Poly.mem bounds' x))
-               && Stdlib.(s = RealTerm.RSub)
-               && has_no_inter x t1 && has_no_inter x t2 ->
-            Some (x, Term.mk_sym_app s [ t1; t2 ])
-        | ( TyApp (Con (BoolTerm.Neq, _), _ty, _),
-            [ t2; App (App (Con (s, _), Var (x, _), _), t1, _) ] )
-          when (not (Map.Poly.mem bounds' x))
-               && (Stdlib.(s = RealTerm.RAdd) || Stdlib.(s = RealTerm.RSub))
-               && has_no_inter x t1 && has_no_inter x t2 ->
-            Some (x, Term.mk_sym_app (RealTerm.neg_sym s) [ t2; t1 ])
-        | ( TyApp (Con (BoolTerm.Neq, _), _ty, _),
-            [ t2; App (App (Con (s, _), t1, _), Var (x, _), _) ] )
-          when (not (Map.Poly.mem bounds' x))
-               && Stdlib.(s = RealTerm.RAdd)
-               && has_no_inter x t1 && has_no_inter x t2 ->
-            Some (x, Term.mk_sym_app (RealTerm.neg_sym s) [ t2; t1 ])
-        | ( TyApp (Con (BoolTerm.Neq, _), _ty, _),
-            [ t2; App (App (Con (s, _), t1, _), Var (x, _), _) ] )
-          when (not (Map.Poly.mem bounds' x))
-               && Stdlib.(s = RealTerm.RSub)
-               && has_no_inter x t1 && has_no_inter x t2 ->
-            Some (x, Term.mk_sym_app s [ t1; t2 ])
-        (* *)
-        | _ -> None)
-  in
-  let res =
+  let rec loop uni_senv defs phis =
+    let res =
+      List.find_map phis ~f:(fun phi ->
+          match Term.let_apps phi with
+          | TyApp (Con (BoolTerm.Neq, _), _ty, _), [ t1; t2 ] -> (
+              match (t1, t2) with
+              | Var (x, _), t
+                when (not (Map.Poly.mem bounds' x))
+                     && has_no_inter x (Term.fvs_of t) ->
+                  Some (x, t)
+              | t, Var (x, _)
+                when (not (Map.Poly.mem bounds' x))
+                     && has_no_inter x (Term.fvs_of t) ->
+                  Some (x, t)
+              (* for integers *)
+              | ( App
+                    ( App (Con ((IntTerm.(Add | Sub) as s), _), Var (x, _), _),
+                      t1,
+                      _ ),
+                  t2 )
+                when (not (Map.Poly.mem bounds' x))
+                     && has_no_inter x
+                          (Set.union (Term.fvs_of t1) (Term.fvs_of t2)) ->
+                  Some (x, Term.mk_sym_app (IntTerm.neg_sym s) [ t2; t1 ])
+              | ( t2,
+                  App
+                    ( App (Con ((IntTerm.(Add | Sub) as s), _), Var (x, _), _),
+                      t1,
+                      _ ) )
+                when (not (Map.Poly.mem bounds' x))
+                     && has_no_inter x
+                          (Set.union (Term.fvs_of t1) (Term.fvs_of t2)) ->
+                  Some (x, Term.mk_sym_app (IntTerm.neg_sym s) [ t2; t1 ])
+              | ( App (App (Con ((IntTerm.Add as s), _), t1, _), Var (x, _), _),
+                  t2 )
+                when (not (Map.Poly.mem bounds' x))
+                     && has_no_inter x
+                          (Set.union (Term.fvs_of t1) (Term.fvs_of t2)) ->
+                  Some (x, Term.mk_sym_app (IntTerm.neg_sym s) [ t2; t1 ])
+              | t2, App (App (Con ((IntTerm.Add as s), _), t1, _), Var (x, _), _)
+                when (not (Map.Poly.mem bounds' x))
+                     && has_no_inter x
+                          (Set.union (Term.fvs_of t1) (Term.fvs_of t2)) ->
+                  Some (x, Term.mk_sym_app (IntTerm.neg_sym s) [ t2; t1 ])
+              | ( App (App (Con ((IntTerm.Sub as s), _), t1, _), Var (x, _), _),
+                  t2 )
+                when (not (Map.Poly.mem bounds' x))
+                     && has_no_inter x
+                          (Set.union (Term.fvs_of t1) (Term.fvs_of t2)) ->
+                  Some (x, Term.mk_sym_app s [ t1; t2 ])
+              | t2, App (App (Con ((IntTerm.Sub as s), _), t1, _), Var (x, _), _)
+                when (not (Map.Poly.mem bounds' x))
+                     && has_no_inter x
+                          (Set.union (Term.fvs_of t1) (Term.fvs_of t2)) ->
+                  Some (x, Term.mk_sym_app s [ t1; t2 ])
+              (* for reals *)
+              | ( App
+                    ( App (Con ((RealTerm.(RAdd | RSub) as s), _), Var (x, _), _),
+                      t1,
+                      _ ),
+                  t2 )
+                when (not (Map.Poly.mem bounds' x))
+                     && has_no_inter x
+                          (Set.union (Term.fvs_of t1) (Term.fvs_of t2)) ->
+                  Some (x, Term.mk_sym_app (RealTerm.neg_sym s) [ t2; t1 ])
+              | ( t2,
+                  App
+                    ( App (Con ((RealTerm.(RAdd | RSub) as s), _), Var (x, _), _),
+                      t1,
+                      _ ) )
+                when (not (Map.Poly.mem bounds' x))
+                     && has_no_inter x
+                          (Set.union (Term.fvs_of t1) (Term.fvs_of t2)) ->
+                  Some (x, Term.mk_sym_app (RealTerm.neg_sym s) [ t2; t1 ])
+              | ( App (App (Con ((RealTerm.RAdd as s), _), t1, _), Var (x, _), _),
+                  t2 )
+                when (not (Map.Poly.mem bounds' x))
+                     && has_no_inter x
+                          (Set.union (Term.fvs_of t1) (Term.fvs_of t2)) ->
+                  Some (x, Term.mk_sym_app (RealTerm.neg_sym s) [ t2; t1 ])
+              | ( t2,
+                  App (App (Con ((RealTerm.RAdd as s), _), t1, _), Var (x, _), _)
+                )
+                when (not (Map.Poly.mem bounds' x))
+                     && has_no_inter x
+                          (Set.union (Term.fvs_of t1) (Term.fvs_of t2)) ->
+                  Some (x, Term.mk_sym_app (RealTerm.neg_sym s) [ t2; t1 ])
+              | ( App (App (Con ((RealTerm.RSub as s), _), t1, _), Var (x, _), _),
+                  t2 )
+                when (not (Map.Poly.mem bounds' x))
+                     && has_no_inter x
+                          (Set.union (Term.fvs_of t1) (Term.fvs_of t2)) ->
+                  Some (x, Term.mk_sym_app s [ t1; t2 ])
+              | ( t2,
+                  App (App (Con ((RealTerm.RSub as s), _), t1, _), Var (x, _), _)
+                )
+                when (not (Map.Poly.mem bounds' x))
+                     && has_no_inter x
+                          (Set.union (Term.fvs_of t1) (Term.fvs_of t2)) ->
+                  Some (x, Term.mk_sym_app s [ t1; t2 ])
+              | _ -> None)
+          | TyApp (Con (BoolTerm.Eq, _), BoolTerm.SBool, _), [ t1; t2 ] -> (
+              match (t1, t2) with
+              | Var (x, _), t
+                when (not (Map.Poly.mem bounds' x))
+                     && has_no_inter x (Term.fvs_of t) ->
+                  Some (x, BoolTerm.neg_of t)
+              | t, Var (x, _)
+                when (not (Map.Poly.mem bounds' x))
+                     && has_no_inter x (Term.fvs_of t) ->
+                  Some (x, BoolTerm.neg_of t)
+              | _ -> None)
+          | _ -> None)
+    in
+    let res =
+      match res with
+      | Some (x, t) -> Some (x, t)
+      | None ->
+          List.filter_map phis ~f:(fun phi ->
+              match
+                List.map
+                  (BoolTerm.conjuncts_of phi)
+                  ~f:(consts_of Map.Poly.empty)
+              with
+              | [
+               First (x1, sym1, BoolTerm.SBool); First (x2, sym2, BoolTerm.SBool);
+              ]
+                when Stdlib.(x1 <> x2) ->
+                  Some (x1, sym1, x2, sym2)
+              | _ -> None)
+          |> List.find_distinct_pair
+               ~f:(fun (x11, sym11, x12, sym12) (x21, sym21, x22, sym22) ->
+                 if
+                   Stdlib.(
+                     (x11 = x21 && x12 = x22 && sym11 <> sym21)
+                     || (x11 = x22 && x12 = x21 && sym11 <> sym22))
+                 then
+                   if Stdlib.(sym11 = sym12 && sym21 = sym22) then
+                     if
+                       (not (Map.Poly.mem bounds' x11))
+                       && not (Map.Poly.mem let_bounds x12)
+                     then Some (x11, BoolTerm.neg_of @@ Term.mk_var x12)
+                     else if
+                       (not (Map.Poly.mem bounds' x12))
+                       && not (Map.Poly.mem let_bounds x11)
+                     then Some (x12, BoolTerm.neg_of @@ Term.mk_var x11)
+                     else None
+                   else if Stdlib.(sym11 <> sym12 && sym21 <> sym22) then
+                     if
+                       (not (Map.Poly.mem bounds' x11))
+                       && not (Map.Poly.mem let_bounds x12)
+                     then Some (x11, Term.mk_var x12)
+                     else if
+                       (not (Map.Poly.mem bounds' x12))
+                       && not (Map.Poly.mem let_bounds x11)
+                     then Some (x12, Term.mk_var x11)
+                     else None
+                   else None
+                 else None)
+    in
     match res with
-    | Some (x, t) -> Some (x, t)
-    | None ->
-        List.filter_map (BoolTerm.disjuncts_of phi) ~f:(fun phi ->
-            match
-              List.map ~f:(consts_of Map.Poly.empty)
-              @@ BoolTerm.conjuncts_of @@ BoolTerm.nnf_of phi
-            with
-            | [
-             First (x1, sym1, BoolTerm.SBool); First (x2, sym2, BoolTerm.SBool);
-            ] ->
-                Some (x1, sym1, x2, sym2)
-            | _ -> None)
-        |> List.find_distinct_pair
-             ~f:(fun (x11, sym11, x12, sym12) (x21, sym21, x22, sym22) ->
-               if
-                 Stdlib.(
-                   ((x11 = x21 && x12 = x22 && sym11 <> sym21)
-                   || (x11 = x22 && x12 = x21 && sym11 <> sym22))
-                   && x11 <> x12 && sym11 = sym12 && sym21 = sym22)
-               then
-                 if
-                   (not (Map.Poly.mem bounds' x11))
-                   && not (Map.Poly.mem let_bounds x12)
-                 then Some (x11, BoolTerm.neg_of @@ Term.mk_var x12)
-                 else if
-                   (not (Map.Poly.mem bounds' x12))
-                   && not (Map.Poly.mem let_bounds x11)
-                 then Some (x12, BoolTerm.neg_of @@ Term.mk_var x11)
-                 else None
-               else if
-                 Stdlib.(
-                   ((x11 = x21 && x12 = x22 && sym11 <> sym21)
-                   || (x11 = x22 && x12 = x21 && sym11 <> sym22))
-                   && x11 <> x12 && sym11 <> sym12 && sym21 <> sym22)
-               then
-                 if
-                   (not (Map.Poly.mem bounds' x11))
-                   && not (Map.Poly.mem let_bounds x12)
-                 then Some (x11, Term.mk_var x12)
-                 else if
-                   (not (Map.Poly.mem bounds' x12))
-                   && not (Map.Poly.mem let_bounds x11)
-                 then Some (x12, Term.mk_var x11)
-                 else None
-               else None)
+    | Some (x, t) ->
+        let uni_senv' = Map.Poly.remove uni_senv x in
+        let sub =
+          Map.Poly.singleton x @@ ExtTerm.simplify_term exi_senv uni_senv' t
+        in
+        if false then
+          print_endline
+          @@ sprintf "[qelim_aux2] %s ==> %s" (Ident.name_of_tvar x)
+               (ExtTerm.str_of t);
+        loop uni_senv'
+          (List.map ~f:(Term.subst sub) defs)
+          (List.map ~f:(Term.subst sub) phis)
+    | None -> (uni_senv, defs, phis)
   in
-  match res with
-  | Some (x, t) ->
-      let uni_senv' = Map.Poly.remove uni_senv x in
-      let sub =
-        Map.Poly.singleton x @@ ExtTerm.simplify_term exi_senv uni_senv' t
-      in
-      (* print_endline @@ sprintf "[qelim_aux2] %s ==> %s" (Ident.name_of_tvar x) (ExtTerm.str_of t'); *)
-      let phi' =
-        ExtTerm.simplify_formula exi_senv (Map.force_merge let_bounds uni_senv')
-        @@ Term.subst sub phi
-      in
-      qelim_aux2 let_bounds bounds exi_senv
-        (uni_senv', (*ToDo: simplify*) List.map ~f:(Term.subst sub) defs, phi')
-  | None -> (uni_senv, defs, phi)
+  let uni_senv, defs, phis =
+    loop uni_senv defs
+      (List.map ~f:BoolTerm.nnf_of (BoolTerm.disjuncts_of phi0))
+  in
+  (uni_senv, defs, BoolTerm.or_of phis)
 
-let app_qelim let_bounds bounds exi_senv =
-  qelim_aux1 let_bounds bounds exi_senv >> qelim_aux2 let_bounds bounds exi_senv
+let print_log = false
+
+let app_qelim ?(simplify = true) let_bounds bounds exi_senv (uni_senv, defs, phi)
+    =
+  let fvs =
+    Set.diff (Term.fvs_of phi)
+      (Map.key_set @@ Map.force_merge_list [ exi_senv; let_bounds; bounds ])
+  in
+  if Set.is_empty fvs then (
+    if print_log then print_endline "[app_qelim] skipped";
+    (uni_senv, defs, phi))
+  else (
+    if print_log then
+      print_endline
+      @@ sprintf "[app_qelim] begin eliminating %s in %s"
+           (String.concat_map_set ~sep:", " ~f:Ident.name_of_tvar fvs)
+           (LogicOld.Formula.str_of
+           @@ Logic.ExtTerm.to_old_fml exi_senv uni_senv phi);
+    let uni_senv, defs, phi1 =
+      qelim_aux1 let_bounds bounds exi_senv (uni_senv, defs, phi)
+    in
+    if print_log then print_endline "  [app_qelim] qelim_aux1";
+    let uni_senv, defs, phi2 =
+      qelim_aux2 let_bounds bounds exi_senv (uni_senv, defs, phi1)
+    in
+    if print_log then print_endline "  [app_qelim] qelim_aux2";
+    let phi3 =
+      if simplify then
+        ExtTerm.simplify_formula exi_senv
+          (Map.force_merge let_bounds uni_senv)
+          phi2
+      else phi2
+    in
+    (if print_log then
+       let _fvs = Set.diff fvs (Term.fvs_of phi2) in
+       print_endline
+       @@ sprintf "[app_qelim] end: %s"
+            (*(String.concat_map_set ~sep:", " ~f:Ident.name_of_tvar fvs)*)
+            (LogicOld.Formula.str_of
+            @@ Logic.ExtTerm.to_old_fml exi_senv uni_senv phi2));
+    (uni_senv, defs, phi3))
 
 (* eliminate free variables in [defs] and [phi] that are universlly quantified implicitly *)
 (* @param [bounds] variables that must not be eliminated *)
 (* assume that [phi] is alpha-renamed and let-normalized *)
-let rec qelim ?(let_bounds = Map.Poly.empty) bounds exi_senv
+let rec qelim ?(simplify = true) ?(let_bounds = Map.Poly.empty) bounds exi_senv
     (uni_senv, defs, phi) =
   match phi with
   | Let (var, sort, def, body, info) -> (
       let let_bounds' = Map.Poly.set ~key:var ~data:sort let_bounds in
       match
-        qelim ~let_bounds:let_bounds' bounds exi_senv
+        qelim ~simplify ~let_bounds:let_bounds' bounds exi_senv
           (Map.Poly.set uni_senv ~key:var ~data:sort, def :: defs, body)
       with
       | _, [], _ -> assert false
@@ -332,18 +391,21 @@ let rec qelim ?(let_bounds = Map.Poly.empty) bounds exi_senv
                         ~data:(Map.Poly.find_exn senv tvar)
                         acc)
                 in
-                app_qelim let_bounds bounds_def exi_senv (uni_senv, [], def')
+                app_qelim ~simplify let_bounds bounds_def exi_senv
+                  (uni_senv, [], def')
               else (uni_senv, [], def')
             in
             ( Map.force_merge uni_senv_def uni_senv_body',
               defs',
               Let (var, sort, def'', body', info) )
           else (uni_senv_body, defs', body'))
-  | _ -> reduce @@ app_qelim let_bounds bounds exi_senv (uni_senv, defs, phi)
+  | _ ->
+      reduce
+      @@ app_qelim ~simplify let_bounds bounds exi_senv (uni_senv, defs, phi)
 
-let qelim_old bounds exi_senv (uni_senv, phi) =
+let qelim_old ?(simplify = true) bounds exi_senv (uni_senv, phi) =
   let uni_senv', _, phi' =
-    qelim bounds exi_senv (uni_senv, [], ExtTerm.of_old_formula phi)
+    qelim ~simplify bounds exi_senv (uni_senv, [], ExtTerm.of_old_formula phi)
   in
   (uni_senv', ExtTerm.to_old_fml exi_senv uni_senv' phi')
 

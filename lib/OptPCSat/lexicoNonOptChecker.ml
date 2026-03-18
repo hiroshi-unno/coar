@@ -36,35 +36,34 @@ module Make (Config : ConfigType) : NonOptChecker.NonOptCheckerType = struct
       let geqs, gts, env =
         List.unzip3
         @@ List.map priority ~f:(fun p ->
-               let sort = Map.Poly.find_exn delta p in
-               let args, senv = CHCOpt.Problem.mk_fresh_args sort in
-               let dir = Map.Poly.find_exn Config.dir_map p in
-               let geq =
-                 ExtTerm.mk_forall senv @@ ExtTerm.beta_reduction
-                 @@ Term.mk_apps
-                      (CHCOpt.Problem.genc ~is_pos:true dir
-                         (Map.Poly.empty, Map.Poly.empty)
-                         delta theta (p, sort))
-                      args
-               in
-               let mp = mk_ne_tvar p in
-               let gt =
-                 ExtTerm.mk_forall senv
-                 @@ ExtTerm.imply_of
-                      (ExtTerm.beta_reduction (*ToDo*)
-                         (Term.mk_apps
-                            (ExtTerm.mk_lambda senv
-                           @@ ExtTerm.mk_var_app mp args)
-                            args))
-                      (ExtTerm.beta_reduction
-                         (Term.mk_apps
-                            (CHCOpt.Problem.genc ~is_pos:false
-                               (CHCOpt.Problem.reverse_direction dir)
-                               (Map.Poly.empty, Map.Poly.empty)
-                               delta theta (p, sort))
-                            args))
-               in
-               (geq, gt, (mp, sort)))
+            let sort = Map.Poly.find_exn delta p in
+            let args, senv = CHCOpt.Problem.mk_fresh_args sort in
+            let dir = Map.Poly.find_exn Config.dir_map p in
+            let geq =
+              ExtTerm.mk_forall senv @@ ExtTerm.beta_reduction
+              @@ Term.mk_apps
+                   (CHCOpt.Problem.genc ~is_pos:true dir
+                      (Map.Poly.empty, Map.Poly.empty)
+                      delta theta (p, sort))
+                   args
+            in
+            let mp = mk_ne_tvar p in
+            let gt =
+              ExtTerm.mk_forall senv
+              @@ ExtTerm.imply_of
+                   (ExtTerm.beta_reduction (*ToDo*)
+                      (Term.mk_apps
+                         (ExtTerm.mk_lambda senv @@ ExtTerm.mk_var_app mp args)
+                         args))
+                   (ExtTerm.beta_reduction
+                      (Term.mk_apps
+                         (CHCOpt.Problem.genc ~is_pos:false
+                            (CHCOpt.Problem.reverse_direction dir)
+                            (Map.Poly.empty, Map.Poly.empty)
+                            delta theta (p, sort))
+                         args))
+            in
+            (geq, gt, (mp, sort)))
       in
       (ExtTerm.and_of (ExtTerm.or_of gts :: geqs), Map.Poly.of_alist_exn env)
     else

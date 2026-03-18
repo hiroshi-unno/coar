@@ -40,7 +40,7 @@ let to_formula pred =
 let sort_env_of_list preds =
   Set.Poly.of_list @@ Logic.of_old_sort_env_list
   @@ List.map preds ~f:(fun pred ->
-         Term.pred_to_sort_bind (pred.name, List.map pred.args ~f:snd))
+      Term.pred_to_sort_bind (pred.name, List.map pred.args ~f:snd))
 
 let subst tsub pred =
   let tsub = Map.remove_keys tsub (List.map ~f:fst pred.args) in
@@ -50,6 +50,14 @@ let lookup preds pvar =
   match List.find preds ~f:(fun pred -> Stdlib.( = ) pvar pred.name) with
   | Some pred -> Some (pred.kind, pred.args, pred.body)
   | None -> None
+
+let kind_of_exn preds pvar =
+  match lookup preds pvar with
+  | Some (kind, _, _) -> kind
+  | None -> failwith ("[Pred.kind_of_exn] not found: " ^ Ident.name_of_pvar pvar)
+
+let kind_of preds pvar =
+  match lookup preds pvar with Some (kind, _, _) -> Some kind | None -> None
 
 let str_of pred =
   sprintf "%s%s: bool =%s %s;"

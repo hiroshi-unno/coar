@@ -113,14 +113,12 @@ module Make
         |> Normalizer.normalize
         (* |> Z3Smt.Z3interface.z3_simplify ~id:(Some 0) fenv *)
         |> (fun phi ->
-             match
-               Evaluator.check
-                 (Z3Smt.Z3interface.is_valid ~id:(Some 0) fenv)
-                 phi
-             with
-             | Some true -> LogicOld.Formula.mk_true ()
-             | Some false -> LogicOld.Formula.mk_false ()
-             | None -> phi)
+        match
+          Evaluator.check (Z3Smt.Z3interface.is_valid ~id:(Some 0) fenv) phi
+        with
+        | Some true -> LogicOld.Formula.mk_true ()
+        | Some false -> LogicOld.Formula.mk_false ()
+        | None -> phi)
         |> Z3Smt.Z3interface.simplify ~id:(Some 0) fenv ~timeout:(Some 20000)
         (* |> (fun phi -> Debug.print_log ~tag:"2" @@ LogicOld.Formula.str_of phi; phi) *)
         |> ExtTerm.of_old_formula

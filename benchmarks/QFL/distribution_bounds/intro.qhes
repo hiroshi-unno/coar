@@ -1,0 +1,10 @@
+dist (Inv 0.0 1.0 0.0) ensures (x1 : real) (x2 : real) -> (x1 + x2 <= 1.0/10.0)
+s.t. 
+Inv (x : real) (b : real) (t : real) : real =mu
+  if b > 0.0 then 
+       (99.0/100.0) * Inv x b (t + 1.0) + 
+       (1.0/100.0) * (max ( (1.0/10.0) * Inv 1.0 0.0 t  + (9.0/10.0) * Inv 0.0 0.0 t ) ( (1.0/10.0) * Inv 2.0 0.0 t  + (9.0/10.0) * Inv 0.0 0.0 t ))  
+  else Post x y t;
+Post (x : real) (y : real) (t : real) : real =mu
+  if (x >= 2.0) then @1
+  else if (x >= 1.0) then @2 else 0.0;

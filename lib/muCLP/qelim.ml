@@ -57,9 +57,8 @@ module Make (Cfg : Config.ConfigType) = struct
     @@ Atom.mk_pvar_app pvar (List.map ~f:snd @@ bounds0 @ bounds)
     @@ Term.of_sort_env bounds0
     @ List.map bounds ~f:(fun (tvar, sort) ->
-          Term.mk_var tvar sort
-          |>
-          match replacer with Some replacer -> replacer tvar | None -> Fn.id)
+        Term.mk_var tvar sort
+        |> match replacer with Some replacer -> replacer tvar | None -> Fn.id)
 
   let mk_replacer tvar op tvar' term_var =
     if Stdlib.(tvar' = tvar) then op term_var (T_int.one ()) else term_var
@@ -83,13 +82,13 @@ module Make (Cfg : Config.ConfigType) = struct
         @@ Formula.or_of
         @@ body
            :: List.fold ~init:[] bounds ~f:(fun res (tvar, _) ->
-                  mk_app pvar bound_tvars bounds
-                    ~replacer:(mk_replacer tvar T_int.mk_add)
+               mk_app pvar bound_tvars bounds
+                 ~replacer:(mk_replacer tvar T_int.mk_add)
+                 ()
+               :: mk_app pvar bound_tvars bounds
+                    ~replacer:(mk_replacer tvar T_int.mk_sub)
                     ()
-                  :: mk_app pvar bound_tvars bounds
-                       ~replacer:(mk_replacer tvar T_int.mk_sub)
-                       ()
-                  :: res);
+               :: res);
       ],
       mk_app pvar bound_tvars bounds ~replacer:(fun _ _ -> T_int.zero ()) (),
       unknowns )
@@ -122,9 +121,9 @@ module Make (Cfg : Config.ConfigType) = struct
         @@ Formula.or_of
         @@ rep body Map.Poly.empty [] bounds
         @ List.map bounds ~f:(fun (tvar, _) ->
-              mk_app pvar bound_tvars bounds
-                ~replacer:(mk_replacer tvar T_int.mk_add)
-                ());
+            mk_app pvar bound_tvars bounds
+              ~replacer:(mk_replacer tvar T_int.mk_add)
+              ());
       ],
       mk_app pvar bound_tvars bounds ~replacer:(fun _ _ -> T_int.zero ()) (),
       unknowns )
@@ -217,18 +216,19 @@ module Make (Cfg : Config.ConfigType) = struct
     (* Exists x =nu x >= 0 /\ (F(x) \/ F(-x) \/ Exists(x-1)) *)
     let body =
       Formula.and_of
-      @@ (* F(x) \/ F(-x) \/ Exists(x-1) *)
+      @@
+      (* F(x) \/ F(-x) \/ Exists(x-1) *)
       Formula.or_of
         (* F(x) \/ F(-x) *)
         (rep body Map.Poly.empty [] bounds
         (* Exists(x-1) *)
         @ List.map bounds ~f:(fun (tvar, _) ->
-              mk_app pvar bound_tvars bounds
-                ~replacer:(mk_replacer tvar T_int.mk_sub)
-                ()))
+            mk_app pvar bound_tvars bounds
+              ~replacer:(mk_replacer tvar T_int.mk_sub)
+              ()))
       (* x >= 0 *)
       :: List.map bounds ~f:(fun (tvar, sort) ->
-             Formula.geq (Term.mk_var tvar sort) (T_int.zero ()))
+          Formula.geq (Term.mk_var tvar sort) (T_int.zero ()))
     in
     ( [ Pred.make Predicate.Nu pvar (bound_tvars @ bounds) body ],
       (* forall x. x >= range => Exists(x) *)
@@ -237,7 +237,7 @@ module Make (Cfg : Config.ConfigType) = struct
            (* x >= range *)
            (Formula.and_of
            @@ List.map bounds ~f:(fun (tvar, sort) ->
-                  Formula.geq (Term.mk_var tvar sort) (T_int.mk_int range)))
+               Formula.geq (Term.mk_var tvar sort) (T_int.mk_int range)))
            (* Exists(x) *)
            (mk_app pvar bound_tvars bounds ()),
       unknowns )
@@ -287,12 +287,13 @@ module Make (Cfg : Config.ConfigType) = struct
     in
     ( [],
       Evaluator.simplify body,
-      Kind.add_funs unknowns Kind.IntFun
+      Kind.add_funs unknowns (*ToDo*) Kind.IntFun
       @@ Map.of_list_exn
       @@ List.map arith_params ~f:(fun (x, sorts) ->
-             ( x,
-               Logic.Sort.mk_fun @@ List.map ~f:Logic.ExtTerm.of_old_sort sorts
-             )) )
+          (x, Logic.Sort.mk_fun @@ List.map ~f:Logic.ExtTerm.of_old_sort sorts))
+    )
+
+  let disable_dependency = true
 
   let encode_exists_skolem_pred prefix bound_tvars bound_pvars unknowns
       exists_formula =
@@ -303,14 +304,22 @@ module Make (Cfg : Config.ConfigType) = struct
       List.filter bounds ~f:(fst >> Set.mem fv)
       |> List.partition_tf ~f:(snd >> Term.is_bool_sort)
     in
-    let pvars' =
-      List.fold_right arith_params ~init:[] ~f:(fun (x, _) pvars' ->
+    let other_pvars = bound_pvars @ Set.to_list @@ Kind.pvars_of unknowns in
+    let _, pvars' =
+      List.fold_left ~init:([], []) arith_params
+        ~f:(fun (dep_params, pvars') (x, s) ->
           let pv =
             Ident.fnpred_pvar (Ident.Pvar (prefix ^ Ident.name_of_tvar x))
           in
-          Problem.avoid_dup pv
-            (pvars' @ bound_pvars @ Set.to_list @@ Kind.pvars_of unknowns)
-          :: pvars')
+          ( (if disable_dependency then []
+             else
+               dep_params
+               @ [ (Ident.Tvar ("#exists_" ^ Ident.name_of_tvar x), s) ]),
+            pvars'
+            @ [
+                ( Problem.avoid_dup pv (List.map ~f:fst pvars' @ other_pvars),
+                  dep_params );
+              ] ))
     in
     let arith_params, body = add_prefix_to_tvars "#exists_" arith_params body in
     (*assert (List.length pvars' = List.length arith_params);*)
@@ -334,13 +343,15 @@ module Make (Cfg : Config.ConfigType) = struct
       @@ Formula.forall arith_params
       @@ Formula.mk_imply
            (Formula.and_of
-              (List.map2_exn pvars' arith_params ~f:(fun pvar (tvar, sort) ->
-                   mk_app pvar bound_tvars [ (tvar, sort) ] ())))
+              (List.map2_exn pvars' arith_params
+                 ~f:(fun (pvar, dep_params) (tvar, sort) ->
+                   mk_app pvar bound_tvars (dep_params @ [ (tvar, sort) ]) ())))
            body,
       Kind.add_pred_env_set unknowns Kind.FN
       @@ Set.Poly.of_list
-      @@ List.map2_exn pvars' arith_params ~f:(fun pvar (_, sort) ->
-             (pvar, List.map ~f:snd bound_tvars @ [ sort ])) )
+      @@ List.map2_exn pvars' arith_params
+           ~f:(fun (pvar, dep_params) (_, sort) ->
+             (pvar, List.map ~f:snd (bound_tvars @ dep_params) @ [ sort ])) )
 
   let dispatched =
     match config.mode with
@@ -421,7 +432,7 @@ module Make (Cfg : Config.ConfigType) = struct
               Kind.add_pred_env_set unknowns Kind.Ord
               @@ Set.Poly.of_list
               @@ List.map2_exn pvars' arith_params ~f:(fun pvar (_, sort) ->
-                     (pvar, List.map ~f:snd bound_tvars @ [ sort ])) )
+                  (pvar, List.map ~f:snd bound_tvars @ [ sort ])) )
           in
           (preds, fml, bound_pvars, unknowns)
         else (preds, fml', bound_pvars, unknowns)

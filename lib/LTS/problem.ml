@@ -1,16 +1,26 @@
 open Core
 open Graph
 open Common.Ext
+open Common.Util
 open Common.Combinator
 open Ast
 open Ast.LogicOld
 
+let bv_mode = ref false
 let nondet_count = ref 0
 let nondet_prefix = "#nondet"
 
-let mk_nondet () =
-  incr nondet_count;
-  Ident.Tvar (nondet_prefix ^ string_of_int !nondet_count)
+let mk_nondet = function
+  | None ->
+      incr nondet_count;
+      Ident.Tvar (nondet_prefix ^ string_of_int !nondet_count)
+  | Some (bits, signed) ->
+      incr nondet_count;
+      Ident.Tvar
+        (nondet_prefix
+        ^ string_of_int !nondet_count
+        ^ "_" ^ string_of_int bits
+        ^ if signed then "_s" else "_u")
 
 type lts =
   string option (* start *)
@@ -81,14 +91,13 @@ let commands_of_formula ~print args rel =
         let sub', phiss_rest =
           List.unzip
           @@ List.map ~f:(fun res ->
-                 let arg = fst @@ List.hd_exn res in
-                 match List.map ~f:snd res with
-                 | [] -> assert false
-                 | t :: ts ->
-                     ( (arg, t),
-                       Set.Poly.of_list
-                       @@ List.map ts ~f:(Formula.eq (uncurry Term.mk_var arg))
-                     ))
+              let arg = fst @@ List.hd_exn res in
+              match List.map ~f:snd res with
+              | [] -> assert false
+              | t :: ts ->
+                  ( (arg, t),
+                    Set.Poly.of_list
+                    @@ List.map ts ~f:(Formula.eq (uncurry Term.mk_var arg)) ))
           @@ List.classify (fun x y -> Stdlib.(fst x = fst y))
           @@ Set.to_list sub'
         in
@@ -105,11 +114,11 @@ let commands_of_formula ~print args rel =
     loop (Set.Poly.empty, phis_rest, phis_cond)
   in
   let sub = Map.of_set_exn sub in
-  let phi_rest = Formula.and_of @@ Set.to_list @@ phis_rest in
+  let phi_rest = Formula.and_of @@ Set.to_list phis_rest in
   Assume (Formula.and_of @@ Set.to_list phis_cond)
   :: List.map args ~f:(fun arg ->
-         if Map.Poly.mem sub arg then Subst (arg, Map.Poly.find_exn sub arg)
-         else Subst (arg, Term.mk_var (mk_nondet ()) (snd arg)))
+      if Map.Poly.mem sub arg then Subst (arg, Map.Poly.find_exn sub arg)
+      else Subst (arg, Term.mk_var (mk_nondet None (*ToDo*)) (snd arg)))
   @ [ Assume phi_rest ]
 
 let rec term_sort_env_of_command = function
@@ -162,21 +171,56 @@ let rec cgen_command senv = function
       let senv, cs2 = cgen_command senv c2 in
       (senv, Set.union cs1 cs2)
 
-let cgen_transition map (_, c, _) = cgen_command map c
+let cgen_transition senv (_, c, _) = cgen_command senv c
 
-let rec subst_sorts_command map = function
+let rec subst_sorts_command senv map = function
   | Skip -> Skip
   | Assume atm -> Assume (Formula.subst_sorts map atm)
   | Subst ((x, s), t) ->
-      Subst ((x, Term.subst_sorts_sort map s), Term.subst_sorts map t)
-  | Seq (c1, c2) -> Seq (subst_sorts_command map c1, subst_sorts_command map c2)
+      Subst
+        ( ( x,
+            match Map.find senv x with
+            | Some s -> s
+            | None -> Term.subst_sorts_sort map s ),
+          Term.subst_sorts map t )
+  | Seq (c1, c2) ->
+      Seq (subst_sorts_command senv map c1, subst_sorts_command senv map c2)
   | Choice (c1, c2) ->
-      Choice (subst_sorts_command map c1, subst_sorts_command map c2)
+      Choice (subst_sorts_command senv map c1, subst_sorts_command senv map c2)
 
-let subst_sorts_trans map (f, c, t) = (f, subst_sorts_command map c, t)
+let subst_sorts_trans senv map (f, c, t) = (f, subst_sorts_command senv map c, t)
 
-let typeinf (s, types, e, c, trans) =
-  let bv_mode = not @@ List.is_empty types in
+let rec str_of_command = function
+  | Skip -> "skip;\n"
+  | Assume atom ->
+      sprintf "assume(%s);\n" (LogicOld.Formula.str_of ~priority:20 atom)
+  | Subst ((x, sort), t) ->
+      if false then
+        sprintf "%s := %s;\n" (Ident.name_of_tvar x) (LogicOld.Term.str_of t)
+      else
+        sprintf "%s : %s := %s;\n" (Ident.name_of_tvar x)
+          (Term.str_of_sort sort) (LogicOld.Term.str_of t)
+  | Seq (c1, c2) -> str_of_command c1 ^ str_of_command c2
+  | Choice (c1, c2) ->
+      "(\n" ^ str_of_command c1 ^ ") || (\n" ^ str_of_command c2 ^ ");\n"
+
+let str_of_transition (from, c, to_) =
+  sprintf "FROM: %s;\n%sTO: %s;\n\n" from (str_of_command c) to_
+
+let str_of_lts (s, _ (*ToDo*), e, c, trans) =
+  (match s with None -> "" | Some s -> sprintf "START: %s;\n" s)
+  ^ (match e with None -> "" | Some e -> sprintf "ERROR: %s;\n" e)
+  ^ (match c with None -> "" | Some c -> sprintf "CUTPOINT: %s;\n" c)
+  ^ String.concat_map_list ~f:str_of_transition trans
+
+let typeinf ?(bv_mode = false) (s, types, e, c, trans) =
+  let types =
+    if bv_mode then types
+    else
+      List.map types ~f:(function
+        | _, T_bv.SBV _ -> failwith "not supported"
+        | bind -> bind (*ToDo*))
+  in
   let senv =
     Map.of_set_exn
     @@ Set.Poly.map
@@ -195,12 +239,44 @@ let typeinf (s, types, e, c, trans) =
     Typeinf.solve constrs ~print:(fun s ->
         if print_log then print_endline (force s) else ())
   in
+  let default_size = Some (*ToDo*) 32 in
   let map =
     Typeinf.elim_nums ~to_sus:false
-      ~default:(Some (if bv_mode then T_bv.SBV None else T_int.SInt))
+      ~default:(Some (if bv_mode then T_bv.SBV default_size else T_int.SInt))
       nums map
   in
-  (s, types, e, c, List.map trans ~f:(subst_sorts_trans map))
+  (*let map =
+    Map.Poly.map map ~f:(function
+      | T_bv.SBV None -> T_bv.SBV default_size
+      | s (*ToDo*) -> s)
+  in*)
+  let svs = Set.diff (Typeinf.svs_of_constrs constrs) (Map.Poly.key_set map) in
+  if false then
+    print_endline
+    @@ sprintf "unsolved vars: %s"
+         (String.concat_map_set ~sep:", " ~f:Ident.name_of_svar svs);
+  let map' =
+    Map.of_set_exn
+    @@ Set.Poly.map svs ~f:(fun svar ->
+        (*print_endline @@ sprintf "adding svar %s" (Ident.name_of_svar svar);*)
+        (svar, if bv_mode then T_bv.SBV default_size else T_int.SInt))
+  in
+  let map =
+    Map.force_merge (Map.Poly.map map ~f:(Term.subst_sorts_sort map')) map'
+  in
+  let types =
+    (*List.map ~f:(fun (x, s) -> (x, Term.subst_sorts_sort map s))*) types
+  in
+  let senv = Map.Poly.map senv ~f:(Term.subst_sorts_sort map) in
+  if false then
+    print_endline
+    @@ sprintf "senv: %s"
+         (String.concat_map_list ~sep:", "
+            ~f:(fun (x, s) ->
+              sprintf "%s: %s" (Ident.name_of_tvar x) (Term.str_of_sort s))
+            (Map.to_alist senv));
+  let trans = List.map trans ~f:(subst_sorts_trans senv map) in
+  (s, types, e, c, trans)
 
 let rec is_effect_free = function
   | Skip | Assume _ -> true
@@ -209,36 +285,116 @@ let rec is_effect_free = function
           not @@ String.is_prefix (Ident.name_of_tvar x) ~prefix:nondet_prefix)
   | Seq (c1, c2) | Choice (c1, c2) -> is_effect_free c1 && is_effect_free c2
 
-let rec str_of_command = function
-  | Skip -> "skip;\n"
-  | Assume atom ->
-      sprintf "assume(%s);\n" (LogicOld.Formula.str_of ~priority:20 atom)
-  | Subst ((x, sort), t) ->
-      if true then
-        sprintf "%s := %s;\n" (Ident.name_of_tvar x) (LogicOld.Term.str_of t)
-      else
-        sprintf "%s : %s := %s;\n" (Ident.name_of_tvar x)
-          (Term.str_of_sort sort) (LogicOld.Term.str_of t)
-  | Seq (c1, c2) -> str_of_command c1 ^ str_of_command c2
-  | Choice (c1, c2) ->
-      "(\n" ^ str_of_command c1 ^ ") || (\n" ^ str_of_command c2 ^ ");\n"
+let qelim_records = Hashtbl.Poly.create ()
+let clean () = Hashtbl.Poly.clear qelim_records
 
-let str_of_transition (from, c, to_) =
-  sprintf "FROM: %s;\n%sTO: %s;\n\n" from (str_of_command c) to_
+let qelim phi =
+  match Hashtbl.Poly.find qelim_records phi with
+  | Some rcd -> rcd
+  | None ->
+      let ret =
+        Z3Smt.Z3interface.qelim ~id:None ~fenv:(LogicOld.get_fenv ()) phi
+      in
+      Hashtbl.Poly.set qelim_records ~key:phi ~data:ret;
+      ret
 
-let str_of_lts (s, _ (*ToDo*), e, c, trans) =
-  (match s with None -> "" | Some s -> sprintf "START: %s;\n" s)
-  ^ (match e with None -> "" | Some e -> sprintf "ERROR: %s;\n" e)
-  ^ (match c with None -> "" | Some c -> sprintf "CUTPOINT: %s;\n" c)
-  ^ String.concat_map_list ~f:str_of_transition trans
+let bind_nondet nondet_senv phi =
+  let nondet_senv =
+    let tvs = Formula.tvs_of phi in
+    List.filter nondet_senv ~f:(fst >> Set.mem tvs)
+  in
+  let range =
+    List.filter_map nondet_senv ~f:(fun (x, s) ->
+        match (String.split ~on:'_' (Ident.name_of_tvar x), s) with
+        | [ _; bits; signed ], T_int.SInt ->
+            let bits = int_of_string bits in
+            let is_signed = String.(signed = "s") in
+            Some
+              (Formula.and_of
+              @@ Formula.mk_range (Term.mk_var x s) (min_num bits is_signed)
+                   (max_num bits is_signed))
+        | _ (*ToDo*) -> None)
+  in
+  Formula.mk_forall_if_bounded nondet_senv
+  @@
+  if List.is_empty range then phi
+  else Formula.mk_imply (Formula.and_of range) phi
 
 let rec wp c phi =
-  match c with
-  | Skip -> phi
-  | Assume phi' -> Formula.mk_imply phi' phi
-  | Subst ((x, _s), t) -> Formula.apply_pred (x, phi) t
-  | Seq (c1, c2) -> wp c1 (wp c2 phi)
-  | Choice (c1, c2) -> Formula.and_of [ wp c1 phi; wp c2 phi ]
+  if print_log then
+    print_endline
+    @@ sprintf "command:\n%spost: %s\n" (str_of_command c) (Formula.str_of phi);
+  let phi =
+    match c with
+    | Skip -> phi
+    | Assume phi' -> Formula.mk_imply phi' phi
+    | Subst ((x, _s), t) ->
+        (if false then Evaluator.simplify_keep_imply else Fn.id)
+        @@ Formula.apply_pred (x, phi) t
+    | Seq (c1, c2) -> wp c1 (wp c2 phi)
+    | Choice (c1, c2) ->
+        Set.union
+          (Formula.implies_of (wp c1 phi))
+          (Formula.implies_of (wp c2 phi))
+        |> Set.fold ~init:Map.Poly.empty ~f:(fun map (lhss, rhs) ->
+            let lhs = Evaluator.simplify_and lhss in
+            Map.Poly.update map rhs ~f:(function
+              | None -> Set.Poly.singleton lhs
+              | Some lhss -> Set.add lhss lhs))
+        |> Map.Poly.map ~f:(Set.to_list >> Formula.or_of)
+        |> Map.Poly.to_alist
+        |> List.filter_map ~f:(fun (rhs, lhs) ->
+            if Formula.is_false lhs || Formula.is_true rhs then None
+            else if Formula.is_true lhs then Some rhs
+            else Some (Formula.mk_imply lhs rhs))
+        |> Formula.and_of
+  in
+  if print_log then
+    print_endline @@ sprintf "wp: %s" (LogicOld.Formula.str_of phi);
+  let nondet_senv =
+    Set.filter
+      (Formula.term_sort_env_of phi)
+      ~f:(fst >> Ident.name_of_tvar >> String.is_prefix ~prefix:nondet_prefix)
+  in
+  if Set.is_empty nondet_senv then phi
+  else
+    let res =
+      let nondet_senv_int =
+        Set.filter nondet_senv ~f:(snd >> LogicOld.Term.is_int_sort)
+      in
+      if Set.is_empty nondet_senv_int then phi
+      else (
+        clean ();
+        Formula.and_of @@ Set.to_list
+        @@ Set.Poly.filter_map ~f:(fun (lhss, rhs) ->
+            if Formula.is_true rhs then None
+            else if Set.is_empty lhss then Some rhs
+            else
+              let lhs =
+                (if true then Set.to_list >> Formula.and_of
+                 else Evaluator.simplify_and)
+                  lhss
+              in
+              if Formula.is_false lhs then None
+              else
+                let nondet_senv_int_lhs =
+                  let tvs = Formula.tvs_of rhs in
+                  Set.filter nondet_senv_int ~f:(fst >> Set.mem tvs >> not)
+                in
+                let lhs =
+                  qelim
+                  @@ Formula.mk_exists_if_bounded
+                       (Set.to_list nondet_senv_int_lhs)
+                       lhs
+                in
+                if Formula.is_false lhs then None
+                else if Formula.is_true lhs then Some rhs
+                else Some (Formula.mk_imply lhs rhs))
+        @@ Formula.implies_of phi)
+    in
+    if print_log then
+      print_endline @@ sprintf "simplified wp: %s" (LogicOld.Formula.str_of res);
+    bind_nondet (Set.to_list nondet_senv) res
 
 let used_vars c =
   let rec aux env = function

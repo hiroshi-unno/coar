@@ -10,12 +10,13 @@
 %token EQUAL
 %token NOT AND OR
 %token COLON SEMI COMMA
-%token UNSIGNED VOID CHAR SHORT INT LONG EXTERN CONST STATIC VOLATILE SIZEOF
+%token UNSIGNED VOID CHAR SHORT INT LONG FLOAT DOUBLE
+%token EXTERN CONST STATIC VOLATILE SIZEOF
 %token SHARPINCLUDE SHARPDEFINE
 %token PHI INIT BODY
 %token CAF CEF CAG CEG CAP CAND COR CIMP
 %token MAIN
-%token NONDET_BOOL NONDET_CHAR NONDET_UCHAR NONDET_SHORT NONDET_USHORT NONDET_INT NONDET_UINT NONDET_LONG NONDET_ULONG NONDET LNONDET
+%token NONDET_BOOL NONDET_CHAR NONDET_UCHAR NONDET_SHORT NONDET_USHORT NONDET_INT NONDET_UINT NONDET_LONG NONDET_ULONG NONDET_FLOAT NONDET_DOUBLE NONDET LNONDET
 %token ASSUME ERROR ABORT ASSERT_FAIL DOCHECK
 %token ATTRIBUTE NORETURN NOTHROW LEAF
 %token ADD MINUS ASTERISK DIV MOD ADDR
@@ -31,7 +32,7 @@
 %%
 
 toplevel:
-    d=Decls EOF {
+  | d=Decls EOF {
       match d with
         None, _, _, _, _, _ -> raise (SemanticError "function __phi is not declared")
         | _, _, None, _, _, _ -> raise (SemanticError "function init is not declared")
@@ -42,7 +43,7 @@ toplevel:
 
 /* Functions and Variables Declarations */
 Decls:
-    { None, [], None, None, [], [] }
+  | { None, [], None, None, [], [] }
   | d1=Decl d2=Decls {
     match d1, d2 with
     | (Some _, _, _, _, _, _), (Some _, _, _, _, _, _) -> raise (SemanticError "function __phi is declared multiple times")
@@ -61,7 +62,7 @@ Decls:
 
 Decl:
   /* ignore: extern void __VERIFIER_error(); */
-    EXTERN VOID ERROR LPAREN RPAREN Attributes SEMI { None, [], None, None, [], [] }
+  | EXTERN VOID ERROR LPAREN RPAREN Attributes SEMI { None, [], None, None, [], [] }
   /* ignore: extern void __VERIFIER_assume(); */
   | EXTERN VOID ASSUME LPAREN RPAREN Attributes SEMI { None, [], None, None, [], [] }
   /* ignore: extern int __VERIFIER_nondet_bool(); */
@@ -82,6 +83,10 @@ Decl:
   | EXTERN LONG NONDET_LONG LPAREN RPAREN Attributes SEMI { None, [], None, None, [], [] }
   /* ignore: extern unsigned long __VERIFIER_nondet_ulong(); */
   | EXTERN UNSIGNED LONG NONDET_ULONG LPAREN RPAREN Attributes SEMI { None, [], None, None, [], [] }
+  /* ignore: extern float __VERIFIER_nondet_float(); */
+  | EXTERN FLOAT NONDET_FLOAT LPAREN RPAREN Attributes SEMI { None, [], None, None, [], [] }
+  /* ignore: extern double __VERIFIER_nondet_double(); */
+  | EXTERN DOUBLE NONDET_DOUBLE LPAREN RPAREN Attributes SEMI { None, [], None, None, [], [] }
   /* ignore: extern void abort(); */
   | EXTERN VOID ABORT LPAREN RPAREN Attributes SEMI { None, [], None, None, [], [] }
   /* ignore: extern int abort(); */
@@ -112,7 +117,7 @@ Decl:
   }
   /* #define hoge() nondet() */
   | SHARPDEFINE funname=ID LPAREN RPAREN NONDET LPAREN RPAREN {
-    None, [], None, None, [], [FunDecl.mk_fun_nondet funname []]
+    None, [], None, None, [], [FunDecl.mk_fun_nondet_int(*ToDo*) funname []]
   }
 
   /* int a, b, c; */
@@ -142,26 +147,26 @@ Decl:
   }
   /* TODO */ /* int f(int a, int *b) { return nondet(); } */
   | Int funname=ID LPAREN params=Parameters RPAREN LBLOCK RETURN NONDET LPAREN RPAREN SEMI RBLOCK {
-    None, [], None, None, [], [FunDecl.mk_fun_nondet funname params]
+    None, [], None, None, [], [FunDecl.mk_fun_nondet_int funname params]
   }
   /* TODO */ /* int f(int a, int *b) { x = nondet(); return x; } */
   | Int funname=ID LPAREN params=Parameters RPAREN LBLOCK varname1=ID EQUAL NONDET LPAREN RPAREN SEMI RETURN varname2=ID SEMI RBLOCK {
     assert String.(varname1 = varname2);
-    None, [], None, None, [], [FunDecl.mk_fun_nondet funname params]
+    None, [], None, None, [], [FunDecl.mk_fun_nondet_int funname params]
   }
 
 Int: CHAR | SHORT | INT | LONG | LONG LONG { () }
 
 /* int a, b, c; */
 VarDecl:
-    VOID varnames=Variables SEMI
+  | VOID varnames=Variables SEMI
   | Int varnames=Variables SEMI
   | VarDeclIntType varnames=Variables SEMI {
     List.map varnames ~f:(fun varname -> Declare.mk_int varname)
   }
 
 VarDeclIntType:
-    UNSIGNED Int
+  | UNSIGNED Int
   | CONST Int
   | STATIC Int
   | STATIC CONST Int
@@ -170,15 +175,15 @@ VarDeclIntType:
 
 /* a, b, c */
 Variables:
-    varnames=Variable { varnames }
+  | varnames=Variable { varnames }
   | varnames1=Variable COMMA varnames=Variables { varnames1 @ varnames }
 
 Variable:
-    varname=ID { [varname] }
+  | varname=ID { [varname] }
   | LNONDET { [] }
 
 Attributes:
-    { () }
+  | { () }
   /* ignore: __attribute__ ((__noreturn__)) */
   | ATTRIBUTE LPAREN LPAREN NORETURN RPAREN RPAREN Attributes { () }
   /* ignore: __attribute__ ((__nothrow__ , __leaf__)) */
@@ -186,32 +191,32 @@ Attributes:
 
 /* int a, int* b */
 Parameters:
-    { [] }
+  | { [] }
   | params=ParametersOneOrMore { params }
 
 ParametersOneOrMore:
-    param=Parameter { [param] }
+  | param=Parameter { [param] }
   | param=Parameter COMMA params=ParametersOneOrMore { param :: params }
 
 Parameter:
-    sort=Type varname=ID { varname, sort }
+  | sort=Type varname=ID { varname, sort }
 
 /* a, 3+5, b */
 Arguements:
-    { [] }
+  | { [] }
   | args=ArguementsOneOrMore { args }
 
 ArguementsOneOrMore:
-    t=Term { [t] }
+  | t=Term { [t] }
   | t=Term COMMA args=ArguementsOneOrMore { t :: args }
 
 Type:
-    Int { T_int.SInt }
+  | Int { T_int.SInt }
   | Int ASTERISK { T_int.SRefInt }
 
 /* CAG( CAP(x > 1) ) */
 Phi:
-    CAF LPAREN phi=Phi RPAREN { Ctl.mk_af phi }
+  | CAF LPAREN phi=Phi RPAREN { Ctl.mk_af phi }
   | CEF LPAREN phi=Phi RPAREN { Ctl.mk_ef phi }
   | CAG LPAREN phi=Phi RPAREN { Ctl.mk_ag phi }
   | CEG LPAREN phi=Phi RPAREN { Ctl.mk_eg phi }
@@ -222,19 +227,18 @@ Phi:
 
 /* Init */
 Init:
-    { [] }
+  | { [] }
   | data=MultipleAssignInit inits=Init {
     let varnames, term = data in
-    List.fold_left ~init:inits
+    List.fold_left ~init:inits varnames
       ~f:(fun inits varname -> Init.mk_assign varname term :: inits)
-      varnames
   }
   | MultipleNondetAssignInit inits=Init { inits }
   | ASSUME LPAREN fml=Formula RPAREN SEMI inits=Init { Init.mk_assume fml :: inits }
 
 /* a = b = c = 10; */
 MultipleAssignInit:
-    varname=ID EQUAL term=Term SEMI { [varname], term }
+  | varname=ID EQUAL term=Term SEMI { [varname], term }
   | varname=ID EQUAL tail=MultipleAssignInit {
     let varnames, term = tail in
     varname :: varnames, term
@@ -242,17 +246,17 @@ MultipleAssignInit:
 
 /* a = b = c = nondet(); */
 MultipleNondetAssignInit:
-    ID EQUAL NONDET LPAREN RPAREN SEMI {}
+  | ID EQUAL NONDET LPAREN RPAREN SEMI {}
   | ID EQUAL LNONDET SEMI {}
   | ID EQUAL MultipleNondetAssignInit {}
 
 /* a = 3; if (x > 0) { y = 10; } */
 Statements:
-    { [] }
+  | { [] }
   | stmt=Statement stmts=Statements { stmt :: stmts }
 
 Statement:
-    stmt=StatementGeneral { stmt }
+  | stmt=StatementGeneral { stmt }
   | IF LPAREN cond_fml=Formula RPAREN t_stmt=Statement { Statement.mk_if cond_fml t_stmt (Statement.mk_nop ()) }
   | IF LPAREN LNONDET RPAREN stmt=Statement { Statement.mk_nondet stmt (Statement.mk_nop ()) }
   | IF LPAREN cond_fml=Formula RPAREN t_stmt=StatementIfT ELSE f_stmt=Statement { Statement.mk_if cond_fml t_stmt f_stmt }
@@ -265,7 +269,7 @@ Statement:
     }
 
 StatementIfT:
-    stmt=StatementGeneral { stmt }
+  | stmt=StatementGeneral { stmt }
   | IF LPAREN cond_fml=Formula RPAREN t_stmt=StatementIfT ELSE f_stmt=StatementIfT { Statement.mk_if cond_fml t_stmt f_stmt }
   | IF LPAREN LNONDET RPAREN stmt1=StatementIfT ELSE stmt2=StatementIfT { Statement.mk_nondet stmt1 stmt2 }
   | WHILE LPAREN cond_n=INTL RPAREN stmt=StatementIfT {
@@ -276,9 +280,9 @@ StatementIfT:
     }
 
 StatementGeneral:
-    varname=ID EQUAL term=Term SEMI { Statement.mk_assign varname term }
-  | varname=ID EQUAL NONDET LPAREN RPAREN SEMI { Statement.mk_nondet_assign varname }
-  | varname=ID EQUAL LNONDET SEMI { Statement.mk_nondet_assign varname }
+  | varname=ID EQUAL term=Term SEMI { Statement.mk_assign varname term }
+  | varname=ID EQUAL NONDET LPAREN RPAREN SEMI { Statement.mk_nondet_int_assign varname }
+  | varname=ID EQUAL LNONDET SEMI { Statement.mk_nondet_int_assign varname }
   | BREAK SEMI { Statement.mk_break () }
   | RETURN INTL SEMI { Statement.mk_exit () }
   | RETURN SEMI { Statement.mk_exit () }
@@ -326,66 +330,66 @@ StatementGeneral:
 /* Ast.LogicOld.Formula.t */
 /* not including LetRec */
 Formula:
-    fml=FormulaOr { fml }
+  | fml=FormulaOr { fml }
 
 FormulaOr:
-    left=FormulaAnd OR right=FormulaOr { Formula.mk_or left right ~info:Dummy }
+  | left=FormulaAnd OR right=FormulaOr { Formula.mk_or left right ~info:Dummy }
   | fml=FormulaAnd { fml }
 
 FormulaAnd:
-    left=FormulaNeg AND right=FormulaAnd { Formula.mk_and left right ~info:Dummy }
+  | left=FormulaNeg AND right=FormulaAnd { Formula.mk_and left right ~info:Dummy }
   | fml=FormulaNeg { fml }
 
 FormulaNeg:
-    NOT fml=FormulaNeg { Formula.mk_neg fml ~info:Dummy }
+  | NOT fml=FormulaNeg { Formula.mk_neg fml ~info:Dummy }
   | fml=FormulaAtom { fml }
 
 FormulaAtom:
-    atom=Atom { Formula.mk_atom atom ~info:Dummy }
+  | atom=Atom { Formula.mk_atom atom ~info:Dummy }
   | LPAREN fml=Formula RPAREN { fml }
   | term=T_intAtom { formula_of_term term }
 
 /* Ast.LogicOld.Atom.t */
 Atom:
-    atom=T_bool { atom }
+  | atom=T_bool { atom }
 
 
 /* Ast.LogicOld.Term.t */
 /* Ast.LogicOld.T_int */
 Term:
-    t=T_int { t }
+  | t=T_int { t }
 
 T_int:
-    t=T_intAddSub { t }
+  | t=T_intAddSub { t }
 
 T_intAddSub:
-    t=T_intMulDivMod { t }
+  | t=T_intMulDivMod { t }
   | t1=T_intAddSub ADD t2=T_intMulDivMod { T_int.mk_add t1 t2 ~info:Dummy }
   | t1=T_intAddSub MINUS t2=T_intMulDivMod { T_int.mk_sub t1 t2 ~info:Dummy }
 
 T_intMulDivMod:
-    t=T_intUnary { t }
+  | t=T_intUnary { t }
   | t1=T_intMulDivMod ASTERISK t2=T_intUnary { T_int.mk_mul t1 t2 ~info:Dummy }
   | t1=T_intMulDivMod DIV t2=T_intUnary { T_int.mk_div Value.Truncated t1 t2 ~info:Dummy }
   | t1=T_intMulDivMod MOD t2=T_intUnary { T_int.mk_rem Value.Truncated t1 t2 ~info:Dummy }
 
 T_intUnary:
-    t=T_intParen { t }
+  | t=T_intParen { t }
   | Cast t=T_intUnary { t }
   | MINUS t=T_intUnary { T_int.mk_neg t ~info:Dummy }
 
 T_intParen:
-    t=T_intAtom { t }
+  | t=T_intAtom { t }
   | LPAREN t=T_int RPAREN { t }
 
 T_intAtom:
-    n=INTL { T_int.from_int n ~info:Dummy }
+  | n=INTL { T_int.from_int n ~info:Dummy }
   | varname=ID { Term.mk_var (Ident.Tvar varname) T_int.SInt ~info:Dummy }
   | funname=ID LPAREN args=Arguements RPAREN {
     Term.mk_fsym_app (FunCall funname) args ~info:Dummy
   }
   | funname=ID LPAREN t1=T_int op=PREDSYM t2=T_int RPAREN { (* ToDo *)
-    let cond = Formula.mk_atom @@ Atom.mk_app (Predicate.mk_psym op) [t1; t2] ~info:Dummy in
+    let cond = Formula.mk_atom @@ Atom.mk_psym_app op [t1; t2] ~info:Dummy in
     Term.mk_fsym_app (FunCall funname) [T_bool.ifte cond (T_int.one ()) (T_int.zero ()) ~info:Dummy] ~info:Dummy
   }
   | ADDR varname=ID { Term.mk_var (Ident.Tvar varname) T_int.SRefInt ~info:Dummy }
@@ -412,12 +416,14 @@ T_intAtom:
   | NONDET_UINT LPAREN RPAREN { Term.mk_fsym_app (FunCall funname_nondet_uint) [] ~info:Dummy }
   | NONDET_LONG LPAREN RPAREN { Term.mk_fsym_app (FunCall funname_nondet_long) [] ~info:Dummy }
   | NONDET_ULONG LPAREN RPAREN { Term.mk_fsym_app (FunCall funname_nondet_ulong) [] ~info:Dummy }
+  | NONDET_FLOAT LPAREN RPAREN { Term.mk_fsym_app (FunCall funname_nondet_float) [] ~info:Dummy }
+  | NONDET_DOUBLE LPAREN RPAREN { Term.mk_fsym_app (FunCall funname_nondet_double) [] ~info:Dummy }
 
 Cast:
-    LPAREN Int RPAREN
+  | LPAREN Int RPAREN
   | LPAREN UNSIGNED Int RPAREN
   | LPAREN VOID RPAREN { () }
 
 /* Ast.LogicOld.T_bool */
 T_bool:
-    t1=T_int op=PREDSYM t2=T_int { Atom.mk_app (Predicate.mk_psym op) [t1; t2] ~info:Dummy }
+  | t1=T_int op=PREDSYM t2=T_int { Atom.mk_app (Predicate.mk_psym op) [t1; t2] ~info:Dummy }

@@ -11,6 +11,11 @@ else
         date='date'
 fi
 
+if [ -z "$cmd" ]; then
+        # echo "e.g., cmd=_build/default/main.exe ... $0"
+        cmd="_build/default/main.exe"
+fi
+
 if [ "$1" != "--xargs" ]; then
         if [ -z "$timeout" ]; then
                 echo "e.g., timeout=10 ... $0"
@@ -30,7 +35,7 @@ fi
 
 run() {
         start_time=$($date +%s%N)
-        output=$(timeout $timeout _build/default/main.exe $options $2)
+        output=$(timeout $timeout $cmd $options $2)
         ret=$?
         pkill -9 main 2> /dev/null
         sleep 0.1
@@ -63,11 +68,11 @@ run() {
                 [ "$result" = "MAYBE" ]; then
                 echo "solved $2,$elapsed,$output" 1>&2
                 echo "$2,$result,$elapsed,$iterations"
-        elif [ $1 -gt 0 ]; then
-                # echo "$2 Abort, restart!" 1>&2
+        elif [ "$1" -gt 0 ]; then
+                echo "$2 Abort, restart!" 1>&2
                 pkill -9 main 2> /dev/null
                 sleep 0.1
-                run $(expr $1 - 1) $2
+                run $(( $1 - 1 )) "$2"
         else
                 echo "solved $2,$elapsed,Sat(Abort)" 1>&2
                 echo "$2,Sat(Abort),$elapsed,$iterations"

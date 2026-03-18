@@ -1,0 +1,13 @@
+Inv x >= [if (x >= 3.0) then 25.0 * (x-2.0) else 0.0; if (x >= 3.0) then 25.0 * (x-2.0) + 5.0 else 0.0;  if (x >= 3.0) then 25.0 * (x-2.0) + 2.0 else 0.0; if (x >= 3.0) then 25.0 * (x - 2.0) + 3.0 else 0.0]
+s.t.
+Inv (x : real) : real =mu
+   if x >= 2.0 then
+       min ( 10.0 + 0.4 * Inv (x + 2.0) + 0.6 * Inv (x - 2.0) )
+           ( 10.0 + 0.3 * Inv (x + 1.0) + 0.7 * Inv (x - 1.0) )
+   else Post x;
+Post (x : real) : real =mu
+  [if 1.0 <= x and x < 2.0 then 0.0 else 0.0;
+   if 1.0 <= x and x < 2.0 then 50.0 else 0.0;
+   if 1.0 <= x and x < 2.0 then 20.0 else 0.0;
+   if 1.0 <= x and x < 2.0 then 30.0 else 0.0
+];

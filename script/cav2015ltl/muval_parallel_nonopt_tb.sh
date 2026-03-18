@@ -2,4 +2,4 @@ SCRIPT_DIR=$(
     cd $(dirname $0)/..
     pwd
 )
-timeout=600 options='-c ./config/solver/muval_parallel_nonopt_tb.json -p cltl' $SCRIPT_DIR/../run_bench_for_multicore.sh benchmarks/C/cav2015ltl/*/*.c benchmarks/C/cav2015ltl/*/*/*.c | LC_ALL=C sort
+timeout=600 options='-c ./config/solver/muval_parallel_nonopt_tb.json -p cltl' para=1 $SCRIPT_DIR/../run_bench.sh benchmarks/C/cav2015ltl/*/*.c benchmarks/C/cav2015ltl/*/*/*.c | LC_ALL=C sort

@@ -15,9 +15,10 @@
   predicateDNF
   predicateFlex
   predicateArrays
-  NWFPredicate
   WFPredicate
   WFPredicateFlex
+  NWFPredicate
+  ParityPredicate
   FNPredicate
   FNPredicateFlex
   NEPredicate

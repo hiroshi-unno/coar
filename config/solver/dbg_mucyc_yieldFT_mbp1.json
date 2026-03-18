@@ -45,6 +45,13 @@
         "enable_apply_threshold": false,
         "normalize_lemma": false,
         "check_lemma_lhs": false,
-        "fold_lemmas": false
+        "fold_lemmas": false,
+
+        "update_only_atoms_j_and_before": false,
+        "update_all_frames_j_and_after": false,
+        "reuse_prev_frame": false,
+        "backtrack_strategy": [
+            "Original"
+        ]
     }
 ]

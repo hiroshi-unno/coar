@@ -208,7 +208,7 @@ module IRBTerm : TermType = struct
         | _ -> assert false)
     | BVToInt (_size, signed) -> (
         match args with
-        | exp :: [] -> Z3.BitVector.mk_bv2int ctx exp (BVTerm.signed_of signed)
+        | exp :: [] -> Z3.BitVector.mk_bv2int ctx exp (BVTerm.is_signed signed)
         | _ -> assert false)
     | sym ->
         if Map.Poly.mem Logic.IntTerm.sym_sort_map sym then

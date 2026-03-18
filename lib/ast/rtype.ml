@@ -1990,9 +1990,9 @@ let of_binop ~config = function
 
 let is_fsym = function
   | "Stdlib.+" | "Stdlib.-" | "Stdlib.*" | "Stdlib./" | "Stdlib.mod"
-  | "Stdlib.+." | "Stdlib.-." | "Stdlib.*." | "Stdlib./." | "Stdlib.~-"
-  | "Stdlib.abs" | "Stdlib.float_of_int" | "Stdlib.int_of_float" | "Stdlib.ref"
-  | "Stdlib.!" | "Stdlib.:=" ->
+  | "Stdlib.\\#mod" | "Stdlib.+." | "Stdlib.-." | "Stdlib.*." | "Stdlib./."
+  | "Stdlib.~-" | "Stdlib.abs" | "Stdlib.float_of_int" | "Stdlib.int_of_float"
+  | "Stdlib.ref" | "Stdlib.!" | "Stdlib.:=" ->
       true
   | _ -> false
 
@@ -2009,17 +2009,18 @@ let is_binop = function
   | _ -> false
 
 let fsym_of_str sort = function
+  | "Stdlib.~-" -> T_int.Neg
+  | "Stdlib.abs" -> T_int.Abs
   | "Stdlib.+" -> T_int.Add
   | "Stdlib.-" -> T_int.Sub
   | "Stdlib.*" -> T_int.Mul
   | "Stdlib./" -> T_int.Div Value.Truncated
-  | "Stdlib.mod" -> T_int.Rem Value.Truncated
+  | "Stdlib.mod" | "Stdlib.\\#mod" -> T_int.Rem Value.Truncated
+  | "Stdlib.~-." -> T_real.RNeg
   | "Stdlib.+." -> T_real.RAdd
   | "Stdlib.-." -> T_real.RSub
   | "Stdlib.*." -> T_real.RMul
   | "Stdlib./." -> T_real.RDiv
-  | "Stdlib.~-" -> T_int.Neg
-  | "Stdlib.abs" -> T_int.Abs
   | "Stdlib.float_of_int" -> T_irb.IntToReal
   | "Stdlib.int_of_float" -> T_irb.RealToInt
   | "Stdlib.ref" -> T_ref.Ref sort

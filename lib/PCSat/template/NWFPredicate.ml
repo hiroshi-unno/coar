@@ -1,32 +1,19 @@
 open Core
 open Common
 open Common.Ext
+open Common.Combinator
 open Ast
 open Ast.LogicOld
-open Ast.HypSpace
 open Function
 
 module type ArgType = sig
   val name : Ident.tvar
-  val sorts : Sort.t list
-
-  (*val dtenv : LogicOld.DTEnv.t*)
   val fenv : LogicOld.FunEnv.t
   val id : int option
-  val tag_infos : (Ident.tvar, Sort.t list) Hashtbl.Poly.t
+  val nwf_tag : (Kind.nwf * (Ident.tvar * Ident.tvar)) option
 end
 
-type parameter = {
-  np : int;
-  ndc : int;
-  nl : int;
-  depth : int;
-  ubrc : Z.t option;
-  ubrd : Z.t option;
-  ubdc : Z.t option;
-  ubdd : Z.t option;
-  ds : Z.t Set.Poly.t;
-}
+open PCSatCommon.VersionSpace
 
 type parameter_update_type +=
   | LexicoPieceConj
@@ -78,22 +65,51 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
 
   let _ = Debug.set_id id
 
-  let param =
-    ref
-      {
-        np = config.number_of_rfun_pieces;
-        ndc = config.number_of_disc_conj;
-        nl = config.number_of_rfun_lexicos;
-        depth = config.depth;
-        ubrc = Option.map config.upper_bound_rfun_coeff ~f:Z.of_int;
-        ubrd = Option.map config.upper_bound_rfun_const ~f:Z.of_int;
-        ubdc = Option.map config.upper_bound_disc_coeff ~f:Z.of_int;
-        ubdd = Option.map config.upper_bound_disc_const ~f:Z.of_int;
-        ds =
-          (match config.disc_seeds with
-          | None -> Set.Poly.singleton Z.zero
-          | Some ds -> Set.Poly.of_list @@ List.map ds ~f:Z.of_int);
-      }
+  let nwf, (tag_l, tag_r) =
+    match Arg.nwf_tag with
+    | Some (nwf, tag) -> (nwf, tag)
+    | None -> assert false
+
+  let sorts_shared : Sort.t list =
+    List.map nwf.sorts_shared ~f:Logic.ExtTerm.to_old_sort
+
+  let sorts_map : (Ident.tvar, Sort.t list) Hashtbl.Poly.t =
+    Hashtbl.Poly.map nwf.sorts_map ~f:(List.map ~f:Logic.ExtTerm.to_old_sort)
+
+  let (param, last_non_timeout_param), (templ, qual_term_map) =
+    match Hashtbl.Poly.find shared_info (id, nwf.name) with
+    | Some m -> m
+    | _ ->
+        let m =
+          let param =
+            {
+              np = config.number_of_rfun_pieces;
+              ndc = config.number_of_disc_conj;
+              nl = config.number_of_rfun_lexicos;
+              depth = config.depth;
+              ubrc = Option.map config.upper_bound_rfun_coeff ~f:Z.of_int;
+              ubrd = Option.map config.upper_bound_rfun_const ~f:Z.of_int;
+              ubdc = Option.map config.upper_bound_disc_coeff ~f:Z.of_int;
+              ubdd = Option.map config.upper_bound_disc_const ~f:Z.of_int;
+              ds =
+                (match config.disc_seeds with
+                | None -> Set.Poly.singleton Z.zero
+                | Some ds -> Set.Poly.of_list @@ List.map ds ~f:Z.of_int);
+            }
+          in
+          ( (ref param, ref param),
+            Hashtbl.Poly.
+              ( NWF (create (), create (), create ()),
+                Hashtbl.Poly.map sorts_map ~f:(fun _ ->
+                    (Set.Poly.empty, Set.Poly.empty)) ) )
+        in
+        Hashtbl.Poly.add_exn shared_info ~key:(id, nwf.name) ~data:m;
+        m
+
+  let rcs, dcs, qds =
+    match templ with
+    | NWF (rcs, dcs, qds) -> (rcs, dcs, qds)
+    | _ -> assert false
 
   let init =
     {
@@ -109,16 +125,27 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
     }
 
   let name_of () = Arg.name
-  let kind_of () = Kind.str_of Kind.WF
-  let sort_of () = Sort.mk_fun @@ Arg.sorts (*ToDo*) @ [ T_bool.SBool ]
+  let kind_of () = Kind.str_of (Kind.NWF (nwf, (tag_l, tag_r)))
+  let sorts_of = Hashtbl.Poly.find_exn sorts_map
+  let sorts_l = sorts_of tag_l
+  let sorts_r = sorts_of tag_r
 
-  let params_of ~tag =
-    let params_of_idx (tag_l, tag_r) =
-      let sorts_l = Hashtbl.Poly.find_exn Arg.tag_infos tag_l in
-      let sorts_r = Hashtbl.Poly.find_exn Arg.tag_infos tag_r in
-      LogicOld.sort_env_list_of_sorts ~pre:"" @@ Arg.sorts @ sorts_l @ sorts_r
-    in
-    params_of_idx @@ Option.value_exn tag
+  let sort_of () =
+    Sort.mk_fun @@ sorts_shared @ sorts_l @ sorts_r @ [ T_bool.SBool ]
+
+  let params_shared = LogicOld.sort_env_list_of_sorts ~pre:"" sorts_shared
+
+  let params_left =
+    LogicOld.sort_env_list_of_sorts ~pre:"" ~start:(List.length sorts_shared)
+      sorts_l
+
+  let params_right =
+    LogicOld.sort_env_list_of_sorts ~pre:""
+      ~start:(List.length sorts_shared + List.length sorts_l)
+      sorts_r
+
+  let params_of () =
+    LogicOld.sort_env_list_of_sorts ~pre:"" (sorts_shared @ sorts_l @ sorts_r)
 
   let show_state ?(config = PCSatCommon.RLConfig.disabled) labels =
     if config.show_num_args then
@@ -126,8 +153,8 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
       @@ lazy
            (sprintf "args: %s"
            @@ String.concat_map_list ~sep:"," ~f:(fun (tag, sorts) ->
-                  sprintf "%s:(%d)" (Ident.name_of_tvar tag) (List.length sorts))
-           @@ Hashtbl.Poly.to_alist Arg.tag_infos);
+               sprintf "%s:(%d)" (Ident.name_of_tvar tag) (List.length sorts))
+           @@ Hashtbl.Poly.to_alist sorts_map);
     Debug.print_stdout
     @@ lazy
          (sprintf "state of %s: %s" (Ident.name_of_tvar (name_of ()))
@@ -152,131 +179,34 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
       (String.concat_map_set ~sep:"," !param.ds ~f:Z.to_string)
 
   let in_space () = true (* TODO *)
+  let adjust_quals_terms = Fn.id
 
-  let params_of_idx_l tag_l =
-    let sorts_l = Hashtbl.Poly.find_exn Arg.tag_infos tag_l in
-    LogicOld.sort_env_list_of_sorts ~pre:"" @@ Arg.sorts @ sorts_l
-    |> Fn.flip List.drop (List.length Arg.sorts)
+  let update_hspace hspace =
+    HypSpace.qualifiers_of ~fenv:Arg.fenv !param.depth hspace
 
-  let params_of_idx_r tag_l tag_r =
-    let sorts_l = Hashtbl.Poly.find_exn Arg.tag_infos tag_l in
-    let sorts_r = Hashtbl.Poly.find_exn Arg.tag_infos tag_r in
-    LogicOld.sort_env_list_of_sorts ~pre:"" @@ Arg.sorts @ sorts_l @ sorts_r
-    |> Fn.flip List.drop (List.length Arg.sorts + List.length sorts_l)
-
-  let adjust_quals ~tag quals =
-    let idxl, idxr = Option.value_exn tag in
-    let quals = Qual.add_quals_form_affine_eq_quals quals in
-    if Stdlib.(idxl <> idxr) then quals
-    else
-      let params_x, params_y =
-        (params_of_idx_l idxl, params_of_idx_r idxl idxr)
-      in
-      let rename_x_y =
-        Formula.rename (ren_of_sort_env_list params_x params_y)
-      in
-      let rename_y_x =
-        Formula.rename (ren_of_sort_env_list params_y params_x)
-      in
-      Set.concat_map quals ~f:(fun phi ->
-          let qual1 =
-            Z3Smt.Z3interface.qelim ~id ~fenv:Arg.fenv
-            @@ Formula.exists params_y phi
-          in
-          let qual2 =
-            Z3Smt.Z3interface.qelim ~id ~fenv:Arg.fenv
-            @@ Formula.exists params_x phi
-          in
-          Set.union
-            (if Formula.is_bind qual1 || Set.is_empty (Formula.fvs_of qual1)
-             then Set.Poly.empty
-             else Set.Poly.of_list [ qual1; rename_x_y qual1 ])
-            (if Formula.is_bind qual2 || Set.is_empty (Formula.fvs_of qual2)
-             then Set.Poly.empty
-             else Set.Poly.of_list [ rename_y_x qual2; qual2 ]))
-
-  let rcs, dcs, qds, qualmapl, qualmapr =
-    let init_qualmap () =
-      Hashtbl.Poly.map Arg.tag_infos ~f:(fun _ -> Set.Poly.empty)
-    in
-    Hashtbl.Poly.
-      (create (), create (), create (), init_qualmap (), init_qualmap ())
-
-  let reset_paramvars () =
-    Hashtbl.Poly.(
-      clear rcs;
-      clear dcs;
-      clear qds)
-
-  let x_i i = Ident.Tvar (sprintf "x%d" (i + 1))
-
-  let rec init_quals tag quals =
-    let quals_with quals params =
-      let vs = Set.Poly.of_list @@ List.map params ~f:fst in
-      Set.filter quals ~f:(fun q ->
-          Set.for_all (Formula.tvs_of q) ~f:(Set.mem vs))
-    in
-    let idxl, idxr = Option.value_exn tag in
-    let params = LogicOld.sort_env_list_of_sorts ~pre:"" Arg.sorts in
-    let params_x, params_y =
-      (params_of_idx_l idxl, params_of_idx_r idxl idxr)
-    in
-    let quals = adjust_quals ~tag quals in
-    let qualsl = quals_with quals (params @ params_x) in
-    let qualsr = quals_with quals (params @ params_y) in
-    let subst_y =
-      Map.Poly.of_alist_exn
-      @@ List.mapi (params @ params_y) ~f:(fun i (x, _) -> (x, x_i i))
-    in
-    let qualsr = Set.Poly.map ~f:(Formula.rename subst_y) qualsr in
-    if Stdlib.(idxl <> idxr) then (
-      init_quals (Some (idxl, idxl)) qualsl;
-      init_quals (Some (idxr, idxr)) qualsr);
-    Hashtbl.Poly.update qualmapl idxl ~f:(function
-      | Some quals -> Set.union quals qualsl
-      | None -> qualsl);
-    Hashtbl.Poly.update qualmapr idxr ~f:(function
-      | Some quals -> Set.union quals qualsr
-      | None -> qualsr)
-
-  let update_hspace ~tag hspace =
-    ignore tag;
-    let qualsl =
-      Hashtbl.Poly.find_exn qualmapl @@ fst @@ Option.value_exn tag
-    in
-    let qualsr =
-      let tag_l, tag_r = Option.value_exn tag in
-      let qualsr = Hashtbl.Poly.find_exn qualmapr tag_r in
-      let sorts_l = Hashtbl.Poly.find_exn Arg.tag_infos tag_l in
-      let sorts_r = Hashtbl.Poly.find_exn Arg.tag_infos tag_r in
-      let subst =
-        Map.Poly.of_alist_exn
-        @@ List.mapi (Arg.sorts @ sorts_r) ~f:(fun i _ ->
-               if i < List.length Arg.sorts then (x_i i, x_i i)
-               else (x_i i, x_i (i + List.length sorts_l)))
-      in
-      Set.Poly.map qualsr ~f:(Formula.rename subst)
-    in
-    let hspace =
-      {
-        hspace with
-        quals = (if true (*ToDo*) then Set.Poly.empty else hspace.quals);
-      }
-    in
-    let hspace = qualifiers_of ~fenv:Arg.fenv !param.depth hspace in
-    { hspace with quals = Set.Poly.union_list [ hspace.quals; qualsl; qualsr ] }
-
-  let gen_template ~tag ~ucore hspace =
-    ignore ucore;
-    let idxl, idxr = Option.value_exn tag in
-    let real_name = Ident.mk_nwf_tvar Arg.name idxl idxr in
+  let gen_template ~ucore:_ (hspace : HypSpace.hspace) =
     let template =
+      let quals_x, terms_x = Hashtbl.find_exn qual_term_map tag_l in
+      let quals_y, terms_y = Hashtbl.find_exn qual_term_map tag_r in
+      let quals_y, terms_y =
+        let ren =
+          ren_of_sort_env_list
+            (LogicOld.sort_env_list_of_sorts ~pre:""
+               ~start:(List.length sorts_shared) sorts_r)
+            (LogicOld.sort_env_list_of_sorts ~pre:""
+               ~start:(List.length sorts_shared + List.length sorts_l)
+               sorts_r)
+        in
+        ( Set.Poly.map quals_y ~f:(Formula.rename ren),
+          Set.Poly.map terms_y ~f:(Term.rename ren) )
+      in
       Templ.gen_simplified_nwf_predicate
         (*config.use_ifte*)
         (rcs, dcs, qds)
         {
-          terms = Set.to_list hspace.terms;
-          quals = Set.to_list hspace.quals;
+          consts = Set.to_list hspace.consts;
+          terms = [] (*Set.to_list hspace.terms*);
+          quals = [] (*Set.to_list hspace.quals*);
           shp = List.init !param.np ~f:(fun _ -> !param.ndc);
           nl = !param.nl;
           ubrc = !param.ubrc;
@@ -292,48 +222,61 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
           berc = Option.map config.bound_each_rfun_coeff ~f:Z.of_int;
           bedc = Option.map config.bound_each_disc_coeff ~f:Z.of_int;
         }
-        ( LogicOld.sort_env_list_of_sorts ~pre:"" Arg.sorts,
-          idxl,
-          params_of_idx_l idxl,
-          idxr,
-          params_of_idx_r idxl idxr )
+        (params_shared, tag_l, params_left, tag_r, params_right)
+        (Set.to_list quals_x, Set.to_list terms_x)
+        (Set.to_list quals_y, Set.to_list terms_y)
     in
     Debug.print
     @@ lazy
          (sprintf "[%s] predicate template:\n  %s"
-            (Ident.name_of_tvar real_name)
+            (Ident.name_of_tvar Arg.name)
             (Formula.str_of template.pred));
     Debug.print
     @@ lazy
+         (sprintf "[%s] rfun_selectors_bounds:\n  %s"
+            (Ident.name_of_tvar Arg.name)
+            (Formula.str_of template.rfun_selectors_bounds));
+    Debug.print
+    @@ lazy
          (sprintf "[%s] rfun_coeffs_bounds:\n  %s"
-            (Ident.name_of_tvar real_name)
+            (Ident.name_of_tvar Arg.name)
             (Formula.str_of template.rfun_coeffs_bounds));
     Debug.print
     @@ lazy
          (sprintf "[%s] rfun_const_bounds:\n  %s"
-            (Ident.name_of_tvar real_name)
+            (Ident.name_of_tvar Arg.name)
             (Formula.str_of template.rfun_const_bounds));
     Debug.print
     @@ lazy
          (sprintf "[%s] disc_coeffs_bounds:\n  %s"
-            (Ident.name_of_tvar real_name)
+            (Ident.name_of_tvar Arg.name)
             (Formula.str_of template.disc_coeffs_bounds));
     Debug.print
     @@ lazy
          (sprintf "[%s] disc_const_bounds:\n  %s"
-            (Ident.name_of_tvar real_name)
+            (Ident.name_of_tvar Arg.name)
             (Formula.str_of template.disc_const_bounds));
-    let tmpl =
-      let params = params_of ~tag in
-      Logic.(Term.mk_lambda (of_old_sort_env_list params))
+    let pred =
+      Logic.(Term.mk_lambda (of_old_sort_env_list hspace.params))
       @@ Logic.ExtTerm.of_old_formula template.pred
     in
-    ( (LexicoPieceConj, tmpl),
+    ( (LexicoPieceConj, pred),
       [
-        (RFunCoeff, Logic.ExtTerm.of_old_formula template.rfun_coeffs_bounds);
-        (RFunConst, Logic.ExtTerm.of_old_formula template.rfun_const_bounds);
-        (DiscCoeff, Logic.ExtTerm.of_old_formula template.disc_coeffs_bounds);
-        (DiscConst, Logic.ExtTerm.of_old_formula template.disc_const_bounds);
+        ( false,
+          RFunCoeff,
+          Logic.ExtTerm.of_old_formula template.rfun_coeffs_bounds );
+        ( false,
+          RFunConst,
+          Logic.ExtTerm.of_old_formula template.rfun_const_bounds );
+        ( false,
+          DiscCoeff,
+          Logic.ExtTerm.of_old_formula template.disc_coeffs_bounds );
+        ( false,
+          DiscConst,
+          Logic.ExtTerm.of_old_formula template.disc_const_bounds );
+        ( true,
+          LexicoPieceConj,
+          Logic.ExtTerm.of_old_formula template.rfun_selectors_bounds );
       ],
       template.templ_params,
       template.hole_quals_map )
@@ -345,8 +288,6 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
          ^ Ident.name_of_tvar Arg.name
          ^ "***************");
     (init, actions @ [ "restart" ])
-
-  let last_non_timeout_param = ref !param
 
   let revert (_param, actions) =
     Debug.print
@@ -633,14 +574,19 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
     ({ param with ubdd = init.ubdd }, actions @ [ "init_disc_const" ])
 
   let increase_lexico_piece_conj (param, actions) =
-    if param.nl >= param.np then
-      increase_depth @@ increase_disc_conj @@ increase_rfun_pieces
-      @@ init_rfun_lexicos (param, actions)
-    else increase_rfun_lexicos (param, actions)
+    if param.nl <= 1 && param.np <= 1 then
+      increase_disc_conj @@ increase_rfun_pieces
+      @@ increase_rfun_lexicos (param, actions)
+    else
+      (if param.nl >= 3 * (param.depth + 1) then increase_depth else Fn.id)
+      @@ (if param.nl >= 2 * param.np then
+            increase_rfun_pieces >> increase_disc_conj
+          else Fn.id)
+      @@ increase_rfun_lexicos (param, actions)
 
   let rec inner param_actions = function
     | [] -> param_actions
-    | LexicoPieceConj :: labels ->
+    | (LexicoPieceConj | Shape) :: labels ->
         inner
           (if config.fix_shape then param_actions
            else increase_lexico_piece_conj param_actions)
@@ -669,7 +615,6 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
     (snd @@ inner (!param, []) @@ Set.to_list labels) @ [ "end" ]
 
   let update_with_labels labels =
-    reset_paramvars ();
     param := fst @@ inner (!param, []) @@ Set.to_list labels
 
   (* called on failure, ignore config.fix_shape *)
@@ -738,15 +683,3 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
             (Ident.name_of_tvar Arg.name));
     Debug.print @@ lazy (str_of ())
 end
-
-let modules = Hashtbl.Poly.create ()
-
-let make ~(id : int option) ~(name : Ident.tvar) config arg =
-  match Hashtbl.Poly.find modules (id, name) with
-  | Some m -> m
-  | None ->
-      let (module Config : WFPredicate.Config.ConfigType) = config in
-      let (module Arg : ArgType) = arg in
-      (module Make (Config) (Arg) : Function.Type) |> fun m ->
-      Hashtbl.Poly.add_exn modules ~key:(id, name) ~data:m;
-      m

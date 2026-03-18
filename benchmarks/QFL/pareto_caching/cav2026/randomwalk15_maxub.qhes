@@ -1,0 +1,25 @@
+Inv 4.0 <= [9.0; 106.0; 108.0; 108.0; 108.0; 108.0; 108.0; 108.0; 108.0; 108.0; 108.0; 108.0; 108.0; 108.0; 108.0]
+s.t.
+Inv (x : real) : real =mu
+   if x >= 2.0 then
+       max ( 1.0 + (2.0/3.0) * Inv (x - 1.0) + (1.0/3.0) * Inv (x + 1.0) )
+                ( Inv 0.0 )
+   else Post x;
+Post (x : real) : real =mu
+  [if x = 0.0 then 0.0 else if x = 1.0 then 0.0 else 0.0;
+   if x = 0.0 then 100.0 else if x = 1.0 then 0.0 else 0.0;
+   if x = 0.0 then 99.0 else if x = 1.0 then 1.0 else 0.0;
+   if x = 0.0 then 96.0 else if x = 1.0 then 4.0 else 0.0;
+   if x = 0.0 then 91.0 else if x = 1.0 then 9.0 else 0.0;
+   if x = 0.0 then 84.0 else if x = 1.0 then 16.0 else 0.0;
+   if x = 0.0 then 75.0 else if x = 1.0 then 25.0 else 0.0;
+   if x = 0.0 then 64.0 else if x = 1.0 then 36.0 else 0.0;
+   if x = 0.0 then 51.0 else if x = 1.0 then 49.0 else 0.0;
+   if x = 0.0 then 36.0 else if x = 1.0 then 64.0 else 0.0;
+   if x = 0.0 then 19.0 else if x = 1.0 then 81.0 else 0.0;
+   if x = 0.0 then 15.0 else if x = 1.0 then 85.0 else 0.0;
+   if x = 0.0 then 12.0 else if x = 1.0 then 88.0 else 0.0;
+   if x = 0.0 then 10.0 else if x = 1.0 then 90.0 else 0.0;
+   if x = 0.0 then 5.0  else if x = 1.0 then 95.0 else 0.0
+];
+

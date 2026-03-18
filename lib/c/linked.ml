@@ -9,7 +9,8 @@ module LinkedStatement : sig
   type t =
     | IF of Formula.t * t ref * t ref
     | ASSIGN of string * Term.t * t ref
-    | NONDET_ASSIGN of string * t ref
+    | NONDET_INT_ASSIGN of string * t ref
+    | NONDET_REAL_ASSIGN of string * t ref
     | NONDET of t ref * t ref
     | ASSUME of Formula.t * t ref
     | NOP of t ref
@@ -17,21 +18,24 @@ module LinkedStatement : sig
 
   val is_if : t -> bool
   val is_assign : t -> bool
-  val is_nondet_assign : t -> bool
+  val is_nondet_int_assign : t -> bool
+  val is_nondet_real_assign : t -> bool
   val is_nondet : t -> bool
   val is_assume : t -> bool
   val is_nop : t -> bool
   val is_exit : t -> bool
   val mk_if : Formula.t -> t ref -> t ref -> t
   val mk_assign : string -> Term.t -> t ref -> t
-  val mk_nondet_assign : string -> t ref -> t
+  val mk_nondet_int_assign : string -> t ref -> t
+  val mk_nondet_real_assign : string -> t ref -> t
   val mk_nondet : t ref -> t ref -> t
   val mk_assume : Formula.t -> t ref -> t
   val mk_nop : t ref -> t
   val mk_exit : unit -> t
   val let_if : t -> Formula.t * t ref * t ref
   val let_assign : t -> string * Term.t * t ref
-  val let_nondet_assign : t -> string * t ref
+  val let_nondet_int_assign : t -> string * t ref
+  val let_nondet_real_assign : t -> string * t ref
   val let_assume : t -> Formula.t * t ref
   val let_nondet : t -> t ref * t ref
   val let_nop : t -> t ref
@@ -53,7 +57,8 @@ end = struct
   type t =
     | IF of Formula.t * t ref * t ref
     | ASSIGN of string * Term.t * t ref
-    | NONDET_ASSIGN of string * t ref
+    | NONDET_INT_ASSIGN of string * t ref
+    | NONDET_REAL_ASSIGN of string * t ref
     | NONDET of t ref * t ref
     | ASSUME of Formula.t * t ref
     | NOP of t ref
@@ -61,14 +66,25 @@ end = struct
 
   let is_if = function IF _ -> true | _ -> false
   let is_assign = function ASSIGN _ -> true | _ -> false
-  let is_nondet_assign = function NONDET_ASSIGN _ -> true | _ -> false
+  let is_nondet_int_assign = function NONDET_INT_ASSIGN _ -> true | _ -> false
+
+  let is_nondet_real_assign = function
+    | NONDET_REAL_ASSIGN _ -> true
+    | _ -> false
+
   let is_nondet = function NONDET _ -> true | _ -> false
   let is_assume = function ASSUME _ -> true | _ -> false
   let is_nop = function NOP _ -> true | _ -> false
   let is_exit = function EXIT -> true | _ -> false
   let mk_if cond_fml t_stmt f_stmt = IF (cond_fml, t_stmt, f_stmt)
   let mk_assign varname term nxt_stmt = ASSIGN (varname, term, nxt_stmt)
-  let mk_nondet_assign varname nxt_stmt = NONDET_ASSIGN (varname, nxt_stmt)
+
+  let mk_nondet_int_assign varname nxt_stmt =
+    NONDET_INT_ASSIGN (varname, nxt_stmt)
+
+  let mk_nondet_real_assign varname nxt_stmt =
+    NONDET_REAL_ASSIGN (varname, nxt_stmt)
+
   let mk_nondet stmt1 stmt2 = NONDET (stmt1, stmt2)
   let mk_assume fml nxt_stmt = ASSUME (fml, nxt_stmt)
   let mk_nop stmt = NOP stmt
@@ -82,8 +98,12 @@ end = struct
     | ASSIGN (varname, term, nxt_stmt) -> (varname, term, nxt_stmt)
     | _ -> assert false
 
-  let let_nondet_assign = function
-    | NONDET_ASSIGN (varname, nxt_stmt) -> (varname, nxt_stmt)
+  let let_nondet_int_assign = function
+    | NONDET_INT_ASSIGN (varname, nxt_stmt) -> (varname, nxt_stmt)
+    | _ -> assert false
+
+  let let_nondet_real_assign = function
+    | NONDET_REAL_ASSIGN (varname, nxt_stmt) -> (varname, nxt_stmt)
     | _ -> assert false
 
   let let_assume = function
@@ -98,7 +118,8 @@ end = struct
 
   let get_next_statements_ref = function
     | ASSIGN (_, _, nxt_stmt) -> [ nxt_stmt ]
-    | NONDET_ASSIGN (_, nxt_stmt) -> [ nxt_stmt ]
+    | NONDET_INT_ASSIGN (_, nxt_stmt) -> [ nxt_stmt ]
+    | NONDET_REAL_ASSIGN (_, nxt_stmt) -> [ nxt_stmt ]
     | IF (_, t_stmt, f_stmt) -> [ t_stmt; f_stmt ]
     | NONDET (stmt1, stmt2) -> [ stmt1; stmt2 ]
     | ASSUME (_, nxt_stmt) -> [ nxt_stmt ]
@@ -169,18 +190,23 @@ end = struct
     else if Statement.is_assume stmt then
       let fml = Statement.let_assume stmt in
       mk_assume fml nxt_stmt
-    else if Statement.is_nondet_assign stmt then
-      let varname = Statement.let_nondet_assign stmt in
-      mk_nondet_assign varname nxt_stmt
+    else if Statement.is_nondet_int_assign stmt then
+      let varname = Statement.let_nondet_int_assign stmt in
+      mk_nondet_int_assign varname nxt_stmt
+    else if Statement.is_nondet_real_assign stmt then
+      let varname = Statement.let_nondet_real_assign stmt in
+      mk_nondet_real_assign varname nxt_stmt
     else if Statement.is_nop stmt then mk_nop nxt_stmt
     else if Statement.is_label stmt then (
       let label_name = Statement.let_label stmt in
       let stmt = mk_nop nxt_stmt in
-      Hashtbl.Poly.find_exn label_to_stmt label_name := stmt;
+      Hashtbl.Poly.find_exn label_to_stmt (label_name, T_int.SInt (*Dummy*))
+      := stmt;
       stmt)
     else if Statement.is_goto stmt then
       let label_name = Statement.let_goto stmt in
-      Hashtbl.Poly.find_exn label_to_stmt label_name |> mk_nop
+      Hashtbl.Poly.find_exn label_to_stmt (label_name, T_int.SInt (*Dummy*))
+      |> mk_nop
     else if Statement.is_vardecl stmt then (* TODO *)
       mk_nop nxt_stmt
     else
@@ -212,14 +238,19 @@ end = struct
            ~init:(used_stmts, vars)
 
   let get_read_vars = function
-    | IF (fml, _, _) -> Formula.tvs_of fml |> Variables.of_tvarset
-    | ASSIGN (_, term, _) -> Term.tvs_of term |> Variables.of_tvarset
-    | ASSUME (fml, _) -> Formula.tvs_of fml |> Variables.of_tvarset
-    | NONDET_ASSIGN _ | NONDET _ | NOP _ | EXIT -> Variables.empty
+    | IF (fml, _, _) -> Formula.term_sort_env_of fml |> Variables.of_tvarset
+    | ASSIGN (_, term, _) -> Term.term_sort_env_of term |> Variables.of_tvarset
+    | ASSUME (fml, _) -> Formula.term_sort_env_of fml |> Variables.of_tvarset
+    | NONDET_INT_ASSIGN _ | NONDET_REAL_ASSIGN _ | NONDET _ | NOP _ | EXIT ->
+        Variables.empty
 
   let get_written_vars = function
-    | NONDET_ASSIGN (varname, _) | ASSIGN (varname, _, _) ->
-        Variables.of_varname varname
+    | NONDET_INT_ASSIGN (varname, _) ->
+        Variables.of_varname (varname, T_int.SInt)
+    | NONDET_REAL_ASSIGN (varname, _) ->
+        Variables.of_varname (varname, T_real.SReal)
+    | ASSIGN (varname, rhs, _) ->
+        Variables.of_varname (varname, Term.sort_of rhs)
     | ASSUME _ | IF _ | NONDET _ | NOP _ | EXIT -> Variables.empty
 
   let get_used_vars stmt =
@@ -279,11 +310,16 @@ end = struct
               ( used,
                 sprintf "%s = %s;\n%s" varname (Term.str_of term) nxt_stmt_str
               )
-          | NONDET_ASSIGN (varname, nxt_stmt) ->
+          | NONDET_INT_ASSIGN (varname, nxt_stmt) ->
               let used, nxt_stmt_str =
                 string_of_stmt_rep ?info used indent !nxt_stmt
               in
-              (used, sprintf "%s = nondet();\n%s" varname nxt_stmt_str)
+              (used, sprintf "%s = nondet_int();\n%s" varname nxt_stmt_str)
+          | NONDET_REAL_ASSIGN (varname, nxt_stmt) ->
+              let used, nxt_stmt_str =
+                string_of_stmt_rep ?info used indent !nxt_stmt
+              in
+              (used, sprintf "%s = nondet_real();\n%s" varname nxt_stmt_str)
           | NONDET (stmt1, stmt2) ->
               let used, stmt1_str =
                 string_of_stmt_rep ?info used (indent + 2) !stmt1
@@ -320,7 +356,10 @@ end = struct
         mk_if (Formula.subst subst cond_fml) t_stmt f_stmt
     | ASSIGN (varname, term, nxt_stmt) ->
         mk_assign varname (Term.subst subst term) nxt_stmt
-    | NONDET_ASSIGN (varname, nxt_stmt) -> mk_nondet_assign varname nxt_stmt
+    | NONDET_INT_ASSIGN (varname, nxt_stmt) ->
+        mk_nondet_int_assign varname nxt_stmt
+    | NONDET_REAL_ASSIGN (varname, nxt_stmt) ->
+        mk_nondet_real_assign varname nxt_stmt
     | NONDET (stmt1, stmt2) -> mk_nondet stmt1 stmt2
     | ASSUME (fml, nxt_stmt) -> mk_assume (Formula.subst subst fml) nxt_stmt
     | NOP stmt -> mk_nop stmt

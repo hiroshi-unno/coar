@@ -553,9 +553,15 @@ and term_of ctx (senv : sort_env_list)
         with Failure err -> (
           Debug.print @@ lazy ("error: " ^ err);
           try
-            (* tuples *)
-            if String.is_prefix ~prefix:unint_tuple_prefix name then
-              T_tuple.mk_tuple_cons arg_sorts ts
+            (* integers *)
+            if String.(name = "^") then
+              match ts with
+              | [ t1; t2 ] -> T_real.mk_rpower t1 t2
+              | _ -> failwith "[z3:term_of] not a valid integer power term"
+            else if
+              (* tuples *)
+              String.is_prefix ~prefix:unint_tuple_prefix name
+            then T_tuple.mk_tuple_cons arg_sorts ts
             else if
               String.is_prefix ~prefix:unint_tuple_sel_prefix name
               && List.length ts = 1
@@ -861,17 +867,17 @@ and
 let dummy_term_map_of terms =
   Map.of_set_exn
   @@ Set.Poly.filter_map terms ~f:(function
-       | tvar, (T_dt.SUS (name, _) as sort) ->
-           let tvar' = Ident.mk_fresh_dummy_tvar name in
-           LogicOld.add_dummy_term tvar' sort;
-           Some (tvar, Term.mk_var tvar' sort)
-       | _ -> None)
+    | tvar, (T_dt.SUS (name, _) as sort) ->
+        let tvar' = Ident.mk_fresh_dummy_tvar name in
+        LogicOld.add_dummy_term tvar' sort;
+        Some (tvar, Term.mk_var tvar' sort)
+    | _ -> None)
 
 let add_dummy_term model =
   List.filter_map model ~f:(function _, Some t -> Some t | _ -> None)
   |> List.fold_left ~init:Set.Poly.empty ~f:(fun ret term ->
-         Set.filter ~f:(function _, T_dt.SUS _ -> true | _ -> false)
-         @@ Set.union ret @@ Term.term_sort_env_of term)
+      Set.filter ~f:(function _, T_dt.SUS _ -> true | _ -> false)
+      @@ Set.union ret @@ Term.term_sort_env_of term)
   |> Set.iter ~f:(uncurry2 add_dummy_term)
 
 let model_of ctx dtenv model =
@@ -932,8 +938,8 @@ let str_of_z3_env env =
              @@ sprintf "(#%d) %s" (Z3.FuncDecl.get_id cons)
                   (Z3.FuncDecl.to_string cons)
                 :: List.map sels ~f:(fun sel ->
-                       sprintf "(#%d) %s" (Z3.FuncDecl.get_id sel)
-                         (Z3.FuncDecl.to_string sel))))
+                    sprintf "(#%d) %s" (Z3.FuncDecl.get_id sel)
+                      (Z3.FuncDecl.to_string sel))))
         (String.concat_map_list ~sep:"\n" (Z3.Datatype.get_recognizers sort)
            ~f:(fun iscons ->
              sprintf "(#%d) %s"
@@ -1012,86 +1018,83 @@ and update_z3env ctx dtenv t =
         uncurry2 (Z3.Datatype.mk_sorts_s ctx)
         @@ List.unzip
         @@ List.map dts ~f:(fun dt ->
-               let dt_name = Datatype.full_name_of_dt dt in
-               ( dt_name,
-                 List.map (Datatype.conses_of_dt dt) ~f:(fun cons ->
-                     let name = Datatype.name_of_cons cons in
-                     Debug.print
-                     @@ lazy
-                          (sprintf "[update_z3env] %s constructor: %s" dt_name
-                             name);
-                     let is_cons_name =
-                       Z3.Symbol.mk_string ctx @@ unint_is_cons_prefix ^ name
-                     in
-                     Debug.print
-                     @@ lazy
-                          (sprintf "[update_z3env] %s tester: %s" dt_name
-                          @@ Z3.Symbol.get_string is_cons_name);
-                     let sels_names, ret_sorts, ref_sorts =
-                       List.fold_left (Datatype.sels_of_cons cons)
-                         ~init:([], [], [])
-                         ~f:(fun (sels_names, ret_sorts, ref_sorts) -> function
-                         | Datatype.Sel (name, ret_sort) ->
-                             Debug.print
-                             @@ lazy
-                                  (sprintf "[update_z3env] %s accessor: %s"
-                                     dt_name name);
-                             ( Z3.Symbol.mk_string ctx name :: sels_names,
-                               Some (of_sort ctx dtenv ret_sort) :: ret_sorts,
-                               0 :: ref_sorts )
-                         | Datatype.InSel (name, ret_name, args) -> (
-                             Debug.print
-                             @@ lazy
-                                  (sprintf "[update_z3env] %s rec. accessor: %s"
-                                     dt_name name);
-                             let full_name =
-                               Datatype.full_name_of
-                                 (Datatype.make ret_name
-                                    [ Datatype.mk_dt ret_name args ]
-                                    FDt)
-                             in
-                             match
-                               Set.find dtenv
-                                 ~f:
-                                   (fst >> Datatype.full_name_of
-                                  >> String.( = ) full_name)
-                             with
-                             | Some (_, sort) ->
-                                 ( Z3.Symbol.mk_string ctx name :: sels_names,
-                                   Some sort :: ret_sorts,
-                                   0 :: ref_sorts )
-                             | None -> (
-                                 match
-                                   List.findi dts ~f:(fun _ ->
-                                       Datatype.name_of_dt
-                                       >> String.( = ) ret_name)
-                                 with
-                                 | Some (i, _) ->
-                                     if false then
-                                       Debug.print
-                                       @@ lazy (sprintf "ref id:%d" i);
-                                     ( Z3.Symbol.mk_string ctx name :: sels_names,
-                                       None :: ret_sorts,
-                                       i :: ref_sorts )
-                                 | _ -> assert false)))
-                     in
-                     let z3cons =
-                       Z3.Datatype.mk_constructor ctx
-                         (Z3.Symbol.mk_string ctx name)
-                         is_cons_name (List.rev sels_names) (List.rev ret_sorts)
-                         (List.rev ref_sorts)
-                     in
-                     if false then (
-                       Debug.print
-                       @@ lazy
-                            ("z3 tester: " ^ Z3.FuncDecl.to_string
-                            @@ Z3.Datatype.Constructor.get_tester_decl z3cons);
-                       List.iter
-                         (Z3.Datatype.Constructor.get_accessor_decls z3cons)
-                         ~f:(fun sel ->
-                           Debug.print
-                           @@ lazy ("z3 sel:" ^ Z3.FuncDecl.to_string sel)));
-                     z3cons) ))
+            let dt_name = Datatype.full_name_of_dt dt in
+            ( dt_name,
+              List.map (Datatype.conses_of_dt dt) ~f:(fun cons ->
+                  let name = Datatype.name_of_cons cons in
+                  Debug.print
+                  @@ lazy
+                       (sprintf "[update_z3env] %s constructor: %s" dt_name name);
+                  let is_cons_name =
+                    Z3.Symbol.mk_string ctx @@ unint_is_cons_prefix ^ name
+                  in
+                  Debug.print
+                  @@ lazy
+                       (sprintf "[update_z3env] %s tester: %s" dt_name
+                       @@ Z3.Symbol.get_string is_cons_name);
+                  let sels_names, ret_sorts, ref_sorts =
+                    List.fold_left (Datatype.sels_of_cons cons)
+                      ~init:([], [], [])
+                      ~f:(fun (sels_names, ret_sorts, ref_sorts) -> function
+                      | Datatype.Sel (name, ret_sort) ->
+                          Debug.print
+                          @@ lazy
+                               (sprintf "[update_z3env] %s accessor: %s" dt_name
+                                  name);
+                          ( Z3.Symbol.mk_string ctx name :: sels_names,
+                            Some (of_sort ctx dtenv ret_sort) :: ret_sorts,
+                            0 :: ref_sorts )
+                      | Datatype.InSel (name, ret_name, args) -> (
+                          Debug.print
+                          @@ lazy
+                               (sprintf "[update_z3env] %s rec. accessor: %s"
+                                  dt_name name);
+                          let full_name =
+                            Datatype.full_name_of
+                              (Datatype.make ret_name
+                                 [ Datatype.mk_dt ret_name args ]
+                                 FDt)
+                          in
+                          match
+                            Set.find dtenv
+                              ~f:
+                                (fst >> Datatype.full_name_of
+                               >> String.( = ) full_name)
+                          with
+                          | Some (_, sort) ->
+                              ( Z3.Symbol.mk_string ctx name :: sels_names,
+                                Some sort :: ret_sorts,
+                                0 :: ref_sorts )
+                          | None -> (
+                              match
+                                List.findi dts ~f:(fun _ ->
+                                    Datatype.name_of_dt >> String.( = ) ret_name)
+                              with
+                              | Some (i, _) ->
+                                  if false then
+                                    Debug.print @@ lazy (sprintf "ref id:%d" i);
+                                  ( Z3.Symbol.mk_string ctx name :: sels_names,
+                                    None :: ret_sorts,
+                                    i :: ref_sorts )
+                              | _ -> assert false)))
+                  in
+                  let z3cons =
+                    Z3.Datatype.mk_constructor ctx
+                      (Z3.Symbol.mk_string ctx name)
+                      is_cons_name (List.rev sels_names) (List.rev ret_sorts)
+                      (List.rev ref_sorts)
+                  in
+                  if false then (
+                    Debug.print
+                    @@ lazy
+                         ("z3 tester: " ^ Z3.FuncDecl.to_string
+                         @@ Z3.Datatype.Constructor.get_tester_decl z3cons);
+                    List.iter
+                      (Z3.Datatype.Constructor.get_accessor_decls z3cons)
+                      ~f:(fun sel ->
+                        Debug.print
+                        @@ lazy ("z3 sel:" ^ Z3.FuncDecl.to_string sel)));
+                  z3cons) ))
       in
       List.fold2_exn dts sorts ~init:dtenv ~f:(fun dtenv dt sort ->
           Set.add dtenv
@@ -1385,7 +1388,7 @@ and of_term ~id ctx (env : sort_env_list)
       | T_irb.IntToBV size, [ t ] ->
           Z3.Arithmetic.Integer.mk_int2bv ctx (T_bv.bits_of size) t
       | T_irb.BVToInt (_size, signed), [ t ] ->
-          Z3.BitVector.mk_bv2int ctx t (T_bv.signed_of signed)
+          Z3.BitVector.mk_bv2int ctx t (T_bv.is_signed signed)
       | T_bv.BVNum (size, n), [] ->
           Z3.BitVector.mk_numeral ctx (Z.to_string n) (T_bv.bits_of size)
       | T_bv.BVNot _size, [ t1 ] -> Z3.BitVector.mk_not ctx t1
@@ -1400,11 +1403,11 @@ and of_term ~id ctx (env : sort_env_list)
       | T_bv.BVSub _size, [ t1; t2 ] -> Z3.BitVector.mk_sub ctx t1 t2
       | T_bv.BVMul _size, [ t1; t2 ] -> Z3.BitVector.mk_mul ctx t1 t2
       | T_bv.BVDiv (_size, signed), [ t1; t2 ] ->
-          (if T_bv.signed_of signed then Z3.BitVector.mk_sdiv
+          (if T_bv.is_signed signed then Z3.BitVector.mk_sdiv
            else Z3.BitVector.mk_udiv)
             ctx t1 t2
       | T_bv.BVRem (_size, signed), [ t1; t2 ] ->
-          (if T_bv.signed_of signed then Z3.BitVector.mk_srem
+          (if T_bv.is_signed signed then Z3.BitVector.mk_srem
            else Z3.BitVector.mk_urem)
             ctx t1 t2
       | T_bv.BVSMod _size, [ t1; t2 ] -> Z3.BitVector.mk_smod ctx t1 t2
@@ -1517,22 +1520,22 @@ and
           Z3.Boolean.mk_not ctx @@ Z3.Boolean.mk_eq ctx t1 t2
       | (T_int.Leq | T_real.RLeq), [ t1; t2 ] -> Z3.Arithmetic.mk_le ctx t1 t2
       | T_bv.BVLeq (_size, signed), [ t1; t2 ] ->
-          (if T_bv.signed_of signed then Z3.BitVector.mk_sle
+          (if T_bv.is_signed signed then Z3.BitVector.mk_sle
            else Z3.BitVector.mk_ule)
             ctx t1 t2
       | (T_int.Geq | T_real.RGeq), [ t1; t2 ] -> Z3.Arithmetic.mk_ge ctx t1 t2
       | T_bv.BVGeq (_size, signed), [ t1; t2 ] ->
-          (if T_bv.signed_of signed then Z3.BitVector.mk_sge
+          (if T_bv.is_signed signed then Z3.BitVector.mk_sge
            else Z3.BitVector.mk_uge)
             ctx t1 t2
       | (T_int.Lt | T_real.RLt), [ t1; t2 ] -> Z3.Arithmetic.mk_lt ctx t1 t2
       | T_bv.BVLt (_size, signed), [ t1; t2 ] ->
-          (if T_bv.signed_of signed then Z3.BitVector.mk_slt
+          (if T_bv.is_signed signed then Z3.BitVector.mk_slt
            else Z3.BitVector.mk_ult)
             ctx t1 t2
       | (T_int.Gt | T_real.RGt), [ t1; t2 ] -> Z3.Arithmetic.mk_gt ctx t1 t2
       | T_bv.BVGt (_size, signed), [ t1; t2 ] ->
-          (if T_bv.signed_of signed then Z3.BitVector.mk_sgt
+          (if T_bv.is_signed signed then Z3.BitVector.mk_sgt
            else Z3.BitVector.mk_ugt)
             ctx t1 t2
       | T_int.PDiv, [ t1; t2 ] ->
@@ -1613,13 +1616,17 @@ let z3_fenv_of ?(init = Map.Poly.empty) ~id ctx (env : sort_env_list)
 let of_formula_with_z3fenv ~id ctx (uni_senv : sort_env_list)
     (penv : (Ident.pvar, Z3.FuncDecl.func_decl) List.Assoc.t) (fenv : fenv)
     (dtenv : (Datatype.t * Z3.Sort.sort) Set.Poly.t) phi =
+  Debug.print
+  @@ lazy
+       (sprintf "[z3:of_formula_with_z3fenv] phi:\n  %s" (Formula.str_of phi));
   let phi' =
     Formula.elim_let_equi false
     (*ToDo*) @@ Normalizer.normalize_let ~rename:true phi
   in
   Debug.print
-  @@ lazy (sprintf "[z3:of_formula_with_z3fenv]\n  %s" (Formula.str_of phi'));
-  of_formula_aux ~id ctx uni_senv penv fenv dtenv phi' |> fun res ->
+  @@ lazy
+       (sprintf "[z3:of_formula_with_z3fenv] phi':\n  %s" (Formula.str_of phi'));
+  let res = of_formula_aux ~id ctx uni_senv penv fenv dtenv phi' in
   if false then Debug.print @@ lazy ("result: " ^ Z3.Expr.to_string res);
   res
 
@@ -1777,14 +1784,16 @@ let incr_check_sat_unsat_core ~id ?(enable = true) ?(z3str3 = false)
     if not @@ Set.is_empty non_tracked then Z3.Solver.pop solver 1;
     ret
   in
-  match timeout with
-  | None -> f ()
-  | Some tm ->
-      if tm = 0 then `Timeout (* times out immediately *)
-      else
-        Timer.enable_timeout (tm / 1000) Fn.id ignore f
-          (fun _ res -> res)
-          (fun _ -> function Timer.Timeout -> `Timeout | e -> raise e)
+  if true then f ()
+  else
+    match timeout with
+    | None -> f ()
+    | Some tm ->
+        if tm = 0 then `Timeout (* times out immediately *)
+        else
+          Timer.enable_timeout (tm / 1000) Fn.id ignore f
+            (fun _ res -> res)
+            (fun _ -> function Timer.Timeout -> `Timeout | e -> raise e)
 
 let check_sat_unsat_core ~id ?(z3str3 = false) ?(timeout = None) fenv
     pvar_clause_map =
@@ -1871,9 +1880,9 @@ let max_smt_of ~id fenv num_ex phis =
   let name_map0 =
     List.map phis ~f:(of_formula_with_z3fenv ~id ctx [] [] fenv dtenv)
     |> List.foldi ~init:Map.Poly.empty ~f:(fun i map phi ->
-           let name = "#S_" ^ string_of_int i in
-           let label = Z3.Boolean.mk_const_s ctx name in
-           Map.Poly.update map label ~f:(function None -> phi | Some x -> x))
+        let name = "#S_" ^ string_of_int i in
+        let label = Z3.Boolean.mk_const_s ctx name in
+        Map.Poly.update map label ~f:(function None -> phi | Some x -> x))
   in
   let rec inner num_ex models ignored name_map =
     if num_ex <= 0 then models
@@ -1903,23 +1912,33 @@ let max_smt_of ~id fenv num_ex phis =
     instance_pool id instance;
   ret
 
-let check_opt_maximize_z3 ctx dtenv phis obj =
+let check_opt_z3 ~max ctx dtenv phis obj =
   let optimizer = Z3.Optimize.mk_opt ctx in
   Z3.Optimize.add optimizer phis;
-  let handle = Z3.Optimize.maximize optimizer obj in
+  let handle = Z3.Optimize.(if max then maximize else minimize) optimizer obj in
   match Z3.Optimize.check optimizer with
   | SATISFIABLE ->
       let open Option.Monad_infix in
       Z3.Optimize.get_model optimizer >>= fun model ->
-      let lower = Z3.Optimize.get_lower handle |> term_of ctx [] [] dtenv in
-      let upper = Z3.Optimize.get_upper handle |> term_of ctx [] [] dtenv in
+      let lower =
+        try Some (Z3.Optimize.get_lower handle |> term_of ctx [] [] dtenv)
+        with _ -> None
+      in
+      let upper =
+        try Some (Z3.Optimize.get_upper handle |> term_of ctx [] [] dtenv)
+        with _ -> None
+      in
       Some (lower, upper, model_of ctx dtenv model)
   | _ -> None
 
-let check_opt_maximize ~id fenv phis obj =
-  let cfg = [ ("model", "true") ] in
-  let cfg = if validate then cfg @ validate_cfg else cfg in
-  let ctx = Z3.mk_context cfg in
+let check_opt ~id fenv phis ~max obj =
+  let ctx =
+    let cfg =
+      let cfg = [ ("model", "true") ] in
+      if validate then cfg @ validate_cfg else cfg
+    in
+    Z3.mk_context cfg
+  in
   let dtenv = z3_dtenv_of_formula ctx @@ Formula.and_of phis in
   let z3fenv = z3_fenv_of ~id ctx [] [] fenv dtenv in
   debug_print_z3_input phis;
@@ -1929,7 +1948,7 @@ let check_opt_maximize ~id fenv phis obj =
   let obj =
     of_term ~id ctx [] [] (z3_fenv_of ~id ctx [] [] fenv dtenv) dtenv obj
   in
-  check_opt_maximize_z3 ctx dtenv phis obj
+  check_opt_z3 ~max ctx dtenv phis obj
 
 let penv_of phi ctx dtenv =
   Formula.pred_sort_env_of phi
@@ -1986,9 +2005,11 @@ let z3_simplify ~id fenv phi =
 let qelim ?(timeout = None) ~id ~fenv phi =
   Debug.print @@ lazy "[Z3interface.qelim]";
   if
-    Set.for_all (Formula.funsyms_of phi) ~f:(T_bv.is_bv_fsym >> not)
+    (not (Formula.is_quantifier_free phi))
+    && Set.for_all (Formula.funsyms_of phi) ~f:(function
+      | T_int.Power | T_real.RPower -> false
+      | fsym -> not (T_bv.is_bv_fsym fsym))
     && Set.for_all (Formula.predsyms_of phi) ~f:(T_bv.is_bv_psym >> not)
-    (*&& Formula.is_quantifier_free phi*)
   then (
     Debug.print @@ lazy (sprintf "[z3:qelim] %s" (Formula.str_of phi));
     let cfg = [ ("model", "true") ] in
@@ -2116,7 +2137,7 @@ and simplify_atom ~id solver ctx fenv (dtenv : dtenv) atom =
         [ expr_of_default_true ~id ctx fenv dtenv @@ Formula.negate phi ]
     then (Atom.mk_true (), true)
     else if
-      inc_check_valid solver [ expr_of_default_true ~id ctx fenv dtenv @@ phi ]
+      inc_check_valid solver [ expr_of_default_true ~id ctx fenv dtenv phi ]
     then (Atom.mk_false (), true)
     else (atom, false)
 

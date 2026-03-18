@@ -44,6 +44,12 @@ let rec int_monomials_of (coeff : Value.t) = function
            (T_int.mk_rem m (normalize_term t1) (normalize_term t2))
            1)
         coeff
+  | FunApp (T_int.Power, [ t1; t2 ], _) ->
+      Map.Poly.singleton
+        (Map.Poly.singleton
+           (T_int.mk_power (normalize_term t1) (normalize_term t2))
+           1)
+        coeff
   | FunApp (T_irb.RealToInt, [ t1 ], _) ->
       Map.Poly.singleton
         (Map.Poly.singleton (T_irb.mk_real_to_int (normalize_term t1)) 1)
@@ -64,6 +70,12 @@ let rec int_monomials_of (coeff : Value.t) = function
       let mono =
         T_bool.mk_if_then_else (normalize_term t1) (normalize_term t2)
           (normalize_term t3)
+      in
+      Map.Poly.singleton (Map.Poly.singleton mono 1) coeff
+  | FunApp (T_int.Case n, t1 :: branches, _) ->
+      let mono =
+        T_int.mk_case n (normalize_term t1)
+          (List.map branches ~f:normalize_term)
       in
       Map.Poly.singleton (Map.Poly.singleton mono 1) coeff
   | FunApp (T_array.ASelect _, [ arr; ti ], _) as term -> (
@@ -100,6 +112,10 @@ and real_monomials_of (coeff : Value.t) = function
         (Map.Poly.singleton (T_real.mk_alge (normalize_term t) n) 1)
         coeff
   | FunApp (T_real.RNeg, [ t ], _) -> real_monomials_of (Value.neg coeff) t
+  | FunApp (T_real.RAbs, [ t1 ], _) ->
+      Map.Poly.singleton
+        (Map.Poly.singleton (T_real.mk_rabs (normalize_term t1)) 1)
+        coeff
   | FunApp (T_real.RAdd, [ t1; t2 ], _) ->
       PolyTerm.real_add_monomials
         (real_monomials_of coeff t1)
@@ -131,10 +147,6 @@ and real_monomials_of (coeff : Value.t) = function
            (T_real.mk_rpower (normalize_term t1) (normalize_term t2))
            1)
         coeff
-  | FunApp (T_real.RAbs, [ t1 ], _) ->
-      Map.Poly.singleton
-        (Map.Poly.singleton (T_real.mk_rabs (normalize_term t1)) 1)
-        coeff
   | FunApp (T_irb.IntToReal, [ t1 ], _) ->
       Map.Poly.singleton
         (Map.Poly.singleton (T_irb.mk_int_to_real (normalize_term t1)) 1)
@@ -149,6 +161,12 @@ and real_monomials_of (coeff : Value.t) = function
       let mono =
         T_bool.mk_if_then_else (normalize_term t1) (normalize_term t2)
           (normalize_term t3)
+      in
+      Map.Poly.singleton (Map.Poly.singleton mono 1) coeff
+  | FunApp (T_int.Case n, t1 :: branches, _) ->
+      let mono =
+        T_int.mk_case n (normalize_term t1)
+          (List.map branches ~f:normalize_term)
       in
       Map.Poly.singleton (Map.Poly.singleton mono 1) coeff
   | FunApp (T_ref.Deref _, [ t ], _) as term -> (
@@ -394,7 +412,7 @@ let rec normalize_let_term = function
       List.fold ts' ~init:term ~f:(Fn.flip Term.replace_let_body)
 
 and normalize_let_atom ?(info = LogicOld.Dummy) = function
-  | (Atom.True _ | Atom.False _) as atom -> Formula.mk_atom atom ~info
+  | Atom.(True _ | False _) as atom -> Formula.mk_atom atom ~info
   | Atom.App (pred, ts, info) ->
       let ts' = List.map ts ~f:normalize_let_term in
       let body =
@@ -410,49 +428,46 @@ and normalize_let_formula phi =
          method fatom atom = normalize_let_atom atom
 
          method fnot phi1 =
-           Formula.replace_let_body phi1
-           @@ Formula.mk_neg @@ Formula.body_of_let phi1
+           Formula.(replace_let_body phi1 @@ mk_neg @@ body_of_let phi1)
 
          method fand phi1 phi2 =
-           Formula.replace_let_body phi2
-           @@ Formula.replace_let_body phi1
-           @@ Formula.mk_and (Formula.body_of_let phi1)
-                (Formula.body_of_let phi2)
+           Formula.(
+             replace_let_body phi2 @@ replace_let_body phi1
+             @@ mk_and (body_of_let phi1) (body_of_let phi2))
 
          method for_ phi1 phi2 =
-           Formula.replace_let_body phi2
-           @@ Formula.replace_let_body phi1
-           @@ Formula.mk_or (Formula.body_of_let phi1)
-                (Formula.body_of_let phi2)
+           Formula.(
+             replace_let_body phi2 @@ replace_let_body phi1
+             @@ mk_or (body_of_let phi1) (body_of_let phi2))
 
          method fimply phi1 phi2 =
-           Formula.replace_let_body phi2
-           @@ Formula.replace_let_body phi1
-           @@ Formula.mk_imply (Formula.body_of_let phi1)
-                (Formula.body_of_let phi2)
+           Formula.(
+             replace_let_body phi2 @@ replace_let_body phi1
+             @@ mk_imply (body_of_let phi1) (body_of_let phi2))
 
          method fiff phi1 phi2 =
-           Formula.replace_let_body phi2
-           @@ Formula.replace_let_body phi1
-           @@ Formula.mk_iff (Formula.body_of_let phi1)
-                (Formula.body_of_let phi2)
+           Formula.(
+             replace_let_body phi2 @@ replace_let_body phi1
+             @@ mk_iff (body_of_let phi1) (body_of_let phi2))
 
          method fxor phi1 phi2 =
-           Formula.replace_let_body phi2
-           @@ Formula.replace_let_body phi1
-           @@ Formula.mk_xor (Formula.body_of_let phi1)
-                (Formula.body_of_let phi2)
+           Formula.(
+             replace_let_body phi2 @@ replace_let_body phi1
+             @@ mk_xor (body_of_let phi1) (body_of_let phi2))
 
-         method fbind binder bounds phi1 = Formula.mk_bind binder bounds phi1
-         (* Formula.replace_let_body phi1
-                @@ Formula.mk_bind binder bounds (Formula.body_of_let phi1) *)
+         method fbind binder bounds phi1 =
+           if true then Formula.mk_bind binder bounds phi1
+           else
+             Formula.(
+               replace_let_body phi1 @@ mk_bind binder bounds (body_of_let phi1))
 
          method fletrec funcs phi1 = Formula.mk_letrec funcs phi1 (*ToDo*)
 
          method flet x s def body =
            let def = normalize_let_term def in
-           Formula.replace_let_term_body def
-           @@ Formula.mk_let_formula x s (Term.body_of_let def) body
+           Formula.(
+             replace_let_term_body def
+             @@ mk_let_formula x s (Term.body_of_let def) body)
       end)
 
 let normalize_let ?(rename = false) phi =

@@ -237,7 +237,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                let open Ast.LogicOld in
                let pvar, sorts, _, _ = Atom.let_pvar_app @@ Set.choose_exn ns in
                let args = mk_fresh_sort_env_list sorts in
-               let params = List.map args ~f:(uncurry2 Term.mk_var) in
+               let params = Term.of_sort_env args in
                let body =
                  Formula.and_of
                  @@ List.map lst ~f:(fun (uni_senv, _, ns, phi) ->

@@ -268,6 +268,7 @@ module Make (Config : Config.ConfigType) = struct
       let param_logs =
         DimReducer.init_param_logs_of @@ PCSP.Problem.senv_of pcsp
       in
+      PvarEliminator.Debug.set_id @@ PCSP.Problem.id_of pcsp;
       let sol_for_eliminated, pcsp = PvarEliminator.elim_pvs ~bpvs pcsp in
       let pcsp = PCSP.Problem.(remove_unused_params pcsp) in
       Debug.print @@ lazy "predicate variables eliminated:";

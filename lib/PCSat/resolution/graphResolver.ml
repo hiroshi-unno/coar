@@ -60,11 +60,17 @@ end = struct
         with E -> None)
     | _ -> None
 
+  let verbose = false
+
   let contradicts ~dpos ~dneg ~graph fenv exi_senv
       (((uni_senv, c_pos, c_neg, c_phi), source), params, theta) =
     ignore graph;
     try
-      (*Debug.print @@ lazy ("  checking contradiction: " ^ Clause.str_of exi_senv (uni_senv, c_pos, c_neg, c_phi));*)
+      if verbose then
+        Debug.print
+        @@ lazy
+             ("  checking contradiction: "
+             ^ Clause.str_of exi_senv (uni_senv, c_pos, c_neg, c_phi));
       let positive =
         Set.Poly.filter_map dpos
           ~f:(fun (e, (src : (ClauseGraph.vertex * bool) Set.Poly.t)) ->
@@ -120,14 +126,17 @@ end = struct
         Formula.exists (Set.to_list bvs)
           phi (* unbound variables are non-predicate function variables *)
       in
-      (*Debug.print @@ lazy ("    sufficient condition: " ^ Formula.str_of cond ^ " is valid?");*)
+      if verbose then
+        Debug.print
+        @@ lazy
+             ("    sufficient condition: " ^ Formula.str_of cond ^ " is valid?");
       insert_source (Set.union source srcs)
       @@
-      if Set.eqlen fvs bvs then
+      if Set.eqlen fvs bvs then (
         (* without non-predicate function variables*)
         match Z3Smt.Z3interface.check_sat ~id fenv [ phi ] with
         | `Sat model ->
-            (*Debug.print @@ lazy "    yes";*)
+            if verbose then Debug.print @@ lazy "    yes";
             let sub =
               LogicOld.remove_dontcare ~freshvar:true model
               |> Map.Poly.of_alist_exn
@@ -141,15 +150,20 @@ end = struct
                     else
                       (*failwith (Ident.name_of_tvar x ^ ":" ^ LogicOld.Term.str_of v1 ^ ":" ^ LogicOld.Term.str_of v2)*)
                       raise E))
-        | _ -> (*Debug.print @@ lazy "    no";*) None
+        | _ ->
+            if verbose then Debug.print @@ lazy "    no";
+            None)
       else if Set.disjoint (Set.Poly.map ~f:fst bvs) params then
         (* with function variables and without parameters *)
         if Evaluator.is_valid (Z3Smt.Z3interface.is_valid ~id fenv) cond then
-          (*let _ = Debug.print @@ lazy "    yes" in*) Some theta
-        else (*let _ = Debug.print @@ lazy "    no" in*) None
+          let _ = if verbose then Debug.print @@ lazy "    yes!" in
+          Some theta
+        else
+          let _ = if verbose then Debug.print @@ lazy "    no!" in
+          None
       else None
     with E ->
-      (*Debug.print @@ lazy "    unification failed";*)
+      if verbose then Debug.print @@ lazy "    unification failed";
       None
 
   let contradicts_assuming_pos ~dpos ~dneg ~graph fenv exi_senv cs
@@ -165,7 +179,20 @@ end = struct
       Set.Poly.empty exi_senv cs
     |> Set.find_map ~f:(fun (c, sub) ->
            contradicts ~dpos ~dneg ~graph fenv exi_senv
-             (c, params, Map.Poly.filter_keys sub ~f:(Set.mem params)))
+             ( c,
+               params,
+               (* all parameters need to be substituted *)
+               Map.of_set_exn
+               @@ Set.Poly.map params ~f:(fun x ->
+                      ( x,
+                        match Map.Poly.find sub x with
+                        | Some r -> r
+                        | None -> (
+                            Term.mk_dummy
+                            @@
+                            match Map.Poly.find param_senv x with
+                            | Some s -> s
+                            | None -> T_int.SInt (*ToDo*)) )) ))
 
   let contradicts_assuming_neg ~dpos ~dneg ~graph fenv exi_senv cs
       ((param_senv, atm), source) =
@@ -181,7 +208,20 @@ end = struct
       exi_senv cs
     |> Set.find_map ~f:(fun (c, sub) ->
            contradicts ~dpos ~dneg ~graph fenv exi_senv
-             (c, params, Map.Poly.filter_keys sub ~f:(Set.mem params)))
+             ( c,
+               params,
+               (* all parameters need to be substituted *)
+               Map.of_set_exn
+               @@ Set.Poly.map params ~f:(fun x ->
+                      ( x,
+                        match Map.Poly.find sub x with
+                        | Some r -> r
+                        | None -> (
+                            Term.mk_dummy
+                            @@
+                            match Map.Poly.find param_senv x with
+                            | Some s -> s
+                            | None -> T_int.SInt (*ToDo*)) )) ))
 
   let prove ~dpos ~dneg ~graph fenv exi_senv cs ((param_senv, atm), source) =
     match
@@ -189,6 +229,9 @@ end = struct
         ((param_senv, atm), source)
     with
     | Some (sub, source') ->
+        let sub =
+          (*ToDo: is this enough?*) Map.Poly.map sub ~f:(Term.subst sub)
+        in
         Debug.print
         @@ lazy
              ("  added as a positive example with: "
@@ -210,6 +253,9 @@ end = struct
         ((param_senv, atm), source)
     with
     | Some (sub, source') ->
+        let sub =
+          (*ToDo: is this enough?*) Map.Poly.map sub ~f:(Term.subst sub)
+        in
         Debug.print
         @@ lazy
              ("  added as a negative example with: "

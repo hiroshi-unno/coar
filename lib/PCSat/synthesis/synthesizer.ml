@@ -114,8 +114,9 @@ module Make
         let cex =
           Set.find constrs ~f:(fun (_, uni_senv, phi) ->
               let phi =
-                Logic.ExtTerm.to_old_fml exi_senv uni_senv
-                  (Logic.Term.subst sub phi)
+                Evaluator.simplify
+                @@ Logic.ExtTerm.to_old_fml exi_senv uni_senv
+                     (Logic.Term.subst sub phi)
               in
               let phi =
                 LogicOld.Formula.forall (LogicOld.get_dummy_term_senv ())
@@ -127,9 +128,9 @@ module Make
                    LogicOld.Formula.subst
                      (Map.Poly.of_alist_exn
                      @@ List.map bounds ~f:(fun (x, s) ->
-                            (x, LogicOld.Term.mk_dummy s)))
+                         (x, LogicOld.Term.mk_dummy s)))
                  else LogicOld.Formula.forall bounds)
-                @@ phi
+                  phi
               in
               assert (Set.is_subset (LogicOld.Formula.fvs_of phi) ~of_:psenv);
               not
@@ -199,10 +200,10 @@ module Make
             @@ lazy " The new candidate is invalid, restart synthesizer.";
             refine_cands iters @@ State.of_examples vs
             @@ Set.Poly.map ~f:(fun (ex, srcs) ->
-                   ( ex,
-                     Set.Poly.of_list
-                     @@ List.map srcs ~f:(fun c ->
-                            (ClauseGraph.mk_example c, true)) ))
+                ( ex,
+                  Set.Poly.of_list
+                  @@ List.map srcs ~f:(fun c ->
+                      (ClauseGraph.mk_example c, true)) ))
             @@ Set.Poly.union_list [ pos; neg; und ])
     | _ -> assert false
 

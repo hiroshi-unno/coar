@@ -23,11 +23,15 @@ module Config = struct
         [@of_yojson qualifier_type_of_json] [@to_json qualifier_type_to_json]
         (** Type of qualifiers (for eager halfspace generation) *)
     approx_level : int;
-        (** Approximation level of hyperplanes obtained from svm. If approx_level > 0, then use truncated continued fractions with length at most approx_level. If approx_level = 0, then the length of truncated continued fractions is chosen automatically. *)
+        (** Approximation level of hyperplanes obtained from svm. If
+            approx_level > 0, then use truncated continued fractions with length
+            at most approx_level. If approx_level = 0, then the length of
+            truncated continued fractions is chosen automatically. *)
     csvm : float;  (** c parameter for csvm *)
     eager_halfspace_gen : bool;  (** Enable eager halfspace generation. *)
     optimize_sum_coeff : bool;
-        (** Optimize the sum of absolute values of coefficients of a piecewise affine ranking function. *)
+        (** Optimize the sum of absolute values of coefficients of a piecewise
+            affine ranking function. *)
     qualifier_reduction : bool;  (** Enable qualifier reduction. *)
   }
   [@@deriving yojson]
@@ -214,8 +218,8 @@ struct
       List.concat_map state_examples ~f:(fun x ->
           StateExample.z_of x |> List.zip_exn params_src_tvar)
       |> List.concat_map ~f:(fun (v, b) ->
-             let affine = Affine.(of_var v - of_z b) in
-             [ affine; Affine.( ~- ) affine ])
+          let affine = Affine.(of_var v - of_z b) in
+          [ affine; Affine.( ~- ) affine ])
       |> List.dedup_and_sort ~compare:Affine.compare
       |> List.map ~f:Halfspace.of_affine
 
@@ -229,15 +233,15 @@ struct
           StateExample.z_of x |> List.zip_exn params_src_tvar)
       |> List.concat_map ~f:combination2
       |> List.concat_map ~f:(fun ((p1, x1), (p2, x2)) ->
-             let p1 = Affine.of_var p1 in
-             let p2 = Affine.of_var p2 in
-             Affine.
-               [
-                 p1 + p2 + of_z Z.(~-x1 - x2);
-                 p1 - p2 + of_z Z.(~-x1 + x2);
-                 ~-p1 + p2 + of_z Z.(x1 - x2);
-                 ~-p1 - p2 + of_z Z.(x1 + x2);
-               ])
+          let p1 = Affine.of_var p1 in
+          let p2 = Affine.of_var p2 in
+          Affine.
+            [
+              p1 + p2 + of_z Z.(~-x1 - x2);
+              p1 - p2 + of_z Z.(~-x1 + x2);
+              ~-p1 + p2 + of_z Z.(x1 - x2);
+              ~-p1 - p2 + of_z Z.(x1 + x2);
+            ])
       |> List.dedup_and_sort ~compare:Affine.compare
       |> List.map ~f:Halfspace.of_affine
 
@@ -700,13 +704,13 @@ struct
              Stdlib.compare g0 g1)
            l
          |> List.iter ~f:(fun (g, _, h_id, _, _) ->
-                Debug.print
-                @@ lazy
-                     (let s = Table.get_halfspace t h_id |> Halfspace.str_of in
-                      s ^ ": gain = " ^ string_of_float g));
+             Debug.print
+             @@ lazy
+                  (let s = Table.get_halfspace t h_id |> Halfspace.str_of in
+                   s ^ ": gain = " ^ string_of_float g));
          l)
         |> List.max_elt ~compare:(fun (g0, _, _, _, _) (g1, _, _, _, _) ->
-               Stdlib.compare g0 g1)
+            Stdlib.compare g0 g1)
         (* take a halfspace with maximum information gain *)
         |> Option.elem_of
       in
@@ -736,7 +740,7 @@ struct
         let approx_bw =
           List.zip_exn abs_approx_bw exact_bw
           |> List.map ~f:(fun (a, s) ->
-                 if Z.Compare.(s < Z.zero) then Z.(~-a) else a)
+              if Z.Compare.(s < Z.zero) then Z.(~-a) else a)
         in
         halfspace_of_bw approx_bw
       else
@@ -755,7 +759,7 @@ struct
           let approx_bw =
             List.zip_exn abs_approx_bw' exact_bw
             |> List.map ~f:(fun (a, s) ->
-                   if Z.Compare.(s < Z.zero) then Z.(~-a) else a)
+                if Z.Compare.(s < Z.zero) then Z.(~-a) else a)
           in
           let h = halfspace_of_bw approx_bw in
           let params_src_tvar = Table.get_params_src t |> List.map ~f:fst in
@@ -779,7 +783,7 @@ struct
       let eval_hyperplane (w, b) sample =
         List.zip_exn (List.map ~f:fst params_src) (Array.to_list sample)
         |> List.fold ~init:b ~f:(fun a (x, b) ->
-               a +. (b *. Map.Poly.find_exn w x))
+            a +. (b *. Map.Poly.find_exn w x))
       in
       let is_useless_hyperplane (w, b) samples =
         let has_pos =
@@ -997,7 +1001,9 @@ struct
 
     exception GapNotFound
 
-    (** [ find_gap t dt unsat_keys example_map ] analyzes implicit cycles in [ unsat_keys ] and returns two distinct state examples between which we can cut an implicit cycle in [ unsat_keys ] *)
+    (** [ find_gap t dt unsat_keys example_map ] analyzes implicit cycles in
+        [ unsat_keys ] and returns two distinct state examples between which we
+        can cut an implicit cycle in [ unsat_keys ] *)
     let find_gap t dt unsat_keys example_map =
       let unsat_dt = dtree_fmap (fun _ -> (ref [], ref [])) dt in
       List.iter ~f:(fun k -> Debug.print @@ lazy k) unsat_keys;
@@ -1018,11 +1024,11 @@ struct
       match
         collect_nonempty_dt unsat_dt
         |> List.find_map ~f:(fun (dsts, srcs) ->
-               List.cartesian_product dsts srcs
-               |> List.find ~f:(fun (dst, src) ->
-                      Stdlib.( <> )
-                        (Table.get_state_example t dst)
-                        (Table.get_state_example t src)))
+            List.cartesian_product dsts srcs
+            |> List.find ~f:(fun (dst, src) ->
+                Stdlib.( <> )
+                  (Table.get_state_example t dst)
+                  (Table.get_state_example t src)))
       with
       | Some (dst, src) -> (dst, src)
       | None -> raise GapNotFound
@@ -1169,9 +1175,9 @@ struct
             let template_params = DecisionTreeTemplate.collect_params dt in
             let obj, abs_constraints = sum_of_abs_params template_params in
             match
-              Z3Smt.Z3interface.check_opt_maximize ~id fenv
+              Z3Smt.Z3interface.check_opt ~id fenv
                 (Map.Poly.data constraints @ abs_constraints)
-                (T_int.mk_neg obj)
+                ~max:true (T_int.mk_neg obj)
             with
             | Some (_, _, model) -> model
             | None -> assert false
@@ -1225,9 +1231,9 @@ struct
     | Node (h, tt, ft) ->
         List.zip_exn (term_of_dtree t tt) (term_of_dtree t ft)
         |> List.map ~f:(fun (x, y) ->
-               T_bool.mk_if_then_else
-                 (Table.get_halfspace t h |> Halfspace.term_of)
-                 x y)
+            T_bool.mk_if_then_else
+              (Table.get_halfspace t h |> Halfspace.term_of)
+              x y)
 
   let decision_tree_main ~id lex2wf table params =
     let pre_dt =

@@ -62,7 +62,7 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
       | SPolyQEnt (module PolyQEnt) ->
           fun ?bpvs ?(print_sol = false) pcsp ->
             ignore bpvs;
-            PolyQEnt.solve ~print_sol pcsp >>= fun sol -> Ok (sol, -1)
+            PolyQEnt.solve ~timeout ~print_sol pcsp >>= fun sol -> Ok (sol, -1)
       | SForward ->
           fun ?bpvs ?(print_sol = false) pcsp ->
             ignore bpvs;
@@ -87,7 +87,7 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
           let sub =
             Map.Poly.of_alist_exn
             @@ List.mapi senv ~f:(fun i (x, _) ->
-                   (x, Ident.Tvar (sprintf "x%d" i)))
+                (x, Ident.Tvar (sprintf "x%d" i)))
           in
           let senv =
             List.map senv ~f:(fun (x, s) -> (Map.Poly.find_exn sub x, s))
@@ -103,7 +103,7 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
           let sub =
             Map.Poly.of_alist_exn
             @@ List.mapi senv ~f:(fun i (x, _) ->
-                   (x, Ident.Tvar (sprintf "x%d" i)))
+                (x, Ident.Tvar (sprintf "x%d" i)))
           in
           let senv =
             List.map senv ~f:(fun (x, s) -> (Map.Poly.find_exn sub x, s))

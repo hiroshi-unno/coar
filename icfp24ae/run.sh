@@ -3,7 +3,7 @@
 
 TIMELIMIT=300
 OUTPUTFILE="result.txt"
-BENCHMARKPATH="./benchmarks/OCaml/probabilistic"
+BENCHMARKPATH="./benchmarks/OCaml/quantitative/icfp24"
 BENCHMARKS=(
 	"lics16_rec3.ml"
 	"lics16_rec3_ghost.ml"

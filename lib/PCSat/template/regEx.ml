@@ -4,7 +4,6 @@ open Common.Ext
 open Common.Util
 open Ast
 open Ast.LogicOld
-open Ast.HypSpace
 open Function
 
 module Config = struct
@@ -55,10 +54,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
   let name_of () = Arg.name
   let kind_of () = Kind.str_of Kind.RegEx
   let sort_of () = Sort.mk_fun @@ Arg.sorts @ [ T_regex.SRegEx ]
-
-  let params_of ~tag =
-    ignore tag;
-    sort_env_list_of_sorts Arg.sorts
+  let params_of () = sort_env_list_of_sorts Arg.sorts
 
   let show_state ?(config = PCSatCommon.RLConfig.disabled) labels =
     ignore config;
@@ -70,20 +66,12 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
 
   let str_of () = sprintf "depth : %d" !param.depth
   let in_space () = true (* TODO *)
+  let adjust_quals_terms = Fn.id
 
-  let adjust_quals ~tag quals =
-    ignore tag;
-    quals
+  let update_hspace hspace =
+    HypSpace.qualifiers_of ~fenv:Arg.fenv !param.depth hspace
 
-  let init_quals _ _ = ()
-
-  let update_hspace ~tag hspace =
-    ignore tag;
-    qualifiers_of ~fenv:Arg.fenv !param.depth hspace
-
-  let gen_template ~tag ~ucore hspace =
-    ignore tag;
-    ignore ucore;
+  let gen_template ~ucore:_ (hspace : HypSpace.hspace) =
     let temp_params = ref Map.Poly.empty in
     let cnstr_of_temp_params = ref @@ Formula.mk_true () in
     let hole_qualifiers_map = [] in
@@ -140,14 +128,18 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     Debug.print
     @@ lazy
          (sprintf "[%s] predicate template:\n  %s"
-            (Ident.name_of_tvar @@ Arg.name)
+            (Ident.name_of_tvar Arg.name)
             (Term.str_of tmpl));
     let tmpl =
       Logic.(Term.mk_lambda (of_old_sort_env_list hspace.params))
       @@ Logic.ExtTerm.of_old_term tmpl
     in
     ( (Depth, tmpl),
-      [ (Dummy, Logic.ExtTerm.of_old_formula !cnstr_of_temp_params) ],
+      [
+        ( true (*ToDo*),
+          Dummy,
+          Logic.ExtTerm.of_old_formula !cnstr_of_temp_params );
+      ],
       !temp_params,
       hole_qualifiers_map )
 
@@ -195,7 +187,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
 
   let rec inner param_actions = function
     | [] -> param_actions
-    | Depth :: labels -> inner (increase_depth param_actions) labels
+    | (Depth | Shape) :: labels -> inner (increase_depth param_actions) labels
     | (Dummy | QualDep) :: labels -> inner param_actions labels
     | TimeOut :: _labels -> param_actions (* z3 may unexpectedly time out*)
     | _ -> assert false

@@ -1,9 +1,11 @@
 open Core
 open Common
+open Common.Util
 open Common.Ext
 open Common.Combinator
 open Ast
 open Ast.LogicOld
+open Preprocessing
 
 module type SolverType = sig
   val solve :
@@ -15,6 +17,10 @@ end
 
 module Make (Cfg : Config.ConfigType) : SolverType = struct
   let config = Cfg.config
+
+  let preprocessor =
+    let open Or_error in
+    ExtFile.unwrap config.preprocessor >>= fun cfg -> Ok (Preprocessor.make cfg)
 
   module Debug =
     Debug.Make ((val Debug.Config.(if config.verbose then enable else disable)))
@@ -85,6 +91,9 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
          end)
        in
        print_endline @@ Printer.string_of_pcsp pcsp; *)
+    let open Or_error in
+    preprocessor >>= fun (module Preprocessor) ->
+    let _, pcsp = Preprocessor.preprocess ~bpvs:Set.Poly.empty pcsp in
     let ctx =
       let options =
         match (config.timeout, timeout) with

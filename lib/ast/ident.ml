@@ -49,9 +49,11 @@ let is_ne_tvar (Tvar p) =
 
 let mk_nwf_tvar (Tvar p) (Tvar l) (Tvar r) = Tvar (sprintf "%s_{%s,%s}" p l r)
 
-let is_nwf_tvar (Tvar p) =
+(*let is_nwf_tvar (Tvar p) =
   let reg = Str.regexp "_N{[0-9]+,[0-9]+}" in
-  Str.string_match reg p 0
+  Str.string_match reg p 0*)
+
+let mk_parity_tvar = mk_nwf_tvar
 
 let src_tvar_of_ne (Tvar p) =
   assert (is_ne_tvar @@ Tvar p);

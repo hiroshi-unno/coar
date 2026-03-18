@@ -21,8 +21,12 @@ let rec sub_inits_rep subst res = function
           Init.let_assume init |> Formula.subst subst |> Init.mk_assume
         in
         sub_inits_rep subst (init :: res) tail
-      else if Init.is_nondet_assign init then
-        let varname = Init.let_nondet_assign init in
+      else if Init.is_nondet_int_assign init then
+        let varname = Init.let_nondet_int_assign init in
+        let subst = Map.Poly.remove subst (Ident.Tvar varname) in
+        sub_inits_rep subst (init :: res) tail
+      else if Init.is_nondet_real_assign init then
+        let varname = Init.let_nondet_real_assign init in
         let subst = Map.Poly.remove subst (Ident.Tvar varname) in
         sub_inits_rep subst (init :: res) tail
       else assert false
@@ -39,8 +43,10 @@ end = struct
   let rec replace_return ~f stmt =
     if
       Statement.is_return_int stmt
+      || Statement.is_return_real stmt
       || Statement.is_return_void stmt
-      || Statement.is_return_nondet stmt
+      || Statement.is_return_nondet_int stmt
+      || Statement.is_return_nondet_real stmt
     then f stmt
     else if Statement.is_compound stmt then
       let stmt1, stmt2 = Statement.let_compound stmt in
@@ -62,7 +68,8 @@ end = struct
       || Statement.is_call_assign stmt
       || Statement.is_call_voidfun stmt
       || Statement.is_goto stmt || Statement.is_label stmt
-      || Statement.is_nondet_assign stmt
+      || Statement.is_nondet_int_assign stmt
+      || Statement.is_nondet_real_assign stmt
       || Statement.is_assume stmt || Statement.is_break stmt
       || Statement.is_exit stmt || Statement.is_nop stmt
     then stmt
@@ -139,10 +146,12 @@ end = struct
     else if
       Statement.is_break stmt || Statement.is_exit stmt || Statement.is_nop stmt
       || Statement.is_goto stmt || Statement.is_label stmt
-      || Statement.is_return_nondet stmt
+      || Statement.is_return_nondet_int stmt
+      || Statement.is_return_nondet_real stmt
       || Statement.is_return_void stmt
       || Statement.is_vardecl stmt
-      || Statement.is_nondet_assign stmt
+      || Statement.is_nondet_int_assign stmt
+      || Statement.is_nondet_real_assign stmt
     then stmt
     else
       failwith
@@ -204,10 +213,13 @@ end = struct
     if Statement.is_call_assign stmt then
       let varname, funname, args = Statement.let_call_assign stmt in
       let fundecl =
-        FunDecl.rename_labels @@ FunDecl.find_fundecl funname fundecls
+        FunDecl.rename_labels
+        @@ FunDecl.find_fundecl (funname, T_int.SInt (*Dummy*)) fundecls
       in
-      if FunDecl.is_fun_nondet fundecl then
-        (Statement.mk_nondet_assign varname, nxt_label_id)
+      if FunDecl.is_fun_nondet_int fundecl then
+        (Statement.mk_nondet_int_assign varname, nxt_label_id)
+      else if FunDecl.is_fun_nondet_real fundecl then
+        (Statement.mk_nondet_real_assign varname, nxt_label_id)
       else if FunDecl.is_fun_int fundecl then
         let _, params, body = FunDecl.let_fun_int fundecl in
         let labelname, nxt_label_id = mk_labelname funname nxt_label_id in
@@ -219,20 +231,41 @@ end = struct
                 Statement.mk_compound
                   (Statement.mk_assign varname term)
                   (Statement.mk_goto labelname)
-              else if Statement.is_return_nondet stmt then
+              else if Statement.is_return_nondet_int stmt then
                 Statement.mk_compound
-                  (Statement.mk_nondet_assign varname)
+                  (Statement.mk_nondet_int_assign varname)
                   (Statement.mk_goto labelname)
               else assert false)
             (* append 'return nondet();' if it's missing *)
-            (Statement.mk_compound body (Statement.mk_return_nondet ()))
+            (Statement.mk_compound body (Statement.mk_return_nondet_int ()))
+          |> mk_inline_funcall nxt_label_id fundecls params args labelname
+        else assert false
+      else if FunDecl.is_fun_real fundecl then
+        let _, params, body = FunDecl.let_fun_real fundecl in
+        let labelname, nxt_label_id = mk_labelname funname nxt_label_id in
+        if FunDecl.is_non_recursive fundecls fundecl then
+          ReturnReplacer.replace_return
+            ~f:(fun stmt ->
+              if Statement.is_return_real stmt then
+                let term = Statement.let_return_real stmt in
+                Statement.mk_compound
+                  (Statement.mk_assign varname term)
+                  (Statement.mk_goto labelname)
+              else if Statement.is_return_nondet_real stmt then
+                Statement.mk_compound
+                  (Statement.mk_nondet_real_assign varname)
+                  (Statement.mk_goto labelname)
+              else assert false)
+            (* append 'return nondet();' if it's missing *)
+            (Statement.mk_compound body (Statement.mk_return_nondet_real ()))
           |> mk_inline_funcall nxt_label_id fundecls params args labelname
         else assert false
       else assert false
     else if Statement.is_call_voidfun stmt then
       let funname, args = Statement.let_call_voidfun stmt in
       let fundecl =
-        FunDecl.rename_labels @@ FunDecl.find_fundecl funname fundecls
+        FunDecl.rename_labels
+        @@ FunDecl.find_fundecl (funname, T_int.SInt (*Dummy*)) fundecls
       in
       let _, params, body = FunDecl.let_fun fundecl in
       if Statement.is_nop body then (body, nxt_label_id)
@@ -272,11 +305,14 @@ end = struct
       || Statement.is_unref_assign stmt
       || Statement.is_vardecl stmt || Statement.is_goto stmt
       || Statement.is_label stmt
-      || Statement.is_nondet_assign stmt
+      || Statement.is_nondet_int_assign stmt
+      || Statement.is_nondet_real_assign stmt
       || Statement.is_assume stmt || Statement.is_break stmt
       || Statement.is_exit stmt || Statement.is_nop stmt
       || Statement.is_return_int stmt
-      || Statement.is_return_nondet stmt
+      || Statement.is_return_real stmt
+      || Statement.is_return_nondet_int stmt
+      || Statement.is_return_nondet_real stmt
       || Statement.is_return_void stmt
     then (stmt, nxt_label_id)
     else
@@ -386,10 +422,12 @@ end = struct
     else if
       Statement.is_break stmt || Statement.is_exit stmt || Statement.is_nop stmt
       || Statement.is_goto stmt || Statement.is_label stmt
-      || Statement.is_return_nondet stmt
+      || Statement.is_return_nondet_int stmt
+      || Statement.is_return_nondet_real stmt
       || Statement.is_return_void stmt
       || Statement.is_vardecl stmt
-      || Statement.is_nondet_assign stmt
+      || Statement.is_nondet_int_assign stmt
+      || Statement.is_nondet_real_assign stmt
     then stmt
     else
       failwith
@@ -400,10 +438,14 @@ end = struct
     if FunDecl.is_fun_int fundecl then
       let funname, args, body = FunDecl.let_fun_int fundecl in
       FunDecl.mk_fun_int funname args (move_funcall_rep body)
+    else if FunDecl.is_fun_real fundecl then
+      let funname, args, body = FunDecl.let_fun_real fundecl in
+      FunDecl.mk_fun_real funname args (move_funcall_rep body)
     else if FunDecl.is_fun_void fundecl then
       let funname, args, body = FunDecl.let_fun_void fundecl in
       FunDecl.mk_fun_void funname args (move_funcall_rep body)
-    else if FunDecl.is_fun_nondet fundecl then fundecl
+    else if FunDecl.is_fun_nondet_int fundecl then fundecl
+    else if FunDecl.is_fun_nondet_real fundecl then fundecl
     else failwith "unknown fundecl"
 
   let elim_funcall fundecls stmt =
@@ -465,9 +507,14 @@ end = struct
           (rename renamed_vars varname)
           (rename_term renamed_vars term),
         renamed_vars )
-    else if Statement.is_nondet_assign stmt then
-      let varname = Statement.let_nondet_assign stmt in
-      (Statement.mk_nondet_assign (rename renamed_vars varname), renamed_vars)
+    else if Statement.is_nondet_int_assign stmt then
+      let varname = Statement.let_nondet_int_assign stmt in
+      ( Statement.mk_nondet_int_assign (rename renamed_vars varname),
+        renamed_vars )
+    else if Statement.is_nondet_real_assign stmt then
+      let varname = Statement.let_nondet_real_assign stmt in
+      ( Statement.mk_nondet_real_assign (rename renamed_vars varname),
+        renamed_vars )
     else if Statement.is_assume stmt then
       let fml = Statement.let_assume stmt in
       (Statement.mk_assume (rename_formula renamed_vars fml), renamed_vars)
@@ -476,7 +523,8 @@ end = struct
       let new_varname =
         sprintf "%s#%d" varname (Map.Poly.length renamed_vars)
       in
-      ( Statement.mk_nondet_assign new_varname,
+      ( (if Term.is_int_sort sort then Statement.mk_nondet_int_assign new_varname
+         else Statement.mk_nondet_real_assign new_varname),
         Map.Poly.update renamed_vars (Ident.Tvar varname) ~f:(fun _ ->
             Term.mk_var (Ident.Tvar new_varname) sort ~info:Dummy) )
     else if Statement.is_return_int stmt then
@@ -582,20 +630,25 @@ let parse_cltl_from_lexbuf ~print lexbuf =
                  (Term.mk_var tvar T_int.SUnrefInt ~info:Dummy);
              ]);
         FunDecl.mk_fun_int funname_nondet_char []
-          (Statement.mk_return_nondet ());
+          (Statement.mk_return_nondet_int ());
         FunDecl.mk_fun_int funname_nondet_uchar []
-          (Statement.mk_return_nondet ());
+          (Statement.mk_return_nondet_int ());
         FunDecl.mk_fun_int funname_nondet_short []
-          (Statement.mk_return_nondet ());
+          (Statement.mk_return_nondet_int ());
         FunDecl.mk_fun_int funname_nondet_ushort []
-          (Statement.mk_return_nondet ());
-        FunDecl.mk_fun_int funname_nondet_int [] (Statement.mk_return_nondet ());
+          (Statement.mk_return_nondet_int ());
+        FunDecl.mk_fun_int funname_nondet_int []
+          (Statement.mk_return_nondet_int ());
         FunDecl.mk_fun_int funname_nondet_uint []
-          (Statement.mk_return_nondet ());
+          (Statement.mk_return_nondet_int ());
         FunDecl.mk_fun_int funname_nondet_long []
-          (Statement.mk_return_nondet ());
+          (Statement.mk_return_nondet_int ());
         FunDecl.mk_fun_int funname_nondet_ulong []
-          (Statement.mk_return_nondet ());
+          (Statement.mk_return_nondet_int ());
+        FunDecl.mk_fun_real funname_nondet_float []
+          (Statement.mk_return_nondet_real ());
+        FunDecl.mk_fun_real funname_nondet_double []
+          (Statement.mk_return_nondet_real ());
       ]
       @ fundecls
     in

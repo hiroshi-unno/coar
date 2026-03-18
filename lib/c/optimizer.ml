@@ -141,7 +141,7 @@ module ReadGraph = struct
     | TwiceOrMore of unit StatementEnv.t
 
   type rg_t = RG of rs_t StatementEnv.t
-  type rgenv_t = RGENV of (Ident.tvar, rg_t) List.Assoc.t
+  type rgenv_t = RGENV of (Ident.tvar * Sort.t, rg_t) List.Assoc.t
 
   let empty = Never
   let rg_empty = RG (StatementEnv.mk_empty Never)
@@ -211,7 +211,7 @@ module ReadGraph = struct
             List.map ~f:fst rgenv
             |> String.concat_map_list ~sep:" " ~f:(fun tvar ->
                    let r = rgenv_get tvar (RGENV rgenv) |> rg_get stmt in
-                   sprintf "%s:%d" (Ident.name_of_tvar tvar) (length r))
+                   sprintf "%s:%d" (Ident.name_of_tvar (fst tvar)) (length r))
             |> sprintf "[%s]")
           query_stmt
 
@@ -304,8 +304,11 @@ module ReadGraph = struct
       if String.equal varname' varname then
         of_term varname stmt term |> update res
       else of_term varname stmt term |> add rs |> update res
-    else if is_nondet_assign stmt then
-      let varname', _ = let_nondet_assign stmt in
+    else if is_nondet_int_assign stmt then
+      let varname', _ = let_nondet_int_assign stmt in
+      if String.equal varname' varname then res else update res rs
+    else if is_nondet_real_assign stmt then
+      let varname', _ = let_nondet_real_assign stmt in
       if String.equal varname' varname then res else update res rs
     else if is_if stmt then
       let fml, _, _ = let_if stmt in
@@ -337,7 +340,10 @@ module ReadGraph = struct
       |> Variables.to_list
       |> List.fold_left ~init:[] ~f:(fun rgdata varname ->
              if Variables.is_mem spec_fv varname then rgdata
-             else (Ident.Tvar varname, get_rg varname prev_env stmts) :: rgdata)
+             else
+               ( (Ident.Tvar (fst varname), snd varname),
+                 get_rg (fst varname) prev_env stmts )
+               :: rgdata)
       |> List.rev
     in
     RGENV rgdata
@@ -460,8 +466,8 @@ end = struct
         else
           (* case: <tvar> \in <phi> *)
           query_stmt_key, new_stmts
-      else if is_nondet_assign stmt then
-        let varname, nxt_stmt_key = let_nondet_assign stmt in
+      else if is_nondet_int_assign stmt then
+        let varname, nxt_stmt_key = let_nondet_int_assign stmt in
         let tvar = Ident.Tvar varname in
         if ReadGraph.rgenv_mem tvar rgenv then
           let rs = ReadGraph.rgenv_get tvar rgenv |> ReadGraph.rg_get !nxt_stmt_key in
@@ -533,16 +539,16 @@ end = struct
       get_read_vars stmt |> Variables.to_list
       |> List.fold ~init:(query_stmt_key, new_stmts)
            ~f:(fun (query_stmt_key, new_stmts) varname ->
-             let tvar = Ident.Tvar varname in
-             if ReadGraph.rgenv_mem tvar rgenv then
+             let tvar = Ident.Tvar (fst varname) in
+             if ReadGraph.rgenv_mem (tvar, snd varname) rgenv then
                (* TODO: simplify terms *)
                (* TODO: improve performance *)
-               let rg = ReadGraph.rgenv_get tvar rgenv in
+               let rg = ReadGraph.rgenv_get (tvar, snd varname) rgenv in
                let init_value =
                  let rc = ReadGraph.rg_get query_stmt_key rg in
                  if ReadGraph.mem stmt_key rc then
-                   if State.mem varname init_state then (
-                     let term = State.get varname init_state in
+                   if State.mem (fst varname) init_state then (
+                     let term = State.get (fst varname) init_state in
                      assert (Term.tvs_of term |> Set.is_empty);
                      T_LIT term)
                    else if check_nondet rc then T_NONDET
@@ -564,7 +570,7 @@ end = struct
                        if is_assign stmt' then
                          let varname', term, nxt_stmt_key = let_assign stmt' in
                          if
-                           String.equal varname' varname
+                           Stdlib.((varname', Term.sort_of term) = varname)
                            && ReadGraph.rg_get !nxt_stmt_key rg
                               |> ReadGraph.mem stmt_key
                          then
@@ -572,11 +578,25 @@ end = struct
                              update (T_LIT term)
                            else T_INVALID
                          else value
-                       else if is_nondet_assign stmt' then
-                         let varname', nxt_stmt_key = let_nondet_assign stmt' in
+                       else if is_nondet_int_assign stmt' then
+                         let varname', nxt_stmt_key =
+                           let_nondet_int_assign stmt'
+                         in
                          let rc = ReadGraph.rg_get !nxt_stmt_key rg in
                          if
-                           String.equal varname' varname
+                           Stdlib.((varname', T_int.SInt) = varname)
+                           && ReadGraph.mem stmt_key rc
+                         then
+                           if check_nondet rc then update T_NONDET
+                           else T_INVALID
+                         else value
+                       else if is_nondet_real_assign stmt' then
+                         let varname', nxt_stmt_key =
+                           let_nondet_real_assign stmt'
+                         in
+                         let rc = ReadGraph.rg_get !nxt_stmt_key rg in
+                         if
+                           Stdlib.((varname', T_real.SReal) = varname)
                            && ReadGraph.mem stmt_key rc
                          then
                            if check_nondet rc then update T_NONDET
@@ -595,8 +615,9 @@ end = struct
                            %s\n\n\
                            original:\n\
                            %s\n\n\
-                           varname: %s\n"
-                          (string_of stmt) (string_of stmt_key) varname
+                           varname: (%s, %s)\n"
+                          (string_of stmt) (string_of stmt_key) (fst varname)
+                          (Term.str_of_sort (snd varname))
                | T_NONDET ->
                    if check_nondet_if tvar stmt then
                      let _, t_stmt, f_stmt = let_if stmt in
@@ -604,8 +625,15 @@ end = struct
                      ( query_stmt_key,
                        StatementEnv.update stmt_key stmt new_stmts )
                    else if check_nondet_assign tvar stmt then
-                     let varname, _, nxt_stmt = let_assign stmt in
-                     let stmt = mk_nondet_assign varname nxt_stmt in
+                     let varname, t, nxt_stmt = let_assign stmt in
+                     let stmt =
+                       if T_int.is_sint t then
+                         mk_nondet_int_assign varname nxt_stmt
+                       else if T_real.is_sreal t then
+                         mk_nondet_real_assign varname nxt_stmt
+                       else (*ToDo*)
+                         mk_nondet_int_assign varname nxt_stmt
+                     in
                      ( query_stmt_key,
                        StatementEnv.update stmt_key stmt new_stmts )
                    else (query_stmt_key, new_stmts)
@@ -621,20 +649,29 @@ end = struct
       (query_stmt_key, new_stmts) =
     if StatementEnv.exists stmt_key new_stmts then
       let stmt = StatementEnv.get stmt_key new_stmts in
-      if is_assign stmt || is_nondet_assign stmt then
+      if
+        is_assign stmt || is_nondet_int_assign stmt
+        || is_nondet_real_assign stmt
+      then
         let varname, nxt_stmt_key =
           if is_assign stmt then
-            let varname, _, nxt_stmt_key = let_assign stmt in
-            (varname, nxt_stmt_key)
-          else let_nondet_assign stmt
+            let varname, t, nxt_stmt_key = let_assign stmt in
+            ((varname, Term.sort_of t), nxt_stmt_key)
+          else if is_nondet_int_assign stmt then
+            let varname, nxt_stmt_key = let_nondet_int_assign stmt in
+            ((varname, T_int.SInt), nxt_stmt_key)
+          else if is_nondet_real_assign stmt then
+            let varname, nxt_stmt_key = let_nondet_real_assign stmt in
+            ((varname, T_real.SReal), nxt_stmt_key)
+          else failwith "remove_unused_assign_one: not an assign stmt"
         in
-        let tvar = Ident.Tvar varname in
+        let tvar = Ident.Tvar (fst varname) in
         if
-          ReadGraph.rgenv_mem tvar rgenv
+          ReadGraph.rgenv_mem (tvar, snd varname) rgenv
           &&
           (*ToDo*)
           Stdlib.(
-            ReadGraph.rgenv_get tvar rgenv
+            ReadGraph.rgenv_get (tvar, snd varname) rgenv
             |> ReadGraph.rg_get !nxt_stmt_key
             = Never)
         then remove_stmt stmt_key stmt_keys (query_stmt_key, new_stmts)

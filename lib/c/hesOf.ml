@@ -37,7 +37,7 @@ let get_funinfo prev_env env phi stmt =
       (ReadGraph.rgenv_entries rgenv
       |> List.filter ~f:(fun (_, rg) ->
              ReadGraph.rg_get stmt rg |> ReadGraph.length > 0)
-      |> List.map ~f:(fst >> Ident.name_of_tvar)
+      |> List.map ~f:(fst >> fun (x, s) -> (Ident.name_of_tvar x, s))
       |> Variables.of_list)
     |> State.of_variables
   in
@@ -78,13 +78,21 @@ let hesfunc_of_c_one prev_env env phi stmt =
       let env, pvar', state' = get_funinfo prev_env env phi !nxt_stmt in
       let state' = State.update varname term state' in
       (env, State.appformula_of pvar' state')
-    else if LinkedStatement.is_nondet_assign stmt then
-      let varname, nxt_stmt = LinkedStatement.let_nondet_assign stmt in
+    else if LinkedStatement.is_nondet_int_assign stmt then
+      let varname, nxt_stmt = LinkedStatement.let_nondet_int_assign stmt in
       let env, pvar', state' = get_funinfo prev_env env phi !nxt_stmt in
       let binder = if Ctl.is_a phi then Formula.Forall else Formula.Exists in
       ( env,
         Formula.mk_bind binder
           [ (Ident.Tvar varname, T_int.SInt) ]
+          (State.appformula_of pvar' state') )
+    else if LinkedStatement.is_nondet_real_assign stmt then
+      let varname, nxt_stmt = LinkedStatement.let_nondet_real_assign stmt in
+      let env, pvar', state' = get_funinfo prev_env env phi !nxt_stmt in
+      let binder = if Ctl.is_a phi then Formula.Forall else Formula.Exists in
+      ( env,
+        Formula.mk_bind binder
+          [ (Ident.Tvar varname, T_real.SReal) ]
           (State.appformula_of pvar' state') )
     else if LinkedStatement.is_if stmt then
       let cond_fml, t_stmt, f_stmt = LinkedStatement.let_if stmt in
@@ -238,7 +246,7 @@ let hes_of_chmes ~print (hmes, decls, inits, query_stmt) =
       (ReadGraph.rgenv_entries rgenv
       |> List.filter ~f:(fun (_, rg) ->
              ReadGraph.rg_get stmt rg |> ReadGraph.length > 0)
-      |> List.map ~f:(fst >> Ident.name_of_tvar)
+      |> List.map ~f:(fst >> fun (x, s) -> (Ident.name_of_tvar x, s))
       |> Variables.of_list)
     |> State.of_variables
   in
@@ -284,12 +292,21 @@ let hes_of_chmes ~print (hmes, decls, inits, query_stmt) =
            (pvar_of !nxt_stmt2 hmes_pvar)
            (state_of !nxt_stmt2))
         ~info:Dummy
-    else if LinkedStatement.is_nondet_assign stmt then
-      let var_name, nxt_stmt = LinkedStatement.let_nondet_assign stmt in
+    else if LinkedStatement.is_nondet_int_assign stmt then
+      let var_name, nxt_stmt = LinkedStatement.let_nondet_int_assign stmt in
       let state = state_of !nxt_stmt in
       let body = State.appformula_of (pvar_of !nxt_stmt hmes_pvar) state in
       if State.mem var_name state then
         Formula.mk_exists [ (Ident.Tvar var_name, T_int.SInt) ] body ~info:Dummy
+      else body
+    else if LinkedStatement.is_nondet_real_assign stmt then
+      let var_name, nxt_stmt = LinkedStatement.let_nondet_real_assign stmt in
+      let state = state_of !nxt_stmt in
+      let body = State.appformula_of (pvar_of !nxt_stmt hmes_pvar) state in
+      if State.mem var_name state then
+        Formula.mk_exists
+          [ (Ident.Tvar var_name, T_real.SReal) ]
+          body ~info:Dummy
       else body
     else if LinkedStatement.is_nop stmt then
       let nxt_stmt = LinkedStatement.let_nop stmt in
@@ -353,7 +370,10 @@ let hes_of_chmes ~print (hmes, decls, inits, query_stmt) =
     in
     Formula.mk_bind_if_bounded Formula.Exists bounds fml ~info:Dummy
   in
-  let hes_neg = MuCLP.Problem.make hes_preds query in
+  let hes_neg =
+    MuCLP.Util.typeinf ~print:(fun _ -> ())
+    @@ MuCLP.Problem.make hes_preds query
+  in
   print @@ lazy "vvvvvvvvvvvvv Converted Hes (neg) vvvvvvvvvvvvv";
   print @@ lazy (MuCLP.Problem.str_of hes_neg);
   print @@ lazy "";

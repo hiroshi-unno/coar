@@ -1,9 +1,7 @@
 open Core
 open Common.Util
 
-type t =
-  | Z3Sat of Z3Sat.Config.t
-  | MiniSat of MiniSat.Config.t
+type t = Z3Sat of Z3Sat.Config.t | MiniSat of MiniSat.Config.t
 [@@deriving yojson]
 
 module type ConfigType = sig

@@ -4,7 +4,6 @@ open Common.Ext
 open Common.Util
 open Ast
 open Ast.LogicOld
-open Ast.HypSpace
 open Function
 
 module Config = struct
@@ -82,10 +81,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
   let name_of () = Arg.name
   let kind_of () = Kind.str_of Kind.NE
   let sort_of () = Sort.mk_fun @@ Arg.sorts @ [ T_bool.SBool ]
-
-  let params_of ~tag =
-    ignore tag;
-    sort_env_list_of_sorts Arg.sorts
+  let params_of () = sort_env_list_of_sorts Arg.sorts
 
   let show_state ?(config = PCSatCommon.RLConfig.disabled) labels =
     ignore config;
@@ -101,35 +97,30 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
 
   let in_space () = true (* TODO *)
 
-  let adjust_quals ~tag quals =
-    ignore tag;
-    Set.Poly.filter_map quals ~f:(fun phi ->
-        match Normalizer.normalize phi with
-        | Formula.Atom
-            (Atom.App (Predicate.Psym (T_bool.Eq | T_int.Geq), [ t1; t2 ], _), _)
-          ->
-            Some (Formula.eq t1 t2)
-        | _ -> None)
+  let adjust_quals_terms (quals, terms) =
+    let params = params_of () in
+    let quals', terms' =
+      Qual.extract_terms_from_quals
+        ~qelim:(Z3Smt.Z3interface.qelim ~id ~fenv:Arg.fenv)
+        params quals
+    in
+    (quals', Set.union terms' (Templ.terms_over_set terms (List.initial params)))
 
-  let init_quals _ _ = ()
+  let update_hspace hspace =
+    HypSpace.qualifiers_of ~fenv:Arg.fenv !param.depth hspace
 
-  let update_hspace ~tag hspace =
-    ignore tag;
-    qualifiers_of ~fenv:Arg.fenv !param.depth hspace
-
-  let gen_template ~tag ~ucore hspace =
-    ignore tag;
-    ignore ucore;
+  let gen_template ~ucore:_ (hspace : HypSpace.hspace) =
     let quals =
       (*ToDo*)
       Set.Poly.filter_map hspace.quals ~f:(fun phi ->
           let phi = Normalizer.normalize phi in
           if Formula.is_eq phi then Some phi else None)
     in
-    let params = params_of ~tag in
+    let params = params_of () in
     let template =
       Templ.gen_ne_template
         {
+          consts = Set.to_list hspace.consts;
           terms = Set.to_list hspace.terms;
           quals = Set.to_list quals;
           dep = !param.depth;
@@ -142,27 +133,27 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     Debug.print
     @@ lazy
          (sprintf "[%s] predicate template:\n  %s"
-            (Ident.name_of_tvar @@ Arg.name)
+            (Ident.name_of_tvar Arg.name)
             (Formula.str_of template.pred));
     Debug.print
     @@ lazy
          (sprintf "[%s] ne_constr:\n  %s"
-            (Ident.name_of_tvar @@ Arg.name)
+            (Ident.name_of_tvar Arg.name)
             (Formula.str_of template.ne_constr));
     Debug.print
     @@ lazy
          (sprintf "[%s] scope_constr:\n  %s"
-            (Ident.name_of_tvar @@ Arg.name)
+            (Ident.name_of_tvar Arg.name)
             (Formula.str_of template.scope_constr));
     Debug.print
     @@ lazy
          (sprintf "[%s] coeffs_bounds:\n  %s"
-            (Ident.name_of_tvar @@ Arg.name)
+            (Ident.name_of_tvar Arg.name)
             (Formula.str_of template.coeffs_bounds));
     Debug.print
     @@ lazy
          (sprintf "[%s] consts_bounds:\n  %s"
-            (Ident.name_of_tvar @@ Arg.name)
+            (Ident.name_of_tvar Arg.name)
             (Formula.str_of template.consts_bounds));
     let pred =
       Logic.(Term.mk_lambda (of_old_sort_env_list hspace.params))
@@ -170,10 +161,12 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     in
     ( (DepthExt, pred),
       [
-        (Dummy, Logic.ExtTerm.of_old_formula template.ne_constr);
-        (Dummy, Logic.ExtTerm.of_old_formula template.scope_constr);
-        (Coeff, Logic.ExtTerm.of_old_formula template.coeffs_bounds);
-        (Const, Logic.ExtTerm.of_old_formula template.consts_bounds);
+        (true (*ToDo*), Dummy, Logic.ExtTerm.of_old_formula template.ne_constr);
+        ( true (*ToDo*),
+          Dummy,
+          Logic.ExtTerm.of_old_formula template.scope_constr );
+        (false, Coeff, Logic.ExtTerm.of_old_formula template.coeffs_bounds);
+        (false, Const, Logic.ExtTerm.of_old_formula template.consts_bounds);
       ],
       template.templ_params,
       template.hole_quals_map )
@@ -299,7 +292,8 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
 
   let rec inner param_actions = function
     | [] -> param_actions
-    | DepthExt :: labels -> inner (increase_depth_ext param_actions) labels
+    | (DepthExt | Shape) :: labels ->
+        inner (increase_depth_ext param_actions) labels
     | (NeInt | QualDep | Dummy) :: labels -> inner param_actions labels
     | Coeff :: labels -> inner (increase_coeff param_actions) labels
     | Const :: labels -> inner (increase_const param_actions) labels

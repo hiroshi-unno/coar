@@ -17,6 +17,11 @@ let update_term_map ?(depth = 0) sort
             | None -> Set.Poly.empty)
           @@ (Term.mk_dummy si (*ToDo*), [])
         in
+        let si_terms =
+          if Term.is_int_sort si then
+            Set.add si_terms (T_int.one () (*ToDo*), [])
+          else si_terms
+        in
         let se_terms =
           match Map.Poly.find term_map se with
           | Some se_terms -> se_terms

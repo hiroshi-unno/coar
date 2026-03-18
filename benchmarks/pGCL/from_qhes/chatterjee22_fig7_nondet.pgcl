@@ -1,0 +1,9 @@
+{
+	{
+		{
+			while(true){
+				skip
+			}
+		}[]{} ## this should be nondeterministic choice
+	}[0.5]{}
+}[0.5]{}

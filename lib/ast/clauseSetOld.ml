@@ -49,3 +49,6 @@ let of_formulas exi_senv phis : t =
   Set.concat_map phis ~f:(fun (uni_senv, phi) ->
       Set.Poly.map ~f:(fun (ps, ns, phi) -> (uni_senv, ps, ns, phi))
       @@ Formula.cnf_of exi_senv phi)
+
+let str_of cls =
+  String.concat_map_set ~sep:"\n" ~f:(fun c -> "  " ^ ClauseOld.str_of c) cls

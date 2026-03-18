@@ -105,7 +105,7 @@ module type SolverType = sig
 
   val solve_muclp : MuCLP.Problem.t -> unit Or_error.t
   val solve_muclp_interactive : MuCLP.Problem.t -> unit Or_error.t
-  val solve_prob_muclp : ProbMuCLP.Problem.t -> unit Or_error.t
+  val solve_qfl : QFL.Problem.t list -> unit Or_error.t
 
   val solve_lts :
     print:(string lazy_t -> unit) -> LTS.Problem.t -> unit Or_error.t
@@ -184,6 +184,11 @@ module Make (Config : Config.ConfigType) : SolverType = struct
           let config = cfg
         end) in
         Z3Smt.solve ~print_sol:true phi >>= fun _ -> Ok ()
+    | MuCyc cfg ->
+        let module MuCyc = MuCyc.Solver.Make (struct
+          let config = cfg
+        end) in
+        MuCyc.solve_smt ~print_sol:true phi >>= fun _ -> Ok ()
     | _ -> Or_error.unimplemented "Solver.solve_smt"
 
   let solve_homc homc =
@@ -325,14 +330,14 @@ module Make (Config : Config.ConfigType) : SolverType = struct
         MuVal.solve_interactive muclp >>= fun _ -> Ok ()
     | _ -> Or_error.unimplemented "Solver.solve_muclp_interactive"
 
-  let solve_prob_muclp prob_muclp =
+  let solve_qfl qfl =
     match Config.config with
     | MuVal cfg ->
         let module MuVal = MuVal.Solver.Make (struct
           let config = cfg
         end) in
-        MuVal.solve_prob ~print_sol:true prob_muclp >>= fun _ -> Ok ()
-    | _ -> Or_error.unimplemented "Solver.solve_prob_muclp"
+        MuVal.solve_qfl ~print_sol:true qfl >>= fun _ -> Ok ()
+    | _ -> Or_error.unimplemented "Solver.solve_qfl"
 
   let solve_lts ~print (lts, mode) =
     match Config.config with

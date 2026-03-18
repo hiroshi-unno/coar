@@ -19,8 +19,8 @@ COPY --chown=opam:opam ./CoAR.opam /home/opam/coar/CoAR.opam
 WORKDIR /home/opam/coar
 # build libraries
 RUN opam update \
- && opam install . --deps-only \
- && opam install dune
+ && opam install dune \
+ && opam install . --deps-only
 # build coar
 COPY --chown=opam:opam . /home/opam/coar/
 RUN eval $(opam env) && dune build main.exe
@@ -40,6 +40,9 @@ RUN apt update \
 # Copy the stub library to call libz3 from coar
 COPY --from=builder /home/opam/.opam/5.4/lib/stublibs/libz3.so /usr/lib/x86_64-linux-gnu/
 COPY --from=builder /home/opam/.opam/5.4/lib/stublibs/libz3.so /usr/lib/aarch64-linux-gnu/
+# Copy the stub library to call apron from coar
+COPY --from=builder /home/opam/.opam/5.4/share/apron/lib/*.so /usr/lib/x86_64-linux-gnu/
+COPY --from=builder /home/opam/.opam/5.4/share/apron/lib/*.so /usr/lib/aarch64-linux-gnu/
 # Copy coar
 COPY --from=builder /home/opam/coar/_build/default/main.exe /root/coar/
 COPY README.md LICENSE CoAR.opam /root/coar/

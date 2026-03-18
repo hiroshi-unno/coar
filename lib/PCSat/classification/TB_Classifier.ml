@@ -73,8 +73,6 @@ struct
       let module M = struct
         let name : Ident.tvar = Ident.pvar_to_tvar pvar
         let sorts : Sort.t list = List.map ~f:snd params
-
-        (*let dtenv : LogicOld.DTEnv.t = Map.Poly.empty*)
         let fenv : LogicOld.FunEnv.t = Map.Poly.empty
         let sol_space = PCSP.Problem.sol_space_of APCSP.problem
         let id = id
@@ -130,15 +128,14 @@ struct
     in
     (*let quals = TruthTable.qualifiers tt in*)
     let rec inner () =
-      let tag = None in
       let ( (update_label, template),
             temp_param_cnstrs,
             temp_param_senv,
             qualifiers ) =
-        FT.gen_template ~tag ~ucore:None
+        FT.gen_template ~ucore:None
           {
             depth = -1;
-            params = FT.params_of ~tag;
+            params = FT.params_of ();
             quals = Set.Poly.empty (*quals*);
             qdeps = Map.Poly.empty;
             terms = Set.Poly.empty;
@@ -214,18 +211,18 @@ struct
           Set.of_map key_constr_map
           |> Set.concat_map ~f:(snd >> Formula.tvs_of)
           |> Set.concat_map ~f:(fun (Ident.Tvar x) ->
-                 Set.Poly.of_list
-                   [
-                     Ident.Tvar x;
-                     Ident.Tvar (x ^ "#pos" (*ToDo*));
-                     Ident.Tvar (x ^ "#neg" (*ToDo*));
-                   ])
+              Set.Poly.of_list
+                [
+                  Ident.Tvar x;
+                  Ident.Tvar (x ^ "#pos" (*ToDo*));
+                  Ident.Tvar (x ^ "#neg" (*ToDo*));
+                ])
         in
         List.fold temp_param_cnstrs
           ~init:(key_constr_map, key_tvar_update_list_map)
           ~f:(fun
               (key_constr_map, key_tvar_update_list_map)
-              (update_label, cnstr)
+              (_hard, update_label, cnstr)
             ->
             let key = get_key () in
             let param_constr =
@@ -256,8 +253,8 @@ struct
           let temp_param_sub =
             Map.Poly.mapi temp_param_senv ~f:(fun ~key ~data ->
                 (match List.find model ~f:(fst >> fst >> Stdlib.( = ) key) with
-                | None -> ((key, data), None)
-                | Some opt -> opt)
+                  | None -> ((key, data), None)
+                  | Some opt -> opt)
                 |> Logic.ExtTerm.remove_dontcare_elem
                    (* ToDo: support parameteric candidate solution and CEGIS(T)*)
                 |> snd)
@@ -265,16 +262,16 @@ struct
           let hole_sub =
             Map.Poly.of_alist_exn
             @@ List.map hole_qualifiers_map ~f:(fun (hole, quals) ->
-                   ( hole,
-                     if List.is_empty quals then
-                       Logic.Term.mk_lambda (Logic.of_old_sort_env_list params)
-                       @@ Logic.BoolTerm.mk_bool true
-                     else
-                       let senv =
-                         let _, (_, qsenv, _) = List.hd_exn quals in
-                         Logic.of_old_sort_env_list qsenv
-                       in
-                       Templ.gen_from_qualifiers (senv, quals) ))
+                ( hole,
+                  if List.is_empty quals then
+                    Logic.Term.mk_lambda (Logic.of_old_sort_env_list params)
+                    @@ Logic.BoolTerm.mk_bool true
+                  else
+                    let senv =
+                      let _, (_, qsenv, _) = List.hd_exn quals in
+                      Logic.of_old_sort_env_list qsenv
+                    in
+                    Templ.gen_from_qualifiers (senv, quals) ))
           in
           let phi =
             Logic.ExtTerm.subst temp_param_sub

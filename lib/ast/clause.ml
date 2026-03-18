@@ -257,13 +257,12 @@ let refresh_tvar ((senv, ps, ns, phi) : t) =
     Set.Poly.map ~f:(Term.rename map) ns,
     Term.rename map phi )
 
-let fvs_new (_, ps, ns, phi) =
-  Set.Poly.union_list
-  @@ (ExtTerm.fvs_of phi :: List.map (Set.to_list ps) ~f:ExtTerm.fvs_of)
-  @ List.map (Set.to_list ns) ~f:ExtTerm.fvs_of
+let fvs (_, ps, ns, phi) =
+  Set.union (ExtTerm.fvs_of phi)
+    (Set.concat_map (Set.union ps ns) ~f:ExtTerm.fvs_of)
 
 let reduce_sort_map (senv, ps, ns, phi) =
-  let ftvs = fvs_new (senv, ps, ns, phi) in
+  let ftvs = fvs (senv, ps, ns, phi) in
   (Map.Poly.filter_keys senv ~f:(Set.mem ftvs), ps, ns, phi)
 
 let rename ren ((uni_senv, ps, ns, phi) : t) =

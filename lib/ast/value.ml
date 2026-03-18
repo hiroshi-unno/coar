@@ -54,7 +54,7 @@ let cast_real_of = function
   | Real r -> r
   | _ -> failwith "[Value.cast_real_of] type error"
 
-let rec compare opi opr ?(opb = fun _ _ -> assert false) t1 t2 =
+let rec compare pos opi opr ?(opb = fun _ _ -> assert false) t1 t2 =
   match (t1, t2) with
   | Bool b1, Bool b2 -> opb b1 b2
   | Int i1, Int i2 -> opi i1 i2
@@ -63,19 +63,31 @@ let rec compare opi opr ?(opb = fun _ _ -> assert false) t1 t2 =
   | Real r, Int i -> opr r (Q.of_bigint i)
   | BV (Some s1, bits1), BV (Some s2, bits2) when s1 = s2 -> opi bits1 bits2
   | Arr (_, v1, m1), Arr (_, v2, m2) ->
-      compare opi opr ~opb v1 v2 && Map.Poly.equal (compare opi opr ~opb) m1 m2
+      (if pos then ( && ) else ( || ))
+        (compare pos opi opr ~opb v1 v2)
+        (let keys = Set.union (Map.Poly.key_set m1) (Map.Poly.key_set m2) in
+         let f k =
+           match (Map.Poly.find m1 k, Map.Poly.find m2 k) with
+           | Some v1, Some v2 -> compare pos opi opr ~opb v1 v2
+           | _ -> false
+         in
+         if pos then Set.for_all keys ~f else Set.exists keys ~f)
   | TupleCons vs1, TupleCons vs2 ->
       if List.length vs1 <> List.length vs2 then
         failwith "[Value.compare] type error: tuple lengths differ"
-      else List.for_all2_exn vs1 vs2 ~f:(compare opi opr ~opb)
+      else
+        (if pos then List.for_all2_exn else List.exists2_exn)
+          vs1 vs2 ~f:(compare pos opi opr ~opb)
   | DTCons (name1, _pvs1, vs1), DTCons (name2, _pvs2, vs2)
     when String.(name1 = name2) ->
       if List.length vs1 <> List.length vs2 then
         failwith "[Value.compare] type error: datatype lengths differ"
-      else List.for_all2_exn vs1 vs2 ~f:(compare opi opr ~opb)
+      else
+        (if pos then List.for_all2_exn else List.exists2_exn)
+          vs1 vs2 ~f:(compare pos opi opr ~opb)
   | _ -> failwith "[Value.compare] type error"
 
-let equal = compare Z.Compare.( = ) Q.( = ) ~opb:Stdlib.( = )
+let equal = compare true Z.Compare.( = ) Q.( = ) ~opb:Stdlib.( = )
 
 let neg = function
   | Bool _ -> failwith "[Value.neg] not supported for booleans"

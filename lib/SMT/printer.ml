@@ -85,12 +85,13 @@ and sexp_of_fun_sym = function
       let atom = sexp_of_atom atom in
       Sexp.List [ Sexp.Atom "boolean"; atom ]
   | T_int.Int n -> Sexp.List [ Sexp.Atom "integer"; Sexp.Atom (Z.to_string n) ]
+  | T_int.Neg -> Sexp.Atom "neg"
   | T_int.Add -> Sexp.Atom "add"
   | T_int.Sub -> Sexp.Atom "sub"
   | T_int.Mul -> Sexp.Atom "mult" (*ToDo*)
   | T_int.Div _ (*ToDo*) -> Sexp.Atom "div"
   | T_int.Rem _ (*ToDo*) -> Sexp.Atom "mod" (*ToDo*)
-  | T_int.Neg -> Sexp.Atom "neg"
+  (*| T_int.Power -> Sexp.Atom "pow"*)
   | _ -> failwith "invalid function symbol"
 
 and sexp_of_pred_sym = function

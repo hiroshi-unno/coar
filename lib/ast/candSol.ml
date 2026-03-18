@@ -138,7 +138,9 @@ let replace_int_con t =
         | Logic.IntTerm.Int _ ->
             (*if Stdlib.(a = Z.zero) then t' else*)
             Logic.ExtTerm.mk_var @@ Ident.mk_fresh_tvar ()
-        | Logic.IntTerm.(Neg | Abs | Add | Sub | Mul | Div _ | Rem _) -> t'
+        | Logic.IntTerm.(
+            Neg | Abs | Add | Sub | Mul | Div _ | Rem _ | Power | Case _) ->
+            t'
         | Logic.BoolTerm.IfThenElse -> t'
         | _ -> t')
     | Logic.Bin (_, _, _, _, _) -> assert false

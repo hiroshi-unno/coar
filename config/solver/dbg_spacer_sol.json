@@ -1,6 +1,10 @@
 [
     "SPACER",
     {
+        "preprocessor": [
+            "Filename",
+            "./config/pcsat/preprocessor/disable.json"
+        ],
         "timeout": null,
         "use_z3_native_mbp": true,
         "enable_global_guidance": false,

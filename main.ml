@@ -14,17 +14,24 @@ type problem =
   | PCHCMax  (** CHC Maximization *)
   | PMuCLP  (** muCLP Validity Checking *)
   | PMuCLPInter  (** Interactive Conditional muCLP Validity Checking *)
-  | PProbMuCLP  (** Probabilistic muCLP Validity Checking *)
+  | PQFL  (** QFL Validity Checking *)
+  | PPGCL  (** pGCL Verification *)
+  | PSGCL  (** SGCL Verification *)
   | PCLTL  (** LTL Verification of C Programs *)
   | PCCTL  (** CTL Verification of C Programs *)
-  | PLTSSafe  (** Safety Verification of Labeled Transition Systems *)
-  | PLTSNSafe  (** Non-Safety Verification of Labeled Transition Systems *)
-  | PLTSTerm  (** Termination Verification of Labeled Transition Systems *)
-  | PLTSNTerm  (** Non-Termination Verification of Labeled Transition Systems *)
-  | PLTSMuCal
+  | PLTSSafe of (* BV mode *) bool
+      (** Safety Verification of Labeled Transition Systems *)
+  | PLTSNSafe of (* BV mode *) bool
+      (** Non-Safety Verification of Labeled Transition Systems *)
+  | PLTSTerm of (* BV mode *) bool
+      (** Termination Verification of Labeled Transition Systems *)
+  | PLTSNTerm of (* BV mode *) bool
+      (** Non-Termination Verification of Labeled Transition Systems *)
+  | PLTSMuCal of (* BV mode *) bool
       (** Modal mu-Calculus Model Checking of Labeled Transition Systems *)
-  | PLTSRel  (** Relational Verification of Labeled Transition Systems *)
-  | PLTSTermInter
+  | PLTSRel of (* BV mode *) bool
+      (** Relational Verification of Labeled Transition Systems *)
+  | PLTSTermInter of (* BV mode *) bool
       (** Interactive Conditional (Non-)Termination Analysis of Labeled
           Transition Systems *)
   | PPLTSTerm
@@ -48,16 +55,25 @@ let problem =
       | "chcmax" -> return PCHCMax
       | "muclp" -> return PMuCLP
       | "muclpinter" | "muclp-inter" -> return PMuCLPInter
-      | "probmuclp" | "prob-muclp" -> return PProbMuCLP
+      | "qfl" -> return PQFL
+      | "pgcl" -> return PPGCL
+      | "sgcl" -> return PSGCL
       | "cltl" | "c-ltl" -> return PCLTL
       | "cctl" | "c-ctl" -> return PCCTL
-      | "ltssafe" | "lts-safe" -> return PLTSSafe
-      | "ltsnsafe" | "lts-nsafe" -> return PLTSNSafe
-      | "ltsterm" | "lts-term" -> return PLTSTerm
-      | "ltsnterm" | "lts-nterm" -> return PLTSNTerm
-      | "ltsmucal" | "lts-mucal" -> return PLTSMuCal
-      | "ltsrel" | "lts-rel" -> return PLTSRel
-      | "ltsterminter" | "lts-term-inter" -> return PLTSTermInter
+      | "ltssafe" | "lts-safe" -> return (PLTSSafe false)
+      | "ltssafebv" | "lts-safe-bv" -> return (PLTSSafe true)
+      | "ltsnsafe" | "lts-nsafe" -> return (PLTSNSafe false)
+      | "ltsnsafebv" | "lts-nsafe-bv" -> return (PLTSNSafe true)
+      | "ltsterm" | "lts-term" -> return (PLTSTerm false)
+      | "ltstermbv" | "lts-term-bv" -> return (PLTSTerm true)
+      | "ltsnterm" | "lts-nterm" -> return (PLTSNTerm false)
+      | "ltsntermbv" | "lts-nterm-bv" -> return (PLTSNTerm true)
+      | "ltsmucal" | "lts-mucal" -> return (PLTSMuCal false)
+      | "ltsmucalbv" | "lts-mucal-bv" -> return (PLTSMuCal true)
+      | "ltsrel" | "lts-rel" -> return (PLTSRel false)
+      | "ltsrelbv" | "lts-rel-bv" -> return (PLTSRel true)
+      | "ltsterminter" | "lts-term-inter" -> return (PLTSTermInter false)
+      | "ltsterminterbv" | "lts-term-inter-bv" -> return (PLTSTermInter true)
       | "pltsterm" | "plts-term" -> return PPLTSTerm
       | "pltsnterm" | "plts-nterm" -> return PPLTSNTerm
       | "ml" -> return POCaml
@@ -81,7 +97,7 @@ let cmd =
            ~aliases:[ "-p" ]
            ~doc:
              "choose problem \
-              [SAT/QSAT/DQSAT/HOSAT/SMT/HOMC/SyGuS/CHC/pCSP/pfwCSP/pfwnCSP/CHCMax/muCLP/muCLPInter/probMuCLP/CLTL/CCTL/LTSsafe/LTSnsafe/LTSterm/LTSnterm/LTSmucal/LTSrel/LTStermInter/PLTSterm/PLTSnterm/ML] \
+              [SAT/QSAT/DQSAT/HOSAT/SMT/HOMC/SyGuS/CHC/pCSP/pfwCSP/pfwnCSP/CHCMax/muCLP/muCLPInter/QFL/CLTL/CCTL/LTSsafe/LTSnsafe/LTSterm/LTStermBV/LTSnterm/LTSntermBV/LTSmucal/LTSrel/LTStermInter/PLTSterm/PLTSnterm/ML] \
               (default: muCLP)"
       +> flag "--verbose" no_arg (* this option is obsolete *)
            ~aliases:[ "-v" ] ~doc:"enable verbose mode")
@@ -94,15 +110,24 @@ let load_solver_config prblm solver =
       Or_error.return
       @@
       match cfg with
-      | MuVal _ when Stdlib.(prblm = PMuCLPInter || prblm = PLTSTermInter) ->
+      | MuVal _
+        when Stdlib.(
+               prblm = PMuCLPInter
+               || prblm = PLTSTermInter false
+               || prblm = PLTSTermInter true) ->
           cfg
-      | MuVal _ when Stdlib.(prblm = PProbMuCLP) -> cfg
+      | MuVal _ when Stdlib.(prblm = PQFL || prblm = PPGCL || prblm = PSGCL) ->
+          cfg
       | (MuVal _ | MuCyc _ | Printer _)
         when Stdlib.(
                prblm = PSyGuS || prblm = PPCSP || prblm = PMuCLP
-               || prblm = PCLTL || prblm = PCCTL || prblm = PLTSSafe
-               || prblm = PLTSNSafe || prblm = PLTSTerm || prblm = PLTSNTerm
-               || prblm = PLTSMuCal || prblm = PLTSRel || prblm = PPLTSTerm
+               || prblm = PCLTL || prblm = PCCTL || prblm = PLTSSafe false
+               || prblm = PLTSSafe true || prblm = PLTSNSafe false
+               || prblm = PLTSNSafe true || prblm = PLTSTerm false
+               || prblm = PLTSTerm true || prblm = PLTSNTerm false
+               || prblm = PLTSNTerm true || prblm = PLTSMuCal false
+               || prblm = PLTSMuCal true || prblm = PLTSRel false
+               || prblm = PLTSRel true || prblm = PPLTSTerm
                || prblm = PPLTSNTerm) ->
           cfg
       | (PCSat _ | SPACER _ | Hoice _ | PolyQEnt _)
@@ -114,7 +139,7 @@ let load_solver_config prblm solver =
       | (HOMCSat _ | Printer _)
         when Stdlib.(prblm = PSAT || prblm = PDQSAT || prblm = PHOSAT) ->
           cfg
-      | Z3Smt _ when Stdlib.(prblm = PSMT) -> cfg
+      | (Z3Smt _ | MuCyc _) when Stdlib.(prblm = PSMT) -> cfg
       | (TRecS _ | HorSat2 _ | Printer _) when Stdlib.(prblm = PHOMC) -> cfg
       | _ ->
           failwith
@@ -192,10 +217,20 @@ let load_muclp ~print filename =
   | Some "hes" -> MuCLP.Util.from_file ~print filename
   | _ -> Or_error.unimplemented "load_muclp"
 
-let load_prob_muclp ~print filename =
+let load_qfl ~print filename =
   match snd (Filename.split_extension filename) with
-  | Some "phes" -> ProbMuCLP.Util.from_file ~print filename
-  | _ -> Or_error.unimplemented "load_prob_muclp"
+  | Some "qhes" -> QFL.Util.from_file ~print filename
+  | _ -> Or_error.unimplemented "load_qfl"
+
+let load_pgcl ~print filename =
+  match snd (Filename.split_extension filename) with
+  | Some "pgcl" -> PGCL.Util.from_file ~print filename
+  | _ -> Or_error.unimplemented "load_pgcl"
+
+let load_sgcl ~print filename =
+  match snd (Filename.split_extension filename) with
+  | Some "sgcl" -> SGCL.Util.from_file ~print filename
+  | _ -> Or_error.unimplemented "load_sgcl"
 
 let load_cltl ~print filename =
   match snd (Filename.split_extension filename) with
@@ -207,9 +242,9 @@ let load_cctl ~print filename =
   | Some "c" -> C.Parser.from_cctl_file ~print filename
   | _ -> Or_error.unimplemented "load_cctl"
 
-let load_lts filename =
+let load_lts ~bv_mode filename =
   match snd (Filename.split_extension filename) with
-  | Some "t2" -> LTS.Parser.from_file filename
+  | Some "t2" -> LTS.Parser.from_file ~bv_mode filename
   | _ -> Or_error.unimplemented "load_lts"
 
 let load_plts ~print filename =
@@ -250,31 +285,43 @@ let main filename solver problem verbose () =
       | PMuCLPInter ->
           load_muclp ~print:Debug.print filename
           >>= Solver.solve_muclp_interactive
-      | PProbMuCLP ->
-          load_prob_muclp ~print:Debug.print filename
-          >>= Solver.solve_prob_muclp
+      | PQFL -> load_qfl ~print:Debug.print filename >>= Solver.solve_qfl
+      | PPGCL ->
+          ( load_pgcl ~print:Debug.print filename >>= fun pgcl ->
+            Or_error.return (PGCL.Util.problem_of ~print:Debug.print pgcl) )
+          >>= fun _ ->
+          print_endline "Solving pGCL...";
+          Or_error.return ()
+          (* >>= Solver.solve_qfl *)
+      | PSGCL ->
+          ( load_sgcl ~print:Debug.print filename >>= fun sgcl ->
+            Or_error.return (SGCL.Util.problem_of ~print:Debug.print sgcl) )
+          >>= fun _ ->
+          print_endline "Solving SGCL...";
+          Or_error.return ()
+          (* >>= Solver.solve_qfl *)
       | PCLTL -> load_cltl ~print:Debug.print filename >>= Solver.solve_muclp
       | PCCTL -> load_cctl ~print:Debug.print filename >>= Solver.solve_muclp
-      | PLTSSafe ->
-          load_lts filename >>= fun lts ->
+      | PLTSSafe bv_mode ->
+          load_lts ~bv_mode filename >>= fun lts ->
           Solver.solve_lts ~print:Debug.print (lts, LTS.Problem.Safe)
-      | PLTSNSafe ->
-          load_lts filename >>= fun lts ->
+      | PLTSNSafe bv_mode ->
+          load_lts ~bv_mode filename >>= fun lts ->
           Solver.solve_lts ~print:Debug.print (lts, LTS.Problem.NonSafe)
-      | PLTSTerm ->
-          load_lts filename >>= fun lts ->
+      | PLTSTerm bv_mode ->
+          load_lts ~bv_mode filename >>= fun lts ->
           Solver.solve_lts ~print:Debug.print (lts, LTS.Problem.Term)
-      | PLTSNTerm ->
-          load_lts filename >>= fun lts ->
+      | PLTSNTerm bv_mode ->
+          load_lts ~bv_mode filename >>= fun lts ->
           Solver.solve_lts ~print:Debug.print (lts, LTS.Problem.NonTerm)
-      | PLTSMuCal ->
-          load_lts filename >>= fun lts ->
+      | PLTSMuCal bv_mode ->
+          load_lts ~bv_mode filename >>= fun lts ->
           Solver.solve_lts ~print:Debug.print (lts, LTS.Problem.MuCal)
-      | PLTSRel ->
-          load_lts filename >>= fun lts ->
+      | PLTSRel bv_mode ->
+          load_lts ~bv_mode filename >>= fun lts ->
           Solver.solve_lts ~print:Debug.print (lts, LTS.Problem.Rel)
-      | PLTSTermInter ->
-          load_lts filename >>= fun lts ->
+      | PLTSTermInter bv_mode ->
+          load_lts ~bv_mode filename >>= fun lts ->
           Solver.solve_lts_interactive ~print:Debug.print lts
       | PPLTSTerm ->
           load_plts ~print:Debug.print filename >>= fun plts ->

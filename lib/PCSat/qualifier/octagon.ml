@@ -27,7 +27,7 @@ let make seeds =
            @@ Formula.geq left
                 (Term.of_value (get_dtenv ()) @@ Evaluator.eval_term right)
          in
-         if Set.is_empty @@ Formula.fvs_of qual then None else Some qual)
+         if Formula.is_ground qual then None else Some qual)
 
 let octagon_half_spaces_of sorts examples =
   let params = LogicOld.sort_env_list_of_sorts sorts in

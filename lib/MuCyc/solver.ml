@@ -2,6 +2,7 @@ open Core
 open Common
 open Common.Util
 open Preprocessing
+open Ast
 
 module Make (Cfg : Config.ConfigType) = struct
   let config = Cfg.config
@@ -66,4 +67,51 @@ module Make (Cfg : Config.ConfigType) = struct
         Or_error.return
           (sol, { PCSatCommon.State.num_cegis_iters = -1 (*ToDo*) }))
       pcsp
+
+  let solve_smt ?(print_sol = false) g =
+    Debug.print
+    @@ lazy (sprintf "original input: %s\n" @@ LogicOld.Formula.str_of g);
+    let g =
+      let senv = Set.to_list @@ LogicOld.Formula.sort_env_of g in
+      LogicOld.Formula.mk_exists_if_bounded senv g
+    in
+    Debug.print @@ lazy (sprintf "closed: %s\n" @@ LogicOld.Formula.str_of g);
+    let g =
+      LogicOld.Formula.move_quantifiers_to_front @@ Normalizer.normalize
+      @@ Evaluator.simplify @@ LogicOld.Formula.elim_ite @@ Normalizer.normalize
+      @@ LogicOld.Formula.elim_let
+      @@ Normalizer.normalize_let ~rename:true
+      @@ Typeinf.typeinf_formula
+           ~print:(*Debug.print*) (fun _ -> ())
+           ~default:(Some LogicOld.T_int.SInt (*ToDo*))
+      @@ LogicOld.Formula.aconv_tvar g
+    in
+    Debug.print
+    @@ lazy (sprintf "prenex normal form: %s\n" @@ LogicOld.Formula.str_of g);
+    let g =
+      Normalizer.normalize @@ Evaluator.simplify @@ LogicOld.Formula.rm_div_mod
+      @@ LogicOld.Formula.elim_redundant_quantifiers g
+    in
+    Debug.print @@ lazy (sprintf "input: %s\n" (LogicOld.Formula.str_of g));
+    let quantifiers, f = LogicOld.Formula.split_quantifiers g in
+    let res =
+      match Qsat.decide_theory quantifiers with
+      | QBF ->
+          let open Qsat.QSAT (Mbp.Boolean) in
+          solve ~config ~print:Debug.print quantifiers f
+      | LRA ->
+          let open Qsat.QSAT (Mbp.LRA) in
+          solve ~config ~print:Debug.print quantifiers f
+      | LIA ->
+          let open Qsat.QSAT (Mbp.LIA) in
+          solve ~config ~print:Debug.print quantifiers f
+    in
+    let solution =
+      match res with
+      | SAT -> SMT.Problem.Sat [ (*ToDo*) ]
+      | UNSAT -> SMT.Problem.Unsat
+    in
+    if print_sol then
+      print_endline @@ sprintf "%s" (SMT.Problem.str_of_solution solution);
+    Ok solution
 end

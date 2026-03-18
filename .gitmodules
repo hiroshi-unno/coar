@@ -26,12 +26,6 @@
 	path = benchmarks/SMT/QF_UF
 	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/QF_UF.git
 
-[submodule "benchmarks/QSMT/LIA"]
-	path = benchmarks/QSMT/LIA
-	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/LIA.git
-[submodule "benchmarks/QSMT/LRA"]
-	path = benchmarks/QSMT/LRA
-	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/LRA.git
 [submodule "benchmarks/QSMT/ijcai2016"]
 	path = benchmarks/QSMT/ijcai2016
 	url = https://github.com/zkincaid/strategy-improvement.git
@@ -69,3 +63,6 @@
 [submodule "benchmarks/chc-comp25"]
 	path = benchmarks/chc-comp25
 	url = https://github.com/chc-comp/chc-comp25-benchmarks.git
+[submodule "benchmarks/term-comp-ari"]
+	path = benchmarks/term-comp-ari
+	url = https://github.com/TermCOMP/TPDB-ARI.git

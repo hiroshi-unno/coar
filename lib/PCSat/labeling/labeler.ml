@@ -113,7 +113,7 @@ module Config = struct
     | Mixed ss ->
         String.bracket
         @@ String.concat_map_list ~sep:", " ss ~f:(fun (s, b) ->
-               (if b then "!" else "") ^ str_of_strategy s)
+            (if b then "!" else "") ^ str_of_strategy s)
     | CBandit -> "Contextual bandit"
     | Bandit_BDD -> "Bandit with BDDs"
 
@@ -157,8 +157,8 @@ module Make
           learn_clauses_to_remove_nondet_functions pos res fnpvs
         else
           let map =
-            Set.Poly.map sample ~f:(snd >> List.rest_last)
-            |> Set.to_list |> Map.Poly.of_alist_multi
+            Map.Poly.of_alist_multi @@ Set.to_list
+            @@ Set.Poly.map sample ~f:(snd >> List.rest_last)
           in
           let res' =
             Map.Poly.fold map ~init:res ~f:(fun ~key:args ~data:rets res ->
@@ -202,11 +202,10 @@ module Make
           | None ->
               let open Graph in
               let open Pack.Digraph in
-              LoopDetector.gen_graph sample
-              |> (fun (graph, node_map_rev) ->
-              (graph, Components.scc_list graph, node_map_rev))
-              |> LoopDetector.detect res pvar sorts
-              |> Fn.flip (learn_clauses_to_remove_cycles pos) wfpvs)
+              let graph, node_map_rev = LoopDetector.gen_graph sample in
+              Fn.flip (learn_clauses_to_remove_cycles pos) wfpvs
+              @@ LoopDetector.detect res pvar sorts
+                   (graph, Components.scc_list graph, node_map_rev))
 
   let rec learn_clauses_to_remove_cycles_for_nwf pos res = function
     | [] -> res
@@ -233,12 +232,13 @@ module Make
           | None ->
               let open Graph in
               let open Pack.Digraph in
-              NWFLoopDetector.gen_graph (sorts, sorts_l, sorts_r) sample
-              |> (fun (graph, node_map_rev) ->
-              (graph, Components.scc_list graph, node_map_rev))
-              |> NWFLoopDetector.detect ~print:Debug.print res pvar
+              let graph, node_map_rev =
+                NWFLoopDetector.gen_graph (sorts, sorts_l, sorts_r) sample
+              in
+              Fn.flip (learn_clauses_to_remove_cycles_for_nwf pos) nwfpvs
+              @@ NWFLoopDetector.detect ~print:Debug.print res pvar
                    (sorts, sorts_l, sorts_r)
-              |> Fn.flip (learn_clauses_to_remove_cycles_for_nwf pos) nwfpvs)
+                   (graph, Components.scc_list graph, node_map_rev))
 
   let abstract_exatom map atm =
     match Map.Poly.find map atm with
@@ -314,15 +314,15 @@ module Make
           | Some oracle -> (
               constr
               :: List.filter_map (Map.Poly.to_alist map) ~f:(fun (atom, prop) ->
-                     let open Option in
-                     ExAtom.pvar_of atom >>= fun pvar ->
-                     let qdep = VersionSpace.qdeps_of pvar vs in
-                     Map.Poly.find (Map.of_set_exn @@ snd oracle) pvar
-                     >>= fun pred ->
-                     match TruthTable.eval_pred ~id vs.fenv qdep pred atom with
-                     | Some true -> Some prop
-                     | Some false -> Some (PropLogic.Formula.mk_neg prop)
-                     | None -> assert false)
+                  let open Option in
+                  ExAtom.pvar_of atom >>= fun pvar ->
+                  let qdep = VersionSpace.qdeps_of pvar vs in
+                  Map.Poly.find (Map.of_set_exn @@ snd oracle) pvar
+                  >>= fun pred ->
+                  match TruthTable.eval_pred ~id vs.fenv qdep pred atom with
+                  | Some true -> Some prop
+                  | Some false -> Some (PropLogic.Formula.mk_neg prop)
+                  | None -> assert false)
               |> PropLogic.Formula.and_of |> SAT.Problem.of_prop_formula
               |> SatSolver.solve
               >>= function
@@ -332,11 +332,11 @@ module Make
           let pos_bias = Stdlib.(strategy = Config.POS_BIASED_SAT) in
           constr
           :: List.filter_map (Map.Poly.to_alist map) ~f:(fun (atm, prop) ->
-                 match (ExAtom.pvar_of atm, prop) with
-                 | Some _, PropLogic.Formula.Atom (_, _) ->
-                     if pos_bias then Some prop
-                     else Some (PropLogic.Formula.mk_neg prop)
-                 | _ -> None)
+              match (ExAtom.pvar_of atm, prop) with
+              | Some _, PropLogic.Formula.Atom (_, _) ->
+                  if pos_bias then Some prop
+                  else Some (PropLogic.Formula.mk_neg prop)
+              | _ -> None)
           |> PropLogic.Formula.and_of |> SAT.Problem.of_prop_formula
           |> SatSolver.solve
           >>= function
@@ -387,9 +387,9 @@ module Make
                 1.0
                 (* default weight for counterexamples *)
               in
-              VersionSpace.examples_of vs
-              |> Set.Poly.map ~f:(fun cl -> (cl, dw))
-              |> Set.to_list
+              Set.to_list
+              @@ Set.Poly.map ~f:(fun cl -> (cl, dw))
+              @@ VersionSpace.examples_of vs
             in
             let exs2 =
               let clauses =
@@ -648,29 +648,27 @@ module Make
     Debug.print
     @@ lazy ("*** labeling with " ^ Config.str_of_strategy config.strategy);
     let wfpvs =
-      PCSP.Problem.wfpvs_senv_of APCSP.problem
-      |> Map.Poly.to_alist
-      |> List.map ~f:(fun (Ident.Tvar n, sort) ->
-             ( Ident.Pvar n,
-               List.map (Logic.Sort.args_of sort) ~f:Logic.ExtTerm.to_old_sort
-             ))
+      List.map ~f:(fun (Ident.Tvar n, sort) ->
+          ( Ident.Pvar n,
+            List.map (Logic.Sort.args_of sort) ~f:Logic.ExtTerm.to_old_sort ))
+      @@ Map.Poly.to_alist
+      @@ PCSP.Problem.wfpvs_senv_of APCSP.problem
     in
     let fnpvs =
-      PCSP.Problem.fnpvs_senv_of APCSP.problem
-      |> Map.Poly.to_alist
-      |> List.map ~f:(fun (Ident.Tvar n, sort) ->
-             ( Ident.Pvar n,
-               List.map (Logic.Sort.args_of sort) ~f:Logic.ExtTerm.to_old_sort
-             ))
+      List.map ~f:(fun (Ident.Tvar n, sort) ->
+          ( Ident.Pvar n,
+            List.map (Logic.Sort.args_of sort) ~f:Logic.ExtTerm.to_old_sort ))
+      @@ Map.Poly.to_alist
+      @@ PCSP.Problem.fnpvs_senv_of APCSP.problem
     in
     let nwfpvs =
-      PCSP.Problem.nwfpvs_senv_of APCSP.problem
-      |> Map.Poly.to_alist
-      |> List.map ~f:(fun (Ident.Tvar n, (_, sorts, _, sorts_x, _, sorts_y)) ->
-             ( Ident.Pvar n,
-               List.map ~f:Logic.ExtTerm.to_old_sort sorts,
-               List.map ~f:Logic.ExtTerm.to_old_sort sorts_x,
-               List.map ~f:Logic.ExtTerm.to_old_sort sorts_y ))
+      List.map ~f:(fun (Ident.Tvar n, (_, sorts, _, sorts_x, _, sorts_y)) ->
+          ( Ident.Pvar n,
+            List.map ~f:Logic.ExtTerm.to_old_sort sorts,
+            List.map ~f:Logic.ExtTerm.to_old_sort sorts_x,
+            List.map ~f:Logic.ExtTerm.to_old_sort sorts_y ))
+      @@ Map.Poly.to_alist
+      @@ PCSP.Problem.nwfpvs_senv_of APCSP.problem
     in
     let open Or_error in
     let pos_atms, neg_atms, undecided_inst =
@@ -702,7 +700,7 @@ module Make
               let new_undecided = Set.diff loop_cls undecided in
               VersionSpace.add_examples vs
               @@ Set.Poly.map new_undecided ~f:(fun ex ->
-                     (ex, Set.Poly.singleton (ClauseGraph.Dummy, false)))
+                  (ex, Set.Poly.singleton (ClauseGraph.Dummy, false)))
             (*TODO: add sources for new_undecided *)
           in
           let vs' =
@@ -758,12 +756,11 @@ module Make
              @@ Set.Poly.
                   (map ~f:fst dpos', map ~f:fst dneg', map ~f:fst undecided'));
         let new_examples =
-          Set.Poly.union_list [ dpos'; dneg'; undecided' ]
-          |> Set.Poly.map ~f:(fun (ex, srcs) ->
-                 ( ex,
-                   Set.Poly.of_list
-                   @@ List.map srcs ~f:(fun e -> (ClauseGraph.Example e, true))
-                 ))
+          Set.Poly.map ~f:(fun (ex, srcs) ->
+              ( ex,
+                Set.Poly.of_list
+                @@ List.map srcs ~f:(fun e -> (ClauseGraph.Example e, true)) ))
+          @@ Set.Poly.union_list [ dpos'; dneg'; undecided' ]
         in
         Ok (State.of_examples vs new_examples)
 

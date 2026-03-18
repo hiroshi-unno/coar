@@ -22,6 +22,8 @@ val lookup :
   Ident.pvar ->
   (Predicate.fixpoint * sort_env_list * Formula.t) option
 
+val kind_of_exn : t list -> Ident.pvar -> Predicate.fixpoint
+val kind_of : t list -> Ident.pvar -> Predicate.fixpoint option
 val to_formula : t -> Formula.t
 val str_of : t -> string
 val str_of_ : t -> string

@@ -1212,6 +1212,7 @@ module type IntTermType = sig
     | Div of Value.modulo
     | Rem of Value.modulo
     | Power
+    | Case of int
 
   type Sort.t += SInt
   type termlit += IntLit of Z.t
@@ -1230,6 +1231,7 @@ module type IntTermType = sig
   val mk_div : Value.modulo -> term
   val mk_rem : Value.modulo -> term
   val mk_power : unit -> term
+  val mk_case : int -> Sort.t -> term
   val sum : term list -> term
   val prod : term list -> term
 
@@ -1255,6 +1257,7 @@ module IntTerm : IntTermType = struct
     | Div of Value.modulo
     | Rem of Value.modulo
     | Power
+    | Case of int
 
   type Sort.t += SInt
   type termlit += IntLit of Z.t
@@ -1281,6 +1284,12 @@ module IntTerm : IntTermType = struct
 
   let sort_of_sym = function
     | Int _ -> SInt
+    | Case n ->
+        let var = Ident.mk_fresh_svar () in
+        Sort.SForAll
+          ( var,
+            Sort.mk_fun (SInt :: List.init (n + 1) ~f:(fun _ -> Sort.SVar var))
+          )
     | sym -> Map.Poly.find_exn sym_sort_map sym
 
   let arity_of_sym = Term.open_arity_of_sym sort_of_sym
@@ -1297,6 +1306,7 @@ module IntTerm : IntTermType = struct
     | Div _ -> "Div"
     | Rem _ -> "Rem"
     | Power -> "Power"
+    | Case _n -> "Case"
     | _ -> failwith "IntTerm.str_of_sym"
 
   let str_of_termlit = function IntLit n -> Z.to_string n | _ -> assert false
@@ -1322,6 +1332,7 @@ module IntTerm : IntTermType = struct
   let mk_div m = mk_con (Div m)
   let mk_rem m = mk_con (Rem m)
   let mk_power () = mk_con Power
+  let mk_case n = mk_tyapp (mk_con (Case n))
 
   let sum = function
     | [] -> zero ()
@@ -1398,6 +1409,7 @@ module IntTerm : IntTermType = struct
                 | _ -> assert false)
           | _ -> assert false)
     | Power -> failwith "not implemented"
+    | Case _ -> failwith "not implemented"
     | _ -> assert false
 
   let eval = open_eval eval_sym of_termlit
@@ -1634,7 +1646,7 @@ module type BVTermType = sig
   (** Observation *)
 
   val bits_of : size -> int
-  val signed_of : signed -> bool
+  val is_signed : signed -> bool
   val is_bv_sort : Sort.t -> bool
 end
 
@@ -1741,7 +1753,7 @@ module BVTerm : BVTermType = struct
     | _ -> failwith "BVTerm.str_of_sym"
 
   let str_of_sort_theory = function
-    | SBV _ -> "bv"
+    | SBV size -> sprintf "bv%s" (str_of_size size)
     | _ -> failwith "unknown sort in BVTerm.str_of_sort_theory"
 
   let str_of_sort = open_str_of_sort str_of_sort_theory
@@ -1750,6 +1762,7 @@ module BVTerm : BVTermType = struct
   (** Observation *)
 
   let bits_of = function None -> 32 (*ToDo*) | Some bits -> bits
+  let is_signed = function None -> true (*ToDo*) | Some signed -> signed
 
   (** Construction *)
 
@@ -1778,7 +1791,6 @@ module BVTerm : BVTermType = struct
 
   (** Observation *)
 
-  let signed_of = function None -> true (*ToDo*) | Some signed -> signed
   let is_bv_sort = function SBV _ -> true | _ -> false
 end
 
@@ -3144,7 +3156,7 @@ module ExtTerm :
     | SBool -> "bool"
     | SInt -> "int"
     | SReal -> "real"
-    | SBV _ -> "bv"
+    | SBV size -> sprintf "bv%s" (BVTerm.str_of_size size)
     | SString -> "string"
     | SSequence true -> "fin_sequence"
     | SSequence false -> "inf_sequence"
@@ -3385,6 +3397,7 @@ module ExtTerm :
     | LogicOld.T_int.Div m, [ _; _ ] -> mk_div m
     | LogicOld.T_int.Rem m, [ _; _ ] -> mk_rem m
     | LogicOld.T_int.Power, [ _; _ ] -> mk_power ()
+    | LogicOld.T_int.Case n, _ :: sort :: _ -> mk_case n sort
     | LogicOld.T_real.Real r, [] -> mk_real r
     | LogicOld.T_real.RNeg, [ _ ] -> mk_rneg ()
     | LogicOld.T_real.RAbs, [ _ ] -> mk_rabs ()
@@ -3421,7 +3434,6 @@ module ExtTerm :
     | LogicOld.T_irb.IntToBV size, [ _ ] -> mk_int_to_bv ~size
     | LogicOld.T_irb.BVToInt (size, signed), [ _ ] -> mk_bv_to_int ~size ~signed
     (*| LogicOld.T_num.NNeg svar, [_] -> failwith "of_old_fun_sym"
-      | LogicOld.T_num.NSEXT _, [_] -> failwith "of_old_fun_sym"
       | LogicOld.T_num.Value (_, svar), [] -> failwith "of_old_fun_sym"
       | LogicOld.T_num.NAdd svar, [_; _] -> failwith "of_old_fun_sym"
       | LogicOld.T_num.NSub svar, [_; _] -> failwith "of_old_fun_sym"
@@ -3612,6 +3624,7 @@ module ExtTerm :
 
   let to_old_fun_sym = function
     | IfThenElse -> LogicOld.T_bool.IfThenElse |> Option.some
+    | Case n -> LogicOld.T_int.Case n |> Option.some
     | Int n -> LogicOld.T_int.Int n |> Option.some
     | Neg -> LogicOld.T_int.Neg |> Option.some
     | Abs -> LogicOld.T_int.Abs |> Option.some
@@ -3812,23 +3825,17 @@ module ExtTerm :
         t1 :: t2 :: t3 :: args )
       when BoolTerm.is_bool_sort
              (sort_of (Map.force_merge exi_senv uni_senv) t2) ->
-        let t1' =
-          LogicOld.T_bool.of_formula (to_old_fml exi_senv uni_senv t1)
-        in
-        let t2' =
-          LogicOld.T_bool.of_formula (to_old_formula exi_senv uni_senv t2 args)
-        in
-        let t3' =
-          LogicOld.T_bool.of_formula (to_old_formula exi_senv uni_senv t3 args)
-        in
-        LogicOld.T_bool.mk_if_then_else t1' t2' t3'
+        LogicOld.T_bool.(
+          mk_if_then_else
+            (of_formula (to_old_fml exi_senv uni_senv t1))
+            (of_formula (to_old_formula exi_senv uni_senv t2 args))
+            (of_formula (to_old_formula exi_senv uni_senv t3 args)))
     | TyApp (Con (IfThenElse, _), _, _), t1 :: t2 :: t3 :: args ->
-        let t1' =
-          LogicOld.T_bool.of_formula (to_old_fml exi_senv uni_senv t1)
-        in
-        let t2' = to_old_term exi_senv uni_senv t2 args in
-        let t3' = to_old_term exi_senv uni_senv t3 args in
-        LogicOld.T_bool.mk_if_then_else t1' t2' t3'
+        LogicOld.T_bool.(
+          mk_if_then_else
+            (of_formula (to_old_fml exi_senv uni_senv t1))
+            (to_old_term exi_senv uni_senv t2 args)
+            (to_old_term exi_senv uni_senv t3 args))
     | TyApp (Con (Leq, _), Sort.SVar svar, _), [ t1; t2 ] ->
         let t1' = to_old_trm exi_senv uni_senv t1 in
         let t2' = to_old_trm exi_senv uni_senv t2 in
@@ -3849,6 +3856,21 @@ module ExtTerm :
         let t2' = to_old_trm exi_senv uni_senv t2 in
         LogicOld.(
           T_bool.of_atom @@ Atom.mk_psym_app (T_num.NGt svar) [ t1'; t2' ])
+    | TyApp (Con (Case n, _), (SBool | Sort.SVar _), _), t1 :: args
+      when List.length args >= 1
+           && BoolTerm.is_bool_sort
+                (sort_of (Map.force_merge exi_senv uni_senv) (List.hd_exn args))
+      ->
+        let args1, args2 = List.split_n args n in
+        LogicOld.(
+          T_int.mk_case n (to_old_trm exi_senv uni_senv t1)
+          @@ List.map args1 ~f:(fun t ->
+                 T_bool.of_formula (to_old_formula exi_senv uni_senv t args2)))
+    | TyApp (Con (Case n, _), _, _), t1 :: args ->
+        let args1, args2 = List.split_n args n in
+        LogicOld.(
+          T_int.mk_case n (to_old_trm exi_senv uni_senv t1)
+          @@ List.map args1 ~f:(fun t -> to_old_term exi_senv uni_senv t args2))
     (*| TyApp (t, _sort, _), args (* ToDo: use [sort] *) ->
       to_old_term exi_senv uni_senv t args*)
     | TyLam _, _ -> failwith "[to_old_term] tylam not implemented"
@@ -3954,6 +3976,17 @@ module ExtTerm :
     (*LogicOld.Formula.mk_or
       (LogicOld.Formula.mk_and t1' t2')
       (LogicOld.Formula.mk_and (LogicOld.Formula.mk_neg t1') t3')*)
+    | TyApp (Con (Case n, _), (SBool | Sort.SVar _), _), t1 :: args
+      when List.length args >= 1
+           && BoolTerm.is_bool_sort
+                (sort_of (Map.force_merge exi_senv uni_senv) (List.hd_exn args))
+      ->
+        let args1, args2 = List.split_n args n in
+        LogicOld.(
+          Atom.of_bool_term
+          @@ T_int.mk_case n (to_old_trm exi_senv uni_senv t1)
+          @@ List.map args1 ~f:(fun t ->
+                 T_bool.of_formula (to_old_formula exi_senv uni_senv t args2)))
     | TyApp (t, _sort, _), args (* ToDo: use [sort] *) ->
         to_old_atom exi_senv uni_senv t args
     | _ ->
@@ -4016,10 +4049,13 @@ module ExtTerm :
           | [] -> assert false
           | arg :: args' ->
               aux uni_senv (subst (Map.Poly.singleton tvar arg) t) args' ~next)
-      | TyApp (Con ((Eq | Neq | IfThenElse), _), (SBool | Sort.SVar _), _) ->
+      | TyApp
+          (Con ((Eq | Neq | IfThenElse | Case _), _), (SBool | Sort.SVar _), _)
+        ->
           next @@ LogicOld.Formula.mk_atom
           @@ to_old_atom exi_senv uni_senv term args
       | TyApp (Con (IfThenElse, _), sort, _) -> failwith @@ str_of_sort sort
+      | TyApp (Con (Case _, _), sort, _) -> failwith @@ str_of_sort sort
       | TyApp (term, _sort, _) (* ToDo: use [sort] *) ->
           aux uni_senv term args ~next
       | Let (var, sort, def, body, _) ->

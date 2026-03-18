@@ -1,0 +1,25 @@
+real alpha;
+real beta;
+real p;
+real q;
+real x;
+
+alpha := 1.0;
+beta := 5000.0;
+p := 0.0005;
+q := 0.99;
+x := 100.0;
+
+while (x >= alpha) {
+	x := x - alpha;
+ 	tick(alpha);
+	{
+		{
+			tick(−beta)
+		}[q]{
+			{
+				tick(−beta)
+			}[]{} ## this should be nondeterministic choice
+		}
+	}[p]{}
+}
