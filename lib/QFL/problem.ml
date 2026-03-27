@@ -27,7 +27,7 @@ type dist_check = {
 }
 
 type query =
-  | ASAT of sort_env_map * Formula.t
+  | ASAT of (Ident.tvar * Term.t list) option * sort_env_list * Formula.t
   (* almost sure satisfaction of omega regular properties *)
   | Check (* bounds checking *) of check
   | DistCheck (* distribution bounds checking *) of dist_check
@@ -66,9 +66,14 @@ let str_of_solution = function
   | Timeout -> "timeout"
 
 let str_of_query ?(fsub = None) = function
-  | ASAT (param_senv, param_constr) ->
+  | ASAT (None, param_senv, param_constr) ->
       sprintf "ASAT (%s) | %s"
-        (str_of_sort_env_map Term.str_of_sort param_senv)
+        (str_of_sort_env_list Term.str_of_sort param_senv)
+        (Formula.str_of param_constr)
+  | ASAT (Some (var, args), param_senv, param_constr) ->
+      sprintf "ASAT (%s %s) (%s) | %s" (Ident.name_of_tvar var)
+        (String.concat_map_list ~sep:" " ~f:Term.str_of args)
+        (str_of_sort_env_list Term.str_of_sort param_senv)
         (Formula.str_of param_constr)
   | Check query -> (
       let q = formula_of_query (Check query) in
@@ -120,8 +125,8 @@ let level_of qfl tvar =
   if found then lv else failwith "level_of: not found"
 
 let simplify_query = function
-  | ASAT (param_senv, param_constr) ->
-      ASAT (param_senv, Evaluator.simplify param_constr)
+  | ASAT (init, param_senv, param_constr) ->
+      ASAT (init, param_senv, Evaluator.simplify param_constr)
   | Check query ->
       Check { query with bound = Evaluator.simplify_term query.bound }
   | DistCheck query ->
@@ -182,8 +187,8 @@ let nth i qfl =
               { pred with body = Term.map_term true ~f pred.body });
         query =
           (match qfl.query with
-          | ASAT (param_senv, param_constr) ->
-              ASAT (param_senv, Formula.map_term ~f param_constr)
+          | ASAT (init, param_senv, param_constr) ->
+              ASAT (init, param_senv, Formula.map_term ~f param_constr)
           | Check query ->
               Check { query with bound = Term.map_term true ~f query.bound }
           | DistCheck query -> DistCheck query (*ToDo*));

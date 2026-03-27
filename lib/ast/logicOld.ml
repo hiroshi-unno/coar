@@ -722,6 +722,8 @@ module Type = struct
     val elim_ite_quant : bool -> (formula -> formula) -> t -> formula Set.Poly.t
     val elim_min_max : int -> t -> t
     val elim_min_max_list : t -> t list
+    val elim_true : formula -> formula
+    val elim_false : formula -> formula
     val instantiate_div0_mod0 : t -> t
 
     val replace_div_mod :
@@ -1019,6 +1021,7 @@ module Type = struct
       t ->
       (atom Set.Poly.t * atom Set.Poly.t * t) Set.Poly.t
 
+    val to_cnf : ?process_pure:bool -> t -> t Set.Poly.t
     val pnf_of : t -> t
 
     val skolemize :
@@ -1463,6 +1466,7 @@ module Type = struct
     val affine_exp_of : Sort.t -> term array -> (term * Sort.t) list -> term
 
     val eq_of :
+      ?real_coeff:bool ->
       Sort.t ->
       (term * Sort.t) list ->
       sort_env_set * (term list * term) list * formula
@@ -1471,6 +1475,7 @@ module Type = struct
     val gt_of : ?signed:bool -> Sort.t -> ?info:info -> term -> term -> formula
 
     val ineq_of :
+      ?real_coeff:bool ->
       Sort.t ->
       (term * Sort.t) list ->
       sort_env_set * (term list * term) list * formula
@@ -5522,12 +5527,12 @@ and Atom :
 
   let elim_false phi =
     (*ToDo: for PolyQEnt *)
-    if Formula.is_false phi then Formula.eq (T_real.rzero ()) (T_real.rone ())
+    if Formula.is_false phi then Formula.geq (T_real.rzero ()) (T_real.rone ())
     else phi
 
   let elim_true phi =
     (*ToDo: for PolyQEnt *)
-    if Formula.is_true phi then Formula.eq (T_real.rzero ()) (T_real.rzero ())
+    if Formula.is_true phi then Formula.geq (T_real.rzero ()) (T_real.rzero ())
     else phi
 
   let elim_ite = function
@@ -7928,6 +7933,14 @@ and Formula :
     >> Set.Poly.map ~f:(fun (ps, ns, phis) ->
         (ps, ns, or_of @@ Set.to_list phis))
 
+  let to_cnf ?(process_pure = false) =
+    cnf_of ~process_pure Map.Poly.empty (*ToDo:check*)
+    >> Set.Poly.map ~f:(fun (pos, neg, pure) ->
+        or_of
+        @@ (pure :: (Set.to_list @@ Set.Poly.map pos ~f:mk_atom))
+        @ Set.to_list
+        @@ Set.Poly.map neg ~f:(mk_atom >> mk_neg))
+
   let pnf_of f = uncurry mk_binds @@ split_quantifiers f
 
   (* assume that [phi] is in NNF and let-normalized *)
@@ -9028,14 +9041,18 @@ and T_irb :
             cast (s, sort)
               (mul_of s (cast (Term.sort_of r.(i + 1), s) r.(i + 1)) t))
 
-  let eq_of sort ts =
+  let eq_of ?(real_coeff = false) sort ts =
     let r =
       Array.init
         (List.length ts + 1)
         ~f:(fun i ->
           Term.mk_var
-            (Ident.mk_fresh_parameter ())
-            (if i = 0 && Term.is_bv_sort sort then sort else T_int.SInt))
+            (if real_coeff then (*ToDo*)
+               Ident.mk_fresh_tvar ~prefix:(Some "param") ()
+             else Ident.mk_fresh_parameter ())
+            (if real_coeff then T_real.SReal
+             else if i = 0 && Term.is_bv_sort sort then sort
+             else T_int.SInt))
     in
     ( Set.Poly.empty,
       [ (Array.to_list @@ Array.slice r 1 (Array.length r), r.(0)) ],
@@ -9063,14 +9080,18 @@ and T_irb :
         @@ geq_of ~signed num_sort ~info t1
              (add_of num_sort t2 (one_of num_sort))
 
-  let ineq_of sort ts =
+  let ineq_of ?(real_coeff = false) sort ts =
     let r =
       Array.init
         (List.length ts + 1)
         ~f:(fun i ->
           Term.mk_var
-            (Ident.mk_fresh_parameter ())
-            (if i = 0 && Term.is_bv_sort sort then sort else T_int.SInt))
+            (if real_coeff then (*ToDo*)
+               Ident.mk_fresh_tvar ~prefix:(Some "param") ()
+             else Ident.mk_fresh_parameter ())
+            (if real_coeff then T_real.SReal
+             else if i = 0 && Term.is_bv_sort sort then sort
+             else T_int.SInt))
     in
     let coeffs_const_list =
       [ (Array.to_list @@ Array.slice r 1 (Array.length r), r.(0)) ]

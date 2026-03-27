@@ -1,0 +1,7 @@
+ASAT (X 50.0) (k : real) | true s.t.
+X3 (x : real) : real =mu
+  (1.0 / 2.0) * X3 (x + k - 1.0) + (1.0 / 2.0) * X3 (x + k + 1.0);
+X4 (x : real) : real =nu
+  (1.0 / 2.0) * X (x + k - 1.0) + (1.0 / 2.0) * X (x + k + 1.0);
+X (x : real) : real =nu
+  if x < 100.0 then X4 x else X3 x;

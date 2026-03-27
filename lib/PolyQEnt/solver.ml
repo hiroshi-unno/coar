@@ -78,8 +78,7 @@ module Make (Config : Config.ConfigType) : SolverType = struct
                                  (*ToDo: PolyQEnt requires this dummy condition*)
                                  LogicOld.(
                                    Formula.mk_imply
-                                     (Formula.eq (T_real.rzero ())
-                                        (T_real.rzero ()))
+                                     (Atom.elim_true (Formula.mk_true ()))
                                      conc)
                              else
                                LogicOld.Formula.mk_imply

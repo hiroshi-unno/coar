@@ -10,11 +10,11 @@ type mode =
 [@@deriving yojson]
 
 type sm_kind =
-  | SSM of bool (* Streett supermartingale (SSM) *)
-  | GSSM of bool (* generalized Streett supermartingale (GSSM) *)
-  | LexGSSM of bool (* lexicographic GSSM (LexGSSM) *)
-  | PMSM of bool (* progress-measure supermartingale (PMSM) *)
-  | LexPMSM of bool (* lexicographic PMSM (LexPMSM) *)
+  | SSM (* Streett supermartingale (SSM) *)
+  | GSSM (* generalized Streett supermartingale (GSSM) *)
+  | LexGSSM (* lexicographic GSSM (LexGSSM) *)
+  | PMSM (* progress-measure supermartingale (PMSM) *)
+  | LexPMSM (* lexicographic PMSM (LexPMSM) *)
 [@@deriving yojson]
 
 type t = {
@@ -55,6 +55,7 @@ type t = {
   quant_postfp_force_non_const : bool;
   quant_underapprox_templ_cond_degree : int option;
   quant_underapprox_templ_term_degree : int option;
+  quant_omega_regular_inv_shape : int list;
   quant_omega_regular_supermartingale : sm_kind;
   enable_pareto_caching : int option;
   pareto_cache_timeout : int option;

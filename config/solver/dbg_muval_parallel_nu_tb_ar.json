@@ -53,9 +53,11 @@
         "quant_postfp_force_non_const": false,
         "quant_underapprox_templ_cond_degree": 1,
         "quant_underapprox_templ_term_degree": null,
+        "quant_omega_regular_inv_shape": [
+            1
+        ],
         "quant_omega_regular_supermartingale": [
-            "LexPMSM",
-            false
+            "LexPMSM"
         ],
         "enable_pareto_caching": null,
         "pareto_cache_timeout": null,

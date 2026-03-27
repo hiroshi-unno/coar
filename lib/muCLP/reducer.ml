@@ -43,19 +43,10 @@ module Make (Cfg : Config.ConfigType) = struct
     |> Map.of_set_exn
     |> Fn.flip Formula.subst_preds phi
 
-  let cnf_of query =
-    query |> Evaluator.simplify
-    |> Formula.cnf_of Map.Poly.empty (*ToDo:check*)
-    |> Set.Poly.map ~f:(fun (pos, neg, pure) ->
-        Formula.or_of
-        @@ (pure :: (Set.to_list @@ Set.Poly.map pos ~f:Formula.mk_atom))
-        @ Set.to_list
-        @@ Set.Poly.map neg ~f:(Formula.mk_atom >> Formula.mk_neg))
-
   let rec elim_nu_aux (*?(id=None)*) psenv bpvs query = function
     | [] ->
         ( rename_preds psenv bpvs query
-          |> cnf_of
+          |> Evaluator.simplify |> Formula.to_cnf
           |> Set.Poly.map ~f:(fun phi ->
               let senv, phi = LogicOld.Formula.rm_quant ~forall:true phi in
               Formula.reduce_sort_map (Map.of_set_exn senv, phi)),
@@ -78,7 +69,8 @@ module Make (Cfg : Config.ConfigType) = struct
             (Formula.mk_atom @@ Atom.pvar_app_of_senv pvar' pred.args)
             (rename_preds psenv bpvs phi)
           (*|> fun phi -> Debug.print ~id @@ lazy (Formula.str_of phi); phi*)
-          |> cnf_of
+          |> Evaluator.simplify
+          |> Formula.to_cnf
           |> Set.Poly.map ~f:(fun phi ->
               Formula.reduce_sort_map (uni_senv, phi))
           |> Set.union clauses )

@@ -2,7 +2,7 @@
     "PolyQEnt",
     {
         "path": "./polyqent/PolyQEnt",
-        "config_path": "./polyqent/config-example.json",
+        "config_path": "",
         "timeout": null,
         "verbose": true
     }

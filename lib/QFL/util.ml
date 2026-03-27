@@ -7,11 +7,16 @@ open Ast.LogicOld
 open Problem
 
 let typeinf_query ~print = function
-  | ASAT (param_senv, param_constr) ->
+  | ASAT (init, param_senv, param_constr) ->
+      let senv = Map.Poly.of_alist_exn param_senv in
       ASAT
-        ( param_senv,
-          Typeinf.typeinf_formula ~print ~default:None ~senv:param_senv
-            param_constr )
+        ( Option.map init ~f:(fun (var, args) ->
+              ( var,
+                List.map
+                  ~f:(Typeinf.typeinf_term ~print ~default:None ~senv)
+                  args )),
+          param_senv,
+          Typeinf.typeinf_formula ~print ~default:None ~senv param_constr )
   | Check query ->
       let senv =
         let vs = Set.Poly.union_list @@ List.map query.args ~f:Term.fvs_of in

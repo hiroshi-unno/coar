@@ -1,0 +1,7 @@
+ASAT (X 280.0) (a : real) (b : real) | 0.0 <= a and a <= 10.0 and 0.0 <= a and a <= 10.0 s.t.
+X1 (x : real) : real =mu
+  (1.0 / 2.0) * X (x - 0.01 * (x - 280.0) + a * x + b - 0.1) + (1.0 / 2.0) * X (x - 0.01 * (x - 280.0) + a * x + b + 0.1);
+X2 (x : real) : real =nu
+  (1.0 / 2.0) * X (x - 0.01 * (x - 280.0) + a * x + b - 0.1) + (1.0 / 2.0) * X (x - 0.01 * (x - 280.0) + a * x + b + 0.1);
+X (x : real) : real =nu
+  if 295.0 - 3.0 <= x and x <= 295.0 + 3.0 then X2 x else X1 x;

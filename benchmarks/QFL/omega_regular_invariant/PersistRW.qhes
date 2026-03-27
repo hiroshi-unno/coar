@@ -1,0 +1,7 @@
+ASAT (X 50.0) s.t.
+X1 (x : real) : real =mu
+  (1.0 / 2.0) * X (x - 0.6) + (1.0 / 2.0) * X (x - 0.4);
+X2 (x : real) : real =nu
+  (1.0 / 2.0) * X (x - 0.6) + (1.0 / 2.0) * X (x - 0.4);
+X (x : real) : real =nu
+  if x > 10.0 then X1 x else X2 x;

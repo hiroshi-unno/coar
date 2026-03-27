@@ -883,8 +883,8 @@ type pred_tfp = {
 
 type pred_tfsp = { bec : Z.t option }
 
-let gen_dnf ?(eq_atom = false) ~br_bools ~only_bools tf_params tfs_params params
-    : templ_pred =
+let gen_dnf ?(eq_atom = false) ?(real_coeff = false) ?(ignore_hole = false)
+    ~br_bools ~only_bools tf_params tfs_params params : templ_pred =
   let terms =
     let terms =
       List.map ~f:(fun t -> (t, Term.sort_of t))
@@ -896,7 +896,10 @@ let gen_dnf ?(eq_atom = false) ~br_bools ~only_bools tf_params tfs_params params
   in
   let gen_atom_templ =
     (* generate template affine equality (if eq_atom) or inequality (otherwise) *)
-    T_irb.(if eq_atom then eq_of else ineq_of) @@ T_irb.num_sort_of terms
+    T_irb.(if eq_atom then eq_of ~real_coeff else ineq_of ~real_coeff)
+    @@
+    if List.is_empty terms && real_coeff then T_real.SReal
+    else T_irb.num_sort_of terms
   in
   let num_ts = T_irb.num_terms_of terms in
   let ( templ_paramss,
@@ -918,11 +921,21 @@ let gen_dnf ?(eq_atom = false) ~br_bools ~only_bools tf_params tfs_params params
                 List.unzip4
                 @@ List.map coeffs_const_list ~f:(fun (coeffs, const) ->
                     let pos_neg_map, coeffs_bound =
-                      mk_coeffs_bounds_of_int 1 coeffs None tf_params.ubc
-                        tfs_params.bec
+                      if real_coeff then
+                        mk_coeffs_bounds_of_real 1 coeffs None
+                          (Option.map ~f:Q.of_bigint tf_params.ubc)
+                          (Option.map ~f:Q.of_bigint tfs_params.bec)
+                      else
+                        mk_coeffs_bounds_of_int 1 coeffs None tf_params.ubc
+                          tfs_params.bec
                     in
                     let consts_bound =
-                      mk_const_bounds_int const None tf_params.ubd tf_params.s
+                      if real_coeff then
+                        mk_const_bounds_real const None
+                          (Option.map ~f:Q.of_bigint tf_params.ubd)
+                          (Set.Poly.map ~f:Q.of_bigint tf_params.s)
+                      else
+                        mk_const_bounds_int const None tf_params.ubd tf_params.s
                     in
                     let quals_bound = (*ToDo*) Formula.mk_true () in
                     let templ_params =
@@ -942,7 +955,9 @@ let gen_dnf ?(eq_atom = false) ~br_bools ~only_bools tf_params tfs_params params
         in
         ( Set.Poly.union_list (templ_params_quals :: templ_paramss),
           (hole, quals),
-          Formula.and_of (mk_pvar_app (Ident.name_of_tvar hole) params :: preds),
+          Formula.and_of
+            (if ignore_hole then preds
+             else mk_pvar_app (Ident.name_of_tvar hole) params :: preds),
           Formula.and_of coeffs_bounds,
           Formula.and_of consts_bounds,
           Formula.and_of quals_bounds ))

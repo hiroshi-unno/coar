@@ -849,6 +849,15 @@ module Make (Cfg : Config.ConfigType) = struct
     List.iter templ ~f:(fun (name, (args, quant_pred)) ->
         Debug.print @@ lazy (str_of_sol (name, (args, quant_pred))))
 
+  let str_of_inv_sol (name, (args, pred)) =
+    sprintf "%s %s |-> %s" (Ident.name_of_tvar name)
+      (str_of_sort_env_list Term.str_of_sort args)
+      (Formula.str_of pred)
+
+  let print_inv_templ templ =
+    List.iter templ ~f:(fun (name, (args, pred)) ->
+        Debug.print @@ lazy (str_of_inv_sol (name, (args, pred))))
+
   let gen_cache_constr for_prefp (preds : QFL.Pred.t list) fsub pareto_cache =
     let rel =
       match for_prefp with First _ -> Formula.geq | Second _ -> Formula.leq
@@ -1435,21 +1444,13 @@ module Make (Cfg : Config.ConfigType) = struct
 
   let div_ceil n d = if n % d = 0 then n / d else (n / d) + 1
 
-  let solve_constrs (param_senv, templ_params, pred_eps_set) constrs =
+  let solve_constrs templ_params constrs =
     let pqes =
       PCSP.Problem.make ~prefix:(Some "q") constrs
       @@ SMT.Problem.
            {
              uni_senv = Map.Poly.empty;
-             exi_senv =
-               Map.force_merge_list
-                 [
-                   param_senv;
-                   templ_params;
-                   Map.of_set_exn
-                   @@ Set.Poly.map pred_eps_set ~f:(fun (_, eps) ->
-                       (eps, T_real.SReal));
-                 ];
+             exi_senv = templ_params;
              kind_map = Map.Poly.empty (*ToDo*);
              fenv = Map.Poly.empty;
              dtenv = Map.Poly.empty;
@@ -1460,7 +1461,13 @@ module Make (Cfg : Config.ConfigType) = struct
     let open Or_error.Monad_infix in
     pcsp_solver ~primal:true >>= fun (module PCSPSolver) ->
     PCSPSolver.solve pqes >>= function
-    | PCSP.Problem.Sat model, _ -> Ok (Some model)
+    | PCSP.Problem.Sat model, _ ->
+        Ok
+          (Some
+             (Map.Poly.mapi templ_params ~f:(fun ~key ~data:_ ->
+                  match Map.Poly.find model key with
+                  | Some t -> t
+                  | None -> Logic.RealTerm.rzero () (*ToDo*))))
     | Unsat _, _ ->
         Debug.print @@ lazy "the templates used may not be expressive enough";
         Ok None
@@ -1477,36 +1484,239 @@ module Make (Cfg : Config.ConfigType) = struct
         Debug.print @@ lazy "timeout";
         Ok None
 
-  let synthesize_ssm ~inv_gen (qfl : QFL.Problem.t) (param_senv, param_constr) =
-    ignore inv_gen;
+  let conv tsub param_senv constrs =
+    if List.is_empty param_senv then Set.Poly.empty
+    else
+      let param_constrs' =
+        Set.Poly.map (Set.Poly.of_list constrs)
+          ~f:
+            (Formula.subst
+               (Map.Poly.filter_keys tsub
+                  ~f:(List.Assoc.mem ~equal:Stdlib.( = ) param_senv >> not))
+            >> Normalizer.normalize >> Evaluator.simplify)
+      in
+      Debug.print @@ lazy "begin qelim";
+      let param_constrs' =
+        Set.concat_map param_constrs' ~f:(fun phi ->
+            Set.concat_map (Formula.conjuncts_of phi) ~f:(fun phi ->
+                let senv, phi =
+                  Formula.rm_quant
+                  @@ Z3Smt.Z3interface.qelim ~id:None
+                       ~fenv:(LogicOld.get_fenv ())
+                  @@ Formula.forall
+                       (Set.to_list
+                       @@ Set.filter
+                            (Formula.term_sort_env_of phi)
+                            ~f:
+                              (fst
+                              >> List.Assoc.mem ~equal:Stdlib.( = ) param_senv
+                              >> not))
+                       phi
+                in
+                Set.Poly.map
+                  (Formula.to_cnf ~process_pure:true phi)
+                  ~f:(Formula.forall (Set.to_list senv))))
+      in
+      Debug.print @@ lazy "end qelim";
+      assert (
+        Set.for_all param_constrs' ~f:(fun phi ->
+            Set.is_subset (Formula.fvs_of phi)
+              ~of_:(Set.Poly.of_list @@ List.map ~f:fst param_senv)));
+      Debug.print
+      @@ lazy
+           (sprintf "parameter constraints: %s |-> %s"
+              (str_of_sort_env_list Term.str_of_sort param_senv)
+              (Formula.str_of @@ Formula.and_of @@ Set.to_list param_constrs'));
+      param_constrs'
+
+  let simul_inv_syn = true
+
+  let rec gen_inv_cnstr inv_sub conds = function
+    | Term.FunApp (T_bool.IfThenElse, [ cond; t1; t2 ], _) ->
+        Set.Poly.union_list
+        @@ List.map
+             (Formula.disjuncts_list_of @@ Evaluator.simplify
+            @@ Formula.of_bool_term cond)
+             ~f:(fun cond -> gen_inv_cnstr inv_sub (Set.add conds cond) t1)
+        @ List.map
+            (Formula.disjuncts_list_of @@ Evaluator.simplify
+            @@ Formula.of_neg_bool_term cond)
+            ~f:(fun cond -> gen_inv_cnstr inv_sub (Set.add conds cond) t2)
+    | Term.FunApp (T_real.RAdd, [ t1; t2 ], _) ->
+        Set.union
+          (gen_inv_cnstr inv_sub conds t1)
+          (gen_inv_cnstr inv_sub conds t2)
+    | Term.FunApp (T_real.RMul, [ t1; t2 ], _) ->
+        Set.union
+          (gen_inv_cnstr inv_sub conds t1)
+          (gen_inv_cnstr inv_sub conds t2)
+    | Term.FunApp (FVar (Ident.Tvar ("min" | "max"), _, _), args, _) ->
+        Set.Poly.union_list @@ List.map ~f:(gen_inv_cnstr inv_sub conds) args
+    | Term.FunApp (FVar (fvar, _, _), args, _) -> (
+        match Map.Poly.find inv_sub fvar with
+        | Some (senv, phi) ->
+            let sub =
+              Map.Poly.of_alist_exn
+              @@ List.map2_exn senv args ~f:(fun (x, _) t -> (x, t))
+            in
+            Set.Poly.map
+              (Formula.to_cnf ~process_pure:true @@ Formula.subst sub phi)
+              ~f:(fun conc -> (conds, conc))
+        | None -> Set.Poly.empty (*ToDo*))
+    | _ (*ToDo*) -> Set.Poly.empty
+
+  let gen_inv_constrs init inv_sub invmap (preds : QFL.Pred.t list) =
+    match init with
+    | None -> []
+    | Some (init_name, init_args) ->
+        Set.to_list
+        @@ Set.Poly.union_list
+             ((let inv_args, inv_body = Map.find_exn inv_sub init_name in
+               Formula.to_cnf ~process_pure:true
+               @@ Formula.subst
+                    (Map.Poly.of_alist_exn
+                    @@ List.map2_exn inv_args init_args ~f:(fun (x, _) t ->
+                        (x, t)))
+                    inv_body)
+             :: List.map preds ~f:(fun pred ->
+                 let constrs =
+                   let cond' =
+                     let inv_args, inv_body = Map.find_exn inv_sub pred.name in
+                     Formula.rename
+                       (LogicOld.ren_of_sort_env_list inv_args pred.args)
+                       inv_body
+                   in
+                   let cond' =
+                     if true then cond'
+                     else
+                       match Map.Poly.find invmap pred.name with
+                       | None -> cond'
+                       | Some (inv_args, inv_body) ->
+                           Formula.mk_and cond'
+                             (Formula.rename
+                                (LogicOld.ren_of_sort_env_list inv_args
+                                   pred.args)
+                                inv_body)
+                   in
+                   Set.concat_map (Formula.disjuncts_of cond') ~f:(fun cond' ->
+                       Set.Poly.filter_map ~f:(fun (conds, conc) ->
+                           let c =
+                             Evaluator.simplify @@ Formula.and_of @@ Set.to_list
+                             @@ Set.add conds cond'
+                           in
+                           if Formula.is_true c then Some conc
+                           else if Formula.is_false c then None
+                           else Some (Formula.mk_imply c conc))
+                       @@ gen_inv_cnstr inv_sub Set.Poly.empty pred.body)
+                 in
+                 if false then
+                   Set.iter constrs ~f:(fun c ->
+                       Debug.print @@ lazy ("c: " ^ Formula.str_of c));
+                 constrs))
+
+  let gen_inv_templ init param_senv (preds : QFL.Pred.t list) =
+    match init with
+    | None -> ([], [])
+    | Some _ ->
+        let inv_templ_paramss, inv_templ_preds =
+          List.unzip
+          @@ List.map preds ~f:(fun pred ->
+              let template =
+                Templ.gen_dnf ~eq_atom:false ~real_coeff:true ~ignore_hole:true
+                  ~br_bools:false ~only_bools:false
+                  {
+                    consts = [];
+                    terms = [];
+                    quals = [];
+                    shp = config.quant_omega_regular_inv_shape;
+                    ubc = None;
+                    ubd = None;
+                    s = Set.Poly.empty;
+                  }
+                  { bec = None } (param_senv @ pred.args)
+              in
+              (template.templ_params, (pred.name, (pred.args, template.pred))))
+        in
+        if not @@ List.is_empty inv_templ_preds then (
+          Debug.print @@ lazy "templates for invariants:";
+          print_inv_templ inv_templ_preds);
+        (inv_templ_paramss, inv_templ_preds)
+
+  let gen_rank_templ param_senv (preds : QFL.Pred.t list) =
+    let rank_templ_paramss, rank_templ_preds =
+      List.unzip
+      @@ List.map preds ~f:(fun pred ->
+          let template =
+            Templ.gen_quant_template
+              ~num_conds:config.quant_rank_templ_num_conds
+              ~use_orig_ite:config.quant_rank_templ_use_orig_ite
+              ~cond_degree:config.quant_rank_templ_cond_degree
+              ~term_degree:config.quant_rank_templ_term_degree
+              (param_senv @ pred.args) pred.body pred.annots
+          in
+          (template.templ_params, (pred.name, (pred.args, template.quant_pred))))
+    in
+    if not @@ List.is_empty rank_templ_preds then (
+      Debug.print @@ lazy "templates for ranking supermartingales:";
+      print_templ rank_templ_preds);
+    (rank_templ_paramss, rank_templ_preds)
+
+  let gen_rank_constrs inv_sub invmap pred_eps_set rank_sub rank_templ_preds =
+    List.concat_map rank_templ_preds ~f:(fun (name, (args, quant_pred)) ->
+        List.map
+          (match
+             Map.Poly.find (if simul_inv_syn then inv_sub else invmap) name
+           with
+          | None -> [ Fn.id ]
+          | Some (inv_args, inv) ->
+              let inv =
+                Formula.rename (LogicOld.ren_of_sort_env_list inv_args args) inv
+              in
+              List.map (Formula.disjuncts_list_of inv) ~f:Formula.mk_imply)
+          ~f:(fun f -> f @@ Formula.geq quant_pred (T_real.rzero ())))
+    @ List.concat_map (Set.to_list pred_eps_set)
+        ~f:(fun ((pred : QFL.Pred.t), eps) ->
+          let rank_args, rank_body = Map.find_exn rank_sub pred.name in
+          List.map
+            (match
+               Map.Poly.find
+                 (if simul_inv_syn then inv_sub else invmap)
+                 pred.name
+             with
+            | None -> [ Fn.id ]
+            | Some (inv_args, inv) ->
+                let inv =
+                  Formula.rename
+                    (LogicOld.ren_of_sort_env_list inv_args pred.args)
+                    inv
+                in
+                List.map (Formula.disjuncts_list_of inv) ~f:Formula.mk_imply)
+            ~f:(fun f ->
+              f
+              @@ Formula.geq
+                   (Term.rename
+                      (LogicOld.ren_of_sort_env_list rank_args pred.args)
+                      rank_body)
+                   (T_real.mk_radd (Term.mk_var eps T_real.SReal)
+                   @@ Term.subst_funcs rank_sub pred.body)))
+
+  let synthesize_ssm (qfl : QFL.Problem.t)
+      (init, invmap, param_senv, param_constrs) =
     let d_div_2 = div_ceil (QFL.Problem.depth_of qfl) 2 in
-    let rec loop param_constr lexmap j =
+    let rec loop param_constrs lexmap j =
       if j <= d_div_2 then (
         let preds = Set.Poly.of_list qfl.preds in
         Debug.print ~id:None
         @@ lazy
              (sprintf "\n***synthesizing ranking supermartingales at level %d\n"
                 j);
-        let rank_templ_paramss, rank_templ_preds =
-          List.unzip
-          @@ List.map qfl.preds ~f:(fun pred ->
-              let template =
-                Templ.gen_quant_template
-                  ~num_conds:config.quant_rank_templ_num_conds
-                  ~use_orig_ite:config.quant_rank_templ_use_orig_ite
-                  ~cond_degree:config.quant_rank_templ_cond_degree
-                  ~term_degree:config.quant_rank_templ_term_degree pred.args
-                  pred.body pred.annots
-              in
-              let templ_params, quant_pred =
-                (template.templ_params, template.quant_pred)
-              in
-              (templ_params, (pred.name, (pred.args, quant_pred))))
+        let inv_templ_paramss, inv_templ_preds =
+          gen_inv_templ init param_senv qfl.preds
         in
-        if not @@ List.is_empty rank_templ_preds then (
-          Debug.print @@ lazy "templates for ranking supermartingales:";
-          print_templ rank_templ_preds);
-        let templ_params = Map.force_merge_list rank_templ_paramss in
+        let inv_sub = Map.Poly.of_alist_exn inv_templ_preds in
+        let rank_templ_paramss, rank_templ_preds =
+          gen_rank_templ param_senv qfl.preds
+        in
         let rank_sub = Map.Poly.of_alist_exn rank_templ_preds in
         let pred_eps_set =
           Set.Poly.map preds ~f:(fun pred ->
@@ -1518,51 +1728,53 @@ module Make (Cfg : Config.ConfigType) = struct
                       (Ident.name_of_tvar eps));
               (pred, eps))
         in
-        let constrs =
-          Formula.conjuncts_list_of
-            (*ToDo: param_constr is assumed to be in CNF *) param_constr
-          @ (Set.to_list
-            @@ Set.Poly.map pred_eps_set ~f:(fun (pred, eps) ->
-                if QFL.Problem.level_of qfl pred.name = (2 * j) - 1 then
-                  Formula.eq (Term.mk_var eps T_real.SReal) (T_real.rone ())
-                else if QFL.Problem.level_of qfl pred.name < (2 * j) - 1 then
-                  Formula.lt (Term.mk_var eps T_real.SReal) (T_real.rzero ())
-                else Formula.eq (Term.mk_var eps T_real.SReal) (T_real.rzero ()))
-            )
-          @ List.map rank_templ_preds ~f:(fun (_, (_, quant_pred)) ->
-              Formula.geq quant_pred (T_real.rzero ()))
-          @ Set.to_list
+        let constrs_inv = gen_inv_constrs init inv_sub invmap qfl.preds in
+        let constrs_rank =
+          (Set.to_list
           @@ Set.Poly.map pred_eps_set ~f:(fun (pred, eps) ->
-              let rank_args, rank_body = Map.find_exn rank_sub pred.name in
-              Formula.geq
-                (Term.rename
-                   (LogicOld.ren_of_sort_env_list rank_args pred.args)
-                   rank_body)
-                (T_real.mk_radd (Term.mk_var eps T_real.SReal)
-                @@ Term.subst_funcs rank_sub pred.body))
+              if QFL.Problem.level_of qfl pred.name = (2 * j) - 1 then
+                Formula.eq (Term.mk_var eps T_real.SReal) (T_real.rone ())
+              else if QFL.Problem.level_of qfl pred.name < (2 * j) - 1 then
+                Formula.lt (Term.mk_var eps T_real.SReal) (T_real.rzero ())
+              else Formula.eq (Term.mk_var eps T_real.SReal) (T_real.rzero ()))
+          )
+          @ gen_rank_constrs inv_sub invmap pred_eps_set rank_sub
+              rank_templ_preds
         in
-        match
-          solve_constrs (param_senv, templ_params, pred_eps_set) constrs
-        with
+        let constrs = Set.to_list param_constrs @ constrs_inv @ constrs_rank in
+        let templ_params =
+          Map.force_merge_list
+          @@ Map.Poly.of_alist_exn param_senv
+             :: (Map.of_set_exn
+                @@ Set.Poly.map pred_eps_set ~f:(fun (_, eps) ->
+                    (eps, T_real.SReal)))
+             :: rank_templ_paramss
+          @ List.map ~f:Logic.to_old_sort_env_map inv_templ_paramss
+        in
+        match solve_constrs templ_params constrs with
         | Ok (Some model) ->
             let tsub =
               Logic.ExtTerm.to_old_subst Map.Poly.empty Map.Poly.empty model
             in
-            let ranks =
-              List.map rank_templ_preds ~f:(fun (name, (args, quant_pred)) ->
-                  ( name,
-                    (args, Evaluator.simplify_term @@ Term.subst tsub quant_pred)
-                  ))
-            in
-            let param_constr' =
-              Evaluator.simplify
-              @@ Formula.subst
-                   (Map.Poly.filter_keys tsub
-                      ~f:(Map.Poly.mem param_senv >> not))
-              @@ Formula.and_of constrs
-            in
+            let param_constrs' = conv tsub param_senv constrs in
+            Debug.print @@ lazy "*************************************";
+            List.iter inv_templ_preds ~f:(fun (name, (args, pred)) ->
+                let inv = Evaluator.simplify @@ Formula.subst tsub pred in
+                Debug.print
+                @@ lazy
+                     (sprintf "synthesized invariant for %s: %s |-> %s"
+                        (Ident.name_of_tvar name)
+                        (str_of_sort_env_list Term.str_of_sort args)
+                        (Formula.str_of inv)));
             Debug.print @@ lazy "*************************************";
             let lexmap' =
+              let ranks =
+                List.map rank_templ_preds ~f:(fun (name, (args, quant_pred)) ->
+                    ( name,
+                      ( args,
+                        Evaluator.simplify_term @@ Term.subst tsub quant_pred )
+                    ))
+              in
               List.fold ~init:lexmap qfl.preds ~f:(fun lexmap pred ->
                   let rank_args, rank_body =
                     List.Assoc.find_exn ~equal:Stdlib.( = ) ranks pred.name
@@ -1584,18 +1796,17 @@ module Make (Cfg : Config.ConfigType) = struct
                   Map.Poly.add_exn lexmap ~key:(pred.name, j, 0) ~data:rank)
             in
             Debug.print @@ lazy "*************************************";
-            loop param_constr' lexmap' (j + 1)
+            loop param_constrs' lexmap' (j + 1)
         | Ok None -> None
         | Error err -> failwith (Error.to_string_hum err))
       else Some lexmap
     in
-    loop param_constr Map.Poly.empty 1
+    loop param_constrs Map.Poly.empty 1
 
-  let synthesize_gssm ~inv_gen (qfl : QFL.Problem.t) (param_senv, param_constr)
-      =
-    ignore inv_gen;
+  let synthesize_gssm (qfl : QFL.Problem.t)
+      (init, invmap, param_senv, param_constrs) =
     let d_div_2 = div_ceil (QFL.Problem.depth_of qfl) 2 in
-    let rec loop param_constr lexmap j =
+    let rec loop param_constrs lexmap j =
       if j <= d_div_2 then (
         let preds =
           Set.filter (Set.Poly.of_list qfl.preds) ~f:(fun pred ->
@@ -1605,26 +1816,13 @@ module Make (Cfg : Config.ConfigType) = struct
         @@ lazy
              (sprintf "\n***synthesizing ranking supermartingales at level %d\n"
                 j);
-        let rank_templ_paramss, rank_templ_preds =
-          List.unzip
-          @@ List.map qfl.preds ~f:(fun pred ->
-              let template =
-                Templ.gen_quant_template
-                  ~num_conds:config.quant_rank_templ_num_conds
-                  ~use_orig_ite:config.quant_rank_templ_use_orig_ite
-                  ~cond_degree:config.quant_rank_templ_cond_degree
-                  ~term_degree:config.quant_rank_templ_term_degree pred.args
-                  pred.body pred.annots
-              in
-              let templ_params, quant_pred =
-                (template.templ_params, template.quant_pred)
-              in
-              (templ_params, (pred.name, (pred.args, quant_pred))))
+        let inv_templ_paramss, inv_templ_preds =
+          gen_inv_templ init param_senv qfl.preds
         in
-        if not @@ List.is_empty rank_templ_preds then (
-          Debug.print @@ lazy "templates for ranking supermartingales:";
-          print_templ rank_templ_preds);
-        let templ_params = Map.force_merge_list rank_templ_paramss in
+        let inv_sub = Map.Poly.of_alist_exn inv_templ_preds in
+        let rank_templ_paramss, rank_templ_preds =
+          gen_rank_templ param_senv qfl.preds
+        in
         let rank_sub = Map.Poly.of_alist_exn rank_templ_preds in
         let pred_eps_set =
           Set.Poly.map preds ~f:(fun pred ->
@@ -1636,50 +1834,51 @@ module Make (Cfg : Config.ConfigType) = struct
                       (Ident.name_of_tvar eps));
               (pred, eps))
         in
-        let constrs =
-          Formula.conjuncts_list_of
-            (*ToDo: param_constr is assumed to be in CNF *) param_constr
-          @ (Set.to_list
-            @@ Set.Poly.map pred_eps_set ~f:(fun (pred, eps) ->
-                Formula.eq (Term.mk_var eps T_real.SReal)
-                @@
-                if QFL.Problem.level_of qfl pred.name = (2 * j) - 1 then
-                  T_real.rone ()
-                else T_real.rzero ()))
-          @ List.map rank_templ_preds ~f:(fun (_, (_, quant_pred)) ->
-              Formula.geq quant_pred (T_real.rzero ()))
-          @ Set.to_list
+        let constrs_inv = gen_inv_constrs init inv_sub invmap qfl.preds in
+        let constrs_rank =
+          (Set.to_list
           @@ Set.Poly.map pred_eps_set ~f:(fun (pred, eps) ->
-              let rank_args, rank_body = Map.find_exn rank_sub pred.name in
-              Formula.geq
-                (Term.rename
-                   (LogicOld.ren_of_sort_env_list rank_args pred.args)
-                   rank_body)
-                (T_real.mk_radd (Term.mk_var eps T_real.SReal)
-                @@ Term.subst_funcs rank_sub pred.body))
+              if QFL.Problem.level_of qfl pred.name = (2 * j) - 1 then
+                Formula.eq (Term.mk_var eps T_real.SReal) (T_real.rone ())
+              else Formula.eq (Term.mk_var eps T_real.SReal) (T_real.rzero ()))
+          )
+          @ gen_rank_constrs inv_sub invmap pred_eps_set rank_sub
+              rank_templ_preds
         in
-        match
-          solve_constrs (param_senv, templ_params, pred_eps_set) constrs
-        with
+        let constrs = Set.to_list param_constrs @ constrs_inv @ constrs_rank in
+        let templ_params =
+          Map.force_merge_list
+          @@ Map.Poly.of_alist_exn param_senv
+             :: (Map.of_set_exn
+                @@ Set.Poly.map pred_eps_set ~f:(fun (_, eps) ->
+                    (eps, T_real.SReal)))
+             :: rank_templ_paramss
+          @ List.map ~f:Logic.to_old_sort_env_map inv_templ_paramss
+        in
+        match solve_constrs templ_params constrs with
         | Ok (Some model) ->
             let tsub =
               Logic.ExtTerm.to_old_subst Map.Poly.empty Map.Poly.empty model
             in
-            let ranks =
-              List.map rank_templ_preds ~f:(fun (name, (args, quant_pred)) ->
-                  ( name,
-                    (args, Evaluator.simplify_term @@ Term.subst tsub quant_pred)
-                  ))
-            in
-            let param_constr' =
-              Evaluator.simplify
-              @@ Formula.subst
-                   (Map.Poly.filter_keys tsub
-                      ~f:(Map.Poly.mem param_senv >> not))
-              @@ Formula.and_of constrs
-            in
+            let param_constrs' = conv tsub param_senv constrs in
+            Debug.print @@ lazy "*************************************";
+            List.iter inv_templ_preds ~f:(fun (name, (args, pred)) ->
+                let inv = Evaluator.simplify @@ Formula.subst tsub pred in
+                Debug.print
+                @@ lazy
+                     (sprintf "synthesized invariant for %s: %s |-> %s"
+                        (Ident.name_of_tvar name)
+                        (str_of_sort_env_list Term.str_of_sort args)
+                        (Formula.str_of inv)));
             Debug.print @@ lazy "*************************************";
             let lexmap' =
+              let ranks =
+                List.map rank_templ_preds ~f:(fun (name, (args, quant_pred)) ->
+                    ( name,
+                      ( args,
+                        Evaluator.simplify_term @@ Term.subst tsub quant_pred )
+                    ))
+              in
               List.fold ~init:lexmap qfl.preds ~f:(fun lexmap pred ->
                   let rank_args, rank_body =
                     List.Assoc.find_exn ~equal:Stdlib.( = ) ranks pred.name
@@ -1701,18 +1900,17 @@ module Make (Cfg : Config.ConfigType) = struct
                   Map.Poly.add_exn lexmap ~key:(pred.name, j, 0) ~data:rank)
             in
             Debug.print @@ lazy "*************************************";
-            loop param_constr' lexmap' (j + 1)
+            loop param_constrs' lexmap' (j + 1)
         | Ok None -> None
         | Error err -> failwith (Error.to_string_hum err))
       else Some lexmap
     in
-    loop param_constr Map.Poly.empty 1
+    loop param_constrs Map.Poly.empty 1
 
-  let synthesize_lexgssm ~inv_gen (qfl : QFL.Problem.t)
-      (param_senv, param_constr) =
-    ignore inv_gen;
+  let synthesize_lexgssm (qfl : QFL.Problem.t)
+      (init, invmap, param_senv, param_constrs) =
     let d_div_2 = div_ceil (QFL.Problem.depth_of qfl) 2 in
-    let rec loop param_constr lexmap j =
+    let rec loop param_constrs lexmap j =
       if j <= d_div_2 then (
         let preds =
           Set.filter (Set.Poly.of_list qfl.preds) ~f:(fun pred ->
@@ -1722,28 +1920,15 @@ module Make (Cfg : Config.ConfigType) = struct
         @@ lazy
              (sprintf "\n***synthesizing ranking supermartingales at level %d\n"
                 j);
-        let rec inner param_constr lexmap (preds : QFL.Pred.t Set.Poly.t) k =
-          let param_constr', lexmap', elimed =
+        let rec inner param_constrs lexmap (preds : QFL.Pred.t Set.Poly.t) k =
+          let param_constrs', lexmap', elimed =
+            let inv_templ_paramss, inv_templ_preds =
+              gen_inv_templ init param_senv qfl.preds
+            in
+            let inv_sub = Map.Poly.of_alist_exn inv_templ_preds in
             let rank_templ_paramss, rank_templ_preds =
-              List.unzip
-              @@ List.map qfl.preds ~f:(fun pred ->
-                  let template =
-                    Templ.gen_quant_template
-                      ~num_conds:config.quant_rank_templ_num_conds
-                      ~use_orig_ite:config.quant_rank_templ_use_orig_ite
-                      ~cond_degree:config.quant_rank_templ_cond_degree
-                      ~term_degree:config.quant_rank_templ_term_degree pred.args
-                      pred.body pred.annots
-                  in
-                  let templ_params, quant_pred =
-                    (template.templ_params, template.quant_pred)
-                  in
-                  (templ_params, (pred.name, (pred.args, quant_pred))))
+              gen_rank_templ param_senv qfl.preds
             in
-            if not @@ List.is_empty rank_templ_preds then (
-              Debug.print @@ lazy "templates for ranking supermartingales:";
-              print_templ rank_templ_preds);
-            let templ_params = Map.force_merge_list rank_templ_paramss in
             let rank_sub = Map.Poly.of_alist_exn rank_templ_preds in
             let pred_eps_set =
               Set.Poly.map preds ~f:(fun pred ->
@@ -1755,63 +1940,67 @@ module Make (Cfg : Config.ConfigType) = struct
                           (Ident.name_of_tvar eps));
                   (pred, eps))
             in
-            let constrs =
-              Formula.conjuncts_list_of
-                (*ToDo: param_constr is assumed to be in CNF *) param_constr
-              @ Formula.geq
-                  (T_real.mk_rsum (T_real.rzero ())
-                  @@ Set.to_list
-                  @@ Set.Poly.map pred_eps_set ~f:(fun (_, eps) ->
-                      Term.mk_var eps T_real.SReal))
-                  (T_real.rone ())
-                :: (Set.to_list
-                   @@ Set.concat_map pred_eps_set ~f:(fun (_, eps) ->
-                       Set.Poly.of_list
-                       @@ Formula.mk_range_real
-                            (Term.mk_var eps T_real.SReal)
-                            Q.zero Q.one))
-              @ List.map rank_templ_preds ~f:(fun (_, (_, quant_pred)) ->
-                  Formula.geq quant_pred (T_real.rzero ()))
-              @ Set.to_list
-              @@ Set.Poly.map pred_eps_set ~f:(fun (pred, eps) ->
-                  let rank_args, rank_body = Map.find_exn rank_sub pred.name in
-                  Formula.geq
-                    (Term.rename
-                       (LogicOld.ren_of_sort_env_list rank_args pred.args)
-                       rank_body)
-                    (T_real.mk_radd (Term.mk_var eps T_real.SReal)
-                    @@ Term.subst_funcs rank_sub pred.body))
+            let constrs_inv = gen_inv_constrs init inv_sub invmap qfl.preds in
+            let constrs_rank =
+              Formula.geq
+                (T_real.mk_rsum (T_real.rzero ())
+                @@ Set.to_list
+                @@ Set.Poly.map pred_eps_set ~f:(fun (_, eps) ->
+                    Term.mk_var eps T_real.SReal))
+                (T_real.rone ())
+              :: (Set.to_list
+                 @@ Set.concat_map pred_eps_set ~f:(fun (_, eps) ->
+                     Set.Poly.of_list
+                     @@ Formula.mk_range_real
+                          (Term.mk_var eps T_real.SReal)
+                          Q.zero Q.one))
+              @ gen_rank_constrs inv_sub invmap pred_eps_set rank_sub
+                  rank_templ_preds
             in
-            match
-              solve_constrs (param_senv, templ_params, pred_eps_set) constrs
-            with
+            let constrs =
+              Set.to_list param_constrs @ constrs_inv @ constrs_rank
+            in
+            let templ_params =
+              Map.force_merge_list
+              @@ Map.Poly.of_alist_exn param_senv
+                 :: (Map.of_set_exn
+                    @@ Set.Poly.map pred_eps_set ~f:(fun (_, eps) ->
+                        (eps, T_real.SReal)))
+                 :: rank_templ_paramss
+              @ List.map ~f:Logic.to_old_sort_env_map inv_templ_paramss
+            in
+            match solve_constrs templ_params constrs with
             | Ok (Some model) ->
                 let tsub =
                   Logic.ExtTerm.to_old_subst Map.Poly.empty Map.Poly.empty model
                 in
-                let ranks =
-                  List.map rank_templ_preds
-                    ~f:(fun (name, (args, quant_pred)) ->
-                      ( name,
-                        ( args,
-                          Evaluator.simplify_term @@ Term.subst tsub quant_pred
-                        ) ))
-                in
-                let param_constr' =
-                  Evaluator.simplify
-                  @@ Formula.subst
-                       (Map.Poly.filter_keys tsub
-                          ~f:(Map.Poly.mem param_senv >> not))
-                  @@ Formula.and_of constrs
-                in
+                let param_constrs' = conv tsub param_senv constrs in
+                Debug.print @@ lazy "*************************************";
+                List.iter inv_templ_preds ~f:(fun (name, (args, pred)) ->
+                    let inv = Evaluator.simplify @@ Formula.subst tsub pred in
+                    Debug.print
+                    @@ lazy
+                         (sprintf "synthesized invariant for %s: %s |-> %s"
+                            (Ident.name_of_tvar name)
+                            (str_of_sort_env_list Term.str_of_sort args)
+                            (Formula.str_of inv)));
                 Debug.print @@ lazy "*************************************";
                 let lexmap', elimed =
+                  let ranks =
+                    List.map rank_templ_preds
+                      ~f:(fun (name, (args, quant_pred)) ->
+                        ( name,
+                          ( args,
+                            Evaluator.simplify_term
+                            @@ Term.subst tsub quant_pred ) ))
+                  in
                   List.fold ~init:(lexmap, Set.Poly.empty) qfl.preds
                     ~f:(fun (lexmap, elimed) pred ->
-                      let rank_args, rank_body =
-                        List.Assoc.find_exn ~equal:Stdlib.( = ) ranks pred.name
-                      in
                       let rank, elimed =
+                        let rank_args, rank_body =
+                          List.Assoc.find_exn ~equal:Stdlib.( = ) ranks
+                            pred.name
+                        in
                         let rank =
                           Term.rename
                             (LogicOld.ren_of_sort_env_list rank_args pred.args)
@@ -1851,9 +2040,9 @@ module Make (Cfg : Config.ConfigType) = struct
                         elimed ))
                 in
                 Debug.print @@ lazy "*************************************";
-                (param_constr', lexmap', elimed)
+                (param_constrs', lexmap', elimed)
             | Ok None ->
-                ( param_constr,
+                ( param_constrs,
                   List.fold ~init:lexmap qfl.preds ~f:(fun lexmap pred ->
                       let rank = T_real.rzero () in
                       Debug.print
@@ -1869,28 +2058,27 @@ module Make (Cfg : Config.ConfigType) = struct
                   Set.Poly.empty )
             | Error err -> failwith (Error.to_string_hum err)
           in
-          if Set.is_empty elimed then (param_constr', lexmap', preds)
+          if Set.is_empty elimed then (param_constrs', lexmap', preds)
           else
             let preds' =
               Set.filter preds ~f:(fun pred -> not @@ Set.mem elimed pred.name)
             in
-            inner param_constr' lexmap' preds' (k + 1)
+            inner param_constrs' lexmap' preds' (k + 1)
         in
-        let param_constr, lexmap, preds = inner param_constr lexmap preds 0 in
+        let param_constrs, lexmap, preds = inner param_constrs lexmap preds 0 in
         if
           Set.exists preds ~f:(fun pred ->
               QFL.Problem.level_of qfl pred.name = (2 * j) - 1)
         then None
-        else loop param_constr lexmap (j + 1))
+        else loop param_constrs lexmap (j + 1))
       else Some lexmap
     in
-    loop param_constr Map.Poly.empty 1
+    loop param_constrs Map.Poly.empty 1
 
-  let synthesize_pmsm ~inv_gen (qfl : QFL.Problem.t) (param_senv, param_constr)
-      =
-    ignore inv_gen;
+  let synthesize_pmsm (qfl : QFL.Problem.t)
+      (init, invmap, param_senv, param_constrs) =
     let d_div_2 = div_ceil (QFL.Problem.depth_of qfl) 2 in
-    let rec loop param_constr lexmap (preds : QFL.Pred.t Set.Poly.t) j =
+    let rec loop param_constrs lexmap (preds : QFL.Pred.t Set.Poly.t) j =
       if j <= d_div_2 then (
         let preds =
           Set.filter preds ~f:(fun pred ->
@@ -1900,26 +2088,13 @@ module Make (Cfg : Config.ConfigType) = struct
         @@ lazy
              (sprintf "\n***synthesizing ranking supermartingales at level %d\n"
                 j);
-        let rank_templ_paramss, rank_templ_preds =
-          List.unzip
-          @@ List.map qfl.preds ~f:(fun pred ->
-              let template =
-                Templ.gen_quant_template
-                  ~num_conds:config.quant_rank_templ_num_conds
-                  ~use_orig_ite:config.quant_rank_templ_use_orig_ite
-                  ~cond_degree:config.quant_rank_templ_cond_degree
-                  ~term_degree:config.quant_rank_templ_term_degree pred.args
-                  pred.body pred.annots
-              in
-              let templ_params, quant_pred =
-                (template.templ_params, template.quant_pred)
-              in
-              (templ_params, (pred.name, (pred.args, quant_pred))))
+        let inv_templ_paramss, inv_templ_preds =
+          gen_inv_templ init param_senv qfl.preds
         in
-        if not @@ List.is_empty rank_templ_preds then (
-          Debug.print @@ lazy "templates for ranking supermartingales:";
-          print_templ rank_templ_preds);
-        let templ_params = Map.force_merge_list rank_templ_paramss in
+        let inv_sub = Map.Poly.of_alist_exn inv_templ_preds in
+        let rank_templ_paramss, rank_templ_preds =
+          gen_rank_templ param_senv qfl.preds
+        in
         let rank_sub = Map.Poly.of_alist_exn rank_templ_preds in
         let pred_eps_set =
           Set.Poly.map preds ~f:(fun pred ->
@@ -1931,59 +2106,61 @@ module Make (Cfg : Config.ConfigType) = struct
                       (Ident.name_of_tvar eps));
               (pred, eps))
         in
-        let constrs =
-          Formula.conjuncts_list_of
-            (*ToDo: param_constr is assumed to be in CNF *) param_constr
-          @ (Set.to_list
-            @@ Set.concat_map pred_eps_set ~f:(fun (pred, eps) ->
-                if QFL.Problem.level_of qfl pred.name = (2 * j) - 1 then
-                  Set.Poly.singleton
-                  @@ Formula.eq (Term.mk_var eps T_real.SReal) (T_real.rone ())
-                else
-                  Set.Poly.of_list
-                  @@ Formula.mk_range_real
-                       (Term.mk_var eps T_real.SReal)
-                       Q.zero Q.one))
-          @ List.map rank_templ_preds ~f:(fun (_, (_, quant_pred)) ->
-              Formula.geq quant_pred (T_real.rzero ()))
-          @ Set.to_list
-          @@ Set.Poly.map pred_eps_set ~f:(fun (pred, eps) ->
-              let rank_args, rank_body = Map.find_exn rank_sub pred.name in
-              Formula.geq
-                (Term.rename
-                   (LogicOld.ren_of_sort_env_list rank_args pred.args)
-                   rank_body)
-                (T_real.mk_radd (Term.mk_var eps T_real.SReal)
-                @@ Term.subst_funcs rank_sub pred.body))
+        let constrs_inv = gen_inv_constrs init inv_sub invmap qfl.preds in
+        let constrs_rank =
+          (Set.to_list
+          @@ Set.concat_map pred_eps_set ~f:(fun (pred, eps) ->
+              if QFL.Problem.level_of qfl pred.name = (2 * j) - 1 then
+                Set.Poly.singleton
+                @@ Formula.eq (Term.mk_var eps T_real.SReal) (T_real.rone ())
+              else
+                Set.Poly.of_list
+                @@ Formula.mk_range_real
+                     (Term.mk_var eps T_real.SReal)
+                     Q.zero Q.one))
+          @ gen_rank_constrs inv_sub invmap pred_eps_set rank_sub
+              rank_templ_preds
         in
-        match
-          solve_constrs (param_senv, templ_params, pred_eps_set) constrs
-        with
+        let constrs = Set.to_list param_constrs @ constrs_inv @ constrs_rank in
+        let templ_params =
+          Map.force_merge_list
+          @@ Map.Poly.of_alist_exn param_senv
+             :: (Map.of_set_exn
+                @@ Set.Poly.map pred_eps_set ~f:(fun (_, eps) ->
+                    (eps, T_real.SReal)))
+             :: rank_templ_paramss
+          @ List.map ~f:Logic.to_old_sort_env_map inv_templ_paramss
+        in
+        match solve_constrs templ_params constrs with
         | Ok (Some model) ->
             let tsub =
               Logic.ExtTerm.to_old_subst Map.Poly.empty Map.Poly.empty model
             in
-            let ranks =
-              List.map rank_templ_preds ~f:(fun (name, (args, quant_pred)) ->
-                  ( name,
-                    (args, Evaluator.simplify_term @@ Term.subst tsub quant_pred)
-                  ))
-            in
-            let param_constr' =
-              Evaluator.simplify
-              @@ Formula.subst
-                   (Map.Poly.filter_keys tsub
-                      ~f:(Map.Poly.mem param_senv >> not))
-              @@ Formula.and_of constrs
-            in
+            let param_constrs' = conv tsub param_senv constrs in
+            Debug.print @@ lazy "*************************************";
+            List.iter inv_templ_preds ~f:(fun (name, (args, pred)) ->
+                let inv = Evaluator.simplify @@ Formula.subst tsub pred in
+                Debug.print
+                @@ lazy
+                     (sprintf "synthesized invariant for %s: %s |-> %s"
+                        (Ident.name_of_tvar name)
+                        (str_of_sort_env_list Term.str_of_sort args)
+                        (Formula.str_of inv)));
             Debug.print @@ lazy "*************************************";
             let lexmap', elimed =
+              let ranks =
+                List.map rank_templ_preds ~f:(fun (name, (args, quant_pred)) ->
+                    ( name,
+                      ( args,
+                        Evaluator.simplify_term @@ Term.subst tsub quant_pred )
+                    ))
+              in
               List.fold ~init:(lexmap, Set.Poly.empty) qfl.preds
                 ~f:(fun (lexmap, elimed) pred ->
-                  let rank_args, rank_body =
-                    List.Assoc.find_exn ~equal:Stdlib.( = ) ranks pred.name
-                  in
                   let rank, elimed =
+                    let rank_args, rank_body =
+                      List.Assoc.find_exn ~equal:Stdlib.( = ) ranks pred.name
+                    in
                     let rank =
                       Term.rename
                         (LogicOld.ren_of_sort_env_list rank_args pred.args)
@@ -2025,18 +2202,17 @@ module Make (Cfg : Config.ConfigType) = struct
             let preds' =
               Set.filter preds ~f:(fun pred -> not @@ Set.mem elimed pred.name)
             in
-            loop param_constr' lexmap' preds' (j + 1)
+            loop param_constrs' lexmap' preds' (j + 1)
         | Ok None -> None
         | Error err -> failwith (Error.to_string_hum err))
       else Some lexmap
     in
-    loop param_constr Map.Poly.empty (Set.Poly.of_list qfl.preds) 1
+    loop param_constrs Map.Poly.empty (Set.Poly.of_list qfl.preds) 1
 
-  let synthesize_lexpmsm ~inv_gen (qfl : QFL.Problem.t)
-      (param_senv, param_constr) =
-    ignore inv_gen;
+  let synthesize_lexpmsm (qfl : QFL.Problem.t)
+      (init, invmap, param_senv, param_constrs) =
     let d_div_2 = div_ceil (QFL.Problem.depth_of qfl) 2 in
-    let rec loop param_constr lexmap (preds : QFL.Pred.t Set.Poly.t) j =
+    let rec loop param_constrs lexmap (preds : QFL.Pred.t Set.Poly.t) j =
       if j <= d_div_2 then (
         let preds =
           Set.filter preds ~f:(fun pred ->
@@ -2046,28 +2222,15 @@ module Make (Cfg : Config.ConfigType) = struct
         @@ lazy
              (sprintf "\n***synthesizing ranking supermartingales at level %d\n"
                 j);
-        let rec inner param_constr lexmap (preds : QFL.Pred.t Set.Poly.t) k =
-          let param_constr', lexmap', elimed =
-            let rank_templ_paramss, rank_templ_preds =
-              List.unzip
-              @@ List.map qfl.preds ~f:(fun pred ->
-                  let template =
-                    Templ.gen_quant_template
-                      ~num_conds:config.quant_rank_templ_num_conds
-                      ~use_orig_ite:config.quant_rank_templ_use_orig_ite
-                      ~cond_degree:config.quant_rank_templ_cond_degree
-                      ~term_degree:config.quant_rank_templ_term_degree pred.args
-                      pred.body pred.annots
-                  in
-                  let templ_params, quant_pred =
-                    (template.templ_params, template.quant_pred)
-                  in
-                  (templ_params, (pred.name, (pred.args, quant_pred))))
+        let rec inner param_constrs lexmap (preds : QFL.Pred.t Set.Poly.t) k =
+          let param_constrs', lexmap', elimed =
+            let inv_templ_paramss, inv_templ_preds =
+              gen_inv_templ init param_senv qfl.preds
             in
-            if not @@ List.is_empty rank_templ_preds then (
-              Debug.print @@ lazy "templates for ranking supermartingales:";
-              print_templ rank_templ_preds);
-            let templ_params = Map.force_merge_list rank_templ_paramss in
+            let inv_sub = Map.Poly.of_alist_exn inv_templ_preds in
+            let rank_templ_paramss, rank_templ_preds =
+              gen_rank_templ param_senv qfl.preds
+            in
             let rank_sub = Map.Poly.of_alist_exn rank_templ_preds in
             let pred_eps_set =
               Set.Poly.map preds ~f:(fun pred ->
@@ -2079,63 +2242,67 @@ module Make (Cfg : Config.ConfigType) = struct
                           (Ident.name_of_tvar eps));
                   (pred, eps))
             in
-            let constrs =
-              Formula.conjuncts_list_of
-                (*ToDo: param_constr is assumed to be in CNF *) param_constr
-              @ Formula.geq
-                  (T_real.mk_rsum (T_real.rzero ())
-                  @@ Set.to_list
-                  @@ Set.Poly.map pred_eps_set ~f:(fun (_, eps) ->
-                      Term.mk_var eps T_real.SReal))
-                  (T_real.rone ())
-                :: (Set.to_list
-                   @@ Set.concat_map pred_eps_set ~f:(fun (_, eps) ->
-                       Set.Poly.of_list
-                       @@ Formula.mk_range_real
-                            (Term.mk_var eps T_real.SReal)
-                            Q.zero Q.one))
-              @ List.map rank_templ_preds ~f:(fun (_, (_, quant_pred)) ->
-                  Formula.geq quant_pred (T_real.rzero ()))
-              @ Set.to_list
-              @@ Set.Poly.map pred_eps_set ~f:(fun (pred, eps) ->
-                  let rank_args, rank_body = Map.find_exn rank_sub pred.name in
-                  Formula.geq
-                    (Term.rename
-                       (LogicOld.ren_of_sort_env_list rank_args pred.args)
-                       rank_body)
-                    (T_real.mk_radd (Term.mk_var eps T_real.SReal)
-                    @@ Term.subst_funcs rank_sub pred.body))
+            let constrs_inv = gen_inv_constrs init inv_sub invmap qfl.preds in
+            let constrs_rank =
+              Formula.geq
+                (T_real.mk_rsum (T_real.rzero ())
+                @@ Set.to_list
+                @@ Set.Poly.map pred_eps_set ~f:(fun (_, eps) ->
+                    Term.mk_var eps T_real.SReal))
+                (T_real.rone ())
+              :: (Set.to_list
+                 @@ Set.concat_map pred_eps_set ~f:(fun (_, eps) ->
+                     Set.Poly.of_list
+                     @@ Formula.mk_range_real
+                          (Term.mk_var eps T_real.SReal)
+                          Q.zero Q.one))
+              @ gen_rank_constrs inv_sub invmap pred_eps_set rank_sub
+                  rank_templ_preds
             in
-            match
-              solve_constrs (param_senv, templ_params, pred_eps_set) constrs
-            with
+            let constrs =
+              Set.to_list param_constrs @ constrs_inv @ constrs_rank
+            in
+            let templ_params =
+              Map.force_merge_list
+              @@ Map.Poly.of_alist_exn param_senv
+                 :: (Map.of_set_exn
+                    @@ Set.Poly.map pred_eps_set ~f:(fun (_, eps) ->
+                        (eps, T_real.SReal)))
+                 :: rank_templ_paramss
+              @ List.map ~f:Logic.to_old_sort_env_map inv_templ_paramss
+            in
+            match solve_constrs templ_params constrs with
             | Ok (Some model) ->
                 let tsub =
                   Logic.ExtTerm.to_old_subst Map.Poly.empty Map.Poly.empty model
                 in
-                let ranks =
-                  List.map rank_templ_preds
-                    ~f:(fun (name, (args, quant_pred)) ->
-                      ( name,
-                        ( args,
-                          Evaluator.simplify_term @@ Term.subst tsub quant_pred
-                        ) ))
-                in
-                let param_constr' =
-                  Evaluator.simplify
-                  @@ Formula.subst
-                       (Map.Poly.filter_keys tsub
-                          ~f:(Map.Poly.mem param_senv >> not))
-                  @@ Formula.and_of constrs
-                in
+                let param_constrs' = conv tsub param_senv constrs in
+                Debug.print @@ lazy "*************************************";
+                List.iter inv_templ_preds ~f:(fun (name, (args, pred)) ->
+                    let inv = Evaluator.simplify @@ Formula.subst tsub pred in
+                    Debug.print
+                    @@ lazy
+                         (sprintf "synthesized invariant for %s: %s |-> %s"
+                            (Ident.name_of_tvar name)
+                            (str_of_sort_env_list Term.str_of_sort args)
+                            (Formula.str_of inv)));
                 Debug.print @@ lazy "*************************************";
                 let lexmap', elimed =
+                  let ranks =
+                    List.map rank_templ_preds
+                      ~f:(fun (name, (args, quant_pred)) ->
+                        ( name,
+                          ( args,
+                            Evaluator.simplify_term
+                            @@ Term.subst tsub quant_pred ) ))
+                  in
                   List.fold ~init:(lexmap, Set.Poly.empty) qfl.preds
                     ~f:(fun (lexmap, elimed) pred ->
-                      let rank_args, rank_body =
-                        List.Assoc.find_exn ~equal:Stdlib.( = ) ranks pred.name
-                      in
                       let rank, elimed =
+                        let rank_args, rank_body =
+                          List.Assoc.find_exn ~equal:Stdlib.( = ) ranks
+                            pred.name
+                        in
                         let rank =
                           Term.rename
                             (LogicOld.ren_of_sort_env_list rank_args pred.args)
@@ -2175,9 +2342,9 @@ module Make (Cfg : Config.ConfigType) = struct
                         elimed ))
                 in
                 Debug.print @@ lazy "*************************************";
-                (param_constr', lexmap', elimed)
+                (param_constrs', lexmap', elimed)
             | Ok None ->
-                ( param_constr,
+                ( param_constrs,
                   List.fold ~init:lexmap qfl.preds ~f:(fun lexmap pred ->
                       let rank = T_real.rzero () in
                       Debug.print
@@ -2193,34 +2360,160 @@ module Make (Cfg : Config.ConfigType) = struct
                   Set.Poly.empty )
             | Error err -> failwith (Error.to_string_hum err)
           in
-          if Set.is_empty elimed then (param_constr', lexmap', preds)
+          if Set.is_empty elimed then (param_constrs', lexmap', preds)
           else
             let preds' =
               Set.filter preds ~f:(fun pred -> not @@ Set.mem elimed pred.name)
             in
-            inner param_constr' lexmap' preds' (k + 1)
+            inner param_constrs' lexmap' preds' (k + 1)
         in
-        let param_constr, lexmap, preds = inner param_constr lexmap preds 0 in
+        let param_constrs, lexmap, preds = inner param_constrs lexmap preds 0 in
         if
           Set.exists preds ~f:(fun pred ->
               QFL.Problem.level_of qfl pred.name = (2 * j) - 1)
         then None
-        else loop param_constr lexmap preds (j + 1))
+        else loop param_constrs lexmap preds (j + 1))
       else Some lexmap
     in
-    loop param_constr Map.Poly.empty (Set.Poly.of_list qfl.preds) 1
+    loop param_constrs Map.Poly.empty (Set.Poly.of_list qfl.preds) 1
 
-  let synthesize_omega_regular_supermartingale qfl (senv, fml) =
-    match config.quant_omega_regular_supermartingale with
-    | SSM inv_gen -> synthesize_ssm ~inv_gen qfl (senv, fml)
-    | GSSM inv_gen -> synthesize_gssm ~inv_gen qfl (senv, fml)
-    | LexGSSM inv_gen -> synthesize_lexgssm ~inv_gen qfl (senv, fml)
-    | PMSM inv_gen -> synthesize_pmsm ~inv_gen qfl (senv, fml)
-    | LexPMSM inv_gen -> synthesize_lexpmsm ~inv_gen qfl (senv, fml)
+  let synthesize_invs (qfl : QFL.Problem.t) (init, param_senv, param_constrs) =
+    match init with
+    | None -> (init, Map.Poly.empty, param_senv, param_constrs)
+    | Some _ ->
+        let inv_templ_paramss, inv_templ_preds =
+          gen_inv_templ init param_senv qfl.preds
+        in
+        let inv_sub = Map.Poly.of_alist_exn inv_templ_preds in
+        let rec loop cnt invmap freshness_constrs param_constrs =
+          let constrs_inv = gen_inv_constrs init inv_sub invmap qfl.preds in
+          let constrs =
+            Set.to_list param_constrs
+            @ Set.to_list freshness_constrs
+            @ constrs_inv
+          in
+          let templ_params =
+            Map.force_merge_list
+            @@ Map.Poly.of_alist_exn param_senv
+               :: List.map ~f:Logic.to_old_sort_env_map inv_templ_paramss
+          in
+          match solve_constrs templ_params constrs with
+          | Ok (Some model) ->
+              let tsub =
+                Logic.ExtTerm.to_old_subst Map.Poly.empty Map.Poly.empty model
+              in
+              if false then print_endline @@ TermSubst.str_of tsub;
+              let rat =
+                List.map inv_templ_paramss ~f:(fun m ->
+                    ( m,
+                      Term.mk_var
+                        (Ident.mk_fresh_tvar ~prefix:(Some "r_") ())
+                        T_real.SReal ))
+              in
+              let freshness_constrs' =
+                Set.add freshness_constrs
+                  (Formula.mk_imply
+                     (Formula.and_of
+                        (Map.Poly.fold model
+                           ~init:
+                             (List.map rat ~f:(fun (_, r) ->
+                                  Formula.mk_atom
+                                  @@ T_real.mk_rgt r (T_real.rzero ())))
+                           ~f:(fun ~key ~data eqs ->
+                             if
+                               List.Assoc.mem ~equal:Stdlib.( = ) param_senv key
+                             then eqs
+                             else
+                               let _, r =
+                                 List.find_exn rat ~f:(fun (m, _) ->
+                                     Map.Poly.mem m key)
+                               in
+                               Formula.eq
+                                 (Term.mk_var key T_real.SReal)
+                                 (T_real.mk_rmul
+                                    (Logic.ExtTerm.to_old_trm Map.Poly.empty
+                                       Map.Poly.empty data)
+                                    r)
+                               :: eqs)))
+                     (Formula.mk_false ()))
+              in
+              let param_constrs' = conv tsub param_senv constrs in
+              Debug.print @@ lazy "*************************************";
+              let invmap' =
+                List.fold ~init:invmap inv_templ_preds
+                  ~f:(fun invmap (name, (args, pred)) ->
+                    let inv = Evaluator.simplify @@ Formula.subst tsub pred in
+                    match Map.Poly.find invmap name with
+                    | None ->
+                        Debug.print
+                        @@ lazy
+                             (sprintf "synthesized invariant for %s: %s |-> %s"
+                                (Ident.name_of_tvar name)
+                                (str_of_sort_env_list Term.str_of_sort args)
+                                (Formula.str_of inv));
+                        if Formula.is_true inv then invmap
+                        else Map.Poly.add_exn invmap ~key:name ~data:(args, inv)
+                    | Some (args', inv') ->
+                        let inv'' =
+                          Evaluator.simplify
+                          @@ Formula.and_of
+                               [
+                                 inv';
+                                 Formula.rename
+                                   (LogicOld.ren_of_sort_env_list args args')
+                                   inv;
+                               ]
+                        in
+                        Debug.print
+                        @@ lazy
+                             (sprintf "synthesized invariant for %s: %s |-> %s"
+                                (Ident.name_of_tvar name)
+                                (str_of_sort_env_list Term.str_of_sort args)
+                                (Formula.str_of inv''));
+                        Map.Poly.set invmap ~key:name ~data:(args', inv''))
+              in
+              Debug.print @@ lazy "*************************************";
+              if cnt <= 4 (*ToDo*) then
+                loop (cnt + 1) invmap' freshness_constrs' param_constrs'
+              else (init, invmap', param_senv, param_constrs')
+          | Ok None -> (init, invmap, param_senv, param_constrs)
+          | Error err -> failwith (Error.to_string_hum err)
+        in
+        let freshness_constrs =
+          Set.Poly.singleton
+          @@ Formula.mk_imply
+               (Formula.and_of
+                  (Set.to_list
+                  @@ Set.Poly.map
+                       (Set.Poly.union_list
+                       @@ List.map ~f:Map.Poly.key_set inv_templ_paramss)
+                       ~f:(fun x ->
+                         Formula.eq
+                           (Term.mk_var x T_real.SReal)
+                           (T_real.rzero ()))))
+               (Formula.mk_false ())
+        in
+        loop 0 Map.Poly.empty freshness_constrs param_constrs
+
+  let synthesize_omega_regular_supermartingale qfl
+      (init, param_senv, param_constrs) =
+    (match config.quant_omega_regular_supermartingale with
+      | SSM -> synthesize_ssm qfl
+      | GSSM -> synthesize_gssm qfl
+      | LexGSSM -> synthesize_lexgssm qfl
+      | PMSM -> synthesize_pmsm qfl
+      | LexPMSM -> synthesize_lexpmsm qfl)
+    @@
+    if simul_inv_syn then (init, Map.Poly.empty, param_senv, param_constrs)
+    else synthesize_invs qfl (None, param_senv, param_constrs)
 
   let check_almost_sure_satisfaction_of_omega_regular_properties
-      ?(print_sol = false) (qfl : QFL.Problem.t) (senv, fml) =
-    match synthesize_omega_regular_supermartingale qfl (senv, fml) with
+      ?(print_sol = false) (qfl : QFL.Problem.t)
+      (init, param_senv, param_constrs) =
+    match
+      synthesize_omega_regular_supermartingale qfl
+        (init, param_senv, param_constrs)
+    with
     | None ->
         if print_sol then print_endline @@ sprintf "unknown";
         Or_error.return ([], [])
@@ -2765,9 +3058,10 @@ module Make (Cfg : Config.ConfigType) = struct
             qfl
         in
         match qfl.query with
-        | ASAT (param_senv, param_constr) ->
+        | ASAT (init, param_senv, param_constr) ->
             check_almost_sure_satisfaction_of_omega_regular_properties
-              ~print_sol qfl (param_senv, param_constr)
+              ~print_sol qfl
+              (init, param_senv, Formula.conjuncts_of param_constr)
         | Check query ->
             check_bounds ~print_sol (i, sols, pareto_cache) qfl query
         | DistCheck query -> check_dist_bounds ~print_sol qfl query)

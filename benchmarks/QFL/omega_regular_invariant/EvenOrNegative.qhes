@@ -1,0 +1,5 @@
+ASAT (X_init 0.0) s.t.
+X_init (x : real) : real =nu (1.0 / 2.0) * X4 (-1.0) + (1.0 / 2.0) * X3 1.0;
+X2 (x : real) : real =nu X3 (x + 1.0);
+X3 (x : real) : real =mu X2 (x + 1.0);
+X4 (x : real) : real =nu X4 (x - 2.0);

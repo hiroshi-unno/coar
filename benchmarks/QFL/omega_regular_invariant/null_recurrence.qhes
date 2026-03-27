@@ -1,0 +1,7 @@
+ASAT (X0 0.0) s.t.
+X0 (x : real) : real =nu
+  X1 1.0;
+X2 (x : real) : real =mu
+  if x >= 1.0 then X2 (x - 1.0) else X0 x;
+X1 (x : real) : real =nu
+  (1.0 / 2.0) * X1 (2.0 * x) + (1.0 / 2.0) * X2 x;

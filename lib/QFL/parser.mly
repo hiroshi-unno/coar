@@ -80,8 +80,18 @@ Query:
         else assert false
       else assert false
     }
-  | ASAT bounds=Bounds { ASAT (Map.Poly.of_alist_exn bounds, Formula.mk_true ()) }
-  | ASAT bounds=Bounds BAR fml=Formula { ASAT (Map.Poly.of_alist_exn bounds, fml) }
+  | ASAT bounds=Bounds {
+      ASAT (None, bounds, Formula.mk_true ())
+    }
+  | ASAT LPAREN name=ID args=FvarAppArgs RPAREN bounds=Bounds {
+      ASAT (Some (Ident.Tvar name, args), bounds, Formula.mk_true ())
+    }
+  | ASAT bounds=Bounds BAR fml=Formula {
+      ASAT (None, bounds, fml)
+    }
+  | ASAT LPAREN name=ID args=FvarAppArgs RPAREN bounds=Bounds BAR fml=Formula {
+      ASAT (Some (Ident.Tvar name, args), bounds, fml)
+    }
   | DIST LPAREN name=ID args=FvarAppArgs RPAREN ENSURES params=Bounds ARROW LPAREN bound=Formula RPAREN {
       DistCheck { name = Ident.Tvar name; args; params; bound }
     }
