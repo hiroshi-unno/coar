@@ -1775,13 +1775,13 @@ let sel_terms_of quals terms =
             let t2 = T_int.mk_sub lhs rhs in
             [ t1; t2 ]
         | T_real.SReal, T_bool.(Eq | Neq) ->
-            let t1 = T_int.mk_sub rhs lhs in
-            let t2 = T_int.mk_sub lhs rhs in
+            let t1 = T_real.mk_rsub rhs lhs in
+            let t2 = T_real.mk_rsub lhs rhs in
             let tabs = T_bool.ifte (Formula.geq t1 (T_real.rzero ())) t1 t2 in
             t1 :: t2 :: (if false then [ tabs ] else [])
         | T_real.SReal, T_real.(RLeq | RLt | RGeq | RGt) ->
-            let t1 = T_int.mk_sub rhs lhs in
-            let t2 = T_int.mk_sub lhs rhs in
+            let t1 = T_real.mk_rsub rhs lhs in
+            let t2 = T_real.mk_rsub lhs rhs in
             [ t1; t2 ]
         | T_bv.SBV size, T_bool.(Eq | Neq) ->
             let t1 = T_bv.mk_bvsub ~size rhs lhs in
