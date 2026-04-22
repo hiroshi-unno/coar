@@ -170,37 +170,45 @@ module Make
     let cls_nonparam, cls_param =
       Set.partition_tf ~f:(fst >> Quintuple.trd >> Map.Poly.is_empty)
       @@ Set.Poly.map clauses ~f:(fun cl ->
-             let uni_senv, clause = Clause.to_senv_formula cl in
-             if false then
-               Debug.print
-               @@ lazy
-                    ("size before: " ^ string_of_int
-                    @@ Logic.ExtTerm.ast_size clause);
-             let phi = Logic.Term.subst cand_map clause in
-             if false then
-               Debug.print
-               @@ lazy
-                    ("size after: " ^ string_of_int
-                   @@ Logic.ExtTerm.ast_size phi);
-             let phi =
-               try
-                 Logic.ExtTerm.to_old_fml Map.Poly.empty
-                   (Map.force_merge params_senv uni_senv)
-                   phi
-               with _ ->
-                 failwith
-                   (sprintf "failed to convert term %s to old formula: %s"
-                      (Logic.ExtTerm.str_of phi)
-                      (CandSol.str_of (params_senv, cand)))
-             in
-             let phi = Evaluator.simplify phi in
-             let fvs = Formula.tvs_of phi in
-             let uni_senv' = Map.Poly.filter_keys uni_senv ~f:(Set.mem fvs) in
-             let params_senv' =
-               Map.Poly.filter_keys params_senv ~f:(Set.mem fvs)
-             in
-             ( (uni_senv, clause, params_senv', uni_senv', phi),
-               (ClauseGraph.Clause cl, true) ))
+          let uni_senv, clause = Clause.to_senv_formula cl in
+          if false then
+            Debug.print
+            @@ lazy
+                 ("size before: " ^ string_of_int
+                 @@ Logic.ExtTerm.ast_size clause);
+          if false then
+            Debug.print
+            @@ lazy
+                 (sprintf "[check clause] %s"
+                 @@ Formula.str_of
+                 @@ Logic.ExtTerm.to_old_fml
+                      (PCSP.Problem.senv_of APCSP.problem)
+                      (Map.force_merge params_senv uni_senv)
+                      clause);
+          let phi = Logic.Term.subst cand_map clause in
+          if false then
+            Debug.print
+            @@ lazy
+                 ("size after: " ^ string_of_int @@ Logic.ExtTerm.ast_size phi);
+          let phi =
+            try
+              Logic.ExtTerm.to_old_fml Map.Poly.empty
+                (Map.force_merge params_senv uni_senv)
+                phi
+            with _ ->
+              failwith
+                (sprintf "failed to convert term %s to old formula: %s"
+                   (Logic.ExtTerm.str_of phi)
+                   (CandSol.str_of (params_senv, cand)))
+          in
+          let phi = Evaluator.simplify phi in
+          let fvs = Formula.tvs_of phi in
+          let uni_senv' = Map.Poly.filter_keys uni_senv ~f:(Set.mem fvs) in
+          let params_senv' =
+            Map.Poly.filter_keys params_senv ~f:(Set.mem fvs)
+          in
+          ( (uni_senv, clause, params_senv', uni_senv', phi),
+            (ClauseGraph.Clause cl, true) ))
     in
     let cls_nonparam =
       Set.Poly.map cls_nonparam ~f:(fun ((uni_senv, clause, _, _, phi), cl) ->
@@ -213,94 +221,91 @@ module Make
     let cls_param =
       Set.to_list cls_param
       |> List.classify (fun ((_, _, senv1, _, _), _) ((_, _, senv2, _, _), _) ->
-             Fn.non Set.is_empty
-             @@ Set.inter (Map.Poly.key_set senv1) (Map.Poly.key_set senv2))
+          Fn.non Set.is_empty
+          @@ Set.inter (Map.Poly.key_set senv1) (Map.Poly.key_set senv2))
       |> List.map ~f:(fun rs ->
-             let (cls, params_senv', uni_senv', phi), cl =
-               List.fold rs
-                 ~init:
-                   ( ([], Map.Poly.empty, Map.Poly.empty, Formula.mk_true ()),
-                     Set.Poly.empty )
-                 ~f:(fun
-                     ((cls, params_senv, uni_senv, phi), srcs)
-                     ( (uni_senv0, clause0, params_senv', uni_senv', phi'),
-                       src_cl )
-                   ->
-                   ( ( (uni_senv0, clause0) :: cls,
-                       Map.force_merge params_senv params_senv',
-                       Map.force_merge uni_senv uni_senv',
-                       Formula.mk_and phi phi' ),
-                     Set.add srcs src_cl ))
-             in
-             (* parametric candidate solution *)
-             assert config.parametric_candidates;
-             ( ( cls,
-                 phi,
-                 if config.strategy_synthesis then (
-                   (* apply strategy synthesis to forall-exists formula *)
-                   assert config.parametric_examples;
-                   check_clause_param_strat_synth ~timeout:config.smt_timeout
-                     fenv params_senv' uni_senv' phi)
-                 else
-                   (* apply SMT solving to forall-exists formula *)
-                   check_clause_param_smt ~timeout:config.smt_timeout fenv
-                     params_senv' uni_senv' phi ),
-               cl ))
+          let (cls, params_senv', uni_senv', phi), cl =
+            List.fold rs
+              ~init:
+                ( ([], Map.Poly.empty, Map.Poly.empty, Formula.mk_true ()),
+                  Set.Poly.empty )
+              ~f:(fun
+                  ((cls, params_senv, uni_senv, phi), srcs)
+                  ((uni_senv0, clause0, params_senv', uni_senv', phi'), src_cl)
+                ->
+                ( ( (uni_senv0, clause0) :: cls,
+                    Map.force_merge params_senv params_senv',
+                    Map.force_merge uni_senv uni_senv',
+                    Formula.mk_and phi phi' ),
+                  Set.add srcs src_cl ))
+          in
+          (* parametric candidate solution *)
+          assert config.parametric_candidates;
+          ( ( cls,
+              phi,
+              if config.strategy_synthesis then (
+                (* apply strategy synthesis to forall-exists formula *)
+                assert config.parametric_examples;
+                check_clause_param_strat_synth ~timeout:config.smt_timeout fenv
+                  params_senv' uni_senv' phi)
+              else
+                (* apply SMT solving to forall-exists formula *)
+                check_clause_param_smt ~timeout:config.smt_timeout fenv
+                  params_senv' uni_senv' phi ),
+            cl ))
       |> Set.Poly.of_list
     in
     Set.union cls_nonparam cls_param
     |> Set.concat_map ~f:(fun ((cls, phi, res), src_cl) ->
-           match res with
-           | `Sat model ->
-               (* not all but some clause in cls has a countermodel *)
-               let res =
-                 Set.Poly.union_list
-                 @@ List.map cls ~f:(fun (uni_senv, clause) ->
-                        let phi_clause =
-                          Logic.ExtTerm.to_old_fml
-                            (PCSP.Problem.senv_of APCSP.problem)
-                            uni_senv clause
-                        in
-                        Set.Poly.map
-                          ~f:
-                            (ExClause.simplify_wfpvs
-                               (PCSP.Problem.wfpvs_of APCSP.problem))
-                        @@ ExClauseSet.of_model
-                             (PCSP.Problem.senv_of APCSP.problem)
-                             config.parametric_examples (uni_senv, phi_clause)
-                             model)
-               in
-               if Fn.non Set.is_empty res then
-                 Set.Poly.map res ~f:(fun ex -> (ex, src_cl))
-               else
-                 (* note that res never represents true *)
-                 let ctx = Z3.mk_context [ ("MODEL", "true") ] in
-                 let dtenv =
-                   Z3Smt.Z3interface.z3_dtenv_of_dtenv ctx
-                     (PCSP.Problem.dtenv_of APCSP.problem)
-                 in
-                 Debug.print
-                 @@ lazy
-                      (sprintf "model: %s\ncandidate: %s\nphi: %s\nz3 input: %s"
-                         (str_of_model model)
-                         (CandSol.str_of (params_senv, cand))
-                         (Formula.str_of phi)
-                         (Z3.Expr.to_string
-                         @@ Z3Smt.Z3interface.of_formula ~id ctx [] [] fenv
-                              dtenv
-                         @@ Formula.mk_neg phi));
-                 (* ToDo: should be unreachable *)
-                 (*dummy*)
-                 Set.Poly.singleton
-                   ( ExClause.mk_unit_pos @@ ExAtom.mk_true (),
-                     Set.Poly.singleton (ClauseGraph.Dummy, true) )
-           | `Unsat -> Set.Poly.empty
-           | _ ->
-               (*failwith "Z3 reported unknown or timeout in the validation phase"*)
-               (*dummy*)
-               Set.Poly.singleton
-                 ( ExClause.mk_unit_pos @@ ExAtom.mk_true (),
-                   Set.Poly.singleton (ClauseGraph.Dummy, true) ))
+        match res with
+        | `Sat model ->
+            (* not all but some clause in cls has a countermodel *)
+            let res =
+              Set.Poly.union_list
+              @@ List.map cls ~f:(fun (uni_senv, clause) ->
+                  let phi_clause =
+                    Logic.ExtTerm.to_old_fml
+                      (PCSP.Problem.senv_of APCSP.problem)
+                      uni_senv clause
+                  in
+                  Set.Poly.map
+                    ~f:
+                      (ExClause.simplify_wfpvs
+                         (PCSP.Problem.wfpvs_of APCSP.problem))
+                  @@ ExClauseSet.of_model
+                       (PCSP.Problem.senv_of APCSP.problem)
+                       config.parametric_examples (uni_senv, phi_clause) model)
+            in
+            if Fn.non Set.is_empty res then
+              Set.Poly.map res ~f:(fun ex -> (ex, src_cl))
+            else
+              (* note that res never represents true *)
+              let ctx = Z3.mk_context [ ("MODEL", "true") ] in
+              let dtenv =
+                Z3Smt.Z3interface.z3_dtenv_of_dtenv ctx
+                  (PCSP.Problem.dtenv_of APCSP.problem)
+              in
+              Debug.print
+              @@ lazy
+                   (sprintf "model: %s\ncandidate: %s\nphi: %s\nz3 input: %s"
+                      (str_of_model model)
+                      (CandSol.str_of (params_senv, cand))
+                      (Formula.str_of phi)
+                      (Z3.Expr.to_string
+                      @@ Z3Smt.Z3interface.of_formula ~id ctx [] [] fenv dtenv
+                      @@ Formula.mk_neg phi));
+              (* ToDo: should be unreachable *)
+              (*dummy*)
+              Set.Poly.singleton
+                ( ExClause.mk_unit_pos @@ ExAtom.mk_true (),
+                  Set.Poly.singleton (ClauseGraph.Dummy, true) )
+        | `Unsat -> Set.Poly.empty
+        | _ ->
+            (*failwith "Z3 reported unknown or timeout in the validation phase"*)
+            (*dummy*)
+            Set.Poly.singleton
+              ( ExClause.mk_unit_pos @@ ExAtom.mk_true (),
+                Set.Poly.singleton (ClauseGraph.Dummy, true) ))
 
   (** ToDo: fix to use real MaxSMT *)
   let find_common_counterexamples_for_clause fenv num_ex
@@ -325,14 +330,14 @@ module Make
         | _ -> None)
       |> Z3Smt.Z3interface.max_smt_of ~id fenv num_ex
       |> Set.concat_map ~f:(fun model ->
-             let examples =
-               ExClauseSet.of_model exi_senv false
-                 ( Map.force_merge exi_senv uni_senv,
-                   Logic.ExtTerm.to_old_fml exi_senv uni_senv clause )
-                 model
-             in
-             assert (Fn.non Set.is_empty examples);
-             examples),
+          let examples =
+            ExClauseSet.of_model exi_senv false
+              ( Map.force_merge exi_senv uni_senv,
+                Logic.ExtTerm.to_old_fml exi_senv uni_senv clause )
+              model
+          in
+          assert (Fn.non Set.is_empty examples);
+          examples),
       Set.Poly.of_list @@ List.map ~f:fst spurious_cand_phi_list )
 
   let receive_bounds vs =
@@ -347,11 +352,11 @@ module Make
           | PCSP.Problem.(LowerBounds _ | UpperBounds _) -> true
           | _ -> false)
         |> List.iter ~f:(function
-             | _, PCSP.Problem.LowerBounds bounds ->
-                 Map.Poly.iteri bounds ~f:(fun ~key ~data -> add key data false)
-             | _, PCSP.Problem.UpperBounds bounds ->
-                 Map.Poly.iteri bounds ~f:(fun ~key ~data -> add key data true)
-             | _ -> failwith "receive_bounds")
+          | _, PCSP.Problem.LowerBounds bounds ->
+              Map.Poly.iteri bounds ~f:(fun ~key ~data -> add key data false)
+          | _, PCSP.Problem.UpperBounds bounds ->
+              Map.Poly.iteri bounds ~f:(fun ~key ~data -> add key data true)
+          | _ -> failwith "receive_bounds")
 
   let send_candidate_partial_solution vs cexs cand cand_tag cls =
     match PCSP.Problem.messenger_of APCSP.problem with
@@ -546,9 +551,9 @@ module Make
                           in
                           Set.union examples
                           @@ Set.Poly.map cexs ~f:(fun (ex, srcs) ->
-                                 ( ExClause.normalize_params unknowns
-                                   @@ ExClause.normalize ex,
-                                   srcs ))
+                              ( ExClause.normalize_params unknowns
+                                @@ ExClause.normalize ex,
+                                srcs ))
                         else examples
                       in
                       iter examples' candidates))

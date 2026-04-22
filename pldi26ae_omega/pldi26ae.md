@@ -2,7 +2,7 @@
 
 ## Basic Information
 
-- Artifact URL: The artifact is available at [Zenodo](https://doi.org/10.5281/zenodo.19068498).
+- Artifact URL: The artifact is available at [Zenodo](https://doi.org/10.5281/zenodo.19068497).
 - Paper: A Hierarchy of Supermartingales for $\omega$-Regular Verification
 
 ## Setup

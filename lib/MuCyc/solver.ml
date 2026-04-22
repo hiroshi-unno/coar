@@ -31,9 +31,9 @@ module Make (Cfg : Config.ConfigType) = struct
     else Fn.id
   (*|> Problem.infer |> snd*)
 
-  let solve ?(print_sol = false) muclp =
+  let solve ?(print_sol = false) ?(dtenv = Map.Poly.empty) muclp =
     let open Or_error.Monad_infix in
-    (Problem.of_muclp muclp
+    (Problem.of_muclp ~dtenv muclp
     |> preprocess ~print:Debug.print
     |>
     if true then ProofSearch.solve ~print:Debug.print ~config pcsp_solver
@@ -54,6 +54,7 @@ module Make (Cfg : Config.ConfigType) = struct
         ignore oracle;
         let open Or_error.Monad_infix in
         solve ~print_sol:false
+          ~dtenv:(PCSP.Problem.dtenv_of pcsp)
           (MuCLP.Util.of_chc ~print:Debug.print ~only_pos:false pcsp)
         >>= fun sol ->
         let sol =

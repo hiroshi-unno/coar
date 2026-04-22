@@ -323,9 +323,17 @@ and term_of ctx (senv : sort_env_list)
   else if Z3.Arithmetic.is_modulus expr then
     apply_bop ctx senv penv dtenv (T_int.mk_rem Value.Euclidean) expr
   else if Z3.Arithmetic.is_remainder expr then
-    apply_bop ctx senv penv dtenv
-      (T_int.mk_rem Value.Euclidean (*ToDo: z3 rem is different from mod*))
-      expr
+    (* z3 rem is not Euclidean mod (https://github.com/Z3Prover/z3/issues/6462) *)
+    match Z3.Expr.get_args expr with
+    | [ _; e ] ->
+        let m =
+          apply_bop ctx senv penv dtenv (T_int.mk_rem Value.Euclidean) expr
+        in
+        T_bool.mk_if_then_else
+          (T_bool.of_atom
+          @@ T_int.mk_geq (term_of ctx senv penv dtenv e) (T_int.zero ()))
+          m (T_int.mk_neg m)
+    | _ -> assert false
   else if Z3.BitVector.is_bv_numeral expr then
     let size = Some (Z3.BitVector.get_size (Z3.Expr.get_sort expr)) in
     T_bv.mk_bvnum ~size @@ Z.of_string @@ Z3.BitVector.numeral_to_string expr
@@ -1209,6 +1217,27 @@ let pred_decl_of ctx dtenv (pvar, sorts) =
       (List.map sorts ~f:(of_sort ctx dtenv))
       (Z3.Boolean.mk_sort ctx) )
 
+let mk_tdiv ctx a b =
+  let zero = Z3.Arithmetic.Integer.mk_numeral_i ctx 0 in
+  Z3.Arithmetic.mk_add ctx
+    [
+      Z3.Arithmetic.mk_div ctx a b;
+      Z3.Boolean.mk_ite ctx
+        (Z3.Boolean.mk_eq ctx (Z3.Arithmetic.Integer.mk_mod ctx a b) zero)
+        zero
+        (Z3.Boolean.mk_ite ctx
+           (Z3.Arithmetic.mk_ge ctx a zero)
+           zero
+           (Z3.Boolean.mk_ite ctx
+              (Z3.Arithmetic.mk_ge ctx b zero)
+              (Z3.Arithmetic.Integer.mk_numeral_i ctx 1)
+              (Z3.Arithmetic.Integer.mk_numeral_i ctx (-1))));
+    ]
+
+let mk_tmod ctx a b =
+  Z3.Arithmetic.mk_sub ctx
+    [ a; Z3.Arithmetic.mk_mul ctx [ b; mk_tdiv ctx a b ] ]
+
 (* Conversion from formulas to Z3 expressions *)
 let rec of_formula_aux ~id ctx (env : sort_env_list)
     (penv : (Ident.pvar, Z3.FuncDecl.func_decl) List.Assoc.t) (fenv : fenv)
@@ -1368,8 +1397,8 @@ and of_term ~id ctx (env : sort_env_list)
           Z3.Arithmetic.mk_sub ctx [ t1; t2 ]
       | (T_int.Mul | T_real.RMul), [ t1; t2 ] ->
           Z3.Arithmetic.mk_mul ctx [ t1; t2 ]
-      | T_int.Div (Euclidean | Truncated (*ToDo*)), [ t1; t2 ] ->
-          Z3.Arithmetic.mk_div ctx t1 t2
+      | T_int.Div Euclidean, [ t1; t2 ] -> Z3.Arithmetic.mk_div ctx t1 t2
+      | T_int.Div Truncated, [ t1; t2 ] -> mk_tdiv ctx t1 t2
       | T_real.RDiv, [ t1; t2 ] ->
           (*ToDo: necessary? *)
           Z3.Arithmetic.mk_div ctx
@@ -1379,8 +1408,9 @@ and of_term ~id ctx (env : sort_env_list)
             (if Z3.Arithmetic.is_int t2 then
                Z3.Arithmetic.Integer.mk_int2real ctx t2
              else t2)
-      | T_int.Rem (Euclidean | Truncated (*ToDo*)), [ t1; t2 ] ->
+      | T_int.Rem Euclidean, [ t1; t2 ] ->
           Z3.Arithmetic.Integer.mk_mod ctx t1 t2
+      | T_int.Rem Truncated, [ t1; t2 ] -> mk_tmod ctx t1 t2
       | (T_int.Power | T_real.RPower), [ t1; t2 ] ->
           Z3.Arithmetic.mk_power ctx t1 t2
       | T_irb.IntToReal, [ t ] -> Z3.Arithmetic.Integer.mk_int2real ctx t

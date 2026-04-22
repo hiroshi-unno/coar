@@ -35,21 +35,20 @@ let seq_map_of penv (problem : Problem.t) =
        List.sort_by (fun seq -> List.length seq.Sequent.left_atms)
        @@ List.map problem.goals ~f:(fst3 >> Sequent.normalize_body) )
      :: List.map penv ~f:(fun (pvar, _) ->
-            ( Some pvar,
-              List.sort_by (fun seq -> List.length seq.Sequent.left_atms)
-              @@ List.map ~f:Sequent.normalize_body
-              @@ Set.to_list
-              @@ Sequent.of_formula exi_senv
-              @@ Formula.mk_imply
-                   (def_of penv problem.defs pvar)
-                   (Formula.mk_atom @@ Atom.pvar_app_of_senv pvar
-                  @@ args_of penv pvar) ))
+         ( Some pvar,
+           List.sort_by (fun seq -> List.length seq.Sequent.left_atms)
+           @@ List.map ~f:Sequent.normalize_body
+           @@ Set.to_list
+           @@ Sequent.of_formula exi_senv
+           @@ Formula.mk_imply
+                (def_of penv problem.defs pvar)
+                (Formula.mk_atom @@ Atom.pvar_app_of_senv pvar
+               @@ args_of penv pvar) ))
 
 let formula_of seq_map pvar_opt =
   Formula.or_of
   @@ List.map ~f:(fun seq ->
-         Formula.negate
-         @@ Sequent.to_formula { seq with Sequent.right_atms = [] })
+      Formula.negate @@ Sequent.to_formula { seq with Sequent.right_atms = [] })
   @@ Map.Poly.find_exn seq_map pvar_opt
 
 let convert_model res_dc senv model =
@@ -99,8 +98,8 @@ let rec expand penv (problem : Problem.t) pvs level =
   if level = 0 then
     ( Set.Poly.of_list
       @@ List.map problem.goals ~f:(fun (seq, _, _) ->
-             let phi = Formula.rename_pvars pvren @@ Sequent.to_formula seq in
-             (Map.of_set_exn @@ Formula.term_sort_env_of phi, phi)),
+          let phi = Formula.rename_pvars pvren @@ Sequent.to_formula seq in
+          (Map.of_set_exn @@ Formula.term_sort_env_of phi, phi)),
       Map.Poly.empty )
   else if level > 0 then
     let level' = level - 1 in
@@ -108,19 +107,19 @@ let rec expand penv (problem : Problem.t) pvs level =
     let chcs, pvmap = expand penv problem pvs' level' in
     ( Set.union chcs @@ Set.Poly.of_list
       @@ List.mapi penv ~f:(fun i (pvar, _) ->
-             match MuCLP.Pred.lookup problem.defs pvar with
-             | Some (Predicate.Mu, args, body) ->
-                 let senv, body =
-                   Formula.rm_quant ~forall:true
-                   @@ Formula.aconv_tvar
-                   @@ Formula.mk_imply (Formula.rename_pvars pvren body)
-                   @@ Formula.mk_atom
-                   @@ Atom.pvar_app_of_senv (List.nth_exn pvs' i) args
-                 in
-                 ( Map.force_merge (Map.of_set_exn senv)
-                     (Map.Poly.of_alist_exn args),
-                   body )
-             | _ -> failwith "[ProofSearch.expand]"),
+          match MuCLP.Pred.lookup problem.defs pvar with
+          | Some (Predicate.Mu, args, body) ->
+              let senv, body =
+                Formula.rm_quant ~forall:true
+                @@ Formula.aconv_tvar
+                @@ Formula.mk_imply (Formula.rename_pvars pvren body)
+                @@ Formula.mk_atom
+                @@ Atom.pvar_app_of_senv (List.nth_exn pvs' i) args
+              in
+              ( Map.force_merge (Map.of_set_exn senv)
+                  (Map.Poly.of_alist_exn args),
+                body )
+          | _ -> failwith "[ProofSearch.expand]"),
       Map.force_merge pvmap
         (Map.Poly.of_alist_exn
         @@ List.mapi pvs' ~f:(fun j pvar -> ((level', j), pvar))) )
@@ -138,10 +137,11 @@ let solve ~config penv solve_chc problem (trace1, trace2) =
   in
   let chcs =
     let params =
-      PCSP.Params.make @@ Logic.of_old_sort_env_map @@ Term.pred_to_sort_env_map
+      PCSP.Params.make ~dtenv:problem.dtenv
+      @@ Logic.of_old_sort_env_map @@ Term.pred_to_sort_env_map
       @@ Map.Poly.of_alist_exn
       @@ List.map (Map.Poly.to_alist pvmap) ~f:(fun ((_, j), pvar) ->
-             (pvar, List.map ~f:snd @@ snd @@ List.nth_exn penv j))
+          (pvar, List.map ~f:snd @@ snd @@ List.nth_exn penv j))
     in
     PCSP.Problem.of_old_formulas ~params chcs
   in
@@ -251,9 +251,9 @@ let get_mbp ~config ~print model0 eliminated0 phi0 =
       Set.Poly.union_list
       @@ eliminated0
          :: List.map bounds ~f:(function
-              | Formula.Exists, senv' ->
-                  Set.(diff (Poly.of_list senv') (Set.Poly.of_list senv))
-              | _ -> failwith "Universal quantifies are not supported")
+           | Formula.Exists, senv' ->
+               Set.(diff (Poly.of_list senv') (Set.Poly.of_list senv))
+           | _ -> failwith "Universal quantifies are not supported")
     in
     (*print @@ lazy ("eliminated': " ^ str_of_sort_env_list Term.str_of_sort @@ Set.to_list eliminated);*)
     let model =
@@ -266,8 +266,8 @@ let get_mbp ~config ~print model0 eliminated0 phi0 =
         | `Sat sub ->
             Map.force_merge model0 @@ Map.Poly.of_alist_exn
             @@ List.map sub ~f:(function
-                 | (x, _s), Some t -> (x, t)
-                 | (x, s), None -> (x, Term.mk_dummy s))
+              | (x, _s), Some t -> (x, t)
+              | (x, s), None -> (x, Term.mk_dummy s))
         | `Unsat -> failwith "Unreachable here"
         | _ -> failwith "Z3 timeout/unknown"
     in
@@ -511,11 +511,11 @@ let psub_of penv = function
   | _, [] ->
       Map.Poly.of_alist_exn
       @@ List.map penv ~f:(fun (pvar, args) ->
-             (pvar, (args, Formula.mk_false () (*ToDo*))))
+          (pvar, (args, Formula.mk_false () (*ToDo*))))
   | _, frame :: _ ->
       Map.Poly.of_alist_exn
       @@ List.map2_exn penv frame ~f:(fun (pvar, args) phi ->
-             (pvar, (args, phi)))
+          (pvar, (args, phi)))
 
 let get_frame = List.hd_exn
 
@@ -764,9 +764,9 @@ let cex_of_countermodel ~config ~print penv seq cexs_left_phis cond model pvar
       let cex =
         Formula.and_of
         @@ List.filter_map (args_of penv pvar) ~f:(fun (x, s) ->
-               match Map.Poly.find model' x with
-               | None -> None
-               | Some t -> Some (Formula.eq (Term.mk_var x s) t))
+            match Map.Poly.find model' x with
+            | None -> None
+            | Some t -> Some (Formula.eq (Term.mk_var x s) t))
       in
       print
       @@ lazy
@@ -790,9 +790,9 @@ let cex_of_countermodel ~config ~print penv seq cexs_left_phis cond model pvar
             let model' = convert_model false senv model in
             Formula.and_of
             @@ List.filter_map (args_of penv pvar) ~f:(fun (x, s) ->
-                   match Map.Poly.find model' x with
-                   | None -> None
-                   | Some t -> Some (Formula.eq (Term.mk_var x s) t))
+                match Map.Poly.find model' x with
+                | None -> None
+                | Some t -> Some (Formula.eq (Term.mk_var x s) t))
           else raise e
       in
       print
@@ -876,9 +876,9 @@ let query_of_countermodel ~config ~print penv pvar_opt seq cexs_left
       let model' = convert_model false senv model in
       Evaluator.simplify_neg @@ Formula.rename atof @@ Formula.and_of
       @@ List.filter_map aargs ~f:(fun (x, s) ->
-             match Map.Poly.find model' x with
-             | None -> None
-             | Some t -> Some (Formula.eq (Term.mk_var x s) t))
+          match Map.Poly.find model' x with
+          | None -> None
+          | Some t -> Some (Formula.eq (Term.mk_var x s) t))
   | Refine (MBP use_saved (* use an invariant state for image finiteness *), _)
     ->
       print
@@ -1244,29 +1244,29 @@ let rec refine ~config ~print solve_chc seq_map penv pvar_opt (state0 : state)
     let state2 =
       Map.Poly.find_exn seq_map pvar_opt
       |> List.fold_left ~init:state0 ~f:(fun state1 (seq : Sequent.t) ->
-             (* for each clause *)
-             let seq =
-               {
-                 seq with
-                 left_phi =
-                   snd
-                   @@ Formula.rm_quant ~forall:false
-                   @@ Formula.aconv_tvar seq.left_phi;
-               }
-             in
-             print
-             @@ lazy
-                  (sprintf "  begin refinement for clause: %s"
-                     (Formula.str_of @@ Sequent.to_formula seq));
-             let _updated, state2 =
-               let refine = refine ~config ~print solve_chc seq_map penv in
-               refine_clause ~config ~print solve_chc seq_map penv pvar_opt
-                 yield seq refine []
-                 (List.map ~f:fst seq.left_atms)
-                 state1
-             in
-             print @@ lazy (sprintf "  end refinement for clause");
-             state2)
+          (* for each clause *)
+          let seq =
+            {
+              seq with
+              left_phi =
+                snd
+                @@ Formula.rm_quant ~forall:false
+                @@ Formula.aconv_tvar seq.left_phi;
+            }
+          in
+          print
+          @@ lazy
+               (sprintf "  begin refinement for clause: %s"
+                  (Formula.str_of @@ Sequent.to_formula seq));
+          let _updated, state2 =
+            let refine = refine ~config ~print solve_chc seq_map penv in
+            refine_clause ~config ~print solve_chc seq_map penv pvar_opt yield
+              seq refine []
+              (List.map ~f:fst seq.left_atms)
+              state1
+          in
+          print @@ lazy (sprintf "  end refinement for clause");
+          state2)
     in
     (* refinement of the current frame*)
     match pvar_opt with

@@ -223,18 +223,18 @@ let rename_args group =
 (*val of_chc : ?only_pos:bool -> PCSP.Problem.t -> t*)
 let of_chc ~print ?(only_pos = true) chc =
   ignore print;
-  let chc = chc |> PCSP.Problem.to_nnf |> PCSP.Problem.to_cnf in
+  let chc = PCSP.Problem.(to_cnf @@ to_nnf chc) in
   let groups =
     chc |> PCSP.Problem.clauses_of
     |> Ast.ClauseSet.to_old_clause_set (PCSP.Problem.senv_of chc)
     |> Set.to_list
     |> List.classify (fun (_, ps1, _, _) (_, ps2, _, _) ->
-           match (Set.to_list ps1, Set.to_list ps2) with
-           | [], [] -> true
-           | [ atm1 ], [ atm2 ] ->
-               assert (Atom.is_pvar_app atm1 && Atom.is_pvar_app atm2);
-               Ident.pvar_equal (Atom.pvar_of atm1) (Atom.pvar_of atm2)
-           | _, _ -> false)
+        match (Set.to_list ps1, Set.to_list ps2) with
+        | [], [] -> true
+        | [ atm1 ], [ atm2 ] ->
+            assert (Atom.is_pvar_app atm1 && Atom.is_pvar_app atm2);
+            Ident.pvar_equal (Atom.pvar_of atm1) (Atom.pvar_of atm2)
+        | _, _ -> false)
     |> List.map ~f:rename_args
   in
   let goals, defs =
@@ -248,27 +248,27 @@ let of_chc ~print ?(only_pos = true) chc =
           Pred.make Predicate.Mu p args
             (Normalizer.normalize @@ Evaluator.simplify @@ Formula.or_of
             @@ List.map group ~f:(fun (senv, _, ns, phi) ->
-                   let phi =
-                     Formula.and_of
-                     @@ Evaluator.simplify phi
-                        :: List.map (Set.to_list ns) ~f:Formula.mk_atom
-                   in
-                   let senv =
-                     Map.Poly.filter_keys senv ~f:(Set.mem @@ Formula.fvs_of phi)
-                   in
-                   let senv, phi =
-                     Pair.map_snd Evaluator.simplify_neg
-                     @@ Ast.Qelim.qelim_old
-                          (Map.of_list_exn @@ Logic.ExtTerm.of_old_sort_env args)
-                          (PCSP.Problem.senv_of chc)
-                          (senv, Evaluator.simplify_neg phi)
-                   in
-                   let unbound =
-                     Map.to_alist @@ Logic.to_old_sort_env_map
-                     @@ Map.Poly.filter_keys senv
-                          ~f:(Fn.non @@ List.Assoc.mem ~equal:Stdlib.( = ) args)
-                   in
-                   Formula.exists unbound phi))
+                let phi =
+                  Formula.and_of
+                  @@ Evaluator.simplify phi
+                     :: List.map (Set.to_list ns) ~f:Formula.mk_atom
+                in
+                let senv =
+                  Map.Poly.filter_keys senv ~f:(Set.mem @@ Formula.fvs_of phi)
+                in
+                let senv, phi =
+                  Pair.map_snd Evaluator.simplify_neg
+                  @@ Ast.Qelim.qelim_old
+                       (Map.of_list_exn @@ Logic.ExtTerm.of_old_sort_env args)
+                       (PCSP.Problem.senv_of chc)
+                       (senv, Evaluator.simplify_neg phi)
+                in
+                let unbound =
+                  Map.to_alist @@ Logic.to_old_sort_env_map
+                  @@ Map.Poly.filter_keys senv
+                       ~f:(Fn.non @@ List.Assoc.mem ~equal:Stdlib.( = ) args)
+                in
+                Formula.exists unbound phi))
       | _ -> assert false)
   in
   let query =
@@ -277,25 +277,24 @@ let of_chc ~print ?(only_pos = true) chc =
     | [ goals ] ->
         Normalizer.normalize @@ Evaluator.simplify @@ Formula.or_of
         @@ List.map goals ~f:(fun (senv, _, ns, phi) ->
-               let senv, phi =
-                 let phi =
-                   Formula.and_of
-                   @@ Evaluator.simplify phi
-                      :: List.map (Set.to_list ns) ~f:Formula.mk_atom
-                 in
-                 let senv =
-                   Map.Poly.filter_keys senv
-                     ~f:(Set.mem @@ Formula.tvs_of phi (*ToDo:also use pvs?*))
-                 in
-                 Pair.map_snd Evaluator.simplify_neg
-                 @@ Ast.Qelim.qelim_old Map.Poly.empty
-                      (PCSP.Problem.senv_of chc)
-                      (senv, Evaluator.simplify_neg phi)
-               in
-               let unbound =
-                 Logic.to_old_sort_env_list @@ Map.Poly.to_alist senv
-               in
-               Formula.exists unbound phi)
+            let senv, phi =
+              let phi =
+                Formula.and_of
+                @@ Evaluator.simplify phi
+                   :: List.map (Set.to_list ns) ~f:Formula.mk_atom
+              in
+              let senv =
+                Map.Poly.filter_keys senv
+                  ~f:(Set.mem @@ Formula.tvs_of phi (*ToDo:also use pvs?*))
+              in
+              Pair.map_snd Evaluator.simplify_neg
+              @@ Ast.Qelim.qelim_old Map.Poly.empty (PCSP.Problem.senv_of chc)
+                   (senv, Evaluator.simplify_neg phi)
+            in
+            let unbound =
+              Logic.to_old_sort_env_list @@ Map.Poly.to_alist senv
+            in
+            Formula.exists unbound phi)
     | _ -> assert false
   in
   let undef_preds =
@@ -304,17 +303,17 @@ let of_chc ~print ?(only_pos = true) chc =
     |> Map.Poly.filter_keys
          ~f:(Ident.tvar_to_pvar >> List.mem def_preds ~equal:Stdlib.( = ) >> not)
     |> Map.Poly.mapi ~f:(fun ~key:(Ident.Tvar n) ~data ->
-           let sorts =
-             List.map ~f:Logic.ExtTerm.to_old_sort @@ Logic.Sort.args_of data
-           in
-           let args sorts =
-             let flag = ref 0 in
-             List.map sorts ~f:(fun sort ->
-                 flag := !flag + 1;
-                 (Ident.Tvar ("x" ^ string_of_int !flag), sort))
-           in
-           Pred.make Predicate.Mu (*ToDo*) (Ident.Pvar n) (args sorts)
-             (Formula.mk_false ()))
+        let sorts =
+          List.map ~f:Logic.ExtTerm.to_old_sort @@ Logic.Sort.args_of data
+        in
+        let args sorts =
+          let flag = ref 0 in
+          List.map sorts ~f:(fun sort ->
+              flag := !flag + 1;
+              (Ident.Tvar ("x" ^ string_of_int !flag), sort))
+        in
+        Pred.make Predicate.Mu (*ToDo*) (Ident.Pvar n) (args sorts)
+          (Formula.mk_false ()))
     |> Map.Poly.data
   in
   if only_pos then get_dual @@ make (preds @ undef_preds) query
@@ -358,27 +357,24 @@ let rec of_lts ~print ?(live_vars = None) ?(cut_points = None) = function
         transitions
         |> List.classify (fun (s1, _, _) (s2, _, _) -> String.(s1 = s2))
         |> List.partition_map ~f:(function
-             | [] -> assert false
-             | (from, c, to_) :: trs -> (
-                 let next =
-                   (c, to_) :: List.map trs ~f:(fun (_, c, to_) -> (c, to_))
-                   |> List.map ~f:(fun (c, to_) ->
-                          let pvar = pvar_of to_ in
-                          let senv = tenv_of to_ in
-                          LTS.Problem.wp c
-                            (Formula.mk_atom @@ Atom.pvar_app_of_senv pvar senv))
-                   |> Formula.and_of |> Evaluator.simplify
-                   |> Normalizer.normalize
-                 in
-                 match cut_points with
-                 | Some cut_points when not @@ Set.mem cut_points from ->
-                     First
-                       (Pred.make Predicate.Fix (pvar_of from) (tenv_of from)
-                          next)
-                 | _ ->
-                     Second
-                       (Pred.make Predicate.Mu (pvar_of from) (tenv_of from)
-                          next)))
+          | [] -> assert false
+          | (from, c, to_) :: trs -> (
+              let next =
+                (c, to_) :: List.map trs ~f:(fun (_, c, to_) -> (c, to_))
+                |> List.map ~f:(fun (c, to_) ->
+                    let pvar = pvar_of to_ in
+                    let senv = tenv_of to_ in
+                    LTS.Problem.wp c
+                      (Formula.mk_atom @@ Atom.pvar_app_of_senv pvar senv))
+                |> Formula.and_of |> Evaluator.simplify |> Normalizer.normalize
+              in
+              match cut_points with
+              | Some cut_points when not @@ Set.mem cut_points from ->
+                  First
+                    (Pred.make Predicate.Fix (pvar_of from) (tenv_of from) next)
+              | _ ->
+                  Second
+                    (Pred.make Predicate.Mu (pvar_of from) (tenv_of from) next)))
       in
       match start with
       | None ->
@@ -390,8 +386,8 @@ let rec of_lts ~print ?(live_vars = None) ?(cut_points = None) = function
               (Set.add (Set.Poly.of_list @@ List.map transitions ~f:trd3) start)
               (Set.Poly.of_list @@ List.map transitions ~f:fst3)
             |> Set.Poly.map ~f:(fun from ->
-                   Pred.make Predicate.Fix (pvar_of from) (tenv_of from)
-                     (Formula.mk_true ()))
+                Pred.make Predicate.Fix (pvar_of from) (tenv_of from)
+                  (Formula.mk_true ()))
             |> Set.to_list
           in
           let query =

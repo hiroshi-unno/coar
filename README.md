@@ -1,7 +1,9 @@
 # CoAR: Collection of Automated Reasoners
 
 * RCaml: A refinement type checking and inference tool for OCaml
-* EffCaml: A transformation-based verifier for effectful OCaml programs
+* EffCaml: A software model checker for effectful OCaml programs
+* [Thrust: A refinement type checking and inference tool for Rust](https://github.com/coord-e/thrust)
+* Athena: A software model checker for C
 * MuVal: A fixpoint logic validity checker based on predicate constraint solving
 * MuCyc: A fixpoint logic validity checker based on cyclic-proof search and proof refinement
 * MuStrat: A fixpoint logic validity checker based on strategy synthesis
@@ -376,6 +378,14 @@ Build `horsat2` and place it in the current directory.
 
 1. Taro Sekiyama and Hiroshi Unno. Higher-Order Model Checking of Effect-Handling Programs with Answer-Type Modification. OOPSLA 2024.
 
+### Thrust
+
+1. Hiromi Ogawa, Taro Sekiyama, and Hiroshi Unno. Thrust: A Prophecy-based Refinement Type System for Rust. PLDI 2025.
+
+### Athena
+
+1. Negar Fathi, Hiroshi Unno, Tachio Terauchi, and Rahul Purandare. Sound Termination and Non-Termination Analysis of C Programs with Bit-Precise Bounded Semantics and Advanced Constructs. FSE 2026.
+
 ### PCSat & OptPCSat
 
 1. Yu Gu, Takeshi Tsukada, and Hiroshi Unno. Optimal CHC Solving via Termination Proofs. POPL 2023.
@@ -400,6 +410,8 @@ Build `horsat2` and place it in the current directory.
 
 ### MuCyc
 
+1. Ivana Bocevska, Takeshi Tsukada, Hiroshi Unno, Oded Padon, and Sharon Shoham. Lagrangian-Based Duality for Quantified SMT Algorithms. CAV 2026.
+
 1. Takeshi Tsukada and Hiroshi Unno. Inductive Approach to Spacer. PLDI 2024.
 
 1. Takeshi Tsukada and Hiroshi Unno. Software Model-Checking as Cyclic-Proof Search. POPL 2022.
@@ -416,4 +428,4 @@ Build `horsat2` and place it in the current directory.
 
 ## Acknowledgements
 
-We thank Hiroyuki Katsura, Philippe Heim, Ehsan Goharshady, Elaine Li, and Benedikt Maderbacher for reporting bugs in PCSat and MuVal. We are also grateful to the organizer of termCOMP 2023, Akihisa Yamada, and participants Florian Frohn and Nils Lommen, as thanks to them, we were able to identify a bug in MuVal.
+We thank Ziteng Wang for contributing the Docker build workflow. We also thank Hiroyuki Katsura, Philippe Heim, Ehsan Goharshady, Elaine Li, Benedikt Maderbacher, and Alvin George for reporting bugs in PCSat and MuVal. We are also grateful to the organizer of termCOMP 2023, Akihisa Yamada, and participants Florian Frohn and Nils Lommen, as thanks to them, we were able to identify a bug in MuVal. We further thank Florian Frohn, as the organizer of termCOMP 2025, for valuable feedback that helped improve the robustness of MuVal’s C program (non-)termination verification. We also thank the artifact evaluation committees of POPL, PLDI, CAV, OOPSLA, and ICFP for their valuable feedback.

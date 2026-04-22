@@ -9,15 +9,17 @@ type t = {
   lemmas : Lemma.t Set.Poly.t;
   defs : MuCLP.Pred.t list;
   goals : (Sequent.t * int option * bool (*whether it is a hard goal *)) list;
+  dtenv : (string, Datatype.t) Map.Poly.t;
 }
 
 type solver = t -> MuCLP.Problem.solution * ProofTree.t list
 
 (** {6 Constructors} *)
 
-let make env lemmas defs goals = { env; lemmas; defs; goals }
+let make ?(dtenv = Map.Poly.empty) env lemmas defs goals =
+  { env; lemmas; defs; goals; dtenv }
 
-let of_muclp muclp =
+let of_muclp ?(dtenv = Map.Poly.empty) muclp =
   let exi_senv = Term.pred_to_sort_env_map @@ MuCLP.Problem.penv_of muclp in
   let senv, query =
     LogicOld.Formula.rm_quant ~forall:true @@ Formula.aconv_tvar muclp.query
@@ -31,6 +33,7 @@ let of_muclp muclp =
       @@ Set.to_list
       @@ Sequent.of_formula exi_senv
       @@ query;
+    dtenv;
   }
 
 (** {6 Destructors} *)
