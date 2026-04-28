@@ -5,8 +5,8 @@ USER opam:opam
 
 RUN sudo apt update \
 	&& sudo apt install -y \
-	git \
 	gnuplot \
+	zstd \
 	libblas-dev \
 	libffi-dev \
 	libglpk-dev \
@@ -14,8 +14,7 @@ RUN sudo apt update \
 	liblapack-dev \
 	libmpfr-dev \
 	pkg-config \
-	python3 \
-	python3.13-venv
+	python3
 
 RUN sudo ln -f /usr/bin/opam-2.5 /usr/bin/opam
 
@@ -34,7 +33,12 @@ RUN sudo chown -R opam:opam /home/opam/coar && \
 # sudo docker run --rm -it mucyc-cav26ae:latest /bin/bash --login
 
 # Reproduce LRA (inside container)
-# git submodule update --init benchmarks/QSMT/LRA
+#
+# wget https://zenodo.org/records/16740866/files/LRA.tar.zst
+# tar --zstd -xf LRA.tar.zst
+# mkdir -p benchmarks/QSMT/LRA
+# cp -r non-incremental/LRA/* benchmarks/QSMT/LRA/
+#
 # cd cav26ae
 # ./LRA_mucyc.sh > LRA_mucyc.csv
 # ./LRA_mucyc_np.sh > LRA_mucyc_np.csv
