@@ -359,15 +359,8 @@ let hes_of_chmes ~print (hmes, decls, inits, query_stmt) =
   in
   let query =
     let pvar = pvar_of query_stmt query_pvar in
-    let state0 = state_of query_stmt in
-    let state1 = List.fold_left ~f:Init.update_state ~init:state0 inits in
-    let state =
-      State.bounds_of state0
-      |> List.fold_left ~init:state0 ~f:(fun acc (tvar, _) ->
-          let v = Ident.name_of_tvar tvar in
-          if State.mem v state1 then State.update v (State.get v state1) acc
-          else acc)
-    in
+    let state = state_of query_stmt in
+    let state = List.fold_left ~f:Init.update_state ~init:state inits in
     let fml = State.appformula_of pvar state in
     let fml = List.fold_left ~f:Init.update_formula_E ~init:fml inits in
     let bounds =

@@ -1335,7 +1335,7 @@ end = struct
           let r = List.Assoc.find_exn ~equal:String.equal state varname in
           r := term;
           STATE state
-        with Not_found_s _ -> STATE ((varname, ref term) :: state))
+        with Not_found_s _ -> STATE state)
 
   let bounds_of = function
     | STATE state ->
@@ -1358,7 +1358,22 @@ end = struct
           state
 
   let of_inits inits =
-    List.fold_left ~f:Init.update_state ~init:(STATE []) inits
+    STATE
+      (List.filter_map
+         ~f:(function
+           | Init.ASSIGN (varname, term) -> Some (varname, ref term)
+           | Init.ASSUME _ -> None
+           | Init.NONDET_INT_ASSIGN varname ->
+               let term =
+                 Term.mk_var (Ident.Tvar varname) T_int.SInt ~info:Dummy
+               in
+               Some (varname, ref term)
+           | Init.NONDET_REAL_ASSIGN varname ->
+               let term =
+                 Term.mk_var (Ident.Tvar varname) T_real.SReal ~info:Dummy
+               in
+               Some (varname, ref term))
+         inits)
 end
 
 module FunDecl : sig
