@@ -90,8 +90,7 @@ end = struct
       let used = StatementEnv.add stmt used in
       get_next_statements stmt
       |> List.fold ~init:(used, env) ~f:(fun (used, env) nxt_stmt ->
-             (used, add_to_prev_env nxt_stmt stmt env)
-             |> get_prev_env_rep nxt_stmt)
+          (used, add_to_prev_env nxt_stmt stmt env) |> get_prev_env_rep nxt_stmt)
 
   let get_prev_env stmt =
     let _, env =
@@ -106,7 +105,7 @@ end = struct
         List.iter stmts ~f:(fun stmt' ->
             get_next_statements_ref stmt'
             |> List.iter ~f:(fun stmt_ref ->
-                   if phys_equal !stmt_ref stmt then stmt_ref := nxt_stmt));
+                if phys_equal !stmt_ref stmt then stmt_ref := nxt_stmt));
         if phys_equal query stmt then nxt_stmt else query
     | _ -> failwith "not a nobranch stmt"
 
@@ -119,17 +118,16 @@ end = struct
   let replace_stmt ~query new_stmts =
     StatementEnv.values new_stmts
     |> List.fold ~init:[] ~f:(fun used stmt ->
-           get_next_statements_ref stmt
-           |> List.fold ~init:used ~f:(fun used nxt_stmt ->
-                  if List.exists ~f:(fun r -> phys_equal r nxt_stmt) used then
-                    used
-                  else if StatementEnv.exists !nxt_stmt new_stmts then (
-                    nxt_stmt := StatementEnv.get !nxt_stmt new_stmts;
-                    nxt_stmt :: used)
-                  else
-                    failwith
-                    @@ sprintf "internal error: replace failed:\n%s\n\n"
-                         (string_of stmt)))
+        get_next_statements_ref stmt
+        |> List.fold ~init:used ~f:(fun used nxt_stmt ->
+            if List.exists ~f:(fun r -> phys_equal r nxt_stmt) used then used
+            else if StatementEnv.exists !nxt_stmt new_stmts then (
+              nxt_stmt := StatementEnv.get !nxt_stmt new_stmts;
+              nxt_stmt :: used)
+            else
+              failwith
+              @@ sprintf "internal error: replace failed:\n%s\n\n"
+                   (string_of stmt)))
     |> ignore;
     StatementEnv.get query new_stmts
 end
@@ -210,8 +208,8 @@ module ReadGraph = struct
           ~info:(fun stmt ->
             List.map ~f:fst rgenv
             |> String.concat_map_list ~sep:" " ~f:(fun tvar ->
-                   let r = rgenv_get tvar (RGENV rgenv) |> rg_get stmt in
-                   sprintf "%s:%d" (Ident.name_of_tvar (fst tvar)) (length r))
+                let r = rgenv_get tvar (RGENV rgenv) |> rg_get stmt in
+                sprintf "%s:%d" (Ident.name_of_tvar (fst tvar)) (length r))
             |> sprintf "[%s]")
           query_stmt
 
@@ -339,11 +337,11 @@ module ReadGraph = struct
       LinkedStatement.get_used_vars_from stmt
       |> Variables.to_list
       |> List.fold_left ~init:[] ~f:(fun rgdata varname ->
-             if Variables.is_mem spec_fv varname then rgdata
-             else
-               ( (Ident.Tvar (fst varname), snd varname),
-                 get_rg (fst varname) prev_env stmts )
-               :: rgdata)
+          if Variables.is_mem spec_fv varname then rgdata
+          else
+            ( (Ident.Tvar (fst varname), snd varname),
+              get_rg (fst varname) prev_env stmts )
+            :: rgdata)
       |> List.rev
     in
     RGENV rgdata
@@ -376,7 +374,8 @@ end = struct
       StatementEnv.update using_stmt_key using_stmt new_stmts
     else new_stmts
 
-  let is_nondet_term _nondet_tvar _term = (* TODO *) true
+  let is_nondet_term nondet_tvar term =
+    (*ToDo*) Set.mem (Term.tvs_of term) nondet_tvar
 
   let rec is_nondet_formula nondet_tvar = function
     | Formula.Atom (atom, _) -> (*ToDo*) Set.mem (Atom.tvs_of atom) nondet_tvar
@@ -530,7 +529,7 @@ end = struct
 
   type sub_value_t = T_VALID | T_INVALID | T_NONDET | T_LIT of Term.t
 
-  let check_nondet rc = ReadGraph.is_once rc
+  let check_nondet ~has_init_def rc = ReadGraph.is_once rc && not has_init_def
 
   let sub_assign_one init_state rgenv stmt_key stmt_keys
       (query_stmt_key, new_stmts) =
@@ -544,14 +543,18 @@ end = struct
                (* TODO: simplify terms *)
                (* TODO: improve performance *)
                let rg = ReadGraph.rgenv_get (tvar, snd varname) rgenv in
+               let rc_init = ReadGraph.rg_get query_stmt_key rg in
+               let has_init_def =
+                 State.mem (fst varname) init_state
+                 && ReadGraph.mem stmt_key rc_init
+               in
                let init_value =
-                 let rc = ReadGraph.rg_get query_stmt_key rg in
-                 if ReadGraph.mem stmt_key rc then
+                 if ReadGraph.mem stmt_key rc_init then
                    if State.mem (fst varname) init_state then (
                      let term = State.get (fst varname) init_state in
                      assert (Term.tvs_of term |> Set.is_empty);
                      T_LIT term)
-                   else if check_nondet rc then T_NONDET
+                   else if check_nondet ~has_init_def rc_init then T_NONDET
                    else T_INVALID
                  else T_VALID
                in
@@ -587,7 +590,7 @@ end = struct
                            Stdlib.((varname', T_int.SInt) = varname)
                            && ReadGraph.mem stmt_key rc
                          then
-                           if check_nondet rc then update T_NONDET
+                           if check_nondet ~has_init_def rc then update T_NONDET
                            else T_INVALID
                          else value
                        else if is_nondet_real_assign stmt' then
@@ -599,7 +602,7 @@ end = struct
                            Stdlib.((varname', T_real.SReal) = varname)
                            && ReadGraph.mem stmt_key rc
                          then
-                           if check_nondet rc then update T_NONDET
+                           if check_nondet ~has_init_def rc then update T_NONDET
                            else T_INVALID
                          else value
                        else value
@@ -749,7 +752,7 @@ end = struct
       let used = StatementEnv.add stmt used in
       StatementEnv.get stmt prev_env
       |> List.fold ~init:used ~f:(fun used prev_stmt ->
-             dfs prev_env prev_stmt used)
+          dfs prev_env prev_stmt used)
 
   let optimize_stmt spec_fv query_stmt =
     let stmts = get_all_statements query_stmt in

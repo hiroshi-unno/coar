@@ -457,14 +457,13 @@ end = struct
           (final_states |> String.concat_map_set ~sep:", " ~f:string_of_node)
           (Array.to_list transition
           |> String.concat_mapi_list ~sep:"\n" ~f:(fun from_id toes ->
-                 sprintf " %s%s: %s"
-                   (if from_id = initial_state then ">" else " ")
-                   (if Set.mem final_states from_id then
-                      String.paren (string_of_node from_id)
-                    else sprintf " %s " (string_of_node from_id))
-                   (String.concat_map_list ~sep:", " toes
-                      ~f:(fun (to_id, label) ->
-                        sprintf "%s(%s)" (string_of_node to_id) (printer label))))
+              sprintf " %s%s: %s"
+                (if from_id = initial_state then ">" else " ")
+                (if Set.mem final_states from_id then
+                   String.paren (string_of_node from_id)
+                 else sprintf " %s " (string_of_node from_id))
+                (String.concat_map_list ~sep:", " toes ~f:(fun (to_id, label) ->
+                     sprintf "%s(%s)" (string_of_node to_id) (printer label))))
           )
 end
 
@@ -1321,7 +1320,7 @@ end = struct
     let state =
       Variables.to_list variables
       |> List.map ~f:(fun (varname, sort) ->
-             (varname, ref (Term.mk_var (Ident.Tvar varname) sort)))
+          (varname, ref (Term.mk_var (Ident.Tvar varname) sort)))
     in
     STATE state
 
@@ -1336,7 +1335,7 @@ end = struct
           let r = List.Assoc.find_exn ~equal:String.equal state varname in
           r := term;
           STATE state
-        with Not_found_s _ -> STATE state)
+        with Not_found_s _ -> STATE ((varname, ref term) :: state))
 
   let bounds_of = function
     | STATE state ->
@@ -1487,14 +1486,14 @@ end = struct
   let rec is_non_recursive_rep fundecls fundecl ancestors used =
     get_next_funnames fundecl
     |> List.fold_left ~init:(true, used) ~f:(fun (res, used) funname' ->
-           let fundecl' = find_fundecl funname' fundecls in
-           if not res then (false, used)
-           else if Variables.is_mem ancestors funname' then (true, used)
-           else if Variables.is_mem used funname' then (true, used)
-           else
-             is_non_recursive_rep fundecls fundecl'
-               (Variables.add funname' ancestors)
-               (Variables.add funname' used))
+        let fundecl' = find_fundecl funname' fundecls in
+        if not res then (false, used)
+        else if Variables.is_mem ancestors funname' then (true, used)
+        else if Variables.is_mem used funname' then (true, used)
+        else
+          is_non_recursive_rep fundecls fundecl'
+            (Variables.add funname' ancestors)
+            (Variables.add funname' used))
 
   let is_non_recursive fundecls fundecl =
     let funname = get_funname fundecl in
@@ -1537,7 +1536,7 @@ end = struct
         let ren =
           Map.Poly.of_alist_exn
           @@ List.map labels ~f:(fun (lab, _) ->
-                 (lab, lab ^ "_" ^ Int.to_string !cnt))
+              (lab, lab ^ "_" ^ Int.to_string !cnt))
         in
         FUN_VOID (funname, args, Statement.rename_labels ren stmt)
     | FUN_INT (funname, args, stmt) ->
@@ -1546,7 +1545,7 @@ end = struct
         let ren =
           Map.Poly.of_alist_exn
           @@ List.map labels ~f:(fun (lab, _) ->
-                 (lab, lab ^ "_" ^ Int.to_string !cnt))
+              (lab, lab ^ "_" ^ Int.to_string !cnt))
         in
         FUN_INT (funname, args, Statement.rename_labels ren stmt)
     | FUN_REAL (funname, args, stmt) ->
@@ -1555,7 +1554,7 @@ end = struct
         let ren =
           Map.Poly.of_alist_exn
           @@ List.map labels ~f:(fun (lab, _) ->
-                 (lab, lab ^ "_" ^ Int.to_string !cnt))
+              (lab, lab ^ "_" ^ Int.to_string !cnt))
         in
         FUN_REAL (funname, args, Statement.rename_labels ren stmt)
 end

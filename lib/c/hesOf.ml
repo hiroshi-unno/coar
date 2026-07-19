@@ -36,7 +36,7 @@ let get_funinfo prev_env env phi stmt =
     Variables.union phifv
       (ReadGraph.rgenv_entries rgenv
       |> List.filter ~f:(fun (_, rg) ->
-             ReadGraph.rg_get stmt rg |> ReadGraph.length > 0)
+          ReadGraph.rg_get stmt rg |> ReadGraph.length > 0)
       |> List.map ~f:(fst >> fun (x, s) -> (Ident.name_of_tvar x, s))
       |> Variables.of_list)
     |> State.of_variables
@@ -245,7 +245,7 @@ let hes_of_chmes ~print (hmes, decls, inits, query_stmt) =
     Variables.union hmes_fv
       (ReadGraph.rgenv_entries rgenv
       |> List.filter ~f:(fun (_, rg) ->
-             ReadGraph.rg_get stmt rg |> ReadGraph.length > 0)
+          ReadGraph.rg_get stmt rg |> ReadGraph.length > 0)
       |> List.map ~f:(fst >> fun (x, s) -> (Ident.name_of_tvar x, s))
       |> Variables.of_list)
     |> State.of_variables
@@ -359,8 +359,15 @@ let hes_of_chmes ~print (hmes, decls, inits, query_stmt) =
   in
   let query =
     let pvar = pvar_of query_stmt query_pvar in
-    let state = state_of query_stmt in
-    let state = List.fold_left ~f:Init.update_state ~init:state inits in
+    let state0 = state_of query_stmt in
+    let state1 = List.fold_left ~f:Init.update_state ~init:state0 inits in
+    let state =
+      State.bounds_of state0
+      |> List.fold_left ~init:state0 ~f:(fun acc (tvar, _) ->
+          let v = Ident.name_of_tvar tvar in
+          if State.mem v state1 then State.update v (State.get v state1) acc
+          else acc)
+    in
     let fml = State.appformula_of pvar state in
     let fml = List.fold_left ~f:Init.update_formula_E ~init:fml inits in
     let bounds =
