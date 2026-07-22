@@ -4,7 +4,7 @@ open Common.Combinator
 open Ast
 open Ast.LogicOld
 
-type theory = QBF | LRA | LIA | PLRA | PLIA
+type theory = QBF | LRA | LIA
 type player = SAT | UNSAT
 
 let decide_theory quantifiers =
@@ -22,10 +22,7 @@ let decide_theory quantifiers =
         match theory with QBF | LRA -> loop LRA tl | _ -> assert false)
     | _ -> assert false
   in
-  let theory = loop QBF sortlist in
-  if List.exists quantifiers ~f:(fst >> Formula.is_random) then
-    match theory with LRA -> PLRA | LIA -> PLIA | _ -> assert false
-  else theory
+  loop QBF sortlist
 
 let level_exists atom vlevel =
   Set.fold ~init:Z.zero (Atom.fvs_of atom) ~f:(fun level tvar ->
@@ -254,8 +251,8 @@ module QSAT (A : MBP_TYPE) = struct
             let core =
               List.filter_opt
               @@ List.map core ~f:(function
-                   | "main" -> None
-                   | v -> Map.Poly.find pvar_clause_map v)
+                | "main" -> None
+                | v -> Map.Poly.find pvar_clause_map v)
             in
             print
             @@ lazy

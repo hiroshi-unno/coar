@@ -108,18 +108,6 @@ module Make (Cfg : Config.ConfigType) = struct
       | LIA ->
           let open Qsat.QSAT (Mbp.LIA) in
           solve ~config ~print:Debug.print quantifiers f
-      | PLRA -> (
-          try
-            let open Pqsat.PQSAT_gen (Mbp.LRA) in
-            solve ~print:Debug.print quantifiers f 0.5
-          with exc ->
-            if true then raise exc
-            else
-              let open Sqsat.SampleQSAT (Mbp.LRA) in
-              solve ~print:Debug.print quantifiers f 0.5)
-      | PLIA ->
-          let open Pqsat.PQSAT_gen (Mbp.LIA) in
-          solve ~print:Debug.print quantifiers f 0.5
     in
     let solution =
       match res with
