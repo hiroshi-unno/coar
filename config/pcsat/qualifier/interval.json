@@ -11,6 +11,7 @@
     "add_bool": true,
     "add_homogeneous": false,
     "add_neg": false,
+    "add_func_qual_disj": true,
     "filter_out_neg": true,
     "filter_out_non_div_mod": false,
     "filter_out_quantified": false,

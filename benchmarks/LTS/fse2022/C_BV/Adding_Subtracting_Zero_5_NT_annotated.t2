@@ -1,0 +1,104 @@
+///*** 1_main ***///
+START: main_bb6;
+
+TYPE v30: bv(32);
+
+FROM: main_bb6;
+memory0_freeIndex := 1;
+memory1_freeIndex := 1;
+vmemory0 := nondet();
+vmemory1 := nondet();
+v30 := nondet();
+TO: main_bb6_end;
+
+FROM: main_bb6_end;
+assume((v30 sle 0) || (v30 sgt 65534));
+TO: main_bb12;
+
+FROM: main_bb6_end;
+assume((v30 sgt 0) && (v30 sle 65534));
+TO: main_bb7;
+
+FROM: main_bb7;
+v33 := memory0_freeIndex;
+v34 := memory0_freeIndex;
+v35 := v34 + 1;
+memory0_freeIndex := v35;
+v36 := sign_extend(32, 64, v33);
+v37 := select_array(vmemory0, v36);
+v38v1 := constr_tuple(v33);
+vmemory0 := store_array(vmemory0, v36, v38v1);
+var__temp_vcyclic.0.i := v33;
+var__temp_vi.0.i := 2;
+var__temp_vcyclic.0.i := v33;
+var__temp_vi.0.i := 2;
+TO: main_bb8;
+
+FROM: main_bb8;
+vcyclic.0.i := var__temp_vcyclic.0.i;
+vi.0.i := var__temp_vi.0.i;
+TO: main_bb8_end;
+
+FROM: main_bb8_end;
+assume(vi.0.i sle v30);
+TO: main_bb9;
+
+FROM: main_bb8_end;
+assume(vi.0.i sgt v30);
+TO: main_initLinkexit;
+
+FROM: main_bb9;
+v40 := memory0_freeIndex;
+v41 := memory0_freeIndex;
+v42 := v41 + 1;
+memory0_freeIndex := v42;
+v43 := sign_extend(32, 64, v40);
+v44 := select_array(vmemory0, v43);
+v45v1 := constr_tuple(v40);
+vmemory0 := store_array(vmemory0, v43, v45v1);
+v46 := sign_extend(32, 64, vcyclic.0.i);
+v47 := select_array(vmemory0, v46);
+v48v1 := constr_tuple(v40);
+vmemory0 := store_array(vmemory0, v46, v48v1);
+v49 := sign_extend(32, 64, vcyclic.0.i);
+v50 := select_array(vmemory0, v49);
+v52 := select_tuple(v50, 0, 1);
+v53 := vi.0.i + 1;
+var__temp_vcyclic.0.i := v52;
+var__temp_vi.0.i := v53;
+var__temp_vcyclic.0.i := v52;
+var__temp_vi.0.i := v53;
+TO: main_bb8;
+
+FROM: main_initLinkexit;
+v54 := sign_extend(32, 64, vcyclic.0.i);
+v55 := select_array(vmemory0, v54);
+v56v1 := constr_tuple(vcyclic.0.i);
+vmemory0 := store_array(vmemory0, v54, v56v1);
+var__temp_vip.0 := v33;
+var__temp_vip.0 := v33;
+TO: main_bb10;
+
+FROM: main_bb10;
+vip.0 := var__temp_vip.0;
+TO: main_bb10_end;
+
+FROM: main_bb10_end;
+assume(vip.0 != 0);
+TO: main_bb11;
+
+FROM: main_bb10_end;
+assume(vip.0 == 0);
+TO: main_bb12;
+
+FROM: main_bb11;
+v58 := sign_extend(32, 64, vip.0);
+v59 := select_array(vmemory0, v58);
+v61 := select_tuple(v59, 0, 1);
+var__temp_vip.0 := v61;
+var__temp_vip.0 := v61;
+TO: main_bb10;
+
+FROM: main_bb12;
+TO: main_bb12_ret;
+

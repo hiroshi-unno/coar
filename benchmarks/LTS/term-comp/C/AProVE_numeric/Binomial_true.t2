@@ -1,0 +1,248 @@
+///*** 1_main ***///
+START: main_bb7;
+FROM: main_bb7;
+v15 := nondet();
+TO: main_bb7_end;
+
+FROM: main_bb7_end;
+assume(v15 slt 0);
+TO: main_bb20;
+
+FROM: main_bb7_end;
+assume(v15 sge 0);
+TO: main_bb8;
+
+FROM: main_bb8;
+v17 := nondet();
+TO: main_bb8_end;
+
+FROM: main_bb8_end;
+assume(v17 slt 0);
+TO: main_bb20;
+
+FROM: main_bb8_end;
+assume(v17 sge 0);
+TO: main_bb9;
+
+FROM: main_bb9;
+v19 := nondet();
+var__temp_vn.0 := 0;
+var__temp_vn.0 := 0;
+TO: main_bb10;
+
+FROM: main_bb10;
+vn.0 := var__temp_vn.0;
+var__temp_vk.0 := 0;
+TO: main_bb10_end;
+
+FROM: main_bb10_end;
+assume(vn.0 sle v15);
+var__temp_vk.0 := 0;
+TO: main_bb11;
+
+FROM: main_bb10_end;
+assume(vn.0 sgt v15);
+TO: main_bb20;
+
+FROM: main_bb11;
+vk.0 := var__temp_vk.0;
+TO: main_bb11_end;
+
+FROM: main_bb11_end;
+assume(vk.0 sle v15);
+TO: main_bb12;
+
+FROM: main_bb11_end;
+assume(vk.0 sgt v15);
+TO: main_bb19;
+
+FROM: main_bb12;
+var__temp_vaccumulator.tr.i.i := 1;
+var__temp_vn.tr.i.i := vn.0;
+var__temp_vaccumulator.tr.i.i1 := 1;
+var__temp_vn.tr.i.i2 := vk.0;
+TO: main_bb12_end;
+
+FROM: main_bb12_end;
+assume(vk.0 sle vn.0);
+var__temp_vaccumulator.tr.i.i := 1;
+var__temp_vn.tr.i.i := vn.0;
+TO: main_tailrecurseii;
+
+FROM: main_bb12_end;
+assume(vk.0 sgt vn.0);
+var__temp_vaccumulator.tr.i.i1 := 1;
+var__temp_vn.tr.i.i2 := vk.0;
+TO: main_tailrecurseii3;
+
+FROM: main_tailrecurseii;
+vaccumulator.tr.i.i := var__temp_vaccumulator.tr.i.i;
+vn.tr.i.i := var__temp_vn.tr.i.i;
+var__temp_vaccumulator.tr.i5.i := 1;
+var__temp_vn.tr.i6.i := vk.0;
+TO: main_tailrecurseii_end;
+
+FROM: main_tailrecurseii_end;
+assume(vn.tr.i.i sle 0);
+var__temp_vaccumulator.tr.i5.i := 1;
+var__temp_vn.tr.i6.i := vk.0;
+TO: main_tailrecursei7i;
+
+FROM: main_tailrecurseii_end;
+assume(vn.tr.i.i sgt 0);
+TO: main_bb15;
+
+FROM: main_tailrecursei7i;
+vaccumulator.tr.i5.i := var__temp_vaccumulator.tr.i5.i;
+vn.tr.i6.i := var__temp_vn.tr.i6.i;
+TO: main_tailrecursei7i_end;
+
+FROM: main_tailrecursei7i_end;
+assume(vn.tr.i6.i sle 0);
+TO: main_factexit8i;
+
+FROM: main_tailrecursei7i_end;
+assume(vn.tr.i6.i sgt 0);
+TO: main_bb14;
+
+FROM: main_factexit8i;
+v25 := vn.0 - vk.0;
+var__temp_vaccumulator.tr.i1.i := 1;
+var__temp_vn.tr.i2.i := v25;
+var__temp_vaccumulator.tr.i1.i := 1;
+var__temp_vn.tr.i2.i := v25;
+TO: main_tailrecursei3i;
+
+FROM: main_tailrecursei3i;
+vaccumulator.tr.i1.i := var__temp_vaccumulator.tr.i1.i;
+vn.tr.i2.i := var__temp_vn.tr.i2.i;
+TO: main_tailrecursei3i_end;
+
+FROM: main_tailrecursei3i_end;
+assume(vn.tr.i2.i sle 0);
+TO: main_binomialCoefficientexit;
+
+FROM: main_tailrecursei3i_end;
+assume(vn.tr.i2.i sgt 0);
+TO: main_bb13;
+
+FROM: main_bb13;
+v27 := vn.tr.i2.i - 1;
+v28 := vn.tr.i2.i * vaccumulator.tr.i1.i;
+var__temp_vaccumulator.tr.i1.i := v28;
+var__temp_vn.tr.i2.i := v27;
+var__temp_vaccumulator.tr.i1.i := v28;
+var__temp_vn.tr.i2.i := v27;
+TO: main_tailrecursei3i;
+
+FROM: main_bb14;
+v29 := vn.tr.i6.i - 1;
+v30 := vn.tr.i6.i * vaccumulator.tr.i5.i;
+var__temp_vaccumulator.tr.i5.i := v30;
+var__temp_vn.tr.i6.i := v29;
+var__temp_vaccumulator.tr.i5.i := v30;
+var__temp_vn.tr.i6.i := v29;
+TO: main_tailrecursei7i;
+
+FROM: main_bb15;
+v31 := vn.tr.i.i - 1;
+v32 := vn.tr.i.i * vaccumulator.tr.i.i;
+var__temp_vaccumulator.tr.i.i := v32;
+var__temp_vn.tr.i.i := v31;
+var__temp_vaccumulator.tr.i.i := v32;
+var__temp_vn.tr.i.i := v31;
+TO: main_tailrecurseii;
+
+FROM: main_tailrecurseii3;
+vaccumulator.tr.i.i1 := var__temp_vaccumulator.tr.i.i1;
+vn.tr.i.i2 := var__temp_vn.tr.i.i2;
+var__temp_vaccumulator.tr.i5.i4 := 1;
+var__temp_vn.tr.i6.i5 := vn.0;
+TO: main_tailrecurseii3_end;
+
+FROM: main_tailrecurseii3_end;
+assume(vn.tr.i.i2 sle 0);
+var__temp_vaccumulator.tr.i5.i4 := 1;
+var__temp_vn.tr.i6.i5 := vn.0;
+TO: main_tailrecursei7i6;
+
+FROM: main_tailrecurseii3_end;
+assume(vn.tr.i.i2 sgt 0);
+TO: main_bb18;
+
+FROM: main_tailrecursei7i6;
+vaccumulator.tr.i5.i4 := var__temp_vaccumulator.tr.i5.i4;
+vn.tr.i6.i5 := var__temp_vn.tr.i6.i5;
+TO: main_tailrecursei7i6_end;
+
+FROM: main_tailrecursei7i6_end;
+assume(vn.tr.i6.i5 sle 0);
+TO: main_factexit8i7;
+
+FROM: main_tailrecursei7i6_end;
+assume(vn.tr.i6.i5 sgt 0);
+TO: main_bb17;
+
+FROM: main_factexit8i7;
+v35 := vk.0 - vn.0;
+var__temp_vaccumulator.tr.i1.i8 := 1;
+var__temp_vn.tr.i2.i9 := v35;
+var__temp_vaccumulator.tr.i1.i8 := 1;
+var__temp_vn.tr.i2.i9 := v35;
+TO: main_tailrecursei3i10;
+
+FROM: main_tailrecursei3i10;
+vaccumulator.tr.i1.i8 := var__temp_vaccumulator.tr.i1.i8;
+vn.tr.i2.i9 := var__temp_vn.tr.i2.i9;
+TO: main_tailrecursei3i10_end;
+
+FROM: main_tailrecursei3i10_end;
+assume(vn.tr.i2.i9 sle 0);
+TO: main_binomialCoefficientexit;
+
+FROM: main_tailrecursei3i10_end;
+assume(vn.tr.i2.i9 sgt 0);
+TO: main_bb16;
+
+FROM: main_binomialCoefficientexit;
+v37 := vk.0 + 1;
+var__temp_vk.0 := v37;
+var__temp_vk.0 := v37;
+TO: main_bb11;
+
+FROM: main_bb16;
+v38 := vn.tr.i2.i9 - 1;
+v39 := vn.tr.i2.i9 * vaccumulator.tr.i1.i8;
+var__temp_vaccumulator.tr.i1.i8 := v39;
+var__temp_vn.tr.i2.i9 := v38;
+var__temp_vaccumulator.tr.i1.i8 := v39;
+var__temp_vn.tr.i2.i9 := v38;
+TO: main_tailrecursei3i10;
+
+FROM: main_bb17;
+v40 := vn.tr.i6.i5 - 1;
+v41 := vn.tr.i6.i5 * vaccumulator.tr.i5.i4;
+var__temp_vaccumulator.tr.i5.i4 := v41;
+var__temp_vn.tr.i6.i5 := v40;
+var__temp_vaccumulator.tr.i5.i4 := v41;
+var__temp_vn.tr.i6.i5 := v40;
+TO: main_tailrecursei7i6;
+
+FROM: main_bb18;
+v42 := vn.tr.i.i2 - 1;
+v43 := vn.tr.i.i2 * vaccumulator.tr.i.i1;
+var__temp_vaccumulator.tr.i.i1 := v43;
+var__temp_vn.tr.i.i2 := v42;
+var__temp_vaccumulator.tr.i.i1 := v43;
+var__temp_vn.tr.i.i2 := v42;
+TO: main_tailrecurseii3;
+
+FROM: main_bb19;
+v44 := vn.0 + 1;
+var__temp_vn.0 := v44;
+var__temp_vn.0 := v44;
+TO: main_bb10;
+
+FROM: main_bb20;
+TO: main_bb20_ret;
+

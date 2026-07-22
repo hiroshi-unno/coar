@@ -1,0 +1,56 @@
+///*** 1_main ***///
+START: main_bb0;
+FROM: main_bb0;
+v0 := nondet();
+v1 := nondet();
+v2 := nondet();
+var__temp_vy.0 := v1;
+var__temp_vx.0 := v0;
+var__temp_vz.0 := v2;
+var__temp_vy.0 := v1;
+var__temp_vx.0 := v0;
+var__temp_vz.0 := v2;
+TO: main_bb1;
+
+FROM: main_bb1;
+vy.0 := var__temp_vy.0;
+vx.0 := var__temp_vx.0;
+vz.0 := var__temp_vz.0;
+TO: main_bb1_end;
+
+FROM: main_bb1_end;
+assume(vx.0 sge 0);
+TO: main_bb2;
+
+FROM: main_bb1_end;
+assume(vx.0 slt 0);
+TO: main_bb3;
+
+FROM: main_bb2;
+v4 := nondet();
+TO: main_bb2_vy.0.sink;
+FROM: main_bb2_vy.0.sink;
+assume(v4 != 0);
+vy.0.sink := vy.0;
+TO: main_bb2_svy.0.sink;
+
+FROM: main_bb2_vy.0.sink;
+assume(v4 == 0);
+vy.0.sink := vz.0;
+TO: main_bb2_svy.0.sink;
+
+FROM: main_bb2_svy.0.sink;
+v6 := vx.0 + vy.0.sink;
+v7 := vy.0 + vz.0;
+v8 := vz.0 - 1;
+var__temp_vy.0 := v7;
+var__temp_vx.0 := v6;
+var__temp_vz.0 := v8;
+var__temp_vy.0 := v7;
+var__temp_vx.0 := v6;
+var__temp_vz.0 := v8;
+TO: main_bb1;
+
+FROM: main_bb3;
+TO: main_bb3_ret;
+

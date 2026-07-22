@@ -24,7 +24,7 @@ let mk_nondet = function
 
 type lts =
   string option (* start *)
-  * (Ident.tvar * Sort.t) list (* types *)
+  * sort_env_list (* types *)
   * string option (* error *)
   * string option (* cutpoint *)
   * transition list
@@ -75,12 +75,12 @@ let commands_of_formula ~print args rel =
               (*ToDo: the following code is ad hoc*)
               if
                 Term.is_var t1
-                && Set.mem args_set (fst @@ fst @@ Term.let_var t1)
+                && Set.mem args_set (Term.tvar_of t1)
                 && Set.disjoint (Term.fvs_of t2) args_set
               then First (fst @@ Term.let_var t1, t2)
               else if
                 Term.is_var t2
-                && Set.mem args_set (fst @@ fst @@ Term.let_var t2)
+                && Set.mem args_set (Term.tvar_of t2)
                 && Set.disjoint (Term.fvs_of t1) args_set
               then First (fst @@ Term.let_var t2, t1)
               else Second phi
@@ -633,10 +633,16 @@ let rec cut_points_of g res =
 let analyze ~print ((s, types, e, c, trans) as lts) =
   print @@ lazy "************* simplifying LTS ***************";
   print @@ lazy (sprintf "input LTS:\n%s" @@ str_of_lts lts);
+  let trans_with_error =
+    match e with
+    | Some error_state -> (error_state, Skip, error_state) :: trans
+    | None -> trans
+  in
   match s with
   | None -> ((fun _ -> Set.Poly.empty), Set.Poly.empty, (s, types, e, c, trans))
   | Some s ->
-      let cfa = simplify ~print s (graph_of trans) in
+      let graph = graph_of trans_with_error in
+      let cfa = simplify ~print s graph in
       let live_vars = LiveVariables.analyze (fun _ -> Set.Poly.empty) cfa in
       let cut_points = cut_points_of (G.copy cfa) Set.Poly.empty in
       let lts' = (Some s, types, e, c, of_graph cfa) in

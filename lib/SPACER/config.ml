@@ -21,7 +21,7 @@ module type ConfigType = sig
   val config : t
 end
 
-let instantiate_ext_files cfg = 
+let instantiate_ext_files cfg =
   let open Or_error in
   Preprocessor.Config.load_ext_file cfg.preprocessor >>= fun preprocessor ->
   Ok { cfg with preprocessor }

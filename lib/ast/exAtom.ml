@@ -20,11 +20,14 @@ let mk_false () = mk_fcon (Map.Poly.empty, Formula.mk_false ())
 let mk_papp pvar sorts args = PApp ((pvar, sorts), args)
 let mk_ppapp pred pvar sorts args = PPApp (pred, ((pvar, sorts), args))
 
-let of_old_atom exi_senv cond = function
+let of_old_atom ?(bvs = Set.Poly.empty) exi_senv cond = function
   | Atom.App (Predicate.Var (pvar, sorts), terms, _) ->
       let param_senv =
         Set.Poly.union_list
-          (Formula.sort_env_of cond :: List.map ~f:Term.sort_env_of terms)
+          (Formula.sort_env_of cond
+          :: List.map terms
+               ~f:(Term.sort_env_of >> Set.filter ~f:(fst >> Set.mem bvs >> not))
+          )
       in
       if
         Set.is_empty param_senv
@@ -75,7 +78,11 @@ let pvar_sorts_of = function
 let tvs_of = function
   | FCon (_, phi) -> Formula.tvs_of phi
   | PApp ((_, _), ts) ->
-      assert (List.for_all ts ~f:(fun t -> Set.is_empty @@ Term.tvs_of t));
+      let dms =
+        Set.Poly.of_list @@ List.map ~f:fst @@ LogicOld.get_dummy_term_senv ()
+      in
+      assert (
+        List.for_all ts ~f:(fun t -> Set.is_subset (Term.tvs_of t) ~of_:dms));
       Set.Poly.empty
   | PPApp ((_, phi), ((_, _), ts)) ->
       Set.Poly.union_list (Formula.tvs_of phi :: List.map ~f:Term.tvs_of ts)
@@ -165,8 +172,12 @@ let to_formula_and_cond atm =
 
 let str_of_papp ((Ident.Pvar ident, _), terms) =
   sprintf "%s(%s)" ident
-  @@ String.concat_mapi_list ~sep:", " terms ~f:(fun _i ->
-      (*sprintf "[x%d] %s" (i+1) @@*) Term.str_of ~priority:Priority.comma)
+  @@ String.concat_mapi_list ~sep:", " terms ~f:(fun _i t ->
+      (*sprintf "[x%d] %s" (i+1) @@*)
+      let str = Term.str_of ~priority:Priority.comma ~c_style:false t in
+      if false then
+        String.paren @@ str ^ " : " ^ Term.str_of_sort (Term.sort_of t)
+      else str)
 
 let str_of = function
   | FCon (_, phi) -> Formula.str_of phi
@@ -225,7 +236,7 @@ let instantiate = function
               terms
               (*List.map terms ~f:(Evaluator.eval_term >> Term.of_value (get_dtenv ()))*)
             )
-        else PPApp ((Map.Poly.empty, Formula.mk_false ()), (target, terms))
+        else PPApp ((Map.Poly.empty, phi), (target, terms))
       with _ -> PPApp ((Map.Poly.empty, phi), (target, terms)))
 
 (* assume all parameters in phi/ts are in dom(map) *)

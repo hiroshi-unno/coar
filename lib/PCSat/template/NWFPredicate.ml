@@ -187,8 +187,12 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
   let gen_template ~ucore:_ (hspace : HypSpace.hspace) =
     let template =
       let quals_x, terms_x = Hashtbl.find_exn qual_term_map tag_l in
-      let quals_y, terms_y = Hashtbl.find_exn qual_term_map tag_r in
+      let quals_x = Set.to_list quals_x in
+      let terms_x = Set.to_list terms_x in
       let quals_y, terms_y =
+        let quals_y, terms_y = Hashtbl.find_exn qual_term_map tag_r in
+        let quals_y = Set.to_list quals_y in
+        let terms_y = Set.to_list terms_y in
         let ren =
           ren_of_sort_env_list
             (LogicOld.sort_env_list_of_sorts ~pre:""
@@ -197,10 +201,10 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
                ~start:(List.length sorts_shared + List.length sorts_l)
                sorts_r)
         in
-        ( Set.Poly.map quals_y ~f:(Formula.rename ren),
-          Set.Poly.map terms_y ~f:(Term.rename ren) )
+        ( List.map quals_y ~f:(Formula.rename ren),
+          List.map terms_y ~f:(Term.rename ren) )
       in
-      Templ.gen_simplified_nwf_predicate
+      Templ.gen_simplified_nwf_predicate ~print:Debug.print
         (*config.use_ifte*)
         (rcs, dcs, qds)
         {
@@ -223,8 +227,7 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
           bedc = Option.map config.bound_each_disc_coeff ~f:Z.of_int;
         }
         (params_shared, tag_l, params_left, tag_r, params_right)
-        (Set.to_list quals_x, Set.to_list terms_x)
-        (Set.to_list quals_y, Set.to_list terms_y)
+        (quals_x, terms_x) (quals_y, terms_y)
     in
     Debug.print
     @@ lazy

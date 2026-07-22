@@ -219,7 +219,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
 
   let gen_template ~ucore:_ (hspace : HypSpace.hspace) =
     let template =
-      Templ.gen_fn_predicate ~ignore_bool:config.ignore_bool
+      Templ.gen_fn_predicate ~print:Debug.print ~ignore_bool:config.ignore_bool
         {
           consts = Set.to_list hspace.consts;
           terms = Set.to_list hspace.terms;

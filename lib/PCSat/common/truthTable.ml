@@ -52,19 +52,19 @@ let clone_table t =
 let length_of_quals table = Hashtbl.Poly.length table.qenv
 let length_of_atoms table = Hashtbl.Poly.length table.aenv
 
-let eval_pred_aux ~id fenv qdeps (params, qual) (_param_senv, cond, _sorts, args)
-    =
-  if false then
-    print_endline
-      (sprintf "evaluating %s with (%s=>%s)" (Formula.str_of qual)
-         (Formula.str_of cond)
-         (String.concat_map_list ~sep:"," ~f:Term.str_of args));
+let eval_pred_aux ~print ~id fenv qdeps (params, qual)
+    (_param_senv, cond, _sorts, args) =
+  print
+  @@ lazy
+       (sprintf "[eval_pred_aux] evaluating %s with (%s => %s)"
+          (Formula.str_of qual) (Formula.str_of cond)
+          (String.concat_map_list ~sep:"," ~f:Term.str_of args));
   let cond' =
     match Map.Poly.find qdeps qual with
     | None -> Formula.mk_true ()
     | Some qdep ->
-        if false then
-          print_endline @@ sprintf "eval_qdep: %s" (QualDep.str_of qdep);
+        print
+        @@ lazy (sprintf "[eval_pred_aux] eval_qdep: %s" (QualDep.str_of qdep));
         let qdep =
           QualDep.map_atom qdep ~f:(function
             | QualDep.LFormula (phi, _) when Stdlib.(phi = qual) ->
@@ -77,13 +77,15 @@ let eval_pred_aux ~id fenv qdeps (params, qual) (_param_senv, cond, _sorts, args
     Map.Poly.of_alist_exn @@ List.zip_exn (List.map ~f:fst params) args
   in
   let phi = Formula.subst sub qual in
-  let cond' = Formula.subst sub cond' in
-  if false then
-    print_endline @@ sprintf "eval_qdep_cond: %s" (Formula.str_of cond');
-  Evaluator.check
-    ~cond:(Formula.mk_and cond cond')
-    (Z3Smt.Z3interface.is_valid ~id fenv)
-    phi
+  let cond = Formula.mk_and cond @@ Formula.subst sub cond' in
+  print @@ lazy (sprintf "[eval_pred_aux] cond: %s" (Formula.str_of cond));
+  print @@ lazy (sprintf "[eval_pred_aux] phi: %s" (Formula.str_of phi));
+  let res = Evaluator.check ~cond (Z3Smt.Z3interface.is_valid ~id fenv) phi in
+  (match res with
+  | Some true -> print @@ lazy "[eval_pred_aux] true"
+  | Some false -> print @@ lazy "[eval_pred_aux] false"
+  | None -> print @@ lazy "[eval_pred_aux] unknown");
+  res
 
 (* assume the ExAtom argument is papp or ppapp*)
 let eval_pred ~id fenv qdeps (params, qual) = function
@@ -94,7 +96,7 @@ let eval_pred ~id fenv qdeps (params, qual) = function
       eval_pred_aux ~id fenv qdeps (params, qual) (param_senv, cond, sorts, args)
   | _ -> assert false
 
-let update_with_atom ~id (table : table) fenv qdeps atom =
+let update_with_atom ~print ~id (table : table) fenv qdeps atom =
   if Hashtbl.Poly.mem table.aenv atom then ()
   else
     let ai = length_of_atoms table in
@@ -104,10 +106,12 @@ let update_with_atom ~id (table : table) fenv qdeps atom =
       table.table <-
         IncrBigArray2.auto_set table.table qi ai
           (res_encode
-          @@ eval_pred ~id fenv qdeps (table.params, table.qarr.(qi)) atom)
+          @@ eval_pred ~print ~id fenv qdeps
+               (table.params, table.qarr.(qi))
+               atom)
     done
 
-let update_with_qualifier ~id (table : table) fenv qdeps qual =
+let update_with_qualifier ~print ~id (table : table) fenv qdeps qual =
   if Hashtbl.Poly.mem table.qenv qual then ()
   else
     let qi = length_of_quals table in
@@ -117,7 +121,7 @@ let update_with_qualifier ~id (table : table) fenv qdeps qual =
       table.table <-
         IncrBigArray2.auto_set table.table qi ai
           (res_encode
-          @@ eval_pred ~id fenv qdeps (table.params, qual)
+          @@ eval_pred ~print ~id fenv qdeps (table.params, qual)
           @@ table.aarr.(ai))
     done
 
@@ -143,49 +147,52 @@ let get_table t pvar =
       update_map t pvar table;
       table
 
-let update_map_with_atom ~id t fenv hspaces atom =
+let update_map_with_atom ~print ~id t fenv hspaces atom =
   match ExAtom.pvar_of atom with
   | None -> ()
   | Some pvar ->
       let hspace = Hashtbl.Poly.find_exn hspaces (Ident.pvar_to_tvar pvar) in
-      update_with_atom ~id (get_table t pvar) fenv hspace.HypSpace.qdeps atom
+      update_with_atom ~print ~id (get_table t pvar) fenv hspace.HypSpace.qdeps
+        atom
 
-let update_map_with_atoms ~id t qdeps fenv =
-  Set.iter ~f:(update_map_with_atom ~id t fenv qdeps)
+let update_map_with_atoms ~print ~id t qdeps fenv =
+  Set.iter ~f:(update_map_with_atom ~print ~id t fenv qdeps)
 
-let update_map_with_example ~id t fenv hspaces example =
+let update_map_with_example ~print ~id t fenv hspaces example =
   Set.iter example.ExClause.negative
-    ~f:(update_map_with_atom ~id t fenv hspaces);
+    ~f:(update_map_with_atom ~print ~id t fenv hspaces);
   Set.iter example.ExClause.positive
-    ~f:(update_map_with_atom ~id t fenv hspaces)
+    ~f:(update_map_with_atom ~print ~id t fenv hspaces)
 
-let update_map_with_examples ~id t fenv hspaces =
-  Set.iter ~f:(update_map_with_example ~id t fenv hspaces)
+let update_map_with_examples ~print ~id t fenv hspaces =
+  Set.iter ~f:(update_map_with_example ~print ~id t fenv hspaces)
 
-let update_map_with_qualifiers ~id t fenv qdeps pvar (params, qualifiers) =
+let update_map_with_qualifiers ~print ~id t fenv qdeps pvar (params, qualifiers)
+    =
   let table = get_table t pvar in
   table.params <- params;
-  Set.iter qualifiers ~f:(update_with_qualifier ~id table fenv qdeps)
+  Set.iter qualifiers ~f:(update_with_qualifier ~print ~id table fenv qdeps)
 
 (* this may update truth table *)
-let index_of_atom ~id table fenv qdeps atom =
+let index_of_atom ~print ~id table fenv qdeps atom =
   match Hashtbl.Poly.find table.aenv atom with
   | Some ai -> ai
   | None ->
-      (*print_endline ("adding atom: " ^ ExAtom.str_of atom);*)
+      print
+      @@ lazy (sprintf "[index_of_atom] adding atom: %s" (ExAtom.str_of atom));
       let ai = length_of_atoms table in
-      update_with_atom ~id table fenv qdeps atom;
+      update_with_atom ~print ~id table fenv qdeps atom;
       ai
 
 (* this may update truth table *)
-let index_of_qual ~id table fenv qdeps qual =
+let index_of_qual ~print ~id table fenv qdeps qual =
   match Hashtbl.Poly.find table.qenv qual with
   | Some qi -> qi
   | None ->
-      if false then
-        print_endline (sprintf " adding qual: %s" (Formula.str_of qual));
+      print
+      @@ lazy (sprintf "[index_of_qual] adding qual: %s" (Formula.str_of qual));
       let qi = length_of_quals table in
-      update_with_qualifier ~id table fenv qdeps qual;
+      update_with_qualifier ~print ~id table fenv qdeps qual;
       qi
 
 (** qlist and alist *)
@@ -253,8 +260,8 @@ let reduced_alist_of (t : table) (qlist, alist) =
          if Set.mem memo example then (memo, alist)
          else (Set.add memo example, Map.Poly.add_exn alist ~key:ai ~data:l))
 
-(** remove redundant qualifiers
-    the prior qualifier in [qlist] is adopted if there are multiple indistinguishable qualifiers *)
+(** remove redundant qualifiers the prior qualifier in [qlist] is adopted if
+    there are multiple indistinguishable qualifiers *)
 let reduced_qlist_of (t : table) (qlist, alist) =
   let atoms_length = length_of_atoms t in
   let alist = Map.Poly.to_alist alist in

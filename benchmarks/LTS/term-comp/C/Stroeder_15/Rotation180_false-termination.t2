@@ -1,0 +1,21 @@
+///*** 1_main ***///
+START: main_bb0;
+FROM: main_bb0;
+v0 := nondet();
+v1 := nondet();
+var__temp_vx.0 := v0;
+var__temp_vy.0 := v1;
+var__temp_vx.0 := v0;
+var__temp_vy.0 := v1;
+TO: main_bb1;
+
+FROM: main_bb1;
+vx.0 := var__temp_vx.0;
+vy.0 := var__temp_vy.0;
+v2 := 0 - vy.0;
+var__temp_vx.0 := v2;
+var__temp_vy.0 := vx.0;
+var__temp_vx.0 := v2;
+var__temp_vy.0 := vx.0;
+TO: main_bb1;
+

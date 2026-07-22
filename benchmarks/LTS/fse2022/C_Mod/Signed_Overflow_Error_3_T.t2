@@ -1,0 +1,118 @@
+///*** 1_main ***///
+START: main_bb5;
+FROM: main_bb5;
+v12 := nondet_uint();
+var__temp_vnumber.0 := v12;
+var__temp_vwidth.0 := 1;
+var__temp_vnumber.0 := v12;
+var__temp_vwidth.0 := 1;
+TO: main_wrap_aroundexit2;
+
+FROM: main_wrap_aroundexit2;
+vnumber.0 := var__temp_vnumber.0;
+vwidth.0 := var__temp_vwidth.0;
+TO: main_wrap_aroundexit2_end;
+
+FROM: main_wrap_aroundexit2_end;
+assume(vnumber.0 >= 10);
+TO: main_bb6;
+
+FROM: main_wrap_aroundexit2_end;
+assume(vnumber.0 < 10);
+TO: main_bb13;
+
+FROM: main_bb6;
+v14 := vnumber.0 / 10;
+TO: main_bb6_end;
+
+FROM: main_bb6_end;
+assume(v14 > 4294967295);
+TO: main_bb7;
+
+FROM: main_bb6_end;
+assume(v14 <= 4294967295);
+TO: main_bb8;
+
+FROM: main_bb7;
+v16 := v14 - 4294967295;
+v17 := v16 - 1;
+v18 := v17 % 4294967296;
+var__temp_v.0.i := v18;
+var__temp_v.0.i := v18;
+TO: main_wrap_aroundexit;
+
+FROM: main_bb8;
+var__temp_v.0.i := v14;
+TO: main_bb8_end;
+
+FROM: main_bb8_end;
+assume(v14 < 0);
+TO: main_bb9;
+
+FROM: main_bb8_end;
+assume(v14 >= 0);
+var__temp_v.0.i := v14;
+TO: main_wrap_aroundexit;
+
+FROM: main_bb9;
+v20 := 0 - v14;
+v21 := v20 - 1;
+v22 := v21 % 4294967296;
+v23 := 4294967295 - v22;
+var__temp_v.0.i := v23;
+var__temp_v.0.i := v23;
+TO: main_wrap_aroundexit;
+
+FROM: main_wrap_aroundexit;
+v.0.i := var__temp_v.0.i;
+v24 := vwidth.0 + 1;
+TO: main_wrap_aroundexit_end;
+
+FROM: main_wrap_aroundexit_end;
+assume(v24 > 2147483647);
+TO: main_bb10;
+
+FROM: main_wrap_aroundexit_end;
+assume(v24 <= 2147483647);
+TO: main_bb11;
+
+FROM: main_bb10;
+v26 := v24 - 2147483647;
+v27 := v26 - 1;
+v28 := v27 % 4294967296;
+v29 := -2147483648 + v28;
+var__temp_vnumber.0 := v.0.i;
+var__temp_vwidth.0 := v29;
+var__temp_vnumber.0 := v.0.i;
+var__temp_vwidth.0 := v29;
+TO: main_wrap_aroundexit2;
+
+FROM: main_bb11;
+var__temp_vnumber.0 := v.0.i;
+var__temp_vwidth.0 := v24;
+TO: main_bb11_end;
+
+FROM: main_bb11_end;
+assume(v24 < -2147483648);
+TO: main_bb12;
+
+FROM: main_bb11_end;
+assume(v24 >= -2147483648);
+var__temp_vnumber.0 := v.0.i;
+var__temp_vwidth.0 := v24;
+TO: main_wrap_aroundexit2;
+
+FROM: main_bb12;
+v31 := -2147483648 - v24;
+v32 := v31 - 1;
+v33 := v32 % 4294967296;
+v34 := 2147483647 - v33;
+var__temp_vnumber.0 := v.0.i;
+var__temp_vwidth.0 := v34;
+var__temp_vnumber.0 := v.0.i;
+var__temp_vwidth.0 := v34;
+TO: main_wrap_aroundexit2;
+
+FROM: main_bb13;
+TO: main_bb13_ret;
+

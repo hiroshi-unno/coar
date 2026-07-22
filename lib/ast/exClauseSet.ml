@@ -10,27 +10,33 @@ let of_formula exi_senv phi : t =
   Set.Poly.filter_map ~f:(uncurry3 @@ ExClause.make exi_senv)
   @@ Formula.cnf_of exi_senv phi
 
+let print_log = false
+
 let of_model exi_senv pex (senv, phi) (* clause*) model : t =
   let map =
-    senv |> Map.Poly.to_alist
-    |> List.map ~f:(fun (id, sort) ->
-           ( (id, sort),
-             match List.find model ~f:(fst >> fst >> Stdlib.( = ) id) with
-             | None -> None
-             | Some (_, v) -> v ))
+    List.map (Map.Poly.to_alist senv) ~f:(fun (id, sort) ->
+        ( (id, sort),
+          match List.find model ~f:(fst >> fst >> Stdlib.( = ) id) with
+          | None -> None
+          | Some (_, v) -> v ))
     |> List.map ~f:(function
-         | (x, _), Some v ->
-             (*print_endline (Ident.name_of_tvar x ^ " |-> " ^ Term.str_of v)*)
-             (x, v)
-         | (x, s), None ->
-             (*print_endline (Ident.name_of_tvar x ^ " |-> *");*)
-             let sort = Logic.ExtTerm.to_old_sort s in
-             if pex then
-               ( x,
-                 Term.mk_var
-                   (Ident.mk_fresh_dontcare (Ident.name_of_tvar x))
-                   sort )
-             else (x, Term.mk_dummy sort))
+      | (x, s), Some v ->
+          let sort = Logic.ExtTerm.to_old_sort s in
+          if print_log then
+            print_endline
+              (Ident.name_of_tvar x ^ " : " ^ Term.str_of_sort sort ^ " |-> "
+             ^ Term.str_of v);
+          (x, v)
+      | (x, s), None ->
+          let sort = Logic.ExtTerm.to_old_sort s in
+          if print_log then
+            print_endline
+              (Ident.name_of_tvar x ^ " : " ^ Term.str_of_sort sort ^ " |-> *");
+          if pex then
+            ( x,
+              Term.mk_var (Ident.mk_fresh_dontcare (Ident.name_of_tvar x)) sort
+            )
+          else (x, Term.mk_dummy sort))
     |> Map.Poly.of_alist_exn
   in
   (*print_endline @@ sprintf "[of_model] before:%s\n" (Formula.str_of phi);*)
@@ -62,8 +68,8 @@ let to_clause_set exi_senv sample =
 
 let str_of ?(max_display = Some 20) sample =
   (match max_display with
-  | None -> Set.to_list sample
-  | Some max_display -> List.take (Set.to_list sample) max_display)
+    | None -> Set.to_list sample
+    | Some max_display -> List.take (Set.to_list sample) max_display)
   |> String.concat_map_list ~sep:";\n" ~f:ExClause.str_of
   |> fun res ->
   res

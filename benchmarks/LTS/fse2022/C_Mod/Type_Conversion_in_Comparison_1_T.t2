@@ -1,0 +1,119 @@
+///*** 1_main ***///
+START: main_bb5;
+FROM: main_bb5;
+v12 := nondet_ushort();
+v13 := nondet_int();
+var__temp_vs.0 := v12;
+var__temp_vi.0 := 0;
+var__temp_vs.0 := v12;
+var__temp_vi.0 := 0;
+TO: main_wrap_aroundexit2;
+
+FROM: main_wrap_aroundexit2;
+vs.0 := var__temp_vs.0;
+vi.0 := var__temp_vi.0;
+TO: main_wrap_aroundexit2_end;
+
+FROM: main_wrap_aroundexit2_end;
+assume(vi.0 < v13);
+TO: main_bb6;
+
+FROM: main_wrap_aroundexit2_end;
+assume(vi.0 >= v13);
+TO: main_bb13;
+
+FROM: main_bb6;
+v15 := vi.0 + 1;
+TO: main_bb6_end;
+
+FROM: main_bb6_end;
+assume(v15 > 2147483647);
+TO: main_bb7;
+
+FROM: main_bb6_end;
+assume(v15 <= 2147483647);
+TO: main_bb8;
+
+FROM: main_bb7;
+v17 := v15 - 2147483647;
+v18 := v17 - 1;
+v19 := v18 % 4294967296;
+v20 := -2147483648 + v19;
+var__temp_v.0.i := v20;
+var__temp_v.0.i := v20;
+TO: main_wrap_aroundexit;
+
+FROM: main_bb8;
+var__temp_v.0.i := v15;
+TO: main_bb8_end;
+
+FROM: main_bb8_end;
+assume(v15 < -2147483648);
+TO: main_bb9;
+
+FROM: main_bb8_end;
+assume(v15 >= -2147483648);
+var__temp_v.0.i := v15;
+TO: main_wrap_aroundexit;
+
+FROM: main_bb9;
+v22 := -2147483648 - v15;
+v23 := v22 - 1;
+v24 := v23 % 4294967296;
+v25 := 2147483647 - v24;
+var__temp_v.0.i := v25;
+var__temp_v.0.i := v25;
+TO: main_wrap_aroundexit;
+
+FROM: main_wrap_aroundexit;
+v.0.i := var__temp_v.0.i;
+v26 := vs.0 + 1;
+TO: main_wrap_aroundexit_end;
+
+FROM: main_wrap_aroundexit_end;
+assume(v26 > 65535);
+TO: main_bb10;
+
+FROM: main_wrap_aroundexit_end;
+assume(v26 <= 65535);
+TO: main_bb11;
+
+FROM: main_bb10;
+v28 := v26 - 65535;
+v29 := v28 - 1;
+v30 := v29 % 65536;
+var__temp_vs.0 := v30;
+var__temp_vi.0 := v.0.i;
+var__temp_vs.0 := v30;
+var__temp_vi.0 := v.0.i;
+TO: main_wrap_aroundexit2;
+
+FROM: main_bb11;
+var__temp_vs.0 := v26;
+var__temp_vi.0 := v.0.i;
+TO: main_bb11_end;
+
+FROM: main_bb11_end;
+assume(v26 < 0);
+TO: main_bb12;
+
+FROM: main_bb11_end;
+assume(v26 >= 0);
+var__temp_vs.0 := v26;
+var__temp_vi.0 := v.0.i;
+TO: main_wrap_aroundexit2;
+
+FROM: main_bb12;
+v32 := 0 - v26;
+v33 := v32 - 1;
+v34 := v33 % 65536;
+v35 := 65535 - v34;
+var__temp_vs.0 := v35;
+var__temp_vi.0 := v.0.i;
+var__temp_vs.0 := v35;
+var__temp_vi.0 := v.0.i;
+TO: main_wrap_aroundexit2;
+
+FROM: main_bb13;
+TO: main_bb13_ret;
+

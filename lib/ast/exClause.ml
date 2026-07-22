@@ -213,7 +213,7 @@ let normalize_params unknowns cl =
   let map =
     Map.Poly.of_alist_exn
     @@ List.mapi tvs ~f:(fun i x ->
-           (x, Ident.mk_dontcare (string_of_int (i + 1))))
+        (x, Ident.mk_dontcare (string_of_int (i + 1))))
   in
   rename map cl
 
@@ -221,8 +221,8 @@ let refresh_params senv cl =
   let map =
     Map.of_set_exn
     @@ Set.Poly.filter_map ~f:(fun x ->
-           if Map.Poly.mem senv x then None
-           else Some (x, Ident.mk_fresh_dontcare ""))
+        if Map.Poly.mem senv x then None
+        else Some (x, Ident.mk_fresh_dontcare ""))
     @@ tvs_of cl
   in
   rename map cl
@@ -293,7 +293,8 @@ let simplify unknowns pos neg (clause, srcs) =
     Some
       (normalize_params unknowns { positive = cl_pos; negative = cl_neg }, !srcs)
 
-let has_self_loop terms =
+let has_self_loop ?(drop = None) terms =
+  let terms = match drop with None -> terms | Some n -> List.drop terms n in
   let size = List.length terms / 2 in
   let ts1, ts2 = List.split_n terms size in
   let eq t1 t2 =
@@ -325,9 +326,9 @@ let rec simplify_nepvs nepvs clause =
   if
     Set.is_empty clause.positive
     && Set.for_all clause.negative ~f:(fun atm ->
-           match ExAtom.pvar_of atm with
-           | None -> false
-           | Some p -> Set.mem nepvs @@ Ident.pvar_to_tvar p)
+        match ExAtom.pvar_of atm with
+        | None -> false
+        | Some p -> Set.mem nepvs @@ Ident.pvar_to_tvar p)
   then
     match Set.find clause.negative ~f:(ExAtom.is_non_empty_atm nepvs) with
     | None -> clause

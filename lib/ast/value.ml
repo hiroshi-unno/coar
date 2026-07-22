@@ -78,16 +78,24 @@ let rec compare pos opi opr ?(opb = fun _ _ -> assert false) t1 t2 =
       else
         (if pos then List.for_all2_exn else List.exists2_exn)
           vs1 vs2 ~f:(compare pos opi opr ~opb)
-  | DTCons (name1, _pvs1, vs1), DTCons (name2, _pvs2, vs2)
-    when String.(name1 = name2) ->
-      if List.length vs1 <> List.length vs2 then
-        failwith "[Value.compare] type error: datatype lengths differ"
-      else
-        (if pos then List.for_all2_exn else List.exists2_exn)
-          vs1 vs2 ~f:(compare pos opi opr ~opb)
-  | _ -> failwith "[Value.compare] type error"
+  | DTCons (name1, _pvs1, vs1), DTCons (name2, _pvs2, vs2) ->
+      if String.(name1 = name2) then
+        if List.length vs1 <> List.length vs2 then
+          failwith "[Value.compare] type error: datatype lengths differ"
+        else
+          (if pos then List.for_all2_exn else List.exists2_exn)
+            vs1 vs2 ~f:(compare pos opi opr ~opb)
+      else false
+  | _ ->
+      failwith @@ "[Value.compare] type error: " ^ str_of t1 ^ " vs "
+      ^ str_of t2
 
-let equal = compare true Z.Compare.( = ) Q.( = ) ~opb:Stdlib.( = )
+let eq = compare true Z.Compare.( = ) Q.( = ) ~opb:Stdlib.( = )
+let neq = compare false Z.Compare.( <> ) Q.( <> ) ~opb:Stdlib.( <> )
+let leq = compare true (*ToDo*) Z.Compare.( <= ) Q.( <= )
+let geq = compare true (*ToDo*) Z.Compare.( >= ) Q.( >= )
+let lt = compare true (*ToDo*) Z.Compare.( < ) Q.( < )
+let gt = compare true (*ToDo*) Z.Compare.( > ) Q.( > )
 
 let neg = function
   | Bool _ -> failwith "[Value.neg] not supported for booleans"

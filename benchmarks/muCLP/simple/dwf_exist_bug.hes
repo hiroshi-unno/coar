@@ -1,0 +1,3 @@
+forall (n: int). P n
+s.t.
+P (x:int) : bool =mu exists (z:int). P x;

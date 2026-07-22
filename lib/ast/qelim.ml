@@ -123,7 +123,7 @@ let rec qelim_aux1 let_bounds bounds exi_senv (uni_senv, defs, phi) =
     let bounds' = Map.force_merge_list [ exi_senv; let_bounds; bounds ] in
     (uni_senv, defs, phi) |> elim_consts bounds'
     |> elim_eqcls let_bounds bounds'
-    |> reduce
+    |> elim_consts bounds' |> reduce
   in
   if Map.Poly.length uni_senv > Map.Poly.length uni_senv' then
     qelim_aux1 let_bounds bounds exi_senv (uni_senv', defs', phi')

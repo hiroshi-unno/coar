@@ -1,0 +1,63 @@
+///*** 1_main ***///
+START: main_bb4;
+FROM: main_bb4;
+memory0_freeIndex := 1;
+vmemory0 := nondet();
+v10 := nondet();
+TO: main_bb4_v.;
+FROM: main_bb4_v.;
+assume(v10 slt 1);
+v. := 1;
+TO: main_bb4_sv.;
+
+FROM: main_bb4_v.;
+assume(v10 sge 1);
+v. := v10;
+TO: main_bb4_sv.;
+
+FROM: main_bb4_sv.;
+v12 := v. * 1;
+v13 := memory0_freeIndex;
+v14 := memory0_freeIndex;
+v15 := v14 + v12;
+memory0_freeIndex := v15;
+v16 := v. - 1;
+v17 := v13 + v16;
+v18 := sign_extend(32, 64, v17);
+v19 := v18;
+vmemory0 := store_array(vmemory0, v18, 0);
+var__temp_vaccumulator.tr.i := 0;
+var__temp_vp.tr.i := v13;
+var__temp_vaccumulator.tr.i := 0;
+var__temp_vp.tr.i := v13;
+TO: main_tailrecursei;
+
+FROM: main_tailrecursei;
+vaccumulator.tr.i := var__temp_vaccumulator.tr.i;
+vp.tr.i := var__temp_vp.tr.i;
+v20 := sign_extend(32, 64, vp.tr.i);
+v21 := v20;
+v22 := select_array(vmemory0, v20);
+v23 := sign_extend(8, 32, v22);
+TO: main_tailrecursei_end;
+
+FROM: main_tailrecursei_end;
+assume(v23 == 0);
+TO: main_strlen_recexit;
+
+FROM: main_tailrecursei_end;
+assume(v23 != 0);
+TO: main_bb5;
+
+FROM: main_strlen_recexit;
+TO: main_strlen_recexit_ret;
+
+FROM: main_bb5;
+v25 := vp.tr.i + 1;
+v26 := 1 + vaccumulator.tr.i;
+var__temp_vaccumulator.tr.i := v26;
+var__temp_vp.tr.i := v25;
+var__temp_vaccumulator.tr.i := v26;
+var__temp_vp.tr.i := v25;
+TO: main_tailrecursei;
+

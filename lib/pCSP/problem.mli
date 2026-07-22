@@ -83,7 +83,7 @@ val nwfpvs_senv_of :
 val paritypvs_senv_of :
   t ->
   ( Ident.tvar,
-    Ident.tvar * Ident.tvar * Sort.t list * Ident.tvar * Sort.t list )
+    Kind.nwf * Ident.tvar * Sort.t list * Ident.tvar * Sort.t list )
   Map.Poly.t
 
 val fnpvs_of : t -> Ident.tvar_set
@@ -201,8 +201,11 @@ val sol_of_candidate : t -> CandSol.t -> term_subst_map
 val subst : ?bpvs:Ident.tvar_set -> ?elim:bool -> term_subst_map -> t -> t
 val cochc_to_chc : t -> t
 val elim_unsat_wf_predicates : print:(string lazy_t -> unit) -> t -> t
-val elim_dup_nwf_predicate : t -> t
-val elim_dup_fn_predicate : t -> t
+val elim_unsat_nwf_predicates : print:(string lazy_t -> unit) -> t -> t
+val elim_unsat_parity_predicates : print:(string lazy_t -> unit) -> t -> t
+val elim_triv_nwf_predicate : t -> t
+val elim_triv_parity_predicate : t -> t
+val elim_triv_fn_predicate : t -> t
 val merge_clauses : t -> t
 
 val is_qualified_partial_solution :

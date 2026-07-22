@@ -1,0 +1,132 @@
+///*** 1_main ***///
+START: main_bb5;
+FROM: main_bb5;
+v12 := nondet_uint();
+v13 := nondet_uint();
+TO: main_bb5_v.;
+FROM: main_bb5_v.;
+assume(v12 < v13);
+v. := v13;
+TO: main_bb5_sv.;
+
+FROM: main_bb5_v.;
+assume(v12 >= v13);
+v. := v12;
+TO: main_bb5_sv.;
+
+FROM: main_bb5_sv.;
+var__temp_vui.0 := 1;
+var__temp_vui.0 := 1;
+TO: main_wrap_aroundexit2;
+
+FROM: main_wrap_aroundexit2;
+vui.0 := var__temp_vui.0;
+TO: main_wrap_aroundexit2_end;
+
+FROM: main_wrap_aroundexit2_end;
+assume(vui.0 < v.);
+TO: main_bb6;
+
+FROM: main_wrap_aroundexit2_end;
+assume(vui.0 >= v.);
+TO: main_critedge;
+
+FROM: main_bb6;
+v16 := vui.0 * 2;
+TO: main_bb6_end;
+
+FROM: main_bb6_end;
+assume(v16 > 4294967295);
+TO: main_bb7;
+
+FROM: main_bb6_end;
+assume(v16 <= 4294967295);
+TO: main_bb8;
+
+FROM: main_bb7;
+v18 := v16 - 4294967295;
+v19 := v18 - 1;
+v20 := v19 % 4294967296;
+var__temp_v.0.i := v20;
+var__temp_v.0.i := v20;
+TO: main_wrap_aroundexit;
+
+FROM: main_bb8;
+var__temp_v.0.i := v16;
+TO: main_bb8_end;
+
+FROM: main_bb8_end;
+assume(v16 < 0);
+TO: main_bb9;
+
+FROM: main_bb8_end;
+assume(v16 >= 0);
+var__temp_v.0.i := v16;
+TO: main_wrap_aroundexit;
+
+FROM: main_bb9;
+v22 := 0 - v16;
+v23 := v22 - 1;
+v24 := v23 % 4294967296;
+v25 := 4294967295 - v24;
+var__temp_v.0.i := v25;
+var__temp_v.0.i := v25;
+TO: main_wrap_aroundexit;
+
+FROM: main_wrap_aroundexit;
+v.0.i := var__temp_v.0.i;
+TO: main_wrap_aroundexit_end;
+
+FROM: main_wrap_aroundexit_end;
+assume(v.0.i > vui.0);
+TO: main_bb10;
+
+FROM: main_wrap_aroundexit_end;
+assume(v.0.i <= vui.0);
+TO: main_critedge;
+
+FROM: main_bb10;
+v27 := vui.0 * 2;
+TO: main_bb10_end;
+
+FROM: main_bb10_end;
+assume(v27 > 4294967295);
+TO: main_bb11;
+
+FROM: main_bb10_end;
+assume(v27 <= 4294967295);
+TO: main_bb12;
+
+FROM: main_bb11;
+v29 := v27 - 4294967295;
+v30 := v29 - 1;
+v31 := v30 % 4294967296;
+var__temp_vui.0 := v31;
+var__temp_vui.0 := v31;
+TO: main_wrap_aroundexit2;
+
+FROM: main_bb12;
+var__temp_vui.0 := v27;
+TO: main_bb12_end;
+
+FROM: main_bb12_end;
+assume(v27 < 0);
+TO: main_bb13;
+
+FROM: main_bb12_end;
+assume(v27 >= 0);
+var__temp_vui.0 := v27;
+TO: main_wrap_aroundexit2;
+
+FROM: main_bb13;
+v33 := 0 - v27;
+v34 := v33 - 1;
+v35 := v34 % 4294967296;
+v36 := 4294967295 - v35;
+var__temp_vui.0 := v36;
+var__temp_vui.0 := v36;
+TO: main_wrap_aroundexit2;
+
+FROM: main_critedge;
+TO: main_critedge_ret;
+

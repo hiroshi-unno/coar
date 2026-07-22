@@ -1,0 +1,66 @@
+///*** 1_main ***///
+START: main_bb9;
+FROM: main_bb9;
+memory0_freeIndex := 1;
+memory1_freeIndex := 1;
+vmemory1 := nondet();
+vmemory0 := nondet();
+v20 := nondet();
+var__temp_vi.0.i := 0;
+var__temp_vsum.0.i := 0;
+var__temp_vi.0.i := 0;
+var__temp_vsum.0.i := 0;
+TO: main_bb10;
+
+FROM: main_bb10;
+vi.0.i := var__temp_vi.0.i;
+vsum.0.i := var__temp_vsum.0.i;
+var__temp_vsum.1.i := vsum.0.i;
+TO: main_bb10_end;
+
+FROM: main_bb10_end;
+assume(vi.0.i slt v20);
+var__temp_vsum.1.i := vsum.0.i;
+TO: main_bb11;
+
+FROM: main_bb10_end;
+assume(vi.0.i sge v20);
+TO: main_sumOfThirdBytesexit;
+
+FROM: main_bb11;
+vsum.1.i := var__temp_vsum.1.i;
+v22 := 0;
+v23 := select_array(vmemory1, 0);
+v24 := sign_extend(8, 32, v23);
+TO: main_bb11_end;
+
+FROM: main_bb11_end;
+assume(v24 sgt 0);
+TO: main_bb12;
+
+FROM: main_bb11_end;
+assume(v24 sle 0);
+TO: main_bb13;
+
+FROM: main_bb12;
+v26 := vsum.1.i + 1;
+v27 := 0;
+v28 := select_array(vmemory1, 0);
+v29 := v28 + -1;
+v30 := 0;
+vmemory1 := store_array(vmemory1, 0, v29);
+var__temp_vsum.1.i := v26;
+var__temp_vsum.1.i := v26;
+TO: main_bb11;
+
+FROM: main_bb13;
+v31 := vi.0.i + 1;
+var__temp_vi.0.i := v31;
+var__temp_vsum.0.i := vsum.1.i;
+var__temp_vi.0.i := v31;
+var__temp_vsum.0.i := vsum.1.i;
+TO: main_bb10;
+
+FROM: main_sumOfThirdBytesexit;
+TO: main_sumOfThirdBytesexit_ret;
+

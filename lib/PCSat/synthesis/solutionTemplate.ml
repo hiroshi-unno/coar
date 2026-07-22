@@ -522,24 +522,44 @@ module Make
           else Logic.ExtTerm.(eq_of SInt (mk_var key) (zero ())))
     else (*never use*) Logic.ExtTerm.(eq_of SInt (mk_var key) (zero ()))
 
+  let print_log = false
+
   let eval_qual tt fenv qdeps polarity unknowns atom (key, (qi, _params, phi)) =
     if Set.disjoint (ExAtom.tvs_of atom) unknowns then (
-      (*Debug.print @@ lazy "before";*)
+      if print_log then
+        Debug.print
+        @@ lazy (sprintf "[eval_qual] original: %s" (ExAtom.str_of atom));
       let atom = ExAtom.normalize_params atom in
-      (*Debug.print @@ lazy "mid";*)
+      if print_log then
+        Debug.print
+        @@ lazy (sprintf "[eval_qual] normalized: %s" (ExAtom.str_of atom));
       let atom = ExAtom.instantiate atom in
-      (*Debug.print @@ lazy "after";*)
-      let ai = TruthTable.index_of_atom ~id tt fenv qdeps atom in
+      if print_log then
+        Debug.print
+        @@ lazy (sprintf "[eval_qual] instantiated: %s" (ExAtom.str_of atom));
+      if print_log then
+        Debug.print
+        @@ lazy
+             (sprintf "[eval_qual] %s on %s" (ExAtom.str_of atom)
+                (Formula.str_of phi));
+      let ai =
+        TruthTable.index_of_atom
+          ~print:(if print_log then Debug.print ~id else fun _ -> ())
+          ~id tt fenv qdeps atom
+      in
       match tt.table.{qi, ai} with
-      | 1 -> Logic.ExtTerm.(geq_of (mk_var key) (zero ()))
-      | -1 -> Logic.ExtTerm.(leq_of (mk_var key) (zero ()))
+      | 1 ->
+          if print_log then Debug.print @@ lazy "[eval_qual] pos";
+          Logic.ExtTerm.(geq_of (mk_var key) (zero ()))
+      | -1 ->
+          if print_log then Debug.print @@ lazy "[eval_qual] neg";
+          Logic.ExtTerm.(leq_of (mk_var key) (zero ()))
       | _ ->
-          if false then
+          if print_log then
             Debug.print
             @@ lazy
-                 (ExAtom.str_of atom ^ " on " ^ Formula.str_of phi
-                ^ " couldn't be evaluated.  This may cause a violation of the \
-                   progress property.");
+                 "[eval_qual] couldn't be evaluated.  This may cause a \
+                  violation of the progress property.";
           if not polarity then Logic.ExtTerm.mk_bool true
           else Logic.ExtTerm.(eq_of SInt (mk_var key) (zero ())))
     else (*never use*) Logic.ExtTerm.(eq_of SInt (mk_var key) (zero ()))
@@ -594,7 +614,8 @@ module Make
       @@ lazy ("size after: " ^ string_of_int @@ Logic.ExtTerm.ast_size term');
     term'
 
-  let cgen_from_ppapp vs template_map qualifiers_map unknowns polarity atom =
+  let cgen_from_ppapp vs template_map qualifiers_map unknowns polarity
+      _param_senv _temp_param_senv atom =
     let pvar, sorts =
       match (ExAtom.pvar_of atom, ExAtom.sorts_of atom) with
       | Some pvar, Some sorts -> (pvar, sorts)
@@ -606,7 +627,8 @@ module Make
     let tt = TruthTable.get_table vs.VersionSpace.truth_table pvar in
     let fenv = vs.fenv in
     let qdeps = VersionSpace.qdeps_of pvar vs in
-    Debug.print @@ lazy "[cgen_from_ppapp] generating hole map";
+    if print_log then
+      Debug.print @@ lazy "[cgen_from_ppapp] generating hole map";
     let hole_map =
       Map.Poly.of_alist_exn
       @@ hole_map_of hole_qualifiers_map sorts
@@ -634,31 +656,44 @@ module Make
       Debug.print
       @@ lazy ("size mid: " ^ string_of_int @@ Logic.ExtTerm.ast_size term');
     let term' = Logic.Term.subst hole_map term' in
+    (*if print_log then
+      Debug.print
+      @@ lazy
+           (sprintf "[cgen_from_ppapp] generated constr: %s"
+              (LogicOld.Term.str_of
+              @@ Logic.ExtTerm.to_old_trm Map.Poly.empty
+                   (Map.force_merge param_senv temp_param_senv)
+                   term'));*)
     if false then
       Debug.print
       @@ lazy ("size after: " ^ string_of_int @@ Logic.ExtTerm.ast_size term');
     term'
 
-  let cgen_from_exatom vs template_map qualifiers_map unknowns polarity =
-    function
+  let cgen_from_exatom vs template_map qualifiers_map unknowns param_senv
+      temp_param_senv polarity = function
     | ExAtom.FCon (param_senv, phi) ->
         (if polarity then Fn.id else Logic.BoolTerm.neg_of)
         @@ cgen_from_fcon template_map qualifiers_map unknowns polarity
              (param_senv, phi)
-    | (ExAtom.PApp ((_, _), _) | ExAtom.PPApp ((_, _), ((_, _), _))) as atom ->
-        cgen_from_ppapp vs template_map qualifiers_map unknowns polarity atom
+    | ExAtom.(PApp ((_, _), _) | PPApp ((_, _), ((_, _), _))) as atom ->
+        cgen_from_ppapp vs template_map qualifiers_map unknowns polarity
+          param_senv temp_param_senv atom
 
   let _ = Random.init 0
 
-  let cgen_from_pex vs template_map qualifiers_map unknowns clause =
+  let cgen_from_pex vs template_map qualifiers_map unknowns temp_param_senv
+      clause =
+    let param_senv = Logic.of_old_sort_env_map @@ ExClause.params_of clause in
     let phi =
-      let f = cgen_from_exatom vs template_map qualifiers_map unknowns in
+      let f =
+        cgen_from_exatom vs template_map qualifiers_map unknowns param_senv
+          temp_param_senv
+      in
       Logic.BoolTerm.or_of @@ Set.to_list
       @@ Set.union
            (Set.Poly.map clause.ExClause.positive ~f:(f true))
            (Set.Poly.map clause.ExClause.negative ~f:(f false))
     in
-    let param_senv = Logic.of_old_sort_env_map @@ ExClause.params_of clause in
     match config.pex_strategy with
     | Quantify -> Logic.BoolTerm.forall (Map.Poly.to_alist param_senv) phi
     | InstRand num ->
@@ -692,9 +727,10 @@ module Make
 
   (* for SMT Solver *)
 
-  let create_smt_instance () =
+  let create_smt_instance ?(ucore = true) () =
     let ctx =
-      Z3.mk_context [ ("model", "true"); ("unsat_core", "true") ]
+      Z3.mk_context
+        (("model", "true") :: (if ucore then [ ("unsat_core", "true") ] else []))
       (*dummy*)
     in
     let solver =
@@ -712,7 +748,6 @@ module Make
     { ctx; solver; z3dtenv; z3fenv; smt_timeout }
 
   let default_smt_instance = create_smt_instance ()
-  let ucore_smt_instance = create_smt_instance ()
 
   let partial_sol_smt_instance =
     Map.Poly.map ~f:(fun _ -> create_smt_instance ())
@@ -733,7 +768,6 @@ module Make
 
   let reset_all_smt_instances () =
     reset_smt_instance default_smt_instance;
-    reset_smt_instance ucore_smt_instance;
     Map.Poly.iter partial_sol_smt_instance ~f:reset_smt_instance
 
   (* for restart and templates/quals/terms update *)
@@ -747,6 +781,7 @@ module Make
 
   (* for incremental solving *)
   let prev_sample = ref Set.Poly.empty
+  let prev_cand = ref Map.Poly.empty
 
   let ref_templates =
     ref (Map.Poly.empty, Map.Poly.empty, Map.Poly.empty, Map.Poly.empty)
@@ -767,11 +802,12 @@ module Make
     ref (Map.Poly.empty, Map.Poly.empty, Map.Poly.empty, Map.Poly.empty)
 
   let init_incr () =
-    Debug.print @@ lazy "PCSat initialized";
+    Debug.print @@ lazy "incremental SMT solver initialized";
     iters_after_updated := 0;
     ref_key_tvar_update_list_map := Map.Poly.empty;
     ref_key_clause_map := Map.Poly.empty;
-    prev_sample := Set.Poly.empty
+    prev_sample := Set.Poly.empty;
+    prev_cand := Map.Poly.empty
   (*
   let initialize () =
     (* for SMT Solver *)
@@ -802,7 +838,8 @@ module Make
   let smt_timeout = ref (Some 16000) (*ToDo*)
   let threshold_ignore_bounds_constrs = 64 (*ToDo*)
 
-  let cgen ?(temporary_sample = Set.Poly.empty) sample (vs : VersionSpace.t)
+  let cgen ?(incr = false) ?(temporary_sample = Set.Poly.empty) sample
+      (vs : VersionSpace.t)
       ( (temp_param_senv : Logic.sort_env_map),
         (templates : (Ident.tvar, Logic.Sort.t * constr) Map.Poly.t),
         (temp_param_cnstrs :
@@ -824,31 +861,38 @@ module Make
     let template_map = Map.Poly.map templates ~f:snd in
     let temporary_constrs =
       Set.Poly.map temporary_sample ~f:(fun clause ->
-          Debug.print
-          @@ lazy
-               (sprintf "gen temporary_constrs of temporary example: %s"
-               @@ ExClause.str_of clause);
+          if print_log then
+            Debug.print
+            @@ lazy
+                 (sprintf "gen temporary_constrs of temporary example: %s"
+                 @@ ExClause.str_of clause);
           let constr =
             let unknowns =
               Set.filter (ExClause.tvs_of clause) ~f:(Map.Poly.mem templates)
             in
             Evaluator.simplify
             @@ Logic.ExtTerm.to_old_fml Map.Poly.empty temp_param_senv
-            @@ cgen_from_pex vs template_map qualifiers_map unknowns clause
+            @@ cgen_from_pex vs template_map qualifiers_map unknowns
+                 temp_param_senv clause
           in
-          Debug.print
-          @@ lazy (sprintf "temporary constr: %s" @@ Formula.str_of constr);
+          if print_log then
+            Debug.print
+            @@ lazy (sprintf "temporary constr: %s" @@ Formula.str_of constr);
           constr)
     in
     let key_constr_map, key_tvar_update_list_map, key_clause_map =
       Set.fold
         ~init:
-          (Map.Poly.empty, !ref_key_tvar_update_list_map, !ref_key_clause_map)
+          (if incr then
+             (Map.Poly.empty, !ref_key_tvar_update_list_map, !ref_key_clause_map)
+           else (Map.Poly.empty, Map.Poly.empty, Map.Poly.empty))
         sample
         ~f:(fun
             (key_constr_map, key_tvar_update_list_map, key_clause_map) clause ->
-          Debug.print
-          @@ lazy (sprintf "gen constr of example: %s" @@ ExClause.str_of clause);
+          if print_log then
+            Debug.print
+            @@ lazy
+                 (sprintf "gen constr of example: %s" @@ ExClause.str_of clause);
           (*let templates =
                 Map.Poly.mapi templates ~f:(fun ~key:tvar ~data:(sort, term) ->
                     let hole_qualifiers_map =
@@ -896,11 +940,13 @@ module Make
             let constr =
               Evaluator.simplify
               @@ Logic.ExtTerm.to_old_fml Map.Poly.empty temp_param_senv
-              @@ cgen_from_pex vs template_map qualifiers_map unknowns clause
+              @@ cgen_from_pex vs template_map qualifiers_map unknowns
+                   temp_param_senv clause
             in
             (*Z3Smt.Z3interface.simplify ~id (LogicOld.get_fenv ())
             @@*)
-            Evaluator.simplify @@ Normalizer.normalize
+            Evaluator.simplify
+            @@ (if false then Normalizer.normalize else Fn.id)
             @@
             if
               Set.exists
@@ -924,8 +970,9 @@ module Make
                  @@ lc_to_yojson { label = key; constr = Formula.str_of constr }
                  );
             RLConfig.unlock ());
-          Debug.print
-          @@ lazy (sprintf "** constr: [%s] %s" key (Formula.str_of constr));
+          if print_log then
+            Debug.print
+            @@ lazy (sprintf "** constr: [%s] %s" key (Formula.str_of constr));
           ( Map.Poly.add_exn key_constr_map ~key ~data:constr,
             Map.Poly.add_exn key_tvar_update_list_map ~key ~data:update_map,
             Map.Poly.add_exn key_clause_map ~key ~data:clause ))
@@ -1075,10 +1122,11 @@ module Make
             (key_constr_map, key_tvar_update_list_map)
           else
             let key = get_key () in
-            Debug.print
-            @@ lazy
-                 (sprintf "** fn pred constr: [%s] %s" key
-                    (Formula.str_of constr));
+            if print_log then
+              Debug.print
+              @@ lazy
+                   (sprintf "** fn pred constr: [%s] %s" key
+                      (Formula.str_of constr));
             ( Map.Poly.add_exn key_constr_map ~key ~data:constr,
               Map.Poly.add_exn key_tvar_update_list_map ~key
                 ~data:
@@ -1122,10 +1170,11 @@ module Make
                                 constr = Formula.str_of param_constr;
                               });
                     RLConfig.unlock ());
-                  Debug.print
-                  @@ lazy
-                       (sprintf "** bounds constr: [%s] %s" key
-                          (Formula.str_of param_constr));
+                  if print_log then
+                    Debug.print
+                    @@ lazy
+                         (sprintf "** bounds constr: [%s] %s" key
+                            (Formula.str_of param_constr));
                   ( Map.Poly.add_exn key_constr_map ~key ~data:param_constr,
                     Map.Poly.add_exn key_tvar_update_list_map ~key
                       ~data:[ (tvar, update_label) ] )))
@@ -1142,12 +1191,14 @@ module Make
         then key_constr_map
         else
           let key = get_key () in
-          Debug.print
-          @@ lazy (sprintf "uterm_constr %s: %s" key (Formula.str_of phi));
+          if print_log then
+            Debug.print
+            @@ lazy (sprintf "uterm_constr %s: %s" key (Formula.str_of phi));
           Map.Poly.add_exn key_constr_map ~key ~data:phi
     in
-    ref_key_tvar_update_list_map := key_tvar_update_list_map;
-    ref_key_clause_map := key_clause_map;
+    if incr then (
+      ref_key_tvar_update_list_map := key_tvar_update_list_map;
+      ref_key_clause_map := key_clause_map);
     Debug.print @@ lazy "constraints generated";
     ( temporary_constrs,
       key_constr_map,
@@ -1201,8 +1252,9 @@ module Make
           @@ List.filter_map unsat_keys ~f:(fun key ->
               Map.Poly.find key_clause_map key)
         in
-        Debug.print
-        @@ lazy (sprintf "*** unsat cores:\n%s" (ExClauseSet.str_of ucores));
+        if ucore && config.compute_ucores then
+          Debug.print
+          @@ lazy (sprintf "*** unsat cores:\n%s" (ExClauseSet.str_of ucores));
         if RLCfg.config.enable && RLCfg.config.show_unsat_core then (
           RLConfig.lock ();
           Debug.print_stdout
@@ -1220,6 +1272,41 @@ module Make
                         | Some labels -> Set.add labels label
                         | None -> Set.Poly.singleton label))
               | None -> map)
+        in
+        let pvar_labels_map =
+          pvar_labels_map |> Map.Poly.to_alist
+          |> List.classify (fun (pvar1, _) (pvar2, _) ->
+              if
+                PCSP.Problem.is_parity_pred APCSP.problem pvar1
+                && PCSP.Problem.is_parity_pred APCSP.problem pvar2
+              then
+                match
+                  ( PCSP.Problem.kind_of APCSP.problem pvar1,
+                    PCSP.Problem.kind_of APCSP.problem pvar2 )
+                with
+                | Kind.Parity (nwf1, _), Kind.Parity (nwf2, _) ->
+                    Ident.tvar_equal nwf1.Kind.name nwf2.Kind.name
+                | _, _ -> assert false
+              else if
+                PCSP.Problem.is_nwf_pred APCSP.problem pvar1
+                && PCSP.Problem.is_nwf_pred APCSP.problem pvar2
+              then
+                match
+                  ( PCSP.Problem.kind_of APCSP.problem pvar1,
+                    PCSP.Problem.kind_of APCSP.problem pvar2 )
+                with
+                | Kind.NWF (nwf1, _), Kind.NWF (nwf2, _) ->
+                    Ident.tvar_equal nwf1.Kind.name nwf2.Kind.name
+                | _, _ -> assert false
+              else Ident.tvar_equal pvar1 pvar2)
+          |> List.fold ~init:Map.Poly.empty ~f:(fun map pvar_labels_list ->
+              let pvar, _ = List.hd_exn pvar_labels_list in
+              let labels =
+                Set.Poly.union_list @@ List.map pvar_labels_list ~f:snd
+              in
+              Map.Poly.update map pvar ~f:(function
+                | Some labels' -> Set.union labels' labels
+                | None -> labels))
         in
         UnsatCore (ucores, pvar_labels_map)
     (*| `Unknown _reason -> (*failwith reason*)(*UnsatCore Map.Poly.empty*) (*ToDo*)*)
@@ -1261,7 +1348,10 @@ module Make
               ( tvar,
                 List.map quals ~f:(fun (tvar, (env, phi)) ->
                     ( tvar,
-                      ( TruthTable.index_of_qual ~id tt vs.fenv
+                      ( TruthTable.index_of_qual
+                          ~print:
+                            (if print_log then Debug.print ~id else fun _ -> ())
+                          ~id tt vs.fenv
                           (VersionSpace.qdeps_of pvar vs)
                           phi,
                         env,
@@ -1328,37 +1418,37 @@ module Make
           | Some consts -> consts
           | None -> Set.Poly.empty
         in
-        (let quals, terms =
-           if true then (
-             Debug.print
-             @@ lazy
-                  (sprintf "adjusting qualifiers for %s:\n%s\n"
-                     (Ident.name_of_tvar key)
-                     (String.concat_map_set ~sep:"\n" ~f:Formula.str_of quals));
-             Debug.print
-             @@ lazy
-                  (sprintf "adjusting terms for %s:\n%s\n"
-                     (Ident.name_of_tvar key)
-                     (String.concat_map_set ~sep:"\n" ~f:Term.str_of terms)));
-           (* adjust the extracted qualifiers and terms to establish the initial qualifiers and terms *)
-           FT.adjust_quals_terms (quals, terms)
-         in
-         if true then (
-           Debug.print
-           @@ lazy
-                (sprintf "adding qualifiers for %s @ init:\n%s\n"
-                   (Ident.name_of_tvar key)
-                   (String.concat_map_set ~sep:"\n" ~f:Formula.str_of quals));
-           Debug.print
-           @@ lazy
-                (sprintf "adding terms for %s @ init:\n%s\n"
-                   (Ident.name_of_tvar key)
-                   (String.concat_map_set ~sep:"\n" ~f:Term.str_of terms));
-           Debug.print
-           @@ lazy
-                (sprintf "adding constants for %s @ init:\n%s\n"
-                   (Ident.name_of_tvar key)
-                   (String.concat_map_set ~sep:"\n" ~f:Term.str_of consts))));
+        let quals, terms =
+          if true then (
+            Debug.print
+            @@ lazy
+                 (sprintf "adjusting qualifiers for %s:\n%s\n"
+                    (Ident.name_of_tvar key)
+                    (String.concat_map_set ~sep:"\n" ~f:Formula.str_of quals));
+            Debug.print
+            @@ lazy
+                 (sprintf "adjusting terms for %s:\n%s\n"
+                    (Ident.name_of_tvar key)
+                    (String.concat_map_set ~sep:"\n" ~f:Term.str_of terms)));
+          (* adjust the extracted qualifiers and terms to establish the initial qualifiers and terms *)
+          FT.adjust_quals_terms (quals, terms)
+        in
+        if true then (
+          Debug.print
+          @@ lazy
+               (sprintf "adding qualifiers for %s @ init:\n%s\n"
+                  (Ident.name_of_tvar key)
+                  (String.concat_map_set ~sep:"\n" ~f:Formula.str_of quals));
+          Debug.print
+          @@ lazy
+               (sprintf "adding terms for %s @ init:\n%s\n"
+                  (Ident.name_of_tvar key)
+                  (String.concat_map_set ~sep:"\n" ~f:Term.str_of terms));
+          Debug.print
+          @@ lazy
+               (sprintf "adding constants for %s @ init:\n%s\n"
+                  (Ident.name_of_tvar key)
+                  (String.concat_map_set ~sep:"\n" ~f:Term.str_of consts)));
         (ref quals, ref terms, ref consts))
 
   let update_hspaces vs =
@@ -1387,7 +1477,9 @@ module Make
         if false then
           Debug.print @@ lazy (VersionSpace.str_of_hspace name hspace);
         VersionSpace.set_hspace key hspace vs);
-    VersionSpace.update_truth_table ~id vs
+    VersionSpace.update_truth_table
+      ~print:(if print_log then Debug.print ~id else fun _ -> ())
+      ~id vs
 
   let out_space_of () =
     Map.Poly.keys
@@ -1519,7 +1611,8 @@ module Make
             match
               csolve ~ucore:false
                 (Map.Poly.find_exn partial_sol_smt_instance key)
-              @@ cgen ~temporary_sample:data diff_ex vs !ref_templates
+              @@ cgen ~incr:true ~temporary_sample:data diff_ex vs
+                   !ref_templates
             with
             | Candidate cand ->
                 if is_non_redundant_partial_sol vs key cand then (
@@ -1634,22 +1727,54 @@ module Make
             Debug.print @@ lazy "\n*** finding a candidate using [non-ucore]";
             match
               csolve ~ucore:true default_smt_instance
-              @@ cgen diff_sample vs !ref_templates
+              @@ cgen ~incr:true diff_sample vs !ref_templates
             with
             | Candidate cand ->
                 iters_after_updated := !iters_after_updated + 1;
                 prev_sample := Set.Poly.union_list [ diff_sample; !prev_sample ];
-                Cands (cand, partial_candidates_of diff_sample vs)
-            (*| UnsatCore (_, _) -> (
+                if
+                  let normalize term =
+                    let senv, term = Logic.ExtTerm.let_lam term in
+                    let senv' =
+                      List.mapi senv ~f:(fun i (_, s) ->
+                          (Ident.Tvar (sprintf "x%d" (i + 1)), s))
+                    in
+                    Logic.ExtTerm.mk_lambda senv'
+                    @@ Logic.ExtTerm.rename
+                         (Map.Poly.of_alist_exn
+                         @@ List.map2_exn senv senv' ~f:(fun (x, _) (y, _) ->
+                             (x, y)))
+                         term
+                  in
+                  (not @@ Map.Poly.is_empty cand)
+                  && Map.Poly.equal
+                       (fun (_, phi1) (_, phi2) ->
+                         Stdlib.(normalize phi1 = normalize phi2))
+                       !prev_cand cand
+                then (
+                  (* non progress detecetd *)
+                  init_incr ();
+                  TemplateUpdateStrategy.update template_modules num_iters state
+                    (Some
+                       (Map.Poly.map template_modules ~f:(fun _ ->
+                            Set.Poly.singleton Shape)));
+                  Debug.print @@ lazy "*** all templates updated";
+                  inner ())
+                else (
+                  prev_cand := cand;
+                  Cands (cand, partial_candidates_of diff_sample vs))
+            (*| UnsatCore (_, _) ->
                 init_incr ();
                 reset_smt_instance default_smt_instance;
                 match
                   csolve ~ucore:true default_smt_instance
-                  @@ cgen (VersionSpace.examples_of vs) vs !ref_templates
+                  @@ cgen ~incr:true (VersionSpace.examples_of vs) vs !ref_templates
                 with
                 | Candidate cand ->
+                    (*unreachable?*)
                     iters_after_updated := !iters_after_updated + 1;
                     prev_sample := VersionSpace.examples_of vs;
+                    prev_cand := cand;
                     Cands
                       ( cand,
                         partial_candidates_of (VersionSpace.examples_of vs) vs
@@ -1661,12 +1786,11 @@ module Make
                     config.learn_quals_from_ucores
                     && (not @@ Set.is_empty ucores0)
                   then (
-                    reset_smt_instance ucore_smt_instance;
                     Debug.print
                     @@ lazy "\n*** finding a candidate using [ucore1]";
                     match
-                      csolve ~ucore:true ucore_smt_instance
-                      @@ cgen ucores0 vs !ref_templates_ucore1
+                      csolve ~ucore:false (create_smt_instance ~ucore:false ())
+                      @@ cgen ~incr:false ucores0 vs !ref_templates_ucore1
                     with
                     | Candidate cand ->
                         Debug.print
@@ -1734,14 +1858,15 @@ module Make
                                     changed := true;
                                     ref_quals := Set.union !ref_quals new_quals));
                         if !changed then (true, Map.Poly.empty)
-                        else (* ToDo: reachable? *) (false, pvar_labels_map0)
-                    | UnsatCore (_ucores1, pvar_labels_map1) -> (
-                        reset_smt_instance ucore_smt_instance;
+                        else (* ToDo: reachable? *)
+                          (false, pvar_labels_map0 (*dummy*))
+                    | UnsatCore (_ucores1, _pvar_labels_map1) -> (
                         Debug.print
                         @@ lazy "\n*** finding a candidate using [ucore2]";
                         match
-                          csolve ~ucore:true ucore_smt_instance
-                          @@ cgen ucores0 vs !ref_templates_ucore2
+                          csolve ~ucore:false
+                            (create_smt_instance ~ucore:false ())
+                          @@ cgen ~incr:false ucores0 vs !ref_templates_ucore2
                         with
                         | Candidate cand ->
                             Debug.print
@@ -1822,14 +1947,15 @@ module Make
                                           Set.union !ref_quals new_quals));
                             if !changed then (true, Map.Poly.empty)
                             else (* ToDo: reachable? *)
-                              (false, pvar_labels_map1)
-                        | UnsatCore (_ucores2, pvar_labels_map2) -> (
-                            reset_smt_instance ucore_smt_instance;
+                              (false, pvar_labels_map0 (*dummy*))
+                        | UnsatCore (_ucores2, _pvar_labels_map2) -> (
                             Debug.print
                             @@ lazy "\n*** finding a candidate using [ucore3]";
                             match
-                              csolve ~ucore:true ucore_smt_instance
-                              @@ cgen ucores0 vs !ref_templates_ucore3
+                              csolve ~ucore:false
+                                (create_smt_instance ~ucore:false ())
+                              @@ cgen ~incr:false ucores0 vs
+                                   !ref_templates_ucore3
                             with
                             | Candidate cand ->
                                 Debug.print
@@ -1911,15 +2037,16 @@ module Make
                                               Set.union !ref_quals new_quals));
                                 if !changed then (true, Map.Poly.empty)
                                 else (* ToDo: reachable? *)
-                                  (false, pvar_labels_map2)
-                            | UnsatCore (_ucores3, pvar_labels_map3) -> (
-                                reset_smt_instance ucore_smt_instance;
+                                  (false, pvar_labels_map0 (*dummy*))
+                            | UnsatCore (_ucores3, _pvar_labels_map3) -> (
                                 Debug.print
                                 @@ lazy
                                      "\n*** finding a candidate using [ucore4]";
                                 match
-                                  csolve ~ucore:true ucore_smt_instance
-                                  @@ cgen ucores0 vs !ref_templates_ucore4
+                                  csolve ~ucore:false
+                                    (create_smt_instance ~ucore:false ())
+                                  @@ cgen ~incr:false ucores0 vs
+                                       !ref_templates_ucore4
                                 with
                                 | Candidate cand ->
                                     Debug.print
@@ -2011,17 +2138,18 @@ module Make
                                                   Set.union !ref_quals new_quals));
                                     if !changed then (true, Map.Poly.empty)
                                     else (* ToDo: reachable? *)
-                                      (false, pvar_labels_map3)
-                                | UnsatCore (_, pvar_labels_map4) -> (
-                                    reset_smt_instance ucore_smt_instance;
+                                      (false, pvar_labels_map0 (*dummy*))
+                                | UnsatCore (_ucores4, _pvar_labels_map4) -> (
                                     Debug.print
                                     @@ lazy
                                          "\n\
                                           *** finding a candidate using \
                                           [ucore5]";
                                     match
-                                      csolve ~ucore:true ucore_smt_instance
-                                      @@ cgen ucores0 vs !ref_templates_ucore5
+                                      csolve ~ucore:true
+                                        (create_smt_instance ~ucore:true ())
+                                      @@ cgen ~incr:false ucores0 vs
+                                           !ref_templates_ucore5
                                     with
                                     | Candidate cand ->
                                         Debug.print
@@ -2122,7 +2250,7 @@ module Make
                                                         new_quals));
                                         if !changed then (true, Map.Poly.empty)
                                         else (* ToDo: reachable? *)
-                                          (false, pvar_labels_map4)
+                                          (false, pvar_labels_map0 (*dummy*))
                                     | UnsatCore (_, pvar_labels_map5) ->
                                         (* The given constraint set is likely unsat, but since parametric examples are used, additional checks are required to conclude this. *)
                                         Debug.print

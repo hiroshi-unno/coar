@@ -50,5 +50,8 @@ COPY config /root/coar/config
 # Copy ocaml library for ocaml program verification
 COPY --from=builder /home/opam/.opam/5.4/lib/ocaml /home/opam/.opam/5.4/lib/ocaml
 
+# Prepare another copies for redistribution with self-contained zip file
+COPY --from=builder /home/opam/.opam/5.4/share/apron/lib/*.so /opt/apron/lib/
+
 ENV PATH="${PATH}:/root/coar"
 CMD ["/bin/bash"]

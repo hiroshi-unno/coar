@@ -15,7 +15,7 @@
 %token <Ast.LogicOld.pred_sym> PREDSYM
 %token <int> INTL
 %token <string> REALL
-%token TRUE FALSE
+%token TRUE FALSE TT FF
 %token WHERE
 %token <string> ID
 
@@ -128,6 +128,8 @@ T_numAtom:
     LPAREN t=T_num RPAREN { t }
   | n=INTL { T_int.from_int n }
   | n=REALL { T_real.mk_real (Q.of_string n) }
+  | TT { T_bool.mk_true ()}
+  | FF { T_bool.mk_false ()}
   | varname=ID { Term.mk_var (Ident.Tvar varname) @@ Sort.mk_fresh_svar () }
 
 /* Ast.LogicOld.T_bool */

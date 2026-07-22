@@ -1,0 +1,68 @@
+///*** 1_main ***///
+START: main_bb4;
+FROM: main_bb4;
+v4 := nondet();
+var__temp_vw.0 := v4;
+var__temp_vw.0 := v4;
+TO: main_bb5;
+
+FROM: main_bb5;
+vw.0 := var__temp_vw.0;
+var__temp_vi.0.i := 1;
+var__temp_v.0.i := vw.0;
+TO: main_bb5_end;
+
+FROM: main_bb5_end;
+assume(vw.0 != 0);
+var__temp_vi.0.i := 1;
+var__temp_v.0.i := vw.0;
+TO: main_bb6;
+
+FROM: main_bb5_end;
+assume(vw.0 == 0);
+TO: main_bb8;
+
+FROM: main_bb6;
+vi.0.i := var__temp_vi.0.i;
+v.0.i := var__temp_v.0.i;
+v6 := v.0.i urem 2;
+TO: main_bb6_end;
+
+FROM: main_bb6_end;
+assume(v6 == 0);
+TO: main_bb7;
+
+FROM: main_bb6_end;
+assume(v6 != 0);
+TO: main_ffsexit;
+
+FROM: main_bb7;
+v8 := vi.0.i + 1;
+v9 := v.0.i udiv 2;
+var__temp_vi.0.i := v8;
+var__temp_v.0.i := v9;
+var__temp_vi.0.i := v8;
+var__temp_v.0.i := v9;
+TO: main_bb6;
+
+FROM: main_ffsexit;
+v11 := lshr(vw.0, vi.0.i);
+TO: main_ffsexit_vw.1;
+FROM: main_ffsexit_vw.1;
+assume(vi.0.i ult 32);
+vw.1 := v11;
+TO: main_ffsexit_svw.1;
+
+FROM: main_ffsexit_vw.1;
+assume(vi.0.i uge 32);
+vw.1 := 0;
+TO: main_ffsexit_svw.1;
+
+FROM: main_ffsexit_svw.1;
+var__temp_vw.0 := vw.1;
+var__temp_vw.0 := vw.1;
+TO: main_bb5;
+
+FROM: main_bb8;
+TO: main_bb8_ret;
+

@@ -5,7 +5,8 @@ open Ast
 open Ast.Logic
 
 let from_smt2_file ~print ~inline ?(skolem_pred = false)
-    ?(uni_senv = Map.Poly.empty) ?(exi_senv = Map.Poly.empty)
+    ?(uni_sort = Set.Poly.empty) ?(uni_senv = Map.Poly.empty)
+    ?(exi_senv = Map.Poly.empty) ?(dep_map = Map.Poly.empty)
     ?(kind_map = Map.Poly.empty) ?(fenv = Map.Poly.empty)
     ?(dtenv = Map.Poly.empty) filename =
   let sexps =
@@ -23,17 +24,19 @@ let from_smt2_file ~print ~inline ?(skolem_pred = false)
   in
   let phis, envs =
     SMT.Smtlib2.toplevel ~print ~inline []
-      { uni_senv; exi_senv; kind_map; fenv; dtenv }
+      { uni_sort; uni_senv; exi_senv; dep_map; kind_map; fenv; dtenv }
       sexps
   in
   let phis =
-    Typeinf.typeinf ~print ~default:(Some Ast.LogicOld.T_int.SInt (*ToDo*))
+    Typeinf.typeinf ~print
+      ~default:(if false then None else Some Ast.LogicOld.T_int.SInt (*ToDo*))
       ~to_sus:true phis
   in
   Problem.make ~skolem_pred phis envs
 
 let from_gzipped_smt2_file ~print ~inline ?(skolem_pred = false)
-    ?(uni_senv = Map.Poly.empty) ?(exi_senv = Map.Poly.empty)
+    ?(uni_sort = Set.Poly.empty) ?(uni_senv = Map.Poly.empty)
+    ?(exi_senv = Map.Poly.empty) ?(dep_map = Map.Poly.empty)
     ?(kind_map = Map.Poly.empty) ?(fenv = Map.Poly.empty)
     ?(dtenv = Map.Poly.empty) filename =
   let sexps =
@@ -51,11 +54,12 @@ let from_gzipped_smt2_file ~print ~inline ?(skolem_pred = false)
   in
   let phis, envs =
     SMT.Smtlib2.toplevel ~print ~inline []
-      { uni_senv; exi_senv; kind_map; fenv; dtenv }
+      { uni_sort; uni_senv; exi_senv; dep_map; kind_map; fenv; dtenv }
       sexps
   in
   let phis =
-    Typeinf.typeinf ~print ~default:(Some Ast.LogicOld.T_int.SInt (*ToDo*))
+    Typeinf.typeinf ~print
+      ~default:(if false then None else Some Ast.LogicOld.T_int.SInt (*ToDo*))
       ~to_sus:true phis
   in
   Problem.make ~skolem_pred phis envs
@@ -114,6 +118,6 @@ let from_clp_file ~print filename =
   Problem.of_formulas ~params
   @@ Set.Poly.of_list
   @@ List.rev_map phis ~f:(fun phi ->
-         ( Map.of_set_exn @@ Logic.of_old_sort_env_set
-           @@ LogicOld.Formula.term_sort_env_of phi,
-           ExtTerm.of_old_formula phi ))
+      ( Map.of_set_exn @@ Logic.of_old_sort_env_set
+        @@ LogicOld.Formula.term_sort_env_of phi,
+        ExtTerm.of_old_formula phi ))

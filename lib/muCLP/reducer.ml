@@ -7,7 +7,10 @@ open Ast
 open Ast.LogicOld
 
 module Config = struct
-  type t = { verbose : bool; use_dwf : bool } [@@deriving yojson]
+  type mode = WF of bool * bool * bool | PPM of bool * bool * bool
+  [@@deriving yojson]
+
+  type t = { verbose : bool; mode : mode } [@@deriving yojson]
 
   module type ConfigType = sig
     val config : t
@@ -31,25 +34,26 @@ module Make (Cfg : Config.ConfigType) = struct
   module Debug =
     Debug.Make ((val Debug.Config.(if config.verbose then enable else disable)))
 
-  let rename_preds psenv bpvs phi =
-    Set.diff psenv bpvs
-    |> Set.Poly.map ~f:(fun (pvar, sorts) ->
+  let psub_of_psenv psenv bpvs =
+    Map.of_set_exn
+    @@ Set.Poly.map (Set.diff psenv bpvs) ~f:(fun (pvar, sorts) ->
         let params = mk_fresh_sort_env_list sorts in
         ( pvar,
           ( params,
             Formula.mk_atom
             @@ Atom.mk_pvar_app (Ident.uninterp_pvar pvar) sorts
             @@ Term.of_sort_env params ) ))
-    |> Map.of_set_exn
-    |> Fn.flip Formula.subst_preds phi
 
   let rec elim_nu_aux (*?(id=None)*) psenv bpvs query = function
     | [] ->
-        ( rename_preds psenv bpvs query
+        ( query
+          |> Formula.subst_preds (psub_of_psenv psenv bpvs)
           |> Evaluator.simplify |> Formula.to_cnf
-          |> Set.Poly.map ~f:(fun phi ->
-              let senv, phi = LogicOld.Formula.rm_quant ~forall:true phi in
-              Formula.reduce_sort_map (Map.of_set_exn senv, phi)),
+          |> Set.Poly.map
+               ~f:
+                 (Formula.rm_quant ~forall:true
+                 >> Pair.map_fst Map.of_set_exn
+                 >> Formula.reduce_sort_map),
           Set.Poly.empty )
     | pred :: preds
       when Stdlib.( = ) pred.Pred.kind Predicate.Nu
@@ -65,14 +69,14 @@ module Make (Cfg : Config.ConfigType) = struct
         in
         let queries, clauses = elim_nu_aux psenv bpvs query preds in
         ( queries,
-          Formula.mk_imply
-            (Formula.mk_atom @@ Atom.pvar_app_of_senv pvar' pred.args)
-            (rename_preds psenv bpvs phi)
+          phi
+          |> Formula.subst_preds (psub_of_psenv psenv bpvs)
+          |> Formula.mk_imply
+               (Formula.mk_atom @@ Atom.pvar_app_of_senv pvar' pred.args)
           (*|> fun phi -> Debug.print ~id @@ lazy (Formula.str_of phi); phi*)
           |> Evaluator.simplify
           |> Formula.to_cnf
-          |> Set.Poly.map ~f:(fun phi ->
-              Formula.reduce_sort_map (uni_senv, phi))
+          |> Set.Poly.map ~f:(curry2 Formula.reduce_sort_map uni_senv)
           |> Set.union clauses )
     | _ ->
         failwith "every mu predicate must be eliminated before applying elim_nu"
@@ -83,8 +87,7 @@ module Make (Cfg : Config.ConfigType) = struct
         (Map.to_set @@ Kind.pred_sort_env_map_of unknowns)
         query preds,
       Kind.add_pred_env_set unknowns Kind.Ord
-      @@ Set.Poly.map psenv ~f:(fun (pvar, sorts) ->
-          (Ident.uninterp_pvar pvar, sorts)) )
+      @@ Set.Poly.map psenv ~f:(Pair.map_fst Ident.uninterp_pvar) )
 
   (* Dependency Graph for optimization of pfwCSP generation *)
   (* e.g.
@@ -101,7 +104,7 @@ module Make (Cfg : Config.ConfigType) = struct
       P => P' iff P calls P' and level(P) < level(P')
       P --> P' iff P calls P' and level(P) >= level(P')
 
-     for each P \in {P_1, P_2, P_3, P_4},
+     for each P,
      - the arguments of P are extended with b and args(P')
        for each inductive predicate P' such that level(P') < level(P)
        if and only if P' (=> | -->)+ P (=> | -->)+ P' in G(level(P'))
@@ -196,9 +199,9 @@ module Make (Cfg : Config.ConfigType) = struct
       Map.Poly.of_alist_exn
       @@ query_node
          :: List.map pvars ~f:(fun (pvar, level) ->
-             let pvars' = occurrences_in pvar in
              let forward, backward =
-               Set.partition_tf pvars' ~f:(fun pvar' -> level < level_of pvar')
+               Set.partition_tf (occurrences_in pvar) ~f:(fun pvar' ->
+                   level < level_of pvar')
              in
              ( pvar,
                {
@@ -209,9 +212,9 @@ module Make (Cfg : Config.ConfigType) = struct
                  reachable = Set.Poly.empty;
                } ))
 
-    let restrict_to pvs g =
-      Map.Poly.filter_keys g ~f:(Set.mem pvs)
-      |> Map.Poly.map ~f:(fun attr ->
+    let restrict_to pvs =
+      Map.Poly.filter_keys ~f:(Set.mem pvs)
+      >> Map.Poly.map ~f:(fun attr ->
           {
             attr with
             forward = Set.inter attr.forward pvs;
@@ -284,232 +287,490 @@ module Make (Cfg : Config.ConfigType) = struct
           })
 
     let str_of (g : t) =
-      String.concat_map_list ~sep:";\n" ~f:(fun (Ident.Pvar pname, attr) ->
+      String.concat_map_list (Map.Poly.to_alist g) ~sep:";\n"
+        ~f:(fun (Ident.Pvar pname, attr) ->
           String.paren
           @@ sprintf "%s, %d, [%s], [%s], [%s], [%s]" pname attr.level
                (Ident.str_of_pvars ~sep:";" attr.forward)
                (Ident.str_of_pvars ~sep:";" attr.forward_reachable)
                (Ident.str_of_pvars ~sep:";" attr.backward)
                (Ident.str_of_pvars ~sep:";" attr.reachable))
-      @@ Map.Poly.to_alist g
   end
 
-  let elim_mu ?(id = None) (query : Formula.t) (preds : Pred.t list) unknowns =
+  let ufp_of ?(id = None) ?(is_nu = false) (use_dwf, use_scc) dg0 unknowns query
+      (pred : Pred.t) (nu_only : Pred.t list) rest =
+    let dg =
+      let relevant_pvs =
+        Set.Poly.of_list
+          (pred.name :: List.map nu_only ~f:(fun pred -> pred.name))
+      in
+      DepGraph.transitive_closure @@ DepGraph.restrict_to relevant_pvs dg0
+    in
+    Debug.print ~id
+    @@ lazy
+         (sprintf "************ Filtered DepGraph for %s:\n%s"
+            (Ident.name_of_pvar pred.name)
+            (DepGraph.str_of dg));
+    let indirect_rec_called, non_rec_called =
+      List.partition_tf nu_only ~f:(fun pred' ->
+          let open DepGraph in
+          (not use_scc)
+          || ((pred.name =->+ pred'.name) dg && (pred'.name =->+ pred.name) dg))
+    in
+    let is_called_outside =
+      let seed =
+        Set.remove
+          (Set.Poly.union_list
+          @@ Formula.pvs_of query
+             :: List.map (non_rec_called @ rest) ~f:(fun p ->
+                 Formula.pvs_of p.body))
+          pred.name
+      in
+      fun pvar ->
+        Set.exists seed ~f:(fun pvar' ->
+            let open DepGraph in
+            Ident.pvar_equal pvar pvar'
+            || (Map.Poly.mem dg pvar' && (pvar' =->+ pvar) dg))
+    in
+    let bot, top = (T_bool.mk_false (), T_bool.mk_true ()) in
+    let bi_term, bi_param =
+      let bi_name = Ident.mk_fresh_tvar () in
+      (Term.mk_var bi_name T_bool.SBool, (bi_name, T_bool.SBool))
+    in
+    let xs_sorts = List.map ~f:snd pred.args in
+    let ext_arg b xs_terms =
+      List.map indirect_rec_called ~f:(fun pred' ->
+          let ys_sorts = List.map ~f:snd pred'.args in
+          let ys_params = mk_fresh_sort_env_list ys_sorts in
+          let ys_terms = Term.of_sort_env ys_params in
+          let phi =
+            Formula.mk_atom
+            @@ uncurry2 (Atom.mk_pvar_app pred'.name)
+            @@
+            if (not use_scc) || is_called_outside pred'.name then
+              ((T_bool.SBool :: xs_sorts) @ ys_sorts, (b :: xs_terms) @ ys_terms)
+            else (xs_sorts @ ys_sorts, xs_terms @ ys_terms)
+          in
+          (pred'.name, (ys_params, phi)))
+    in
+    let xs_params = mk_fresh_sort_env_list xs_sorts in
+    let xs_terms = Term.of_sort_env xs_params in
+    let dir_rec = DepGraph.(pred.name =->+ pred.name) dg in
+    let unknowns' =
+      if (not use_scc) || dir_rec then
+        Kind.add_pred_env_set unknowns
+          (if is_nu then Kind.Ord else if use_dwf then Kind.DWF else Kind.WF)
+          (Set.Poly.singleton
+             (Ident.wfpred_pvar pred.name, xs_sorts @ xs_sorts))
+      else unknowns
+    in
+    let sigma_1 =
+      (* calls unrelated to recursive calls of pred *)
+      Formula.subst_preds @@ Map.Poly.of_alist_exn
+      @@
+      let dummy_args = List.map xs_sorts ~f:Term.mk_dummy in
+      if use_dwf && ((not use_scc) || dir_rec) then
+        let ys_params = mk_fresh_sort_env_list xs_sorts in
+        let ys_terms = Term.of_sort_env ys_params in
+        ( pred.name,
+          ( ys_params,
+            Formula.mk_atom
+            @@ Atom.mk_pvar_app pred.name (xs_sorts @ xs_sorts)
+                 (ys_terms @ ys_terms) ) )
+        :: ext_arg bot dummy_args
+      else ext_arg bot dummy_args
+    in
+    let emb_wfp check_bi =
+      let ys_params = mk_fresh_sort_env_list xs_sorts in
+      let ys_terms = Term.of_sort_env ys_params in
+      let phi =
+        Formula.and_of
+          [
+            (* (co-)recursion *)
+            Formula.mk_atom @@ Atom.mk_pvar_app pred.name xs_sorts ys_terms;
+            (* guard *)
+            (if check_bi then Formula.mk_imply (Formula.eq bi_term top)
+             else Fn.id)
+            @@ Formula.mk_atom
+            @@ Atom.mk_pvar_app
+                 (Ident.wfpred_pvar pred.name)
+                 (xs_sorts @ xs_sorts) (xs_terms @ ys_terms);
+          ]
+      in
+      (pred.name, (ys_params, phi))
+    in
+    let sigma_2 =
+      (* direct recursive calls to pred *)
+      Formula.subst_preds @@ Map.Poly.of_alist_exn
+      @@ (emb_wfp false :: ext_arg top xs_terms)
+    in
+    let sigma_3 =
+      (* indirect recursive calls to pred *)
+      Formula.subst_preds @@ Map.Poly.of_alist_exn
+      @@ (emb_wfp true :: ext_arg bi_term xs_terms)
+    in
+    let sigma_4 =
+      (* direct recursive calls to pred *)
+      Formula.subst_preds @@ Map.Poly.of_alist_exn
+      @@
+      let ys_params = mk_fresh_sort_env_list xs_sorts in
+      let ys_terms = Term.of_sort_env ys_params in
+      let phi =
+        Formula.and_of
+          [
+            (* (co-)recursion *)
+            Formula.mk_atom
+            @@ Atom.mk_pvar_app pred.name (xs_sorts @ xs_sorts)
+                 (ys_terms @ ys_terms);
+            (* (co-)recursion *)
+            Formula.mk_atom
+            @@ Atom.mk_pvar_app pred.name (xs_sorts @ xs_sorts)
+                 (xs_terms @ ys_terms);
+            (* guard *)
+            Formula.mk_atom
+            @@ Atom.mk_pvar_app
+                 (Ident.wfpred_pvar pred.name)
+                 (xs_sorts @ xs_sorts) (xs_terms @ ys_terms);
+          ]
+      in
+      (pred.name, (ys_params, phi)) :: ext_arg top xs_terms
+    in
+    let sigma_5 =
+      (* indirect recursive calls to pred *)
+      Formula.subst_preds @@ Map.Poly.of_alist_exn
+      @@
+      let ys_params = mk_fresh_sort_env_list xs_sorts in
+      let ys_terms = Term.of_sort_env ys_params in
+      let phi =
+        Formula.and_of
+          [
+            (* (co-)recursion *)
+            Formula.mk_atom
+            @@ Atom.mk_pvar_app pred.name (xs_sorts @ xs_sorts)
+                 (ys_terms @ ys_terms);
+            Formula.mk_imply (Formula.eq bi_term top)
+            @@ Formula.and_of
+                 [
+                   (* (co-)recursion *)
+                   Formula.mk_atom
+                   @@ Atom.mk_pvar_app pred.name (xs_sorts @ xs_sorts)
+                        (xs_terms @ ys_terms);
+                   (* guard *)
+                   Formula.mk_atom
+                   @@ Atom.mk_pvar_app
+                        (Ident.wfpred_pvar pred.name)
+                        (xs_sorts @ xs_sorts) (xs_terms @ ys_terms);
+                 ];
+          ]
+      in
+      (pred.name, (ys_params, phi)) :: ext_arg bi_term xs_terms
+    in
+    let query' = sigma_1 query in
+    let rest' =
+      List.map rest ~f:(fun pred -> { pred with body = sigma_1 pred.body })
+    in
+    let nu_only' =
+      (if use_dwf then
+         if (not use_scc) || dir_rec then
+           {
+             pred with
+             kind = Predicate.Nu;
+             args = xs_params @ pred.args;
+             body = sigma_4 pred.body;
+           }
+         else
+           { pred with kind = Predicate.Nu; args = pred.args; body = pred.body }
+       else
+         {
+           pred with
+           kind = Predicate.Nu;
+           args = pred.args;
+           body =
+             Formula.rename (ren_of_sort_env_list xs_params pred.args)
+             @@ sigma_2 pred.body;
+         })
+      :: List.map nu_only ~f:(fun pred' ->
+          if
+            let open DepGraph in
+            (not use_scc)
+            || ((pred.name =->+ pred'.name) dg && (pred'.name =->+ pred.name) dg)
+          then
+            if use_dwf then
+              if (not use_scc) || is_called_outside pred'.name then
+                {
+                  pred' with
+                  args = (bi_param :: xs_params) @ pred'.args;
+                  body = sigma_5 pred'.body;
+                }
+              else
+                {
+                  pred' with
+                  args = xs_params @ pred'.args;
+                  body = sigma_4 pred'.body;
+                }
+            else if (not use_scc) || is_called_outside pred'.name then
+              {
+                pred' with
+                args = (bi_param :: xs_params) @ pred'.args;
+                body = sigma_3 pred'.body;
+              }
+            else
+              {
+                pred' with
+                args = xs_params @ pred'.args;
+                body = sigma_2 pred'.body;
+              }
+          else { pred' with body = sigma_1 pred'.body })
+    in
+    (unknowns', query', nu_only', rest')
+
+  let elim_mu_bra ?(id = None) ?(conv_nu = false)
+      (use_dwf, use_scc, _use_alt_dep) (query : Formula.t) (preds : Pred.t list)
+      unknowns =
     let (dg0 : DepGraph.t) = DepGraph.gen_init_graph query preds in
     Debug.print ~id
     @@ lazy (sprintf "************ Initial DepGraph:\n%s" (DepGraph.str_of dg0));
-    let rec inner query wfpvs nu_only = function
-      | [] ->
-          ( (query, nu_only),
-            Kind.add_pred_env_set unknowns
-              (if config.use_dwf then Kind.DWF else Kind.WF)
-              wfpvs )
+    let rec inner unknowns query nu_only = function
+      | [] -> ((query, nu_only), unknowns)
       | pred :: rest -> (
           match pred.Pred.kind with
           | Predicate.(Nu | Fix) ->
-              inner query wfpvs
-                ({ pred with kind = Predicate.Nu } :: nu_only)
-                rest
-          | Predicate.Mu ->
-              let dg =
-                let relevant_pvs =
-                  Set.Poly.of_list
-                    (pred.name :: List.map nu_only ~f:(fun pred -> pred.name))
+              if conv_nu then
+                let unknowns', query', nu_only', rest' =
+                  ufp_of ~id ~is_nu:true (use_dwf, use_scc) dg0 unknowns query
+                    pred nu_only rest
                 in
-                DepGraph.transitive_closure
-                @@ DepGraph.restrict_to relevant_pvs dg0
+                inner unknowns' query' nu_only' rest'
+              else
+                inner unknowns query
+                  ({ pred with kind = Predicate.Nu } :: nu_only)
+                  rest
+          | Predicate.Mu ->
+              let unknowns', query', nu_only', rest' =
+                ufp_of ~id ~is_nu:false (use_dwf, use_scc) dg0 unknowns query
+                  pred nu_only rest
+              in
+              inner unknowns' query' nu_only' rest')
+    in
+    inner unknowns query [] @@ List.rev preds
+
+  let elim_mu_ppm_scc ?(id = None) (use_alt_dep, ignore_nu_components)
+      (query : Formula.t) (preds : Pred.t list) scc_i =
+    let (dg0 : DepGraph.t) = DepGraph.gen_init_graph query preds in
+    Debug.print ~id
+    @@ lazy
+         (sprintf "************ DepGraph for the %s SCC:\n%s"
+            (Ordinal.string_of (Ordinal.make (scc_i + 1)))
+            (DepGraph.str_of dg0));
+    let sorts_map =
+      Hashtbl.Poly.of_alist_exn
+      @@ List.map preds ~f:(fun pred ->
+          ( Ident.pvar_to_tvar pred.name,
+            List.map ~f:(snd >> Logic.ExtTerm.of_old_sort) pred.args ))
+    in
+    let pvs = Set.Poly.of_list @@ List.map preds ~f:(fun pred -> pred.name) in
+    let nwf =
+      if use_alt_dep then (
+        let alt_dep, amax =
+          let rec loop alt_dep = function
+            | [] -> alt_dep
+            | (name_i, is_mu_i, i) :: pvars' ->
+                let ai =
+                  let dg = DepGraph.k_transitive_closure dg0 i in
+                  Debug.print ~id
+                  @@ lazy
+                       (sprintf "************ k-reachability analysis:\n%s"
+                          (DepGraph.str_of dg));
+                  Integer.max_list
+                  @@ 1
+                     :: List.filter_map alt_dep ~f:(fun (name_j, is_mu_j, aj) ->
+                         let open DepGraph in
+                         if
+                           Set.exists pvs ~f:(fun k ->
+                               (name_i =->* k) dg && (k =-> name_j) dg)
+                           && Set.exists pvs ~f:(fun k ->
+                               (name_j =->* k) dg && (k =-> name_i) dg)
+                         then
+                           if Stdlib.(is_mu_i = is_mu_j) then Some aj
+                           else Some (1 + aj)
+                         else None)
+                in
+                Debug.print ~id
+                @@ lazy
+                     (sprintf "%s has the alternation depth of %d"
+                        (Ident.name_of_pvar name_i)
+                        ai);
+                loop ((name_i, is_mu_i, ai) :: alt_dep) pvars'
+          in
+          let res =
+            List.map ~f:(fun (name_i, _, ai) -> (name_i, ai))
+            @@ loop [] @@ List.rev
+            @@ List.mapi preds ~f:(fun i pred ->
+                ( pred.name,
+                  (match pred.kind with Predicate.Mu -> true | _ -> false),
+                  i ))
+          in
+          (Map.Poly.of_alist_exn res, Integer.max_list @@ List.map ~f:snd res)
+        in
+        Debug.print ~id @@ lazy (sprintf "amax = %d" amax);
+        let max_pri =
+          if ignore_nu_components then
+            if (amax + 1) mod 2 = 0 then (amax + 1) / 2 else (amax + 2) / 2
+          else amax + 1
+        in
+        Debug.print ~id @@ lazy (sprintf "#ord = %d" max_pri);
+        let trunc =
+          if ignore_nu_components then fun sigma_i ->
+            if sigma_i mod 2 = 0 then sigma_i / 2 else (sigma_i + 1) / 2
+          else Fn.id
+        in
+        let sigma =
+          Map.Poly.of_alist_exn
+          @@ List.map preds ~f:(fun pred ->
+              let pri = 2 + amax - Map.Poly.find_exn alt_dep pred.name in
+              let pri =
+                match pred.Pred.kind with
+                | Predicate.(Nu | Fix) -> if pri mod 2 = 0 then pri else pri - 1
+                | Predicate.Mu -> if pri mod 2 = 0 then pri - 1 else pri
               in
               Debug.print ~id
               @@ lazy
-                   (sprintf "************ Filtered DepGraph for %s:\n%s"
+                   (sprintf "%s has the priority of %d |-> #%d"
                       (Ident.name_of_pvar pred.name)
-                      (DepGraph.str_of dg));
-              let is_tainted =
-                let called_outside =
-                  Set.Poly.union_list
-                  @@ List.map nu_only ~f:(fun pred' ->
-                      if
-                        let open DepGraph in
-                        (pred.name =->+ pred'.name) dg
-                        && (pred'.name =->+ pred.name) dg
-                      then Set.Poly.empty
-                      else Formula.pvs_of pred'.body)
-                  @ List.map rest ~f:(fun pred -> Formula.pvs_of pred.body)
-                in
-                let open DepGraph in
-                fun pvar ->
-                  Set.exists called_outside ~f:(fun pvar' ->
-                      Ident.pvar_equal pvar pvar'
-                      || (Map.Poly.mem dg pvar' && (pvar' =->+ pvar) dg))
-              in
-              let prev_avail_term, prev_avail_param =
-                let prev_avail_name = Ident.mk_fresh_tvar () in
-                ( Term.mk_var prev_avail_name T_bool.SBool,
-                  (prev_avail_name, T_bool.SBool) )
-              in
-              let prev_params =
-                mk_fresh_sort_env_list @@ List.map ~f:snd pred.args
-              in
-              let prev_terms = Term.of_sort_env prev_params in
-              let bot, top = (T_bool.mk_false (), T_bool.mk_true ()) in
-              let ext_arg b (xs_terms, xs_sorts) =
-                List.filter ~f:(fun (p, _) ->
-                    let open DepGraph in
-                    (pred.name =->+ p) dg && (p =->+ pred.name) dg)
-                >> List.map ~f:(fun (pvar', ys) ->
-                    let ys_sorts = List.map ~f:snd ys in
-                    let ys_params = mk_fresh_sort_env_list ys_sorts in
-                    let ys_terms = Term.of_sort_env ys_params in
-                    let phi =
-                      Formula.mk_atom
-                      @@
-                      if config.use_dwf || is_tainted pvar' then
-                        Atom.mk_pvar_app pvar'
-                          ((T_bool.SBool :: xs_sorts) @ ys_sorts)
-                          (b
-                           ::
-                           (if config.use_dwf && T_bool.is_true b then
-                              prev_terms
-                            else xs_terms)
-                          @ ys_terms)
-                      else
-                        Atom.mk_pvar_app pvar' (xs_sorts @ ys_sorts)
-                          ((if config.use_dwf && T_bool.is_true b then
-                              prev_terms
-                            else xs_terms)
-                          @ ys_terms)
-                    in
-                    (pvar', (ys_params, phi)))
-              in
-              let bi_term, bi_param =
-                let bi_name = Ident.mk_fresh_tvar () in
-                (Term.mk_var bi_name T_bool.SBool, (bi_name, T_bool.SBool))
-              in
-              let emb_wfp ~indirect (xs_terms, xs_sorts) =
-                let ys_params = mk_fresh_sort_env_list xs_sorts in
-                let ys_terms = Term.of_sort_env ys_params in
-                let phi =
-                  Formula.and_of
-                  @@ (if config.use_dwf then
-                        [
-                          (* (co-)recursion *)
-                          (let bi_term, xs_terms =
-                             if indirect then (bi_term, xs_terms)
-                             else (prev_avail_term, prev_terms)
-                           in
-                           Formula.mk_atom
-                           @@ Atom.mk_pvar_app pred.name
-                                ((T_bool.SBool :: xs_sorts) @ xs_sorts)
-                                ((bi_term :: xs_terms) @ ys_terms));
-                        ]
-                      else [])
-                  @ [
-                      (* (co-)recursion *)
-                      (let sorts, terms =
-                         if config.use_dwf then
-                           ( (T_bool.SBool :: xs_sorts) @ xs_sorts,
-                             (top :: ys_terms) @ ys_terms )
-                         else (xs_sorts, ys_terms)
-                       in
-                       Formula.mk_atom @@ Atom.mk_pvar_app pred.name sorts terms);
-                      (* guard *)
-                      (if indirect then
-                         Formula.mk_imply (Formula.eq bi_term top)
-                       else if config.use_dwf then
-                         Formula.mk_imply (Formula.eq prev_avail_term top)
-                       else Fn.id)
-                      @@ Formula.mk_atom
-                      @@ Atom.mk_pvar_app
-                           (Ident.wfpred_pvar pred.name)
-                           (xs_sorts @ xs_sorts)
-                           ((if indirect then xs_terms
-                             else if config.use_dwf then prev_terms
-                             else xs_terms)
-                           @ ys_terms);
-                    ]
-                in
-                (pred.name, (ys_params, phi))
-              in
-              let preds =
-                List.map nu_only ~f:(fun pred -> (pred.name, pred.args))
-              in
-              let sigma_1, sigma_2, sigma_3 =
-                let sorts = List.map ~f:snd pred.args in
-                let sigma_1_ =
-                  let dummy_args = List.map sorts ~f:Term.mk_dummy in
-                  (if config.use_dwf then
-                     let ys_params = mk_fresh_sort_env_list sorts in
-                     let ys_terms = Term.of_sort_env ys_params in
-                     [
-                       ( pred.name,
-                         ( ys_params,
-                           Formula.mk_atom
-                           @@ Atom.mk_pvar_app pred.name
-                                ((T_bool.SBool :: sorts) @ sorts)
-                                ((bot :: dummy_args) @ ys_terms) ) );
-                     ]
-                   else [])
-                  @ ext_arg bot (dummy_args, sorts) preds
-                in
-                let sigma_2_, sigma_3_ =
-                  let ps = (Term.of_sort_env pred.args, sorts) in
-                  ( emb_wfp ~indirect:false ps
-                    :: ext_arg
-                         (if config.use_dwf then prev_avail_term else top)
-                         ps preds,
-                    emb_wfp ~indirect:true ps :: ext_arg bi_term ps preds )
-                in
-                Formula.
-                  ( subst_preds @@ Map.Poly.of_alist_exn @@ sigma_1_,
-                    subst_preds @@ Map.Poly.of_alist_exn @@ sigma_2_,
-                    subst_preds @@ Map.Poly.of_alist_exn @@ sigma_3_ )
-              in
-              let query' = sigma_1 query in
-              let wfpvs' =
-                let sorts = List.map ~f:snd pred.args in
-                if DepGraph.(pred.name =->+ pred.name) dg then
-                  Set.add wfpvs (Ident.wfpred_pvar pred.name, sorts @ sorts)
-                else wfpvs
-              in
-              let nu_only' =
-                {
-                  pred with
-                  kind = Predicate.Nu;
-                  args =
-                    (if config.use_dwf then prev_avail_param :: prev_params
-                     else [])
-                    @ pred.args;
-                  body = sigma_2 pred.body;
-                }
-                :: List.map nu_only ~f:(fun pred' ->
-                    if
-                      let open DepGraph in
-                      (pred.name =->+ pred'.name) dg
-                      && (pred'.name =->+ pred.name) dg
-                    then
-                      if config.use_dwf || is_tainted pred'.name then
-                        {
-                          pred' with
-                          args = (bi_param :: pred.args) @ pred'.args;
-                          body = sigma_3 pred'.body;
-                        }
-                      else
-                        {
-                          pred' with
-                          args = pred.args @ pred'.args;
-                          body = sigma_2 pred'.body;
-                        }
-                    else { pred' with body = sigma_1 pred'.body })
-              in
-              inner query' wfpvs' nu_only'
-              @@ List.map rest ~f:(fun pred ->
-                  { pred with body = sigma_1 pred.body }))
+                      pri (trunc pri));
+              (Ident.pvar_to_tvar pred.name, pri))
+        in
+        let acc_set =
+          Set.Poly.of_list
+          @@ List.init
+               (if amax mod 2 = 0 then amax / 2 else (amax + 1) / 2)
+               ~f:(fun i -> 2 * (i + 1))
+        in
+        Debug.print ~id
+        @@ lazy
+             (sprintf "acc_set: %s"
+                (String.concat_map_set ~sep:"," acc_set ~f:string_of_int));
+        Kind.
+          {
+            name = Ident.Tvar ("PR" ^ string_of_int scc_i);
+            sorts_shared = [];
+            sorts_map;
+            max_pri;
+            sigma;
+            trunc;
+            acc_set;
+          })
+      else
+        let max_pri = List.length preds in
+        Debug.print ~id @@ lazy (sprintf "#ord = %d" max_pri);
+        let trunc = Fn.id in
+        let sigma =
+          Map.Poly.of_alist_exn
+          @@ List.mapi preds ~f:(fun i pred ->
+              let pri = i + 1 in
+              Debug.print ~id
+              @@ lazy
+                   (sprintf "%s has the priority of %d |-> #%d"
+                      (Ident.name_of_pvar pred.name)
+                      pri (trunc pri));
+              (Ident.pvar_to_tvar pred.name, pri))
+        in
+        let acc_set =
+          Set.Poly.of_list
+          @@ List.filter_map preds ~f:(fun pred ->
+              match pred.Pred.kind with
+              | Predicate.(Nu | Fix) ->
+                  Some (Map.Poly.find_exn sigma (Ident.pvar_to_tvar pred.name))
+              | Predicate.Mu -> None)
+        in
+        Debug.print ~id
+        @@ lazy
+             (sprintf "acc_set: %s"
+                (String.concat_map_set ~sep:"," acc_set ~f:string_of_int));
+        Kind.
+          {
+            name = Ident.Tvar ("PR" ^ string_of_int scc_i);
+            sorts_shared = [];
+            sorts_map;
+            max_pri;
+            sigma;
+            trunc;
+            acc_set;
+          }
     in
-    inner query Set.Poly.empty [] @@ List.rev preds
+    let rec inner nu_only wfpvs = function
+      | [] ->
+          ( nu_only,
+            Set.fold ~init:(Map.Poly.empty, Map.Poly.empty) wfpvs
+              ~f:(fun acc (l, r) ->
+                let wftvar = Kind.parity_tvar_of_nwf nwf l r in
+                Kind.add_pred_env_set acc
+                  (Kind.Parity (nwf, (l, r)))
+                  (Set.Poly.singleton
+                     ( Ident.tvar_to_pvar wftvar,
+                       List.map ~f:Logic.ExtTerm.to_old_sort
+                       @@ Hashtbl.Poly.find_exn nwf.sorts_map l
+                       @ Hashtbl.Poly.find_exn nwf.sorts_map r ))) )
+      | (pred : Pred.t) :: rest ->
+          let sigma =
+            Set.Poly.filter_map ~f:(fun (pvar_r, sorts_r) ->
+                if
+                  List.for_all preds ~f:(fun pred ->
+                      not @@ Ident.pvar_equal pvar_r pred.name)
+                then None
+                else
+                  let params_r = mk_fresh_sort_env_list sorts_r in
+                  let phi =
+                    let terms_r = Term.of_sort_env params_r in
+                    let wftvar =
+                      Ident.mk_parity_tvar nwf.name
+                        (Ident.Tvar
+                           (Ident.name_of_pvar pred.name
+                           ^ "@" ^ string_of_int
+                           @@ Map.Poly.find_exn nwf.sigma
+                           @@ Ident.pvar_to_tvar pred.name))
+                        (Ident.Tvar
+                           (Ident.name_of_pvar pvar_r ^ "@" ^ string_of_int
+                           @@ Map.Poly.find_exn nwf.sigma
+                           @@ Ident.pvar_to_tvar pvar_r))
+                    in
+                    Formula.and_of
+                      [
+                        (* (co-)recursion *)
+                        Formula.mk_atom
+                        @@ Atom.mk_pvar_app pvar_r sorts_r terms_r;
+                        (* guard *)
+                        Formula.mk_atom
+                        @@ Atom.mk_pvar_app
+                             (Ident.tvar_to_pvar wftvar)
+                             (List.map ~f:snd pred.args @ sorts_r)
+                             (Term.of_sort_env pred.args @ terms_r);
+                      ]
+                  in
+                  Some (pvar_r, (params_r, phi)))
+            @@ Set.filter
+                 ~f:(fst >> Ident.pvar_to_tvar >> Hashtbl.Poly.mem sorts_map)
+            @@ Formula.pred_sort_env_of pred.body
+          in
+          let wfpvs' =
+            Set.union wfpvs
+              (Set.Poly.map sigma ~f:(fun (pvar_r, _) ->
+                   (Ident.pvar_to_tvar pred.name, Ident.pvar_to_tvar pvar_r)))
+          in
+          let nu_only' =
+            {
+              pred with
+              kind = Predicate.Nu;
+              body = Formula.subst_preds (Map.of_set_exn sigma) pred.body;
+            }
+            :: nu_only
+          in
+          inner nu_only' wfpvs' rest
+    in
+    inner [] Set.Poly.empty (List.rev preds)
 
-  let elim_mu_ppm ?(id = None) ?(use_scc = true) ?(use_alt_dep = true)
-      ?(ignore_nu_components = false) (query : Formula.t) (preds : Pred.t list)
-      unknowns =
+  let elim_mu_ppm ?(id = None) (use_scc, use_alt_dep, ignore_nu_components)
+      (query : Formula.t) (preds : Pred.t list) unknowns =
     let open Graph in
     let open Pack.Digraph in
     let sccs =
@@ -525,247 +786,23 @@ module Make (Cfg : Config.ConfigType) = struct
         Components.scc_list graph)
       else [ List.init (List.length preds) ~f:V.create ]
     in
-    let elim_mu_ppm_scc scc_i scc =
-      let preds =
-        List.filter_mapi preds ~f:(fun i pred ->
-            if List.exists scc ~f:(fun v -> V.label v = i) then Some pred
-            else None)
-      in
-      if
-        List.for_all preds ~f:(fun pred ->
-            match pred.Pred.kind with Predicate.Mu -> false | _ -> true)
-      then (preds, (Map.Poly.empty, Map.Poly.empty))
-      else
-        let (dg0 : DepGraph.t) = DepGraph.gen_init_graph query preds in
-        Debug.print ~id
-        @@ lazy
-             (sprintf "************ DepGraph for the %s SCC:\n%s"
-                (Ordinal.string_of (Ordinal.make (scc_i + 1)))
-                (DepGraph.str_of dg0));
-        let sorts_map =
-          Hashtbl.Poly.of_alist_exn
-          @@ List.map preds ~f:(fun pred ->
-              ( Ident.pvar_to_tvar pred.name,
-                List.map ~f:(snd >> Logic.ExtTerm.of_old_sort) pred.args ))
-        in
-        let pvs =
-          Set.Poly.of_list @@ List.map preds ~f:(fun pred -> pred.name)
-        in
-        let nwf =
-          if use_alt_dep then (
-            let alt_dep, amax =
-              let rec loop alt_dep = function
-                | [] -> alt_dep
-                | (name_i, is_mu_i, i) :: pvars' ->
-                    let ai =
-                      let dg = DepGraph.k_transitive_closure dg0 i in
-                      Debug.print ~id
-                      @@ lazy
-                           (sprintf "************ k-reachability analysis:\n%s"
-                              (DepGraph.str_of dg));
-                      Integer.max_list
-                      @@ 1
-                         :: List.filter_map alt_dep
-                              ~f:(fun (name_j, is_mu_j, aj) ->
-                                let open DepGraph in
-                                if
-                                  Set.exists pvs ~f:(fun k ->
-                                      (name_i =->* k) dg && (k =-> name_j) dg)
-                                  && Set.exists pvs ~f:(fun k ->
-                                      (name_j =->* k) dg && (k =-> name_i) dg)
-                                then
-                                  if Stdlib.(is_mu_i = is_mu_j) then Some aj
-                                  else Some (1 + aj)
-                                else None)
-                    in
-                    Debug.print ~id
-                    @@ lazy
-                         (sprintf "%s has the alternation depth of %d"
-                            (Ident.name_of_pvar name_i)
-                            ai);
-                    loop ((name_i, is_mu_i, ai) :: alt_dep) pvars'
-              in
-              let res =
-                List.map ~f:(fun (name_i, _, ai) -> (name_i, ai))
-                @@ loop [] @@ List.rev
-                @@ List.mapi preds ~f:(fun i pred ->
-                    ( pred.name,
-                      (match pred.kind with Predicate.Mu -> true | _ -> false),
-                      i ))
-              in
-              ( Map.Poly.of_alist_exn res,
-                Integer.max_list @@ List.map ~f:snd res )
-            in
-            Debug.print ~id @@ lazy (sprintf "amax = %d" amax);
-            let max_pri =
-              if ignore_nu_components then
-                if (amax + 1) mod 2 = 0 then (amax + 1) / 2 else (amax + 2) / 2
-              else amax + 1
-            in
-            Debug.print ~id @@ lazy (sprintf "#ord = %d" max_pri);
-            let trunc =
-              if ignore_nu_components then fun sigma_i ->
-                if sigma_i mod 2 = 0 then sigma_i / 2 else (sigma_i + 1) / 2
-              else Fn.id
-            in
-            let sigma =
-              Map.Poly.of_alist_exn
-              @@ List.map preds ~f:(fun pred ->
-                  let pri = 2 + amax - Map.Poly.find_exn alt_dep pred.name in
-                  let pri =
-                    match pred.Pred.kind with
-                    | Predicate.(Nu | Fix) ->
-                        if pri mod 2 = 0 then pri else pri - 1
-                    | Predicate.Mu -> if pri mod 2 = 0 then pri - 1 else pri
-                  in
-                  Debug.print ~id
-                  @@ lazy
-                       (sprintf "%s has the priority of %d |-> #%d"
-                          (Ident.name_of_pvar pred.name)
-                          pri (trunc pri));
-                  (Ident.pvar_to_tvar pred.name, pri))
-            in
-            let acc_set =
-              Set.Poly.of_list
-              @@ List.init
-                   (if amax mod 2 = 0 then amax / 2 else (amax + 1) / 2)
-                   ~f:(fun i -> 2 * (i + 1))
-            in
-            Debug.print ~id
-            @@ lazy
-                 (sprintf "acc_set: %s"
-                    (String.concat_map_set ~sep:"," acc_set ~f:string_of_int));
-            Kind.
-              {
-                name = Ident.Tvar ("PR" ^ string_of_int scc_i);
-                sorts_shared = [];
-                sorts_map;
-                max_pri;
-                sigma;
-                trunc;
-                acc_set;
-              })
+    let predss, res =
+      List.unzip
+      @@ List.mapi sccs ~f:(fun scc_i scc ->
+          let preds =
+            List.filter_mapi preds ~f:(fun i pred ->
+                if List.exists scc ~f:(fun v -> V.label v = i) then Some pred
+                else None)
+          in
+          if
+            List.for_all preds ~f:(fun pred ->
+                match pred.Pred.kind with Predicate.Mu -> false | _ -> true)
+          then (preds, (Map.Poly.empty, Map.Poly.empty))
           else
-            let max_pri = List.length preds in
-            Debug.print ~id @@ lazy (sprintf "#ord = %d" max_pri);
-            let trunc = Fn.id in
-            let sigma =
-              Map.Poly.of_alist_exn
-              @@ List.mapi preds ~f:(fun i pred ->
-                  let pri = i + 1 in
-                  Debug.print ~id
-                  @@ lazy
-                       (sprintf "%s has the priority of %d |-> #%d"
-                          (Ident.name_of_pvar pred.name)
-                          pri (trunc pri));
-                  (Ident.pvar_to_tvar pred.name, pri))
-            in
-            let acc_set =
-              Set.Poly.of_list
-              @@ List.filter_map preds ~f:(fun pred ->
-                  match pred.Pred.kind with
-                  | Predicate.(Nu | Fix) ->
-                      Some
-                        (Map.Poly.find_exn sigma (Ident.pvar_to_tvar pred.name))
-                  | Predicate.Mu -> None)
-            in
-            Debug.print ~id
-            @@ lazy
-                 (sprintf "acc_set: %s"
-                    (String.concat_map_set ~sep:"," acc_set ~f:string_of_int));
-            Kind.
-              {
-                name = Ident.Tvar ("PR" ^ string_of_int scc_i);
-                sorts_shared = [];
-                sorts_map;
-                max_pri;
-                sigma;
-                trunc;
-                acc_set;
-              }
-        in
-        let rec inner nu_only wfpvs = function
-          | [] ->
-              ( nu_only,
-                Set.fold ~init:(Map.Poly.empty, Map.Poly.empty) wfpvs
-                  ~f:(fun acc (l, r) ->
-                    let wftvar =
-                      Ident.mk_parity_tvar nwf.name
-                        (Ident.Tvar
-                           (Ident.name_of_tvar l ^ "@" ^ string_of_int
-                           @@ Map.Poly.find_exn nwf.sigma l))
-                        (Ident.Tvar
-                           (Ident.name_of_tvar r ^ "@" ^ string_of_int
-                           @@ Map.Poly.find_exn nwf.sigma r))
-                    in
-                    Kind.add_pred_env_set acc
-                      (Kind.Parity (nwf, (l, r)))
-                      (Set.Poly.singleton
-                         ( Ident.tvar_to_pvar wftvar,
-                           List.map ~f:Logic.ExtTerm.to_old_sort
-                           @@ Hashtbl.Poly.find_exn nwf.sorts_map l
-                           @ Hashtbl.Poly.find_exn nwf.sorts_map r ))) )
-          | (pred : Pred.t) :: rest ->
-              let sigma =
-                Set.Poly.filter_map ~f:(fun (pvar_r, sorts_r) ->
-                    if
-                      List.for_all preds ~f:(fun pred ->
-                          not @@ Ident.pvar_equal pvar_r pred.name)
-                    then None
-                    else
-                      let params_r = mk_fresh_sort_env_list sorts_r in
-                      let phi =
-                        let terms_r = Term.of_sort_env params_r in
-                        let wftvar =
-                          Ident.mk_parity_tvar nwf.name
-                            (Ident.Tvar
-                               (Ident.name_of_pvar pred.name
-                               ^ "@" ^ string_of_int
-                               @@ Map.Poly.find_exn nwf.sigma
-                               @@ Ident.pvar_to_tvar pred.name))
-                            (Ident.Tvar
-                               (Ident.name_of_pvar pvar_r ^ "@" ^ string_of_int
-                               @@ Map.Poly.find_exn nwf.sigma
-                               @@ Ident.pvar_to_tvar pvar_r))
-                        in
-                        Formula.and_of
-                          [
-                            (* (co-)recursion *)
-                            Formula.mk_atom
-                            @@ Atom.mk_pvar_app pvar_r sorts_r terms_r;
-                            (* guard *)
-                            Formula.mk_atom
-                            @@ Atom.mk_pvar_app
-                                 (Ident.tvar_to_pvar wftvar)
-                                 (List.map ~f:snd pred.args @ sorts_r)
-                                 (Term.of_sort_env pred.args @ terms_r);
-                          ]
-                      in
-                      Some (pvar_r, (params_r, phi)))
-                @@ Set.filter
-                     ~f:(fst >> Ident.pvar_to_tvar >> Hashtbl.Poly.mem sorts_map)
-                @@ Formula.pred_sort_env_of pred.body
-              in
-              let wfpvs' =
-                Set.union wfpvs
-                  (Set.Poly.map sigma ~f:(fun (pvar_r, _) ->
-                       (Ident.pvar_to_tvar pred.name, Ident.pvar_to_tvar pvar_r)))
-              in
-              let nu_only' =
-                Pred.
-                  {
-                    pred with
-                    kind = Predicate.Nu;
-                    body = Formula.subst_preds (Map.of_set_exn sigma) pred.body;
-                  }
-                :: nu_only
-              in
-              inner nu_only' wfpvs' rest
-        in
-        inner [] Set.Poly.empty (List.rev preds)
+            elim_mu_ppm_scc
+              (use_alt_dep, ignore_nu_components)
+              ~id query preds scc_i)
     in
-    let predss, res = List.unzip @@ List.mapi sccs ~f:elim_mu_ppm_scc in
-    let senvs, kind_maps = List.unzip res in
     ( ( query,
         List.concat
         @@ List.filter_map preds ~f:(fun pred ->
@@ -776,24 +813,31 @@ module Make (Cfg : Config.ConfigType) = struct
                then Some { pred with kind = Predicate.Nu }
                else None)
            :: predss ),
+      let senvs, kind_maps = List.unzip res in
       ( Map.force_merge_list @@ (fst unknowns :: senvs),
         Map.force_merge_list @@ (snd unknowns :: kind_maps) ) )
 
-  let f ?(id = None) ~exchange ~messenger ?(use_ppm = false) ?(use_scc = true)
-      ?(ignore_nu_components = false) ?(use_alt_dep = true) (muclp : Problem.t)
+  let elim_mu ?(id = None) ?(conv_nu = false) (muclp : Problem.t) unknowns =
+    (match config.mode with
+    | PPM (use_scc, use_alt_dep, ignore_nu_components) ->
+        elim_mu_ppm ~id (use_scc, use_alt_dep, ignore_nu_components)
+    | WF (use_dwf, use_scc, use_alt_dep) ->
+        elim_mu_bra ~id ~conv_nu (use_dwf, use_scc, use_alt_dep))
+      muclp.query muclp.preds unknowns
+
+  let f ?(id = None) ?(conv_nu = false) ~exchange ~messenger (muclp : Problem.t)
       unknowns =
     (*Debug.set_id id;*)
     Debug.print ~id @@ lazy "**************** elim_mu ***********";
-    let (query', preds'), unknowns' =
-      if use_ppm then
-        elim_mu_ppm ~id ~use_scc ~use_alt_dep ~ignore_nu_components muclp.query
-          muclp.preds unknowns
-      else elim_mu ~id muclp.query muclp.preds unknowns
+    let (query', preds'), nu_wfs =
+      elim_mu ~id ~conv_nu muclp (Map.Poly.empty, Map.Poly.empty)
     in
     Debug.print ~id @@ lazy (Problem.str_of @@ Problem.make preds' query');
     Debug.print ~id @@ lazy "**************** elim_nu ***********";
     let (queries, clauses), (exi_senv, kind_map) =
-      elim_nu query' preds' unknowns'
+      elim_nu query' preds'
+        ( Map.force_merge (fst nu_wfs) (fst unknowns),
+          Map.force_merge (snd nu_wfs) (snd unknowns) )
     in
     let clauses, stable_clauses =
       if exchange then
@@ -801,15 +845,20 @@ module Make (Cfg : Config.ConfigType) = struct
         ( clauses,
           Set.concat_map queries ~f:(fun (param_senv, phi) ->
               let uni_senv = Logic.of_old_sort_env_map param_senv in
-              Logic.ExtTerm.of_old_formula phi
-              |> Logic.ExtTerm.nnf_of
+              phi |> Logic.ExtTerm.of_old_formula |> Logic.ExtTerm.nnf_of
               |> Logic.ExtTerm.cnf_of exi_senv uni_senv
               |> Set.Poly.map ~f:(fun (ps, ns, phi) -> (uni_senv, ps, ns, phi)))
         )
       else (Set.union clauses queries, Set.Poly.empty)
     in
     let params =
-      PCSP.Params.make ~kind_map ~messenger ~id ~stable_clauses exi_senv
+      let arg_original_names =
+        Map.Poly.of_alist_exn
+        @@ List.map muclp.preds ~f:(fun (pred : Pred.t) ->
+            (pred.name, pred.arg_original_names))
+      in
+      PCSP.Params.make ~arg_original_names ~kind_map ~messenger ~id
+        ~stable_clauses exi_senv
     in
-    PCSP.Problem.of_old_formulas ~params clauses
+    (PCSP.Problem.of_old_formulas ~params clauses (* Insert metadata *), nu_wfs)
 end

@@ -1,0 +1,49 @@
+///*** 1_main ***///
+START: main_bb0;
+FROM: main_bb0;
+v0 := nondet();
+var__temp_vx.0 := v0;
+var__temp_vx.0 := v0;
+TO: main_bb1;
+
+FROM: main_bb1;
+vx.0 := var__temp_vx.0;
+TO: main_bb1_end;
+
+FROM: main_bb1_end;
+assume(vx.0 sle 100);
+TO: main_bb2;
+
+FROM: main_bb1_end;
+assume(vx.0 sgt 100);
+TO: main_bb5;
+
+FROM: main_bb2;
+v2 := nondet();
+TO: main_bb2_end;
+
+FROM: main_bb2_end;
+assume(v2 != 0);
+TO: main_bb3;
+
+FROM: main_bb2_end;
+assume(v2 == 0);
+TO: main_bb4;
+
+FROM: main_bb3;
+v4 := -2 * vx.0;
+v5 := v4 + 2;
+var__temp_vx.0 := v5;
+var__temp_vx.0 := v5;
+TO: main_bb1;
+
+FROM: main_bb4;
+v6 := -3 * vx.0;
+v7 := v6 - 2;
+var__temp_vx.0 := v7;
+var__temp_vx.0 := v7;
+TO: main_bb1;
+
+FROM: main_bb5;
+TO: main_bb5_ret;
+

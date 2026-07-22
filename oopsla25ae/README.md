@@ -49,7 +49,7 @@ The following instructions assume that you are in the root directory of the GitH
    opam switch create oopsla2025-artifact 5.3.0
    ```
 
-   Don't forget to activate the created switch to make sure the environment is up-to-date. E.g., run 
+   Don't forget to activate the created switch to make sure the environment is up-to-date. E.g., run
    ```
    eval $(opam env --switch=oopsla2025-artifact)
    ```
@@ -68,7 +68,7 @@ The following instructions assume that you are in the root directory of the GitH
    dune build main.exe
    ```
 
-5. Build the backend solver [HorSat2](https://github.com/hopv/horsat2): 
+5. Build the backend solver [HorSat2](https://github.com/hopv/horsat2):
 
    ```
    wget https://github.com/hopv/horsat2/archive/refs/heads/master.zip
@@ -104,7 +104,7 @@ The following is the correspondence between the benchmarks in the paper and the 
 To verify an original program against a specification, the user has to prepare a `.ml` file following a certain template. We illustrate the template using `./benchmarks/OCaml/oopsla25/file_SAT.ml`, which corresponds to the first program shown in the table in Section 7 of the paper.
 
 ```
-(* 
+(*
   This declares the algebraic operations used in the programs as a generalized algebraic datatype (GADT).
   See https://ocaml.org/manual/5.2/gadts-tutorial.html for an introduction to GADTs in OCaml.
 *)

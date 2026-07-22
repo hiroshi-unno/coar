@@ -192,16 +192,26 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
   let gen_template ~ucore:_ (hspace : HypSpace.hspace) =
     let template =
       let quals_x, terms_x = Hashtbl.find_exn qual_term_map tag_l in
+      let quals_x = Set.to_list quals_x in
+      let terms_x = Set.to_list terms_x in
       let quals_y, terms_y =
         let quals_y, terms_y = Hashtbl.find_exn qual_term_map tag_r in
+        let quals_y = Set.to_list quals_y in
+        let terms_y = Set.to_list terms_y in
         let ren =
           ren_of_sort_env_list
             (LogicOld.sort_env_list_of_sorts ~pre:"" sorts_r)
             (LogicOld.sort_env_list_of_sorts ~pre:""
                ~start:(List.length sorts_l) sorts_r)
         in
-        ( Set.Poly.map quals_y ~f:(Formula.rename ren),
-          Set.Poly.map terms_y ~f:(Term.rename ren) )
+        (* print ren *)
+        Map.Poly.iteri ren ~f:(fun ~key ~data ->
+            Debug.print
+            @@ lazy
+                 (sprintf "renaming %s to %s" (Ident.name_of_tvar key)
+                    (Ident.name_of_tvar data)));
+        ( List.map quals_y ~f:(Formula.rename ren),
+          List.map terms_y ~f:(Term.rename ren) )
       in
       if true then (
         Debug.print @@ lazy "qualifiers and terms for template generation:";
@@ -216,20 +226,20 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
         Debug.print
         @@ lazy
              (sprintf "quals_x for %s: %s" (Ident.name_of_tvar tag_l)
-             @@ String.concat_map_set ~sep:"," quals_x ~f:Formula.str_of);
+             @@ String.concat_map_list ~sep:"," quals_x ~f:Formula.str_of);
         Debug.print
         @@ lazy
              (sprintf "terms_x for %s: %s" (Ident.name_of_tvar tag_l)
-             @@ String.concat_map_set ~sep:"," terms_x ~f:Term.str_of);
+             @@ String.concat_map_list ~sep:"," terms_x ~f:Term.str_of);
         Debug.print
         @@ lazy
              (sprintf "quals_y for %s: %s" (Ident.name_of_tvar tag_r)
-             @@ String.concat_map_set ~sep:"," quals_y ~f:Formula.str_of);
+             @@ String.concat_map_list ~sep:"," quals_y ~f:Formula.str_of);
         Debug.print
         @@ lazy
              (sprintf "terms_y for %s: %s" (Ident.name_of_tvar tag_r)
-             @@ String.concat_map_set ~sep:"," terms_y ~f:Term.str_of));
-      Templ.gen_simplified_parity_predicate
+             @@ String.concat_map_list ~sep:"," terms_y ~f:Term.str_of));
+      Templ.gen_simplified_parity_predicate ~print:Debug.print
         (*config.use_ifte*)
         (rcs, dcs, qds)
         (nwf.max_pri, nwf.sigma, nwf.trunc, nwf.acc_set)
@@ -253,8 +263,7 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
           bedc = Option.map config.bound_each_disc_coeff ~f:Z.of_int;
         }
         (tag_l, params_left, tag_r, params_right)
-        (Set.to_list quals_x, Set.to_list terms_x)
-        (Set.to_list quals_y, Set.to_list terms_y)
+        (quals_x, terms_x) (quals_y, terms_y)
     in
     Debug.print
     @@ lazy

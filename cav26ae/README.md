@@ -8,10 +8,10 @@ Claimed badges: Available + Functional + Reusable
 Justification for the badges:
 
   * Functional: The artifact replicates the results of the paper (see below for details). It compiles MuCyc and executes the benchmarks on our approach and the tools we compare with. The source code is included in the artifact.
-      - replicated: 
-          * Figure 1, plot left 
-          * Figure 1, plot right   
-      
+      - replicated:
+          * Figure 1, plot left
+          * Figure 1, plot right
+
   * Reusable:
       - The artifact's license allows its reuse and repurposing. Source code is provided and the artifact allows several different configuration options. Namely, the benchmarks are evaluated using the approach which satisfies the progress property, as well as an approach where the progress property is not ensured. Moreover, the timeout for the execution of the benchmarks can be adjusted if needed.
       - All dependencies and used libraries are well documented and up to date. Our tool depends on the solver `Z3` and the SMT-LIB2 benchmarks. The remaining dependencies are documented in the README file in the root directory of the repository.
@@ -118,7 +118,7 @@ Finally, generate the plots:
 ./gen_figs_LRA.sh
 ```
 
-The following `csv` files are generated: 
+The following `csv` files are generated:
 - `LRA_mucyc_np.csv`: results of execution time of all benchmarks when using the approach in which the progress property is not ensured.
 - `LRA_mucyc.csv`: results of execution time of all benchmarks when using the approach in which the progress property is ensured.
 - `LRA_z3.csv`: results of execution time of all benchmarks when using the SMT solver `Z3`.

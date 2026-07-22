@@ -1,0 +1,11 @@
+///*** 1_main ***///
+START: main_bb6;
+FROM: main_bb6;
+memory0_freeIndex := 1;
+memory1_freeIndex := 1;
+vmemory0 := nondet();
+vmemory1 := nondet();
+v18 := 0;
+vmemory0 := store_array(vmemory0, 0, 0);
+TO: main_bb6_ret;
+

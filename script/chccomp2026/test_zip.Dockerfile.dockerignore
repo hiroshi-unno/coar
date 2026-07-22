@@ -1,0 +1,16 @@
+.git
+_build
+.vscode
+
+cav21ae_dt
+cav21ae_rel
+popl24ae
+icfp24ae
+oopsla25ae
+pldi26ae_lower
+pldi26ae_omega
+cav26ae
+forStarExec
+learner
+script
+!script/chccomp2026/coar.zip

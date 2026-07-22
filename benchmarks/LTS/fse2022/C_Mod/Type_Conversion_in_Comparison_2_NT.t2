@@ -1,0 +1,66 @@
+///*** 1_main ***///
+START: main_bb5;
+FROM: main_bb5;
+v12 := nondet_uchar();
+v13 := nondet_char();
+var__temp_vac.0 := v12;
+var__temp_vac.0 := v12;
+TO: main_wrap_aroundexit;
+
+FROM: main_wrap_aroundexit;
+vac.0 := var__temp_vac.0;
+TO: main_wrap_aroundexit_end;
+
+FROM: main_wrap_aroundexit_end;
+assume(vac.0 != v13);
+TO: main_bb6;
+
+FROM: main_wrap_aroundexit_end;
+assume(vac.0 == v13);
+TO: main_bb10;
+
+FROM: main_bb6;
+v15 := vac.0 + 1;
+TO: main_bb6_end;
+
+FROM: main_bb6_end;
+assume(v15 > 255);
+TO: main_bb7;
+
+FROM: main_bb6_end;
+assume(v15 <= 255);
+TO: main_bb8;
+
+FROM: main_bb7;
+v17 := v15 - 255;
+v18 := v17 - 1;
+v19 := v18 % 256;
+var__temp_vac.0 := v19;
+var__temp_vac.0 := v19;
+TO: main_wrap_aroundexit;
+
+FROM: main_bb8;
+var__temp_vac.0 := v15;
+TO: main_bb8_end;
+
+FROM: main_bb8_end;
+assume(v15 < 0);
+TO: main_bb9;
+
+FROM: main_bb8_end;
+assume(v15 >= 0);
+var__temp_vac.0 := v15;
+TO: main_wrap_aroundexit;
+
+FROM: main_bb9;
+v21 := 0 - v15;
+v22 := v21 - 1;
+v23 := v22 % 256;
+v24 := 255 - v23;
+var__temp_vac.0 := v24;
+var__temp_vac.0 := v24;
+TO: main_wrap_aroundexit;
+
+FROM: main_bb10;
+TO: main_bb10_ret;
+

@@ -1,0 +1,80 @@
+///*** 1_main ***///
+START: main_bb6;
+
+TYPE v14: bv(32);
+
+FROM: main_bb6;
+flag := 0;
+count := 0;
+TO: main_bb7;
+
+FROM: main_bb7;
+v10 := flag;
+v12 := count;
+var__temp_v.0.i := 0;
+TO: main_bb7_end;
+
+FROM: main_bb7_end;
+assume((v10 == 1) || (v12 sgt 100));
+var__temp_v.0.i := 0;
+TO: main_readexit;
+
+FROM: main_bb7_end;
+assume((v10 != 1) && (v12 sle 100));
+TO: main_bb8;
+
+FROM: main_bb8;
+v14 := nondet();
+var__temp_v.0.i := -1;
+TO: main_bb8_end;
+
+FROM: main_bb8_end;
+assume(v14 sle 0);
+var__temp_v.0.i := -1;
+TO: main_readexit;
+
+FROM: main_bb8_end;
+assume(v14 sgt 0);
+TO: main_bb9;
+
+FROM: main_bb9;
+v16 := v14 srem 1000;
+TO: main_bb9_end;
+
+FROM: main_bb9_end;
+assume(v16 slt 995);
+TO: main_bb10;
+
+FROM: main_bb9_end;
+assume(v16 sge 995);
+TO: main_bb11;
+
+FROM: main_bb10;
+v18 := count;
+v19 := v18 + 1;
+count := v19;
+var__temp_v.0.i := v16;
+var__temp_v.0.i := v16;
+TO: main_readexit;
+
+FROM: main_bb11;
+flag := 1;
+var__temp_v.0.i := 0;
+var__temp_v.0.i := 0;
+TO: main_readexit;
+
+FROM: main_readexit;
+v.0.i := var__temp_v.0.i;
+TO: main_readexit_end;
+
+FROM: main_readexit_end;
+assume(v.0.i sle 0);
+TO: main_bb12;
+
+FROM: main_readexit_end;
+assume(v.0.i sgt 0);
+TO: main_bb7;
+
+FROM: main_bb12;
+TO: main_bb12_ret;
+

@@ -203,18 +203,14 @@ and normalize_datatype_eq psym cons_name dt ts t2 =
           Evaluator.simplify @@ Formula.and_of
           @@ (Formula.mk_atom @@ T_dt.mk_is_cons dt cons_name t2)
              :: List.map2_exn sels ts ~f:(fun sel t ->
-                    Evaluator.simplify
-                    @@ Formula.eq
-                         (T_dt.mk_sel dt (Datatype.name_of_sel sel) t2)
-                         t)
+                 Evaluator.simplify
+                 @@ Formula.eq (T_dt.mk_sel dt (Datatype.name_of_sel sel) t2) t)
       | T_bool.Neq ->
           Evaluator.simplify @@ Formula.or_of
           @@ (Formula.mk_atom @@ T_dt.mk_is_not_cons dt cons_name t2)
              :: List.map2_exn sels ts ~f:(fun sel t ->
-                    Evaluator.simplify
-                    @@ Formula.neq
-                         (T_dt.mk_sel dt (Datatype.name_of_sel sel) t2)
-                         t)
+                 Evaluator.simplify
+                 @@ Formula.neq (T_dt.mk_sel dt (Datatype.name_of_sel sel) t2) t)
       | _ -> assert false)
 
 and normalize_term ?(drop_coeff = false) = function
@@ -230,12 +226,12 @@ and normalize_term ?(drop_coeff = false) = function
           |> (if drop_coeff then PolyTerm.div_by_gcd else Fn.id)
           |> Map.Poly.to_alist
           |> List.map ~f:(fun (m, c) ->
-                 if Map.Poly.is_empty m then Term.of_value (get_dtenv ()) c
-                 else if Stdlib.(c = Value.Int Z.one) then PolyTerm.int_prod m
-                 else
-                   T_int.mk_mul
-                     (Term.of_value (get_dtenv ()) c)
-                     (PolyTerm.int_prod m))
+              if Map.Poly.is_empty m then Term.of_value (get_dtenv ()) c
+              else if Stdlib.(c = Value.Int Z.one) then PolyTerm.int_prod m
+              else
+                T_int.mk_mul
+                  (Term.of_value (get_dtenv ()) c)
+                  (PolyTerm.int_prod m))
           |> function
           | [] -> T_int.zero ()
           | [ t ] -> t
@@ -246,12 +242,12 @@ and normalize_term ?(drop_coeff = false) = function
           |> (if false (*drop_coeff*) then PolyTerm.div_by_gcd else Fn.id)
           |> Map.Poly.to_alist
           |> List.map ~f:(fun (m, c) ->
-                 if Map.Poly.is_empty m then Term.of_value (get_dtenv ()) c
-                 else if Stdlib.(c = Value.Real Q.one) then PolyTerm.real_prod m
-                 else
-                   T_real.mk_rmul
-                     (Term.of_value (get_dtenv ()) c)
-                     (PolyTerm.real_prod m))
+              if Map.Poly.is_empty m then Term.of_value (get_dtenv ()) c
+              else if Stdlib.(c = Value.Real Q.one) then PolyTerm.real_prod m
+              else
+                T_real.mk_rmul
+                  (Term.of_value (get_dtenv ()) c)
+                  (PolyTerm.real_prod m))
           |> function
           | [] -> T_real.rzero ()
           | [ t ] -> t
@@ -479,13 +475,11 @@ let homogenize_term term =
       int_monomials_of (Value.Int Z.one) term
       |> PolyTerm.int_simplify |> Map.Poly.to_alist
       |> List.map ~f:(fun (m, c) ->
-             if Map.Poly.is_empty m then (*Term.of_value (get_dtenv ())c*)
-               T_int.zero ()
-             else if Stdlib.(c = Value.Int Z.one) then PolyTerm.int_prod m
-             else
-               T_int.mk_mul
-                 (Term.of_value (get_dtenv ()) c)
-                 (PolyTerm.int_prod m))
+          if Map.Poly.is_empty m then (*Term.of_value (get_dtenv ())c*)
+            T_int.zero ()
+          else if Stdlib.(c = Value.Int Z.one) then PolyTerm.int_prod m
+          else
+            T_int.mk_mul (Term.of_value (get_dtenv ()) c) (PolyTerm.int_prod m))
       |> function
       | [] -> T_int.zero ()
       | [ t ] -> t
@@ -494,13 +488,13 @@ let homogenize_term term =
       real_monomials_of (Value.Real Q.one) term
       |> PolyTerm.real_simplify |> Map.Poly.to_alist
       |> List.map ~f:(fun (m, c) ->
-             if Map.Poly.is_empty m then (*Term.of_value (get_dtenv ())c*)
-               T_real.rzero ()
-             else if Stdlib.(c = Value.Real Q.one) then PolyTerm.real_prod m
-             else
-               T_real.mk_rmul
-                 (Term.of_value (get_dtenv ()) c)
-                 (PolyTerm.real_prod m))
+          if Map.Poly.is_empty m then (*Term.of_value (get_dtenv ())c*)
+            T_real.rzero ()
+          else if Stdlib.(c = Value.Real Q.one) then PolyTerm.real_prod m
+          else
+            T_real.mk_rmul
+              (Term.of_value (get_dtenv ()) c)
+              (PolyTerm.real_prod m))
       |> function
       | [] -> T_real.rzero ()
       | [ t ] -> t

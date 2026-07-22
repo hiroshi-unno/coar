@@ -90,7 +90,7 @@ let str_of_sort_env_map str_of_sort =
 let str_of_term_subst str_of_term =
   Map.Poly.to_alist
   >> String.concat_map_list ~sep:"\n" ~f:(fun (tvar, term) ->
-         sprintf "%s |-> %s" (Ident.name_of_tvar tvar) (str_of_term term))
+      sprintf "%s |-> %s" (Ident.name_of_tvar tvar) (str_of_term term))
 
 type sym = ..
 type termlit = ..
@@ -215,6 +215,7 @@ module type TermType = sig
   val is_let : term -> bool
   val is_tyapp : term -> bool
   val is_tylam : term -> bool
+  val is_var_app : term -> bool
 
   val svs_of :
     (sym -> Ident.svar_set) ->
@@ -223,6 +224,7 @@ module type TermType = sig
     Ident.svar_set
 
   val fvs_of : term -> Ident.tvar_set
+  val find : f:(term -> bool) -> term -> term option
   val pvar_of_atom : term -> Ident.tvar
   val ast_size : term -> int
 
@@ -430,6 +432,11 @@ module Term : TermType = struct
   let is_tyapp = function TyApp (_, _, _) -> true | _ -> false
   let is_tylam = function TyLam (_, _, _) -> true | _ -> false
 
+  let rec is_var_app = function
+    | Var (_, _) -> true
+    | App (t, _, _) -> is_var_app t
+    | _ -> false
+
   let svs_of svs_of_sym svs_of_sort term =
     let rec aux ~next = function
       | Var (_, _) -> next Set.Poly.empty
@@ -470,6 +477,15 @@ module Term : TermType = struct
     in
     aux term ~next:Fn.id
 
+  let rec find ~f t =
+    if f t then Some t
+    else
+      match t with
+      | Var (_, _) | Con (_, _) -> None
+      | App (t1, t2, _) | Let (_, _, t1, t2, _) -> (
+          match find ~f t1 with Some t -> Some t | None -> find ~f t2)
+      | Bin (_, _, _, t1, _) | TyApp (t1, _, _) | TyLam (_, t1, _) -> find ~f t1
+
   let rec pvar_of_atom = function
     | Var (tvar, _) -> tvar
     | App (t, _, _) -> pvar_of_atom t
@@ -508,7 +524,9 @@ module Term : TermType = struct
     | Var (var, info) -> (
         next
         @@
-        match Map.Poly.find env var with None -> Var (var, info) | Some t -> t)
+        match Map.Poly.find env var with
+        | None -> Var (var, info)
+        | Some t -> t)
     | Bin (bind, var, sort, term, info) ->
         let var' = Ident.mk_fresh_tvar () in
         subst ~beta_red env
@@ -1112,7 +1130,7 @@ module BoolTerm : BoolTermType = struct
                 let phis, cls =
                   Set.union res1 res2
                   |> Set.partition_tf ~f:(fun (ps, ns, _) ->
-                         Set.is_empty ps && Set.is_empty ns)
+                      Set.is_empty ps && Set.is_empty ns)
                   |> Pair.map
                        (Set.Poly.map ~f:(Triple.trd >> Set.to_list >> or_of))
                        Fn.id
@@ -1137,11 +1155,11 @@ module BoolTerm : BoolTermType = struct
         aux exi_senv (Map.Poly.set senv ~key:var ~data:sort) body (fun res ->
             k
             @@ Set.Poly.map res ~f:(fun (ps, ns, phis) ->
-                   ( Set.Poly.map ~f:(insert_let_var_app var sort def info) ps,
-                     Set.Poly.map ~f:(insert_let_var_app var sort def info) ns,
-                     Set.Poly.singleton
-                     @@ insert_let var sort def info
-                     @@ or_of @@ Set.to_list phis )))
+                ( Set.Poly.map ~f:(insert_let_var_app var sort def info) ps,
+                  Set.Poly.map ~f:(insert_let_var_app var sort def info) ns,
+                  Set.Poly.singleton
+                  @@ insert_let var sort def info
+                  @@ or_of @@ Set.to_list phis )))
     | t -> (
         if is_pvar_app exi_senv senv t then
           k
@@ -2249,11 +2267,11 @@ module rec Datatype : DatatypeType = struct
         sprintf "%s %s where [%s]" (str_of_flag flag)
           (full_name_of Term.str_of_sort t)
         @@ String.concat_map_list ~sep:" and " (dts_of t) ~f:(fun dt ->
-               sprintf "%s %s = %s" (str_of_flag flag)
-                 (full_name_of_dt Term.str_of_sort dt)
-               (*String.concat_map_list ~sep:" " ~f:Term.str_of_sort @@ params_of_dt dt)*)
-               @@ String.concat_map_list ~sep:" | " ~f:str_of_cons
-               @@ conses_of_dt dt)
+            sprintf "%s %s = %s" (str_of_flag flag)
+              (full_name_of_dt Term.str_of_sort dt)
+            (*String.concat_map_list ~sep:" " ~f:Term.str_of_sort @@ params_of_dt dt)*)
+            @@ String.concat_map_list ~sep:" | " ~f:str_of_cons
+            @@ conses_of_dt dt)
 
   (** Transformation *)
 
@@ -2349,9 +2367,8 @@ module rec Datatype : DatatypeType = struct
   let is_finite t =
     not
     @@ List.exists (conses_of t) ~f:(fun cons ->
-           List.for_all (sorts_of_cons_args t cons) ~f:(fun arg ->
-               Stdlib.(arg = DatatypeTerm.SDT t)
-               && DatatypeTerm.is_finite_dt arg))
+        List.for_all (sorts_of_cons_args t cons) ~f:(fun arg ->
+            Stdlib.(arg = DatatypeTerm.SDT t) && DatatypeTerm.is_finite_dt arg))
 
   let rec is_singleton = function
     | DatatypeTerm.SDT t as sort -> (
@@ -3791,7 +3808,7 @@ module ExtTerm :
         else
           let args' = List.map args ~f:(to_old_trm exi_senv uni_senv) in
           let sargs, sret = LogicOld.Sort.args_ret_of sort in
-          if LogicOld.Term.is_bool_sort sret then
+          if Map.Poly.mem exi_senv tvar && LogicOld.Term.is_bool_sort sret then
             LogicOld.T_bool.of_atom
             @@ LogicOld.Atom.mk_pvar_app (Ident.tvar_to_pvar tvar) sargs args'
           else LogicOld.Term.mk_fvar_app tvar sargs sret args'
@@ -3804,6 +3821,8 @@ module ExtTerm :
             LogicOld.T_bool.of_formula
               (to_old_formula exi_senv uni_senv term args))
     | App (t1, t2, _), args -> to_old_term exi_senv uni_senv t1 (t2 :: args)
+    | Bin ((Forall | Exists), _, _, _, _), [] ->
+        LogicOld.T_bool.of_formula (to_old_formula exi_senv uni_senv term args)
     | Bin (Lambda, _, _, _, _), [] ->
         failwith "[to_old_term] partial application not supported"
     | Bin (Lambda, tvar, _, t, _), arg :: args' ->
@@ -3865,7 +3884,7 @@ module ExtTerm :
         LogicOld.(
           T_int.mk_case n (to_old_trm exi_senv uni_senv t1)
           @@ List.map args1 ~f:(fun t ->
-                 T_bool.of_formula (to_old_formula exi_senv uni_senv t args2)))
+              T_bool.of_formula (to_old_formula exi_senv uni_senv t args2)))
     | TyApp (Con (Case n, _), _, _), t1 :: args ->
         let args1, args2 = List.split_n args n in
         LogicOld.(
@@ -3887,45 +3906,55 @@ module ExtTerm :
         let args' = List.map args ~f:(to_old_trm exi_senv uni_senv) in
         match Map.Poly.find exi_senv tvar with
         | Some sort ->
-            let sargs, sret = Sort.args_ret_of sort in
-            assert (BoolTerm.is_bool_sort sret);
-            LogicOld.Atom.mk_pvar_app (Ident.Pvar name)
-              (List.map ~f:to_old_sort sargs)
-              args'
+            let sargs, sret = LogicOld.Sort.args_ret_of @@ to_old_sort sort in
+            assert (LogicOld.Term.is_bool_sort sret);
+            LogicOld.Atom.mk_pvar_app (Ident.Pvar name) sargs args'
         | None -> (
             match Map.Poly.find uni_senv tvar with
             | Some sort ->
-                if Fn.non List.is_empty args then
-                  if true then (
-                    (*ToDo*)
-                    let sargs, sret = Sort.args_ret_of sort in
-                    assert (List.length sargs = List.length args');
-                    assert (BoolTerm.is_bool_sort sret);
-                    LogicOld.Atom.of_bool_term
-                    @@ LogicOld.Term.mk_fvar_app tvar
-                         (List.map ~f:to_old_sort sargs)
-                         (to_old_sort sret) args')
-                  else
-                    failwith
-                    @@ sprintf "%s(%s)" (Ident.name_of_tvar tvar)
-                         (String.concat_map_list ~sep:"," args ~f:str_of)
-                else (
-                  assert (BoolTerm.is_bool_sort sort);
-                  LogicOld.Atom.of_bool_term
-                  @@ LogicOld.Term.mk_var tvar (to_old_sort sort))
+                let sargs, sret =
+                  LogicOld.Sort.args_ret_of @@ to_old_sort sort
+                in
+                assert (LogicOld.Term.is_bool_sort sret);
+                LogicOld.Atom.of_bool_term
+                @@
+                if List.is_empty sargs then LogicOld.Term.mk_var tvar sret
+                else if true then
+                  LogicOld.Term.mk_fvar_app (*ToDo*) tvar sargs sret args'
+                else
+                  failwith
+                  @@ sprintf "%s(%s)" (Ident.name_of_tvar tvar)
+                       (String.concat_map_list ~sep:"," args ~f:str_of)
             | None -> (
-                match Map.Poly.find (LogicOld.get_fenv ()) tvar with
-                | Some (params, sret, _, _, _) ->
+                let dum_senv = LogicOld.get_dummy_term_senv () in
+                match List.Assoc.find dum_senv ~equal:Stdlib.( = ) tvar with
+                | Some sort ->
+                    let sargs, sret = LogicOld.Sort.args_ret_of sort in
                     assert (LogicOld.Term.is_bool_sort sret);
-                    let sargs = List.map params ~f:snd in
-                    LogicOld.Atom.of_bool_term
-                    @@ LogicOld.Term.mk_fvar_app tvar sargs sret args'
-                | None ->
-                    print_endline @@ sprintf "exi_senv: %s"
-                    @@ str_of_sort_env_map str_of_sort exi_senv;
-                    print_endline @@ sprintf "uni_senv: %s"
-                    @@ str_of_sort_env_map str_of_sort uni_senv;
-                    failwith (sprintf "[to_old_atom] %s is not bound" name))))
+                    LogicOld.(
+                      Atom.of_bool_term
+                      @@ Term.mk_fvar_app (Ident.Tvar name) sargs sret args')
+                | None -> (
+                    let fenv = LogicOld.get_fenv () in
+                    match Map.Poly.find fenv tvar with
+                    | Some (params, sret, _, _, _) ->
+                        assert (LogicOld.Term.is_bool_sort sret);
+                        let sargs = List.map params ~f:snd in
+                        LogicOld.(
+                          Atom.of_bool_term
+                          @@ Term.mk_fvar_app tvar sargs sret args')
+                    | None ->
+                        print_endline @@ sprintf "exi_senv: %s"
+                        @@ str_of_sort_env_map str_of_sort exi_senv;
+                        print_endline @@ sprintf "uni_senv: %s"
+                        @@ str_of_sort_env_map str_of_sort uni_senv;
+                        print_endline @@ sprintf "dum_senv: %s"
+                        @@ LogicOld.str_of_sort_env_list
+                             LogicOld.Term.str_of_sort dum_senv;
+                        print_endline @@ sprintf "fenv: %s"
+                        @@ LogicOld.FunEnv.str_of fenv;
+                        failwith (sprintf "[to_old_atom] %s is not bound" name))
+                )))
     | Con (True, _), [] -> LogicOld.Atom.mk_true ()
     | Con (False, _), [] -> LogicOld.Atom.mk_false ()
     | Con (ASelect _, _), args ->
@@ -3986,7 +4015,7 @@ module ExtTerm :
           Atom.of_bool_term
           @@ T_int.mk_case n (to_old_trm exi_senv uni_senv t1)
           @@ List.map args1 ~f:(fun t ->
-                 T_bool.of_formula (to_old_formula exi_senv uni_senv t args2)))
+              T_bool.of_formula (to_old_formula exi_senv uni_senv t args2)))
     | TyApp (t, _sort, _), args (* ToDo: use [sort] *) ->
         to_old_atom exi_senv uni_senv t args
     | _ ->

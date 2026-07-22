@@ -1,0 +1,66 @@
+///*** 1_main ***///
+START: main_bb0;
+FROM: main_bb0;
+v0 := nondet();
+v1 := nondet();
+TO: main_bb0_end;
+
+FROM: main_bb0_end;
+assume((0 sle v0) && (v0 slt v1));
+TO: main_bb1;
+
+FROM: main_bb0_end;
+assume((0 sgt v0) || (v0 sge v1));
+TO: main_critedge;
+
+FROM: main_bb1;
+v4 := v0 + 1;
+var__temp_vtmp.0 := v4;
+var__temp_vtmp.0 := v4;
+TO: main_bb2;
+
+FROM: main_bb2;
+vtmp.0 := var__temp_vtmp.0;
+TO: main_bb2_end;
+
+FROM: main_bb2_end;
+assume(vtmp.0 != v0);
+TO: main_bb3;
+
+FROM: main_bb2_end;
+assume(vtmp.0 == v0);
+TO: main_critedge;
+
+FROM: main_bb3;
+v6 := nondet();
+TO: main_bb3_end;
+
+FROM: main_bb3_end;
+assume(v6 != 0);
+TO: main_bb4;
+
+FROM: main_bb3_end;
+assume(v6 == 0);
+TO: main_critedge;
+
+FROM: main_bb4;
+v9 := vtmp.0 + 1;
+TO: main_bb4_vtmp.1;
+FROM: main_bb4_vtmp.1;
+assume(vtmp.0 sle v1);
+vtmp.1 := v9;
+TO: main_bb4_svtmp.1;
+
+FROM: main_bb4_vtmp.1;
+assume(vtmp.0 sgt v1);
+vtmp.1 := 0;
+TO: main_bb4_svtmp.1;
+
+FROM: main_bb4_svtmp.1;
+var__temp_vtmp.0 := vtmp.1;
+var__temp_vtmp.0 := vtmp.1;
+TO: main_bb2;
+
+FROM: main_critedge;
+TO: main_critedge_ret;
+

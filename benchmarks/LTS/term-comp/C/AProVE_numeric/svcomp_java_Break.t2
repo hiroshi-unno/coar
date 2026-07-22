@@ -1,0 +1,34 @@
+///*** 1_main ***///
+START: main_bb0;
+FROM: main_bb0;
+var__temp_vi.0 := 0;
+var__temp_vc.0 := 0;
+var__temp_vi.0 := 0;
+var__temp_vc.0 := 0;
+TO: main_bb1;
+
+FROM: main_bb1;
+vi.0 := var__temp_vi.0;
+vc.0 := var__temp_vc.0;
+TO: main_bb1_end;
+
+FROM: main_bb1_end;
+assume(vi.0 sgt 10);
+TO: main_bb2;
+
+FROM: main_bb1_end;
+assume(vi.0 sle 10);
+TO: main_bb3;
+
+FROM: main_bb2;
+TO: main_bb2_ret;
+
+FROM: main_bb3;
+v1 := vi.0 + 1;
+v2 := vc.0 + 1;
+var__temp_vi.0 := v1;
+var__temp_vc.0 := v2;
+var__temp_vi.0 := v1;
+var__temp_vc.0 := v2;
+TO: main_bb1;
+

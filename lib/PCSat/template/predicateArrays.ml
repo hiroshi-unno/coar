@@ -18,6 +18,7 @@ module Config = struct
     bound_each_coeff : int option;
     threshold_coeff : int option;
     threshold_const : int option;
+    add_mod2_quals : bool;
   }
   [@@deriving yojson]
 
@@ -131,7 +132,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
   let adjust_quals_terms (quals, terms) = (quals, terms)
 
   let update_hspace hspace =
-    HypSpace.qualifiers_of ~fenv:Arg.fenv ~add_mod2_quals:false
+    HypSpace.qualifiers_of ~fenv:Arg.fenv ~add_mod2_quals:config.add_mod2_quals
       ~add_bv_quals:true (*ToDo: use depth instead *) config.number_of_qpa
       hspace
 
@@ -139,7 +140,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     let template =
       match ucore with
       | Some (shp, eq_atom, only_bools) ->
-          Templ.gen_dnf ~eq_atom ~br_bools:false ~only_bools
+          Templ.gen_dnf ~print:Debug.print ~eq_atom ~br_bools:false ~only_bools
             {
               consts = Set.to_list hspace.consts;
               terms = Set.to_list hspace.terms;
@@ -157,11 +158,12 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
             { bec = Option.map config.bound_each_coeff ~f:Z.of_int }
             hspace.params
       | None ->
-          Templ.gen_dnf ~eq_atom:false ~br_bools:false ~only_bools:false
+          Templ.gen_dnf ~print:Debug.print ~eq_atom:false ~br_bools:false
+            ~only_bools:false
             {
               consts = [];
               terms = [];
-              quals = Formula.mk_false () :: Set.to_list hspace.quals;
+              quals = Set.to_list (Set.add hspace.quals (Formula.mk_false ()));
               shp = List.init !param.nd ~f:(fun _ -> 0);
               ubc = None;
               ubd = None;

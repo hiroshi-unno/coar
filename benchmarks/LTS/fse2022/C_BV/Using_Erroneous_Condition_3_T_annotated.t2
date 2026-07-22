@@ -1,0 +1,116 @@
+///*** 1_main ***///
+START: main_bb0;
+
+TYPE v0: bv(32);
+TYPE v1: bv(32);
+TYPE v3: bv(32);
+TYPE v6: bv(32);
+
+FROM: main_bb0;
+vold_ := nondet();
+vnew_ := nondet();
+v0 := nondet();
+v1 := nondet();
+var__temp_vj.0 := 0;
+var__temp_vj.0 := 0;
+TO: main_bb1;
+
+FROM: main_bb1;
+vj.0 := var__temp_vj.0;
+TO: main_bb1_end;
+
+FROM: main_bb1_end;
+assume(vj.0 slt 9);
+TO: main_bb2;
+
+FROM: main_bb1_end;
+assume(vj.0 sge 9);
+TO: main_bb3;
+
+FROM: main_bb2;
+v3 := nondet();
+v4 := sign_extend(32, 64, vj.0);
+v5 := v4;
+vold_ := store_array(vold_, v4, v3);
+v6 := nondet();
+v7 := sign_extend(32, 64, vj.0);
+v8 := v7;
+vnew_ := store_array(vnew_, v7, v6);
+v9 := vj.0 + 1;
+var__temp_vj.0 := v9;
+var__temp_vj.0 := v9;
+TO: main_bb1;
+
+FROM: main_bb3;
+v10 := 9;
+vold_ := store_array(vold_, 9, 0);
+v11 := 9;
+vnew_ := store_array(vnew_, 9, 0);
+var__temp_vbase.0 := v0;
+var__temp_vi.0 := 0;
+var__temp_vbase.0 := v0;
+var__temp_vi.0 := 0;
+TO: main_bb4;
+
+FROM: main_bb4;
+vbase.0 := var__temp_vbase.0;
+vi.0 := var__temp_vi.0;
+TO: main_bb4_end;
+
+FROM: main_bb4_end;
+assume(vbase.0 slt v1);
+TO: main_bb5;
+
+FROM: main_bb4_end;
+assume(vbase.0 sge v1);
+TO: main_bb9;
+
+FROM: main_bb5;
+v13 := sign_extend(32, 64, vi.0);
+v14 := v13;
+v15 := select_array(vold_, v13);
+v16 := sign_extend(32, 64, vi.0);
+v17 := v16;
+v18 := select_array(vnew_, v16);
+var__temp_vnumber.0 := vbase.0;
+var__temp_vnumber.0 := vbase.0;
+TO: main_bb6;
+
+FROM: main_bb6;
+vnumber.0 := var__temp_vnumber.0;
+TO: main_bb6_end;
+
+FROM: main_bb6_end;
+assume(v15 != v18);
+TO: main_bb7;
+
+FROM: main_bb6_end;
+assume(v15 == v18);
+TO: main_bb8;
+
+FROM: main_bb7;
+v20 := vnumber.0 + 1;
+var__temp_vnumber.0 := v20;
+TO: main_bb7_end;
+
+FROM: main_bb7_end;
+assume(v20 == v1);
+TO: main_bb8;
+
+FROM: main_bb7_end;
+assume(v20 != v1);
+var__temp_vnumber.0 := v20;
+TO: main_bb6;
+
+FROM: main_bb8;
+v22 := vi.0 + 1;
+v23 := vbase.0 + 8;
+var__temp_vbase.0 := v23;
+var__temp_vi.0 := v22;
+var__temp_vbase.0 := v23;
+var__temp_vi.0 := v22;
+TO: main_bb4;
+
+FROM: main_bb9;
+TO: main_bb9_ret;
+

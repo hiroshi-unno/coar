@@ -1,0 +1,1283 @@
+///*** 1_main ***///
+START: main_bb46;
+FROM: main_bb46;
+v101 := nondet();
+v102 := nondet();
+v103 := nondet();
+v104 := nondet();
+v105 := nondet();
+v106 := nondet();
+v107 := nondet();
+v108 := nondet();
+v109 := nondet();
+v110 := nondet();
+v111 := nondet();
+v112 := nondet();
+v113 := nondet();
+v114 := nondet();
+v115 := nondet();
+v116 := nondet();
+v117 := nondet();
+v118 := nondet();
+v119 := nondet();
+v120 := nondet();
+v121 := nondet();
+v122 := nondet();
+v123 := nondet();
+v124 := nondet();
+v125 := nondet();
+v126 := nondet();
+v127 := nondet();
+v128 := nondet();
+v129 := sign_extend(32, 64, v127);
+var__temp_vs__ctx__stats__sess_connect.0.i := v110;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.0.i := v109;
+var__temp_vs__state.0.i := 12292;
+var__temp_vblastFlag.0.i := 0;
+var__temp_vs__ctx__stats__sess_connect.0.i := v110;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.0.i := v109;
+var__temp_vs__init_buf___0.0.i := nondef.28;
+var__temp_vs__s3__flags.0.i := nondef.29;
+var__temp_vs__s3__tmp__next_state___0.0.i := nondef.30;
+var__temp_vnum1.0.i := nondef.31;
+var__temp_vs__state.0.i := 12292;
+var__temp_vblastFlag.0.i := 0;
+TO: main_bb47;
+
+FROM: main_bb47;
+vs__ctx__stats__sess_connect.0.i := var__temp_vs__ctx__stats__sess_connect.0.i;
+vs__ctx__stats__sess_connect_renegotiate.0.i := var__temp_vs__ctx__stats__sess_connect_renegotiate.0.i;
+vs__init_buf___0.0.i := var__temp_vs__init_buf___0.0.i;
+vs__s3__flags.0.i := var__temp_vs__s3__flags.0.i;
+vs__s3__tmp__next_state___0.0.i := var__temp_vs__s3__tmp__next_state___0.0.i;
+vnum1.0.i := var__temp_vnum1.0.i;
+vs__state.0.i := var__temp_vs__state.0.i;
+vblastFlag.0.i := var__temp_vblastFlag.0.i;
+TO: main_bb47_end;
+
+FROM: main_bb47_end;
+assume(vs__state.0.i slt 4448);
+TO: main_NodeBlock44i;
+
+FROM: main_bb47_end;
+assume(vs__state.0.i sge 4448);
+TO: main_NodeBlock89i;
+
+FROM: main_NodeBlock44i;
+TO: main_NodeBlock44i_end;
+
+FROM: main_NodeBlock44i_end;
+assume(vs__state.0.i slt 4368);
+TO: main_NodeBlock20i;
+
+FROM: main_NodeBlock44i_end;
+assume(vs__state.0.i sge 4368);
+TO: main_NodeBlock42i;
+
+FROM: main_NodeBlock20i;
+TO: main_NodeBlock20i_end;
+
+FROM: main_NodeBlock20i_end;
+assume(vs__state.0.i slt 4099);
+TO: main_NodeBlocki;
+
+FROM: main_NodeBlock20i_end;
+assume(vs__state.0.i sge 4099);
+TO: main_NodeBlock18i;
+
+FROM: main_NodeBlocki;
+TO: main_NodeBlocki_end;
+
+FROM: main_NodeBlocki_end;
+assume(vs__state.0.i slt 4096);
+TO: main_LeafBlocki;
+
+FROM: main_NodeBlocki_end;
+assume(vs__state.0.i sge 4096);
+TO: main_LeafBlock12i;
+
+FROM: main_LeafBlocki;
+TO: main_LeafBlocki_ret;
+
+FROM: main_LeafBlock12i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.4.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+TO: main_LeafBlock12i_end;
+
+FROM: main_LeafBlock12i_end;
+assume(vs__state.0.i == 4096);
+var__temp_vs__ctx__stats__sess_connect_renegotiate.4.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+TO: main_bb74;
+
+FROM: main_LeafBlock12i_end;
+assume(vs__state.0.i != 4096);
+TO: main_ssl3_connectexit;
+
+FROM: main_NodeBlock18i;
+TO: main_NodeBlock18i_end;
+
+FROM: main_NodeBlock18i_end;
+assume(vs__state.0.i slt 4352);
+TO: main_LeafBlock14i;
+
+FROM: main_NodeBlock18i_end;
+assume(vs__state.0.i sge 4352);
+TO: main_LeafBlock16i;
+
+FROM: main_LeafBlock14i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.4.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+TO: main_LeafBlock14i_end;
+
+FROM: main_LeafBlock14i_end;
+assume(vs__state.0.i == 4099);
+var__temp_vs__ctx__stats__sess_connect_renegotiate.4.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+TO: main_bb74;
+
+FROM: main_LeafBlock14i_end;
+assume(vs__state.0.i != 4099);
+TO: main_ssl3_connectexit;
+
+FROM: main_LeafBlock16i;
+TO: main_LeafBlock16i_end;
+
+FROM: main_LeafBlock16i_end;
+assume(vs__state.0.i == 4352);
+TO: main_bb48;
+
+FROM: main_LeafBlock16i_end;
+assume(vs__state.0.i != 4352);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb48;
+v130 := sign_extend(32, 64, vnum1.0.i);
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := vblastFlag.0.i;
+TO: main_bb48_end;
+
+FROM: main_bb48_end;
+assume(v130 sgt 0);
+TO: main_bb49;
+
+FROM: main_bb48_end;
+assume(v130 sle 0);
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := vblastFlag.0.i;
+TO: main_bb79;
+
+FROM: main_bb49;
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := v127;
+var__temp_vs__state.7.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := vblastFlag.0.i;
+TO: main_bb49_end;
+
+FROM: main_bb49_end;
+assume(v129 sle 0);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb49_end;
+assume(v129 sgt 0);
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := v127;
+var__temp_vs__state.7.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := vblastFlag.0.i;
+TO: main_bb79;
+
+FROM: main_NodeBlock42i;
+TO: main_NodeBlock42i_end;
+
+FROM: main_NodeBlock42i_end;
+assume(vs__state.0.i slt 4400);
+TO: main_NodeBlock27i;
+
+FROM: main_NodeBlock42i_end;
+assume(vs__state.0.i sge 4400);
+TO: main_NodeBlock40i;
+
+FROM: main_NodeBlock27i;
+TO: main_NodeBlock27i_end;
+
+FROM: main_NodeBlock27i_end;
+assume(vs__state.0.i slt 4384);
+TO: main_LeafBlock22i;
+
+FROM: main_NodeBlock27i_end;
+assume(vs__state.0.i sge 4384);
+TO: main_LeafBlock24i;
+
+FROM: main_LeafBlock22i;
+vs__state.0.off.i := vs__state.0.i + -4368;
+TO: main_LeafBlock22i_end;
+
+FROM: main_LeafBlock22i_end;
+assume(vs__state.0.off.i ule 1);
+TO: main_bb50;
+
+FROM: main_LeafBlock22i_end;
+assume(vs__state.0.off.i ugt 1);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb50;
+v133 := nondet();
+TO: main_bb50_v.blastFlag.0.i;
+FROM: main_bb50_v.blastFlag.0.i;
+assume(vblastFlag.0.i == 0);
+v.blastFlag.0.i := 1;
+TO: main_bb50_sv.blastFlag.0.i;
+
+FROM: main_bb50_v.blastFlag.0.i;
+assume(vblastFlag.0.i != 0);
+v.blastFlag.0.i := vblastFlag.0.i;
+TO: main_bb50_sv.blastFlag.0.i;
+
+FROM: main_bb50_sv.blastFlag.0.i;
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := 4384;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := v.blastFlag.0.i;
+TO: main_bb50_end;
+
+FROM: main_bb50_end;
+assume(v133 sle 0);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb50_end;
+assume(v133 sgt 0);
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := 4384;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := v.blastFlag.0.i;
+TO: main_bb79;
+
+FROM: main_LeafBlock24i;
+vs__state.0.off25.i := vs__state.0.i + -4384;
+TO: main_LeafBlock24i_end;
+
+FROM: main_LeafBlock24i_end;
+assume(vs__state.0.off25.i ule 1);
+TO: main_bb51;
+
+FROM: main_LeafBlock24i_end;
+assume(vs__state.0.off25.i ugt 1);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb51;
+v136 := nondet();
+TO: main_bb51_v.blastFlag.01.i;
+FROM: main_bb51_v.blastFlag.01.i;
+assume(vblastFlag.0.i == 1);
+v.blastFlag.01.i := 2;
+TO: main_bb51_sv.blastFlag.01.i;
+
+FROM: main_bb51_v.blastFlag.01.i;
+assume(vblastFlag.0.i != 1);
+v.blastFlag.01.i := vblastFlag.0.i;
+TO: main_bb51_sv.blastFlag.01.i;
+
+FROM: main_bb51_sv.blastFlag.01.i;
+TO: main_bb51_end;
+
+FROM: main_bb51_end;
+assume(v136 sle 0);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb51_end;
+assume(v136 sgt 0);
+TO: main_bb52;
+
+FROM: main_bb52;
+TO: main_bb52_v.2.i;
+FROM: main_bb52_v.2.i;
+assume(v106 != 0);
+v.2.i := 4560;
+TO: main_bb52_sv.2.i;
+
+FROM: main_bb52_v.2.i;
+assume(v106 == 0);
+v.2.i := 4400;
+TO: main_bb52_sv.2.i;
+
+FROM: main_bb52_sv.2.i;
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := v.2.i;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := v.blastFlag.01.i;
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := v.2.i;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := v.blastFlag.01.i;
+TO: main_bb79;
+
+FROM: main_NodeBlock40i;
+TO: main_NodeBlock40i_end;
+
+FROM: main_NodeBlock40i_end;
+assume(vs__state.0.i slt 4416);
+TO: main_LeafBlock29i;
+
+FROM: main_NodeBlock40i_end;
+assume(vs__state.0.i sge 4416);
+TO: main_NodeBlock38i;
+
+FROM: main_LeafBlock29i;
+vs__state.0.off30.i := vs__state.0.i + -4400;
+TO: main_LeafBlock29i_end;
+
+FROM: main_LeafBlock29i_end;
+assume(vs__state.0.off30.i ule 1);
+TO: main_bb53;
+
+FROM: main_LeafBlock29i_end;
+assume(vs__state.0.off30.i ugt 1);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb53;
+v140 := v117 - 256;
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := 4416;
+var__temp_vskip.2.i := 1;
+var__temp_vblastFlag.7.i := vblastFlag.0.i;
+TO: main_bb53_end;
+
+FROM: main_bb53_end;
+assume(v140 != 0);
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := 4416;
+var__temp_vskip.2.i := 1;
+var__temp_vblastFlag.7.i := vblastFlag.0.i;
+TO: main_bb79;
+
+FROM: main_bb53_end;
+assume(v140 == 0);
+TO: main_bb54;
+
+FROM: main_bb54;
+v142 := nondet();
+TO: main_bb54_v.blastFlag.03.i;
+FROM: main_bb54_v.blastFlag.03.i;
+assume(vblastFlag.0.i == 2);
+v.blastFlag.03.i := 3;
+TO: main_bb54_sv.blastFlag.03.i;
+
+FROM: main_bb54_v.blastFlag.03.i;
+assume(vblastFlag.0.i != 2);
+v.blastFlag.03.i := vblastFlag.0.i;
+TO: main_bb54_sv.blastFlag.03.i;
+
+FROM: main_bb54_sv.blastFlag.03.i;
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := 4416;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := v.blastFlag.03.i;
+TO: main_bb54_end;
+
+FROM: main_bb54_end;
+assume(v142 sle 0);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb54_end;
+assume(v142 sgt 0);
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := 4416;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := v.blastFlag.03.i;
+TO: main_bb79;
+
+FROM: main_NodeBlock38i;
+TO: main_NodeBlock38i_end;
+
+FROM: main_NodeBlock38i_end;
+assume(vs__state.0.i slt 4432);
+TO: main_LeafBlock32i;
+
+FROM: main_NodeBlock38i_end;
+assume(vs__state.0.i sge 4432);
+TO: main_LeafBlock35i;
+
+FROM: main_LeafBlock32i;
+vs__state.0.off33.i := vs__state.0.i + -4416;
+TO: main_LeafBlock32i_end;
+
+FROM: main_LeafBlock32i_end;
+assume(vs__state.0.off33.i ule 1);
+TO: main_bb55;
+
+FROM: main_LeafBlock32i_end;
+assume(vs__state.0.off33.i ugt 1);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb55;
+v145 := nondet();
+TO: main_bb55_v.blastFlag.04.i;
+FROM: main_bb55_v.blastFlag.04.i;
+assume(vblastFlag.0.i == 3);
+v.blastFlag.04.i := 4;
+TO: main_bb55_sv.blastFlag.04.i;
+
+FROM: main_bb55_v.blastFlag.04.i;
+assume(vblastFlag.0.i != 3);
+v.blastFlag.04.i := vblastFlag.0.i;
+TO: main_bb55_sv.blastFlag.04.i;
+
+FROM: main_bb55_sv.blastFlag.04.i;
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := 4432;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := v.blastFlag.04.i;
+TO: main_bb55_end;
+
+FROM: main_bb55_end;
+assume((v145 sgt 0) && (v124 != 0));
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := 4432;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := v.blastFlag.04.i;
+TO: main_bb79;
+
+FROM: main_bb55_end;
+assume((v145 sle 0) || (v124 == 0));
+TO: main_ssl3_connectexit;
+
+FROM: main_LeafBlock35i;
+vs__state.0.off36.i := vs__state.0.i + -4432;
+TO: main_LeafBlock35i_end;
+
+FROM: main_LeafBlock35i_end;
+assume(vs__state.0.off36.i ule 1);
+TO: main_bb56;
+
+FROM: main_LeafBlock35i_end;
+assume(vs__state.0.off36.i ugt 1);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb56;
+v149 := nondet();
+TO: main_bb56_end;
+
+FROM: main_bb56_end;
+assume(vblastFlag.0.i == 4);
+TO: main_bb57;
+
+FROM: main_bb56_end;
+assume(vblastFlag.0.i != 4);
+TO: main_bb58;
+
+FROM: main_bb57;
+TO: main_ssl3_connectexit_ret;
+
+FROM: main_bb58;
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := 4448;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := vblastFlag.0.i;
+TO: main_bb58_end;
+
+FROM: main_bb58_end;
+assume(v149 sle 0);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb58_end;
+assume(v149 sgt 0);
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := 4448;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := vblastFlag.0.i;
+TO: main_bb79;
+
+FROM: main_NodeBlock89i;
+TO: main_NodeBlock89i_end;
+
+FROM: main_NodeBlock89i_end;
+assume(vs__state.0.i slt 4528);
+TO: main_NodeBlock67i;
+
+FROM: main_NodeBlock89i_end;
+assume(vs__state.0.i sge 4528);
+TO: main_NodeBlock87i;
+
+FROM: main_NodeBlock67i;
+TO: main_NodeBlock67i_end;
+
+FROM: main_NodeBlock67i_end;
+assume(vs__state.0.i slt 4480);
+TO: main_NodeBlock52i;
+
+FROM: main_NodeBlock67i_end;
+assume(vs__state.0.i sge 4480);
+TO: main_NodeBlock65i;
+
+FROM: main_NodeBlock52i;
+TO: main_NodeBlock52i_end;
+
+FROM: main_NodeBlock52i_end;
+assume(vs__state.0.i slt 4464);
+TO: main_LeafBlock46i;
+
+FROM: main_NodeBlock52i_end;
+assume(vs__state.0.i sge 4464);
+TO: main_LeafBlock49i;
+
+FROM: main_LeafBlock46i;
+vs__state.0.off47.i := vs__state.0.i + -4448;
+TO: main_LeafBlock46i_end;
+
+FROM: main_LeafBlock46i_end;
+assume(vs__state.0.off47.i ule 1);
+TO: main_bb59;
+
+FROM: main_LeafBlock46i_end;
+assume(vs__state.0.off47.i ugt 1);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb59;
+v152 := nondet();
+TO: main_bb59_v.blastFlag.05.i;
+FROM: main_bb59_v.blastFlag.05.i;
+assume(vblastFlag.0.i == 4);
+v.blastFlag.05.i := 5;
+TO: main_bb59_sv.blastFlag.05.i;
+
+FROM: main_bb59_v.blastFlag.05.i;
+assume(vblastFlag.0.i != 4);
+v.blastFlag.05.i := vblastFlag.0.i;
+TO: main_bb59_sv.blastFlag.05.i;
+
+FROM: main_bb59_sv.blastFlag.05.i;
+TO: main_bb59_end;
+
+FROM: main_bb59_end;
+assume(v152 sle 0);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb59_end;
+assume(v152 sgt 0);
+TO: main_bb60;
+
+FROM: main_bb60;
+TO: main_bb60_v.6.i;
+FROM: main_bb60_v.6.i;
+assume(v113 != 0);
+v.6.i := 4464;
+TO: main_bb60_sv.6.i;
+
+FROM: main_bb60_v.6.i;
+assume(v113 == 0);
+v.6.i := 4480;
+TO: main_bb60_sv.6.i;
+
+FROM: main_bb60_sv.6.i;
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := v.6.i;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := v.blastFlag.05.i;
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := v.6.i;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := v.blastFlag.05.i;
+TO: main_bb79;
+
+FROM: main_LeafBlock49i;
+vs__state.0.off50.i := vs__state.0.i + -4464;
+TO: main_LeafBlock49i_end;
+
+FROM: main_LeafBlock49i_end;
+assume(vs__state.0.off50.i ule 3);
+TO: main_bb61;
+
+FROM: main_LeafBlock49i_end;
+assume(vs__state.0.off50.i ugt 3);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb61;
+v156 := nondet();
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := 4480;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := vblastFlag.0.i;
+TO: main_bb61_end;
+
+FROM: main_bb61_end;
+assume(v156 sle 0);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb61_end;
+assume(v156 sgt 0);
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := 4480;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := vblastFlag.0.i;
+TO: main_bb79;
+
+FROM: main_NodeBlock65i;
+TO: main_NodeBlock65i_end;
+
+FROM: main_NodeBlock65i_end;
+assume(vs__state.0.i slt 4496);
+TO: main_LeafBlock54i;
+
+FROM: main_NodeBlock65i_end;
+assume(vs__state.0.i sge 4496);
+TO: main_NodeBlock63i;
+
+FROM: main_LeafBlock54i;
+vs__state.0.off55.i := vs__state.0.i + -4480;
+TO: main_LeafBlock54i_end;
+
+FROM: main_LeafBlock54i_end;
+assume(vs__state.0.off55.i ule 1);
+TO: main_bb62;
+
+FROM: main_LeafBlock54i_end;
+assume(vs__state.0.off55.i ugt 1);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb62;
+v158 := nondet();
+TO: main_bb62_end;
+
+FROM: main_bb62_end;
+assume(v158 sle 0);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb62_end;
+assume(v158 sgt 0);
+TO: main_bb63;
+
+FROM: main_bb63;
+TO: main_bb63_v.7.i;
+FROM: main_bb63_v.7.i;
+assume(v113 == 1);
+v.7.i := 4496;
+TO: main_bb63_sv.7.i;
+
+FROM: main_bb63_v.7.i;
+assume(v113 != 1);
+v.7.i := 4512;
+TO: main_bb63_sv.7.i;
+
+FROM: main_bb63_sv.7.i;
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := v.7.i;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := vblastFlag.0.i;
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := v.7.i;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := vblastFlag.0.i;
+TO: main_bb79;
+
+FROM: main_NodeBlock63i;
+TO: main_NodeBlock63i_end;
+
+FROM: main_NodeBlock63i_end;
+assume(vs__state.0.i slt 4512);
+TO: main_LeafBlock57i;
+
+FROM: main_NodeBlock63i_end;
+assume(vs__state.0.i sge 4512);
+TO: main_LeafBlock60i;
+
+FROM: main_LeafBlock57i;
+vs__state.0.off58.i := vs__state.0.i + -4496;
+TO: main_LeafBlock57i_end;
+
+FROM: main_LeafBlock57i_end;
+assume(vs__state.0.off58.i ule 1);
+TO: main_bb64;
+
+FROM: main_LeafBlock57i_end;
+assume(vs__state.0.off58.i ugt 1);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb64;
+v161 := nondet();
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := 4512;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := vblastFlag.0.i;
+TO: main_bb64_end;
+
+FROM: main_bb64_end;
+assume(v161 sle 0);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb64_end;
+assume(v161 sgt 0);
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := 4512;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := vblastFlag.0.i;
+TO: main_bb79;
+
+FROM: main_LeafBlock60i;
+vs__state.0.off61.i := vs__state.0.i + -4512;
+TO: main_LeafBlock60i_end;
+
+FROM: main_LeafBlock60i_end;
+assume(vs__state.0.off61.i ule 1);
+TO: main_bb65;
+
+FROM: main_LeafBlock60i_end;
+assume(vs__state.0.off61.i ugt 1);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb65;
+v163 := nondet();
+TO: main_bb65_end;
+
+FROM: main_bb65_end;
+assume(v163 sle 0);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb65_end;
+assume(v163 sgt 0);
+TO: main_bb66;
+
+FROM: main_bb66;
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := 4528;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := vblastFlag.0.i;
+TO: main_bb66_end;
+
+FROM: main_bb66_end;
+assume((v125 != 0) && (v126 != 0));
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := 4528;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := vblastFlag.0.i;
+TO: main_bb79;
+
+FROM: main_bb66_end;
+assume((v125 == 0) || (v126 == 0));
+TO: main_ssl3_connectexit;
+
+FROM: main_NodeBlock87i;
+TO: main_NodeBlock87i_end;
+
+FROM: main_NodeBlock87i_end;
+assume(vs__state.0.i slt 12292);
+TO: main_NodeBlock75i;
+
+FROM: main_NodeBlock87i_end;
+assume(vs__state.0.i sge 12292);
+TO: main_NodeBlock85i;
+
+FROM: main_NodeBlock75i;
+TO: main_NodeBlock75i_end;
+
+FROM: main_NodeBlock75i_end;
+assume(vs__state.0.i slt 4560);
+TO: main_LeafBlock69i;
+
+FROM: main_NodeBlock75i_end;
+assume(vs__state.0.i sge 4560);
+TO: main_LeafBlock72i;
+
+FROM: main_LeafBlock69i;
+vs__state.0.off70.i := vs__state.0.i + -4528;
+TO: main_LeafBlock69i_end;
+
+FROM: main_LeafBlock69i_end;
+assume(vs__state.0.off70.i ule 1);
+TO: main_bb67;
+
+FROM: main_LeafBlock69i_end;
+assume(vs__state.0.off70.i ugt 1);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb67;
+v167 := nondet();
+TO: main_bb67_end;
+
+FROM: main_bb67_end;
+assume(v167 sle 0);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb67_end;
+assume(v167 sgt 0);
+TO: main_bb68;
+
+FROM: main_bb68;
+v169 := sign_extend(32, 64, vs__s3__flags.0.i);
+v170 := v169 + 5;
+v171 := extract(31, 0, v170);
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := v171;
+var__temp_vs__s3__tmp__next_state___0.2.i := 4560;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := 4352;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := vblastFlag.0.i;
+TO: main_bb68_end;
+
+FROM: main_bb68_end;
+assume(v106 != 0);
+TO: main_bb69;
+
+FROM: main_bb68_end;
+assume(v106 == 0);
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := v171;
+var__temp_vs__s3__tmp__next_state___0.2.i := 4560;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := 4352;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := vblastFlag.0.i;
+TO: main_bb79;
+
+FROM: main_bb69;
+v173 := sign_extend(32, 64, v171);
+v174 := v173 - 2;
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := v171;
+var__temp_vs__s3__tmp__next_state___0.2.i := 3;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := 4352;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := vblastFlag.0.i;
+TO: main_bb69_end;
+
+FROM: main_bb69_end;
+assume(v174 != 0);
+TO: main_bb70;
+
+FROM: main_bb69_end;
+assume(v174 == 0);
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := v171;
+var__temp_vs__s3__tmp__next_state___0.2.i := 3;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := 4352;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := vblastFlag.0.i;
+TO: main_bb79;
+
+FROM: main_bb70;
+v176 := sign_extend(32, 64, v171);
+v177 := v176 + 4;
+v178 := extract(31, 0, v177);
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := v178;
+var__temp_vs__s3__tmp__next_state___0.2.i := 3;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := 3;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := vblastFlag.0.i;
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := v178;
+var__temp_vs__s3__tmp__next_state___0.2.i := 3;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := 3;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := vblastFlag.0.i;
+TO: main_bb79;
+
+FROM: main_LeafBlock72i;
+vs__state.0.off73.i := vs__state.0.i + -4560;
+TO: main_LeafBlock72i_end;
+
+FROM: main_LeafBlock72i_end;
+assume(vs__state.0.off73.i ule 1);
+TO: main_bb71;
+
+FROM: main_LeafBlock72i_end;
+assume(vs__state.0.off73.i ugt 1);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb71;
+v179 := nondet();
+TO: main_bb71_end;
+
+FROM: main_bb71_end;
+assume(v179 sle 0);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb71_end;
+assume(v179 sgt 0);
+TO: main_bb72;
+
+FROM: main_bb72;
+TO: main_bb72_v.8.i;
+FROM: main_bb72_v.8.i;
+assume(v106 != 0);
+v.8.i := 4512;
+TO: main_bb72_sv.8.i;
+
+FROM: main_bb72_v.8.i;
+assume(v106 == 0);
+v.8.i := 3;
+TO: main_bb72_sv.8.i;
+
+FROM: main_bb72_sv.8.i;
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := v.8.i;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := vblastFlag.0.i;
+var__temp_vs__ctx__stats__sess_connect.1.i := vs__ctx__stats__sess_connect.0.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.0.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := v.8.i;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := vblastFlag.0.i;
+TO: main_bb79;
+
+FROM: main_NodeBlock85i;
+TO: main_NodeBlock85i_end;
+
+FROM: main_NodeBlock85i_end;
+assume(vs__state.0.i slt 16384);
+TO: main_LeafBlock77i;
+
+FROM: main_NodeBlock85i_end;
+assume(vs__state.0.i sge 16384);
+TO: main_NodeBlock83i;
+
+FROM: main_LeafBlock77i;
+TO: main_LeafBlock77i_end;
+
+FROM: main_LeafBlock77i_end;
+assume(vs__state.0.i == 12292);
+TO: main_bb73;
+
+FROM: main_LeafBlock77i_end;
+assume(vs__state.0.i != 12292);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb73;
+v182 := vs__ctx__stats__sess_connect_renegotiate.0.i + 1;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.4.i := v182;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.4.i := v182;
+TO: main_bb74;
+
+FROM: main_NodeBlock83i;
+TO: main_NodeBlock83i_end;
+
+FROM: main_NodeBlock83i_end;
+assume(vs__state.0.i slt 20480);
+TO: main_LeafBlock79i;
+
+FROM: main_NodeBlock83i_end;
+assume(vs__state.0.i sge 20480);
+TO: main_LeafBlock81i;
+
+FROM: main_LeafBlock79i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.4.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+TO: main_LeafBlock79i_end;
+
+FROM: main_LeafBlock79i_end;
+assume(vs__state.0.i == 16384);
+var__temp_vs__ctx__stats__sess_connect_renegotiate.4.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+TO: main_bb74;
+
+FROM: main_LeafBlock79i_end;
+assume(vs__state.0.i != 16384);
+TO: main_ssl3_connectexit;
+
+FROM: main_LeafBlock81i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.4.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+TO: main_LeafBlock81i_end;
+
+FROM: main_LeafBlock81i_end;
+assume(vs__state.0.i == 20480);
+var__temp_vs__ctx__stats__sess_connect_renegotiate.4.i := vs__ctx__stats__sess_connect_renegotiate.0.i;
+TO: main_bb74;
+
+FROM: main_LeafBlock81i_end;
+assume(vs__state.0.i != 20480);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb74;
+vs__ctx__stats__sess_connect_renegotiate.4.i := var__temp_vs__ctx__stats__sess_connect_renegotiate.4.i;
+v183 := v103 - 65280;
+TO: main_bb74_end;
+
+FROM: main_bb74_end;
+assume(v183 != 768);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb74_end;
+assume(v183 == 768);
+TO: main_bb75;
+
+FROM: main_bb75;
+var__temp_vs__init_buf___0.1.i := vs__init_buf___0.0.i;
+TO: main_bb75_end;
+
+FROM: main_bb75_end;
+assume(vs__init_buf___0.0.i == 0);
+TO: main_bb76;
+
+FROM: main_bb75_end;
+assume(vs__init_buf___0.0.i != 0);
+var__temp_vs__init_buf___0.1.i := vs__init_buf___0.0.i;
+TO: main_bb77;
+
+FROM: main_bb76;
+v186 := nondet();
+var__temp_vs__init_buf___0.1.i := v186;
+TO: main_bb76_end;
+
+FROM: main_bb76_end;
+assume((v186 != 0) && (v121 != 0));
+var__temp_vs__init_buf___0.1.i := v186;
+TO: main_bb77;
+
+FROM: main_bb76_end;
+assume((v186 == 0) || (v121 == 0));
+TO: main_ssl3_connectexit;
+
+FROM: main_bb77;
+vs__init_buf___0.1.i := var__temp_vs__init_buf___0.1.i;
+TO: main_bb77_end;
+
+FROM: main_bb77_end;
+assume((v122 != 0) && (v123 != 0));
+TO: main_bb78;
+
+FROM: main_bb77_end;
+assume((v122 == 0) || (v123 == 0));
+TO: main_ssl3_connectexit;
+
+FROM: main_bb78;
+v191 := vs__ctx__stats__sess_connect.0.i + 1;
+var__temp_vs__ctx__stats__sess_connect.1.i := v191;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.4.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.1.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := 4368;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := vblastFlag.0.i;
+var__temp_vs__ctx__stats__sess_connect.1.i := v191;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i := vs__ctx__stats__sess_connect_renegotiate.4.i;
+var__temp_vs__init_buf___0.2.i := vs__init_buf___0.1.i;
+var__temp_vs__s3__flags.3.i := vs__s3__flags.0.i;
+var__temp_vs__s3__tmp__next_state___0.2.i := vs__s3__tmp__next_state___0.0.i;
+var__temp_vnum1.2.i := vnum1.0.i;
+var__temp_vs__state.7.i := 4368;
+var__temp_vskip.2.i := 0;
+var__temp_vblastFlag.7.i := vblastFlag.0.i;
+TO: main_bb79;
+
+FROM: main_bb79;
+vs__ctx__stats__sess_connect.1.i := var__temp_vs__ctx__stats__sess_connect.1.i;
+vs__ctx__stats__sess_connect_renegotiate.5.i := var__temp_vs__ctx__stats__sess_connect_renegotiate.5.i;
+vs__init_buf___0.2.i := var__temp_vs__init_buf___0.2.i;
+vs__s3__flags.3.i := var__temp_vs__s3__flags.3.i;
+vs__s3__tmp__next_state___0.2.i := var__temp_vs__s3__tmp__next_state___0.2.i;
+vnum1.2.i := var__temp_vnum1.2.i;
+vs__state.7.i := var__temp_vs__state.7.i;
+vskip.2.i := var__temp_vskip.2.i;
+vblastFlag.7.i := var__temp_vblastFlag.7.i;
+var__temp_vs__ctx__stats__sess_connect.0.i := vs__ctx__stats__sess_connect.1.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.0.i := vs__ctx__stats__sess_connect_renegotiate.5.i;
+var__temp_vs__init_buf___0.0.i := vs__init_buf___0.2.i;
+var__temp_vs__s3__flags.0.i := vs__s3__flags.3.i;
+var__temp_vs__s3__tmp__next_state___0.0.i := vs__s3__tmp__next_state___0.2.i;
+var__temp_vnum1.0.i := vnum1.2.i;
+var__temp_vs__state.0.i := vs__state.7.i;
+var__temp_vblastFlag.0.i := vblastFlag.7.i;
+TO: main_bb79_end;
+
+FROM: main_bb79_end;
+assume((!((v115 != 0) || (vskip.2.i != 0))) && (v107 != 0));
+TO: main_bb80;
+
+FROM: main_bb79_end;
+assume(((v115 != 0) || (vskip.2.i != 0)) || (v107 == 0));
+var__temp_vs__ctx__stats__sess_connect.0.i := vs__ctx__stats__sess_connect.1.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.0.i := vs__ctx__stats__sess_connect_renegotiate.5.i;
+var__temp_vs__init_buf___0.0.i := vs__init_buf___0.2.i;
+var__temp_vs__s3__flags.0.i := vs__s3__flags.3.i;
+var__temp_vs__s3__tmp__next_state___0.0.i := vs__s3__tmp__next_state___0.2.i;
+var__temp_vnum1.0.i := vnum1.2.i;
+var__temp_vs__state.0.i := vs__state.7.i;
+var__temp_vblastFlag.0.i := vblastFlag.7.i;
+TO: main_bb47;
+
+FROM: main_bb80;
+v195 := nondet();
+var__temp_vs__ctx__stats__sess_connect.0.i := vs__ctx__stats__sess_connect.1.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.0.i := vs__ctx__stats__sess_connect_renegotiate.5.i;
+var__temp_vs__init_buf___0.0.i := vs__init_buf___0.2.i;
+var__temp_vs__s3__flags.0.i := vs__s3__flags.3.i;
+var__temp_vs__s3__tmp__next_state___0.0.i := vs__s3__tmp__next_state___0.2.i;
+var__temp_vnum1.0.i := vnum1.2.i;
+var__temp_vs__state.0.i := vs__state.7.i;
+var__temp_vblastFlag.0.i := vblastFlag.7.i;
+TO: main_bb80_end;
+
+FROM: main_bb80_end;
+assume(v195 sle 0);
+TO: main_ssl3_connectexit;
+
+FROM: main_bb80_end;
+assume(v195 sgt 0);
+var__temp_vs__ctx__stats__sess_connect.0.i := vs__ctx__stats__sess_connect.1.i;
+var__temp_vs__ctx__stats__sess_connect_renegotiate.0.i := vs__ctx__stats__sess_connect_renegotiate.5.i;
+var__temp_vs__init_buf___0.0.i := vs__init_buf___0.2.i;
+var__temp_vs__s3__flags.0.i := vs__s3__flags.3.i;
+var__temp_vs__s3__tmp__next_state___0.0.i := vs__s3__tmp__next_state___0.2.i;
+var__temp_vnum1.0.i := vnum1.2.i;
+var__temp_vs__state.0.i := vs__state.7.i;
+var__temp_vblastFlag.0.i := vblastFlag.7.i;
+TO: main_bb47;
+
+FROM: main_ssl3_connectexit;
+TO: main_ssl3_connectexit_ret;
+

@@ -1,0 +1,9 @@
+///*** 1_main ***///
+START: main_bb0;
+FROM: main_bb0;
+v0 := nondet();
+TO: main_bb1;
+
+FROM: main_bb1;
+TO: main_bb1;
+

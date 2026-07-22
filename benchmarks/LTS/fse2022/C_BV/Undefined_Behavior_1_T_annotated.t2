@@ -1,0 +1,36 @@
+///*** 1_main ***///
+START: main_bb0;
+
+TYPE vnum.0: bv(32);
+
+FROM: main_bb0;
+v0 := nondet();
+v1 := v0 + 1;
+var__temp_vnum.0 := v1;
+var__temp_vbytes.0 := 0;
+var__temp_vnum.0 := v1;
+var__temp_vbytes.0 := 0;
+TO: main_bb1;
+
+FROM: main_bb1;
+vnum.0 := var__temp_vnum.0;
+vbytes.0 := var__temp_vbytes.0;
+v2 := vbytes.0 + 1;
+v3 := lshr(vnum.0, 7);
+var__temp_vnum.0 := v3;
+var__temp_vbytes.0 := v2;
+TO: main_bb1_end;
+
+FROM: main_bb1_end;
+assume(v3 != 0);
+var__temp_vnum.0 := v3;
+var__temp_vbytes.0 := v2;
+TO: main_bb1;
+
+FROM: main_bb1_end;
+assume(v3 == 0);
+TO: main_bb2;
+
+FROM: main_bb2;
+TO: main_bb2_ret;
+

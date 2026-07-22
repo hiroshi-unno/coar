@@ -130,15 +130,15 @@ struct
         Ok
           (List.n_cartesian_product res
           |> List.map ~f:(fun res ->
-                 let paramss, cand = List.unzip res in
-                 let cand =
-                   CandSol.of_old
-                     (Map.force_merge_list paramss, Set.Poly.of_list cand)
-                 in
-                 print @@ lazy "  Learned Classifier:";
-                 print @@ lazy (CandSol.str_of cand);
-                 print @@ lazy "********************************************";
-                 (cand, CandSol.Total sample_examples))))
+              let paramss, cand = List.unzip res in
+              let cand =
+                CandSol.of_old
+                  (Map.force_merge_list paramss, Set.Poly.of_list cand)
+              in
+              print @@ lazy "  Learned Classifier:";
+              print @@ lazy (CandSol.str_of cand);
+              print @@ lazy "********************************************";
+              (cand, CandSol.Total sample_examples))))
     |> Result.all
     (* ToDo: errors can be tolerated *) >>= fun candss ->
     Ok (State.Continue (vs, List.concat candss))

@@ -1,0 +1,92 @@
+///*** 1_main ***///
+START: main_bb5;
+FROM: main_bb5;
+memory0_freeIndex := 1;
+vmemory0 := nondet();
+v47 := nondet();
+v48 := nondet();
+v49 := memory0_freeIndex;
+v50 := memory0_freeIndex;
+v51 := v50 + 1;
+memory0_freeIndex := v51;
+v52 := memory0_freeIndex;
+v53 := memory0_freeIndex;
+v54 := v53 + 1;
+memory0_freeIndex := v54;
+v55 := memory0_freeIndex;
+v56 := memory0_freeIndex;
+v57 := v56 + 1;
+memory0_freeIndex := v57;
+v58 := memory0_freeIndex;
+v59 := memory0_freeIndex;
+v60 := v59 + 1;
+memory0_freeIndex := v60;
+v61 := sign_extend(32, 64, v49);
+v62 := v61;
+vmemory0 := store_array(vmemory0, v61, v47);
+v63 := sign_extend(32, 64, v52);
+v64 := v63;
+vmemory0 := store_array(vmemory0, v63, v48);
+v65 := sign_extend(32, 64, v55);
+v66 := v65;
+vmemory0 := store_array(vmemory0, v65, 1);
+v67 := sign_extend(32, 64, v58);
+v68 := v67;
+vmemory0 := store_array(vmemory0, v67, 0);
+v69 := sign_extend(32, 64, v55);
+v70 := v69;
+v71 := sign_extend(32, 64, v49);
+v72 := v71;
+v73 := sign_extend(32, 64, v52);
+v74 := v73;
+v75 := sign_extend(32, 64, v55);
+v76 := v75;
+v77 := sign_extend(32, 64, v58);
+v78 := v77;
+v79 := sign_extend(32, 64, v58);
+v80 := v79;
+TO: main_bb6;
+
+FROM: main_bb6;
+v81 := select_array(vmemory0, v69);
+TO: main_bb6_end;
+
+FROM: main_bb6_end;
+assume(v81 != 0);
+TO: main_bb7;
+
+FROM: main_bb6_end;
+assume(v81 == 0);
+TO: main_fexit;
+
+FROM: main_bb7;
+v83 := select_array(vmemory0, v71);
+v84 := v83 + 1;
+vmemory0 := store_array(vmemory0, v71, v84);
+v85 := select_array(vmemory0, v73);
+TO: main_bb7_v86;
+
+FROM: main_bb7_v86;
+assume(v83 slt v85);
+v86 := 1;
+TO: main_bb7_sv86;
+
+FROM: main_bb7_v86;
+assume(v83 sge v85);
+v86 := 0;
+TO: main_bb7_sv86;
+
+FROM: main_bb7_sv86;
+v87 := zero_extend(1, 32, v86);
+vmemory0 := store_array(vmemory0, v75, v87);
+v88 := select_array(vmemory0, v77);
+v89 := v88 + 1;
+vmemory0 := store_array(vmemory0, v79, v89);
+TO: main_bb6;
+
+FROM: main_fexit;
+v90 := sign_extend(32, 64, v58);
+v91 := v90;
+v92 := select_array(vmemory0, v90);
+TO: main_fexit_ret;
+

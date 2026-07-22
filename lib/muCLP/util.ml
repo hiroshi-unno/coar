@@ -130,6 +130,7 @@ let rec of_formula_with_env preds env used_pvars bound_tvars =
             Formula.mk_atom
             @@ Atom.mk_pvar_app new_pvar new_sorts new_inner_args
           in
+          let new_arg_names = Pred.tvars_of_list new_bounds in
           let body =
             Formula.subst_preds
               (Map.Poly.singleton def.name (def.args, new_pvar_app))
@@ -137,7 +138,9 @@ let rec of_formula_with_env preds env used_pvars bound_tvars =
           in
           ( Formula.mk_atom ~info
             @@ Atom.mk_pvar_app new_pvar new_sorts new_outer_args ~info:info',
-            Pred.make def.kind new_pvar new_bounds body :: preds,
+            Pred.make def.kind new_pvar new_bounds
+              ~arg_original_names:new_arg_names body
+            :: preds,
             used_pvars )
       | App (Var (pvar, sorts), args, info') ->
           ( Formula.mk_atom
@@ -185,7 +188,9 @@ let rec of_formula_with_env preds env used_pvars bound_tvars =
             in
             ( Pred.make def.kind
                 (List.Assoc.find_exn ~equal:Stdlib.( = ) env def.name)
-                def.args body
+                def.args
+                ~arg_original_names:(Pred.tvars_of_list def.args)
+                body
               :: preds,
               used_pvars ))
       in
@@ -371,10 +376,21 @@ let rec of_lts ~print ?(live_vars = None) ?(cut_points = None) = function
               match cut_points with
               | Some cut_points when not @@ Set.mem cut_points from ->
                   First
-                    (Pred.make Predicate.Fix (pvar_of from) (tenv_of from) next)
+                    (let sort_env_list = tenv_of from in
+                     let arg_original_names =
+                       Pred.tvars_of_list sort_env_list
+                     in
+                     Pred.make Predicate.Fix (pvar_of from) sort_env_list
+                       ~arg_original_names (* Insert metadata around here *)
+                       next)
               | _ ->
                   Second
-                    (Pred.make Predicate.Mu (pvar_of from) (tenv_of from) next)))
+                    (let sort_env_list = tenv_of from in
+                     let arg_original_names =
+                       Pred.tvars_of_list sort_env_list
+                     in
+                     Pred.make Predicate.Mu (pvar_of from) sort_env_list
+                       ~arg_original_names next)))
       in
       match start with
       | None ->
@@ -386,8 +402,10 @@ let rec of_lts ~print ?(live_vars = None) ?(cut_points = None) = function
               (Set.add (Set.Poly.of_list @@ List.map transitions ~f:trd3) start)
               (Set.Poly.of_list @@ List.map transitions ~f:fst3)
             |> Set.Poly.map ~f:(fun from ->
-                Pred.make Predicate.Fix (pvar_of from) (tenv_of from)
-                  (Formula.mk_true ()))
+                let sort_env_list = tenv_of from in
+                let arg_original_names = Pred.tvars_of_list sort_env_list in
+                Pred.make Predicate.Fix (pvar_of from) sort_env_list
+                  ~arg_original_names (Formula.mk_true ()))
             |> Set.to_list
           in
           let query =
@@ -401,4 +419,92 @@ let rec of_lts ~print ?(live_vars = None) ?(cut_points = None) = function
           make (preds_mu @ preds_nu @ undef_preds) query)
   | lts, LTS.Problem.NonTerm ->
       get_dual @@ of_lts ~print ~live_vars ~cut_points (lts, LTS.Problem.Term)
-  | _, LTS.Problem.(Safe | NonSafe | MuCal | Rel) -> failwith "not implemented"
+  | lts, LTS.Problem.Safe -> (
+      let start, (*ignored*) _types, error, (*ignored*) _cutpoint, transitions =
+        lts
+      in
+      let pvar_of s = Ident.Pvar ("state_" ^ s) in
+      let tenv_of =
+        match live_vars with
+        | None ->
+            let tenv =
+              Set.to_list
+              @@ Set.filter
+                   ~f:
+                     (fst >> Ident.name_of_tvar
+                     >> String.is_prefix ~prefix:LTS.Problem.nondet_prefix
+                     >> not)
+              @@ LTS.Problem.term_sort_env_of lts
+            in
+            fun _ -> tenv
+        | Some live_vars -> (
+            fun s ->
+              try Set.to_list (live_vars s)
+              with Stdlib.Not_found -> failwith ("not found: " ^ s))
+      in
+      print @@ lazy (sprintf "LTS:\n%s" @@ LTS.Problem.str_of_lts lts);
+      let preds_nu, preds_mu =
+        transitions
+        |> List.classify (fun (s1, _, _) (s2, _, _) -> String.(s1 = s2))
+        |> List.partition_map ~f:(function
+          | [] -> assert false
+          | (from, c, to_) :: trs -> (
+              let next =
+                (c, to_) :: List.map trs ~f:(fun (_, c, to_) -> (c, to_))
+                |> List.map ~f:(fun (c, to_) ->
+                    let post =
+                      match error with
+                      | Some error_state when String.(to_ = error_state) ->
+                          Formula.mk_false ()
+                      | _ ->
+                          let pvar = pvar_of to_ in
+                          let senv = tenv_of to_ in
+                          Formula.mk_atom @@ Atom.pvar_app_of_senv pvar senv
+                    in
+                    LTS.Problem.wp c post)
+                |> Formula.and_of |> Evaluator.simplify |> Normalizer.normalize
+              in
+              match cut_points with
+              | Some cut_points when not @@ Set.mem cut_points from ->
+                  First
+                    (let sort_env_list = tenv_of from in
+                     let arg_original_names =
+                       Pred.tvars_of_list sort_env_list
+                     in
+                     Pred.make Predicate.Fix (pvar_of from) sort_env_list
+                       ~arg_original_names next)
+              | _ ->
+                  Second
+                    (let sort_env_list = tenv_of from in
+                     let arg_original_names =
+                       Pred.tvars_of_list sort_env_list
+                     in
+                     Pred.make Predicate.Nu (pvar_of from) sort_env_list
+                       ~arg_original_names next)))
+      in
+      match start with
+      | None ->
+          assert (List.is_empty transitions);
+          make [] (Formula.mk_true ())
+      | Some start ->
+          let undef_preds =
+            Set.diff
+              (Set.add (Set.Poly.of_list @@ List.map transitions ~f:trd3) start)
+              (Set.Poly.of_list @@ List.map transitions ~f:fst3)
+            |> Set.Poly.map ~f:(fun from ->
+                let sort_env_list = tenv_of from in
+                let arg_original_names = Pred.tvars_of_list sort_env_list in
+                Pred.make Predicate.Fix (pvar_of from) sort_env_list
+                  ~arg_original_names (Formula.mk_true ()))
+            |> Set.to_list
+          in
+          let query =
+            let tenv = tenv_of start in
+            Formula.mk_forall_if_bounded tenv
+            @@ Formula.mk_atom
+            @@ Atom.pvar_app_of_senv (pvar_of start) tenv
+          in
+          make (preds_mu @ preds_nu @ undef_preds) query)
+  | lts, LTS.Problem.NonSafe ->
+      get_dual @@ of_lts ~print ~live_vars ~cut_points (lts, LTS.Problem.Safe)
+  | _, LTS.Problem.(MuCal | Rel) -> failwith "not implemented"

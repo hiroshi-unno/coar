@@ -47,6 +47,7 @@ let of_old_formulas ?(params = Params.empty) =
 
 let of_clauses ?(params = Params.empty) cs = Cnf (cs, params)
 let params_of = function Raw (_, params) | Cnf (_, params) -> params
+let arg_original_names_of pcsp = (params_of pcsp).Params.arg_original_names
 let senv_of pcsp = (params_of pcsp).Params.senv
 let kind_map_of pcsp = (params_of pcsp).Params.kind_map
 let kind_of pcsp = Map.Poly.find_exn (kind_map_of pcsp)
@@ -99,7 +100,7 @@ let paritypvs_senv_of pcsp =
       match Map.Poly.find (kind_map_of pcsp) key with
       | Some (Kind.Parity (nwf, (idl, idr))) ->
           Some
-            ( nwf.name,
+            ( nwf,
               idl,
               Hashtbl.Poly.find_exn nwf.sorts_map idl,
               idr,
@@ -300,7 +301,14 @@ let to_yojson pcsp =
 
 let str_of pcsp =
   sprintf
-    "%s\n\nsort env: %s\n\ndatatype env:\n%s\n\nfun env:\n%s\n\nsol_space: %s"
+    "%s\n\n\
+     sort env: %s\n\n\
+     original arg names: %s\n\n\
+     datatype env:\n\
+     %s\n\n\
+     fun env:\n\
+     %s\n\n\
+     sol_space: %s"
     (String.concat_map_set ~sep:"\n" (formulas_of pcsp)
        ~f:(fun (uni_senv, phi) ->
          String.bracket (string_of_int (Map.Poly.length uni_senv))
@@ -312,6 +320,9 @@ let str_of pcsp =
     @@ Map.Poly.mapi ~f:(fun ~key ~data ->
         (data, try kind_of pcsp key with _ -> Kind.Ord (*ToDo*)))
     @@ senv_of pcsp)
+    (Params.str_of_arg_original_names ~pvar_sep:"\n" ~tvar_sep:" "
+       ~pvar_tvar_delim:": "
+    @@ arg_original_names_of pcsp)
     (LogicOld.DTEnv.str_of @@ dtenv_of pcsp)
     (LogicOld.FunEnv.str_of @@ fenv_of pcsp)
     (SolSpace.str_of @@ sol_space_of pcsp)
@@ -542,7 +553,7 @@ let normalize pcsp =
         |> LogicOld.Formula.elim_let_with_unknowns unknowns
         (* |> LogicOld.Formula.elim_let *)
         |> Normalizer.normalize
-        |> Evaluator.simplify
+        |> Evaluator.simplify |> Normalizer.normalize |> Evaluator.simplify
       in
       if false then
         print_endline
@@ -656,13 +667,11 @@ let subst ?(bpvs = Set.Poly.empty) ?(elim = true) subst pcsp =
   let subst = Map.Poly.filter_keys subst ~f:(Fn.non @@ Set.mem bpvs) in
   let params' =
     if elim then
+      let f = Map.Poly.mem subst >> not in
       {
         params with
-        Params.senv =
-          Map.Poly.filter_keys params.Params.senv ~f:(Map.Poly.mem subst >> not);
-        Params.kind_map =
-          Map.Poly.filter_keys params.Params.kind_map
-            ~f:(Map.Poly.mem subst >> not);
+        Params.senv = Map.Poly.filter_keys ~f params.Params.senv;
+        Params.kind_map = Map.Poly.filter_keys ~f params.Params.kind_map;
       }
     else { params with Params.sol_for_eliminated = subst }
   in
@@ -681,16 +690,16 @@ let subst ?(bpvs = Set.Poly.empty) ?(elim = true) subst pcsp =
   |>
   if true then Fn.id
   else
-    map_old ~f:(fun (uni_senv, phi) ->
-        ( uni_senv,
-          Z3Smt.Z3interface.qelim
-            ~id:(id_of pcsp) (*(senv_of pcsp)*)
-            ~fenv:(LogicOld.get_fenv ()) phi ))
+    map_old
+      ~f:
+        (Pair.map_snd
+           (Z3Smt.Z3interface.qelim
+              ~id:(id_of pcsp) (*(senv_of pcsp)*)
+              ~fenv:(LogicOld.get_fenv ())))
 
 let cochc_to_chc pcsp =
-  let senv = senv_of pcsp in
   let sub =
-    Map.Poly.filter_mapi senv ~f:(fun ~key ~data ->
+    Map.Poly.filter_mapi (senv_of pcsp) ~f:(fun ~key ~data ->
         if Kind.is_ord @@ kind_of pcsp key then (
           let sargs, sret = Sort.args_ret_of data in
           let params = sort_env_list_of_sorts sargs in
@@ -703,65 +712,117 @@ let cochc_to_chc pcsp =
   in
   subst ~elim:false (*ToDo*) sub pcsp
 
+let mmap ~f pcsp =
+  map pcsp ~f:(fun (uni_senv, phi) ->
+      ( uni_senv,
+        ExtTerm.nnf_of phi
+        |> ExtTerm.cnf_of (senv_of pcsp) uni_senv
+        |> Set.Poly.map ~f:(fun (ps, ns, phi) ->
+            (uni_senv, Set.Poly.map ps ~f, Set.Poly.map ns ~f, phi))
+        |> ClauseSet.to_formula ))
+
 let elim_unsat_wf_predicates ~print pcsp =
-  let open Ast.Logic in
   if Map.Poly.exists (kind_map_of pcsp) ~f:Kind.is_wf then
     let replace_wf_term term =
       let pv, args = ExtTerm.let_var_app term in
       if is_wf_pred pcsp pv then (
         let length = List.length args / 2 in
         assert (List.length args mod 2 = 0);
-        let args_l, args_r = (List.take args length, List.drop args length) in
+        let args_l, args_r = List.split_n args length in
         if Stdlib.(args_l = args_r) then (
           print @@ lazy (sprintf "eliminating %s" @@ ExtTerm.str_of term);
           ExtTerm.mk_bool false)
         else term)
       else term
     in
-    map pcsp ~f:(fun (uni_senv, phi) ->
-        ( uni_senv,
-          ExtTerm.nnf_of phi
-          |> ExtTerm.cnf_of (senv_of pcsp) uni_senv
-          |> Set.Poly.(
-               map ~f:(fun (ps, ns, phi) ->
-                   ( uni_senv,
-                     map ps ~f:replace_wf_term,
-                     map ns ~f:replace_wf_term,
-                     phi )))
-          |> ClauseSet.to_formula ))
+    mmap pcsp ~f:replace_wf_term
   else pcsp
 
-(* ToDo: NWF predicate variables that do not appear in any cycle can be set trivially to either true or false *)
-let elim_dup_nwf_predicate pcsp =
+let elim_unsat_nwf_predicates ~print pcsp =
+  if Map.Poly.exists (kind_map_of pcsp) ~f:Kind.is_nwf then
+    let replace_nwf_term term =
+      let pv, args = ExtTerm.let_var_app term in
+      if is_nwf_pred pcsp pv then
+        match nwf_tag_of pcsp pv with
+        | None -> assert false
+        | Some (nwf, (idl, idr)) ->
+            if Ident.tvar_equal idl idr then (
+              let args = List.drop args (List.length nwf.sorts_shared) in
+              let len_args = List.length args in
+              assert (len_args mod 2 = 0);
+              let length = len_args / 2 in
+              let args_l, args_r = List.split_n args length in
+              if Stdlib.(args_l = args_r) then (
+                print @@ lazy (sprintf "eliminating %s" @@ ExtTerm.str_of term);
+                ExtTerm.mk_bool false)
+              else term)
+            else term
+      else term
+    in
+    mmap pcsp ~f:replace_nwf_term
+  else pcsp
+
+let elim_unsat_parity_predicates ~print pcsp =
+  if Map.Poly.exists (kind_map_of pcsp) ~f:Kind.is_parity then
+    let replace_parity_term term =
+      let pv, args = ExtTerm.let_var_app term in
+      if is_parity_pred pcsp pv then
+        match nwf_tag_of pcsp pv with
+        | None -> assert false
+        | Some (nwf, (idl, idr)) ->
+            if
+              Ident.tvar_equal idl idr
+              && (not @@ Set.mem nwf.acc_set (Map.Poly.find_exn nwf.sigma idl))
+            then (
+              let args = List.drop args (List.length nwf.sorts_shared) in
+              let len_args = List.length args in
+              assert (len_args mod 2 = 0);
+              let length = len_args / 2 in
+              let args_l, args_r = List.split_n args length in
+              if Stdlib.(args_l = args_r) then (
+                print @@ lazy (sprintf "eliminating %s" @@ ExtTerm.str_of term);
+                ExtTerm.mk_bool false)
+              else term)
+            else term
+      else term
+    in
+    mmap pcsp ~f:replace_parity_term
+  else pcsp
+
+let elim_triv_nwf_predicate pcsp =
   let kind_map = kind_map_of pcsp in
-  if Map.Poly.exists kind_map ~f:Kind.is_nwf then (
-    let id_log = Hashtbl.Poly.create () in
-    let visited = Hash_set.Poly.create () in
+  if Map.Poly.exists kind_map ~f:Kind.is_nwf then
     let clauses = clauses_of @@ to_cnf @@ to_nnf pcsp in
-    Set.iter clauses ~f:(fun (_, ps, ns, _) ->
-        Set.iter (Set.union ps ns) ~f:(fun atm ->
-            match Map.Poly.find kind_map @@ ExtTerm.pvar_of_atom atm with
-            | Some (Kind.NWF (nwf, (idl, idr)))
-              when not @@ Hash_set.Poly.mem visited (nwf.name, idl, idr) ->
-                Hash_set.Poly.add visited (nwf.name, idl, idr);
-                Hashtbl.Poly.update id_log (nwf.name, idl) ~f:(function
-                  | None -> 1
-                  | Some i -> i + 1);
-                Hashtbl.Poly.update id_log (nwf.name, idr) ~f:(function
-                  | None -> 1
-                  | Some i -> i + 1)
-            | _ -> ()));
+    let non_trivial =
+      Set.concat_map clauses ~f:(fun (_, ps, ns (*ToDo*), _) ->
+          Set.Poly.filter_map (Set.union ps ns) ~f:(fun atm ->
+              match Map.Poly.find kind_map @@ ExtTerm.pvar_of_atom atm with
+              | Some (Kind.NWF (nwf, (idl, idr))) -> Some (nwf.name, idl, idr)
+              | _ -> None))
+      |> Set.group_by ~equiv:(fun (pv1, _, _) (pv2, _, _) ->
+          Ident.tvar_equal pv1 pv2)
+      |> List.map ~f:(fun l ->
+          let pv = Triple.fst @@ Set.choose_exn l in
+          let idls, idrs =
+            Set.unzip @@ Set.Poly.map l ~f:(fun (_, idl, idr) -> (idl, idr))
+          in
+          (pv, Set.inter idls idrs))
+      |> Map.Poly.of_alist_exn
+    in
     let clauses' =
       Set.Poly.filter_map clauses ~f:(fun (uni_senv, ps, ns, phi) ->
-          let aux atm =
+          let trivially_satisfied atm =
+            (* ToDo: NWF predicate variables that do not appear in any cycle can be set trivially to either true or false *)
             match Map.Poly.find kind_map @@ ExtTerm.pvar_of_atom atm with
             | Some (Kind.NWF (nwf, (idl, idr))) ->
-                Hashtbl.Poly.find_exn id_log (nwf.name, idl) <= 1
-                || Hashtbl.Poly.find_exn id_log (nwf.name, idr) <= 1
+                let non_trivial_set = Map.Poly.find_exn non_trivial nwf.name in
+                not (Set.mem non_trivial_set idl && Set.mem non_trivial_set idr)
             | _ -> false
           in
-          if Set.exists ps ~f:aux then None
-          else Some (uni_senv, ps, (*ToDo*) Set.filter ns ~f:(Fn.non aux), phi))
+          if Set.exists ps ~f:trivially_satisfied then None
+          else
+            let ns = (*ToDo*) Set.filter ns ~f:(Fn.non trivially_satisfied) in
+            Some (uni_senv, ps, ns, phi))
     in
     match pcsp with
     | Raw (_, params) ->
@@ -769,68 +830,112 @@ let elim_dup_nwf_predicate pcsp =
           ( Set.Poly.map clauses' ~f:(fun cl ->
                 (Quadruple.fst cl, Clause.to_formula cl)),
             params )
-    | Cnf (_, params) -> Cnf (clauses', params))
+    | Cnf (_, params) -> Cnf (clauses', params)
   else pcsp
 
-let elim_dup_fn_predicate pcsp =
-  let open Ast.Logic in
+let elim_triv_parity_predicate pcsp =
+  let kind_map = kind_map_of pcsp in
+  if Map.Poly.exists kind_map ~f:Kind.is_parity then
+    let clauses = clauses_of @@ to_cnf @@ to_nnf pcsp in
+    let non_trivial =
+      Set.concat_map clauses ~f:(fun (_, ps, ns (*ToDo*), _) ->
+          Set.Poly.filter_map (Set.union ps ns) ~f:(fun atm ->
+              match Map.Poly.find kind_map @@ ExtTerm.pvar_of_atom atm with
+              | Some (Kind.Parity (nwf, (idl, idr))) -> Some (nwf.name, idl, idr)
+              | _ -> None))
+      |> Set.group_by ~equiv:(fun (pv1, _, _) (pv2, _, _) ->
+          Ident.tvar_equal pv1 pv2)
+      |> List.map ~f:(fun l ->
+          let pv = Triple.fst @@ Set.choose_exn l in
+          let idls, idrs =
+            Set.unzip @@ Set.Poly.map l ~f:(fun (_, idl, idr) -> (idl, idr))
+          in
+          (pv, Set.inter idls idrs))
+      |> Map.Poly.of_alist_exn
+    in
+    let clauses' =
+      Set.Poly.filter_map clauses ~f:(fun (uni_senv, ps, ns, phi) ->
+          let trivially_satisfied atm =
+            (* ToDo: parity predicate variables that do not appear in any cycle can be set trivially to either true or false *)
+            match Map.Poly.find kind_map @@ ExtTerm.pvar_of_atom atm with
+            | Some (Kind.Parity (nwf, (idl, idr))) ->
+                let non_trivial_set = Map.Poly.find_exn non_trivial nwf.name in
+                not (Set.mem non_trivial_set idl && Set.mem non_trivial_set idr)
+            | _ -> false
+          in
+          if Set.exists ps ~f:trivially_satisfied then None
+          else
+            let ns = (*ToDo*) Set.filter ns ~f:(Fn.non trivially_satisfied) in
+            Some (uni_senv, ps, ns, phi))
+    in
+    match pcsp with
+    | Raw (_, params) ->
+        Raw
+          ( Set.Poly.map clauses' ~f:(fun cl ->
+                (Quadruple.fst cl, Clause.to_formula cl)),
+            params )
+    | Cnf (_, params) -> Cnf (clauses', params)
+  else pcsp
+
+let elim_triv_fn_predicate pcsp =
   if Map.Poly.exists (kind_map_of pcsp) ~f:Kind.is_fn then
     map pcsp ~f:(fun (uni_senv, phi) ->
-        ( uni_senv,
+        let phi' =
           ExtTerm.nnf_of phi
           |> ExtTerm.cnf_of (senv_of pcsp) uni_senv
-          |> Set.Poly.(
-               map ~f:(fun (ps, ns, phi) ->
-                   let fnns, ns =
-                     Set.partition_map ns ~f:(fun term ->
-                         let pv, args = ExtTerm.let_var_app term in
-                         if is_fn_pred pcsp pv then First (pv, args)
-                         else Second term)
-                   in
-                   let ns', phiss =
-                     let fvs_ps_ns_phi =
-                       Set.diff
-                         (Set.union (ExtTerm.fvs_of phi)
-                            (Set.concat_map (Set.union ps ns) ~f:Term.fvs_of))
-                         (Map.Poly.key_set @@ senv_of pcsp)
-                     in
-                     List.unzip
-                     @@ List.map ~f:(fun pvs ->
-                         let hd, tl = List.hd_tl pvs in
-                         let out = List.last_exn @@ snd hd in
-                         ( uncurry ExtTerm.mk_var_app hd,
-                           List.map tl ~f:(fun (_, args) ->
-                               ExtTerm.neq_of
-                                 (ExtTerm.sort_of uni_senv out)
-                                 out (List.last_exn args)) ))
-                     @@ List.classify (fun (pv1, args1) (pv2, args2) ->
-                         Stdlib.(
-                           pv1 = pv2
-                           && Common.Ext.List.initial args1
-                              = Common.Ext.List.initial args2))
-                     @@ Set.to_list
-                     @@ Set.filter fnns ~f:(fun ((_, args) as fnn) ->
-                         let out = List.last_exn args in
-                         let fvs_fnns =
-                           Set.diff
-                             (Set.concat
-                             @@ Set.concat_map
-                                  ~f:
-                                    (snd >> List.map ~f:Term.fvs_of
-                                   >> Set.Poly.of_list)
-                             @@ Set.remove fnns fnn)
-                             (Map.Poly.key_set @@ senv_of pcsp)
-                         in
-                         (not (ExtTerm.is_var out))
-                         || Set.mem
-                              (Set.union fvs_ps_ns_phi fvs_fnns)
-                              (fst (ExtTerm.let_var out)))
-                   in
-                   ( uni_senv,
-                     ps,
-                     Set.union ns (Set.Poly.of_list ns'),
-                     ExtTerm.or_of (phi :: List.concat phiss) )))
-          |> ClauseSet.to_formula ))
+          |> Set.Poly.map ~f:(fun (ps, ns, phi) ->
+              let fnns, ns =
+                Set.partition_map ns ~f:(fun term ->
+                    let pv, args = ExtTerm.let_var_app term in
+                    if is_fn_pred pcsp pv then First (pv, args) else Second term)
+              in
+              let ns', phiss =
+                let fvs_ps_ns_phi =
+                  Set.diff
+                    (Set.union (ExtTerm.fvs_of phi)
+                       (Set.concat_map (Set.union ps ns) ~f:ExtTerm.fvs_of))
+                    (Map.Poly.key_set @@ senv_of pcsp)
+                in
+                Set.filter fnns ~f:(fun fnn ->
+                    let ins, out = List.rest_last (snd fnn) in
+                    if ExtTerm.is_var out then
+                      let fvs_fnns =
+                        Set.diff
+                          (Set.Poly.union_list
+                          @@ Set.concat_map (Set.remove fnns fnn)
+                               ~f:(uncurry2 ExtTerm.mk_var_app >> ExtTerm.fvs_of)
+                             :: List.map ins ~f:ExtTerm.fvs_of)
+                          (Map.Poly.key_set @@ senv_of pcsp)
+                      in
+                      if
+                        Set.mem
+                          (Set.union fvs_ps_ns_phi fvs_fnns)
+                          (fst (ExtTerm.let_var out))
+                      then true
+                      else (* fnn is trivial *) false
+                    else true)
+                |> Set.to_list
+                |> List.classify (fun (pv1, args1) (pv2, args2) ->
+                    Ident.tvar_equal pv1 pv2
+                    && Stdlib.(
+                         Common.Ext.List.initial args1
+                         = Common.Ext.List.initial args2))
+                |> List.map ~f:(fun pvs ->
+                    let hd, tl = List.hd_tl pvs in
+                    let out = List.last_exn @@ snd hd in
+                    let sort = ExtTerm.sort_of uni_senv out in
+                    ( uncurry ExtTerm.mk_var_app hd,
+                      List.map tl
+                        ~f:(snd >> List.last_exn >> ExtTerm.neq_of sort out) ))
+                |> List.unzip
+              in
+              ( uni_senv,
+                ps,
+                Set.union ns (Set.Poly.of_list ns'),
+                ExtTerm.or_of (phi :: List.concat phiss) ))
+          |> ClauseSet.to_formula
+        in
+        (uni_senv, phi'))
   else pcsp
 
 (** assume pcsp is cnf *)

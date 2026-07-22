@@ -7,17 +7,17 @@ if [ ! -d $2 ]; then
     mkdir $2
 fi
 echo generate $1
-if [ -f $1 ]; then 
-    fname=`basename $1` 
+if [ -f $1 ]; then
+    fname=`basename $1`
     _build/default/main.exe -c ./config/solver/printer_smt2.json -p sygus $1 > $2/$fname.smt2
 fi
-for file_a in $1/* 
-do  
-    fname=`basename $file_a`  
-    if [ -f $1/$fname ]; then 
+for file_a in $1/*
+do
+    fname=`basename $file_a`
+    if [ -f $1/$fname ]; then
         _build/default/main.exe -c ./config/solver/printer_smt2.json -p sygus $1/$fname > $2/$fname.smt2
     fi
-    if [ -d $1/$fname ]; then 
+    if [ -d $1/$fname ]; then
         sh $0 $1/$fname $2/$fname
     fi
 done

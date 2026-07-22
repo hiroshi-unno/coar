@@ -911,11 +911,20 @@ let model_of ctx dtenv model =
           ( (Ident.Tvar x, s),
             if Z3.FuncDecl.get_arity decl = 0 then
               match Z3.Model.get_const_interp model decl with
-              | Some expr -> Some (term_of ctx [] [] dtenv expr)
+              | Some expr ->
+                  let t = term_of ctx [] [] dtenv expr in
+                  if Term.is_var t then (*ToDo*)
+                    LogicOld.add_dummy_term (Term.tvar_of t) s;
+                  Some t
               | None -> None
             else
               match Z3.Model.get_func_interp model decl with
-              | Some _func -> None (*ToDo*)
+              | Some _func ->
+                  None
+                  (*ToDo*)
+                  (*let args = Z3.FuncInterp.get_args func in
+                  let values = Z3.FuncInterp.get_values func in
+                  Some (Term.mk_fun_def (Ident.Tvar x) args values)*)
               | None -> None ))
     in
     Debug.print @@ lazy ("model is: " ^ str_of_model model);
@@ -1769,19 +1778,24 @@ let incr_check_sat_unsat_core ~id ?(enable = true) ?(z3str3 = false)
     | Some timeout ->
         Z3.Params.add_int params (Z3.Symbol.mk_string ctx "timeout") timeout);
     Z3.Solver.set_parameters solver params;
-    Map.Poly.iteri labeled_constr_map ~f:(fun ~key:label ~data:phi ->
-        if Formula.is_true phi then ()
-        else
-          let z3_expr = of_formula_with_z3fenv ~id ctx [] [] fenv dtenv phi in
-          if enable then (
+    if enable then
+      Map.Poly.iteri labeled_constr_map ~f:(fun ~key:label ~data:phi ->
+          if Formula.is_true phi then ()
+          else
+            let z3_expr = of_formula_with_z3fenv ~id ctx [] [] fenv dtenv phi in
             Debug.print
             @@ lazy
                  (sprintf "assert and track: [%s] %s" label (Formula.str_of phi));
             z3_solver_assert_and_track solver z3_expr
               (Z3.Boolean.mk_const_s ctx label))
-          else (
+    else
+      z3_solver_add solver
+      @@ List.filter_map (Map.Poly.data labeled_constr_map) ~f:(fun phi ->
+          if Formula.is_true phi then None
+          else
+            let z3_expr = of_formula_with_z3fenv ~id ctx [] [] fenv dtenv phi in
             Debug.print @@ lazy (sprintf "assert: %s" (Formula.str_of phi));
-            z3_solver_add solver [ z3_expr ]));
+            Some z3_expr);
     if not @@ Set.is_empty non_tracked then (
       Z3.Solver.push solver;
       if false then print_endline @@ Z3.Solver.to_string solver;
@@ -2036,6 +2050,7 @@ let qelim ?(timeout = None) ~id ~fenv phi =
   Debug.print @@ lazy "[Z3interface.qelim]";
   if
     (not (Formula.is_quantifier_free phi))
+    && Formula.is_fun_quantifier_free phi
     && Set.for_all (Formula.funsyms_of phi) ~f:(function
       | T_int.Power | T_real.RPower -> false
       | fsym -> not (T_bv.is_bv_fsym fsym))

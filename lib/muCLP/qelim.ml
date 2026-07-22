@@ -362,127 +362,121 @@ module Make (Cfg : Config.ConfigType) = struct
     | SkolemFun -> encode_exists_skolem_fun
     | SkolemPred -> encode_exists_skolem_pred
 
-  let encode_exists ?(forall_dom = false) prefix bound_tvars bound_pvars
+  let rec encode_exists ?(conv_forall = false) prefix bound_tvars bound_pvars
       unknowns fml =
-    let rec rep bound_tvars bound_pvars unknowns fml =
-      if Formula.is_quantifier_free fml then ([], fml, bound_pvars, unknowns)
-      else if Formula.is_and fml || Formula.is_or fml then
-        let binop, fml1, fml2, info = Formula.let_binop fml in
-        let preds1, fml1, bound_pvars, unknowns =
-          rep bound_tvars bound_pvars unknowns fml1
+    if Formula.is_quantifier_free fml then ([], fml, bound_pvars, unknowns)
+    else if Formula.is_and fml || Formula.is_or fml then
+      let binop, fml1, fml2, info = Formula.let_binop fml in
+      let preds1, fml1, bound_pvars, unknowns =
+        encode_exists ~conv_forall prefix bound_tvars bound_pvars unknowns fml1
+      in
+      let preds2, fml2, bound_pvars, unknowns =
+        encode_exists ~conv_forall prefix bound_tvars bound_pvars unknowns fml2
+      in
+      ( preds1 @ preds2,
+        Formula.mk_binop binop fml1 fml2 ~info,
+        bound_pvars,
+        unknowns )
+    else if Formula.is_forall fml then
+      let bounds, fml, info = Formula.let_forall fml in
+      let preds, fml, bound_pvars, unknowns =
+        encode_exists ~conv_forall prefix (bounds @ bound_tvars) bound_pvars
+          unknowns fml
+      in
+      let fml' = Formula.forall bounds fml ~info in
+      if conv_forall && Formula.is_forall fml' then
+        let fml, unknowns =
+          let body = fml in
+          let bool_params, arith_params =
+            let fv = Formula.tvs_of body in
+            List.filter bounds ~f:(fst >> Set.mem fv)
+            |> List.partition_tf ~f:(snd >> Term.is_bool_sort)
+          in
+          let pvars' =
+            List.fold_right arith_params ~init:[] ~f:(fun (x, _) pvars' ->
+                let pv =
+                  Ident.fnpred_pvar (Ident.Pvar (prefix ^ Ident.name_of_tvar x))
+                in
+                Problem.avoid_dup pv
+                  (pvars' @ bound_pvars @ Set.to_list @@ Kind.pvars_of unknowns)
+                :: pvars')
+          in
+          let arith_params, body =
+            add_prefix_to_tvars "#foralls_" arith_params body
+          in
+          (*assert (List.length pvars' = List.length arith_params);*)
+          let body =
+            (* expand universal quantification over boolean variables *)
+            let rec aux body = function
+              | [] -> body
+              | (x, sort) :: xs ->
+                  assert (Term.is_bool_sort sort);
+                  let body = aux body xs in
+                  Formula.and_of
+                    [
+                      Formula.apply_pred (x, body) @@ T_bool.mk_true ();
+                      Formula.apply_pred (x, body) @@ T_bool.mk_false ();
+                    ]
+            in
+            aux body bool_params
+          in
+          ( Evaluator.simplify
+            @@ Formula.forall arith_params
+            @@
+            (* disjoin the dummy predicate variables for universal quantifiers *)
+            Formula.or_of
+              (List.map2_exn pvars' arith_params ~f:(fun pvar bind ->
+                   mk_app pvar bound_tvars [ bind ] ())
+              @ [ body ]),
+            Kind.add_pred_env_set unknowns Kind.Ord
+            @@ Set.Poly.of_list
+            @@ List.map2_exn pvars' arith_params ~f:(fun pvar (_, sort) ->
+                (pvar, List.map bound_tvars ~f:snd @ [ sort ])) )
         in
-        let preds2, fml2, bound_pvars, unknowns =
-          rep bound_tvars bound_pvars unknowns fml2
+        (preds, fml, bound_pvars, unknowns)
+      else (preds, fml', bound_pvars, unknowns)
+    else if Formula.is_exists fml then
+      let bounds, fml, info = Formula.let_exists fml in
+      let preds, fml, bound_pvars, unknowns =
+        encode_exists ~conv_forall prefix (bounds @ bound_tvars) bound_pvars
+          unknowns fml
+      in
+      let fml' = Formula.exists bounds fml ~info in
+      if Formula.is_exists fml' then
+        let add_preds, fml, unknowns =
+          dispatched prefix bound_tvars bound_pvars unknowns fml'
         in
-        ( preds1 @ preds2,
-          Formula.mk_binop binop fml1 fml2 ~info,
-          bound_pvars,
+        ( add_preds @ preds,
+          fml,
+          Pred.pvars_of_list add_preds @ bound_pvars,
           unknowns )
-      else if Formula.is_forall fml then
-        let bounds, fml, info = Formula.let_forall fml in
-        let preds, fml, bound_pvars, unknowns =
-          rep (bounds @ bound_tvars) bound_pvars unknowns fml
-        in
-        let fml' = Formula.forall bounds fml ~info in
-        if forall_dom && Formula.is_forall fml' then
-          let fml, unknowns =
-            let body = fml in
-            let bool_params, arith_params =
-              let fv = Formula.tvs_of body in
-              List.filter bounds ~f:(fst >> Set.mem fv)
-              |> List.partition_tf ~f:(snd >> Term.is_bool_sort)
-            in
-            let pvars' =
-              List.fold_right arith_params ~init:[] ~f:(fun (x, _) pvars' ->
-                  let pv =
-                    Ident.fnpred_pvar
-                      (Ident.Pvar (prefix ^ Ident.name_of_tvar x))
-                  in
-                  Problem.avoid_dup pv
-                    (pvars' @ bound_pvars @ Set.to_list
-                   @@ Kind.pvars_of unknowns)
-                  :: pvars')
-            in
-            let arith_params, body =
-              add_prefix_to_tvars "#foralls_" arith_params body
-            in
-            (*assert (List.length pvars' = List.length arith_params);*)
-            let body =
-              (* expand universal quantification over boolean variables *)
-              let rec aux body = function
-                | [] -> body
-                | (x, sort) :: xs ->
-                    assert (Term.is_bool_sort sort);
-                    let body = aux body xs in
-                    Formula.and_of
-                      [
-                        Formula.apply_pred (x, body) @@ T_bool.mk_true ();
-                        Formula.apply_pred (x, body) @@ T_bool.mk_false ();
-                      ]
-              in
-              aux body bool_params
-            in
-            ( Evaluator.simplify
-              @@ Formula.forall arith_params
-              @@ Formula.or_of
-                   (List.map2_exn pvars' arith_params
-                      ~f:(fun pvar (tvar, sort) ->
-                        mk_app pvar bound_tvars [ (tvar, sort) ] ())
-                   @ [ body ]),
-              Kind.add_pred_env_set unknowns Kind.Ord
-              @@ Set.Poly.of_list
-              @@ List.map2_exn pvars' arith_params ~f:(fun pvar (_, sort) ->
-                  (pvar, List.map ~f:snd bound_tvars @ [ sort ])) )
-          in
-          (preds, fml, bound_pvars, unknowns)
-        else (preds, fml', bound_pvars, unknowns)
-      else if Formula.is_exists fml then
-        let bounds, fml, info = Formula.let_exists fml in
-        let preds, fml, bound_pvars, unknowns =
-          rep (bounds @ bound_tvars) bound_pvars unknowns fml
-        in
-        let fml = Formula.exists bounds fml ~info in
-        if Formula.is_exists fml then
-          let add_preds, fml, unknowns =
-            dispatched prefix bound_tvars bound_pvars unknowns fml
-          in
-          ( add_preds @ preds,
-            fml,
-            Pred.pvars_of_list add_preds @ bound_pvars,
-            unknowns )
-        else (preds, fml, bound_pvars, unknowns)
-      else
-        failwith
-          (sprintf "[encode_exists] %s not supported" (Formula.str_of fml))
-    in
-    let preds, fml, _pvars, unknowns =
-      rep bound_tvars bound_pvars unknowns @@ Formula.nnf_of fml
-    in
-    (preds, fml, unknowns)
+      else (preds, fml', bound_pvars, unknowns)
+    else
+      failwith (sprintf "[encode_exists] %s not supported" (Formula.str_of fml))
 
-  let elim_exists_in_query ?(forall_dom = false) (muclp, unknowns) =
+  let elim_exists_in_query ?(conv_forall = false) (muclp, unknowns) =
     let bound_pvars = Pred.pvars_of_list muclp.Problem.preds in
-    let add_preds, query', unknowns =
+    let add_preds, query', _pvars, unknowns =
       let prefix = "query_" in
-      encode_exists ~forall_dom prefix [] bound_pvars unknowns
-        muclp.Problem.query
+      encode_exists ~conv_forall prefix [] bound_pvars unknowns
+        (Formula.nnf_of muclp.Problem.query)
     in
     (Problem.make (add_preds @ muclp.Problem.preds) query', unknowns)
 
-  let elim_exists_in_preds ?(forall_dom = false) (muclp, unknowns) =
+  let elim_exists_in_preds ?(conv_forall = false) (muclp, unknowns) =
     let bound_pvars = Pred.pvars_of_list muclp.Problem.preds in
     let preds', unknowns =
       List.fold ~init:([], unknowns) muclp.Problem.preds
         ~f:(fun (preds, unknowns) pred ->
-          let add_preds, body, unknowns =
+          let add_preds, body, _pvars, unknowns =
             let prefix = Ident.name_of_pvar pred.name ^ Ident.divide_flag in
-            encode_exists ~forall_dom prefix pred.args bound_pvars unknowns
-              pred.body
+            encode_exists ~conv_forall prefix pred.args bound_pvars unknowns
+              (Formula.nnf_of pred.body)
           in
           (add_preds @ ({ pred with body } :: preds), unknowns))
     in
     (Problem.make (List.rev preds') muclp.Problem.query, unknowns)
 
-  let elim_exists ?(forall_dom = false) =
-    elim_exists_in_query ~forall_dom >> elim_exists_in_preds ~forall_dom
+  let elim_exists ?(conv_forall = false) =
+    elim_exists_in_query ~conv_forall >> elim_exists_in_preds ~conv_forall
 end

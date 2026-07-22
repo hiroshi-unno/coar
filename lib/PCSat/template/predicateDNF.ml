@@ -155,7 +155,8 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
 
   let gen_template ~ucore:_ (hspace : HypSpace.hspace) =
     let template =
-      Templ.gen_dnf ~eq_atom:config.eq_atom ~br_bools:false ~only_bools:false
+      Templ.gen_dnf ~print:Debug.print ~eq_atom:config.eq_atom ~br_bools:false
+        ~only_bools:false
         {
           consts = Set.to_list hspace.consts;
           terms = Set.to_list hspace.terms;

@@ -22,7 +22,7 @@ if [ "$1" != "--xargs" ]; then
                 exit
         fi
 
-        if [ -z "$type" ]; then 
+        if [ -z "$type" ]; then
                 echo "e.g., type=sygus ... $0"
                 exit
         fi

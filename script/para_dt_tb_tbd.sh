@@ -47,7 +47,7 @@ do
         cat output2
         break
     fi
-    
+
     if [  "$alive1" ] && [ -z "$alive2" ] && ["$alive3"]; then
 #        echo "kill1 3"
         kill $pid1
@@ -55,7 +55,7 @@ do
         cat output2
         break
     fi
-    
+
     if ["$alive1" ] && [ "$alive2" ] && [ -z  "$alive3"]; then
 #        echo "kill1 2"
         kill $pid2

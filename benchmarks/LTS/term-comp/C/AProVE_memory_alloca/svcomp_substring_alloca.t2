@@ -1,0 +1,149 @@
+///*** 1_main ***///
+START: main_bb8;
+FROM: main_bb8;
+memory0_freeIndex := 1;
+vmemory0 := nondet();
+v30 := nondet();
+v31 := nondet();
+TO: main_bb8_v.;
+FROM: main_bb8_v.;
+assume(v30 slt 1);
+v. := 1;
+TO: main_bb8_sv.;
+
+FROM: main_bb8_v.;
+assume(v30 sge 1);
+v. := v30;
+TO: main_bb8_sv.;
+
+FROM: main_bb8_sv.;
+TO: main_bb8_vlength2.0;
+FROM: main_bb8_vlength2.0;
+assume(v31 slt 1);
+vlength2.0 := 1;
+TO: main_bb8_svlength2.0;
+
+FROM: main_bb8_vlength2.0;
+assume(v31 sge 1);
+vlength2.0 := v31;
+TO: main_bb8_svlength2.0;
+
+FROM: main_bb8_svlength2.0;
+v34 := v. * 1;
+v35 := memory0_freeIndex;
+v36 := memory0_freeIndex;
+v37 := v36 + v34;
+memory0_freeIndex := v37;
+v38 := vlength2.0 * 1;
+v39 := memory0_freeIndex;
+v40 := memory0_freeIndex;
+v41 := v40 + v38;
+memory0_freeIndex := v41;
+v42 := v. - 1;
+v43 := v35 + v42;
+v44 := sign_extend(32, 64, v43);
+v45 := v44;
+vmemory0 := store_array(vmemory0, v44, 0);
+v46 := vlength2.0 - 1;
+v47 := v39 + v46;
+v48 := sign_extend(32, 64, v47);
+v49 := v48;
+vmemory0 := store_array(vmemory0, v48, 0);
+var__temp_vps.0.i := v35;
+var__temp_vps.0.i := v35;
+TO: main_bb9;
+
+FROM: main_bb9;
+vps.0.i := var__temp_vps.0.i;
+v50 := sign_extend(32, 64, vps.0.i);
+v51 := v50;
+v52 := select_array(vmemory0, v50);
+v53 := sign_extend(8, 32, v52);
+var__temp_vps2.0.i := vps.0.i;
+var__temp_vpt.0.i := v39;
+var__temp_v.0.i := 0;
+TO: main_bb9_end;
+
+FROM: main_bb9_end;
+assume(v53 != 0);
+var__temp_vps2.0.i := vps.0.i;
+var__temp_vpt.0.i := v39;
+TO: main_bb10;
+
+FROM: main_bb9_end;
+assume(v53 == 0);
+var__temp_v.0.i := 0;
+TO: main_substringexit;
+
+FROM: main_bb10;
+vps2.0.i := var__temp_vps2.0.i;
+vpt.0.i := var__temp_vpt.0.i;
+v55 := sign_extend(32, 64, vpt.0.i);
+v56 := v55;
+v57 := select_array(vmemory0, v55);
+v58 := sign_extend(8, 32, v57);
+TO: main_bb10_end;
+
+FROM: main_bb10_end;
+assume(v58 != 0);
+TO: main_bb11;
+
+FROM: main_bb10_end;
+assume(v58 == 0);
+TO: main_critedgei;
+
+FROM: main_bb11;
+v60 := sign_extend(32, 64, vpt.0.i);
+v61 := v60;
+v62 := select_array(vmemory0, v60);
+v63 := sign_extend(8, 32, v62);
+v64 := sign_extend(32, 64, vps2.0.i);
+v65 := v64;
+v66 := select_array(vmemory0, v64);
+v67 := sign_extend(8, 32, v66);
+TO: main_bb11_end;
+
+FROM: main_bb11_end;
+assume(v63 == v67);
+TO: main_bb12;
+
+FROM: main_bb11_end;
+assume(v63 != v67);
+TO: main_critedgei;
+
+FROM: main_bb12;
+v69 := vpt.0.i + 1;
+v70 := vps2.0.i + 1;
+var__temp_vps2.0.i := v70;
+var__temp_vpt.0.i := v69;
+var__temp_vps2.0.i := v70;
+var__temp_vpt.0.i := v69;
+TO: main_bb10;
+
+FROM: main_critedgei;
+v71 := sign_extend(32, 64, vpt.0.i);
+v72 := v71;
+v73 := select_array(vmemory0, v71);
+v74 := sign_extend(8, 32, v73);
+var__temp_v.0.i := 1;
+TO: main_critedgei_end;
+
+FROM: main_critedgei_end;
+assume(v74 == 0);
+var__temp_v.0.i := 1;
+TO: main_substringexit;
+
+FROM: main_critedgei_end;
+assume(v74 != 0);
+TO: main_bb13;
+
+FROM: main_bb13;
+v76 := vps.0.i + 1;
+var__temp_vps.0.i := v76;
+var__temp_vps.0.i := v76;
+TO: main_bb9;
+
+FROM: main_substringexit;
+v.0.i := var__temp_v.0.i;
+TO: main_substringexit_ret;
+

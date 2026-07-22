@@ -1,0 +1,87 @@
+///*** 1_main ***///
+START: main_bb10;
+FROM: main_bb10;
+v26 := nondet_int();
+v27 := v26 % 99999;
+var__temp_v.0.i := v27;
+TO: main_bb10_end;
+
+FROM: main_bb10_end;
+assume(v27 < 0);
+TO: main_bb11;
+
+FROM: main_bb10_end;
+assume(v27 >= 0);
+var__temp_v.0.i := v27;
+TO: main_gettablesizeexit;
+
+FROM: main_bb11;
+v29 := 0 - v27;
+TO: main_bb11_end;
+
+FROM: main_bb11_end;
+assume(v29 > 2147483647);
+TO: main_bb12;
+
+FROM: main_bb11_end;
+assume(v29 <= 2147483647);
+TO: main_bb13;
+
+FROM: main_bb12;
+v31 := v29 - 2147483647;
+v32 := v31 - 1;
+v33 := v32 % 4294967296;
+v34 := -2147483648 + v33;
+var__temp_v.0.i := v34;
+var__temp_v.0.i := v34;
+TO: main_gettablesizeexit;
+
+FROM: main_bb13;
+var__temp_v.0.i := v29;
+TO: main_bb13_end;
+
+FROM: main_bb13_end;
+assume(v29 < -2147483648);
+TO: main_bb14;
+
+FROM: main_bb13_end;
+assume(v29 >= -2147483648);
+var__temp_v.0.i := v29;
+TO: main_gettablesizeexit;
+
+FROM: main_bb14;
+v36 := -2147483648 - v29;
+v37 := v36 - 1;
+v38 := v37 % 4294967296;
+v39 := 2147483647 - v38;
+var__temp_v.0.i := v39;
+var__temp_v.0.i := v39;
+TO: main_gettablesizeexit;
+
+FROM: main_gettablesizeexit;
+v.0.i := var__temp_v.0.i;
+var__temp_vi.0 := 0;
+var__temp_vi.0 := 0;
+TO: main_bb15;
+
+FROM: main_bb15;
+vi.0 := var__temp_vi.0;
+TO: main_bb15_end;
+
+FROM: main_bb15_end;
+assume(vi.0 < v.0.i);
+TO: main_bb16;
+
+FROM: main_bb15_end;
+assume(vi.0 >= v.0.i);
+TO: main_bb17;
+
+FROM: main_bb16;
+v41 := vi.0 + 1;
+var__temp_vi.0 := v41;
+var__temp_vi.0 := v41;
+TO: main_bb15;
+
+FROM: main_bb17;
+TO: main_bb17_ret;
+

@@ -18,7 +18,17 @@ module Make (Cfg : Config.ConfigType) = struct
   module Reducer = MuCLP.Reducer.Make (
     struct
       let config =
-        MuCLP.Reducer.Config.{ verbose = config.verbose; use_dwf = false }
+        MuCLP.Reducer.Config.
+          {
+            verbose = config.verbose;
+            mode =
+              (if config.use_parity_progress_measure then
+                 PPM
+                   ( config.use_scc,
+                     config.use_alternation_depth,
+                     config.ignore_nu_components )
+               else WF (false, config.use_scc, config.use_alternation_depth));
+          }
     end :
       MuCLP.Reducer.Config.ConfigType)
 
@@ -66,12 +76,9 @@ module Make (Cfg : Config.ConfigType) = struct
     in
     (*Debug.print ~id @@ lazy (sprintf "Preprocessed muCLP: %s\n" @@ str_of muclp);*)
     let pfwcsp =
-      let pfwcsp =
+      let pfwcsp, _ =
         let exchange = Option.is_some exc_info in
-        Reducer.f ~id ~exchange ~messenger
-          ~use_ppm:config.use_parity_progress_measure ~use_scc:config.use_scc
-          ~use_alt_dep:config.use_alternation_depth
-          ~ignore_nu_components:config.ignore_nu_components muclp unknowns
+        Reducer.f ~id ~exchange ~messenger muclp unknowns
       in
       match exc_info with
       | None -> pfwcsp
@@ -90,12 +97,58 @@ module Make (Cfg : Config.ConfigType) = struct
         (MuCLP.Problem.solution * int) Or_error.t =
       let open Or_error.Monad_infix in
       pcsp_solver ~primal >>= fun (module PCSPSolver) ->
-      muclp
-      |> pfwcsp_of ~id ~messenger ~exc_info (exi_senv, kind_map)
-      |> PCSP.Problem.map ~f:Logic.Term.refresh
-      |> PCSPSolver.solve
-      >>= function
-      | PCSP.Problem.Sat _, info -> Ok (MuCLP.Problem.Valid, info)
+      let pcsp =
+        muclp
+        |> pfwcsp_of ~id ~messenger ~exc_info (exi_senv, kind_map)
+        |> PCSP.Problem.map ~f:Logic.Term.refresh
+      in
+      PCSPSolver.solve pcsp >>= function
+      | PCSP.Problem.Sat sol, info -> (
+          match config.output_certificates with
+          | Some filename ->
+              Debug.print
+              @@ lazy (sprintf "Outputting certificates to %s" filename);
+              let file = Out_channel.create ~binary:false filename in
+              Map.Poly.iteri sol ~f:(fun ~key ~data ->
+                  try
+                    let prefix = "U_state_" in
+                    let plen = String.length prefix in
+                    let slen = String.length (Ident.name_of_tvar key) in
+                    if slen < plen + 1 then invalid_arg "too short";
+                    if not (String.is_prefix ~prefix (Ident.name_of_tvar key))
+                    then invalid_arg "invalid prefix";
+                    if Stdlib.((Ident.name_of_tvar key).[slen - 1] <> '_') then
+                      invalid_arg "missing trailing underscore";
+                    let pid =
+                      String.sub (Ident.name_of_tvar key) ~pos:plen
+                        ~len:(slen - plen - 1)
+                    in
+                    let fml =
+                      let args, term = Logic.ExtTerm.let_lam data in
+                      let fml =
+                        Logic.ExtTerm.to_old_formula Map.Poly.empty
+                          (Map.Poly.of_alist_exn args)
+                          term []
+                      in
+                      let ren =
+                        let args' =
+                          Map.Poly.find_exn
+                            (PCSP.Problem.params_of pcsp).arg_original_names
+                            (Ident.Pvar ("state_" ^ pid))
+                        in
+                        Map.Poly.of_alist_exn
+                        @@ List.map2_exn args args' ~f:(fun (v, _) orig_name ->
+                            (v, orig_name))
+                      in
+                      Formula.rename ren fml
+                    in
+                    Out_channel.output_string file
+                    @@ sprintf "%s, %s\n" pid (Formula.str_of ~c_style:true fml)
+                  with _ -> ());
+              Out_channel.flush file;
+              Out_channel.close file;
+              Ok (MuCLP.Problem.Valid, info)
+          | None -> Ok (MuCLP.Problem.Valid, info))
       | Unsat _, info -> Ok (Invalid, info)
       | Unknown, info -> Ok (Unknown, info)
       | OutSpace _, _ -> failwith "out of space" (* TODO *)
@@ -1325,8 +1378,10 @@ module Make (Cfg : Config.ConfigType) = struct
               PCSP.Problem.make ~prefix:(Some "q") pc_constrs
               @@ SMT.Problem.
                    {
+                     uni_sort = Set.Poly.empty;
                      uni_senv = Map.Poly.empty;
                      exi_senv = Map.force_merge templ_params pc_templ_params;
+                     dep_map = Map.Poly.empty;
                      kind_map = Map.Poly.empty (*ToDo*);
                      fenv = Map.Poly.empty;
                      dtenv = Map.Poly.empty;
@@ -1339,8 +1394,10 @@ module Make (Cfg : Config.ConfigType) = struct
                 PCSP.Problem.make ~prefix:(Some "q") constrs
                 @@ SMT.Problem.
                      {
+                       uni_sort = Set.Poly.empty;
                        uni_senv = Map.Poly.empty;
                        exi_senv = templ_params;
+                       dep_map = Map.Poly.empty;
                        kind_map = Map.Poly.empty (*ToDo*);
                        fenv = Map.Poly.empty;
                        dtenv = Map.Poly.empty;
@@ -1353,8 +1410,10 @@ module Make (Cfg : Config.ConfigType) = struct
               PCSP.Problem.make ~prefix:(Some "q") constrs
               @@ SMT.Problem.
                    {
+                     uni_sort = Set.Poly.empty;
                      uni_senv = Map.Poly.empty;
                      exi_senv = templ_params;
+                     dep_map = Map.Poly.empty;
                      kind_map = Map.Poly.empty (*ToDo*);
                      fenv = Map.Poly.empty;
                      dtenv = Map.Poly.empty;
@@ -1410,8 +1469,10 @@ module Make (Cfg : Config.ConfigType) = struct
               PCSP.Problem.make pc_constrs
               @@ SMT.Problem.
                    {
+                     uni_sort = Set.Poly.empty;
                      uni_senv = Map.Poly.empty;
                      exi_senv = Map.force_merge templ_params pc_templ_params;
+                     dep_map = Map.Poly.empty;
                      kind_map = Map.Poly.empty (*ToDo*);
                      fenv = Map.Poly.empty;
                      dtenv = Map.Poly.empty;
@@ -1421,8 +1482,10 @@ module Make (Cfg : Config.ConfigType) = struct
                 PCSP.Problem.make constrs
                 @@ SMT.Problem.
                      {
+                       uni_sort = Set.Poly.empty;
                        uni_senv = Map.Poly.empty;
                        exi_senv = templ_params;
+                       dep_map = Map.Poly.empty;
                        kind_map = Map.Poly.empty (*ToDo*);
                        fenv = Map.Poly.empty;
                        dtenv = Map.Poly.empty;
@@ -1432,8 +1495,10 @@ module Make (Cfg : Config.ConfigType) = struct
               PCSP.Problem.make constrs
               @@ SMT.Problem.
                    {
+                     uni_sort = Set.Poly.empty;
                      uni_senv = Map.Poly.empty;
                      exi_senv = templ_params;
+                     dep_map = Map.Poly.empty;
                      kind_map = Map.Poly.empty (*ToDo*);
                      fenv = Map.Poly.empty;
                      dtenv = Map.Poly.empty;
@@ -1449,8 +1514,10 @@ module Make (Cfg : Config.ConfigType) = struct
       PCSP.Problem.make ~prefix:(Some "q") constrs
       @@ SMT.Problem.
            {
+             uni_sort = Set.Poly.empty;
              uni_senv = Map.Poly.empty;
              exi_senv = templ_params;
+             dep_map = Map.Poly.empty;
              kind_map = Map.Poly.empty (*ToDo*);
              fenv = Map.Poly.empty;
              dtenv = Map.Poly.empty;
@@ -1622,8 +1689,8 @@ module Make (Cfg : Config.ConfigType) = struct
           List.unzip
           @@ List.map preds ~f:(fun pred ->
               let template =
-                Templ.gen_dnf ~eq_atom:false ~real_coeff:true ~ignore_hole:true
-                  ~br_bools:false ~only_bools:false
+                Templ.gen_dnf ~print:Debug.print ~eq_atom:false ~real_coeff:true
+                  ~ignore_hole:true ~br_bools:false ~only_bools:false
                   {
                     consts = [];
                     terms = [];
@@ -2744,7 +2811,10 @@ module Make (Cfg : Config.ConfigType) = struct
                   ("failed to solve Problem " ^ string_of_int (i + 1))))
 
   let check_dist_bounds ~print_sol qfl (q : QFL.Problem.dist_check) =
+    let ub_time = ref 0.0 in
+    let opt_time = ref 0.0 in
     let check ?(strict = false) bound sub =
+      Timer.start ();
       let query : QFL.Problem.check =
         {
           params = [];
@@ -2771,6 +2841,7 @@ module Make (Cfg : Config.ConfigType) = struct
       @@ lazy (sprintf "\ninput: %s\n" @@ QFL.Problem.str_of qfl);
       match check_bounds ~print_sol (-1, [], []) qfl query with
       | Ok (_, [ Some sol ]) ->
+          ub_time := !ub_time +. Timer.stop ();
           let senv, t = List.Assoc.find_exn ~equal:Stdlib.( = ) sol q.name in
           let bound =
             Value.real_of @@ Evaluator.eval_term
@@ -2781,7 +2852,9 @@ module Make (Cfg : Config.ConfigType) = struct
           in
           Debug.print @@ lazy (sprintf "found bound: %s\n" (Q.to_string bound));
           (List.map sub ~f:snd, bound)
-      | _ -> failwith "failed to solve dist_check"
+      | _ ->
+          ub_time := !ub_time +. Timer.stop ();
+          failwith "failed to solve dist_check"
     in
     let h =
       let res =
@@ -2922,6 +2995,7 @@ module Make (Cfg : Config.ConfigType) = struct
                 T_real.mk_rsum (T_real.rzero ()) (List.map2_exn ps qs ~f)
               in
               let fenv = Map.Poly.empty in
+              Timer.start ();
               match
                 if config.dist_bound_use_optimathsat then
                   OptiMathSAT.Solver.minimize constrs obj
@@ -2930,6 +3004,7 @@ module Make (Cfg : Config.ConfigType) = struct
                     obj
               with
               | Some (eps', _, model) ->
+                  opt_time := !opt_time +. Timer.stop ();
                   let sub =
                     Map.Poly.of_alist_exn
                     @@ List.map model ~f:(fun ((x, s), v) ->
@@ -2993,7 +3068,9 @@ module Make (Cfg : Config.ConfigType) = struct
                           | w -> failwith ("w = " ^ Value.str_of w)),
                       bound )
                   else (eps, weight, bounds)
-              | None -> assert false))
+              | None ->
+                  opt_time := !opt_time +. Timer.stop ();
+                  assert false))
       in
       if Q.(eps = zero) then None
       else (
@@ -3024,7 +3101,13 @@ module Make (Cfg : Config.ConfigType) = struct
       match refine h with
       | None ->
           if print_sol then (
-            print_endline (MuCLP.Problem.str_of_solution MuCLP.Problem.Valid);
+            print_endline
+            @@ String.concat ~sep:", "
+                 [
+                   MuCLP.Problem.str_of_solution MuCLP.Problem.Valid;
+                   sprintf "%fs (UB checker)" !ub_time;
+                   sprintf "%fs (OMT solver)" !opt_time;
+                 ];
             List.iter h ~f:(fun (ws, b) ->
                 print_endline
                 @@ sprintf "weight: [%s], bound: %s"

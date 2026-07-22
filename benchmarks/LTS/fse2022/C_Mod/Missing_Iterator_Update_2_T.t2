@@ -1,0 +1,267 @@
+///*** 1_main ***///
+START: main_bb11;
+FROM: main_bb11;
+flag := 0;
+v28 := nondet_int();
+v29 := flag;
+v30 := v29 + 1;
+TO: main_bb11_end;
+
+FROM: main_bb11_end;
+assume(v30 > 2147483647);
+TO: main_bb12;
+
+FROM: main_bb11_end;
+assume(v30 <= 2147483647);
+TO: main_bb13;
+
+FROM: main_bb12;
+v32 := v30 - 2147483647;
+v33 := v32 - 1;
+v34 := v33 % 4294967296;
+v35 := -2147483648 + v34;
+var__temp_v.0.i.i := v35;
+var__temp_v.0.i.i := v35;
+TO: main_wrap_aroundexiti;
+
+FROM: main_bb13;
+var__temp_v.0.i.i := v30;
+TO: main_bb13_end;
+
+FROM: main_bb13_end;
+assume(v30 < -2147483648);
+TO: main_bb14;
+
+FROM: main_bb13_end;
+assume(v30 >= -2147483648);
+var__temp_v.0.i.i := v30;
+TO: main_wrap_aroundexiti;
+
+FROM: main_bb14;
+v37 := -2147483648 - v30;
+v38 := v37 - 1;
+v39 := v38 % 4294967296;
+v40 := 2147483647 - v39;
+var__temp_v.0.i.i := v40;
+var__temp_v.0.i.i := v40;
+TO: main_wrap_aroundexiti;
+
+FROM: main_wrap_aroundexiti;
+v.0.i.i := var__temp_v.0.i.i;
+flag := v.0.i.i;
+v41 := flag;
+var__temp_v.0.i := 1;
+TO: main_wrap_aroundexiti_end;
+
+FROM: main_wrap_aroundexiti_end;
+assume(v41 > 1000);
+var__temp_v.0.i := 1;
+TO: main_mdb_cursor_getexit;
+
+FROM: main_wrap_aroundexiti_end;
+assume(v41 <= 1000);
+TO: main_bb15;
+
+FROM: main_bb15;
+TO: main_bb15_v..i;
+FROM: main_bb15_v..i;
+assume(v28 >= 0);
+v..i := 0;
+TO: main_bb15_sv..i;
+
+FROM: main_bb15_v..i;
+assume(v28 < 0);
+v..i := 1;
+TO: main_bb15_sv..i;
+
+FROM: main_bb15_sv..i;
+var__temp_v.0.i := v..i;
+var__temp_v.0.i := v..i;
+TO: main_mdb_cursor_getexit;
+
+FROM: main_mdb_cursor_getexit;
+v.0.i := var__temp_v.0.i;
+v44 := nondet_int();
+var__temp_vrc.0 := v.0.i;
+var__temp_vrc.0 := v.0.i;
+TO: main_mdb_cursor_getexit5;
+
+FROM: main_mdb_cursor_getexit5;
+vrc.0 := var__temp_vrc.0;
+TO: main_mdb_cursor_getexit5_end;
+
+FROM: main_mdb_cursor_getexit5_end;
+assume(vrc.0 == 0);
+TO: main_bb16;
+
+FROM: main_mdb_cursor_getexit5_end;
+assume(vrc.0 != 0);
+TO: main_bb27;
+
+FROM: main_bb16;
+v47 := nondet_int();
+v48 := flag;
+v49 := v48 + 1;
+TO: main_bb16_end;
+
+FROM: main_bb16_end;
+assume(v44 <= 0);
+TO: main_bb17;
+
+FROM: main_bb16_end;
+assume(v44 > 0);
+TO: main_bb22;
+
+FROM: main_bb17;
+TO: main_bb17_end;
+
+FROM: main_bb17_end;
+assume(v49 > 2147483647);
+TO: main_bb18;
+
+FROM: main_bb17_end;
+assume(v49 <= 2147483647);
+TO: main_bb19;
+
+FROM: main_bb18;
+v51 := v49 - 2147483647;
+v52 := v51 - 1;
+v53 := v52 % 4294967296;
+v54 := -2147483648 + v53;
+var__temp_v.0.i.i1 := v54;
+var__temp_v.0.i.i1 := v54;
+TO: main_wrap_aroundexiti2;
+
+FROM: main_bb19;
+var__temp_v.0.i.i1 := v49;
+TO: main_bb19_end;
+
+FROM: main_bb19_end;
+assume(v49 < -2147483648);
+TO: main_bb20;
+
+FROM: main_bb19_end;
+assume(v49 >= -2147483648);
+var__temp_v.0.i.i1 := v49;
+TO: main_wrap_aroundexiti2;
+
+FROM: main_bb20;
+v56 := -2147483648 - v49;
+v57 := v56 - 1;
+v58 := v57 % 4294967296;
+v59 := 2147483647 - v58;
+var__temp_v.0.i.i1 := v59;
+var__temp_v.0.i.i1 := v59;
+TO: main_wrap_aroundexiti2;
+
+FROM: main_wrap_aroundexiti2;
+v.0.i.i1 := var__temp_v.0.i.i1;
+flag := v.0.i.i1;
+v60 := flag;
+var__temp_vrc.0 := 1;
+TO: main_wrap_aroundexiti2_end;
+
+FROM: main_wrap_aroundexiti2_end;
+assume(v60 > 1000);
+var__temp_vrc.0 := 1;
+TO: main_mdb_cursor_getexit5;
+
+FROM: main_wrap_aroundexiti2_end;
+assume(v60 <= 1000);
+TO: main_bb21;
+
+FROM: main_bb21;
+TO: main_bb21_v..i3;
+FROM: main_bb21_v..i3;
+assume(v47 >= 0);
+v..i3 := 0;
+TO: main_bb21_sv..i3;
+
+FROM: main_bb21_v..i3;
+assume(v47 < 0);
+v..i3 := 1;
+TO: main_bb21_sv..i3;
+
+FROM: main_bb21_sv..i3;
+var__temp_vrc.0 := v..i3;
+var__temp_vrc.0 := v..i3;
+TO: main_mdb_cursor_getexit5;
+
+FROM: main_bb22;
+TO: main_bb22_end;
+
+FROM: main_bb22_end;
+assume(v49 > 2147483647);
+TO: main_bb23;
+
+FROM: main_bb22_end;
+assume(v49 <= 2147483647);
+TO: main_bb24;
+
+FROM: main_bb23;
+v63 := v49 - 2147483647;
+v64 := v63 - 1;
+v65 := v64 % 4294967296;
+v66 := -2147483648 + v65;
+var__temp_v.0.i.i6 := v66;
+var__temp_v.0.i.i6 := v66;
+TO: main_wrap_aroundexiti7;
+
+FROM: main_bb24;
+var__temp_v.0.i.i6 := v49;
+TO: main_bb24_end;
+
+FROM: main_bb24_end;
+assume(v49 < -2147483648);
+TO: main_bb25;
+
+FROM: main_bb24_end;
+assume(v49 >= -2147483648);
+var__temp_v.0.i.i6 := v49;
+TO: main_wrap_aroundexiti7;
+
+FROM: main_bb25;
+v68 := -2147483648 - v49;
+v69 := v68 - 1;
+v70 := v69 % 4294967296;
+v71 := 2147483647 - v70;
+var__temp_v.0.i.i6 := v71;
+var__temp_v.0.i.i6 := v71;
+TO: main_wrap_aroundexiti7;
+
+FROM: main_wrap_aroundexiti7;
+v.0.i.i6 := var__temp_v.0.i.i6;
+flag := v.0.i.i6;
+v72 := flag;
+var__temp_vrc.0 := 1;
+TO: main_wrap_aroundexiti7_end;
+
+FROM: main_wrap_aroundexiti7_end;
+assume(v72 > 1000);
+var__temp_vrc.0 := 1;
+TO: main_mdb_cursor_getexit5;
+
+FROM: main_wrap_aroundexiti7_end;
+assume(v72 <= 1000);
+TO: main_bb26;
+
+FROM: main_bb26;
+TO: main_bb26_v..i8;
+FROM: main_bb26_v..i8;
+assume(v47 >= 0);
+v..i8 := 0;
+TO: main_bb26_sv..i8;
+
+FROM: main_bb26_v..i8;
+assume(v47 < 0);
+v..i8 := 1;
+TO: main_bb26_sv..i8;
+
+FROM: main_bb26_sv..i8;
+var__temp_vrc.0 := v..i8;
+var__temp_vrc.0 := v..i8;
+TO: main_mdb_cursor_getexit5;
+
+FROM: main_bb27;
+TO: main_bb27_ret;
+

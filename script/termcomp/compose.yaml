@@ -1,0 +1,16 @@
+# Bind mount for various tests when attaching to the Docker image
+services:
+  solver:
+    build:
+      context: ../..
+      dockerfile: script/termcomp/Dockerfile
+    image: "termcomp:latest"
+    tty: true
+    stdin_open: true
+    volumes:
+      - type: bind
+        source: ../../script
+        target: /root/coar/script
+      - type: bind
+        source: ../../benchmarks
+        target: /root/coar/benchmarks

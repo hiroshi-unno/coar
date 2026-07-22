@@ -220,7 +220,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
            (sprintf "terms: %s"
            @@ String.concat_map_set ~sep:"," hspace.terms ~f:Term.str_of));
     let template =
-      Templ.gen_simplified_wf_predicate
+      Templ.gen_simplified_wf_predicate ~print:Debug.print
         (*config.use_ifte*)
         {
           consts = Set.to_list hspace.consts;

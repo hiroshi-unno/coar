@@ -1,0 +1,74 @@
+///*** 1_main ***///
+START: main_bb0;
+FROM: main_bb0;
+v0 := nondet();
+v1 := nondet();
+var__temp_vj.0 := v1;
+var__temp_vi.0 := v0;
+var__temp_vj.0 := v1;
+var__temp_vi.0 := v0;
+TO: main_bb1;
+
+FROM: main_bb1;
+vj.0 := var__temp_vj.0;
+vi.0 := var__temp_vi.0;
+TO: main_bb1_end;
+
+FROM: main_bb1_end;
+assume((vi.0 sgt 0) && (vj.0 sgt 0));
+TO: main_bb2;
+
+FROM: main_bb1_end;
+assume((vi.0 sle 0) || (vj.0 sle 0));
+TO: main_bb4;
+
+FROM: main_bb2;
+var__temp_vj.0 := vi.0;
+var__temp_vi.0 := vj.0;
+TO: main_bb2_end;
+
+FROM: main_bb2_end;
+assume(vi.0 slt vj.0);
+var__temp_vj.0 := vi.0;
+var__temp_vi.0 := vj.0;
+TO: main_bb1;
+
+FROM: main_bb2_end;
+assume(vi.0 sge vj.0);
+TO: main_bb3;
+
+FROM: main_bb3;
+v6 := vi.0 - 1;
+TO: main_bb3_vj.1;
+FROM: main_bb3_vj.1;
+assume(vi.0 sgt vj.0);
+vj.1 := vi.0;
+TO: main_bb3_svj.1;
+
+FROM: main_bb3_vj.1;
+assume(vi.0 sle vj.0);
+vj.1 := vj.0;
+TO: main_bb3_svj.1;
+
+FROM: main_bb3_svj.1;
+TO: main_bb3_vi.1;
+FROM: main_bb3_vi.1;
+assume(vi.0 sgt vj.0);
+vi.1 := vi.0;
+TO: main_bb3_svi.1;
+
+FROM: main_bb3_vi.1;
+assume(vi.0 sle vj.0);
+vi.1 := v6;
+TO: main_bb3_svi.1;
+
+FROM: main_bb3_svi.1;
+var__temp_vj.0 := vj.1;
+var__temp_vi.0 := vi.1;
+var__temp_vj.0 := vj.1;
+var__temp_vi.0 := vi.1;
+TO: main_bb1;
+
+FROM: main_bb4;
+TO: main_bb4_ret;
+

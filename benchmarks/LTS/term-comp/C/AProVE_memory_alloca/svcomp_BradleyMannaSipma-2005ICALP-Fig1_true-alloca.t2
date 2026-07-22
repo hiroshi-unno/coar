@@ -1,0 +1,97 @@
+///*** 1_main ***///
+START: main_bb7;
+FROM: main_bb7;
+memory0_freeIndex := 1;
+vmemory0 := nondet();
+v48 := nondet();
+v49 := nondet();
+TO: main_bb7_end;
+
+FROM: main_bb7_end;
+assume((v48 sge 0) && (v49 sge 0));
+TO: main_bb8;
+
+FROM: main_bb7_end;
+assume((v48 slt 0) || (v49 slt 0));
+TO: main_gcdexit;
+
+FROM: main_bb8;
+v52 := memory0_freeIndex;
+v53 := memory0_freeIndex;
+v54 := v53 + 1;
+memory0_freeIndex := v54;
+v55 := memory0_freeIndex;
+v56 := memory0_freeIndex;
+v57 := v56 + 1;
+memory0_freeIndex := v57;
+v58 := sign_extend(32, 64, v52);
+v59 := v58;
+vmemory0 := store_array(vmemory0, v58, v48);
+v60 := sign_extend(32, 64, v55);
+v61 := v60;
+vmemory0 := store_array(vmemory0, v60, v49);
+v62 := sign_extend(32, 64, v52);
+v63 := v62;
+v64 := sign_extend(32, 64, v55);
+v65 := v64;
+v66 := sign_extend(32, 64, v52);
+v67 := v66;
+v68 := sign_extend(32, 64, v55);
+v69 := v68;
+v70 := sign_extend(32, 64, v52);
+v71 := v70;
+v72 := sign_extend(32, 64, v55);
+v73 := v72;
+v74 := sign_extend(32, 64, v52);
+v75 := v74;
+v76 := sign_extend(32, 64, v55);
+v77 := v76;
+v78 := sign_extend(32, 64, v52);
+v79 := v78;
+v80 := sign_extend(32, 64, v55);
+v81 := v80;
+TO: main_bb9;
+
+FROM: main_bb9;
+v82 := select_array(vmemory0, v62);
+v83 := select_array(vmemory0, v64);
+TO: main_bb9_end;
+
+FROM: main_bb9_end;
+assume(v82 != v83);
+TO: main_bb10;
+
+FROM: main_bb9_end;
+assume(v82 == v83);
+TO: main_gcdexit;
+
+FROM: main_bb10;
+v85 := select_array(vmemory0, v66);
+v86 := select_array(vmemory0, v68);
+TO: main_bb10_end;
+
+FROM: main_bb10_end;
+assume(v85 sgt v86);
+TO: main_bb11;
+
+FROM: main_bb10_end;
+assume(v85 sle v86);
+TO: main_bb12;
+
+FROM: main_bb11;
+v88 := select_array(vmemory0, v70);
+v89 := select_array(vmemory0, v72);
+v90 := v88 - v89;
+vmemory0 := store_array(vmemory0, v74, v90);
+TO: main_bb9;
+
+FROM: main_bb12;
+v91 := select_array(vmemory0, v76);
+v92 := select_array(vmemory0, v78);
+v93 := v91 - v92;
+vmemory0 := store_array(vmemory0, v80, v93);
+TO: main_bb9;
+
+FROM: main_gcdexit;
+TO: main_gcdexit_ret;
+

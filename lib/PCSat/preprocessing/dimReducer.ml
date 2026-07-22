@@ -166,7 +166,7 @@ module Make (Verbose : Debug.Config.ConfigType) = struct
   let find_unsafe_raf clauses (e : erasure) (pvar, (is : (int * int) Set.Poly.t))
       =
     let check_tk atoms times t =
-      if Term.is_var t then
+      if (not @@ Sort.is_arrow (Term.sort_of t)) (*ToDo*) && Term.is_var t then
         let (x, _), _ = Term.let_var t in
         if Hashtbl.Poly.find_exn times x > 1 then true
         else occur_times_in_atoms x (erase_atoms e atoms) <> 0
@@ -183,7 +183,7 @@ module Make (Verbose : Debug.Config.ConfigType) = struct
   let find_unsafe_far clauses (e : erasure) (pvar, (is : (int * int) Set.Poly.t))
       =
     let check_tk ps ns phi e t =
-      if Term.is_var t then
+      if (not @@ Sort.is_arrow (Term.sort_of t)) (*ToDo*) && Term.is_var t then
         let (x, _), _ = Term.let_var t in
         if occur_times_in_atoms x ps > 1 then true
         else
@@ -220,7 +220,7 @@ module Make (Verbose : Debug.Config.ConfigType) = struct
              (String.concat_mapi_list ~sep:"," sorts ~f:(fun i sort -> sprintf "x%d:%s" i @@ Term.str_of_sort sort))); *)
           Some
             ( pvar1,
-              List.foldi sorts ~init:Set.Poly.empty ~f:(fun i ret _ ->
+              List.foldi sorts ~init:Set.Poly.empty ~f:(fun i ret _s ->
                   if i < bounds then Set.add ret (i, src_id_of i param_log)
                   else ret) )
     | _ -> None

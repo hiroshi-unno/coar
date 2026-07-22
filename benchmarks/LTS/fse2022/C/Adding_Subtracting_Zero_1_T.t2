@@ -1,0 +1,58 @@
+///*** 1_main ***///
+START: main_bb0;
+FROM: main_bb0;
+v0 := nondet();
+TO: main_bb0_end;
+
+FROM: main_bb0_end;
+assume(v0 slt 0);
+TO: main_bb4;
+
+FROM: main_bb0_end;
+assume(v0 sge 0);
+TO: main_bb1;
+
+FROM: main_bb1;
+v2 := nondet();
+var__temp_vh.0 := v2;
+var__temp_vlinesToRead.0 := v0;
+var__temp_vh.0 := v2;
+var__temp_vlinesToRead.0 := v0;
+TO: main_bb2;
+
+FROM: main_bb2;
+vh.0 := var__temp_vh.0;
+vlinesToRead.0 := var__temp_vlinesToRead.0;
+TO: main_bb2_end;
+
+FROM: main_bb2_end;
+assume((vlinesToRead.0 != 0) && (vh.0 sgt 0));
+TO: main_bb3;
+
+FROM: main_bb2_end;
+assume((vlinesToRead.0 == 0) || (vh.0 sle 0));
+TO: main_bb4;
+
+FROM: main_bb3;
+TO: main_bb3_vh.0.linesToRead.0;
+FROM: main_bb3_vh.0.linesToRead.0;
+assume(vlinesToRead.0 sgt vh.0);
+vh.0.linesToRead.0 := vh.0;
+TO: main_bb3_svh.0.linesToRead.0;
+
+FROM: main_bb3_vh.0.linesToRead.0;
+assume(vlinesToRead.0 sle vh.0);
+vh.0.linesToRead.0 := vlinesToRead.0;
+TO: main_bb3_svh.0.linesToRead.0;
+
+FROM: main_bb3_svh.0.linesToRead.0;
+v6 := vh.0 - vh.0.linesToRead.0;
+var__temp_vh.0 := v6;
+var__temp_vlinesToRead.0 := vh.0.linesToRead.0;
+var__temp_vh.0 := v6;
+var__temp_vlinesToRead.0 := vh.0.linesToRead.0;
+TO: main_bb2;
+
+FROM: main_bb4;
+TO: main_bb4_ret;
+

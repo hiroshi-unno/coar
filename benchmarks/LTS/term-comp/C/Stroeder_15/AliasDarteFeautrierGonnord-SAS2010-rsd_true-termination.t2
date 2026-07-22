@@ -1,0 +1,73 @@
+///*** 1_main ***///
+START: main_bb0;
+FROM: main_bb0;
+v0 := nondet();
+TO: main_bb0_end;
+
+FROM: main_bb0_end;
+assume(v0 sge 0);
+TO: main_bb1;
+
+FROM: main_bb0_end;
+assume(v0 slt 0);
+TO: main_bb4;
+
+FROM: main_bb1;
+v2 := 2 * v0;
+v3 := 2 * v0;
+var__temp_vda.0 := v2;
+var__temp_vdb.0 := v3;
+var__temp_vda.0 := v2;
+var__temp_vdb.0 := v3;
+TO: main_bb2;
+
+FROM: main_bb2;
+vda.0 := var__temp_vda.0;
+vdb.0 := var__temp_vdb.0;
+TO: main_bb2_end;
+
+FROM: main_bb2_end;
+assume(vda.0 sge v0);
+TO: main_bb3;
+
+FROM: main_bb2_end;
+assume(vda.0 slt v0);
+TO: main_bb4;
+
+FROM: main_bb3;
+v5 := nondet();
+v7 := vda.0 - 1;
+v8 := vdb.0 - 1;
+TO: main_bb3_vda.1;
+FROM: main_bb3_vda.1;
+assume(v5 != 0);
+vda.1 := v7;
+TO: main_bb3_svda.1;
+
+FROM: main_bb3_vda.1;
+assume(v5 == 0);
+vda.1 := v8;
+TO: main_bb3_svda.1;
+
+FROM: main_bb3_svda.1;
+TO: main_bb3_vdb.1;
+FROM: main_bb3_vdb.1;
+assume(v5 != 0);
+vdb.1 := vdb.0;
+TO: main_bb3_svdb.1;
+
+FROM: main_bb3_vdb.1;
+assume(v5 == 0);
+vdb.1 := v8;
+TO: main_bb3_svdb.1;
+
+FROM: main_bb3_svdb.1;
+var__temp_vda.0 := vda.1;
+var__temp_vdb.0 := vdb.1;
+var__temp_vda.0 := vda.1;
+var__temp_vdb.0 := vdb.1;
+TO: main_bb2;
+
+FROM: main_bb4;
+TO: main_bb4_ret;
+

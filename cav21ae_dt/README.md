@@ -12,7 +12,7 @@ Satoshi Kura, Hiroshi Unno, and Ichiro Hasuo. Decision Tree Learning in CEGIS-Ba
 1. Download `cav21ae_dt/Dockerfile` from [the repository](https://github.com/hiroshi-unno/coar)
 
 2. Build a docker image (about 50 min)
-    
+
     ```bash
     cd /path/to/Dockerfile
     sudo docker build -t cav21ae .
@@ -80,8 +80,8 @@ Before proceeding, make sure that the following files and directories are in the
 
     Assume that the results obtained from the artifact are saved in `result_eager.csv`.
 
-    `result_eager.csv` has 3 columns. 
-    
+    `result_eager.csv` has 3 columns.
+
     - Column 1 contains file names of benchmarks.
     - Column 2 contains answers (YES/NO/timeout) for the termination problems.
     - Column 3 contains elapsed time to solve.

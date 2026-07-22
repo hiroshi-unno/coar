@@ -146,99 +146,122 @@ module Make
         let config = cfg
       end) : SATSolver.Solver.SolverType)
 
-  let rec learn_clauses_to_remove_nondet_functions pos res = function
+  let rec learn_clauses_for_nondet_functions pos res = function
     | [] -> res
     | (pvar, sorts) :: fnpvs ->
         (*print_endline @@ Ident.name_of_pvar pvar;*)
-        let sample =
-          Set.filter pos ~f:(fun ((pvar', _), _) -> Stdlib.(pvar = pvar'))
-        in
+        let sample = Set.filter pos ~f:(fst >> fst >> Stdlib.( = ) pvar) in
         if Set.is_empty sample then
-          learn_clauses_to_remove_nondet_functions pos res fnpvs
+          learn_clauses_for_nondet_functions pos res fnpvs
         else
-          let map =
-            Map.Poly.of_alist_multi @@ Set.to_list
-            @@ Set.Poly.map sample ~f:(snd >> List.rest_last)
-          in
-          let res' =
-            Map.Poly.fold map ~init:res ~f:(fun ~key:args ~data:rets res ->
-                Set.fold_distinct_pairs (Set.Poly.of_list rets) ~init:res
-                  ~f:(fun acc r1 r2 ->
-                    Set.add acc
-                    @@ ExClause.
-                         {
-                           positive = Set.Poly.empty;
-                           negative =
-                             Set.Poly.of_list
-                               [
-                                 ExAtom.PApp ((pvar, sorts), args @ [ r1 ]);
-                                 ExAtom.PApp ((pvar, sorts), args @ [ r2 ]);
-                               ];
-                         }))
-          in
-          learn_clauses_to_remove_nondet_functions pos res' fnpvs
+          Set.Poly.map sample ~f:(snd >> List.rest_last)
+          |> Set.to_list |> Map.Poly.of_alist_multi
+          |> Map.Poly.fold ~init:res ~f:(fun ~key:args ~data:rets res ->
+              Set.fold_distinct_pairs (Set.Poly.of_list rets) ~init:res
+                ~f:(fun acc r1 r2 ->
+                  Set.add acc
+                  @@ ExClause.
+                       {
+                         positive = Set.Poly.empty;
+                         negative =
+                           Set.Poly.of_list
+                             [
+                               ExAtom.PApp ((pvar, sorts), args @ [ r1 ]);
+                               ExAtom.PApp ((pvar, sorts), args @ [ r2 ]);
+                             ];
+                       }))
+          |> Fn.flip (learn_clauses_for_nondet_functions pos) fnpvs
 
   (* the return value may contain a unit clause*)
-  let rec learn_clauses_to_remove_cycles pos res = function
+  let rec learn_clauses_for_wf_cycles pos res = function
     | [] -> res
     | (pvar, sorts) :: wfpvs -> (
-        let sample =
-          Set.filter pos ~f:(fun ((pvar', _), _) -> Stdlib.(pvar = pvar'))
-        in
-        if Set.is_empty sample then learn_clauses_to_remove_cycles pos res wfpvs
+        Fn.flip (learn_clauses_for_wf_cycles pos) wfpvs
+        @@
+        let sample = Set.filter pos ~f:(fst >> fst >> Stdlib.( = ) pvar) in
+        if Set.is_empty sample then res
         else
           (* ToDo: Better add all? *)
           match Set.find sample ~f:(snd >> ExClause.has_self_loop) with
-          | Some ((_pvar, sorts), terms) ->
-              let res' =
-                Set.add res
-                  (ExClause.mk_unit_neg (ExAtom.PApp ((pvar, sorts), terms)))
-              in
-              if false then (
-                print_endline @@ "in: "
-                ^ ExAtom.str_of (ExAtom.PApp ((pvar, sorts), terms));
-                print_endline @@ "out: " ^ ExClauseSet.str_of res');
-              learn_clauses_to_remove_cycles pos res' wfpvs
+          | Some (pv, terms) ->
+              Set.add res (ExClause.mk_unit_neg (ExAtom.PApp (pv, terms)))
           | None ->
               let open Graph in
               let open Pack.Digraph in
               let graph, node_map_rev = LoopDetector.gen_graph sample in
-              Fn.flip (learn_clauses_to_remove_cycles pos) wfpvs
-              @@ LoopDetector.detect res pvar sorts
-                   (graph, Components.scc_list graph, node_map_rev))
+              LoopDetector.detect ~print:Debug.print pvar sorts
+                (graph, Components.scc_list graph, node_map_rev)
+                res)
 
-  let rec learn_clauses_to_remove_cycles_for_nwf pos res = function
+  let rec learn_clauses_for_nwf_cycles pos res = function
     | [] -> res
-    | (pvar, sorts, sorts_l, sorts_r) :: nwfpvs -> (
+    | (name, m) :: nwfpvs -> (
+        Fn.flip (learn_clauses_for_nwf_cycles pos) nwfpvs
+        @@
         let sample =
-          Set.filter pos ~f:(fun ((pvar', _), _) -> Stdlib.(pvar = pvar'))
+          Set.Poly.filter_map pos ~f:(fun (pv, terms) ->
+              match
+                PCSP.Problem.kind_of APCSP.problem (Ident.pvar_to_tvar @@ fst pv)
+              with
+              | Kind.NWF (nwf, (idl, idr))
+                when Ident.tvar_equal name nwf.Kind.name ->
+                  Some (pv, (idl, idr), terms)
+              | _ -> None)
         in
-        if Set.is_empty sample then
-          learn_clauses_to_remove_cycles_for_nwf pos res nwfpvs
+        if Set.is_empty sample then res
         else
-          let has_self_loop (_, terms) =
-            let terms = List.drop terms (List.length sorts) in
-            let size_x = List.length sorts_l in
-            List.(Stdlib.( = ) (take terms size_x) (drop terms size_x))
-          in
           (* ToDo: Better add all? *)
-          match Set.find sample ~f:has_self_loop with
-          | Some ((_pvar, sorts), terms) ->
-              let res' =
-                Set.add res
-                  (ExClause.mk_unit_neg (ExAtom.PApp ((pvar, sorts), terms)))
-              in
-              learn_clauses_to_remove_cycles_for_nwf pos res' nwfpvs
+          match
+            Set.find sample ~f:(fun (_, (idl, idr), terms) ->
+                Ident.tvar_equal idl idr
+                &&
+                let _, sorts, _, _ = Map.Poly.find_exn m (idl, idr) in
+                ExClause.has_self_loop ~drop:(Some (List.length sorts)) terms)
+          with
+          | Some (pv, (_, _), terms) ->
+              Set.add res (ExClause.mk_unit_neg (ExAtom.PApp (pv, terms)))
           | None ->
               let open Graph in
               let open Pack.Digraph in
-              let graph, node_map_rev =
-                NWFLoopDetector.gen_graph (sorts, sorts_l, sorts_r) sample
-              in
-              Fn.flip (learn_clauses_to_remove_cycles_for_nwf pos) nwfpvs
-              @@ NWFLoopDetector.detect ~print:Debug.print res pvar
-                   (sorts, sorts_l, sorts_r)
-                   (graph, Components.scc_list graph, node_map_rev))
+              let graph, node_map_rev = NWFLoopDetector.gen_graph m sample in
+              NWFLoopDetector.detect_nwf ~print:Debug.print name m
+                (graph, Components.scc_list graph, node_map_rev)
+                res)
+
+  let rec learn_clauses_for_parity_functions pos res = function
+    | [] -> res
+    | (name, m) :: parpvs -> (
+        Fn.flip (learn_clauses_for_parity_functions pos) parpvs
+        @@
+        let sample =
+          Set.Poly.filter_map pos ~f:(fun (pv, terms) ->
+              match
+                PCSP.Problem.kind_of APCSP.problem (Ident.pvar_to_tvar @@ fst pv)
+              with
+              | Kind.Parity (nwf, (idl, idr))
+                when Ident.tvar_equal name nwf.Kind.name ->
+                  Some (pv, (idl, idr), terms)
+              | _ -> None)
+        in
+        if Set.is_empty sample then res
+        else
+          (* ToDo: Better add all? *)
+          match
+            Set.find sample ~f:(fun (_, (idl, idr), terms) ->
+                Ident.tvar_equal idl idr
+                &&
+                let _, sorts, _, _ = Map.Poly.find_exn m (idl, idr) in
+                ExClause.has_self_loop ~drop:(Some (List.length sorts)) terms)
+          with
+          | Some (pv, (_, _), terms) ->
+              Set.add res (ExClause.mk_unit_neg (ExAtom.PApp (pv, terms)))
+          | None ->
+              let open Graph in
+              let open Pack.Digraph in
+              let graph, node_map_rev = NWFLoopDetector.gen_graph m sample in
+              NWFLoopDetector.detect_parity ~print:Debug.print m
+                (graph, Components.scc_list graph, node_map_rev)
+                res)
 
   let abstract_exatom map atm =
     match Map.Poly.find map atm with
@@ -293,14 +316,15 @@ module Make
   let scaler = 10000.0
   let print_log = false
 
-  let check_sat_with iters vs _wfpvs map cls =
+  let check_sat_with iters vs _wfpvs _dwfpvs map cls =
     let open Or_error.Monad_infix in
     if print_log then
       Set.iter cls ~f:(fun cl ->
-          Debug.print @@ lazy ("checking: " ^ ExClause.str_of cl));
+          Debug.print @@ lazy ("[check_sat_with] clause: " ^ ExClause.str_of cl));
     let constr = abstract map cls in
     if print_log then
-      Debug.print @@ lazy ("checking: " ^ PropLogic.Formula.str_of constr);
+      Debug.print
+      @@ lazy ("[check_sat_with] constr: " ^ PropLogic.Formula.str_of constr);
     let rec aux iters strategy =
       sat_solver >>= fun (module SatSolver : SATSolver.Solver.SolverType) ->
       match strategy with
@@ -319,7 +343,12 @@ module Make
                   let qdep = VersionSpace.qdeps_of pvar vs in
                   Map.Poly.find (Map.of_set_exn @@ snd oracle) pvar
                   >>= fun pred ->
-                  match TruthTable.eval_pred ~id vs.fenv qdep pred atom with
+                  match
+                    TruthTable.eval_pred
+                      ~print:
+                        (if print_log then Debug.print ~id else fun _ -> ())
+                      ~id vs.fenv qdep pred atom
+                  with
                   | Some true -> Some prop
                   | Some false -> Some (PropLogic.Formula.mk_neg prop)
                   | None -> assert false)
@@ -497,7 +526,10 @@ module Make
                     Map.Poly.find (Map.of_set_exn @@ snd oracle) pvar
                     >>= fun pred ->
                     match
-                      TruthTable.eval_pred ~id vs.fenv Map.Poly.empty pred atom
+                      TruthTable.eval_pred
+                        ~print:
+                          (if print_log then Debug.print ~id else fun _ -> ())
+                        ~id vs.fenv Map.Poly.empty pred atom
                     with
                     | Some true -> Some (SAT.Problem.of_prop_formula prop, 1)
                     | Some false ->
@@ -569,13 +601,14 @@ module Make
 
   (** ToDo: extend to support the case where [undecided] contains function
       variables *)
-  let check_sat_main iters vs nwfpvs wfpvs fnpvs pos_atms neg_atms undecided =
+  let check_sat_main iters vs wfpvs dwfpvs nwfpvs parpvs fnpvs pos_atms neg_atms
+      undecided =
     let und_atms = ExClauseSet.exatoms_of undecided in
     let map = mk_labels pos_atms neg_atms und_atms in
     if print_log then
       Debug.print
       @@ lazy
-           ("map:\n"
+           ("[check_sat_main] map:\n"
            ^ String.concat_map_list (Map.Poly.to_alist map) ~sep:"\n"
                ~f:(fun (atm, prop) ->
                  sprintf "%s -> %s" (ExAtom.str_of atm)
@@ -591,16 +624,17 @@ module Make
         if print_log then (
           Debug.print
           @@ lazy
-               ("learned clauses:\n" ^ ExClauseSet.str_of ~max_display:None lcls);
+               ("[check_sat_main] learned clauses:\n"
+               ^ ExClauseSet.str_of ~max_display:None lcls);
           Debug.print
           @@ lazy
-               ("example instances:\n"
+               ("[check_sat_main] example instances:\n"
                ^ ExClauseSet.str_of ~max_display:None sample);
           Debug.print
           @@ lazy
-               ("block_prev_assignments:\n"
+               ("[check_sat_main] block_prev_assignments:\n"
                ^ ExClauseSet.str_of ~max_display:None block_prev_assignments));
-        check_sat_with iters vs wfpvs map
+        check_sat_with iters vs wfpvs dwfpvs map
           (Set.Poly.union_list [ lcls; sample; block_prev_assignments ])
           config.strategy
         >>= function
@@ -609,16 +643,22 @@ module Make
             let lcls' =
               let papps =
                 Set.Poly.filter_map pos ~f:(function
-                  | PApp papp -> Some papp
+                  | PApp papp ->
+                      if print_log then
+                        Debug.print
+                        @@ lazy
+                             ("[check_sat_main] pos: "
+                             ^ ExAtom.str_of (ExAtom.PApp papp));
+                      Some papp
                   | _ -> (*ToDo: is it OK to ignore parametric examples?*) None)
               in
               Set.Poly.union_list
                 [
-                  learn_clauses_to_remove_cycles papps Set.Poly.empty wfpvs;
-                  learn_clauses_to_remove_cycles_for_nwf papps Set.Poly.empty
-                    nwfpvs;
-                  learn_clauses_to_remove_nondet_functions papps Set.Poly.empty
-                    fnpvs;
+                  learn_clauses_for_wf_cycles papps Set.Poly.empty wfpvs;
+                  learn_clauses_for_wf_cycles papps Set.Poly.empty dwfpvs;
+                  learn_clauses_for_nwf_cycles papps Set.Poly.empty nwfpvs;
+                  learn_clauses_for_parity_functions papps Set.Poly.empty parpvs;
+                  learn_clauses_for_nondet_functions papps Set.Poly.empty fnpvs;
                 ]
             in
             if Set.is_empty lcls' then
@@ -648,27 +688,53 @@ module Make
     Debug.print
     @@ lazy ("*** labeling with " ^ Config.str_of_strategy config.strategy);
     let wfpvs =
-      List.map ~f:(fun (Ident.Tvar n, sort) ->
-          ( Ident.Pvar n,
+      List.map ~f:(fun (x, sort) ->
+          ( Ident.tvar_to_pvar x,
             List.map (Logic.Sort.args_of sort) ~f:Logic.ExtTerm.to_old_sort ))
       @@ Map.Poly.to_alist
       @@ PCSP.Problem.wfpvs_senv_of APCSP.problem
     in
+    let dwfpvs =
+      List.map ~f:(fun (x, sort) ->
+          ( Ident.tvar_to_pvar x,
+            List.map (Logic.Sort.args_of sort) ~f:Logic.ExtTerm.to_old_sort ))
+      @@ Map.Poly.to_alist
+      @@ PCSP.Problem.dwfpvs_senv_of APCSP.problem
+    in
+    let nwfpvs =
+      List.map ~f:(fun ls ->
+          (fst @@ List.hd_exn ls, Map.Poly.of_alist_exn @@ List.map ls ~f:snd))
+      @@ List.classify (fun (n1, _) (n2, _) -> Ident.tvar_equal n1 n2)
+      @@ List.map ~f:(fun (name, sorts, idl, sorts_x, idr, sorts_y) ->
+          ( name,
+            ( (idl, idr),
+              ( Kind.dummy_nwf,
+                List.map ~f:Logic.ExtTerm.to_old_sort sorts,
+                List.map ~f:Logic.ExtTerm.to_old_sort sorts_x,
+                List.map ~f:Logic.ExtTerm.to_old_sort sorts_y ) ) ))
+      @@ Map.Poly.data
+      @@ PCSP.Problem.nwfpvs_senv_of APCSP.problem
+    in
+    let parpvs =
+      List.map ~f:(fun ls ->
+          (fst @@ List.hd_exn ls, Map.Poly.of_alist_exn @@ List.map ls ~f:snd))
+      @@ List.classify (fun (n1, _) (n2, _) -> Ident.tvar_equal n1 n2)
+      @@ List.map ~f:(fun (nwf, idl, sorts_x, idr, sorts_y) ->
+          ( nwf.Kind.name,
+            ( (idl, idr),
+              ( nwf,
+                List.map ~f:Logic.ExtTerm.to_old_sort nwf.sorts_shared,
+                List.map ~f:Logic.ExtTerm.to_old_sort sorts_x,
+                List.map ~f:Logic.ExtTerm.to_old_sort sorts_y ) ) ))
+      @@ Map.Poly.data
+      @@ PCSP.Problem.paritypvs_senv_of APCSP.problem
+    in
     let fnpvs =
-      List.map ~f:(fun (Ident.Tvar n, sort) ->
-          ( Ident.Pvar n,
+      List.map ~f:(fun (x, sort) ->
+          ( Ident.tvar_to_pvar x,
             List.map (Logic.Sort.args_of sort) ~f:Logic.ExtTerm.to_old_sort ))
       @@ Map.Poly.to_alist
       @@ PCSP.Problem.fnpvs_senv_of APCSP.problem
-    in
-    let nwfpvs =
-      List.map ~f:(fun (Ident.Tvar n, (_, sorts, _, sorts_x, _, sorts_y)) ->
-          ( Ident.Pvar n,
-            List.map ~f:Logic.ExtTerm.to_old_sort sorts,
-            List.map ~f:Logic.ExtTerm.to_old_sort sorts_x,
-            List.map ~f:Logic.ExtTerm.to_old_sort sorts_y ))
-      @@ Map.Poly.to_alist
-      @@ PCSP.Problem.nwfpvs_senv_of APCSP.problem
     in
     let open Or_error in
     let pos_atms, neg_atms, undecided_inst =
@@ -688,7 +754,7 @@ module Make
       Debug.print @@ lazy (str_of_conflicts conflicts);
       Ok State.Unsat)
     else
-      check_sat_main iters vs nwfpvs wfpvs fnpvs pos_atms neg_atms
+      check_sat_main iters vs wfpvs dwfpvs nwfpvs parpvs fnpvs pos_atms neg_atms
         undecided_inst
       >>= function
       | [], _ -> Ok State.Unsat
@@ -708,12 +774,18 @@ module Make
               List.map pos_neg_list ~f:(fun (pos, neg, sample_examples) ->
                   let labeling =
                     Set.fold pos ~init:Map.Poly.empty ~f:(fun l atm ->
-                        VersionSpace.set_label ~id vs TruthTable.label_pos l
+                        VersionSpace.set_label
+                          ~print:
+                            (if print_log then Debug.print ~id else fun _ -> ())
+                          ~id vs TruthTable.label_pos l
                         @@ ExAtom.normalize_params atm)
                   in
                   let labeling =
                     Set.fold neg ~init:labeling ~f:(fun l atm ->
-                        VersionSpace.set_label ~id vs TruthTable.label_neg l
+                        VersionSpace.set_label
+                          ~print:
+                            (if print_log then Debug.print ~id else fun _ -> ())
+                          ~id vs TruthTable.label_neg l
                         @@ ExAtom.normalize_params atm)
                   in
                   (labeling, sample_examples))

@@ -1,0 +1,44 @@
+///*** 1_main ***///
+START: main_bb0;
+FROM: main_bb0;
+v0 := nondet();
+TO: main_bb0_v.;
+FROM: main_bb0_v.;
+assume(v0 sgt 10);
+v. := 1;
+TO: main_bb0_sv.;
+
+FROM: main_bb0_v.;
+assume(v0 sle 10);
+v. := 0;
+TO: main_bb0_sv.;
+
+FROM: main_bb0_sv.;
+TO: main_bb0_v.1;
+FROM: main_bb0_v.1;
+assume(v0 sgt 10);
+v.1 := 0;
+TO: main_bb0_sv.1;
+
+FROM: main_bb0_v.1;
+assume(v0 sle 10);
+v.1 := 1;
+TO: main_bb0_sv.1;
+
+FROM: main_bb0_sv.1;
+TO: main_bb1;
+
+FROM: main_bb1;
+TO: main_bb1_end;
+
+FROM: main_bb1_end;
+assume(v. == v.1);
+TO: main_bb1;
+
+FROM: main_bb1_end;
+assume(v. != v.1);
+TO: main_bb2;
+
+FROM: main_bb2;
+TO: main_bb2_ret;
+

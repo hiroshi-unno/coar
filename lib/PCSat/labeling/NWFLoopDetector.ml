@@ -1,5 +1,5 @@
-(* TODO: Functorize this module and implemente configurations of
-   loop detection including verbose, whether use Jhonson's algorithms, and so on. *)
+(* TODO: Functorize this module and implement configurable loop-detection
+   options, including verbosity, whether to use Johnson's algorithm, and so on. *)
 
 open Core
 open Ast
@@ -14,10 +14,7 @@ let find_cycle graph vertiecs =
       | Some (i, _) -> ver :: List.take stack (i + 1) |> List.rev
       | None -> assert false
     else
-      let visited = Set.add visited ver in
-      let nexts = succ graph ver in
-      let next = List.hd_exn nexts in
-      inner (ver :: stack) visited next
+      inner (ver :: stack) (Set.add visited ver) (List.hd_exn (succ graph ver))
   in
   let start = Set.choose_exn vertiecs in
   inner [] Set.Poly.empty start
@@ -25,60 +22,75 @@ let find_cycle graph vertiecs =
 (* ToDo: implement Johnson algorithm to find all cycle *)
 let find_cycles graph vertiecs = [ find_cycle graph vertiecs ]
 
-let term_map (sorts, sorts_l, _sorts_r) examples =
+let term_map m examples =
   (* size of examples is more than 0 *)
   let open Graph in
   let open Pack.Digraph in
   let cnt = ref 0 in
-  let size_param = List.length sorts in
-  let size_l = List.length sorts_l in
   let map =
-    Set.fold
-      ~f:(fun map -> function
-        | (_, _), terms ->
-            let params = List.take terms size_param in
-            let terms = List.drop terms size_param in
-            let t1 = params @ List.take terms size_l in
-            let t2 = params @ List.drop terms size_l in
-            let set term map =
-              Map.Poly.update map term ~f:(function
-                | None ->
-                    incr cnt;
-                    V.create !cnt
-                | Some n -> n)
-            in
-            set t2 @@ set t1 map)
-      ~init:Map.Poly.empty examples
+    Set.fold ~init:Map.Poly.empty examples ~f:(fun map -> function
+      | _, (idl, idr), terms ->
+          let _, sorts_shared, sorts_l, sorts_r =
+            Map.Poly.find_exn m (idl, idr)
+          in
+          let size_shared = List.length sorts_shared in
+          let size_l = List.length sorts_l in
+          let size_r = List.length sorts_r in
+          let params, terms = List.split_n terms size_shared in
+          let t1, t2 = List.split_n terms size_l in
+          assert (List.length t2 = size_r);
+          let set term map =
+            Map.Poly.update map term ~f:(function
+              | None ->
+                  incr cnt;
+                  V.create !cnt
+              | Some n -> n)
+          in
+          map |> set (params @ t1, idl) |> set (params @ t2, idr))
   in
   let rmap =
-    Map.Poly.fold
-      ~f:(fun ~key:k ~data:v acc -> Map.Poly.add_exn acc ~key:v ~data:k)
-      ~init:Map.Poly.empty map
+    Map.Poly.fold ~init:Map.Poly.empty map ~f:(fun ~key:k ~data:v ->
+        Map.Poly.add_exn ~key:v ~data:k)
   in
-  (map, rmap, !cnt, (size_param, size_l))
+  (map, rmap, !cnt)
 
-let gen_graph (sorts, sorts_l, sorts_r) sample =
+let gen_graph m sample =
   let open Graph in
   let open Pack.Digraph in
-  let node_map, node_map_rev, n, (size_param, size_l) =
-    term_map (sorts, sorts_l, sorts_r) sample
-  in
+  let node_map, node_map_rev, n = term_map m sample in
   let graph = create ~size:n () in
-  Set.iter sample ~f:(fun ((_, _), terms) ->
-      let params = List.take terms size_param in
-      let terms = List.drop terms size_param in
-      let t1 = params @ List.take terms size_l in
-      let t2 = params @ List.drop terms size_l in
-      let e1 = Map.Poly.find_exn node_map t1 in
-      let e2 = Map.Poly.find_exn node_map t2 in
-      add_edge graph e1 e2);
+  Set.iter sample ~f:(fun (_, (idl, idr), terms) ->
+      let _, sorts_shared, sorts_l, sorts_r = Map.Poly.find_exn m (idl, idr) in
+      let size_shared = List.length sorts_shared in
+      let size_l = List.length sorts_l in
+      let size_r = List.length sorts_r in
+      let params, terms = List.split_n terms size_shared in
+      let t1, t2 = List.split_n terms size_l in
+      assert (List.length t2 = size_r);
+      add_edge graph
+        (Map.Poly.find_exn node_map (params @ t1, idl))
+        (Map.Poly.find_exn node_map (params @ t2, idr)));
   (graph, node_map_rev)
 
-let detect ~print res pvar (sorts, sorts_l, sorts_r)
-    (graph, components, node_map_rev) =
+let rec get_papps_nwf ~print name m node_map_rev acc = function
+  | v1 :: v2 :: tl ->
+      let t1, idl = Map.Poly.find_exn node_map_rev v1 in
+      let t2, idr = Map.Poly.find_exn node_map_rev v2 in
+      let _, sorts_shared, sorts_l, sorts_r = Map.Poly.find_exn m (idl, idr) in
+      let papp =
+        ExAtom.PApp
+          ( ( Ident.tvar_to_pvar @@ Kind.nwf_tvar_of_nwf name idl idr,
+              sorts_shared @ sorts_l @ sorts_r ),
+            t1 @ List.drop t2 (List.length sorts_shared) )
+      in
+      print @@ lazy (ExAtom.str_of papp ^ ",");
+      get_papps_nwf ~print name m node_map_rev (papp :: acc) (v2 :: tl)
+  | _ -> acc
+
+let detect_nwf ~print name m (graph, components, node_map_rev) res =
   let open Graph in
   let open Pack.Digraph in
-  List.fold components ~init:res ~f:(fun acc component ->
+  List.fold ~init:res components ~f:(fun acc component ->
       if List.length component <= 1 then acc
       else
         let subgraph = create ~size:(List.length component) () in
@@ -88,26 +100,65 @@ let detect ~print res pvar (sorts, sorts_l, sorts_r)
                 if Set.mem component s then add_edge subgraph v s else ()));
         List.fold ~init:acc (find_cycles subgraph component)
           ~f:(fun acc cycle ->
-            let rec get_papps acc = function
-              | v1 :: v2 :: tl ->
-                  let t1, t2 =
-                    Map.Poly.(find_exn node_map_rev v1, find_exn node_map_rev v2)
-                  in
-                  let t2 = List.drop t2 (List.length sorts) in
-                  let papp =
-                    ExAtom.PApp ((pvar, sorts @ sorts_l @ sorts_r), t1 @ t2)
-                  in
-                  print @@ lazy (ExAtom.str_of papp ^ ",");
-                  let acc' = papp :: acc in
-                  get_papps acc' (v2 :: tl)
-              | _ -> acc
-            in
-            print @@ lazy "find a cycle:[";
-            let papps = get_papps [] cycle in
+            print @@ lazy "A non-NWF cycle found: [";
+            let papps = get_papps_nwf ~print name m node_map_rev [] cycle in
             print @@ lazy "]\n";
             Set.add acc
-            @@ ExClause.
-                 {
-                   positive = Set.Poly.empty;
-                   negative = Set.Poly.of_list papps;
-                 }))
+              ExClause.
+                { positive = Set.Poly.empty; negative = Set.Poly.of_list papps }))
+
+let is_sat_parity_cond m node_map_rev = function
+  | v1 :: v2 :: tl ->
+      let _, idl = Map.Poly.find_exn node_map_rev v1 in
+      let _, idr = Map.Poly.find_exn node_map_rev v2 in
+      let nwf, _, _, _ = Map.Poly.find_exn m (idl, idr) in
+      let min =
+        List.fold_left ~init:(Map.Poly.find_exn nwf.Kind.sigma idl) (v2 :: tl)
+          ~f:(fun m v ->
+            let _, id = Map.Poly.find_exn node_map_rev v in
+            min m (Map.Poly.find_exn nwf.Kind.sigma id))
+      in
+      Set.mem nwf.Kind.acc_set min
+  | _ -> assert false
+
+let rec get_papps_parity ~print m node_map_rev acc = function
+  | v1 :: v2 :: tl ->
+      let t1, idl = Map.Poly.find_exn node_map_rev v1 in
+      let t2, idr = Map.Poly.find_exn node_map_rev v2 in
+      let nwf, sorts_shared, sorts_l, sorts_r =
+        Map.Poly.find_exn m (idl, idr)
+      in
+      let papp =
+        ExAtom.PApp
+          ( ( Ident.tvar_to_pvar @@ Kind.parity_tvar_of_nwf nwf idl idr,
+              sorts_shared @ sorts_l @ sorts_r ),
+            t1 @ List.drop t2 (List.length sorts_shared) )
+      in
+      print @@ lazy (ExAtom.str_of papp ^ ",");
+      get_papps_parity ~print m node_map_rev (papp :: acc) (v2 :: tl)
+  | _ -> acc
+
+let detect_parity ~print m (graph, components, node_map_rev) res =
+  let open Graph in
+  let open Pack.Digraph in
+  List.fold ~init:res components ~f:(fun acc component ->
+      if List.length component <= 1 then acc
+      else
+        let subgraph = create ~size:(List.length component) () in
+        let component = Set.Poly.of_list component in
+        Set.iter component ~f:(fun v ->
+            List.iter (succ graph v) ~f:(fun s ->
+                if Set.mem component s then add_edge subgraph v s else ()));
+        List.fold ~init:acc (find_cycles subgraph component)
+          ~f:(fun acc cycle ->
+            if is_sat_parity_cond m node_map_rev cycle then acc
+            else (
+              print @@ lazy "A non-parity cycle found: [";
+              let papps = get_papps_parity ~print m node_map_rev [] cycle in
+              print @@ lazy "]\n";
+              Set.add acc
+                ExClause.
+                  {
+                    positive = Set.Poly.empty;
+                    negative = Set.Poly.of_list papps;
+                  })))

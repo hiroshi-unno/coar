@@ -1,0 +1,68 @@
+///*** 1_main ***///
+START: main_bb0;
+FROM: main_bb0;
+v0 := nondet();
+v1 := nondet();
+var__temp_vy1.0 := v0;
+var__temp_vy2.0 := v1;
+TO: main_bb0_end;
+
+FROM: main_bb0_end;
+assume((v0 sgt 0) && (v1 sgt 0));
+var__temp_vy1.0 := v0;
+var__temp_vy2.0 := v1;
+TO: main_bb1;
+
+FROM: main_bb0_end;
+assume((v0 sle 0) || (v1 sle 0));
+TO: main_bb3;
+
+FROM: main_bb1;
+vy1.0 := var__temp_vy1.0;
+vy2.0 := var__temp_vy2.0;
+TO: main_bb1_end;
+
+FROM: main_bb1_end;
+assume(vy1.0 != vy2.0);
+TO: main_bb2;
+
+FROM: main_bb1_end;
+assume(vy1.0 == vy2.0);
+TO: main_bb3;
+
+FROM: main_bb2;
+v6 := vy1.0 - vy2.0;
+v7 := vy2.0 - vy1.0;
+TO: main_bb2_vy1.1;
+FROM: main_bb2_vy1.1;
+assume(vy1.0 sgt vy2.0);
+vy1.1 := v6;
+TO: main_bb2_svy1.1;
+
+FROM: main_bb2_vy1.1;
+assume(vy1.0 sle vy2.0);
+vy1.1 := vy1.0;
+TO: main_bb2_svy1.1;
+
+FROM: main_bb2_svy1.1;
+TO: main_bb2_vy2.1;
+FROM: main_bb2_vy2.1;
+assume(vy1.0 sgt vy2.0);
+vy2.1 := vy2.0;
+TO: main_bb2_svy2.1;
+
+FROM: main_bb2_vy2.1;
+assume(vy1.0 sle vy2.0);
+vy2.1 := v7;
+TO: main_bb2_svy2.1;
+
+FROM: main_bb2_svy2.1;
+var__temp_vy1.0 := vy1.1;
+var__temp_vy2.0 := vy2.1;
+var__temp_vy1.0 := vy1.1;
+var__temp_vy2.0 := vy2.1;
+TO: main_bb1;
+
+FROM: main_bb3;
+TO: main_bb3_ret;
+

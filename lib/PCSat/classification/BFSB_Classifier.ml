@@ -106,6 +106,8 @@ struct
           |> List.sort ~compare:(fun (r1, _) (r2, _) -> compare r1 r2)
           |> List.map ~f:snd
 
+  let print_log = false
+
   let find_small_classifier pvar params table labeling examples =
     let open Or_error in
     qualifier_generator >>= fun qualifier_generator ->
@@ -130,11 +132,18 @@ struct
               (Ordinal.string_of @@ Ordinal.make n)
               (Set.length quals) (G.str_of_domain n)
               (String.concat_map_set ~sep:", " quals ~f:(snd >> Formula.str_of)));
-      TruthTable.update_map_with_qualifiers ~id table fenv qdeps pvar
+      TruthTable.update_map_with_qualifiers
+        ~print:(if print_log then Debug.print ~id else fun _ -> ())
+        ~id table fenv qdeps pvar
         (params, Set.Poly.map ~f:snd quals);
       let tt = TruthTable.get_table table pvar in
       let qlist =
-        Set.Poly.map quals ~f:(snd >> TruthTable.index_of_qual ~id tt fenv qdeps)
+        Set.Poly.map quals
+          ~f:
+            (snd
+            >> TruthTable.index_of_qual
+                 ~print:(if print_log then Debug.print ~id else fun _ -> ())
+                 ~id tt fenv qdeps)
         |>
         match config.qual_order with
         | Rank -> Rank.sort_indices tt.TruthTable.qarr

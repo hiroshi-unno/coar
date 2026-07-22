@@ -1,0 +1,56 @@
+///*** 1_main ***///
+START: main_bb0;
+FROM: main_bb0;
+var__temp_vam.0 := nondef.0;
+var__temp_vbm.0 := nondef.1;
+TO: main_bb1;
+
+FROM: main_bb1;
+vam.0 := var__temp_vam.0;
+vbm.0 := var__temp_vbm.0;
+TO: main_bb1_end;
+
+FROM: main_bb1_end;
+assume(vam.0 != vbm.0);
+TO: main_bb2;
+
+FROM: main_bb1_end;
+assume(vam.0 == vbm.0);
+TO: main_bb3;
+
+FROM: main_bb2;
+v2 := vbm.0 + nondef.4;
+v3 := vam.0 + nondef.5;
+TO: main_bb2_vam.1;
+FROM: main_bb2_vam.1;
+assume(vam.0 sgt vbm.0);
+vam.1 := vam.0;
+TO: main_bb2_svam.1;
+
+FROM: main_bb2_vam.1;
+assume(vam.0 sle vbm.0);
+vam.1 := v3;
+TO: main_bb2_svam.1;
+
+FROM: main_bb2_svam.1;
+TO: main_bb2_vbm.1;
+FROM: main_bb2_vbm.1;
+assume(vam.0 sgt vbm.0);
+vbm.1 := v2;
+TO: main_bb2_svbm.1;
+
+FROM: main_bb2_vbm.1;
+assume(vam.0 sle vbm.0);
+vbm.1 := vbm.0;
+TO: main_bb2_svbm.1;
+
+FROM: main_bb2_svbm.1;
+var__temp_vam.0 := vam.1;
+var__temp_vbm.0 := vbm.1;
+var__temp_vam.0 := vam.1;
+var__temp_vbm.0 := vbm.1;
+TO: main_bb1;
+
+FROM: main_bb3;
+TO: main_bb3_ret;
+

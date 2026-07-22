@@ -97,7 +97,7 @@ let cmd =
            ~aliases:[ "-p" ]
            ~doc:
              "choose problem \
-              [SAT/QSAT/DQSAT/HOSAT/SMT/HOMC/SyGuS/CHC/pCSP/pfwCSP/pfwnCSP/CHCMax/muCLP/muCLPInter/QFL/CLTL/CCTL/LTSsafe/LTSnsafe/LTSterm/LTStermBV/LTSnterm/LTSntermBV/LTSmucal/LTSrel/LTStermInter/PLTSterm/PLTSnterm/ML] \
+              [SAT/QSAT/DQSAT/HOSAT/SMT/HOMC/SyGuS/CHC/QCHC/DQCHC/pCSP/pfwCSP/pfwnCSP/CHCMax/muCLP/muCLPInter/QFL/CLTL/CCTL/LTSsafe/LTSnsafe/LTSterm/LTStermBV/LTSnterm/LTSntermBV/LTSmucal/LTSrel/LTStermInter/PLTSterm/PLTSnterm/ML] \
               (default: muCLP)"
       +> flag "--verbose" no_arg (* this option is obsolete *)
            ~aliases:[ "-v" ] ~doc:"enable verbose mode")

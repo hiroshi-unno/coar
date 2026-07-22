@@ -225,7 +225,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
 
   let gen_template ~ucore:_ (hspace : HypSpace.hspace) =
     let template =
-      Templ.gen_adm_predicate ~with_cond:Arg.with_cond
+      Templ.gen_adm_predicate ~print:Debug.print ~with_cond:Arg.with_cond
         ~ignore_bool:config.ignore_bool
         ~enable_lhs_param:config.enable_lhs_param
         {

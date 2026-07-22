@@ -1,8 +1,12 @@
+open Core
+open Ast
 open Ast.LogicOld
 
 type envs = {
+  uni_sort : Sort.t Set.Poly.t;
   uni_senv : sort_env_map;
   exi_senv : sort_env_map;
+  dep_map : (Ident.tvar, sort_env_list) Map.Poly.t;
   kind_map : Ast.Kind.map;
   fenv : FunEnv.t;
   dtenv : DTEnv.t;

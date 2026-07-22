@@ -138,6 +138,11 @@ let pvars_of (exi_senv, kind_map) =
 
 (* NWF related *)
 
+let nwf_tvar_of_nwf name l r =
+  Ident.mk_nwf_tvar name
+    (Ident.Tvar (Ident.name_of_tvar l))
+    (Ident.Tvar (Ident.name_of_tvar r))
+
 let kind_map_of_nwf nwf : map =
   let sorts_map = Hashtbl.Poly.to_alist nwf.sorts_map in
   Map.Poly.of_alist_exn
@@ -185,6 +190,15 @@ let app_nwf_predicate_and_add_tag_old nwf params (tag_l, sorts_l, params_l)
 *)
 
 (* Parity related *)
+
+let parity_tvar_of_nwf nwf l r =
+  Ident.mk_parity_tvar nwf.name
+    (Ident.Tvar
+       (Ident.name_of_tvar l ^ "@" ^ string_of_int
+       @@ Map.Poly.find_exn nwf.sigma l))
+    (Ident.Tvar
+       (Ident.name_of_tvar r ^ "@" ^ string_of_int
+       @@ Map.Poly.find_exn nwf.sigma r))
 
 let kind_map_of_parity nwf : map =
   let sorts_map = Hashtbl.Poly.to_alist nwf.sorts_map in

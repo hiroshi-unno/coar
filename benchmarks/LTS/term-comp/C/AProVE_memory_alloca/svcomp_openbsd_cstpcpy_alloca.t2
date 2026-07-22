@@ -1,0 +1,95 @@
+///*** 1_main ***///
+START: main_bb5;
+FROM: main_bb5;
+memory0_freeIndex := 1;
+vmemory0 := nondet();
+v12 := nondet();
+v13 := nondet();
+TO: main_bb5_v.;
+FROM: main_bb5_v.;
+assume(v12 slt 1);
+v. := 1;
+TO: main_bb5_sv.;
+
+FROM: main_bb5_v.;
+assume(v12 sge 1);
+v. := v12;
+TO: main_bb5_sv.;
+
+FROM: main_bb5_sv.;
+TO: main_bb5_vlength2.0;
+FROM: main_bb5_vlength2.0;
+assume(v13 slt 1);
+vlength2.0 := 1;
+TO: main_bb5_svlength2.0;
+
+FROM: main_bb5_vlength2.0;
+assume(v13 sge 1);
+vlength2.0 := v13;
+TO: main_bb5_svlength2.0;
+
+FROM: main_bb5_svlength2.0;
+TO: main_bb5_end;
+
+FROM: main_bb5_end;
+assume(v. slt vlength2.0);
+TO: main_cstpcpyexit;
+
+FROM: main_bb5_end;
+assume(v. sge vlength2.0);
+TO: main_bb6;
+
+FROM: main_bb6;
+v17 := v. * 1;
+v18 := memory0_freeIndex;
+v19 := memory0_freeIndex;
+v20 := v19 + v17;
+memory0_freeIndex := v20;
+v21 := vlength2.0 * 1;
+v22 := memory0_freeIndex;
+v23 := memory0_freeIndex;
+v24 := v23 + v21;
+memory0_freeIndex := v24;
+v25 := vlength2.0 - 1;
+v26 := v22 + v25;
+v27 := sign_extend(32, 64, v26);
+v28 := v27;
+vmemory0 := store_array(vmemory0, v27, 0);
+var__temp_v.01.i := v22;
+var__temp_v.0.i := v18;
+var__temp_v.01.i := v22;
+var__temp_v.0.i := v18;
+TO: main_bb7;
+
+FROM: main_bb7;
+v.01.i := var__temp_v.01.i;
+v.0.i := var__temp_v.0.i;
+v29 := sign_extend(32, 64, v.01.i);
+v30 := v29;
+v31 := select_array(vmemory0, v29);
+v32 := sign_extend(32, 64, v.0.i);
+v33 := v32;
+vmemory0 := store_array(vmemory0, v32, v31);
+v34 := sign_extend(8, 32, v31);
+TO: main_bb7_end;
+
+FROM: main_bb7_end;
+assume(v34 != 0);
+TO: main_bb8;
+
+FROM: main_bb7_end;
+assume(v34 == 0);
+TO: main_cstpcpyexit;
+
+FROM: main_bb8;
+v36 := v.01.i + 1;
+v37 := v.0.i + 1;
+var__temp_v.01.i := v36;
+var__temp_v.0.i := v37;
+var__temp_v.01.i := v36;
+var__temp_v.0.i := v37;
+TO: main_bb7;
+
+FROM: main_cstpcpyexit;
+TO: main_cstpcpyexit_ret;
+

@@ -43,8 +43,8 @@ dune exec main -- -c ./config/solver/rcaml_pcsat_tb_ar.json -p ml ./benchmarks/O
 ```
 If the installation has been done successfully, you will see the output similar to below:
 ```
-unsat,0         @assert type_of(sum) <: ($x208:int) -> {$v212: int | $v212 >_#svar13 $x208} [#1] 
-sat,9           @assert type_of(sum) <: ($x219:{$v224: int | $v224 >_#svar15 1}) -> {$v223: int | $v223 >_#svar18 $x219} [#2] 
+unsat,0         @assert type_of(sum) <: ($x208:int) -> {$v212: int | $v212 >_#svar13 $x208} [#1]
+sat,9           @assert type_of(sum) <: ($x219:{$v224: int | $v224 >_#svar15 1}) -> {$v223: int | $v223 >_#svar18 $x219} [#2]
 sat,3           @assert type_of(sum) <: ($x230:int) -> {$v234: int | $v234 >=_#svar21 $x230} [#3]
 ```
 

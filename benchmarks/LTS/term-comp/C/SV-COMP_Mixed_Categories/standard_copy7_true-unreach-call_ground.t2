@@ -1,0 +1,238 @@
+///*** 1_main ***///
+START: main_bb3;
+FROM: main_bb3;
+va1 := nondet();
+va2 := nondet();
+va3 := nondet();
+va4 := nondet();
+va5 := nondet();
+va6 := nondet();
+va7 := nondet();
+va8 := nondet();
+var__temp_vi.0 := 0;
+var__temp_vi.0 := 0;
+TO: main_bb4;
+
+FROM: main_bb4;
+vi.0 := var__temp_vi.0;
+var__temp_vi.1 := 0;
+TO: main_bb4_end;
+
+FROM: main_bb4_end;
+assume(vi.0 slt 100000);
+TO: main_bb5;
+
+FROM: main_bb4_end;
+assume(vi.0 sge 100000);
+var__temp_vi.1 := 0;
+TO: main_bb6;
+
+FROM: main_bb5;
+v2 := sign_extend(32, 64, vi.0);
+v3 := v2;
+v4 := select_array(va1, v2);
+v5 := sign_extend(32, 64, vi.0);
+v6 := v5;
+va2 := store_array(va2, v5, v4);
+v7 := vi.0 + 1;
+var__temp_vi.0 := v7;
+var__temp_vi.0 := v7;
+TO: main_bb4;
+
+FROM: main_bb6;
+vi.1 := var__temp_vi.1;
+var__temp_vi.2 := 0;
+TO: main_bb6_end;
+
+FROM: main_bb6_end;
+assume(vi.1 slt 100000);
+TO: main_bb7;
+
+FROM: main_bb6_end;
+assume(vi.1 sge 100000);
+var__temp_vi.2 := 0;
+TO: main_bb8;
+
+FROM: main_bb7;
+v9 := sign_extend(32, 64, vi.1);
+v10 := v9;
+v11 := select_array(va2, v9);
+v12 := sign_extend(32, 64, vi.1);
+v13 := v12;
+va3 := store_array(va3, v12, v11);
+v14 := vi.1 + 1;
+var__temp_vi.1 := v14;
+var__temp_vi.1 := v14;
+TO: main_bb6;
+
+FROM: main_bb8;
+vi.2 := var__temp_vi.2;
+var__temp_vi.3 := 0;
+TO: main_bb8_end;
+
+FROM: main_bb8_end;
+assume(vi.2 slt 100000);
+TO: main_bb9;
+
+FROM: main_bb8_end;
+assume(vi.2 sge 100000);
+var__temp_vi.3 := 0;
+TO: main_bb10;
+
+FROM: main_bb9;
+v16 := sign_extend(32, 64, vi.2);
+v17 := v16;
+v18 := select_array(va3, v16);
+v19 := sign_extend(32, 64, vi.2);
+v20 := v19;
+va4 := store_array(va4, v19, v18);
+v21 := vi.2 + 1;
+var__temp_vi.2 := v21;
+var__temp_vi.2 := v21;
+TO: main_bb8;
+
+FROM: main_bb10;
+vi.3 := var__temp_vi.3;
+var__temp_vi.4 := 0;
+TO: main_bb10_end;
+
+FROM: main_bb10_end;
+assume(vi.3 slt 100000);
+TO: main_bb11;
+
+FROM: main_bb10_end;
+assume(vi.3 sge 100000);
+var__temp_vi.4 := 0;
+TO: main_bb12;
+
+FROM: main_bb11;
+v23 := sign_extend(32, 64, vi.3);
+v24 := v23;
+v25 := select_array(va4, v23);
+v26 := sign_extend(32, 64, vi.3);
+v27 := v26;
+va5 := store_array(va5, v26, v25);
+v28 := vi.3 + 1;
+var__temp_vi.3 := v28;
+var__temp_vi.3 := v28;
+TO: main_bb10;
+
+FROM: main_bb12;
+vi.4 := var__temp_vi.4;
+var__temp_vi.5 := 0;
+TO: main_bb12_end;
+
+FROM: main_bb12_end;
+assume(vi.4 slt 100000);
+TO: main_bb13;
+
+FROM: main_bb12_end;
+assume(vi.4 sge 100000);
+var__temp_vi.5 := 0;
+TO: main_bb14;
+
+FROM: main_bb13;
+v30 := sign_extend(32, 64, vi.4);
+v31 := v30;
+v32 := select_array(va5, v30);
+v33 := sign_extend(32, 64, vi.4);
+v34 := v33;
+va6 := store_array(va6, v33, v32);
+v35 := vi.4 + 1;
+var__temp_vi.4 := v35;
+var__temp_vi.4 := v35;
+TO: main_bb12;
+
+FROM: main_bb14;
+vi.5 := var__temp_vi.5;
+var__temp_vi.6 := 0;
+TO: main_bb14_end;
+
+FROM: main_bb14_end;
+assume(vi.5 slt 100000);
+TO: main_bb15;
+
+FROM: main_bb14_end;
+assume(vi.5 sge 100000);
+var__temp_vi.6 := 0;
+TO: main_bb16;
+
+FROM: main_bb15;
+v37 := sign_extend(32, 64, vi.5);
+v38 := v37;
+v39 := select_array(va6, v37);
+v40 := sign_extend(32, 64, vi.5);
+v41 := v40;
+va7 := store_array(va7, v40, v39);
+v42 := vi.5 + 1;
+var__temp_vi.5 := v42;
+var__temp_vi.5 := v42;
+TO: main_bb14;
+
+FROM: main_bb16;
+vi.6 := var__temp_vi.6;
+var__temp_vx.0 := 0;
+TO: main_bb16_end;
+
+FROM: main_bb16_end;
+assume(vi.6 slt 100000);
+TO: main_bb17;
+
+FROM: main_bb16_end;
+assume(vi.6 sge 100000);
+var__temp_vx.0 := 0;
+TO: main_bb18;
+
+FROM: main_bb17;
+v44 := sign_extend(32, 64, vi.6);
+v45 := v44;
+v46 := select_array(va7, v44);
+v47 := sign_extend(32, 64, vi.6);
+v48 := v47;
+va8 := store_array(va8, v47, v46);
+v49 := vi.6 + 1;
+var__temp_vi.6 := v49;
+var__temp_vi.6 := v49;
+TO: main_bb16;
+
+FROM: main_bb18;
+vx.0 := var__temp_vx.0;
+TO: main_bb18_end;
+
+FROM: main_bb18_end;
+assume(vx.0 slt 100000);
+TO: main_bb19;
+
+FROM: main_bb18_end;
+assume(vx.0 sge 100000);
+TO: main_bb21;
+
+FROM: main_bb19;
+v51 := sign_extend(32, 64, vx.0);
+v52 := v51;
+v53 := select_array(va1, v51);
+v54 := sign_extend(32, 64, vx.0);
+v55 := v54;
+v56 := select_array(va8, v54);
+TO: main_bb19_end;
+
+FROM: main_bb19_end;
+assume(v53 == v56);
+TO: main___VERIFIER_assertexit;
+
+FROM: main_bb19_end;
+assume(v53 != v56);
+TO: main_bb20;
+
+FROM: main___VERIFIER_assertexit;
+v58 := vx.0 + 1;
+var__temp_vx.0 := v58;
+var__temp_vx.0 := v58;
+TO: main_bb18;
+
+FROM: main_bb20;
+TO: main_bb21_ret;
+
+FROM: main_bb21;
+TO: main_bb21_ret;
+

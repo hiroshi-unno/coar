@@ -477,7 +477,7 @@ module Make (Config : Config.ConfigType) = struct
                  EHMTT.Nonterm
                    (Ident.Tvar
                       (match
-                         Ident.name_of_tvar @@ fst @@ fst @@ Term.let_var term
+                         Ident.name_of_tvar @@ Term.tvar_of term
                        with
                       | "Stdlib.=" -> "Iff"
                       | "Stdlib.<>" -> "Xor"
@@ -1359,7 +1359,7 @@ module Make (Config : Config.ConfigType) = struct
   type envs = {
     tl_rules : EHMTT.rule list;
     tl_nt : Ident.tvar;
-    tl_args : (Ident.tvar * Sort.t) list;
+    tl_args : sort_env_list;
     rules : EHMTT.rule list;
     trs : TTA.pre_trs;
     fenv : FunEnv.t;

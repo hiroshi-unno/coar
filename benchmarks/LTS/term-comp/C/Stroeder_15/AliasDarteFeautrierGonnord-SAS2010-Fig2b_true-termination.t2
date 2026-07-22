@@ -1,0 +1,122 @@
+///*** 1_main ***///
+START: main_bb0;
+FROM: main_bb0;
+v0 := nondet();
+v1 := nondet();
+var__temp_vx.0 := v0;
+var__temp_vy.0 := v1;
+var__temp_vx.0 := v0;
+var__temp_vy.0 := v1;
+TO: main_bb1;
+
+FROM: main_bb1;
+vx.0 := var__temp_vx.0;
+vy.0 := var__temp_vy.0;
+TO: main_bb1_end;
+
+FROM: main_bb1_end;
+assume(vx.0 sge 2);
+TO: main_bb2;
+
+FROM: main_bb1_end;
+assume(vx.0 slt 2);
+TO: main_bb9;
+
+FROM: main_bb2;
+v3 := vx.0 - 1;
+v4 := vy.0 + v3;
+var__temp_vx.1 := v3;
+var__temp_vy.1 := v4;
+var__temp_vx.1 := v3;
+var__temp_vy.1 := v4;
+TO: main_bb3;
+
+FROM: main_bb3;
+vx.1 := var__temp_vx.1;
+vy.1 := var__temp_vy.1;
+v5 := vx.1 + 1;
+TO: main_bb3_end;
+
+FROM: main_bb3_end;
+assume(vy.1 sge v5);
+TO: main_bb4;
+
+FROM: main_bb3_end;
+assume(vy.1 slt v5);
+TO: main_critedge;
+
+FROM: main_bb4;
+v7 := nondet();
+TO: main_bb4_end;
+
+FROM: main_bb4_end;
+assume(v7 != 0);
+TO: main_bb5;
+
+FROM: main_bb4_end;
+assume(v7 == 0);
+TO: main_critedge;
+
+FROM: main_bb5;
+v9 := vy.1 - 1;
+var__temp_vx.2 := vx.1;
+var__temp_vy.2 := v9;
+var__temp_vx.2 := vx.1;
+var__temp_vy.2 := v9;
+TO: main_bb6;
+
+FROM: main_bb6;
+vx.2 := var__temp_vx.2;
+vy.2 := var__temp_vy.2;
+v10 := vx.2 + 3;
+TO: main_bb6_end;
+
+FROM: main_bb6_end;
+assume(vy.2 sge v10);
+TO: main_bb7;
+
+FROM: main_bb6_end;
+assume(vy.2 slt v10);
+TO: main_critedge1;
+
+FROM: main_bb7;
+v12 := nondet();
+TO: main_bb7_end;
+
+FROM: main_bb7_end;
+assume(v12 != 0);
+TO: main_bb8;
+
+FROM: main_bb7_end;
+assume(v12 == 0);
+TO: main_critedge1;
+
+FROM: main_bb8;
+v14 := vx.2 + 1;
+v15 := vy.2 - 2;
+var__temp_vx.2 := v14;
+var__temp_vy.2 := v15;
+var__temp_vx.2 := v14;
+var__temp_vy.2 := v15;
+TO: main_bb6;
+
+FROM: main_critedge1;
+v16 := vy.2 - 1;
+var__temp_vx.1 := vx.2;
+var__temp_vy.1 := v16;
+var__temp_vx.1 := vx.2;
+var__temp_vy.1 := v16;
+TO: main_bb3;
+
+FROM: main_critedge;
+v17 := vx.1 - 1;
+v18 := vy.1 - v17;
+var__temp_vx.0 := v17;
+var__temp_vy.0 := v18;
+var__temp_vx.0 := v17;
+var__temp_vy.0 := v18;
+TO: main_bb1;
+
+FROM: main_bb9;
+TO: main_bb9_ret;
+

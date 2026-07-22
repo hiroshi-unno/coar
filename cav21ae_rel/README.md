@@ -12,7 +12,7 @@ Hiroshi Unno, Tachio Terauchi, and Eric Koskinen. Constraint-based Relational Ve
 1. Download `cav21ae_rel/Dockerfile` from [the repository](https://github.com/hiroshi-unno/coar)
 
 2. Build a docker image (about 30 min)
-    
+
     ```bash
     cd /path/to/Dockerfile
     sudo docker build -t cav21ae_pcsat .

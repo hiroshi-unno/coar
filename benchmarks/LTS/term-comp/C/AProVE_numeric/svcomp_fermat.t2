@@ -1,0 +1,108 @@
+///*** 1_main ***///
+START: main_bb4;
+FROM: main_bb4;
+var__temp_vb.0.i := 1;
+var__temp_va.0.i := 1;
+var__temp_vc.0.i := 1;
+var__temp_vb.0.i := 1;
+var__temp_va.0.i := 1;
+var__temp_vc.0.i := 1;
+TO: main_bb5;
+
+FROM: main_bb5;
+vb.0.i := var__temp_vb.0.i;
+va.0.i := var__temp_va.0.i;
+vc.0.i := var__temp_vc.0.i;
+v14 := va.0.i * va.0.i;
+v15 := v14 * va.0.i;
+v16 := vb.0.i * vb.0.i;
+v17 := v16 * vb.0.i;
+v18 := vc.0.i * vc.0.i;
+v19 := v18 * vc.0.i;
+v20 := v17 + v19;
+var__temp_v.0.i := 1;
+TO: main_bb5_end;
+
+FROM: main_bb5_end;
+assume(v15 == v20);
+var__temp_v.0.i := 1;
+TO: main_fermatexit;
+
+FROM: main_bb5_end;
+assume(v15 != v20);
+TO: main_bb6;
+
+FROM: main_bb6;
+v22 := va.0.i + 1;
+v24 := vb.0.i + 1;
+TO: main_bb6_v.b.0.i;
+FROM: main_bb6_v.b.0.i;
+assume(v22 sgt 1000);
+v.b.0.i := v24;
+TO: main_bb6_sv.b.0.i;
+
+FROM: main_bb6_v.b.0.i;
+assume(v22 sle 1000);
+v.b.0.i := vb.0.i;
+TO: main_bb6_sv.b.0.i;
+
+FROM: main_bb6_sv.b.0.i;
+TO: main_bb6_v..i;
+FROM: main_bb6_v..i;
+assume(v22 sgt 1000);
+v..i := 1;
+TO: main_bb6_sv..i;
+
+FROM: main_bb6_v..i;
+assume(v22 sle 1000);
+v..i := v22;
+TO: main_bb6_sv..i;
+
+FROM: main_bb6_sv..i;
+v26 := vc.0.i + 1;
+TO: main_bb6_vb.2.i;
+FROM: main_bb6_vb.2.i;
+assume(v.b.0.i sgt 1000);
+vb.2.i := 1;
+TO: main_bb6_svb.2.i;
+
+FROM: main_bb6_vb.2.i;
+assume(v.b.0.i sle 1000);
+vb.2.i := v.b.0.i;
+TO: main_bb6_svb.2.i;
+
+FROM: main_bb6_svb.2.i;
+TO: main_bb6_vc.1.i;
+FROM: main_bb6_vc.1.i;
+assume(v.b.0.i sgt 1000);
+vc.1.i := v26;
+TO: main_bb6_svc.1.i;
+
+FROM: main_bb6_vc.1.i;
+assume(v.b.0.i sle 1000);
+vc.1.i := vc.0.i;
+TO: main_bb6_svc.1.i;
+
+FROM: main_bb6_svc.1.i;
+var__temp_vb.0.i := vb.2.i;
+var__temp_va.0.i := v..i;
+var__temp_vc.0.i := vc.1.i;
+var__temp_v.0.i := 0;
+TO: main_bb6_end;
+
+FROM: main_bb6_end;
+assume(vc.1.i sgt 1000);
+var__temp_v.0.i := 0;
+TO: main_fermatexit;
+
+FROM: main_bb6_end;
+assume(vc.1.i sle 1000);
+var__temp_vb.0.i := vb.2.i;
+var__temp_va.0.i := v..i;
+var__temp_vc.0.i := vc.1.i;
+TO: main_bb5;
+
+FROM: main_fermatexit;
+v.0.i := var__temp_v.0.i;
+TO: main_fermatexit_ret;
+

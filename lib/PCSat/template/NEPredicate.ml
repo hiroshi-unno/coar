@@ -118,7 +118,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     in
     let params = params_of () in
     let template =
-      Templ.gen_ne_template
+      Templ.gen_ne_template ~print:Debug.print
         {
           consts = Set.to_list hspace.consts;
           terms = Set.to_list hspace.terms;

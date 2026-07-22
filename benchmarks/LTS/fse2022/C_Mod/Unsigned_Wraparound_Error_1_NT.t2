@@ -1,0 +1,75 @@
+///*** 1_main ***///
+START: main_bb5;
+FROM: main_bb5;
+v12 := nondet_uint();
+v13 := nondet_uint();
+v14 := nondet_uint();
+var__temp_vcur.0 := v12;
+TO: main_bb5_end;
+
+FROM: main_bb5_end;
+assume((v13 <= v14) || (v12 == 0));
+TO: main_bb6;
+
+FROM: main_bb5_end;
+assume((v13 > v14) && (v12 != 0));
+var__temp_vcur.0 := v12;
+TO: main_wrap_aroundexit;
+
+FROM: main_wrap_aroundexit;
+vcur.0 := var__temp_vcur.0;
+TO: main_wrap_aroundexit_end;
+
+FROM: main_wrap_aroundexit_end;
+assume(v13 < vcur.0);
+TO: main_bb6;
+
+FROM: main_wrap_aroundexit_end;
+assume(v13 >= vcur.0);
+TO: main_bb7;
+
+FROM: main_bb6;
+TO: main_bb6_ret;
+
+FROM: main_bb7;
+v18 := vcur.0 + v12;
+TO: main_bb7_end;
+
+FROM: main_bb7_end;
+assume(v18 > 4294967295);
+TO: main_bb8;
+
+FROM: main_bb7_end;
+assume(v18 <= 4294967295);
+TO: main_bb9;
+
+FROM: main_bb8;
+v20 := v18 - 4294967295;
+v21 := v20 - 1;
+v22 := v21 % 4294967296;
+var__temp_vcur.0 := v22;
+var__temp_vcur.0 := v22;
+TO: main_wrap_aroundexit;
+
+FROM: main_bb9;
+var__temp_vcur.0 := v18;
+TO: main_bb9_end;
+
+FROM: main_bb9_end;
+assume(v18 < 0);
+TO: main_bb10;
+
+FROM: main_bb9_end;
+assume(v18 >= 0);
+var__temp_vcur.0 := v18;
+TO: main_wrap_aroundexit;
+
+FROM: main_bb10;
+v24 := 0 - v18;
+v25 := v24 - 1;
+v26 := v25 % 4294967296;
+v27 := 4294967295 - v26;
+var__temp_vcur.0 := v27;
+var__temp_vcur.0 := v27;
+TO: main_wrap_aroundexit;
+

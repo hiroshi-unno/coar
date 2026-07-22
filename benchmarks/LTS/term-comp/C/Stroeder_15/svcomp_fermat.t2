@@ -1,0 +1,95 @@
+///*** 1_main ***///
+START: main_bb0;
+FROM: main_bb0;
+var__temp_va.0 := 1;
+var__temp_vb.0 := 1;
+var__temp_vc.0 := 1;
+var__temp_va.0 := 1;
+var__temp_vb.0 := 1;
+var__temp_vc.0 := 1;
+TO: main_bb1;
+
+FROM: main_bb1;
+va.0 := var__temp_va.0;
+vb.0 := var__temp_vb.0;
+vc.0 := var__temp_vc.0;
+v0 := va.0 * va.0;
+v1 := v0 * va.0;
+v2 := vb.0 * vb.0;
+v3 := v2 * vb.0;
+v4 := vc.0 * vc.0;
+v5 := v4 * vc.0;
+v6 := v3 + v5;
+TO: main_bb1_end;
+
+FROM: main_bb1_end;
+assume((v1 != v6) && (vc.0 sle 1000));
+TO: main_bb2;
+
+FROM: main_bb1_end;
+assume((v1 == v6) || (vc.0 sgt 1000));
+TO: main_bb3;
+
+FROM: main_bb2;
+v9 := va.0 + 1;
+v11 := vb.0 + 1;
+TO: main_bb2_v.1;
+FROM: main_bb2_v.1;
+assume(v9 sgt 1000);
+v.1 := 1;
+TO: main_bb2_sv.1;
+
+FROM: main_bb2_v.1;
+assume(v9 sle 1000);
+v.1 := v9;
+TO: main_bb2_sv.1;
+
+FROM: main_bb2_sv.1;
+TO: main_bb2_v.b.0;
+FROM: main_bb2_v.b.0;
+assume(v9 sgt 1000);
+v.b.0 := v11;
+TO: main_bb2_sv.b.0;
+
+FROM: main_bb2_v.b.0;
+assume(v9 sle 1000);
+v.b.0 := vb.0;
+TO: main_bb2_sv.b.0;
+
+FROM: main_bb2_sv.b.0;
+v13 := vc.0 + 1;
+TO: main_bb2_vb.2;
+FROM: main_bb2_vb.2;
+assume(v.b.0 sgt 1000);
+vb.2 := 1;
+TO: main_bb2_svb.2;
+
+FROM: main_bb2_vb.2;
+assume(v.b.0 sle 1000);
+vb.2 := v.b.0;
+TO: main_bb2_svb.2;
+
+FROM: main_bb2_svb.2;
+TO: main_bb2_vc.1;
+FROM: main_bb2_vc.1;
+assume(v.b.0 sgt 1000);
+vc.1 := v13;
+TO: main_bb2_svc.1;
+
+FROM: main_bb2_vc.1;
+assume(v.b.0 sle 1000);
+vc.1 := vc.0;
+TO: main_bb2_svc.1;
+
+FROM: main_bb2_svc.1;
+var__temp_va.0 := v.1;
+var__temp_vb.0 := vb.2;
+var__temp_vc.0 := vc.1;
+var__temp_va.0 := v.1;
+var__temp_vb.0 := vb.2;
+var__temp_vc.0 := vc.1;
+TO: main_bb1;
+
+FROM: main_bb3;
+TO: main_bb3_ret;
+

@@ -1,0 +1,120 @@
+///*** 1_main ***///
+START: main_bb14;
+FROM: main_bb14;
+flag := 0;
+count := 0;
+TO: main_bb15;
+
+FROM: main_bb15;
+v32 := flag;
+v34 := count;
+var__temp_v.0.i := 0;
+TO: main_bb15_end;
+
+FROM: main_bb15_end;
+assume((v32 == 1) || (v34 > 100));
+var__temp_v.0.i := 0;
+TO: main_readexit;
+
+FROM: main_bb15_end;
+assume((v32 != 1) && (v34 <= 100));
+TO: main_bb16;
+
+FROM: main_bb16;
+v36 := nondet_int();
+var__temp_v.0.i := -1;
+TO: main_bb16_end;
+
+FROM: main_bb16_end;
+assume(v36 <= 0);
+var__temp_v.0.i := -1;
+TO: main_readexit;
+
+FROM: main_bb16_end;
+assume(v36 > 0);
+TO: main_bb17;
+
+FROM: main_bb17;
+v38 := v36 % 1000;
+TO: main_bb17_end;
+
+FROM: main_bb17_end;
+assume(v38 < 995);
+TO: main_bb18;
+
+FROM: main_bb17_end;
+assume(v38 >= 995);
+TO: main_bb22;
+
+FROM: main_bb18;
+v40 := count;
+v41 := v40 + 1;
+TO: main_bb18_end;
+
+FROM: main_bb18_end;
+assume(v41 > 2147483647);
+TO: main_bb19;
+
+FROM: main_bb18_end;
+assume(v41 <= 2147483647);
+TO: main_bb20;
+
+FROM: main_bb19;
+v43 := v41 - 2147483647;
+v44 := v43 - 1;
+v45 := v44 % 4294967296;
+v46 := -2147483648 + v45;
+var__temp_v.0.i.i := v46;
+var__temp_v.0.i.i := v46;
+TO: main_wrap_aroundexiti;
+
+FROM: main_bb20;
+var__temp_v.0.i.i := v41;
+TO: main_bb20_end;
+
+FROM: main_bb20_end;
+assume(v41 < -2147483648);
+TO: main_bb21;
+
+FROM: main_bb20_end;
+assume(v41 >= -2147483648);
+var__temp_v.0.i.i := v41;
+TO: main_wrap_aroundexiti;
+
+FROM: main_bb21;
+v48 := -2147483648 - v41;
+v49 := v48 - 1;
+v50 := v49 % 4294967296;
+v51 := 2147483647 - v50;
+var__temp_v.0.i.i := v51;
+var__temp_v.0.i.i := v51;
+TO: main_wrap_aroundexiti;
+
+FROM: main_wrap_aroundexiti;
+v.0.i.i := var__temp_v.0.i.i;
+count := v.0.i.i;
+var__temp_v.0.i := v38;
+var__temp_v.0.i := v38;
+TO: main_readexit;
+
+FROM: main_bb22;
+flag := 1;
+var__temp_v.0.i := 0;
+var__temp_v.0.i := 0;
+TO: main_readexit;
+
+FROM: main_readexit;
+v.0.i := var__temp_v.0.i;
+TO: main_readexit_end;
+
+FROM: main_readexit_end;
+assume(v.0.i <= 0);
+TO: main_bb23;
+
+FROM: main_readexit_end;
+assume(v.0.i > 0);
+TO: main_bb15;
+
+FROM: main_bb23;
+TO: main_bb23_ret;
+

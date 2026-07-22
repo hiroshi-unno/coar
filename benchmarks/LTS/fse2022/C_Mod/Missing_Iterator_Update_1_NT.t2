@@ -1,0 +1,113 @@
+///*** 1_main ***///
+START: main_bb10;
+FROM: main_bb10;
+errno := 0;
+v18 := nondet_int();
+var__temp_vret.0 := v18;
+TO: main_bb10_end;
+
+FROM: main_bb10_end;
+assume(v18 < 0);
+TO: main_bb11;
+
+FROM: main_bb10_end;
+assume(v18 >= 0);
+var__temp_vret.0 := v18;
+TO: main_waitpidexit;
+
+FROM: main_bb11;
+v20 := nondet_int();
+v22 := errno;
+TO: main_bb11_end;
+
+FROM: main_bb11_end;
+assume((v20 != 0) && (v22 != 1));
+TO: main_bb12;
+
+FROM: main_bb11_end;
+assume((v20 == 0) || (v22 == 1));
+TO: main_bb13;
+
+FROM: main_bb12;
+errno := 1;
+var__temp_vret.0 := v18;
+var__temp_vret.0 := v18;
+TO: main_waitpidexit;
+
+FROM: main_bb13;
+errno := 2;
+var__temp_vret.0 := v18;
+var__temp_vret.0 := v18;
+TO: main_waitpidexit;
+
+FROM: main_waitpidexit;
+vret.0 := var__temp_vret.0;
+var__temp_vret.1 := vret.0;
+TO: main_waitpidexit_end;
+
+FROM: main_waitpidexit_end;
+assume(vret.0 == 0);
+TO: main_bb14;
+
+FROM: main_waitpidexit_end;
+assume(vret.0 != 0);
+var__temp_vret.1 := vret.0;
+TO: main_waitpidexit2;
+
+FROM: main_bb14;
+v25 := nondet_int();
+var__temp_vret.1 := v25;
+TO: main_bb14_end;
+
+FROM: main_bb14_end;
+assume(v25 < 0);
+TO: main_bb15;
+
+FROM: main_bb14_end;
+assume(v25 >= 0);
+var__temp_vret.1 := v25;
+TO: main_waitpidexit2;
+
+FROM: main_bb15;
+v27 := nondet_int();
+v29 := errno;
+TO: main_bb15_end;
+
+FROM: main_bb15_end;
+assume((v27 != 0) && (v29 != 1));
+TO: main_bb16;
+
+FROM: main_bb15_end;
+assume((v27 == 0) || (v29 == 1));
+TO: main_bb17;
+
+FROM: main_bb16;
+errno := 1;
+var__temp_vret.1 := v25;
+var__temp_vret.1 := v25;
+TO: main_waitpidexit2;
+
+FROM: main_bb17;
+errno := 2;
+var__temp_vret.1 := v25;
+var__temp_vret.1 := v25;
+TO: main_waitpidexit2;
+
+FROM: main_waitpidexit2;
+vret.1 := var__temp_vret.1;
+v32 := errno;
+var__temp_vret.0 := vret.1;
+TO: main_waitpidexit2_end;
+
+FROM: main_waitpidexit2_end;
+assume((vret.1 < 0) && (v32 == 1));
+var__temp_vret.0 := vret.1;
+TO: main_waitpidexit;
+
+FROM: main_waitpidexit2_end;
+assume((vret.1 >= 0) || (v32 != 1));
+TO: main_bb18;
+
+FROM: main_bb18;
+TO: main_bb18_ret;
+

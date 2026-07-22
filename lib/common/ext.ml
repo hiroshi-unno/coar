@@ -98,7 +98,7 @@ module Nat = struct
   let of_var_radix radices coeffs =
     coeffs
     |> List.mapi ~f:(fun i coeff ->
-           List.drop radices (i + 1) |> Integer.prod_list |> ( * ) coeff)
+        List.drop radices (i + 1) |> Integer.prod_list |> ( * ) coeff)
     |> Integer.sum_list
 end
 
@@ -1616,8 +1616,8 @@ module Set = struct
         Set.fold ~init:acc ~f:(fun acc subsets ->
             List.fold subsets ~init:acc ~f:Set.add)
         @@ Set.Poly.map acc ~f:(fun subset ->
-               List.map lst ~f:(fun x ->
-                   List.sort ~compare:Stdlib.compare @@ (x :: subset))))
+            List.map lst ~f:(fun x ->
+                List.sort ~compare:Stdlib.compare @@ (x :: subset))))
 
   let cartesian_map ?(init = Set.Poly.empty) ~f s1 s2 =
     Set.fold s1 ~init ~f:(fun acc x1 ->

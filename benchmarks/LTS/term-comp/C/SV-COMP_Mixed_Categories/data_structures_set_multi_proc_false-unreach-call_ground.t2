@@ -1,0 +1,234 @@
+///*** 1_main ***///
+START: main_bb9;
+FROM: main_bb9;
+vset := nondet();
+vvalues := nondet();
+var__temp_vx.0 := 0;
+var__temp_vx.0 := 0;
+TO: main_bb10;
+
+FROM: main_bb10;
+vx.0 := var__temp_vx.0;
+TO: main_bb10_end;
+
+FROM: main_bb10_end;
+assume(vx.0 slt 0);
+TO: main_bb11;
+
+FROM: main_bb10_end;
+assume(vx.0 sge 0);
+TO: main_bb16;
+
+FROM: main_bb11;
+v11 := vx.0 + 1;
+v12 := sign_extend(32, 64, vx.0);
+v13 := v12;
+v14 := select_array(vset, v12);
+var__temp_vy.0 := v11;
+var__temp_vy.0 := v11;
+TO: main_bb12;
+
+FROM: main_bb12;
+vy.0 := var__temp_vy.0;
+TO: main_bb12_end;
+
+FROM: main_bb12_end;
+assume(vy.0 slt 0);
+TO: main_bb13;
+
+FROM: main_bb12_end;
+assume(vy.0 sge 0);
+TO: main_bb15;
+
+FROM: main_bb13;
+v16 := sign_extend(32, 64, vy.0);
+v17 := v16;
+v18 := select_array(vset, v16);
+TO: main_bb13_end;
+
+FROM: main_bb13_end;
+assume(v14 != v18);
+TO: main___VERIFIER_assertexit;
+
+FROM: main_bb13_end;
+assume(v14 == v18);
+TO: main_bb14;
+
+FROM: main___VERIFIER_assertexit;
+v20 := vy.0 + 1;
+var__temp_vy.0 := v20;
+var__temp_vy.0 := v20;
+TO: main_bb12;
+
+FROM: main_bb14;
+TO: main_bb30_ret;
+
+FROM: main_bb15;
+v21 := vx.0 + 1;
+var__temp_vx.0 := v21;
+var__temp_vx.0 := v21;
+TO: main_bb10;
+
+FROM: main_bb16;
+v22 := 0;
+var__temp_vn.0 := 0;
+var__temp_vv.0 := 0;
+var__temp_vn.0 := 0;
+var__temp_vv.0 := 0;
+TO: main_bb17;
+
+FROM: main_bb17;
+vn.0 := var__temp_vn.0;
+vv.0 := var__temp_vv.0;
+var__temp_vx.1 := 0;
+TO: main_bb17_end;
+
+FROM: main_bb17_end;
+assume(vv.0 slt 100000);
+TO: main_bb18;
+
+FROM: main_bb17_end;
+assume(vv.0 sge 100000);
+var__temp_vx.1 := 0;
+TO: main_bb24;
+
+FROM: main_bb18;
+v24 := sign_extend(32, 64, vv.0);
+v25 := v24;
+v26 := select_array(vvalues, v24);
+var__temp_vi.0.i := 0;
+var__temp_vi.0.i := 0;
+TO: main_bb19;
+
+FROM: main_bb19;
+vi.0.i := var__temp_vi.0.i;
+TO: main_bb19_end;
+
+FROM: main_bb19_end;
+assume(vi.0.i slt vn.0);
+TO: main_bb20;
+
+FROM: main_bb19_end;
+assume(vi.0.i sge vn.0);
+TO: main_elem_existsexit;
+
+FROM: main_bb20;
+v28 := sign_extend(32, 64, vi.0.i);
+v29 := 0 + v28;
+v30 := select_array(vset, 0 + v28);
+TO: main_bb20_end;
+
+FROM: main_bb20_end;
+assume(v30 == v26);
+TO: main_elem_existsexit;
+
+FROM: main_bb20_end;
+assume(v30 != v26);
+TO: main_bb21;
+
+FROM: main_bb21;
+v32 := vi.0.i + 1;
+var__temp_vi.0.i := v32;
+var__temp_vi.0.i := v32;
+TO: main_bb19;
+
+FROM: main_elem_existsexit;
+var__temp_vn.1 := vn.0;
+TO: main_elem_existsexit_end;
+
+FROM: main_elem_existsexit_end;
+assume(1 <= 0);
+var__temp_vn.1 := vn.0;
+TO: main_bb23;
+
+FROM: main_elem_existsexit_end;
+assume(0 <= 0);
+TO: main_bb22;
+
+FROM: main_bb22;
+v34 := 0;
+v35 := sign_extend(32, 64, vv.0);
+v36 := v35;
+v37 := select_array(vvalues, v35);
+v38 := sign_extend(32, 64, vn.0);
+v39 := 0 + v38;
+vset := store_array(vset, 0 + v38, v37);
+v40 := vn.0 + 1;
+var__temp_vn.1 := v40;
+var__temp_vn.1 := v40;
+TO: main_bb23;
+
+FROM: main_bb23;
+vn.1 := var__temp_vn.1;
+v41 := vv.0 + 1;
+var__temp_vn.0 := vn.1;
+var__temp_vv.0 := v41;
+var__temp_vn.0 := vn.1;
+var__temp_vv.0 := v41;
+TO: main_bb17;
+
+FROM: main_bb24;
+vx.1 := var__temp_vx.1;
+TO: main_bb24_end;
+
+FROM: main_bb24_end;
+assume(vx.1 slt vn.0);
+TO: main_bb25;
+
+FROM: main_bb24_end;
+assume(vx.1 sge vn.0);
+TO: main_bb30;
+
+FROM: main_bb25;
+v43 := vx.1 + 1;
+v44 := sign_extend(32, 64, vx.1);
+v45 := v44;
+v46 := select_array(vset, v44);
+var__temp_vy.1 := v43;
+var__temp_vy.1 := v43;
+TO: main_bb26;
+
+FROM: main_bb26;
+vy.1 := var__temp_vy.1;
+TO: main_bb26_end;
+
+FROM: main_bb26_end;
+assume(vy.1 slt vn.0);
+TO: main_bb27;
+
+FROM: main_bb26_end;
+assume(vy.1 sge vn.0);
+TO: main_bb29;
+
+FROM: main_bb27;
+v48 := sign_extend(32, 64, vy.1);
+v49 := v48;
+v50 := select_array(vset, v48);
+TO: main_bb27_end;
+
+FROM: main_bb27_end;
+assume(v46 != v50);
+TO: main___VERIFIER_assertexit1;
+
+FROM: main_bb27_end;
+assume(v46 == v50);
+TO: main_bb28;
+
+FROM: main___VERIFIER_assertexit1;
+v52 := vy.1 + 1;
+var__temp_vy.1 := v52;
+var__temp_vy.1 := v52;
+TO: main_bb26;
+
+FROM: main_bb28;
+TO: main_bb30_ret;
+
+FROM: main_bb29;
+v53 := vx.1 + 1;
+var__temp_vx.1 := v53;
+var__temp_vx.1 := v53;
+TO: main_bb24;
+
+FROM: main_bb30;
+TO: main_bb30_ret;
+

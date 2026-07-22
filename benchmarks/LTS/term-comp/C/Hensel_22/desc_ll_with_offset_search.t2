@@ -1,0 +1,106 @@
+///*** 1_main ***///
+START: main_bb10;
+FROM: main_bb10;
+memory0_freeIndex := 1;
+memory1_freeIndex := 1;
+vmemory0 := nondet();
+vmemory1 := nondet();
+v27 := nondet();
+TO: main_bb10_end;
+
+FROM: main_bb10_end;
+assume(v27 slt 1);
+TO: main_searchexit;
+
+FROM: main_bb10_end;
+assume(v27 sge 1);
+TO: main_bb11;
+
+FROM: main_bb11;
+v29 := nondet();
+TO: main_bb11_end;
+
+FROM: main_bb11_end;
+assume((v29 slt 1) || (v29 sge v27));
+TO: main_searchexit;
+
+FROM: main_bb11_end;
+assume((v29 sge 1) && (v29 slt v27));
+TO: main_bb12;
+
+FROM: main_bb12;
+v32 := nondet();
+var__temp_vcurr.0.i := 0;
+var__temp_vj.0.i := v32;
+var__temp_vcurr.0.i := 0;
+var__temp_vj.0.i := v32;
+TO: main_bb13;
+
+FROM: main_bb13;
+vcurr.0.i := var__temp_vcurr.0.i;
+vj.0.i := var__temp_vj.0.i;
+v33 := v32 + v27;
+TO: main_bb13_end;
+
+FROM: main_bb13_end;
+assume(vj.0.i slt v33);
+TO: main_bb14;
+
+FROM: main_bb13_end;
+assume(vj.0.i sge v33);
+TO: main_init_listexit;
+
+FROM: main_bb14;
+v35 := memory0_freeIndex;
+v36 := memory0_freeIndex;
+v37 := v36 + 1;
+memory0_freeIndex := v37;
+v38 := sign_extend(32, 64, v35);
+v39 := select_array(vmemory0, v38);
+v40v1 := select_tuple(v39, 1, 2);
+v40v2 := constr_tuple(vj.0.i, v40v1);
+vmemory0 := store_array(vmemory0, v38, v40v2);
+v41 := sign_extend(32, 64, v35);
+v42 := select_array(vmemory0, v41);
+v43v0 := select_tuple(v42, 0, 2);
+v43v2 := constr_tuple(v43v0, vcurr.0.i);
+vmemory0 := store_array(vmemory0, v41, v43v2);
+v44 := vj.0.i + 1;
+var__temp_vcurr.0.i := v35;
+var__temp_vj.0.i := v44;
+var__temp_vcurr.0.i := v35;
+var__temp_vj.0.i := v44;
+TO: main_bb13;
+
+FROM: main_init_listexit;
+v45 := v32 + v29;
+var__temp_vcurr.0.i1 := vcurr.0.i;
+var__temp_vcurr.0.i1 := vcurr.0.i;
+TO: main_bb15;
+
+FROM: main_bb15;
+vcurr.0.i1 := var__temp_vcurr.0.i1;
+v46 := sign_extend(32, 64, vcurr.0.i1);
+v47 := select_array(vmemory0, v46);
+v49 := select_tuple(v47, 0, 2);
+TO: main_bb15_end;
+
+FROM: main_bb15_end;
+assume(v49 != v45);
+TO: main_bb16;
+
+FROM: main_bb15_end;
+assume(v49 == v45);
+TO: main_searchexit;
+
+FROM: main_bb16;
+v51 := sign_extend(32, 64, vcurr.0.i1);
+v52 := select_array(vmemory0, v51);
+v54 := select_tuple(v52, 1, 2);
+var__temp_vcurr.0.i1 := v54;
+var__temp_vcurr.0.i1 := v54;
+TO: main_bb15;
+
+FROM: main_searchexit;
+TO: main_searchexit_ret;
+

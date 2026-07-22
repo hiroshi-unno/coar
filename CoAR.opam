@@ -1,6 +1,6 @@
 opam-version: "2.0"
 name: "CoAR"
-version: "3.4"
+version: "3.5"
 maintainer: "Hiroshi Unno <hiroshi.unno@acm.org>"
 authors: "Hiroshi Unno <hiroshi.unno@acm.org>"
 homepage: "https://github.com/hiroshi-unno/coar"

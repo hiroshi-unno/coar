@@ -200,12 +200,12 @@ struct
 
   let model_postprocess model params =
     let zero_model =
-      List.map params ~f:(fun p ->
+      Map.Poly.of_alist_exn
+      @@ List.map params ~f:(fun p ->
           let (t, _), _ = Term.let_var p in
           (t, T_int.zero ()))
-      |> Map.Poly.of_alist_exn
     in
-    let model = remove_dontcare model |> Map.Poly.of_alist_exn in
+    let model = Map.Poly.of_alist_exn @@ remove_dontcare model in
     Map.Poly.merge model zero_model ~f:(fun ~key:_ -> function
       | `Left v | `Both (v, _) | `Right v -> Some v)
 

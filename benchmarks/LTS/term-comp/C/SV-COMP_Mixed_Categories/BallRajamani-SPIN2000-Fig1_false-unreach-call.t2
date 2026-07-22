@@ -1,0 +1,85 @@
+///*** 1_main ***///
+START: main_bb2;
+FROM: main_bb2;
+g := 0;
+v1 := nondet();
+TO: main_bb2_v3;
+
+FROM: main_bb2_v3;
+assume(!(v1 != 0));
+v3 := 1;
+TO: main_bb2_sv3;
+
+FROM: main_bb2_v3;
+assume(v1 != 0);
+v3 := 0;
+TO: main_bb2_sv3;
+
+FROM: main_bb2_sv3;
+v4 := zero_extend(1, 32, v3);
+var__temp_va1.tr.i := v1;
+var__temp_va2.tr.i := v4;
+var__temp_va1.tr.i := v1;
+var__temp_va2.tr.i := v4;
+TO: main_tailrecursei;
+
+FROM: main_tailrecursei;
+va1.tr.i := var__temp_va1.tr.i;
+va2.tr.i := var__temp_va2.tr.i;
+var__temp_va1.tr.i := va2.tr.i;
+var__temp_va2.tr.i := va1.tr.i;
+TO: main_tailrecursei_end;
+
+FROM: main_tailrecursei_end;
+assume(va1.tr.i != 0);
+var__temp_va1.tr.i := va2.tr.i;
+var__temp_va2.tr.i := va1.tr.i;
+TO: main_tailrecursei;
+
+FROM: main_tailrecursei_end;
+assume(va1.tr.i == 0);
+TO: main_Aexit;
+
+FROM: main_Aexit;
+g := va2.tr.i;
+var__temp_va1.tr.i1 := v1;
+var__temp_va2.tr.i2 := v4;
+var__temp_va1.tr.i1 := v1;
+var__temp_va2.tr.i2 := v4;
+TO: main_tailrecursei3;
+
+FROM: main_tailrecursei3;
+va1.tr.i1 := var__temp_va1.tr.i1;
+va2.tr.i2 := var__temp_va2.tr.i2;
+var__temp_va1.tr.i1 := va2.tr.i2;
+var__temp_va2.tr.i2 := va1.tr.i1;
+TO: main_tailrecursei3_end;
+
+FROM: main_tailrecursei3_end;
+assume(va1.tr.i1 != 0);
+var__temp_va1.tr.i1 := va2.tr.i2;
+var__temp_va2.tr.i2 := va1.tr.i1;
+TO: main_tailrecursei3;
+
+FROM: main_tailrecursei3_end;
+assume(va1.tr.i1 == 0);
+TO: main_Aexit4;
+
+FROM: main_Aexit4;
+g := va2.tr.i2;
+TO: main_Aexit4_end;
+
+FROM: main_Aexit4_end;
+assume(v1 != 0);
+TO: main_bb3;
+
+FROM: main_Aexit4_end;
+assume(v1 == 0);
+TO: main_bb4;
+
+FROM: main_bb3;
+TO: main_bb4_ret;
+
+FROM: main_bb4;
+TO: main_bb4_ret;
+

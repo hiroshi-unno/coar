@@ -68,6 +68,8 @@ struct
       incr key_cnt;
       sprintf "#S_%d" !key_cnt
 
+  let print_log = false
+
   let mk_classifier pvar (params : sort_env_list) table labeling _examples =
     let (module FT) =
       let module M = struct
@@ -147,8 +149,12 @@ struct
             ( tvar,
               List.map quals ~f:(fun (tvar, (env, phi)) ->
                   ( tvar,
-                    (TruthTable.index_of_qual ~id tt fenv qdeps phi, env, phi)
-                  )) ))
+                    ( TruthTable.index_of_qual
+                        ~print:
+                          (if print_log then Debug.print ~id else fun _ -> ())
+                        ~id tt fenv qdeps phi,
+                      env,
+                      phi ) )) ))
       in
       Debug.print @@ lazy "templates generated";
       let key_constr_map, key_tvar_update_list_map =
@@ -161,7 +167,9 @@ struct
             let key = get_key () in
             let eval_qual (key, (qi, _params, _phi)) =
               let ai =
-                TruthTable.index_of_atom ~id tt fenv qdeps
+                TruthTable.index_of_atom
+                  ~print:(if print_log then Debug.print ~id else fun _ -> ())
+                  ~id tt fenv qdeps
                   (ExAtom.normalize_params atom)
               in
               let e = tt.table.{qi, ai} in
@@ -208,8 +216,7 @@ struct
       in
       let key_constr_map, key_tvar_update_list_map =
         let used_param_senv =
-          Set.of_map key_constr_map
-          |> Set.concat_map ~f:(snd >> Formula.tvs_of)
+          Set.concat_map (Set.of_map key_constr_map) ~f:(snd >> Formula.tvs_of)
           |> Set.concat_map ~f:(fun (Ident.Tvar x) ->
               Set.Poly.of_list
                 [
@@ -232,8 +239,8 @@ struct
                     if Set.mem used_param_senv key then None
                     else Some (Logic.mk_old_dummy data))
               in
-              Logic.ExtTerm.to_old_fml Map.Poly.empty temp_param_senv cnstr
-              |> Formula.subst dis_map |> Evaluator.simplify
+              Evaluator.simplify @@ Formula.subst dis_map
+              @@ Logic.ExtTerm.to_old_fml Map.Poly.empty temp_param_senv cnstr
             in
             ( Map.Poly.add_exn key_constr_map ~key ~data:param_constr,
               Map.Poly.add_exn key_tvar_update_list_map ~key ~data:update_label
@@ -252,12 +259,12 @@ struct
           in
           let temp_param_sub =
             Map.Poly.mapi temp_param_senv ~f:(fun ~key ~data ->
-                (match List.find model ~f:(fst >> fst >> Stdlib.( = ) key) with
-                  | None -> ((key, data), None)
-                  | Some opt -> opt)
-                |> Logic.ExtTerm.remove_dontcare_elem
-                   (* ToDo: support parameteric candidate solution and CEGIS(T)*)
-                |> snd)
+                snd @@ Logic.ExtTerm.remove_dontcare_elem
+                (* ToDo: support parameteric candidate solution and CEGIS(T)*)
+                @@
+                match List.find model ~f:(fst >> fst >> Stdlib.( = ) key) with
+                | None -> ((key, data), None)
+                | Some opt -> opt)
           in
           let hole_sub =
             Map.Poly.of_alist_exn

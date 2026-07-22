@@ -296,21 +296,21 @@ let set_pos_neg_und_examples examples t = { t with examples }
 let set_hspace pvar hspace t = Hashtbl.Poly.set t.hspaces ~key:pvar ~data:hspace
 let set_truth_table truth_table t = { t with truth_table }
 
-let update_truth_table ~id t =
+let update_truth_table ~print ~id t =
   Hashtbl.Poly.iteri t.hspaces ~f:(fun ~key:(Ident.Tvar name) ~data ->
-      TruthTable.update_map_with_qualifiers ~id t.truth_table t.fenv data.qdeps
-        ((*ToDo*) Ident.Pvar name) (data.params, data.quals));
-  TruthTable.update_map_with_examples ~id t.truth_table t.fenv t.hspaces
+      TruthTable.update_map_with_qualifiers ~print ~id t.truth_table t.fenv
+        data.qdeps ((*ToDo*) Ident.Pvar name) (data.params, data.quals));
+  TruthTable.update_map_with_examples ~print ~id t.truth_table t.fenv t.hspaces
   @@ examples_of t
 
 let set_labelings labelings t = { t with labelings }
 
-let set_label ~id t label labeling atom =
+let set_label ~print ~id t label labeling atom =
   match ExAtom.pvar_of atom with
   | None -> labeling
   | Some pvar -> (
       let ai =
-        TruthTable.index_of_atom ~id
+        TruthTable.index_of_atom ~print ~id
           (TruthTable.get_table t.truth_table pvar)
           t.fenv (qdeps_of pvar t) atom
       in

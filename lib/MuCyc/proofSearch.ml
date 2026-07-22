@@ -255,7 +255,12 @@ let get_mbp ~config ~print model0 eliminated0 phi0 =
                Set.(diff (Poly.of_list senv') (Set.Poly.of_list senv))
            | _ -> failwith "Universal quantifies are not supported")
     in
-    (*print @@ lazy ("eliminated': " ^ str_of_sort_env_list Term.str_of_sort @@ Set.to_list eliminated);*)
+    if false then
+      print
+      @@ lazy
+           ("eliminated': "
+           ^ str_of_sort_env_list Term.str_of_sort
+           @@ Set.to_list eliminated);
     let model =
       let phi = Formula.subst model0 phi in
       if Formula.is_ground phi then model0
@@ -271,9 +276,13 @@ let get_mbp ~config ~print model0 eliminated0 phi0 =
         | `Unsat -> failwith "Unreachable here"
         | _ -> failwith "Z3 timeout/unknown"
     in
-    (*print @@ lazy ("model': " ^
-                     String.concat_map_list ~sep:", " (Map.Poly.to_alist model) ~f:(function
-                           (Ident.Tvar tvar, value) -> sprintf "%s |-> %s" tvar (Term.str_of value)));*)
+    if false then
+      print
+      @@ lazy
+           ("model': "
+           ^ String.concat_map_list ~sep:", " (Map.Poly.to_alist model)
+               ~f:(function Ident.Tvar tvar, value ->
+                 sprintf "%s |-> %s" tvar (Term.str_of value)));
     let atoms =
       let tatoms, fatoms = Formula.atoms_of ~nrec:true phi in
       Set.concat_map
@@ -291,7 +300,7 @@ let get_mbp ~config ~print model0 eliminated0 phi0 =
               Set.Poly.singleton
               @@
               if
-                Value.compare true Z.Compare.( > ) Q.( > )
+                Value.gt
                   (Evaluator.eval_term @@ Term.subst model t1)
                   (Evaluator.eval_term @@ Term.subst model t2)
               then
@@ -316,7 +325,7 @@ let get_mbp ~config ~print model0 eliminated0 phi0 =
                     @@ Formula.term_sort_env_of phi ->
               if
                 Value.is_true @@ Evaluator.eval_term
-                @@ Map.Poly.find_exn model (fst @@ fst @@ Term.let_var tx)
+                @@ Map.Poly.find_exn model (Term.tvar_of tx)
               then
                 Set.add
                   (preprocess
@@ -341,7 +350,7 @@ let get_mbp ~config ~print model0 eliminated0 phi0 =
                     @@ Formula.term_sort_env_of phi ->
               if
                 Value.is_true @@ Evaluator.eval_term
-                @@ Map.Poly.find_exn model (fst @@ fst @@ Term.let_var tx)
+                @@ Map.Poly.find_exn model (Term.tvar_of tx)
               then
                 Set.add
                   (preprocess
@@ -366,7 +375,7 @@ let get_mbp ~config ~print model0 eliminated0 phi0 =
                     @@ Formula.term_sort_env_of phi ->
               if
                 Value.is_true @@ Evaluator.eval_term
-                @@ Map.Poly.find_exn model (fst @@ fst @@ Term.let_var tx)
+                @@ Map.Poly.find_exn model (Term.tvar_of tx)
               then
                 Set.add
                   (preprocess
@@ -391,7 +400,7 @@ let get_mbp ~config ~print model0 eliminated0 phi0 =
                     @@ Formula.term_sort_env_of phi ->
               if
                 Value.is_true @@ Evaluator.eval_term
-                @@ Map.Poly.find_exn model (fst @@ fst @@ Term.let_var tx)
+                @@ Map.Poly.find_exn model (Term.tvar_of tx)
               then
                 Set.add
                   (preprocess
@@ -423,8 +432,12 @@ let get_mbp ~config ~print model0 eliminated0 phi0 =
         match eliminated with
         | [] -> atoms
         | (x, s) :: eliminated' -> (
-            (*Out_channel.output_char stdout '.';*)
-            (*print @@ lazy ("eliminating " ^ Ident.name_of_tvar x ^ " in\n" ^ String.concat_map_set ~sep:"\n" ~f:Atom.str_of atoms);*)
+            if true then
+              (*Out_channel.output_char stdout '.';*)
+              print
+              @@ lazy
+                   ("eliminating " ^ Ident.name_of_tvar x ^ " in\n"
+                   ^ String.concat_map_set ~sep:"\n" ~f:Atom.str_of atoms);
             let atoms1, atoms2 =
               Set.partition_tf atoms ~f:(fun atm -> Set.mem (Atom.fvs_of atm) x)
             in
@@ -435,6 +448,8 @@ let get_mbp ~config ~print model0 eliminated0 phi0 =
                    | T_bool.SBool -> Mbp.Boolean.model_based_projection
                    | T_int.SInt -> Mbp.LIA.model_based_projection
                    | T_real.SReal -> Mbp.LRA.model_based_projection
+                   | T_dt.SDT _ -> Mbp.ADT.model_based_projection
+                   | T_array.SArray (_, _) -> Mbp.ARR.model_based_projection
                    | _ -> failwith "not supported")
                      ~print model x atoms1
               with Mbp.NotNormalized ->
@@ -915,17 +930,24 @@ let query_of_countermodel ~config ~print penv pvar_opt seq cexs_left
              (Sequent.subst_preds_right psub_right seq).right_phi
       in
       let mbp =
-        let model = convert_model true senv model in
-        let ub = Evaluator.simplify_neg ub in
+        let model' = convert_model true senv model in
         try
-          get_mbp ~config ~print model (Set.filter senv ~f:(fst >> non_arg)) ub
+          get_mbp ~config ~print model' (Set.filter senv ~f:(fst >> non_arg))
+          @@ Evaluator.simplify_neg ub
         with e ->
           if config.backup_for_mbp then
-            (*qelim_except ~config ~exists:true aargs ub*)
-            Evaluator.simplify_neg @@ Formula.rename atof
-            @@ Formula.subst
-                 (Map.Poly.filter_keys model ~f:non_arg)
-                 seq.left_phi
+            (* qelim_except ~config ~exists:true aargs ub *)
+            if true then
+              Formula.subst
+                (Map.Poly.filter_keys model' ~f:non_arg)
+                seq.left_phi
+            else
+              let model' = convert_model false senv model in
+              Formula.and_of
+              @@ List.filter_map aargs ~f:(fun (x, s) ->
+                  match Map.Poly.find model' x with
+                  | None -> None
+                  | Some t -> Some (Formula.eq (Term.mk_var x s) t))
           else raise e
       in
       (*print @@ lazy ("      ub: " ^ Formula.str_of ub);
@@ -1502,7 +1524,7 @@ let rec search ~config ~print solve_chc penv is_covered seq_map problem trace
           search ~config ~print solve_chc penv is_covered seq_map problem trace'
             induct'')
 
-let solve ~config ~print pcsp_solver problem =
+let solve ~config ~print ?(dtenv = Map.Poly.empty) pcsp_solver problem =
   let open Or_error.Monad_infix in
   pcsp_solver () >>= fun (module PCSPSolver : PCSPSolver.Solver.SolverType) ->
   print @@ lazy (Format.asprintf "Problem: %a" Problem.pr problem);
@@ -1520,5 +1542,8 @@ let solve ~config ~print pcsp_solver problem =
     search ~config ~print
       (fun ~bpvs arg ->
         PCSPSolver.reset ();
-        PCSPSolver.solve ~bpvs arg)
+        let arg_with_dt =
+          PCSP.Problem.map_params arg ~f:(fun params -> { params with dtenv })
+        in
+        PCSPSolver.solve ~bpvs arg_with_dt)
       penv (is_covered penv) seq_map problem empty_trace empty_induct

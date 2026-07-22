@@ -1,0 +1,275 @@
+///*** 1_main ***///
+START: main_bb10;
+FROM: main_bb10;
+ldv_mutex := 1;
+open_called := 0;
+open_called := 0;
+var__temp_vldv_s_misc_fops_file_operations.0 := 0;
+var__temp_vldv_s_misc_fops_file_operations.0 := 0;
+TO: main_misc_releaseexit;
+
+FROM: main_misc_releaseexit;
+vldv_s_misc_fops_file_operations.0 := var__temp_vldv_s_misc_fops_file_operations.0;
+v6 := nondet();
+TO: main_misc_releaseexit_end;
+
+FROM: main_misc_releaseexit_end;
+assume(v6 != 0);
+TO: main_bb11;
+
+FROM: main_misc_releaseexit_end;
+assume(v6 == 0);
+TO: main_bb25;
+
+FROM: main_bb11;
+v8 := nondet();
+TO: main_NodeBlock6;
+
+FROM: main_NodeBlock6;
+TO: main_NodeBlock6_end;
+
+FROM: main_NodeBlock6_end;
+assume(v8 slt 2);
+TO: main_NodeBlock;
+
+FROM: main_NodeBlock6_end;
+assume(v8 sge 2);
+TO: main_NodeBlock4;
+
+FROM: main_NodeBlock;
+TO: main_NodeBlock_end;
+
+FROM: main_NodeBlock_end;
+assume(v8 slt 1);
+TO: main_LeafBlock;
+
+FROM: main_NodeBlock_end;
+assume(v8 sge 1);
+TO: main_bb15;
+
+FROM: main_LeafBlock;
+TO: main_LeafBlock_end;
+
+FROM: main_LeafBlock_end;
+assume(v8 == 0);
+TO: main_bb12;
+
+FROM: main_LeafBlock_end;
+assume(v8 != 0);
+TO: main_NewDefault;
+
+FROM: main_bb12;
+var__temp_vldv_s_misc_fops_file_operations.0 := vldv_s_misc_fops_file_operations.0;
+TO: main_bb12_end;
+
+FROM: main_bb12_end;
+assume(vldv_s_misc_fops_file_operations.0 == 0);
+TO: main_bb13;
+
+FROM: main_bb12_end;
+assume(vldv_s_misc_fops_file_operations.0 != 0);
+var__temp_vldv_s_misc_fops_file_operations.0 := vldv_s_misc_fops_file_operations.0;
+TO: main_misc_releaseexit;
+
+FROM: main_bb13;
+v10 := nondet();
+TO: main_bb13_end;
+
+FROM: main_bb13_end;
+assume(v10 != 0);
+TO: main_misc_openexit;
+
+FROM: main_bb13_end;
+assume(v10 == 0);
+TO: main_bb14;
+
+FROM: main_bb14;
+open_called := 1;
+TO: main_misc_openexit;
+
+FROM: main_misc_openexit;
+v12 := vldv_s_misc_fops_file_operations.0 + 1;
+var__temp_vldv_s_misc_fops_file_operations.0 := v12;
+var__temp_vldv_s_misc_fops_file_operations.0 := v12;
+TO: main_misc_releaseexit;
+
+FROM: main_bb15;
+v14 := vldv_s_misc_fops_file_operations.0 + 1;
+TO: main_bb15_v.ldv_s_misc_fops_file_operations.0;
+FROM: main_bb15_v.ldv_s_misc_fops_file_operations.0;
+assume(vldv_s_misc_fops_file_operations.0 == 1);
+v.ldv_s_misc_fops_file_operations.0 := v14;
+TO: main_bb15_sv.ldv_s_misc_fops_file_operations.0;
+
+FROM: main_bb15_v.ldv_s_misc_fops_file_operations.0;
+assume(vldv_s_misc_fops_file_operations.0 != 1);
+v.ldv_s_misc_fops_file_operations.0 := vldv_s_misc_fops_file_operations.0;
+TO: main_bb15_sv.ldv_s_misc_fops_file_operations.0;
+
+FROM: main_bb15_sv.ldv_s_misc_fops_file_operations.0;
+var__temp_vldv_s_misc_fops_file_operations.0 := v.ldv_s_misc_fops_file_operations.0;
+var__temp_vldv_s_misc_fops_file_operations.0 := v.ldv_s_misc_fops_file_operations.0;
+TO: main_misc_releaseexit;
+
+FROM: main_NodeBlock4;
+TO: main_NodeBlock4_end;
+
+FROM: main_NodeBlock4_end;
+assume(v8 slt 3);
+TO: main_bb16;
+
+FROM: main_NodeBlock4_end;
+assume(v8 sge 3);
+TO: main_LeafBlock2;
+
+FROM: main_bb16;
+v16 := vldv_s_misc_fops_file_operations.0 + 1;
+TO: main_bb16_v.ldv_s_misc_fops_file_operations.01;
+FROM: main_bb16_v.ldv_s_misc_fops_file_operations.01;
+assume(vldv_s_misc_fops_file_operations.0 == 2);
+v.ldv_s_misc_fops_file_operations.01 := v16;
+TO: main_bb16_sv.ldv_s_misc_fops_file_operations.01;
+
+FROM: main_bb16_v.ldv_s_misc_fops_file_operations.01;
+assume(vldv_s_misc_fops_file_operations.0 != 2);
+v.ldv_s_misc_fops_file_operations.01 := vldv_s_misc_fops_file_operations.0;
+TO: main_bb16_sv.ldv_s_misc_fops_file_operations.01;
+
+FROM: main_bb16_sv.ldv_s_misc_fops_file_operations.01;
+var__temp_vldv_s_misc_fops_file_operations.0 := v.ldv_s_misc_fops_file_operations.01;
+var__temp_vldv_s_misc_fops_file_operations.0 := v.ldv_s_misc_fops_file_operations.01;
+TO: main_misc_releaseexit;
+
+FROM: main_LeafBlock2;
+TO: main_LeafBlock2_end;
+
+FROM: main_LeafBlock2_end;
+assume(v8 == 3);
+TO: main_bb17;
+
+FROM: main_LeafBlock2_end;
+assume(v8 != 3);
+TO: main_NewDefault;
+
+FROM: main_bb17;
+var__temp_vldv_s_misc_fops_file_operations.0 := vldv_s_misc_fops_file_operations.0;
+TO: main_bb17_end;
+
+FROM: main_bb17_end;
+assume(vldv_s_misc_fops_file_operations.0 == 3);
+TO: main_bb18;
+
+FROM: main_bb17_end;
+assume(vldv_s_misc_fops_file_operations.0 != 3);
+var__temp_vldv_s_misc_fops_file_operations.0 := vldv_s_misc_fops_file_operations.0;
+TO: main_misc_releaseexit;
+
+FROM: main_bb18;
+v18 := open_called;
+v20 := ldv_mutex;
+TO: main_bb18_end;
+
+FROM: main_bb18_end;
+assume(v18 != 0);
+TO: main_bb19;
+
+FROM: main_bb18_end;
+assume(v18 == 0);
+TO: main_bb22;
+
+FROM: main_bb19;
+TO: main_bb19_end;
+
+FROM: main_bb19_end;
+assume(v20 == 1);
+TO: main_mutex_lockexiti;
+
+FROM: main_bb19_end;
+assume(v20 != 1);
+TO: main_bb21;
+
+FROM: main_mutex_lockexiti;
+ldv_mutex := 2;
+v22 := ldv_mutex;
+TO: main_mutex_lockexiti_end;
+
+FROM: main_mutex_lockexiti_end;
+assume(v22 == 2);
+TO: main_mutex_unlockexiti;
+
+FROM: main_mutex_lockexiti_end;
+assume(v22 != 2);
+TO: main_bb20;
+
+FROM: main_mutex_unlockexiti;
+ldv_mutex := 1;
+open_called := 0;
+var__temp_vldv_s_misc_fops_file_operations.0 := 0;
+var__temp_vldv_s_misc_fops_file_operations.0 := 0;
+TO: main_misc_releaseexit;
+
+FROM: main_bb20;
+TO: main_bb26_ret;
+
+FROM: main_bb21;
+TO: main_bb26_ret;
+
+FROM: main_bb22;
+TO: main_bb22_end;
+
+FROM: main_bb22_end;
+assume(v20 == 1);
+TO: main_mutex_lockexit1i;
+
+FROM: main_bb22_end;
+assume(v20 != 1);
+TO: main_bb24;
+
+FROM: main_mutex_lockexit1i;
+ldv_mutex := 2;
+v24 := ldv_mutex;
+TO: main_mutex_lockexit1i_end;
+
+FROM: main_mutex_lockexit1i_end;
+assume(v24 == 1);
+TO: main_mutex_lockexit2i;
+
+FROM: main_mutex_lockexit1i_end;
+assume(v24 != 1);
+TO: main_bb23;
+
+FROM: main_mutex_lockexit2i;
+ldv_mutex := 2;
+var__temp_vldv_s_misc_fops_file_operations.0 := 0;
+var__temp_vldv_s_misc_fops_file_operations.0 := 0;
+TO: main_misc_releaseexit;
+
+FROM: main_bb23;
+TO: main_bb26_ret;
+
+FROM: main_bb24;
+TO: main_bb26_ret;
+
+FROM: main_NewDefault;
+var__temp_vldv_s_misc_fops_file_operations.0 := vldv_s_misc_fops_file_operations.0;
+var__temp_vldv_s_misc_fops_file_operations.0 := vldv_s_misc_fops_file_operations.0;
+TO: main_misc_releaseexit;
+
+FROM: main_bb25;
+v26 := ldv_mutex;
+TO: main_bb25_end;
+
+FROM: main_bb25_end;
+assume(v26 == 1);
+TO: main_check_final_stateexit;
+
+FROM: main_bb25_end;
+assume(v26 != 1);
+TO: main_bb26;
+
+FROM: main_check_final_stateexit;
+TO: main_check_final_stateexit_ret;
+
+FROM: main_bb26;
+TO: main_bb26_ret;
+

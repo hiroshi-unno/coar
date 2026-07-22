@@ -1,0 +1,181 @@
+///*** 1_main ***///
+START: main_bb7;
+
+TYPE v11: bv(32);
+TYPE v17: bv(32);
+
+FROM: main_bb7;
+flag := 0;
+v11 := nondet();
+var__temp_vbuf.0 := 0;
+var__temp_vtries.0 := 0;
+var__temp_vcount.0 := v11;
+TO: main_bb7_end;
+
+FROM: main_bb7_end;
+assume(v11 sle 0);
+TO: main_bb18;
+
+FROM: main_bb7_end;
+assume(v11 sgt 0);
+var__temp_vbuf.0 := 0;
+var__temp_vtries.0 := 0;
+var__temp_vcount.0 := v11;
+TO: main_bb8;
+
+FROM: main_bb8;
+vbuf.0 := var__temp_vbuf.0;
+vtries.0 := var__temp_vtries.0;
+vcount.0 := var__temp_vcount.0;
+TO: main_bb8_end;
+
+FROM: main_bb8_end;
+assume(vcount.0 sgt 0);
+TO: main_bb9;
+
+FROM: main_bb8_end;
+assume(vcount.0 sle 0);
+TO: main_bb18;
+
+FROM: main_bb9;
+v14 := flag;
+var__temp_vcount.0.i := 0;
+var__temp_v.01.i := vbuf.0;
+var__temp_v.0.i := 0;
+TO: main_bb9_end;
+
+FROM: main_bb9_end;
+assume(v14 == 1);
+var__temp_v.0.i := 0;
+TO: main_readexit;
+
+FROM: main_bb9_end;
+assume(v14 != 1);
+var__temp_vcount.0.i := 0;
+var__temp_v.01.i := vbuf.0;
+TO: main_bb10;
+
+FROM: main_bb10;
+vcount.0.i := var__temp_vcount.0.i;
+v.01.i := var__temp_v.01.i;
+var__temp_v.0.i := vcount.0.i;
+TO: main_bb10_end;
+
+FROM: main_bb10_end;
+assume(v.01.i slt vcount.0);
+TO: main_bb11;
+
+FROM: main_bb10_end;
+assume(v.01.i sge vcount.0);
+var__temp_v.0.i := vcount.0.i;
+TO: main_readexit;
+
+FROM: main_bb11;
+v17 := nondet();
+var__temp_v.0.i := -1;
+TO: main_bb11_end;
+
+FROM: main_bb11_end;
+assume(v17 == 0);
+var__temp_v.0.i := -1;
+TO: main_readexit;
+
+FROM: main_bb11_end;
+assume(v17 != 0);
+TO: main_bb12;
+
+FROM: main_bb12;
+v20 := 0 - v17;
+TO: main_bb12_v..i;
+FROM: main_bb12_v..i;
+assume(v17 slt 0);
+v..i := v20;
+TO: main_bb12_sv..i;
+
+FROM: main_bb12_v..i;
+assume(v17 sge 0);
+v..i := v17;
+TO: main_bb12_sv..i;
+
+FROM: main_bb12_sv..i;
+v21 := v..i srem 1000;
+v22 := vcount.0.i + 1;
+TO: main_bb12_end;
+
+FROM: main_bb12_end;
+assume(v21 slt 995);
+TO: main_bb13;
+
+FROM: main_bb12_end;
+assume(v21 sge 995);
+TO: main_bb14;
+
+FROM: main_bb13;
+v24 := v.01.i + 1;
+var__temp_vcount.0.i := v22;
+var__temp_v.01.i := v24;
+var__temp_vcount.0.i := v22;
+var__temp_v.01.i := v24;
+TO: main_bb10;
+
+FROM: main_bb14;
+flag := 1;
+var__temp_v.0.i := v22;
+var__temp_v.0.i := v22;
+TO: main_readexit;
+
+FROM: main_readexit;
+v.0.i := var__temp_v.0.i;
+TO: main_readexit_end;
+
+FROM: main_readexit_end;
+assume(v.0.i sle 0);
+TO: main_bb15;
+
+FROM: main_readexit_end;
+assume(v.0.i sgt 0);
+TO: main_bb17;
+
+FROM: main_bb15;
+TO: main_bb15_end;
+
+FROM: main_bb15_end;
+assume(v.0.i == 0);
+TO: main_bb16;
+
+FROM: main_bb15_end;
+assume(v.0.i != 0);
+TO: main_bb18;
+
+FROM: main_bb16;
+v27 := vtries.0 + 1;
+var__temp_vbuf.0 := vbuf.0;
+var__temp_vtries.0 := v27;
+var__temp_vcount.0 := vcount.0;
+TO: main_bb16_end;
+
+FROM: main_bb16_end;
+assume(vtries.0 slt 5);
+var__temp_vbuf.0 := vbuf.0;
+var__temp_vtries.0 := v27;
+var__temp_vcount.0 := vcount.0;
+TO: main_bb8;
+
+FROM: main_bb16_end;
+assume(vtries.0 sge 5);
+TO: main_bb18;
+
+FROM: main_bb17;
+v29 := vcount.0 - v.0.i;
+v30 := vbuf.0 + v.0.i;
+var__temp_vbuf.0 := v30;
+var__temp_vtries.0 := vtries.0;
+var__temp_vcount.0 := v29;
+var__temp_vbuf.0 := v30;
+var__temp_vtries.0 := vtries.0;
+var__temp_vcount.0 := v29;
+TO: main_bb8;
+
+FROM: main_bb18;
+TO: main_bb18_ret;
+

@@ -164,8 +164,10 @@ module Make (Config : Config.ConfigType) : SolverType = struct
                         @@ SMT.Smtlib2.of_term ~print:Debug.print ~inline:true
                              SMT.Problem.
                                {
+                                 uni_sort = Set.Poly.empty;
                                  uni_senv = Map.Poly.empty;
                                  exi_senv = Map.Poly.empty;
+                                 dep_map = Map.Poly.empty;
                                  kind_map = Map.Poly.empty;
                                  fenv = Map.Poly.empty;
                                  dtenv = Map.Poly.empty;

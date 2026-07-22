@@ -1,0 +1,54 @@
+///*** 1_main ***///
+START: main_bb0;
+FROM: main_bb0;
+va := nondet();
+var__temp_vk.0 := 0;
+var__temp_vk.0 := 0;
+TO: main_bb1;
+
+FROM: main_bb1;
+vk.0 := var__temp_vk.0;
+v0 := sign_extend(32, 64, vk.0);
+v1 := v0;
+v2 := select_array(va, v0);
+TO: main_bb1_end;
+
+FROM: main_bb1_end;
+assume((v2 sge 0) && (vk.0 slt 1048));
+TO: main_bb2;
+
+FROM: main_bb1_end;
+assume((v2 slt 0) || (vk.0 sge 1048));
+TO: main_bb5;
+
+FROM: main_bb2;
+v5 := nondet();
+TO: main_bb2_end;
+
+FROM: main_bb2_end;
+assume(v5 != 0);
+TO: main_bb3;
+
+FROM: main_bb2_end;
+assume(v5 == 0);
+TO: main_bb4;
+
+FROM: main_bb3;
+v7 := vk.0 + 1;
+var__temp_vk.0 := v7;
+var__temp_vk.0 := v7;
+TO: main_bb1;
+
+FROM: main_bb4;
+v8 := sign_extend(32, 64, vk.0);
+v9 := v8;
+v10 := select_array(va, v8);
+v11 := v10 + -1;
+va := store_array(va, v8, v11);
+var__temp_vk.0 := vk.0;
+var__temp_vk.0 := vk.0;
+TO: main_bb1;
+
+FROM: main_bb5;
+TO: main_bb5_ret;
+

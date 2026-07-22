@@ -123,141 +123,139 @@ let rsfds_of_ehmtt ~print rules trs (id_nt, main_typ) =
       failwith @@ Format.asprintf "return type %a not supported" RefType.pr ret
 
 (*
-  let debug_print_sub sub =
-    let prsub ppf (x, y) = Format.fprintf ppf "%s:%s" x y in
-    Format.eprintf "[%a]" (List.pr prsub ", ") sub
+let debug_print_sub sub =
+  let prsub ppf (x, y) = Format.fprintf ppf "%s:%s" x y in
+  Format.eprintf "[%a]" (List.pr prsub ", ") sub
 
-  let transform_rule (f, (xs, t)) =
-    let f_ty = 
-      try List.assoc f typeenv
-      with Not_found -> failwith (Format.sprintf "No type info for %s@\n" f)
-    in
-    let (ty_args,_) = TypeSystem.args_and_ret f_ty in
-    let make_subst i =
-      let ty_i = 
-        try List.nth ty_args (i-1)  
-        with List.Invalid_index(k) -> failwith (Format.sprintf "Failed to pick %dth type of %s" k f)
-      in
-      let x_i = List.nth xs (i-1) in
-      if (is_intype ty_i) then
-        (x_i, copy1 x_i)
-      else
-        (x_i, x_i)
-    in
-    let idx = List.from_to 1 (List.length xs) in
-    let sub = List.map make_subst idx in
-    let rule_a = (copy1 f, (List.map copy1 xs, Term.subst sub (alpha t))) in
-    let xs1 = List.map copy1 xs in
-    let xs2 = List.map copy2 xs in
-    let xs12 = unzip (List.combine xs1 xs2) in
-    let bt = beta_term t coerce_states in
-    let rule_b = (copy2 f, (xs12, Term.subst sub bt)) in
-    (rule_a, rule_b)
+let transform_rule (f, (xs, t)) =
+  let f_ty =
+    try List.assoc f typeenv
+    with Not_found -> failwith (Format.sprintf "No type info for %s@\n" f)
   in
-  let rules = (unzip (List.map transform_rule rules)) @ (List.map make_terminal_fun terminals) in
-  (start_rules@rules, !coerce_states, n)
+  let ty_args, _ = TypeSystem.args_and_ret f_ty in
+  let make_subst i =
+    let ty_i =
+      try List.nth ty_args (i - 1)
+      with List.Invalid_index k ->
+        failwith (Format.sprintf "Failed to pick %dth type of %s" k f)
+    in
+    let x_i = List.nth xs (i - 1) in
+    if is_intype ty_i then (x_i, copy1 x_i) else (x_i, x_i)
+  in
+  let idx = List.from_to 1 (List.length xs) in
+  let sub = List.map make_subst idx in
+  let rule_a = (copy1 f, (List.map copy1 xs, Term.subst sub (alpha t))) in
+  let xs1 = List.map copy1 xs in
+  let xs2 = List.map copy2 xs in
+  let xs12 = unzip (List.combine xs1 xs2) in
+  let bt = beta_term t coerce_states in
+  let rule_b = (copy2 f, (xs12, Term.subst sub bt)) in
+  (rule_a, rule_b)
+
+let _ =
+  let rules =
+    unzip (List.map transform_rule rules) @ List.map make_terminal_fun terminals
+  in
+  (start_rules @ rules, !coerce_states, n)
 *)
 
 (*
 let rec beta_term t stref =
   let rec coerces = function
-    | Term(a) -> []
-    | Var(x,t) -> []
-    | Nonterm(f) -> []
-    | App(t1, t2) -> List.unique ((coerces t1) @  (coerces t2))
-    | Case(x, pats) -> []
-    | Tree(q) -> []
-    | CaseState(q, pats) -> []
-    | Coerce(q, t) ->
-      stref := List.unique (q::!stref); 
-      [(q,t)]
-    | CaseCoerce(q, t, pats) -> 
-      stref := List.unique (q::!stref); 
-      [(q,t)]
-    | Copy(_) | VarOrTerm(_) -> failwith "coerces"
+    | Term a -> []
+    | Var (x, t) -> []
+    | Nonterm f -> []
+    | App (t1, t2) -> List.unique (coerces t1 @ coerces t2)
+    | Case (x, pats) -> []
+    | Tree q -> []
+    | CaseState (q, pats) -> []
+    | Coerce (q, t) ->
+        stref := List.unique (q :: !stref);
+        [ (q, t) ]
+    | CaseCoerce (q, t, pats) ->
+        stref := List.unique (q :: !stref);
+        [ (q, t) ]
+    | Copy _ | VarOrTerm _ -> failwith "coerces"
   in
   let chi cs t =
-    let check_term (q,t) = 
-      let chk = Term("check__" ^ q) in
+    let check_term (q, t) =
+      let chk = Term ("check__" ^ q) in
       let at = alpha t in
-      App(chk, at)
+      App (chk, at)
     in
     let checked_terms = List.map check_term cs in
     let bts = List.map (fun (_, t) -> beta_term t stref) cs in
-    let branch = 
-      Util.nondet_branch (Term(TTA.br_symbol)) (fun (x,y) -> App(x,y)) (checked_terms@bts@[t])
+    let branch =
+      Util.nondet_branch (Term TTA.br_symbol)
+        (fun (x, y) -> App (x, y))
+        (checked_terms @ bts @ [ t ])
     in
     branch
   in
   let rec beta1 = function
-    | Term(a) -> Nonterm(term a)
-    | Var(x,t) as v when (is_intype !t) -> v
-    | Var(x,t) -> Var(copy2 x, t)
-    | Nonterm(f) -> Nonterm(copy2 f)
-    | App(t1, t2) -> 
-      App(App(beta1 t1, alpha t2), beta1 t2)
-    | Case(x, pats) -> 
-      let f (a, (xs, t)) = (a, (xs, beta_term t stref)) in
-      Case(x, List.map f pats)
-    | Tree(q) as t -> t
-    | CaseState(q, pats) -> 
-      let f (a, (xs, t)) = (a, (xs, beta_term t stref)) in
-      CaseState(q, List.map f pats)
-    | Coerce(_) | CaseCoerce(_) | Copy(_) | VarOrTerm(_) -> failwith "beta1"
+    | Term a -> Nonterm (term a)
+    | Var (x, t) as v when is_intype !t -> v
+    | Var (x, t) -> Var (copy2 x, t)
+    | Nonterm f -> Nonterm (copy2 f)
+    | App (t1, t2) -> App (App (beta1 t1, alpha t2), beta1 t2)
+    | Case (x, pats) ->
+        let f (a, (xs, t)) = (a, (xs, beta_term t stref)) in
+        Case (x, List.map f pats)
+    | Tree q as t -> t
+    | CaseState (q, pats) ->
+        let f (a, (xs, t)) = (a, (xs, beta_term t stref)) in
+        CaseState (q, List.map f pats)
+    | Coerce _ | CaseCoerce _ | Copy _ | VarOrTerm _ -> failwith "beta1"
   in
   let rec beta0 = function
-    | Term(a) as t-> t
-    | Var(x,t) as v -> v
-    | Nonterm(f) as n -> n
-    | App(t1, t2) -> App(beta0 t1, beta0 t2)
-    | Case(x, pats) as c -> c
-    | Tree(q) as t -> t
-    | CaseState(q, pats) as c -> c
-    | Coerce(q,t) -> Tree(q)
-    | CaseCoerce(q,t,pats) -> CaseState(q, pats)
-    | Copy(_) | VarOrTerm(_) -> failwith "beta1"
+    | Term a as t -> t
+    | Var (x, t) as v -> v
+    | Nonterm f as n -> n
+    | App (t1, t2) -> App (beta0 t1, beta0 t2)
+    | Case (x, pats) as c -> c
+    | Tree q as t -> t
+    | CaseState (q, pats) as c -> c
+    | Coerce (q, t) -> Tree q
+    | CaseCoerce (q, t, pats) -> CaseState (q, pats)
+    | Copy _ | VarOrTerm _ -> failwith "beta1"
   in
-  chi (coerces t) (beta1(beta0 t))
-;;
+  chi (coerces t) (beta1 (beta0 t))
 
 let beta rules terminals typeenv =
   let make_terminal_fun (a, n) =
     let vs = List.from_to 1 n in
-    let vs = List.map (fun v -> "x" ^ (string_of_int v)) vs in
+    let vs = List.map (fun v -> "x" ^ string_of_int v) vs in
     let vs1 = List.map copy1 vs in
     let vs2 = List.map copy2 vs in
     let vs12 = unzip (List.combine vs1 vs2) in
-    let vs2' = List.map (fun v -> Var(v, ref Out)) vs2 in
-    let t = 
-      if n = 0 then
-        Term(TTA.success_symbol)
+    let vs2' = List.map (fun v -> Var (v, ref Out)) vs2 in
+    let t =
+      if n = 0 then Term TTA.success_symbol
       else
-        Util.nondet_branch (Term(TTA.br_symbol)) (fun (x,y) -> App(x,y)) vs2' 
+        Util.nondet_branch (Term TTA.br_symbol) (fun (x, y) -> App (x, y)) vs2'
     in
     let rule = (term a, (vs12, t)) in
     rule
   in
   let coerce_states = ref [] in
   let transform_rule (f, (xs, t)) =
-    let f_ty = 
+    let f_ty =
       try List.assoc f typeenv
       with Not_found -> failwith (Format.sprintf "No type info for %s@\n" f)
     in
-    let (ty_args,_) = TypeSystem.args_and_ret f_ty in
+    let ty_args, _ = TypeSystem.args_and_ret f_ty in
     let make_subst i =
-      let ty_i = 
-        try List.nth ty_args (i-1)  
-        with List.Invalid_index(k) -> failwith (Format.sprintf "Failed to pick %dth type of %s" k f)
+      let ty_i =
+        try List.nth ty_args (i - 1)
+        with List.Invalid_index k ->
+          failwith (Format.sprintf "Failed to pick %dth type of %s" k f)
       in
-      let x_i = List.nth xs (i-1) in
-      if (is_intype ty_i) then
-        (x_i, copy1 x_i)
-      else
-        (x_i, x_i)
+      let x_i = List.nth xs (i - 1) in
+      if is_intype ty_i then (x_i, copy1 x_i) else (x_i, x_i)
     in
     let idx = List.from_to 1 (List.length xs) in
     let sub = List.map make_subst idx in
-(*    debug_print_sub sub; *)
+    (*    debug_print_sub sub; *)
     let rule_a = (copy1 f, (List.map copy1 xs, Term.subst sub (alpha t))) in
     let xs1 = List.map copy1 xs in
     let xs2 = List.map copy2 xs in
@@ -266,25 +264,26 @@ let beta rules terminals typeenv =
     let rule_b = (copy2 f, (xs12, Term.subst sub bt)) in
     (rule_a, rule_b)
   in
-  let start_rule (f, (xs, t)) = 
-    let start_from_f = 
+  let start_rule (f, (xs, t)) =
+    let start_from_f =
       let xsxs = unzip (List.combine xs xs) in
-      let dummy_type = ref (TVar({contents=None})) in
-      let xsxs = List.map (fun x -> Var(x,dummy_type)) xsxs in
-      let f2 = Nonterm(copy2 f) in
+      let dummy_type = ref (TVar { contents = None }) in
+      let xsxs = List.map (fun x -> Var (x, dummy_type)) xsxs in
+      let f2 = Nonterm (copy2 f) in
       Term.apps f2 xsxs
     in
     (f, (xs, start_from_f))
   in
   let cs = List.map (fun (_, (_, t)) -> Term.count_coerce t) rules in
   let n = List.fold_left (fun x y -> x + y) 0 cs in
-  if n = 0 then
-    (rules, [], 0)
+  if n = 0 then (rules, [], 0)
   else
     let start_rules = List.map start_rule rules in
-    let rules = (unzip (List.map transform_rule rules)) @ (List.map make_terminal_fun terminals) in
-    (start_rules@rules, !coerce_states, n)
-;;
+    let rules =
+      unzip (List.map transform_rule rules)
+      @ List.map make_terminal_fun terminals
+    in
+    (start_rules @ rules, !coerce_states, n)
 *)
 
 (*

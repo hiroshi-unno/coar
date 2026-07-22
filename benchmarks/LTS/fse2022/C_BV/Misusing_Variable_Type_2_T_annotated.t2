@@ -1,0 +1,47 @@
+///*** 1_main ***///
+START: main_bb1;
+
+TYPE v4: bv(32);
+
+FROM: main_bb1;
+v4 := nondet();
+v5 := v4 srem 99999;
+v7 := 0 - v5;
+TO: main_bb1_v.0.i;
+FROM: main_bb1_v.0.i;
+assume(v5 slt 0);
+v.0.i := v7;
+TO: main_bb1_sv.0.i;
+
+FROM: main_bb1_v.0.i;
+assume(v5 sge 0);
+v.0.i := v5;
+TO: main_bb1_sv.0.i;
+
+FROM: main_bb1_sv.0.i;
+v8 := sign_extend(32, 64, v.0.i);
+var__temp_vi.0 := 0;
+var__temp_vi.0 := 0;
+TO: main_bb2;
+
+FROM: main_bb2;
+vi.0 := var__temp_vi.0;
+TO: main_bb2_end;
+
+FROM: main_bb2_end;
+assume(vi.0 slt v8);
+TO: main_bb3;
+
+FROM: main_bb2_end;
+assume(vi.0 sge v8);
+TO: main_bb4;
+
+FROM: main_bb3;
+v10 := vi.0 + 1;
+var__temp_vi.0 := v10;
+var__temp_vi.0 := v10;
+TO: main_bb2;
+
+FROM: main_bb4;
+TO: main_bb4_ret;
+

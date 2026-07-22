@@ -1,0 +1,44 @@
+///*** 1_main ***///
+START: main_bb0;
+
+TYPE v0: bv(32);
+TYPE v1: bv(32);
+TYPE v2: bv(32);
+
+FROM: main_bb0;
+v0 := nondet();
+v1 := nondet();
+v2 := nondet();
+var__temp_vcur.0 := v0;
+TO: main_bb0_end;
+
+FROM: main_bb0_end;
+assume((v1 ule v2) || (v0 == 0));
+TO: main_bb2;
+
+FROM: main_bb0_end;
+assume((v1 ugt v2) && (v0 != 0));
+var__temp_vcur.0 := v0;
+TO: main_bb1;
+
+FROM: main_bb1;
+vcur.0 := var__temp_vcur.0;
+TO: main_bb1_end;
+
+FROM: main_bb1_end;
+assume(v1 ult vcur.0);
+TO: main_bb2;
+
+FROM: main_bb1_end;
+assume(v1 uge vcur.0);
+TO: main_bb3;
+
+FROM: main_bb2;
+TO: main_bb2_ret;
+
+FROM: main_bb3;
+v6 := vcur.0 + v0;
+var__temp_vcur.0 := v6;
+var__temp_vcur.0 := v6;
+TO: main_bb1;
+

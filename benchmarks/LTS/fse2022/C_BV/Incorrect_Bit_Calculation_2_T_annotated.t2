@@ -1,0 +1,58 @@
+///*** 1_main ***///
+START: main_bb0;
+
+TYPE v6: bv(32);
+TYPE v7: bv(32);
+TYPE va0.0: bv(32);
+TYPE va1.0: bv(32);
+
+FROM: main_bb0;
+gtv_0 := 0;
+gtv_1 := 0;
+v0 := nondet();
+v1 := nondet();
+v2 := or(v0, v1);
+var__temp_va1.0 := v1;
+var__temp_va0.0 := v0;
+TO: main_bb0_end;
+
+FROM: main_bb0_end;
+assume(v2 == 0);
+TO: main_bb3;
+
+FROM: main_bb0_end;
+assume(v2 != 0);
+var__temp_va1.0 := v1;
+var__temp_va0.0 := v0;
+TO: main_bb1;
+
+FROM: main_bb1;
+va1.0 := var__temp_va1.0;
+va0.0 := var__temp_va0.0;
+v4 := and(va0.0, 1);
+TO: main_bb1_end;
+
+FROM: main_bb1_end;
+assume(v4 == 0);
+TO: main_bb2;
+
+FROM: main_bb1_end;
+assume(v4 != 0);
+TO: main_bb3;
+
+FROM: main_bb2;
+v6 := shl(va1.0, 31);
+gtv_0 := v6;
+v7 := ashr(va0.0, 1);
+gtv_1 := v7;
+v8 := or(v6, v7);
+v9 := ashr(va1.0, 1);
+var__temp_va1.0 := v9;
+var__temp_va0.0 := v8;
+var__temp_va1.0 := v9;
+var__temp_va0.0 := v8;
+TO: main_bb1;
+
+FROM: main_bb3;
+TO: main_bb3_ret;
+

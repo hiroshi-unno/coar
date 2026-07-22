@@ -1,0 +1,175 @@
+///*** 1_main ***///
+START: main_bb15;
+FROM: main_bb15;
+flag := 0;
+TO: main_bb16;
+
+FROM: main_bb16;
+v40 := flag;
+var__temp_v.0.i := -1;
+TO: main_bb16_end;
+
+FROM: main_bb16_end;
+assume(v40 > 1000);
+var__temp_v.0.i := -1;
+TO: main_fgetcexit;
+
+FROM: main_bb16_end;
+assume(v40 <= 1000);
+TO: main_bb17;
+
+FROM: main_bb17;
+v42 := flag;
+v43 := v42 + 1;
+TO: main_bb17_end;
+
+FROM: main_bb17_end;
+assume(v43 > 2147483647);
+TO: main_bb18;
+
+FROM: main_bb17_end;
+assume(v43 <= 2147483647);
+TO: main_bb19;
+
+FROM: main_bb18;
+v45 := v43 - 2147483647;
+v46 := v45 - 1;
+v47 := v46 % 4294967296;
+v48 := -2147483648 + v47;
+var__temp_v.0.i.i := v48;
+var__temp_v.0.i.i := v48;
+TO: main_wrap_aroundexiti;
+
+FROM: main_bb19;
+var__temp_v.0.i.i := v43;
+TO: main_bb19_end;
+
+FROM: main_bb19_end;
+assume(v43 < -2147483648);
+TO: main_bb20;
+
+FROM: main_bb19_end;
+assume(v43 >= -2147483648);
+var__temp_v.0.i.i := v43;
+TO: main_wrap_aroundexiti;
+
+FROM: main_bb20;
+v50 := -2147483648 - v43;
+v51 := v50 - 1;
+v52 := v51 % 4294967296;
+v53 := 2147483647 - v52;
+var__temp_v.0.i.i := v53;
+var__temp_v.0.i.i := v53;
+TO: main_wrap_aroundexiti;
+
+FROM: main_wrap_aroundexiti;
+v.0.i.i := var__temp_v.0.i.i;
+flag := v.0.i.i;
+v54 := nondet_int();
+var__temp_vc.0.i := v54;
+TO: main_wrap_aroundexiti_end;
+
+FROM: main_wrap_aroundexiti_end;
+assume(v54 < 0);
+TO: main_bb21;
+
+FROM: main_wrap_aroundexiti_end;
+assume(v54 >= 0);
+var__temp_vc.0.i := v54;
+TO: main_wrap_aroundexit3i;
+
+FROM: main_bb21;
+v56 := 0 - v54;
+TO: main_bb21_end;
+
+FROM: main_bb21_end;
+assume(v56 > 2147483647);
+TO: main_bb22;
+
+FROM: main_bb21_end;
+assume(v56 <= 2147483647);
+TO: main_bb23;
+
+FROM: main_bb22;
+v58 := v56 - 2147483647;
+v59 := v58 - 1;
+v60 := v59 % 4294967296;
+v61 := -2147483648 + v60;
+var__temp_vc.0.i := v61;
+var__temp_vc.0.i := v61;
+TO: main_wrap_aroundexit3i;
+
+FROM: main_bb23;
+var__temp_vc.0.i := v56;
+TO: main_bb23_end;
+
+FROM: main_bb23_end;
+assume(v56 < -2147483648);
+TO: main_bb24;
+
+FROM: main_bb23_end;
+assume(v56 >= -2147483648);
+var__temp_vc.0.i := v56;
+TO: main_wrap_aroundexit3i;
+
+FROM: main_bb24;
+v63 := -2147483648 - v56;
+v64 := v63 - 1;
+v65 := v64 % 4294967296;
+v66 := 2147483647 - v65;
+var__temp_vc.0.i := v66;
+var__temp_vc.0.i := v66;
+TO: main_wrap_aroundexit3i;
+
+FROM: main_wrap_aroundexit3i;
+vc.0.i := var__temp_vc.0.i;
+v67 := vc.0.i % 256;
+var__temp_v.0.i := v67;
+var__temp_v.0.i := v67;
+TO: main_fgetcexit;
+
+FROM: main_fgetcexit;
+v.0.i := var__temp_v.0.i;
+var__temp_v.0.i1 := v.0.i;
+TO: main_fgetcexit_end;
+
+FROM: main_fgetcexit_end;
+assume(v.0.i < 0);
+TO: main_bb25;
+
+FROM: main_fgetcexit_end;
+assume(v.0.i >= 0);
+var__temp_v.0.i1 := v.0.i;
+TO: main_wrap_aroundexit;
+
+FROM: main_bb25;
+v69 := 0 - v.0.i;
+v70 := v69 - 1;
+v71 := v70 % 256;
+v72 := 255 - v71;
+var__temp_v.0.i1 := v72;
+var__temp_v.0.i1 := v72;
+TO: main_wrap_aroundexit;
+
+FROM: main_wrap_aroundexit;
+v.0.i1 := var__temp_v.0.i1;
+TO: main_LeafBlock;
+
+FROM: main_LeafBlock;
+v.0.i1.off := v.0.i1 + 1;
+TO: main_LeafBlock_end;
+
+FROM: main_LeafBlock_end;
+assume(v.0.i1.off <= 1);
+TO: main_bb26;
+
+FROM: main_LeafBlock_end;
+assume(v.0.i1.off > 1);
+TO: main_NewDefault;
+
+FROM: main_bb26;
+TO: main_bb26_ret;
+
+FROM: main_NewDefault;
+TO: main_bb16;
+

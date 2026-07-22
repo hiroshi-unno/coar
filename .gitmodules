@@ -25,11 +25,9 @@
 [submodule "benchmarks/SMT/QF_UF"]
 	path = benchmarks/SMT/QF_UF
 	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/QF_UF.git
-
 [submodule "benchmarks/QSMT/ijcai2016"]
 	path = benchmarks/QSMT/ijcai2016
 	url = https://github.com/zkincaid/strategy-improvement.git
-
 [submodule "benchmarks/chc-comp18"]
 	path = benchmarks/chc-comp18
 	url = https://github.com/chc-comp/chc-comp18-benchmarks.git
@@ -45,15 +43,6 @@
 [submodule "benchmarks/chc-comp22"]
 	path = benchmarks/chc-comp22
 	url = https://github.com/chc-comp/chc-comp22-benchmarks.git
-[submodule "benchmarks/sygus-comp"]
-	path = benchmarks/sygus-comp
-	url = https://github.com/SyGuS-Org/benchmarks.git
-[submodule "benchmarks/term-comp"]
-	path = benchmarks/term-comp
-	url = https://github.com/TermCOMP/TPDB.git
-[submodule "benchmarks/sv-comp"]
-	path = benchmarks/sv-comp
-	url = https://gitlab.com/sosy-lab/benchmarking/sv-benchmarks.git
 [submodule "benchmarks/chc-comp23"]
 	path = benchmarks/chc-comp23
 	url = https://github.com/chc-comp/chc-comp23-benchmarks.git
@@ -63,6 +52,22 @@
 [submodule "benchmarks/chc-comp25"]
 	path = benchmarks/chc-comp25
 	url = https://github.com/chc-comp/chc-comp25-benchmarks.git
+[submodule "benchmarks/chc-comp26"]
+	path = benchmarks/chc-comp26
+	url = https://github.com/chc-comp/chc-comp26-benchmarks.git
+[submodule "benchmarks/sygus-comp"]
+	path = benchmarks/sygus-comp
+	url = https://github.com/SyGuS-Org/benchmarks.git
+[submodule "benchmarks/term-comp"]
+	path = benchmarks/term-comp
+	url = https://github.com/TermCOMP/TPDB.git
 [submodule "benchmarks/term-comp-ari"]
 	path = benchmarks/term-comp-ari
 	url = https://github.com/TermCOMP/TPDB-ARI.git
+[submodule "benchmarks/sv-comp"]
+	path = benchmarks/sv-comp
+	url = https://gitlab.com/sosy-lab/benchmarking/sv-benchmarks.git
+[submodule "athena/llvm2kittel"]
+	path = athena/llvm2kittel
+	url = https://github.com/addmai/llvm2kittel.git
+	branch = svcomp2026

@@ -394,6 +394,7 @@ module Type = struct
     (** Destruction *)
 
     val let_var : t -> sort_bind * info
+    val tvar_of : t -> Ident.tvar
     val let_app : t -> fun_sym * t list * info
     val let_fvar_app : t -> Ident.tvar * Sort.t list * Sort.t * t list * info
     val let_funcall : t -> string * t list * info
@@ -402,7 +403,7 @@ module Type = struct
     (** Function Symbols *)
 
     val is_fvar_sym : fun_sym -> bool
-    val str_of_funsym : fun_sym -> string
+    val str_of_funsym : ?c_style:bool -> fun_sym -> string
     val rename_fun_sym : Ident.tvar_map -> fun_sym -> fun_sym
     val subst_fun_sym : (t -> string) -> termSubst -> fun_sym -> fun_sym
     val subst_sorts_fun_sym : sort_subst -> fun_sym -> fun_sym
@@ -428,7 +429,7 @@ module Type = struct
 
     (** Printing *)
 
-    val str_of : ?priority:Priority.t -> t -> string
+    val str_of : ?priority:Priority.t -> ?c_style:bool -> t -> string
 
     (** Observation *)
 
@@ -442,6 +443,7 @@ module Type = struct
     val is_uninterpreted_term : t -> bool
     val is_let_free : t -> bool
     val is_quantifier_free : t -> bool
+    val is_fun_quantifier_free : t -> bool
     val tvs_of : t -> Ident.tvar_set
     val pvs_of : t -> Ident.pvar_set
     val fvs_of : t -> Ident.tvar_set
@@ -553,11 +555,11 @@ module Type = struct
     val is_included_psym : pred_sym -> pred_sym -> bool
     val flip_psym : pred_sym -> pred_sym
     val negate_psym : pred_sym -> pred_sym
-    val str_of_psym : pred_sym -> string
+    val str_of_psym : ?c_style:bool -> pred_sym -> string
 
     (** Printing *)
 
-    val str_of : t -> string
+    val str_of : ?c_style:bool -> t -> string
 
     (** Observation *)
 
@@ -648,7 +650,7 @@ module Type = struct
 
     (** Printing *)
 
-    val str_of : ?priority:Priority.t -> t -> string
+    val str_of : ?priority:Priority.t -> ?c_style:bool -> t -> string
 
     (** Observation *)
 
@@ -660,6 +662,7 @@ module Type = struct
     val is_pvar_app_of : Ident.pvar -> t -> bool
     val is_let_free : t -> bool
     val is_quantifier_free : t -> bool
+    val is_fun_quantifier_free : t -> bool
     val tvs_of : t -> Ident.tvar_set
     val pvs_of : t -> Ident.pvar_set
     val fvs_of : t -> Ident.tvar_set
@@ -825,6 +828,17 @@ module Type = struct
     val mk_range_real : term -> Q.t -> Q.t -> t list
     val mk_range_real_opt : term -> Q.t option -> Q.t option -> t list
 
+    val mk_range_bv :
+      size:int option -> signed:bool option -> term -> Z.t -> Z.t -> t list
+
+    val mk_range_bv_opt :
+      size:int option ->
+      signed:bool option ->
+      term ->
+      Z.t option ->
+      Z.t option ->
+      t list
+
     (** Destruction *)
 
     val let_atom : t -> atom * info
@@ -872,7 +886,7 @@ module Type = struct
 
     (** Printing *)
 
-    val str_of : ?priority:Priority.t -> t -> string
+    val str_of : ?priority:Priority.t -> ?c_style:bool -> t -> string
 
     (** Observation *)
 
@@ -896,6 +910,7 @@ module Type = struct
     val is_let_formula : t -> bool
     val is_let_free : t -> bool
     val is_quantifier_free : t -> bool
+    val is_fun_quantifier_free : t -> bool
     val is_ground : t -> bool
     val tvs_of : t -> Ident.tvar_set
     val pvs_of : t -> Ident.pvar_set
@@ -960,6 +975,7 @@ module Type = struct
     val replace_let_body : t -> t -> t
     val replace_let_term_body : term -> t -> t
     val subst : termSubst -> t -> t
+    val psub_of_sub : termSubst -> predSubst
     val subst_preds : predSubst -> t -> t
     val subst_funcs : funcSubst -> t -> t
     val subst_neg : Ident.pvar -> t -> t
@@ -1368,7 +1384,7 @@ module Type = struct
     val is_bv_fsym : fun_sym -> bool
     val is_bv_psym : pred_sym -> bool
     val is_sbv : bvterm -> bool
-    val is_bv : bvterm -> bool
+    val is_bvnum : bvterm -> bool
     val is_bvzero : bvterm -> bool
     val is_bvunit : bvterm -> bool
     val is_bvnot : bvterm -> bool
@@ -1907,7 +1923,7 @@ module Type = struct
     type t = (Ident.tvar, term) Map.Poly.t
 
     val str_of : t -> string
-    val make : name:string -> (Ident.tvar * Sort.t) list -> term list -> t
+    val make : name:string -> sort_env_list -> term list -> t
   end
 
   module type PredSubstType = sig
@@ -2832,6 +2848,8 @@ module rec Term :
         ((Ident.Tvar var, T_bool.SBool), info)
     | _ -> assert false
 
+  let tvar_of = let_var >> fst >> fst
+
   let let_app = function
     | FunApp (sym, ts, info) -> (sym, ts, info)
     | _ -> assert false
@@ -2852,8 +2870,8 @@ module rec Term :
 
   let is_fvar_sym = function FVar (_, _, _) -> true | _ -> false
 
-  let str_of_funsym = function
-    | FVar (x, _, _) -> Ident.name_of_tvar x
+  let str_of_funsym ?(c_style = false) = function
+    | FVar (x, _, _) -> "\\" ^ Ident.name_of_tvar x
     | T_bool.Formula phi -> sprintf "Formula(%s)" @@ Formula.str_of phi
     | T_bool.IfThenElse -> "ite"
     | T_int.Int n -> Z.to_string n
@@ -2863,10 +2881,10 @@ module rec Term :
     | T_int.Add -> "+"
     | T_int.Sub -> "-"
     | T_int.Mul -> "*"
-    | T_int.Div Euclidean -> "ediv"
-    | T_int.Div _ -> "div"
-    | T_int.Rem Euclidean -> "erem"
-    | T_int.Rem _ -> "rem"
+    | T_int.Div Euclidean -> if c_style then "/" else "ediv"
+    | T_int.Div _ -> if c_style then "/" else "div"
+    | T_int.Rem Euclidean -> if c_style then "%%" else "erem"
+    | T_int.Rem _ -> if c_style then "%%" else "rem"
     | T_int.Power -> "^"
     | T_int.Case _ -> "case"
     | T_real.Real r -> Q.to_string r
@@ -3000,7 +3018,7 @@ module rec Term :
         match Map.Poly.find map var' with
         | None -> fsym
         | Some t -> (
-            try FVar (fst @@ fst @@ let_var t, sargs, sret)
+            try FVar (tvar_of t, sargs, sret)
             with _ ->
               failwith
               @@ sprintf "[subst_fun_sym] %s |-> %s" (Ident.name_of_tvar var')
@@ -3226,7 +3244,7 @@ module rec Term :
 
   (** Printing *)
 
-  let rec str_of ?(priority = Priority.lowest) t0 =
+  let rec str_of ?(priority = Priority.lowest) ?(c_style = false) t0 =
     para
       ~f:
         (object
@@ -3242,7 +3260,7 @@ module rec Term :
 
            method fapp fsym (ts, args) priority =
              match (fsym, args) with
-             | FVar (x, _, _), [] -> Ident.name_of_tvar x
+             | FVar (x, _, _), [] -> "\\" ^ Ident.name_of_tvar x
              | FVar (x, _, _), ts ->
                  Priority.add_paren priority Priority.fun_app
                  @@ sprintf "\\%s %s" (Ident.name_of_tvar x)
@@ -3251,7 +3269,7 @@ module rec Term :
              | T_bool.Formula phi, [] ->
                  Priority.add_paren priority Priority.lowest
                  (*ToDo*) @@ String.angle_bracket
-                 @@ Formula.str_of ~priority:Priority.lowest phi
+                 @@ Formula.str_of ~priority:Priority.lowest ~c_style phi
              | T_bool.IfThenElse, [ cond; then_; else_ ] ->
                  Priority.add_paren priority Priority.ite
                  @@ sprintf "if %s then %s else %s"
@@ -3280,18 +3298,20 @@ module rec Term :
                  @@ sprintf "%s0b%s"
                       (if Option.is_none size then "?" else "")
                       (z_to_bin_string_fixed (T_bv.bits_of size) n)
-             | T_num.Value _, _ -> str_of_funsym fsym
+             | T_num.Value _, _ -> str_of_funsym ~c_style fsym
              | ( ( T_int.(Nop | Abs)
                  | T_real.RAbs
                  | T_bv.(BVNot _ | BVNeg _ | BVEXTRACT _ | BVSEXT _ | BVZEXT _)
                  | T_irb.(IntToReal | RealToInt | IntToBV _ | BVToInt _) ),
                  [ t ] ) ->
                  Priority.add_paren priority Priority.fun_app
-                 @@ sprintf "%s %s" (str_of_funsym fsym)
+                 @@ sprintf "%s %s"
+                      (str_of_funsym ~c_style fsym)
                       (t (Priority.fun_app + 1))
              | (T_int.Neg | T_real.RNeg | T_num.NNeg _), [ t ] ->
                  Priority.add_paren priority Priority.neg_deref
-                 @@ sprintf "%s%s" (str_of_funsym fsym)
+                 @@ sprintf "%s%s"
+                      (str_of_funsym ~c_style fsym)
                       (t (Priority.neg_deref + 1))
              | ( ( T_int.(Add | Sub)
                  | T_real.(RAdd | RSub)
@@ -3300,7 +3320,7 @@ module rec Term :
                  [ t1; t2 ] ) ->
                  Priority.add_paren priority Priority.add_sub
                  @@ sprintf "%s %s %s" (t1 Priority.add_sub)
-                      (str_of_funsym fsym)
+                      (str_of_funsym ~c_style fsym)
                       (t2 (Priority.add_sub + 1))
              | ( ( T_int.(Mul | Div _ | Rem _)
                  | T_real.(RMul | RDiv)
@@ -3309,19 +3329,21 @@ module rec Term :
                  [ t1; t2 ] ) ->
                  Priority.add_paren priority Priority.mul_div_mod
                  @@ sprintf "%s %s %s" (t1 Priority.mul_div_mod)
-                      (str_of_funsym fsym)
+                      (str_of_funsym ~c_style fsym)
                       (t2 (Priority.mul_div_mod + 1))
              | (T_int.Power | T_real.RPower | T_num.NPower _), [ t1; t2 ] ->
                  Priority.add_paren priority Priority.append_power
                  @@ sprintf "%s %s %s"
                       (t1 (Priority.append_power + 1))
-                      (str_of_funsym fsym) (t2 Priority.append_power)
+                      (str_of_funsym ~c_style fsym)
+                      (t2 Priority.append_power)
              | ( T_bv.(
                    ( BVAnd _ | BVOr _ | BVXor _ | BVNand _ | BVNor _ | BVXnor _
                    | BVSHL _ | BVLSHR _ | BVASHR _ | BVCONCAT _ )),
                  [ t1; t2 ] ) ->
                  Priority.add_paren priority Priority.fun_app
-                 @@ sprintf "%s %s %s" (str_of_funsym fsym)
+                 @@ sprintf "%s %s %s"
+                      (str_of_funsym ~c_style fsym)
                       (t1 (Priority.fun_app + 1))
                       (t2 (Priority.fun_app + 1))
              | ( ( T_int.(Add | Sub | Mul | Div _ | Rem _ | Power)
@@ -3336,34 +3358,40 @@ module rec Term :
                  failwith
                    "add, sub, mul, div, mod, rem, power, bitwise operators are \
                     binary"
-             | T_string.StrConst _, [] -> str_of_funsym fsym
-             | T_sequence.(SeqEpsilon | SeqSymbol _), [] -> str_of_funsym fsym
+             | T_string.StrConst _, [] -> str_of_funsym ~c_style fsym
+             | T_sequence.(SeqEpsilon | SeqSymbol _), [] ->
+                 str_of_funsym ~c_style fsym
              | ( T_sequence.(
                    SeqConcat _ | SeqLeftQuotient _ | SeqRightQuotient _),
                  [ t1; t2 ] ) ->
                  Priority.add_paren priority Priority.fun_app
-                 @@ sprintf "%s %s %s" (str_of_funsym fsym)
+                 @@ sprintf "%s %s %s"
+                      (str_of_funsym ~c_style fsym)
                       (t1 (Priority.fun_app + 1))
                       (t2 (Priority.fun_app + 1))
              | T_regex.(RegEmpty | RegFull | RegEpsilon), [] ->
-                 str_of_funsym fsym
+                 str_of_funsym ~c_style fsym
              | ( T_regex.(RegStr | RegComplement | RegStar | RegPlus | RegOpt),
                  [ t1 ] ) ->
                  Priority.add_paren priority Priority.fun_app
-                 @@ sprintf "%s %s" (str_of_funsym fsym)
+                 @@ sprintf "%s %s"
+                      (str_of_funsym ~c_style fsym)
                       (t1 (Priority.fun_app + 1))
              | T_regex.(RegConcat | RegUnion | RegInter), [ t1; t2 ] ->
                  Priority.add_paren priority Priority.fun_app
-                 @@ sprintf "%s %s %s" (str_of_funsym fsym)
+                 @@ sprintf "%s %s %s"
+                      (str_of_funsym ~c_style fsym)
                       (t1 (Priority.fun_app + 1))
                       (t2 (Priority.fun_app + 1))
              | T_array.AConst _, [ t1 ] ->
                  Priority.add_paren priority Priority.fun_app
-                 @@ sprintf "%s %s" (str_of_funsym fsym)
+                 @@ sprintf "%s %s"
+                      (str_of_funsym ~c_style fsym)
                       (t1 (Priority.fun_app + 1))
              | T_array.AStore _, [ t1; t2; t3 ] ->
                  Priority.add_paren priority Priority.fun_app
-                 @@ sprintf "%s %s %s %s" (str_of_funsym fsym)
+                 @@ sprintf "%s %s %s %s"
+                      (str_of_funsym ~c_style fsym)
                       (t1 (Priority.fun_app + 1))
                       (t2 (Priority.fun_app + 1))
                       (t3 (Priority.fun_app + 1))
@@ -3377,7 +3405,8 @@ module rec Term :
                         t (Priority.comma + 1) (*ToDo*) ^ ":" ^ str_of_sort s)
              | T_tuple.TupleSel (_, _), [ t ] ->
                  Priority.add_paren priority Priority.fun_app
-                 @@ sprintf "%s %s" (str_of_funsym fsym)
+                 @@ sprintf "%s %s"
+                      (str_of_funsym ~c_style fsym)
                       (t (Priority.fun_app + 1))
              | T_dt.DTCons ("::", _, dt), [ _; _ ]
                when Datatype.is_list_sort (Datatype.sort_of dt) -> (
@@ -3398,29 +3427,35 @@ module rec Term :
                      Priority.add_paren priority Priority.lowest
                      (*ToDo*) @@ String.bracket
                      @@ String.concat_map_list ~sep:"; " args
-                          ~f:(str_of ~priority:(Priority.seq + 1) (*ToDo*))
+                          ~f:
+                            (str_of
+                               ~priority:(Priority.seq + 1) (*ToDo*)
+                               ~c_style)
                  | [ t1 ], Some t2 ->
                      Priority.add_paren priority Priority.cons
                      @@ sprintf "%s :: %s"
-                          (str_of ~priority:(Priority.cons + 1) t1)
-                          (str_of ~priority:Priority.cons t2)
+                          (str_of ~priority:(Priority.cons + 1) ~c_style t1)
+                          (str_of ~priority:Priority.cons ~c_style t2)
                  | args, Some t ->
                      Priority.add_paren priority Priority.append_power
                      @@ sprintf "%s @ %s"
                           (String.bracket
                           @@ String.concat_map_list ~sep:"; " args
-                               ~f:(str_of ~priority:(Priority.seq + 1) (*ToDo*))
-                          )
-                          (str_of ~priority:Priority.append_power t))
-             | T_dt.DTCons (_, _, _), [] -> str_of_funsym fsym
+                               ~f:
+                                 (str_of ~priority:(Priority.seq + 1)
+                                    ~c_style (*ToDo*)))
+                          (str_of ~priority:Priority.append_power ~c_style t))
+             | T_dt.DTCons (_, _, _), [] -> str_of_funsym ~c_style fsym
              | T_dt.DTCons (_, _, _), ts ->
                  Priority.add_paren priority Priority.fun_app
-                 @@ sprintf "%s %s" (str_of_funsym fsym)
+                 @@ sprintf "%s %s"
+                      (str_of_funsym ~c_style fsym)
                       (String.concat_map_list ~sep:" " ts ~f:(fun t ->
                            t (Priority.fun_app + 1)))
              | T_dt.DTSel (_, _, _), [ t1 ] ->
                  Priority.add_paren priority Priority.fun_app
-                 @@ sprintf "%s %s" (str_of_funsym fsym)
+                 @@ sprintf "%s %s"
+                      (str_of_funsym ~c_style fsym)
                       (t1 (Priority.fun_app + 1))
              | T_ref.Ref _sort, [ t ] ->
                  Priority.add_paren priority Priority.fun_app
@@ -3436,7 +3471,7 @@ module rec Term :
              | f, ts ->
                  failwith
                    ("unknown function application: " ^ String.concat ~sep:" "
-                   @@ str_of_funsym f
+                   @@ str_of_funsym ~c_style f
                       :: List.map ts ~f:(fun t -> t (Priority.fun_app + 1)))
 
            method flet tvar _sort (_, def) (_, body) priority =
@@ -3540,6 +3575,20 @@ module rec Term :
            method fapp fsym args =
              match (fsym, args) with
              | T_bool.Formula phi, [] -> Formula.is_quantifier_free phi
+             | _ -> List.for_all args ~f:Fn.id
+
+           method flet _tvar _sort def body = def && body
+        end)
+
+  let is_fun_quantifier_free =
+    fold
+      ~f:
+        (object
+           method fvar _tvar _sort = true
+
+           method fapp fsym args =
+             match (fsym, args) with
+             | T_bool.Formula phi, [] -> Formula.is_fun_quantifier_free phi
              | _ -> List.for_all args ~f:Fn.id
 
            method flet _tvar _sort def body = def && body
@@ -3667,7 +3716,7 @@ module rec Term :
         | Value.Arr (dummy, v, m) ->
             let v2 = value_of t2 in
             let v3 = value_of t3 in
-            if Value.equal v v3 then Value.Arr (dummy, v, Map.Poly.remove m v2)
+            if Value.eq v v3 then Value.Arr (dummy, v, Map.Poly.remove m v2)
             else Value.Arr (dummy, v, Map.Poly.set m ~key:v2 ~data:v3)
         | _ ->
             failwith @@ "Array store: first term must be an array, but got "
@@ -4033,7 +4082,10 @@ module rec Term :
              | Some (senv, phi) ->
                  if List.is_empty senv then
                    T_bool.of_formula (Formula.subst_preds (*ToDO*) psub phi)
-                 else assert false
+                 else
+                   failwith @@ "[subst_preds] non-empty senv not supported: "
+                   ^ Ident.name_of_tvar tvar ^ " with senv: "
+                   ^ str_of_sort_env_list Term.str_of_sort senv
              | None -> Term.mk_var tvar sort
 
            method fapp fsym args psub =
@@ -4574,9 +4626,9 @@ and Predicate :
         true
     | _ -> false
 
-  let str_of_psym = function
-    | T_bool.Eq -> "="
-    | T_bool.Neq -> "!="
+  let str_of_psym ?(c_style = false) = function
+    | T_bool.Eq -> if c_style then "==" else "="
+    | T_bool.Neq -> if c_style then "!=" else "!="
     | T_int.Leq -> "<="
     | T_int.Geq -> ">="
     | T_int.Lt -> "<"
@@ -4783,16 +4835,16 @@ and Predicate :
 
   (** Printing *)
 
-  let str_of = function
+  let str_of ?(c_style = false) = function
     | Var (Ident.Pvar pvar, _sorts) -> pvar
     (* sprintf "(%s : [%s])" pvar
        (String.concat_map_list ~sep:";" ~f:Term.str_of_sort sorts) *)
-    | Psym psym -> str_of_psym psym
+    | Psym psym -> str_of_psym ~c_style psym
     | Fixpoint def ->
         sprintf "(%s%s%s. %s)" (str_of_fop def.kind)
           (Ident.name_of_pvar def.name)
           (String.paren @@ str_of_sort_env_list Term.str_of_sort def.args)
-          (Formula.str_of ~priority:Priority.lowest def.body)
+          (Formula.str_of ~priority:Priority.lowest ~c_style def.body)
 
   (** Observation *)
 
@@ -5137,23 +5189,34 @@ and Atom :
 
   (** Printing *)
 
-  let str_of ?(priority = Priority.lowest) = function
+  let str_of ?(priority = Priority.lowest) ?(c_style = false) = function
     | True _ -> "true"
     | False _ -> "false"
     | App (Predicate.Psym psym, [ t1; t2 ], _) when Predicate.is_infix_psym psym
       ->
         Priority.add_paren priority Priority.eq_neq_lt_leq_gt_geq
         @@ sprintf "%s %s %s"
-             (Term.str_of ~priority:(Priority.eq_neq_lt_leq_gt_geq + 1) t1)
-             (Predicate.str_of_psym psym)
-             (Term.str_of ~priority:(Priority.eq_neq_lt_leq_gt_geq + 1) t2)
+             (Term.str_of
+                ~priority:(Priority.eq_neq_lt_leq_gt_geq + 1)
+                ~c_style t1)
+             (Predicate.str_of_psym ~c_style psym)
+             (Term.str_of
+                ~priority:(Priority.eq_neq_lt_leq_gt_geq + 1)
+                ~c_style t2)
     | App (pred, args, _) ->
-        if List.length args = 0 then Predicate.str_of pred
+        if List.length args = 0 then Predicate.str_of ~c_style pred
         else
           Priority.add_paren priority Priority.fun_app
-          @@ sprintf "%s %s" (Predicate.str_of pred)
-               (String.concat_map_list ~sep:" " args
-                  ~f:(Term.str_of ~priority:(Priority.fun_app + 1)))
+          @@ sprintf "%s %s"
+               (Predicate.str_of ~c_style pred)
+               (String.concat_map_list ~sep:" " args ~f:(fun t ->
+                    let str =
+                      Term.str_of ~priority:(Priority.fun_app + 1) ~c_style t
+                    in
+                    if true then str
+                    else
+                      String.paren @@ str ^ " : "
+                      ^ Term.str_of_sort (Term.sort_of t)))
 
   (** Observation *)
 
@@ -5173,6 +5236,10 @@ and Atom :
 
   let is_quantifier_free = function
     | App (_, args, _) -> List.for_all args ~f:Term.is_quantifier_free
+    | _ -> true
+
+  let is_fun_quantifier_free = function
+    | App (_, args, _) -> List.for_all args ~f:Term.is_fun_quantifier_free
     | _ -> true
 
   let tvs_of = function
@@ -5935,6 +6002,33 @@ and Formula :
     | Some lb, Some ub ->
         [ Formula.leq (T_real.mk_real lb) v; Formula.leq v (T_real.mk_real ub) ]
 
+  let mk_range_bv ~size ~signed v lb ub =
+    [
+      Formula.mk_atom @@ T_bv.mk_bvleq ~size ~signed (T_bv.mk_bvnum ~size lb) v;
+      Formula.mk_atom @@ T_bv.mk_bvleq ~size ~signed v (T_bv.mk_bvnum ~size ub);
+    ]
+
+  let mk_range_bv_opt ~size ~signed v lb ub =
+    match (lb, ub) with
+    | None, None -> []
+    | None, Some ub ->
+        [
+          Formula.mk_atom
+          @@ T_bv.mk_bvleq ~size ~signed v (T_bv.mk_bvnum ~size ub);
+        ]
+    | Some lb, None ->
+        [
+          Formula.mk_atom
+          @@ T_bv.mk_bvleq ~size ~signed (T_bv.mk_bvnum ~size lb) v;
+        ]
+    | Some lb, Some ub ->
+        [
+          Formula.mk_atom
+          @@ T_bv.mk_bvleq ~size ~signed (T_bv.mk_bvnum ~size lb) v;
+          Formula.mk_atom
+          @@ T_bv.mk_bvleq ~size ~signed v (T_bv.mk_bvnum ~size ub);
+        ]
+
   (** Destruction *)
 
   let let_atom = function
@@ -6104,26 +6198,26 @@ and Formula :
 
   (** Printing *)
 
-  let str_of ?(priority = Priority.lowest) =
+  let str_of ?(priority = Priority.lowest) ?(c_style = false) =
     let rec aux ?(priority = Priority.lowest) ~next = function
-      | Atom (atom, _) -> next @@ Atom.str_of ~priority atom
+      | Atom (atom, _) -> next @@ Atom.str_of ~priority ~c_style atom
       | UnaryOp (Not, phi, _) ->
           aux ~priority:(Priority.fun_app + 1 (*ToDo*)) phi ~next:(fun s ->
               next
               @@ Priority.add_paren priority Priority.fun_app
-              @@ sprintf "not %s" s)
+              @@ sprintf "%s %s" (if c_style then "!" else "not") s)
       | BinaryOp (And, phi1, phi2, _) ->
           aux ~priority:Priority.binary_and phi1 ~next:(fun s1 ->
               aux ~priority:Priority.binary_and phi2 ~next:(fun s2 ->
                   next
                   @@ Priority.add_paren priority Priority.binary_and
-                  @@ sprintf "%s /\\ %s" s1 s2))
+                  @@ sprintf "%s %s %s" s1 (if c_style then "&&" else "/\\") s2))
       | BinaryOp (Or, phi1, phi2, _) ->
           aux ~priority:Priority.binary_or phi1 ~next:(fun s1 ->
               aux ~priority:Priority.binary_or phi2 ~next:(fun s2 ->
                   next
                   @@ Priority.add_paren priority Priority.binary_or
-                  @@ sprintf "%s \\/ %s" s1 s2))
+                  @@ sprintf "%s %s %s" s1 (if c_style then "||" else "\\/") s2))
       | BinaryOp (Imply, phi1, phi2, _) ->
           aux phi1 ~priority:Priority.binary_and ~next:(fun s1 ->
               aux phi2 ~priority:Priority.imply_iff_xor ~next:(fun s2 ->
@@ -6186,7 +6280,7 @@ and Formula :
               @@ Priority.add_paren priority Priority.let_forall_exists
               @@ sprintf "letf %s:%s = %s in %s" (Ident.name_of_tvar var)
                    (Term.short_name_of_sort sort)
-                   (Term.str_of def) s)
+                   (Term.str_of ~c_style def) s)
     in
     aux ~priority ~next:Fn.id
 
@@ -6250,6 +6344,28 @@ and Formula :
            method flet _tvar _sort def r1 = Term.is_quantifier_free def && r1
         end)
 
+  let is_fun_quantifier_free =
+    fold
+      ~f:
+        (object
+           method fatom atom = Atom.is_fun_quantifier_free atom
+           method fnot r1 = r1
+           method fand r1 r2 = r1 && r2
+           method for_ r1 r2 = r1 && r2
+           method fimply r1 r2 = r1 && r2
+           method fiff r1 r2 = r1 && r2
+           method fxor r1 r2 = r1 && r2
+
+           method fbind _ senv _r1 =
+             List.for_all senv ~f:(snd >> Sort.is_arrow >> not)
+
+           method fletrec funcs r1 =
+             List.for_all funcs ~f:(fun def -> def.body) && r1
+
+           method flet _tvar _sort def r1 =
+             Term.is_fun_quantifier_free def && r1
+        end)
+
   let tvs_of =
     fold
       ~f:
@@ -6263,7 +6379,7 @@ and Formula :
            method fxor r1 r2 = Set.union r1 r2
 
            method fbind _ senv r1 =
-             Set.diff r1 (Set.Poly.of_list @@ List.map ~f:fst senv)
+             Set.diff r1 (Set.Poly.of_list @@ List.map senv ~f:fst)
 
            method fletrec funcs r1 =
              Set.diff
@@ -6290,7 +6406,14 @@ and Formula :
            method fimply r1 r2 = Set.union r1 r2
            method fiff r1 r2 = Set.union r1 r2
            method fxor r1 r2 = Set.union r1 r2
-           method fbind _ _ r1 = r1
+
+           method fbind _ senv r1 =
+             Set.diff r1
+               (Set.Poly.of_list
+               @@ List.filter_map senv ~f:(fun (x, s) ->
+                   if Sort.is_arrow s && Term.is_bool_sort (Sort.ret_of s) then
+                     Some (Ident.tvar_to_pvar x)
+                   else None))
 
            method fletrec funcs r1 =
              Set.diff
@@ -6878,7 +7001,7 @@ and Formula :
           match Map.Poly.find map (Ident.pvar_to_tvar pvar (*ToDo*)) with
           | Some t ->
               next @@ of_bool_term
-              @@ if Term.is_var t then t else Term.subst map t
+              @@ if Term.is_var t then t else Term.subst map t (*ToDo*)
           | None -> next phi)
       | Atom (atom, info) -> next @@ Atom (Atom.subst map atom, info)
       | UnaryOp (Not, phi, info) ->
@@ -6904,6 +7027,22 @@ and Formula :
               next @@ LetFormula (var, sort, Term.subst map def, body', info))
     in
     aux map phi ~next:Fn.id
+
+  let psub_of_sub sub =
+    Map.Poly.map_keys_exn ~f:Ident.tvar_to_pvar
+    @@ Map.Poly.filter_map sub ~f:(fun t ->
+        let s = Term.sort_of t in
+        if Sort.is_arrow s then
+          let sargs = Sort.args_of s in
+          let senv = sort_env_list_of_sorts sargs in
+          Some
+            ( senv,
+              Formula.mk_atom
+              @@ Atom.mk_pvar_app
+                   (Ident.tvar_to_pvar @@ Term.tvar_of t)
+                   (List.map ~f:snd senv)
+                   (List.map ~f:(uncurry2 Term.mk_var) senv) )
+        else None)
 
   let subst_preds psub phi =
     fold
@@ -8731,7 +8870,7 @@ and T_bv :
     | _ -> false
 
   let is_sbv t = Term.is_bv_sort @@ Term.sort_of t
-  let is_bv = function Term.FunApp (BVNum _, [], _) -> true | _ -> false
+  let is_bvnum = function Term.FunApp (BVNum _, [], _) -> true | _ -> false
 
   let is_bvzero = function
     | Term.FunApp (BVNum (_size, i), _, _) when Z.Compare.(i = Z.zero) -> true
@@ -10930,23 +11069,25 @@ module UTermEnv = struct
 end
 
 let remove_dontcare_elem ?(freshvar = false) ((x, s), v) =
-  match v with
-  | None ->
-      ( x,
-        if freshvar then
-          Term.mk_var (Ident.mk_fresh_dontcare (Ident.name_of_tvar x)) s
-        else Term.mk_dummy s )
-  | Some t -> (x, t)
+  ( x,
+    match v with
+    | None ->
+        if
+          freshvar && (not @@ Sort.is_arrow s)
+          (* to work around a bug in Z3 version 4.15.2 where it ignores constraints involving uninterpreted functions and returns don't care *)
+        then Term.mk_var (Ident.mk_fresh_dontcare (Ident.name_of_tvar x)) s
+        else Term.mk_dummy s
+    | Some t -> t )
 
-let remove_dontcare ?(freshvar = false) m =
-  List.filter m ~f:(function
+let remove_dontcare ?(freshvar = false) =
+  List.filter ~f:(function
     | (Ident.Tvar "div0", Sort.SArrow (_, _)), None ->
         false (* bug of model generation of z3 4.8.8? *)
     | (Ident.Tvar "mod0", Sort.SArrow (_, _)), None ->
         false (* bug of model generation of z3 4.8.8? *)
     | (Ident.Tvar "array-ext", Sort.SArrow (_, _)), None -> false
     | _ -> true)
-  |> List.map ~f:(remove_dontcare_elem ~freshvar)
+  >> List.map ~f:(remove_dontcare_elem ~freshvar)
 
 let ref_dtenv = Atomic.make @@ DTEnv.mk_empty ()
 let get_dtenv () = Atomic.get ref_dtenv

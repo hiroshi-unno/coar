@@ -1,0 +1,3482 @@
+///*** 1_main ***///
+START: main_bb5147;
+FROM: main_bb5147;
+v__startrek_Assert_t2_i0 := nondet();
+v__startrek_Assert_t1_i0 := nondet();
+v__startrek_Assert_t0_i0 := nondet();
+memory0_freeIndex := 1;
+memory1_freeIndex := 1;
+__startrek_lock := 0;
+ud_err_theta := 0;
+ud_theta_ref := 0;
+ud_thetadot_cmd_lpf := 0;
+ud_psi := 0;
+ud_theta_lpf := 0;
+vK_F := nondet();
+vmemory1 := nondet();
+vmemory0 := nondet();
+__startrek_hidden_nxtway_gs_mode := 0;
+__startrek_hidden_obstacle_flag := 0;
+__startrek_hidden_cmd_forward := 0;
+__startrek_hidden_cmd_turn := 0;
+timer := 0;
+gyro_offset := 0;
+avg_cnt := 0;
+cal_start_time := 0;
+vbt_receive_buf := const_array(0);
+__startrek_base_priority_OSEK_Task_ts3 := 0;
+__startrek_period_OSEK_Task_ts3 := 96;
+__startrek_wcet_OSEK_Task_ts3 := 48;
+__startrek_arrival_min_OSEK_Task_ts3 := 0;
+__startrek_arrival_max_OSEK_Task_ts3 := 0;
+__startrek_base_priority_OSEK_Task_ts2 := 1;
+__startrek_period_OSEK_Task_ts2 := 48;
+__startrek_wcet_OSEK_Task_ts2 := 2;
+__startrek_arrival_min_OSEK_Task_ts2 := 0;
+__startrek_arrival_max_OSEK_Task_ts2 := 0;
+__startrek_base_priority_OSEK_Task_ts1 := 2;
+__startrek_period_OSEK_Task_ts1 := 4;
+__startrek_wcet_OSEK_Task_ts1 := 1;
+__startrek_arrival_min_OSEK_Task_ts1 := 0;
+__startrek_arrival_max_OSEK_Task_ts1 := 0;
+__startrek_time_bound := 96;
+__startrek_error_round := 0;
+__startrek_task := 0;
+__startrek_job := 0;
+__startrek_is_first_cs := 0;
+v__startrek_start_t0 := const_array(0);
+__startrek_round := 0;
+v__startrek_end_t0 := const_array(0);
+__startrek_job_end := 0;
+v__startrek_start_t1 := const_array(0);
+v__startrek_end_t1 := const_array(0);
+v__startrek_start_t2 := const_array(0);
+v__startrek_end_t2 := const_array(0);
+__startrek_hyper_period := 0;
+v_cmd_turn_ := const_array(0);
+v_cmd_forward_ := const_array(0);
+v_obstacle_flag_ := const_array(0);
+v_nxtway_gs_mode_ := const_array(0);
+v_i_nxtway_gs_mode_ := const_array(0);
+v_i_obstacle_flag_ := const_array(0);
+v_i_cmd_forward_ := const_array(0);
+v_i_cmd_turn_ := const_array(0);
+vtmp.i.i.i.i := nondet();
+vtmp_theta_0.i.i.i.i := nondet();
+v22021 := __startrek_hidden_cmd_turn;
+v22022 := 0;
+v_cmd_turn_ := store_array(v_cmd_turn_, 0, v22021);
+v22023 := __startrek_hidden_cmd_forward;
+v22024 := 0;
+v_cmd_forward_ := store_array(v_cmd_forward_, 0, v22023);
+v22025 := __startrek_hidden_obstacle_flag;
+v22026 := extract(0, 0, v22025);
+TO: main_bb5147_v22026;
+
+FROM: main_bb5147_v22026;
+assume(v22026 != 0);
+v22026 := 1;
+TO: main_bb5147_sv22026;
+
+FROM: main_bb5147_v22026;
+assume(v22026 == 0);
+v22026 := 0;
+TO: main_bb5147_sv22026;
+
+FROM: main_bb5147_sv22026;
+v22027 := zero_extend(1, 8, v22026);
+v22028 := 0;
+v_obstacle_flag_ := store_array(v_obstacle_flag_, 0, v22027);
+v22029 := __startrek_hidden_nxtway_gs_mode;
+v22030 := 0;
+v_nxtway_gs_mode_ := store_array(v_nxtway_gs_mode_, 0, v22029);
+__startrek_hyper_period := 0;
+__startrek_error_round := 27;
+__startrek_task := 0;
+__startrek_job := 0;
+__startrek_is_first_cs := 1;
+v22031 := 0;
+v22032 := select_array(v__startrek_start_t0, 0);
+__startrek_round := v22032;
+v22033 := __startrek_round;
+v22034 := zero_extend(8, 32, v22033);
+v22035 := __startrek_error_round;
+v22036 := zero_extend(8, 32, v22035);
+TO: main_bb5147_end;
+
+FROM: main_bb5147_end;
+assume(v22034 slt v22036);
+TO: main_bb5148;
+
+FROM: main_bb5147_end;
+assume(v22034 sge v22036);
+TO: main___VERIFIER_assumeexiti;
+
+FROM: main_bb5148;
+v22038 := 0;
+v22039 := select_array(v__startrek_end_t0, 0);
+__startrek_job_end := v22039;
+v22040 := __startrek_task;
+v22041 := zero_extend(8, 32, v22040);
+TO: main_bb5148_end;
+
+FROM: main_bb5148_end;
+assume(v22041 slt 1);
+TO: main_LeafBlockiiii;
+
+FROM: main_bb5148_end;
+assume(v22041 sge 1);
+TO: main_LeafBlock4iiii;
+
+FROM: main_LeafBlockiiii;
+TO: main_LeafBlockiiii_end;
+
+FROM: main_LeafBlockiiii_end;
+assume(v22041 == 0);
+TO: main_bb5149;
+
+FROM: main_LeafBlockiiii_end;
+assume(v22041 != 0);
+TO: main___startrek_read_nxtway_gs_modeexitiii;
+
+FROM: main_bb5149;
+v22042 := __startrek_is_first_cs;
+v22043 := extract(0, 0, v22042);
+TO: main_bb5149_end;
+
+FROM: main_bb5149_end;
+assume(v22043 != 0);
+TO: main_bb5150;
+
+FROM: main_bb5149_end;
+assume(v22043 == 0);
+TO: main_bb5151;
+
+FROM: main_bb5150;
+__startrek_is_first_cs := 0;
+TO: main_bb5151;
+
+FROM: main_bb5151;
+v22044 := __startrek_lock;
+v22045 := extract(0, 0, v22044);
+TO: main_bb5151_end;
+
+FROM: main_bb5151_end;
+assume(v22045 != 0);
+TO: main___startrek_read_nxtway_gs_modeexitiii;
+
+FROM: main_bb5151_end;
+assume(v22045 == 0);
+TO: main_bb5152;
+
+FROM: main_bb5152;
+TO: main_bb5152_v22046;
+
+FROM: main_bb5152_v22046;
+assume(nondet() != 0);
+v22046 := 1;
+TO: main_bb5152_sv22046;
+
+FROM: main_bb5152_v22046;
+assume(nondet() != 0);
+v22046 := 0;
+TO: main_bb5152_sv22046;
+
+FROM: main_bb5152_sv22046;
+v22047 := zero_extend(1, 8, v22046);
+v22048 := extract(0, 0, v22047);
+TO: main_bb5152_end;
+
+FROM: main_bb5152_end;
+assume(v22048 != 0);
+TO: main___startrek_read_nxtway_gs_modeexitiii;
+
+FROM: main_bb5152_end;
+assume(v22048 == 0);
+TO: main_bb5153;
+
+FROM: main_bb5153;
+v22049 := __startrek_round;
+v22050 := nondet();
+__startrek_round := v22050;
+v22051 := __startrek_round;
+v22052 := zero_extend(8, 32, v22051);
+v22053 := zero_extend(8, 32, v22049);
+TO: main_bb5153_end;
+
+FROM: main_bb5153_end;
+assume(v22052 sgt v22053);
+TO: main___VERIFIER_assumeexitiiiii;
+
+FROM: main_bb5153_end;
+assume(v22052 sle v22053);
+TO: main_bb5160;
+
+FROM: main___VERIFIER_assumeexitiiiii;
+v22055 := __startrek_round;
+v22056 := zero_extend(8, 32, v22055);
+v22057 := __startrek_job_end;
+v22058 := zero_extend(8, 32, v22057);
+TO: main___VERIFIER_assumeexitiiiii_end;
+
+FROM: main___VERIFIER_assumeexitiiiii_end;
+assume(v22056 sle v22058);
+TO: main___VERIFIER_assumeexit1iiiii;
+
+FROM: main___VERIFIER_assumeexitiiiii_end;
+assume(v22056 sgt v22058);
+TO: main_bb5159;
+
+FROM: main___VERIFIER_assumeexit1iiiii;
+v22060 := __startrek_round;
+v22061 := zero_extend(8, 32, v22060);
+v22062 := __startrek_job_end;
+v22063 := zero_extend(8, 32, v22062);
+TO: main___VERIFIER_assumeexit1iiiii_end;
+
+FROM: main___VERIFIER_assumeexit1iiiii_end;
+assume(v22061 != v22063);
+TO: main_bb5154;
+
+FROM: main___VERIFIER_assumeexit1iiiii_end;
+assume(v22061 == v22063);
+TO: main___startrek_read_nxtway_gs_modeexitiii;
+
+FROM: main_bb5154;
+v22065 := 0;
+v22066 := select_array(v__startrek_start_t1, 0);
+v22067 := zero_extend(8, 32, v22066);
+v22068 := __startrek_round;
+v22069 := zero_extend(8, 32, v22068);
+TO: main_bb5154_end;
+
+FROM: main_bb5154_end;
+assume(v22067 slt v22069);
+TO: main_bb5155;
+
+FROM: main_bb5154_end;
+assume(v22067 sge v22069);
+TO: main___VERIFIER_assumeexit2iiiii;
+
+FROM: main_bb5155;
+v22071 := __startrek_round;
+v22072 := zero_extend(8, 32, v22071);
+v22073 := 0;
+v22074 := select_array(v__startrek_end_t1, 0);
+v22075 := zero_extend(8, 32, v22074);
+TO: main_bb5155_end;
+
+FROM: main_bb5155_end;
+assume(v22072 sgt v22075);
+TO: main___VERIFIER_assumeexit2iiiii;
+
+FROM: main_bb5155_end;
+assume(v22072 sle v22075);
+TO: main_bb5156;
+
+FROM: main_bb5156;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main___VERIFIER_assumeexit2iiiii;
+v22077 := 1;
+v22078 := select_array(v__startrek_start_t1, 1);
+v22079 := zero_extend(8, 32, v22078);
+v22080 := __startrek_round;
+v22081 := zero_extend(8, 32, v22080);
+TO: main___VERIFIER_assumeexit2iiiii_end;
+
+FROM: main___VERIFIER_assumeexit2iiiii_end;
+assume(v22079 slt v22081);
+TO: main_bb5157;
+
+FROM: main___VERIFIER_assumeexit2iiiii_end;
+assume(v22079 sge v22081);
+TO: main___startrek_read_nxtway_gs_modeexitiii;
+
+FROM: main_bb5157;
+v22083 := __startrek_round;
+v22084 := zero_extend(8, 32, v22083);
+v22085 := 1;
+v22086 := select_array(v__startrek_end_t1, 1);
+v22087 := zero_extend(8, 32, v22086);
+TO: main_bb5157_end;
+
+FROM: main_bb5157_end;
+assume(v22084 sgt v22087);
+TO: main___startrek_read_nxtway_gs_modeexitiii;
+
+FROM: main_bb5157_end;
+assume(v22084 sle v22087);
+TO: main_bb5158;
+
+FROM: main_bb5158;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5159;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5160;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_LeafBlock4iiii;
+TO: main_LeafBlock4iiii_end;
+
+FROM: main_LeafBlock4iiii_end;
+assume(v22041 == 1);
+TO: main_bb5161;
+
+FROM: main_LeafBlock4iiii_end;
+assume(v22041 != 1);
+TO: main___startrek_read_nxtway_gs_modeexitiii;
+
+FROM: main_bb5161;
+v22089 := __startrek_is_first_cs;
+v22090 := extract(0, 0, v22089);
+TO: main_bb5161_end;
+
+FROM: main_bb5161_end;
+assume(v22090 != 0);
+TO: main_bb5162;
+
+FROM: main_bb5161_end;
+assume(v22090 == 0);
+TO: main_bb5163;
+
+FROM: main_bb5162;
+__startrek_is_first_cs := 0;
+TO: main_bb5163;
+
+FROM: main_bb5163;
+v22091 := __startrek_lock;
+v22092 := extract(0, 0, v22091);
+TO: main_bb5163_end;
+
+FROM: main_bb5163_end;
+assume(v22092 != 0);
+TO: main___startrek_read_nxtway_gs_modeexitiii;
+
+FROM: main_bb5163_end;
+assume(v22092 == 0);
+TO: main_bb5164;
+
+FROM: main_bb5164;
+TO: main_bb5164_v22093;
+
+FROM: main_bb5164_v22093;
+assume(nondet() != 0);
+v22093 := 1;
+TO: main_bb5164_sv22093;
+
+FROM: main_bb5164_v22093;
+assume(nondet() != 0);
+v22093 := 0;
+TO: main_bb5164_sv22093;
+
+FROM: main_bb5164_sv22093;
+v22094 := zero_extend(1, 8, v22093);
+v22095 := extract(0, 0, v22094);
+TO: main_bb5164_end;
+
+FROM: main_bb5164_end;
+assume(v22095 != 0);
+TO: main___startrek_read_nxtway_gs_modeexitiii;
+
+FROM: main_bb5164_end;
+assume(v22095 == 0);
+TO: main_bb5165;
+
+FROM: main_bb5165;
+v22096 := __startrek_round;
+v22097 := nondet();
+__startrek_round := v22097;
+v22098 := __startrek_round;
+v22099 := zero_extend(8, 32, v22098);
+v22100 := zero_extend(8, 32, v22096);
+TO: main_bb5165_end;
+
+FROM: main_bb5165_end;
+assume(v22099 sgt v22100);
+TO: main___VERIFIER_assumeexiti1iiii;
+
+FROM: main_bb5165_end;
+assume(v22099 sle v22100);
+TO: main_bb5167;
+
+FROM: main___VERIFIER_assumeexiti1iiii;
+v22102 := __startrek_round;
+v22103 := zero_extend(8, 32, v22102);
+v22104 := __startrek_job_end;
+v22105 := zero_extend(8, 32, v22104);
+TO: main___VERIFIER_assumeexiti1iiii_end;
+
+FROM: main___VERIFIER_assumeexiti1iiii_end;
+assume(v22103 sle v22105);
+TO: main___startrek_read_nxtway_gs_modeexitiii;
+
+FROM: main___VERIFIER_assumeexiti1iiii_end;
+assume(v22103 sgt v22105);
+TO: main_bb5166;
+
+FROM: main_bb5166;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5167;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main___startrek_read_nxtway_gs_modeexitiii;
+v22107 := __startrek_round;
+v22108 := zero_extend(8, 64, v22107);
+v22109 := v22108;
+v22110 := select_array(v_nxtway_gs_mode_, v22108);
+v22111 := zero_extend(8, 32, v22110);
+TO: main___startrek_read_nxtway_gs_modeexitiii_end;
+
+FROM: main___startrek_read_nxtway_gs_modeexitiii_end;
+assume(v22111 slt 2);
+TO: main_LeafBlockiii;
+
+FROM: main___startrek_read_nxtway_gs_modeexitiii_end;
+assume(v22111 sge 2);
+TO: main_LeafBlock51iii;
+
+FROM: main_LeafBlockiii;
+var__temp_vi.0.i.i.i := 0;
+TO: main_LeafBlockiii_end;
+
+FROM: main_LeafBlockiii_end;
+assume(v22111 == 0);
+var__temp_vi.0.i.i.i := 0;
+TO: main_bb5168;
+
+FROM: main_LeafBlockiii_end;
+assume(v22111 != 0);
+TO: main___startrek_entry_pt_OSEK_Task_ts3exiti;
+
+FROM: main_bb5168;
+vi.0.i.i.i := var__temp_vi.0.i.i.i;
+TO: main_bb5168_end;
+
+FROM: main_bb5168_end;
+assume(vi.0.i.i.i slt 2);
+TO: main_bb5169;
+
+FROM: main_bb5168_end;
+assume(vi.0.i.i.i sge 2);
+TO: main___startrek_entry_pt_OSEK_Task_ts3exiti;
+
+FROM: main_bb5169;
+v22113 := sign_extend(32, 64, vi.0.i.i.i);
+v22114 := v22113;
+vbt_receive_buf := store_array(vbt_receive_buf, v22113, 0);
+v22115 := vi.0.i.i.i + 1;
+var__temp_vi.0.i.i.i := v22115;
+var__temp_vi.0.i.i.i := v22115;
+TO: main_bb5168;
+
+FROM: main_LeafBlock51iii;
+TO: main_LeafBlock51iii_end;
+
+FROM: main_LeafBlock51iii_end;
+assume(v22111 == 2);
+TO: main_bb5170;
+
+FROM: main_LeafBlock51iii_end;
+assume(v22111 != 2);
+TO: main___startrek_entry_pt_OSEK_Task_ts3exiti;
+
+FROM: main_bb5170;
+v22116 := nondet();
+v22117 := 0;
+vbt_receive_buf := store_array(vbt_receive_buf, 0, v22116);
+v22118 := nondet();
+v22119 := 1;
+vbt_receive_buf := store_array(vbt_receive_buf, 1, v22118);
+v22120 := __startrek_task;
+v22121 := zero_extend(8, 32, v22120);
+TO: main_bb5170_end;
+
+FROM: main_bb5170_end;
+assume(v22121 slt 1);
+TO: main_LeafBlocki3iii;
+
+FROM: main_bb5170_end;
+assume(v22121 sge 1);
+TO: main_LeafBlock4i8iii;
+
+FROM: main_LeafBlocki3iii;
+TO: main_LeafBlocki3iii_end;
+
+FROM: main_LeafBlocki3iii_end;
+assume(v22121 == 0);
+TO: main_bb5171;
+
+FROM: main_LeafBlocki3iii_end;
+assume(v22121 != 0);
+TO: main___startrek_read_obstacle_flagexitiii;
+
+FROM: main_bb5171;
+v22122 := __startrek_is_first_cs;
+v22123 := extract(0, 0, v22122);
+TO: main_bb5171_end;
+
+FROM: main_bb5171_end;
+assume(v22123 != 0);
+TO: main_bb5172;
+
+FROM: main_bb5171_end;
+assume(v22123 == 0);
+TO: main_bb5173;
+
+FROM: main_bb5172;
+__startrek_is_first_cs := 0;
+TO: main_bb5173;
+
+FROM: main_bb5173;
+v22124 := __startrek_lock;
+v22125 := extract(0, 0, v22124);
+TO: main_bb5173_end;
+
+FROM: main_bb5173_end;
+assume(v22125 != 0);
+TO: main___startrek_read_obstacle_flagexitiii;
+
+FROM: main_bb5173_end;
+assume(v22125 == 0);
+TO: main_bb5174;
+
+FROM: main_bb5174;
+TO: main_bb5174_v22126;
+
+FROM: main_bb5174_v22126;
+assume(nondet() != 0);
+v22126 := 1;
+TO: main_bb5174_sv22126;
+
+FROM: main_bb5174_v22126;
+assume(nondet() != 0);
+v22126 := 0;
+TO: main_bb5174_sv22126;
+
+FROM: main_bb5174_sv22126;
+v22127 := zero_extend(1, 8, v22126);
+v22128 := extract(0, 0, v22127);
+TO: main_bb5174_end;
+
+FROM: main_bb5174_end;
+assume(v22128 != 0);
+TO: main___startrek_read_obstacle_flagexitiii;
+
+FROM: main_bb5174_end;
+assume(v22128 == 0);
+TO: main_bb5175;
+
+FROM: main_bb5175;
+v22129 := __startrek_round;
+v22130 := nondet();
+__startrek_round := v22130;
+v22131 := __startrek_round;
+v22132 := zero_extend(8, 32, v22131);
+v22133 := zero_extend(8, 32, v22129);
+TO: main_bb5175_end;
+
+FROM: main_bb5175_end;
+assume(v22132 sgt v22133);
+TO: main___VERIFIER_assumeexitii4iii;
+
+FROM: main_bb5175_end;
+assume(v22132 sle v22133);
+TO: main_bb5182;
+
+FROM: main___VERIFIER_assumeexitii4iii;
+v22135 := __startrek_round;
+v22136 := zero_extend(8, 32, v22135);
+v22137 := __startrek_job_end;
+v22138 := zero_extend(8, 32, v22137);
+TO: main___VERIFIER_assumeexitii4iii_end;
+
+FROM: main___VERIFIER_assumeexitii4iii_end;
+assume(v22136 sle v22138);
+TO: main___VERIFIER_assumeexit1ii5iii;
+
+FROM: main___VERIFIER_assumeexitii4iii_end;
+assume(v22136 sgt v22138);
+TO: main_bb5181;
+
+FROM: main___VERIFIER_assumeexit1ii5iii;
+v22140 := __startrek_round;
+v22141 := zero_extend(8, 32, v22140);
+v22142 := __startrek_job_end;
+v22143 := zero_extend(8, 32, v22142);
+TO: main___VERIFIER_assumeexit1ii5iii_end;
+
+FROM: main___VERIFIER_assumeexit1ii5iii_end;
+assume(v22141 != v22143);
+TO: main_bb5176;
+
+FROM: main___VERIFIER_assumeexit1ii5iii_end;
+assume(v22141 == v22143);
+TO: main___startrek_read_obstacle_flagexitiii;
+
+FROM: main_bb5176;
+v22145 := 0;
+v22146 := select_array(v__startrek_start_t1, 0);
+v22147 := zero_extend(8, 32, v22146);
+v22148 := __startrek_round;
+v22149 := zero_extend(8, 32, v22148);
+TO: main_bb5176_end;
+
+FROM: main_bb5176_end;
+assume(v22147 slt v22149);
+TO: main_bb5177;
+
+FROM: main_bb5176_end;
+assume(v22147 sge v22149);
+TO: main___VERIFIER_assumeexit2ii6iii;
+
+FROM: main_bb5177;
+v22151 := __startrek_round;
+v22152 := zero_extend(8, 32, v22151);
+v22153 := 0;
+v22154 := select_array(v__startrek_end_t1, 0);
+v22155 := zero_extend(8, 32, v22154);
+TO: main_bb5177_end;
+
+FROM: main_bb5177_end;
+assume(v22152 sgt v22155);
+TO: main___VERIFIER_assumeexit2ii6iii;
+
+FROM: main_bb5177_end;
+assume(v22152 sle v22155);
+TO: main_bb5178;
+
+FROM: main_bb5178;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main___VERIFIER_assumeexit2ii6iii;
+v22157 := 1;
+v22158 := select_array(v__startrek_start_t1, 1);
+v22159 := zero_extend(8, 32, v22158);
+v22160 := __startrek_round;
+v22161 := zero_extend(8, 32, v22160);
+TO: main___VERIFIER_assumeexit2ii6iii_end;
+
+FROM: main___VERIFIER_assumeexit2ii6iii_end;
+assume(v22159 slt v22161);
+TO: main_bb5179;
+
+FROM: main___VERIFIER_assumeexit2ii6iii_end;
+assume(v22159 sge v22161);
+TO: main___startrek_read_obstacle_flagexitiii;
+
+FROM: main_bb5179;
+v22163 := __startrek_round;
+v22164 := zero_extend(8, 32, v22163);
+v22165 := 1;
+v22166 := select_array(v__startrek_end_t1, 1);
+v22167 := zero_extend(8, 32, v22166);
+TO: main_bb5179_end;
+
+FROM: main_bb5179_end;
+assume(v22164 sgt v22167);
+TO: main___startrek_read_obstacle_flagexitiii;
+
+FROM: main_bb5179_end;
+assume(v22164 sle v22167);
+TO: main_bb5180;
+
+FROM: main_bb5180;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5181;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5182;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_LeafBlock4i8iii;
+TO: main_LeafBlock4i8iii_end;
+
+FROM: main_LeafBlock4i8iii_end;
+assume(v22121 == 1);
+TO: main_bb5183;
+
+FROM: main_LeafBlock4i8iii_end;
+assume(v22121 != 1);
+TO: main___startrek_read_obstacle_flagexitiii;
+
+FROM: main_bb5183;
+v22169 := __startrek_is_first_cs;
+v22170 := extract(0, 0, v22169);
+TO: main_bb5183_end;
+
+FROM: main_bb5183_end;
+assume(v22170 != 0);
+TO: main_bb5184;
+
+FROM: main_bb5183_end;
+assume(v22170 == 0);
+TO: main_bb5185;
+
+FROM: main_bb5184;
+__startrek_is_first_cs := 0;
+TO: main_bb5185;
+
+FROM: main_bb5185;
+v22171 := __startrek_lock;
+v22172 := extract(0, 0, v22171);
+TO: main_bb5185_end;
+
+FROM: main_bb5185_end;
+assume(v22172 != 0);
+TO: main___startrek_read_obstacle_flagexitiii;
+
+FROM: main_bb5185_end;
+assume(v22172 == 0);
+TO: main_bb5186;
+
+FROM: main_bb5186;
+TO: main_bb5186_v22173;
+
+FROM: main_bb5186_v22173;
+assume(nondet() != 0);
+v22173 := 1;
+TO: main_bb5186_sv22173;
+
+FROM: main_bb5186_v22173;
+assume(nondet() != 0);
+v22173 := 0;
+TO: main_bb5186_sv22173;
+
+FROM: main_bb5186_sv22173;
+v22174 := zero_extend(1, 8, v22173);
+v22175 := extract(0, 0, v22174);
+TO: main_bb5186_end;
+
+FROM: main_bb5186_end;
+assume(v22175 != 0);
+TO: main___startrek_read_obstacle_flagexitiii;
+
+FROM: main_bb5186_end;
+assume(v22175 == 0);
+TO: main_bb5187;
+
+FROM: main_bb5187;
+v22176 := __startrek_round;
+v22177 := nondet();
+__startrek_round := v22177;
+v22178 := __startrek_round;
+v22179 := zero_extend(8, 32, v22178);
+v22180 := zero_extend(8, 32, v22176);
+TO: main_bb5187_end;
+
+FROM: main_bb5187_end;
+assume(v22179 sgt v22180);
+TO: main___VERIFIER_assumeexiti1i9iii;
+
+FROM: main_bb5187_end;
+assume(v22179 sle v22180);
+TO: main_bb5189;
+
+FROM: main___VERIFIER_assumeexiti1i9iii;
+v22182 := __startrek_round;
+v22183 := zero_extend(8, 32, v22182);
+v22184 := __startrek_job_end;
+v22185 := zero_extend(8, 32, v22184);
+TO: main___VERIFIER_assumeexiti1i9iii_end;
+
+FROM: main___VERIFIER_assumeexiti1i9iii_end;
+assume(v22183 sle v22185);
+TO: main___startrek_read_obstacle_flagexitiii;
+
+FROM: main___VERIFIER_assumeexiti1i9iii_end;
+assume(v22183 sgt v22185);
+TO: main_bb5188;
+
+FROM: main_bb5188;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5189;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main___startrek_read_obstacle_flagexitiii;
+v22187 := __startrek_round;
+v22188 := zero_extend(8, 64, v22187);
+v22189 := v22188;
+v22190 := select_array(v_obstacle_flag_, v22188);
+v22191 := extract(0, 0, v22190);
+TO: main___startrek_read_obstacle_flagexitiii_v22191;
+
+FROM: main___startrek_read_obstacle_flagexitiii_v22191;
+assume(v22191 != 0);
+v22191 := 1;
+TO: main___startrek_read_obstacle_flagexitiii_sv22191;
+
+FROM: main___startrek_read_obstacle_flagexitiii_v22191;
+assume(v22191 == 0);
+v22191 := 0;
+TO: main___startrek_read_obstacle_flagexitiii_sv22191;
+
+FROM: main___startrek_read_obstacle_flagexitiii_sv22191;
+v22192 := zero_extend(1, 8, v22191);
+v22193 := extract(0, 0, v22192);
+TO: main___startrek_read_obstacle_flagexitiii_v22193;
+
+FROM: main___startrek_read_obstacle_flagexitiii_v22193;
+assume(v22193 != 0);
+v22193 := 1;
+TO: main___startrek_read_obstacle_flagexitiii_sv22193;
+
+FROM: main___startrek_read_obstacle_flagexitiii_v22193;
+assume(v22193 == 0);
+v22193 := 0;
+TO: main___startrek_read_obstacle_flagexitiii_sv22193;
+
+FROM: main___startrek_read_obstacle_flagexitiii_sv22193;
+v22194 := zero_extend(1, 8, v22193);
+v22195 := extract(0, 0, v22194);
+var__temp_vwrote.0.i.i.i := 0;
+TO: main___startrek_read_obstacle_flagexitiii_end;
+
+FROM: main___startrek_read_obstacle_flagexitiii_end;
+assume(v22195 != 0);
+var__temp_vwrote.0.i.i.i := 0;
+TO: main_bb5229;
+
+FROM: main___startrek_read_obstacle_flagexitiii_end;
+assume(v22195 == 0);
+TO: main_bb5190;
+
+FROM: main_bb5190;
+v22196 := 0;
+v22197 := select_array(vbt_receive_buf, 0);
+v22198 := sign_extend(8, 32, v22197);
+v22199 := 0 - v22198;
+v22200 := extract(7, 0, v22199);
+v22201 := __startrek_task;
+v22202 := zero_extend(8, 32, v22201);
+TO: main_bb5190_end;
+
+FROM: main_bb5190_end;
+assume(v22202 slt 1);
+TO: main_LeafBlocki13iii;
+
+FROM: main_bb5190_end;
+assume(v22202 sge 1);
+TO: main_LeafBlock4i18iii;
+
+FROM: main_LeafBlocki13iii;
+TO: main_LeafBlocki13iii_end;
+
+FROM: main_LeafBlocki13iii_end;
+assume(v22202 == 0);
+TO: main_bb5191;
+
+FROM: main_LeafBlocki13iii_end;
+assume(v22202 != 0);
+TO: main___startrek_write_cmd_forwardexitiii;
+
+FROM: main_bb5191;
+v22203 := __startrek_is_first_cs;
+v22204 := extract(0, 0, v22203);
+TO: main_bb5191_end;
+
+FROM: main_bb5191_end;
+assume(v22204 != 0);
+TO: main_bb5192;
+
+FROM: main_bb5191_end;
+assume(v22204 == 0);
+TO: main_bb5193;
+
+FROM: main_bb5192;
+__startrek_is_first_cs := 0;
+TO: main_bb5193;
+
+FROM: main_bb5193;
+v22205 := __startrek_lock;
+v22206 := extract(0, 0, v22205);
+TO: main_bb5193_end;
+
+FROM: main_bb5193_end;
+assume(v22206 != 0);
+TO: main___startrek_write_cmd_forwardexitiii;
+
+FROM: main_bb5193_end;
+assume(v22206 == 0);
+TO: main_bb5194;
+
+FROM: main_bb5194;
+TO: main_bb5194_v22207;
+
+FROM: main_bb5194_v22207;
+assume(nondet() != 0);
+v22207 := 1;
+TO: main_bb5194_sv22207;
+
+FROM: main_bb5194_v22207;
+assume(nondet() != 0);
+v22207 := 0;
+TO: main_bb5194_sv22207;
+
+FROM: main_bb5194_sv22207;
+v22208 := zero_extend(1, 8, v22207);
+v22209 := extract(0, 0, v22208);
+TO: main_bb5194_end;
+
+FROM: main_bb5194_end;
+assume(v22209 != 0);
+TO: main___startrek_write_cmd_forwardexitiii;
+
+FROM: main_bb5194_end;
+assume(v22209 == 0);
+TO: main_bb5195;
+
+FROM: main_bb5195;
+v22210 := __startrek_round;
+v22211 := nondet();
+__startrek_round := v22211;
+v22212 := __startrek_round;
+v22213 := zero_extend(8, 32, v22212);
+v22214 := zero_extend(8, 32, v22210);
+TO: main_bb5195_end;
+
+FROM: main_bb5195_end;
+assume(v22213 sgt v22214);
+TO: main___VERIFIER_assumeexitii14iii;
+
+FROM: main_bb5195_end;
+assume(v22213 sle v22214);
+TO: main_bb5202;
+
+FROM: main___VERIFIER_assumeexitii14iii;
+v22216 := __startrek_round;
+v22217 := zero_extend(8, 32, v22216);
+v22218 := __startrek_job_end;
+v22219 := zero_extend(8, 32, v22218);
+TO: main___VERIFIER_assumeexitii14iii_end;
+
+FROM: main___VERIFIER_assumeexitii14iii_end;
+assume(v22217 sle v22219);
+TO: main___VERIFIER_assumeexit1ii15iii;
+
+FROM: main___VERIFIER_assumeexitii14iii_end;
+assume(v22217 sgt v22219);
+TO: main_bb5201;
+
+FROM: main___VERIFIER_assumeexit1ii15iii;
+v22221 := __startrek_round;
+v22222 := zero_extend(8, 32, v22221);
+v22223 := __startrek_job_end;
+v22224 := zero_extend(8, 32, v22223);
+TO: main___VERIFIER_assumeexit1ii15iii_end;
+
+FROM: main___VERIFIER_assumeexit1ii15iii_end;
+assume(v22222 != v22224);
+TO: main_bb5196;
+
+FROM: main___VERIFIER_assumeexit1ii15iii_end;
+assume(v22222 == v22224);
+TO: main___startrek_write_cmd_forwardexitiii;
+
+FROM: main_bb5196;
+v22226 := 0;
+v22227 := select_array(v__startrek_start_t1, 0);
+v22228 := zero_extend(8, 32, v22227);
+v22229 := __startrek_round;
+v22230 := zero_extend(8, 32, v22229);
+TO: main_bb5196_end;
+
+FROM: main_bb5196_end;
+assume(v22228 slt v22230);
+TO: main_bb5197;
+
+FROM: main_bb5196_end;
+assume(v22228 sge v22230);
+TO: main___VERIFIER_assumeexit2ii16iii;
+
+FROM: main_bb5197;
+v22232 := __startrek_round;
+v22233 := zero_extend(8, 32, v22232);
+v22234 := 0;
+v22235 := select_array(v__startrek_end_t1, 0);
+v22236 := zero_extend(8, 32, v22235);
+TO: main_bb5197_end;
+
+FROM: main_bb5197_end;
+assume(v22233 sgt v22236);
+TO: main___VERIFIER_assumeexit2ii16iii;
+
+FROM: main_bb5197_end;
+assume(v22233 sle v22236);
+TO: main_bb5198;
+
+FROM: main_bb5198;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main___VERIFIER_assumeexit2ii16iii;
+v22238 := 1;
+v22239 := select_array(v__startrek_start_t1, 1);
+v22240 := zero_extend(8, 32, v22239);
+v22241 := __startrek_round;
+v22242 := zero_extend(8, 32, v22241);
+TO: main___VERIFIER_assumeexit2ii16iii_end;
+
+FROM: main___VERIFIER_assumeexit2ii16iii_end;
+assume(v22240 slt v22242);
+TO: main_bb5199;
+
+FROM: main___VERIFIER_assumeexit2ii16iii_end;
+assume(v22240 sge v22242);
+TO: main___startrek_write_cmd_forwardexitiii;
+
+FROM: main_bb5199;
+v22244 := __startrek_round;
+v22245 := zero_extend(8, 32, v22244);
+v22246 := 1;
+v22247 := select_array(v__startrek_end_t1, 1);
+v22248 := zero_extend(8, 32, v22247);
+TO: main_bb5199_end;
+
+FROM: main_bb5199_end;
+assume(v22245 sgt v22248);
+TO: main___startrek_write_cmd_forwardexitiii;
+
+FROM: main_bb5199_end;
+assume(v22245 sle v22248);
+TO: main_bb5200;
+
+FROM: main_bb5200;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5201;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5202;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_LeafBlock4i18iii;
+TO: main_LeafBlock4i18iii_end;
+
+FROM: main_LeafBlock4i18iii_end;
+assume(v22202 == 1);
+TO: main_bb5203;
+
+FROM: main_LeafBlock4i18iii_end;
+assume(v22202 != 1);
+TO: main___startrek_write_cmd_forwardexitiii;
+
+FROM: main_bb5203;
+v22250 := __startrek_is_first_cs;
+v22251 := extract(0, 0, v22250);
+TO: main_bb5203_end;
+
+FROM: main_bb5203_end;
+assume(v22251 != 0);
+TO: main_bb5204;
+
+FROM: main_bb5203_end;
+assume(v22251 == 0);
+TO: main_bb5205;
+
+FROM: main_bb5204;
+__startrek_is_first_cs := 0;
+TO: main_bb5205;
+
+FROM: main_bb5205;
+v22252 := __startrek_lock;
+v22253 := extract(0, 0, v22252);
+TO: main_bb5205_end;
+
+FROM: main_bb5205_end;
+assume(v22253 != 0);
+TO: main___startrek_write_cmd_forwardexitiii;
+
+FROM: main_bb5205_end;
+assume(v22253 == 0);
+TO: main_bb5206;
+
+FROM: main_bb5206;
+TO: main_bb5206_v22254;
+
+FROM: main_bb5206_v22254;
+assume(nondet() != 0);
+v22254 := 1;
+TO: main_bb5206_sv22254;
+
+FROM: main_bb5206_v22254;
+assume(nondet() != 0);
+v22254 := 0;
+TO: main_bb5206_sv22254;
+
+FROM: main_bb5206_sv22254;
+v22255 := zero_extend(1, 8, v22254);
+v22256 := extract(0, 0, v22255);
+TO: main_bb5206_end;
+
+FROM: main_bb5206_end;
+assume(v22256 != 0);
+TO: main___startrek_write_cmd_forwardexitiii;
+
+FROM: main_bb5206_end;
+assume(v22256 == 0);
+TO: main_bb5207;
+
+FROM: main_bb5207;
+v22257 := __startrek_round;
+v22258 := nondet();
+__startrek_round := v22258;
+v22259 := __startrek_round;
+v22260 := zero_extend(8, 32, v22259);
+v22261 := zero_extend(8, 32, v22257);
+TO: main_bb5207_end;
+
+FROM: main_bb5207_end;
+assume(v22260 sgt v22261);
+TO: main___VERIFIER_assumeexiti1i19iii;
+
+FROM: main_bb5207_end;
+assume(v22260 sle v22261);
+TO: main_bb5209;
+
+FROM: main___VERIFIER_assumeexiti1i19iii;
+v22263 := __startrek_round;
+v22264 := zero_extend(8, 32, v22263);
+v22265 := __startrek_job_end;
+v22266 := zero_extend(8, 32, v22265);
+TO: main___VERIFIER_assumeexiti1i19iii_end;
+
+FROM: main___VERIFIER_assumeexiti1i19iii_end;
+assume(v22264 sle v22266);
+TO: main___startrek_write_cmd_forwardexitiii;
+
+FROM: main___VERIFIER_assumeexiti1i19iii_end;
+assume(v22264 sgt v22266);
+TO: main_bb5208;
+
+FROM: main_bb5208;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5209;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main___startrek_write_cmd_forwardexitiii;
+v22268 := __startrek_round;
+v22269 := zero_extend(8, 64, v22268);
+v22270 := v22269;
+v_cmd_forward_ := store_array(v_cmd_forward_, v22269, v22200);
+v22271 := 1;
+v22272 := select_array(vbt_receive_buf, 1);
+v22273 := __startrek_task;
+v22274 := zero_extend(8, 32, v22273);
+TO: main___startrek_write_cmd_forwardexitiii_end;
+
+FROM: main___startrek_write_cmd_forwardexitiii_end;
+assume(v22274 slt 1);
+TO: main_LeafBlocki23iii;
+
+FROM: main___startrek_write_cmd_forwardexitiii_end;
+assume(v22274 sge 1);
+TO: main_LeafBlock4i28iii;
+
+FROM: main_LeafBlocki23iii;
+TO: main_LeafBlocki23iii_end;
+
+FROM: main_LeafBlocki23iii_end;
+assume(v22274 == 0);
+TO: main_bb5210;
+
+FROM: main_LeafBlocki23iii_end;
+assume(v22274 != 0);
+TO: main___startrek_write_cmd_turnexitiii;
+
+FROM: main_bb5210;
+v22275 := __startrek_is_first_cs;
+v22276 := extract(0, 0, v22275);
+TO: main_bb5210_end;
+
+FROM: main_bb5210_end;
+assume(v22276 != 0);
+TO: main_bb5211;
+
+FROM: main_bb5210_end;
+assume(v22276 == 0);
+TO: main_bb5212;
+
+FROM: main_bb5211;
+__startrek_is_first_cs := 0;
+TO: main_bb5212;
+
+FROM: main_bb5212;
+v22277 := __startrek_lock;
+v22278 := extract(0, 0, v22277);
+TO: main_bb5212_end;
+
+FROM: main_bb5212_end;
+assume(v22278 != 0);
+TO: main___startrek_write_cmd_turnexitiii;
+
+FROM: main_bb5212_end;
+assume(v22278 == 0);
+TO: main_bb5213;
+
+FROM: main_bb5213;
+TO: main_bb5213_v22279;
+
+FROM: main_bb5213_v22279;
+assume(nondet() != 0);
+v22279 := 1;
+TO: main_bb5213_sv22279;
+
+FROM: main_bb5213_v22279;
+assume(nondet() != 0);
+v22279 := 0;
+TO: main_bb5213_sv22279;
+
+FROM: main_bb5213_sv22279;
+v22280 := zero_extend(1, 8, v22279);
+v22281 := extract(0, 0, v22280);
+TO: main_bb5213_end;
+
+FROM: main_bb5213_end;
+assume(v22281 != 0);
+TO: main___startrek_write_cmd_turnexitiii;
+
+FROM: main_bb5213_end;
+assume(v22281 == 0);
+TO: main_bb5214;
+
+FROM: main_bb5214;
+v22282 := __startrek_round;
+v22283 := nondet();
+__startrek_round := v22283;
+v22284 := __startrek_round;
+v22285 := zero_extend(8, 32, v22284);
+v22286 := zero_extend(8, 32, v22282);
+TO: main_bb5214_end;
+
+FROM: main_bb5214_end;
+assume(v22285 sgt v22286);
+TO: main___VERIFIER_assumeexitii24iii;
+
+FROM: main_bb5214_end;
+assume(v22285 sle v22286);
+TO: main_bb5221;
+
+FROM: main___VERIFIER_assumeexitii24iii;
+v22288 := __startrek_round;
+v22289 := zero_extend(8, 32, v22288);
+v22290 := __startrek_job_end;
+v22291 := zero_extend(8, 32, v22290);
+TO: main___VERIFIER_assumeexitii24iii_end;
+
+FROM: main___VERIFIER_assumeexitii24iii_end;
+assume(v22289 sle v22291);
+TO: main___VERIFIER_assumeexit1ii25iii;
+
+FROM: main___VERIFIER_assumeexitii24iii_end;
+assume(v22289 sgt v22291);
+TO: main_bb5220;
+
+FROM: main___VERIFIER_assumeexit1ii25iii;
+v22293 := __startrek_round;
+v22294 := zero_extend(8, 32, v22293);
+v22295 := __startrek_job_end;
+v22296 := zero_extend(8, 32, v22295);
+TO: main___VERIFIER_assumeexit1ii25iii_end;
+
+FROM: main___VERIFIER_assumeexit1ii25iii_end;
+assume(v22294 != v22296);
+TO: main_bb5215;
+
+FROM: main___VERIFIER_assumeexit1ii25iii_end;
+assume(v22294 == v22296);
+TO: main___startrek_write_cmd_turnexitiii;
+
+FROM: main_bb5215;
+v22298 := 0;
+v22299 := select_array(v__startrek_start_t1, 0);
+v22300 := zero_extend(8, 32, v22299);
+v22301 := __startrek_round;
+v22302 := zero_extend(8, 32, v22301);
+TO: main_bb5215_end;
+
+FROM: main_bb5215_end;
+assume(v22300 slt v22302);
+TO: main_bb5216;
+
+FROM: main_bb5215_end;
+assume(v22300 sge v22302);
+TO: main___VERIFIER_assumeexit2ii26iii;
+
+FROM: main_bb5216;
+v22304 := __startrek_round;
+v22305 := zero_extend(8, 32, v22304);
+v22306 := 0;
+v22307 := select_array(v__startrek_end_t1, 0);
+v22308 := zero_extend(8, 32, v22307);
+TO: main_bb5216_end;
+
+FROM: main_bb5216_end;
+assume(v22305 sgt v22308);
+TO: main___VERIFIER_assumeexit2ii26iii;
+
+FROM: main_bb5216_end;
+assume(v22305 sle v22308);
+TO: main_bb5217;
+
+FROM: main_bb5217;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main___VERIFIER_assumeexit2ii26iii;
+v22310 := 1;
+v22311 := select_array(v__startrek_start_t1, 1);
+v22312 := zero_extend(8, 32, v22311);
+v22313 := __startrek_round;
+v22314 := zero_extend(8, 32, v22313);
+TO: main___VERIFIER_assumeexit2ii26iii_end;
+
+FROM: main___VERIFIER_assumeexit2ii26iii_end;
+assume(v22312 slt v22314);
+TO: main_bb5218;
+
+FROM: main___VERIFIER_assumeexit2ii26iii_end;
+assume(v22312 sge v22314);
+TO: main___startrek_write_cmd_turnexitiii;
+
+FROM: main_bb5218;
+v22316 := __startrek_round;
+v22317 := zero_extend(8, 32, v22316);
+v22318 := 1;
+v22319 := select_array(v__startrek_end_t1, 1);
+v22320 := zero_extend(8, 32, v22319);
+TO: main_bb5218_end;
+
+FROM: main_bb5218_end;
+assume(v22317 sgt v22320);
+TO: main___startrek_write_cmd_turnexitiii;
+
+FROM: main_bb5218_end;
+assume(v22317 sle v22320);
+TO: main_bb5219;
+
+FROM: main_bb5219;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5220;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5221;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_LeafBlock4i28iii;
+TO: main_LeafBlock4i28iii_end;
+
+FROM: main_LeafBlock4i28iii_end;
+assume(v22274 == 1);
+TO: main_bb5222;
+
+FROM: main_LeafBlock4i28iii_end;
+assume(v22274 != 1);
+TO: main___startrek_write_cmd_turnexitiii;
+
+FROM: main_bb5222;
+v22322 := __startrek_is_first_cs;
+v22323 := extract(0, 0, v22322);
+TO: main_bb5222_end;
+
+FROM: main_bb5222_end;
+assume(v22323 != 0);
+TO: main_bb5223;
+
+FROM: main_bb5222_end;
+assume(v22323 == 0);
+TO: main_bb5224;
+
+FROM: main_bb5223;
+__startrek_is_first_cs := 0;
+TO: main_bb5224;
+
+FROM: main_bb5224;
+v22324 := __startrek_lock;
+v22325 := extract(0, 0, v22324);
+TO: main_bb5224_end;
+
+FROM: main_bb5224_end;
+assume(v22325 != 0);
+TO: main___startrek_write_cmd_turnexitiii;
+
+FROM: main_bb5224_end;
+assume(v22325 == 0);
+TO: main_bb5225;
+
+FROM: main_bb5225;
+TO: main_bb5225_v22326;
+
+FROM: main_bb5225_v22326;
+assume(nondet() != 0);
+v22326 := 1;
+TO: main_bb5225_sv22326;
+
+FROM: main_bb5225_v22326;
+assume(nondet() != 0);
+v22326 := 0;
+TO: main_bb5225_sv22326;
+
+FROM: main_bb5225_sv22326;
+v22327 := zero_extend(1, 8, v22326);
+v22328 := extract(0, 0, v22327);
+TO: main_bb5225_end;
+
+FROM: main_bb5225_end;
+assume(v22328 != 0);
+TO: main___startrek_write_cmd_turnexitiii;
+
+FROM: main_bb5225_end;
+assume(v22328 == 0);
+TO: main_bb5226;
+
+FROM: main_bb5226;
+v22329 := __startrek_round;
+v22330 := nondet();
+__startrek_round := v22330;
+v22331 := __startrek_round;
+v22332 := zero_extend(8, 32, v22331);
+v22333 := zero_extend(8, 32, v22329);
+TO: main_bb5226_end;
+
+FROM: main_bb5226_end;
+assume(v22332 sgt v22333);
+TO: main___VERIFIER_assumeexiti1i29iii;
+
+FROM: main_bb5226_end;
+assume(v22332 sle v22333);
+TO: main_bb5228;
+
+FROM: main___VERIFIER_assumeexiti1i29iii;
+v22335 := __startrek_round;
+v22336 := zero_extend(8, 32, v22335);
+v22337 := __startrek_job_end;
+v22338 := zero_extend(8, 32, v22337);
+TO: main___VERIFIER_assumeexiti1i29iii_end;
+
+FROM: main___VERIFIER_assumeexiti1i29iii_end;
+assume(v22336 sle v22338);
+TO: main___startrek_write_cmd_turnexitiii;
+
+FROM: main___VERIFIER_assumeexiti1i29iii_end;
+assume(v22336 sgt v22338);
+TO: main_bb5227;
+
+FROM: main_bb5227;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5228;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main___startrek_write_cmd_turnexitiii;
+v22340 := __startrek_round;
+v22341 := zero_extend(8, 64, v22340);
+v22342 := v22341;
+v_cmd_turn_ := store_array(v_cmd_turn_, v22341, v22272);
+var__temp_vwrote.0.i.i.i := 1;
+var__temp_vwrote.0.i.i.i := 1;
+TO: main_bb5229;
+
+FROM: main_bb5229;
+vwrote.0.i.i.i := var__temp_vwrote.0.i.i.i;
+v22343 := extract(0, 0, vwrote.0.i.i.i);
+TO: main_bb5229_end;
+
+FROM: main_bb5229_end;
+assume(v22343 != 0);
+TO: main_bb5230;
+
+FROM: main_bb5229_end;
+assume(v22343 == 0);
+TO: main___startrek_entry_pt_OSEK_Task_ts3exiti;
+
+FROM: main_bb5230;
+v22344 := __startrek_task;
+v22345 := zero_extend(8, 32, v22344);
+TO: main_bb5230_end;
+
+FROM: main_bb5230_end;
+assume(v22345 slt 1);
+TO: main_LeafBlocki33iii;
+
+FROM: main_bb5230_end;
+assume(v22345 sge 1);
+TO: main_LeafBlock4i38iii;
+
+FROM: main_LeafBlocki33iii;
+TO: main_LeafBlocki33iii_end;
+
+FROM: main_LeafBlocki33iii_end;
+assume(v22345 == 0);
+TO: main_bb5231;
+
+FROM: main_LeafBlocki33iii_end;
+assume(v22345 != 0);
+TO: main___startrek_read_cmd_turnexitiii;
+
+FROM: main_bb5231;
+v22346 := __startrek_is_first_cs;
+v22347 := extract(0, 0, v22346);
+TO: main_bb5231_end;
+
+FROM: main_bb5231_end;
+assume(v22347 != 0);
+TO: main_bb5232;
+
+FROM: main_bb5231_end;
+assume(v22347 == 0);
+TO: main_bb5233;
+
+FROM: main_bb5232;
+__startrek_is_first_cs := 0;
+TO: main_bb5233;
+
+FROM: main_bb5233;
+v22348 := __startrek_lock;
+v22349 := extract(0, 0, v22348);
+TO: main_bb5233_end;
+
+FROM: main_bb5233_end;
+assume(v22349 != 0);
+TO: main___startrek_read_cmd_turnexitiii;
+
+FROM: main_bb5233_end;
+assume(v22349 == 0);
+TO: main_bb5234;
+
+FROM: main_bb5234;
+TO: main_bb5234_v22350;
+
+FROM: main_bb5234_v22350;
+assume(nondet() != 0);
+v22350 := 1;
+TO: main_bb5234_sv22350;
+
+FROM: main_bb5234_v22350;
+assume(nondet() != 0);
+v22350 := 0;
+TO: main_bb5234_sv22350;
+
+FROM: main_bb5234_sv22350;
+v22351 := zero_extend(1, 8, v22350);
+v22352 := extract(0, 0, v22351);
+TO: main_bb5234_end;
+
+FROM: main_bb5234_end;
+assume(v22352 != 0);
+TO: main___startrek_read_cmd_turnexitiii;
+
+FROM: main_bb5234_end;
+assume(v22352 == 0);
+TO: main_bb5235;
+
+FROM: main_bb5235;
+v22353 := __startrek_round;
+v22354 := nondet();
+__startrek_round := v22354;
+v22355 := __startrek_round;
+v22356 := zero_extend(8, 32, v22355);
+v22357 := zero_extend(8, 32, v22353);
+TO: main_bb5235_end;
+
+FROM: main_bb5235_end;
+assume(v22356 sgt v22357);
+TO: main___VERIFIER_assumeexitii34iii;
+
+FROM: main_bb5235_end;
+assume(v22356 sle v22357);
+TO: main_bb5242;
+
+FROM: main___VERIFIER_assumeexitii34iii;
+v22359 := __startrek_round;
+v22360 := zero_extend(8, 32, v22359);
+v22361 := __startrek_job_end;
+v22362 := zero_extend(8, 32, v22361);
+TO: main___VERIFIER_assumeexitii34iii_end;
+
+FROM: main___VERIFIER_assumeexitii34iii_end;
+assume(v22360 sle v22362);
+TO: main___VERIFIER_assumeexit1ii35iii;
+
+FROM: main___VERIFIER_assumeexitii34iii_end;
+assume(v22360 sgt v22362);
+TO: main_bb5241;
+
+FROM: main___VERIFIER_assumeexit1ii35iii;
+v22364 := __startrek_round;
+v22365 := zero_extend(8, 32, v22364);
+v22366 := __startrek_job_end;
+v22367 := zero_extend(8, 32, v22366);
+TO: main___VERIFIER_assumeexit1ii35iii_end;
+
+FROM: main___VERIFIER_assumeexit1ii35iii_end;
+assume(v22365 != v22367);
+TO: main_bb5236;
+
+FROM: main___VERIFIER_assumeexit1ii35iii_end;
+assume(v22365 == v22367);
+TO: main___startrek_read_cmd_turnexitiii;
+
+FROM: main_bb5236;
+v22369 := 0;
+v22370 := select_array(v__startrek_start_t1, 0);
+v22371 := zero_extend(8, 32, v22370);
+v22372 := __startrek_round;
+v22373 := zero_extend(8, 32, v22372);
+TO: main_bb5236_end;
+
+FROM: main_bb5236_end;
+assume(v22371 slt v22373);
+TO: main_bb5237;
+
+FROM: main_bb5236_end;
+assume(v22371 sge v22373);
+TO: main___VERIFIER_assumeexit2ii36iii;
+
+FROM: main_bb5237;
+v22375 := __startrek_round;
+v22376 := zero_extend(8, 32, v22375);
+v22377 := 0;
+v22378 := select_array(v__startrek_end_t1, 0);
+v22379 := zero_extend(8, 32, v22378);
+TO: main_bb5237_end;
+
+FROM: main_bb5237_end;
+assume(v22376 sgt v22379);
+TO: main___VERIFIER_assumeexit2ii36iii;
+
+FROM: main_bb5237_end;
+assume(v22376 sle v22379);
+TO: main_bb5238;
+
+FROM: main_bb5238;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main___VERIFIER_assumeexit2ii36iii;
+v22381 := 1;
+v22382 := select_array(v__startrek_start_t1, 1);
+v22383 := zero_extend(8, 32, v22382);
+v22384 := __startrek_round;
+v22385 := zero_extend(8, 32, v22384);
+TO: main___VERIFIER_assumeexit2ii36iii_end;
+
+FROM: main___VERIFIER_assumeexit2ii36iii_end;
+assume(v22383 slt v22385);
+TO: main_bb5239;
+
+FROM: main___VERIFIER_assumeexit2ii36iii_end;
+assume(v22383 sge v22385);
+TO: main___startrek_read_cmd_turnexitiii;
+
+FROM: main_bb5239;
+v22387 := __startrek_round;
+v22388 := zero_extend(8, 32, v22387);
+v22389 := 1;
+v22390 := select_array(v__startrek_end_t1, 1);
+v22391 := zero_extend(8, 32, v22390);
+TO: main_bb5239_end;
+
+FROM: main_bb5239_end;
+assume(v22388 sgt v22391);
+TO: main___startrek_read_cmd_turnexitiii;
+
+FROM: main_bb5239_end;
+assume(v22388 sle v22391);
+TO: main_bb5240;
+
+FROM: main_bb5240;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5241;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5242;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_LeafBlock4i38iii;
+TO: main_LeafBlock4i38iii_end;
+
+FROM: main_LeafBlock4i38iii_end;
+assume(v22345 == 1);
+TO: main_bb5243;
+
+FROM: main_LeafBlock4i38iii_end;
+assume(v22345 != 1);
+TO: main___startrek_read_cmd_turnexitiii;
+
+FROM: main_bb5243;
+v22393 := __startrek_is_first_cs;
+v22394 := extract(0, 0, v22393);
+TO: main_bb5243_end;
+
+FROM: main_bb5243_end;
+assume(v22394 != 0);
+TO: main_bb5244;
+
+FROM: main_bb5243_end;
+assume(v22394 == 0);
+TO: main_bb5245;
+
+FROM: main_bb5244;
+__startrek_is_first_cs := 0;
+TO: main_bb5245;
+
+FROM: main_bb5245;
+v22395 := __startrek_lock;
+v22396 := extract(0, 0, v22395);
+TO: main_bb5245_end;
+
+FROM: main_bb5245_end;
+assume(v22396 != 0);
+TO: main___startrek_read_cmd_turnexitiii;
+
+FROM: main_bb5245_end;
+assume(v22396 == 0);
+TO: main_bb5246;
+
+FROM: main_bb5246;
+TO: main_bb5246_v22397;
+
+FROM: main_bb5246_v22397;
+assume(nondet() != 0);
+v22397 := 1;
+TO: main_bb5246_sv22397;
+
+FROM: main_bb5246_v22397;
+assume(nondet() != 0);
+v22397 := 0;
+TO: main_bb5246_sv22397;
+
+FROM: main_bb5246_sv22397;
+v22398 := zero_extend(1, 8, v22397);
+v22399 := extract(0, 0, v22398);
+TO: main_bb5246_end;
+
+FROM: main_bb5246_end;
+assume(v22399 != 0);
+TO: main___startrek_read_cmd_turnexitiii;
+
+FROM: main_bb5246_end;
+assume(v22399 == 0);
+TO: main_bb5247;
+
+FROM: main_bb5247;
+v22400 := __startrek_round;
+v22401 := nondet();
+__startrek_round := v22401;
+v22402 := __startrek_round;
+v22403 := zero_extend(8, 32, v22402);
+v22404 := zero_extend(8, 32, v22400);
+TO: main_bb5247_end;
+
+FROM: main_bb5247_end;
+assume(v22403 sgt v22404);
+TO: main___VERIFIER_assumeexiti1i39iii;
+
+FROM: main_bb5247_end;
+assume(v22403 sle v22404);
+TO: main_bb5249;
+
+FROM: main___VERIFIER_assumeexiti1i39iii;
+v22406 := __startrek_round;
+v22407 := zero_extend(8, 32, v22406);
+v22408 := __startrek_job_end;
+v22409 := zero_extend(8, 32, v22408);
+TO: main___VERIFIER_assumeexiti1i39iii_end;
+
+FROM: main___VERIFIER_assumeexiti1i39iii_end;
+assume(v22407 sle v22409);
+TO: main___startrek_read_cmd_turnexitiii;
+
+FROM: main___VERIFIER_assumeexiti1i39iii_end;
+assume(v22407 sgt v22409);
+TO: main_bb5248;
+
+FROM: main_bb5248;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5249;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main___startrek_read_cmd_turnexitiii;
+v22411 := __startrek_round;
+v22412 := zero_extend(8, 64, v22411);
+v22413 := v22412;
+v22414 := select_array(v_cmd_turn_, v22412);
+v22415 := __startrek_task;
+v22416 := zero_extend(8, 32, v22415);
+TO: main___startrek_read_cmd_turnexitiii_end;
+
+FROM: main___startrek_read_cmd_turnexitiii_end;
+assume(v22416 slt 1);
+TO: main_LeafBlocki43iii;
+
+FROM: main___startrek_read_cmd_turnexitiii_end;
+assume(v22416 sge 1);
+TO: main_LeafBlock4i48iii;
+
+FROM: main_LeafBlocki43iii;
+TO: main_LeafBlocki43iii_end;
+
+FROM: main_LeafBlocki43iii_end;
+assume(v22416 == 0);
+TO: main_bb5250;
+
+FROM: main_LeafBlocki43iii_end;
+assume(v22416 != 0);
+TO: main___startrek_read_cmd_forwardexitiii;
+
+FROM: main_bb5250;
+v22417 := __startrek_is_first_cs;
+v22418 := extract(0, 0, v22417);
+TO: main_bb5250_end;
+
+FROM: main_bb5250_end;
+assume(v22418 != 0);
+TO: main_bb5251;
+
+FROM: main_bb5250_end;
+assume(v22418 == 0);
+TO: main_bb5252;
+
+FROM: main_bb5251;
+__startrek_is_first_cs := 0;
+TO: main_bb5252;
+
+FROM: main_bb5252;
+v22419 := __startrek_lock;
+v22420 := extract(0, 0, v22419);
+TO: main_bb5252_end;
+
+FROM: main_bb5252_end;
+assume(v22420 != 0);
+TO: main___startrek_read_cmd_forwardexitiii;
+
+FROM: main_bb5252_end;
+assume(v22420 == 0);
+TO: main_bb5253;
+
+FROM: main_bb5253;
+TO: main_bb5253_v22421;
+
+FROM: main_bb5253_v22421;
+assume(nondet() != 0);
+v22421 := 1;
+TO: main_bb5253_sv22421;
+
+FROM: main_bb5253_v22421;
+assume(nondet() != 0);
+v22421 := 0;
+TO: main_bb5253_sv22421;
+
+FROM: main_bb5253_sv22421;
+v22422 := zero_extend(1, 8, v22421);
+v22423 := extract(0, 0, v22422);
+TO: main_bb5253_end;
+
+FROM: main_bb5253_end;
+assume(v22423 != 0);
+TO: main___startrek_read_cmd_forwardexitiii;
+
+FROM: main_bb5253_end;
+assume(v22423 == 0);
+TO: main_bb5254;
+
+FROM: main_bb5254;
+v22424 := __startrek_round;
+v22425 := nondet();
+__startrek_round := v22425;
+v22426 := __startrek_round;
+v22427 := zero_extend(8, 32, v22426);
+v22428 := zero_extend(8, 32, v22424);
+TO: main_bb5254_end;
+
+FROM: main_bb5254_end;
+assume(v22427 sgt v22428);
+TO: main___VERIFIER_assumeexitii44iii;
+
+FROM: main_bb5254_end;
+assume(v22427 sle v22428);
+TO: main_bb5261;
+
+FROM: main___VERIFIER_assumeexitii44iii;
+v22430 := __startrek_round;
+v22431 := zero_extend(8, 32, v22430);
+v22432 := __startrek_job_end;
+v22433 := zero_extend(8, 32, v22432);
+TO: main___VERIFIER_assumeexitii44iii_end;
+
+FROM: main___VERIFIER_assumeexitii44iii_end;
+assume(v22431 sle v22433);
+TO: main___VERIFIER_assumeexit1ii45iii;
+
+FROM: main___VERIFIER_assumeexitii44iii_end;
+assume(v22431 sgt v22433);
+TO: main_bb5260;
+
+FROM: main___VERIFIER_assumeexit1ii45iii;
+v22435 := __startrek_round;
+v22436 := zero_extend(8, 32, v22435);
+v22437 := __startrek_job_end;
+v22438 := zero_extend(8, 32, v22437);
+TO: main___VERIFIER_assumeexit1ii45iii_end;
+
+FROM: main___VERIFIER_assumeexit1ii45iii_end;
+assume(v22436 != v22438);
+TO: main_bb5255;
+
+FROM: main___VERIFIER_assumeexit1ii45iii_end;
+assume(v22436 == v22438);
+TO: main___startrek_read_cmd_forwardexitiii;
+
+FROM: main_bb5255;
+v22440 := 0;
+v22441 := select_array(v__startrek_start_t1, 0);
+v22442 := zero_extend(8, 32, v22441);
+v22443 := __startrek_round;
+v22444 := zero_extend(8, 32, v22443);
+TO: main_bb5255_end;
+
+FROM: main_bb5255_end;
+assume(v22442 slt v22444);
+TO: main_bb5256;
+
+FROM: main_bb5255_end;
+assume(v22442 sge v22444);
+TO: main___VERIFIER_assumeexit2ii46iii;
+
+FROM: main_bb5256;
+v22446 := __startrek_round;
+v22447 := zero_extend(8, 32, v22446);
+v22448 := 0;
+v22449 := select_array(v__startrek_end_t1, 0);
+v22450 := zero_extend(8, 32, v22449);
+TO: main_bb5256_end;
+
+FROM: main_bb5256_end;
+assume(v22447 sgt v22450);
+TO: main___VERIFIER_assumeexit2ii46iii;
+
+FROM: main_bb5256_end;
+assume(v22447 sle v22450);
+TO: main_bb5257;
+
+FROM: main_bb5257;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main___VERIFIER_assumeexit2ii46iii;
+v22452 := 1;
+v22453 := select_array(v__startrek_start_t1, 1);
+v22454 := zero_extend(8, 32, v22453);
+v22455 := __startrek_round;
+v22456 := zero_extend(8, 32, v22455);
+TO: main___VERIFIER_assumeexit2ii46iii_end;
+
+FROM: main___VERIFIER_assumeexit2ii46iii_end;
+assume(v22454 slt v22456);
+TO: main_bb5258;
+
+FROM: main___VERIFIER_assumeexit2ii46iii_end;
+assume(v22454 sge v22456);
+TO: main___startrek_read_cmd_forwardexitiii;
+
+FROM: main_bb5258;
+v22458 := __startrek_round;
+v22459 := zero_extend(8, 32, v22458);
+v22460 := 1;
+v22461 := select_array(v__startrek_end_t1, 1);
+v22462 := zero_extend(8, 32, v22461);
+TO: main_bb5258_end;
+
+FROM: main_bb5258_end;
+assume(v22459 sgt v22462);
+TO: main___startrek_read_cmd_forwardexitiii;
+
+FROM: main_bb5258_end;
+assume(v22459 sle v22462);
+TO: main_bb5259;
+
+FROM: main_bb5259;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5260;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5261;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_LeafBlock4i48iii;
+TO: main_LeafBlock4i48iii_end;
+
+FROM: main_LeafBlock4i48iii_end;
+assume(v22416 == 1);
+TO: main_bb5262;
+
+FROM: main_LeafBlock4i48iii_end;
+assume(v22416 != 1);
+TO: main___startrek_read_cmd_forwardexitiii;
+
+FROM: main_bb5262;
+v22464 := __startrek_is_first_cs;
+v22465 := extract(0, 0, v22464);
+TO: main_bb5262_end;
+
+FROM: main_bb5262_end;
+assume(v22465 != 0);
+TO: main_bb5263;
+
+FROM: main_bb5262_end;
+assume(v22465 == 0);
+TO: main_bb5264;
+
+FROM: main_bb5263;
+__startrek_is_first_cs := 0;
+TO: main_bb5264;
+
+FROM: main_bb5264;
+v22466 := __startrek_lock;
+v22467 := extract(0, 0, v22466);
+TO: main_bb5264_end;
+
+FROM: main_bb5264_end;
+assume(v22467 != 0);
+TO: main___startrek_read_cmd_forwardexitiii;
+
+FROM: main_bb5264_end;
+assume(v22467 == 0);
+TO: main_bb5265;
+
+FROM: main_bb5265;
+TO: main_bb5265_v22468;
+
+FROM: main_bb5265_v22468;
+assume(nondet() != 0);
+v22468 := 1;
+TO: main_bb5265_sv22468;
+
+FROM: main_bb5265_v22468;
+assume(nondet() != 0);
+v22468 := 0;
+TO: main_bb5265_sv22468;
+
+FROM: main_bb5265_sv22468;
+v22469 := zero_extend(1, 8, v22468);
+v22470 := extract(0, 0, v22469);
+TO: main_bb5265_end;
+
+FROM: main_bb5265_end;
+assume(v22470 != 0);
+TO: main___startrek_read_cmd_forwardexitiii;
+
+FROM: main_bb5265_end;
+assume(v22470 == 0);
+TO: main_bb5266;
+
+FROM: main_bb5266;
+v22471 := __startrek_round;
+v22472 := nondet();
+__startrek_round := v22472;
+v22473 := __startrek_round;
+v22474 := zero_extend(8, 32, v22473);
+v22475 := zero_extend(8, 32, v22471);
+TO: main_bb5266_end;
+
+FROM: main_bb5266_end;
+assume(v22474 sgt v22475);
+TO: main___VERIFIER_assumeexiti1i49iii;
+
+FROM: main_bb5266_end;
+assume(v22474 sle v22475);
+TO: main_bb5268;
+
+FROM: main___VERIFIER_assumeexiti1i49iii;
+v22477 := __startrek_round;
+v22478 := zero_extend(8, 32, v22477);
+v22479 := __startrek_job_end;
+v22480 := zero_extend(8, 32, v22479);
+TO: main___VERIFIER_assumeexiti1i49iii_end;
+
+FROM: main___VERIFIER_assumeexiti1i49iii_end;
+assume(v22478 sle v22480);
+TO: main___startrek_read_cmd_forwardexitiii;
+
+FROM: main___VERIFIER_assumeexiti1i49iii_end;
+assume(v22478 sgt v22480);
+TO: main_bb5267;
+
+FROM: main_bb5267;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5268;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main___startrek_read_cmd_forwardexitiii;
+v22482 := __startrek_round;
+v22483 := zero_extend(8, 64, v22482);
+v22484 := v22483;
+v22485 := select_array(v_cmd_forward_, v22483);
+TO: main___startrek_entry_pt_OSEK_Task_ts3exiti;
+
+FROM: main___startrek_entry_pt_OSEK_Task_ts3exiti;
+__startrek_lock := 0;
+v22486 := __startrek_round;
+v22487 := zero_extend(8, 32, v22486);
+v22488 := __startrek_job_end;
+v22489 := zero_extend(8, 32, v22488);
+TO: main___startrek_entry_pt_OSEK_Task_ts3exiti_end;
+
+FROM: main___startrek_entry_pt_OSEK_Task_ts3exiti_end;
+assume(v22487 == v22489);
+TO: main___VERIFIER_assumeexiti;
+
+FROM: main___startrek_entry_pt_OSEK_Task_ts3exiti_end;
+assume(v22487 != v22489);
+TO: main_bb5269;
+
+FROM: main_bb5269;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main___VERIFIER_assumeexiti;
+__startrek_task := 1;
+__startrek_job := 0;
+__startrek_is_first_cs := 1;
+v22491 := 0;
+v22492 := select_array(v__startrek_start_t1, 0);
+__startrek_round := v22492;
+v22493 := __startrek_round;
+v22494 := zero_extend(8, 32, v22493);
+v22495 := __startrek_error_round;
+v22496 := zero_extend(8, 32, v22495);
+TO: main___VERIFIER_assumeexiti_end;
+
+FROM: main___VERIFIER_assumeexiti_end;
+assume(v22494 slt v22496);
+TO: main_bb5270;
+
+FROM: main___VERIFIER_assumeexiti_end;
+assume(v22494 sge v22496);
+TO: main___VERIFIER_assumeexit31i;
+
+FROM: main_bb5270;
+v22498 := 0;
+v22499 := select_array(v__startrek_end_t1, 0);
+__startrek_job_end := v22499;
+v22500 := __startrek_task;
+v22501 := zero_extend(8, 32, v22500);
+TO: main_bb5270_end;
+
+FROM: main_bb5270_end;
+assume(v22501 slt 1);
+TO: main_LeafBlockiii3i;
+
+FROM: main_bb5270_end;
+assume(v22501 sge 1);
+TO: main_LeafBlock4iii8i;
+
+FROM: main_LeafBlockiii3i;
+TO: main_LeafBlockiii3i_end;
+
+FROM: main_LeafBlockiii3i_end;
+assume(v22501 == 0);
+TO: main_bb5271;
+
+FROM: main_LeafBlockiii3i_end;
+assume(v22501 != 0);
+TO: main___startrek_write_obstacle_flagexitiii;
+
+FROM: main_bb5271;
+v22502 := __startrek_is_first_cs;
+v22503 := extract(0, 0, v22502);
+TO: main_bb5271_end;
+
+FROM: main_bb5271_end;
+assume(v22503 != 0);
+TO: main_bb5272;
+
+FROM: main_bb5271_end;
+assume(v22503 == 0);
+TO: main_bb5273;
+
+FROM: main_bb5272;
+__startrek_is_first_cs := 0;
+TO: main_bb5273;
+
+FROM: main_bb5273;
+v22504 := __startrek_lock;
+v22505 := extract(0, 0, v22504);
+TO: main_bb5273_end;
+
+FROM: main_bb5273_end;
+assume(v22505 != 0);
+TO: main___startrek_write_obstacle_flagexitiii;
+
+FROM: main_bb5273_end;
+assume(v22505 == 0);
+TO: main_bb5274;
+
+FROM: main_bb5274;
+TO: main_bb5274_v22506;
+
+FROM: main_bb5274_v22506;
+assume(nondet() != 0);
+v22506 := 1;
+TO: main_bb5274_sv22506;
+
+FROM: main_bb5274_v22506;
+assume(nondet() != 0);
+v22506 := 0;
+TO: main_bb5274_sv22506;
+
+FROM: main_bb5274_sv22506;
+v22507 := zero_extend(1, 8, v22506);
+v22508 := extract(0, 0, v22507);
+TO: main_bb5274_end;
+
+FROM: main_bb5274_end;
+assume(v22508 != 0);
+TO: main___startrek_write_obstacle_flagexitiii;
+
+FROM: main_bb5274_end;
+assume(v22508 == 0);
+TO: main_bb5275;
+
+FROM: main_bb5275;
+v22509 := __startrek_round;
+v22510 := nondet();
+__startrek_round := v22510;
+v22511 := __startrek_round;
+v22512 := zero_extend(8, 32, v22511);
+v22513 := zero_extend(8, 32, v22509);
+TO: main_bb5275_end;
+
+FROM: main_bb5275_end;
+assume(v22512 sgt v22513);
+TO: main___VERIFIER_assumeexitiiii4i;
+
+FROM: main_bb5275_end;
+assume(v22512 sle v22513);
+TO: main_bb5282;
+
+FROM: main___VERIFIER_assumeexitiiii4i;
+v22515 := __startrek_round;
+v22516 := zero_extend(8, 32, v22515);
+v22517 := __startrek_job_end;
+v22518 := zero_extend(8, 32, v22517);
+TO: main___VERIFIER_assumeexitiiii4i_end;
+
+FROM: main___VERIFIER_assumeexitiiii4i_end;
+assume(v22516 sle v22518);
+TO: main___VERIFIER_assumeexit1iiii5i;
+
+FROM: main___VERIFIER_assumeexitiiii4i_end;
+assume(v22516 sgt v22518);
+TO: main_bb5281;
+
+FROM: main___VERIFIER_assumeexit1iiii5i;
+v22520 := __startrek_round;
+v22521 := zero_extend(8, 32, v22520);
+v22522 := __startrek_job_end;
+v22523 := zero_extend(8, 32, v22522);
+TO: main___VERIFIER_assumeexit1iiii5i_end;
+
+FROM: main___VERIFIER_assumeexit1iiii5i_end;
+assume(v22521 != v22523);
+TO: main_bb5276;
+
+FROM: main___VERIFIER_assumeexit1iiii5i_end;
+assume(v22521 == v22523);
+TO: main___startrek_write_obstacle_flagexitiii;
+
+FROM: main_bb5276;
+v22525 := 0;
+v22526 := select_array(v__startrek_start_t1, 0);
+v22527 := zero_extend(8, 32, v22526);
+v22528 := __startrek_round;
+v22529 := zero_extend(8, 32, v22528);
+TO: main_bb5276_end;
+
+FROM: main_bb5276_end;
+assume(v22527 slt v22529);
+TO: main_bb5277;
+
+FROM: main_bb5276_end;
+assume(v22527 sge v22529);
+TO: main___VERIFIER_assumeexit2iiii6i;
+
+FROM: main_bb5277;
+v22531 := __startrek_round;
+v22532 := zero_extend(8, 32, v22531);
+v22533 := 0;
+v22534 := select_array(v__startrek_end_t1, 0);
+v22535 := zero_extend(8, 32, v22534);
+TO: main_bb5277_end;
+
+FROM: main_bb5277_end;
+assume(v22532 sgt v22535);
+TO: main___VERIFIER_assumeexit2iiii6i;
+
+FROM: main_bb5277_end;
+assume(v22532 sle v22535);
+TO: main_bb5278;
+
+FROM: main_bb5278;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main___VERIFIER_assumeexit2iiii6i;
+v22537 := 1;
+v22538 := select_array(v__startrek_start_t1, 1);
+v22539 := zero_extend(8, 32, v22538);
+v22540 := __startrek_round;
+v22541 := zero_extend(8, 32, v22540);
+TO: main___VERIFIER_assumeexit2iiii6i_end;
+
+FROM: main___VERIFIER_assumeexit2iiii6i_end;
+assume(v22539 slt v22541);
+TO: main_bb5279;
+
+FROM: main___VERIFIER_assumeexit2iiii6i_end;
+assume(v22539 sge v22541);
+TO: main___startrek_write_obstacle_flagexitiii;
+
+FROM: main_bb5279;
+v22543 := __startrek_round;
+v22544 := zero_extend(8, 32, v22543);
+v22545 := 1;
+v22546 := select_array(v__startrek_end_t1, 1);
+v22547 := zero_extend(8, 32, v22546);
+TO: main_bb5279_end;
+
+FROM: main_bb5279_end;
+assume(v22544 sgt v22547);
+TO: main___startrek_write_obstacle_flagexitiii;
+
+FROM: main_bb5279_end;
+assume(v22544 sle v22547);
+TO: main_bb5280;
+
+FROM: main_bb5280;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5281;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5282;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_LeafBlock4iii8i;
+TO: main_LeafBlock4iii8i_end;
+
+FROM: main_LeafBlock4iii8i_end;
+assume(v22501 == 1);
+TO: main_bb5283;
+
+FROM: main_LeafBlock4iii8i_end;
+assume(v22501 != 1);
+TO: main___startrek_write_obstacle_flagexitiii;
+
+FROM: main_bb5283;
+v22549 := __startrek_is_first_cs;
+v22550 := extract(0, 0, v22549);
+TO: main_bb5283_end;
+
+FROM: main_bb5283_end;
+assume(v22550 != 0);
+TO: main_bb5284;
+
+FROM: main_bb5283_end;
+assume(v22550 == 0);
+TO: main_bb5285;
+
+FROM: main_bb5284;
+__startrek_is_first_cs := 0;
+TO: main_bb5285;
+
+FROM: main_bb5285;
+v22551 := __startrek_lock;
+v22552 := extract(0, 0, v22551);
+TO: main_bb5285_end;
+
+FROM: main_bb5285_end;
+assume(v22552 != 0);
+TO: main___startrek_write_obstacle_flagexitiii;
+
+FROM: main_bb5285_end;
+assume(v22552 == 0);
+TO: main_bb5286;
+
+FROM: main_bb5286;
+TO: main_bb5286_v22553;
+
+FROM: main_bb5286_v22553;
+assume(nondet() != 0);
+v22553 := 1;
+TO: main_bb5286_sv22553;
+
+FROM: main_bb5286_v22553;
+assume(nondet() != 0);
+v22553 := 0;
+TO: main_bb5286_sv22553;
+
+FROM: main_bb5286_sv22553;
+v22554 := zero_extend(1, 8, v22553);
+v22555 := extract(0, 0, v22554);
+TO: main_bb5286_end;
+
+FROM: main_bb5286_end;
+assume(v22555 != 0);
+TO: main___startrek_write_obstacle_flagexitiii;
+
+FROM: main_bb5286_end;
+assume(v22555 == 0);
+TO: main_bb5287;
+
+FROM: main_bb5287;
+v22556 := __startrek_round;
+v22557 := nondet();
+__startrek_round := v22557;
+v22558 := __startrek_round;
+v22559 := zero_extend(8, 32, v22558);
+v22560 := zero_extend(8, 32, v22556);
+TO: main_bb5287_end;
+
+FROM: main_bb5287_end;
+assume(v22559 sgt v22560);
+TO: main___VERIFIER_assumeexiti1iii9i;
+
+FROM: main_bb5287_end;
+assume(v22559 sle v22560);
+TO: main_bb5289;
+
+FROM: main___VERIFIER_assumeexiti1iii9i;
+v22562 := __startrek_round;
+v22563 := zero_extend(8, 32, v22562);
+v22564 := __startrek_job_end;
+v22565 := zero_extend(8, 32, v22564);
+TO: main___VERIFIER_assumeexiti1iii9i_end;
+
+FROM: main___VERIFIER_assumeexiti1iii9i_end;
+assume(v22563 sle v22565);
+TO: main___startrek_write_obstacle_flagexitiii;
+
+FROM: main___VERIFIER_assumeexiti1iii9i_end;
+assume(v22563 sgt v22565);
+TO: main_bb5288;
+
+FROM: main_bb5288;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5289;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main___startrek_write_obstacle_flagexitiii;
+v22567 := __startrek_round;
+v22568 := zero_extend(8, 64, v22567);
+v22569 := v22568;
+v_obstacle_flag_ := store_array(v_obstacle_flag_, v22568, 0);
+v22570 := __startrek_task;
+v22571 := zero_extend(8, 32, v22570);
+TO: main___startrek_write_obstacle_flagexitiii_end;
+
+FROM: main___startrek_write_obstacle_flagexitiii_end;
+assume(v22571 slt 1);
+TO: main_LeafBlocki3ii12i;
+
+FROM: main___startrek_write_obstacle_flagexitiii_end;
+assume(v22571 sge 1);
+TO: main_LeafBlock4i8ii17i;
+
+FROM: main_LeafBlocki3ii12i;
+TO: main_LeafBlocki3ii12i_end;
+
+FROM: main_LeafBlocki3ii12i_end;
+assume(v22571 == 0);
+TO: main_bb5290;
+
+FROM: main_LeafBlocki3ii12i_end;
+assume(v22571 != 0);
+TO: main___startrek_read_nxtway_gs_modeexitii19i;
+
+FROM: main_bb5290;
+v22572 := __startrek_is_first_cs;
+v22573 := extract(0, 0, v22572);
+TO: main_bb5290_end;
+
+FROM: main_bb5290_end;
+assume(v22573 != 0);
+TO: main_bb5291;
+
+FROM: main_bb5290_end;
+assume(v22573 == 0);
+TO: main_bb5292;
+
+FROM: main_bb5291;
+__startrek_is_first_cs := 0;
+TO: main_bb5292;
+
+FROM: main_bb5292;
+v22574 := __startrek_lock;
+v22575 := extract(0, 0, v22574);
+TO: main_bb5292_end;
+
+FROM: main_bb5292_end;
+assume(v22575 != 0);
+TO: main___startrek_read_nxtway_gs_modeexitii19i;
+
+FROM: main_bb5292_end;
+assume(v22575 == 0);
+TO: main_bb5293;
+
+FROM: main_bb5293;
+TO: main_bb5293_v22576;
+
+FROM: main_bb5293_v22576;
+assume(nondet() != 0);
+v22576 := 1;
+TO: main_bb5293_sv22576;
+
+FROM: main_bb5293_v22576;
+assume(nondet() != 0);
+v22576 := 0;
+TO: main_bb5293_sv22576;
+
+FROM: main_bb5293_sv22576;
+v22577 := zero_extend(1, 8, v22576);
+v22578 := extract(0, 0, v22577);
+TO: main_bb5293_end;
+
+FROM: main_bb5293_end;
+assume(v22578 != 0);
+TO: main___startrek_read_nxtway_gs_modeexitii19i;
+
+FROM: main_bb5293_end;
+assume(v22578 == 0);
+TO: main_bb5294;
+
+FROM: main_bb5294;
+v22579 := __startrek_round;
+v22580 := nondet();
+__startrek_round := v22580;
+v22581 := __startrek_round;
+v22582 := zero_extend(8, 32, v22581);
+v22583 := zero_extend(8, 32, v22579);
+TO: main_bb5294_end;
+
+FROM: main_bb5294_end;
+assume(v22582 sgt v22583);
+TO: main___VERIFIER_assumeexitii4ii13i;
+
+FROM: main_bb5294_end;
+assume(v22582 sle v22583);
+TO: main_bb5301;
+
+FROM: main___VERIFIER_assumeexitii4ii13i;
+v22585 := __startrek_round;
+v22586 := zero_extend(8, 32, v22585);
+v22587 := __startrek_job_end;
+v22588 := zero_extend(8, 32, v22587);
+TO: main___VERIFIER_assumeexitii4ii13i_end;
+
+FROM: main___VERIFIER_assumeexitii4ii13i_end;
+assume(v22586 sle v22588);
+TO: main___VERIFIER_assumeexit1ii5ii14i;
+
+FROM: main___VERIFIER_assumeexitii4ii13i_end;
+assume(v22586 sgt v22588);
+TO: main_bb5300;
+
+FROM: main___VERIFIER_assumeexit1ii5ii14i;
+v22590 := __startrek_round;
+v22591 := zero_extend(8, 32, v22590);
+v22592 := __startrek_job_end;
+v22593 := zero_extend(8, 32, v22592);
+TO: main___VERIFIER_assumeexit1ii5ii14i_end;
+
+FROM: main___VERIFIER_assumeexit1ii5ii14i_end;
+assume(v22591 != v22593);
+TO: main_bb5295;
+
+FROM: main___VERIFIER_assumeexit1ii5ii14i_end;
+assume(v22591 == v22593);
+TO: main___startrek_read_nxtway_gs_modeexitii19i;
+
+FROM: main_bb5295;
+v22595 := 0;
+v22596 := select_array(v__startrek_start_t1, 0);
+v22597 := zero_extend(8, 32, v22596);
+v22598 := __startrek_round;
+v22599 := zero_extend(8, 32, v22598);
+TO: main_bb5295_end;
+
+FROM: main_bb5295_end;
+assume(v22597 slt v22599);
+TO: main_bb5296;
+
+FROM: main_bb5295_end;
+assume(v22597 sge v22599);
+TO: main___VERIFIER_assumeexit2ii6ii15i;
+
+FROM: main_bb5296;
+v22601 := __startrek_round;
+v22602 := zero_extend(8, 32, v22601);
+v22603 := 0;
+v22604 := select_array(v__startrek_end_t1, 0);
+v22605 := zero_extend(8, 32, v22604);
+TO: main_bb5296_end;
+
+FROM: main_bb5296_end;
+assume(v22602 sgt v22605);
+TO: main___VERIFIER_assumeexit2ii6ii15i;
+
+FROM: main_bb5296_end;
+assume(v22602 sle v22605);
+TO: main_bb5297;
+
+FROM: main_bb5297;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main___VERIFIER_assumeexit2ii6ii15i;
+v22607 := 1;
+v22608 := select_array(v__startrek_start_t1, 1);
+v22609 := zero_extend(8, 32, v22608);
+v22610 := __startrek_round;
+v22611 := zero_extend(8, 32, v22610);
+TO: main___VERIFIER_assumeexit2ii6ii15i_end;
+
+FROM: main___VERIFIER_assumeexit2ii6ii15i_end;
+assume(v22609 slt v22611);
+TO: main_bb5298;
+
+FROM: main___VERIFIER_assumeexit2ii6ii15i_end;
+assume(v22609 sge v22611);
+TO: main___startrek_read_nxtway_gs_modeexitii19i;
+
+FROM: main_bb5298;
+v22613 := __startrek_round;
+v22614 := zero_extend(8, 32, v22613);
+v22615 := 1;
+v22616 := select_array(v__startrek_end_t1, 1);
+v22617 := zero_extend(8, 32, v22616);
+TO: main_bb5298_end;
+
+FROM: main_bb5298_end;
+assume(v22614 sgt v22617);
+TO: main___startrek_read_nxtway_gs_modeexitii19i;
+
+FROM: main_bb5298_end;
+assume(v22614 sle v22617);
+TO: main_bb5299;
+
+FROM: main_bb5299;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5300;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5301;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_LeafBlock4i8ii17i;
+TO: main_LeafBlock4i8ii17i_end;
+
+FROM: main_LeafBlock4i8ii17i_end;
+assume(v22571 == 1);
+TO: main_bb5302;
+
+FROM: main_LeafBlock4i8ii17i_end;
+assume(v22571 != 1);
+TO: main___startrek_read_nxtway_gs_modeexitii19i;
+
+FROM: main_bb5302;
+v22619 := __startrek_is_first_cs;
+v22620 := extract(0, 0, v22619);
+TO: main_bb5302_end;
+
+FROM: main_bb5302_end;
+assume(v22620 != 0);
+TO: main_bb5303;
+
+FROM: main_bb5302_end;
+assume(v22620 == 0);
+TO: main_bb5304;
+
+FROM: main_bb5303;
+__startrek_is_first_cs := 0;
+TO: main_bb5304;
+
+FROM: main_bb5304;
+v22621 := __startrek_lock;
+v22622 := extract(0, 0, v22621);
+TO: main_bb5304_end;
+
+FROM: main_bb5304_end;
+assume(v22622 != 0);
+TO: main___startrek_read_nxtway_gs_modeexitii19i;
+
+FROM: main_bb5304_end;
+assume(v22622 == 0);
+TO: main_bb5305;
+
+FROM: main_bb5305;
+TO: main_bb5305_v22623;
+
+FROM: main_bb5305_v22623;
+assume(nondet() != 0);
+v22623 := 1;
+TO: main_bb5305_sv22623;
+
+FROM: main_bb5305_v22623;
+assume(nondet() != 0);
+v22623 := 0;
+TO: main_bb5305_sv22623;
+
+FROM: main_bb5305_sv22623;
+v22624 := zero_extend(1, 8, v22623);
+v22625 := extract(0, 0, v22624);
+TO: main_bb5305_end;
+
+FROM: main_bb5305_end;
+assume(v22625 != 0);
+TO: main___startrek_read_nxtway_gs_modeexitii19i;
+
+FROM: main_bb5305_end;
+assume(v22625 == 0);
+TO: main_bb5306;
+
+FROM: main_bb5306;
+v22626 := __startrek_round;
+v22627 := nondet();
+__startrek_round := v22627;
+v22628 := __startrek_round;
+v22629 := zero_extend(8, 32, v22628);
+v22630 := zero_extend(8, 32, v22626);
+TO: main_bb5306_end;
+
+FROM: main_bb5306_end;
+assume(v22629 sgt v22630);
+TO: main___VERIFIER_assumeexiti1i9ii18i;
+
+FROM: main_bb5306_end;
+assume(v22629 sle v22630);
+TO: main_bb5308;
+
+FROM: main___VERIFIER_assumeexiti1i9ii18i;
+v22632 := __startrek_round;
+v22633 := zero_extend(8, 32, v22632);
+v22634 := __startrek_job_end;
+v22635 := zero_extend(8, 32, v22634);
+TO: main___VERIFIER_assumeexiti1i9ii18i_end;
+
+FROM: main___VERIFIER_assumeexiti1i9ii18i_end;
+assume(v22633 sle v22635);
+TO: main___startrek_read_nxtway_gs_modeexitii19i;
+
+FROM: main___VERIFIER_assumeexiti1i9ii18i_end;
+assume(v22633 sgt v22635);
+TO: main_bb5307;
+
+FROM: main_bb5307;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5308;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main___startrek_read_nxtway_gs_modeexitii19i;
+v22637 := __startrek_round;
+v22638 := zero_extend(8, 64, v22637);
+v22639 := v22638;
+v22640 := select_array(v_nxtway_gs_mode_, v22638);
+v22641 := zero_extend(8, 32, v22640);
+TO: main___startrek_read_nxtway_gs_modeexitii19i_end;
+
+FROM: main___startrek_read_nxtway_gs_modeexitii19i_end;
+assume(v22641 == 2);
+TO: main_bb5309;
+
+FROM: main___startrek_read_nxtway_gs_modeexitii19i_end;
+assume(v22641 != 2);
+TO: main___startrek_entry_pt_OSEK_Task_ts2exiti;
+
+FROM: main_bb5309;
+v22643 := nondet();
+v22644 := zero_extend(8, 32, v22643);
+TO: main_bb5309_end;
+
+FROM: main_bb5309_end;
+assume(v22644 sle 25);
+TO: main_bb5310;
+
+FROM: main_bb5309_end;
+assume(v22644 sgt 25);
+TO: main___startrek_entry_pt_OSEK_Task_ts2exiti;
+
+FROM: main_bb5310;
+v22646 := __startrek_task;
+v22647 := zero_extend(8, 32, v22646);
+TO: main_bb5310_end;
+
+FROM: main_bb5310_end;
+assume(v22647 slt 1);
+TO: main_LeafBlocki13ii22i;
+
+FROM: main_bb5310_end;
+assume(v22647 sge 1);
+TO: main_LeafBlock4i18ii27i;
+
+FROM: main_LeafBlocki13ii22i;
+TO: main_LeafBlocki13ii22i_end;
+
+FROM: main_LeafBlocki13ii22i_end;
+assume(v22647 == 0);
+TO: main_bb5311;
+
+FROM: main_LeafBlocki13ii22i_end;
+assume(v22647 != 0);
+TO: main___startrek_write_obstacle_flagexit21iii;
+
+FROM: main_bb5311;
+v22648 := __startrek_is_first_cs;
+v22649 := extract(0, 0, v22648);
+TO: main_bb5311_end;
+
+FROM: main_bb5311_end;
+assume(v22649 != 0);
+TO: main_bb5312;
+
+FROM: main_bb5311_end;
+assume(v22649 == 0);
+TO: main_bb5313;
+
+FROM: main_bb5312;
+__startrek_is_first_cs := 0;
+TO: main_bb5313;
+
+FROM: main_bb5313;
+v22650 := __startrek_lock;
+v22651 := extract(0, 0, v22650);
+TO: main_bb5313_end;
+
+FROM: main_bb5313_end;
+assume(v22651 != 0);
+TO: main___startrek_write_obstacle_flagexit21iii;
+
+FROM: main_bb5313_end;
+assume(v22651 == 0);
+TO: main_bb5314;
+
+FROM: main_bb5314;
+TO: main_bb5314_v22652;
+
+FROM: main_bb5314_v22652;
+assume(nondet() != 0);
+v22652 := 1;
+TO: main_bb5314_sv22652;
+
+FROM: main_bb5314_v22652;
+assume(nondet() != 0);
+v22652 := 0;
+TO: main_bb5314_sv22652;
+
+FROM: main_bb5314_sv22652;
+v22653 := zero_extend(1, 8, v22652);
+v22654 := extract(0, 0, v22653);
+TO: main_bb5314_end;
+
+FROM: main_bb5314_end;
+assume(v22654 != 0);
+TO: main___startrek_write_obstacle_flagexit21iii;
+
+FROM: main_bb5314_end;
+assume(v22654 == 0);
+TO: main_bb5315;
+
+FROM: main_bb5315;
+v22655 := __startrek_round;
+v22656 := nondet();
+__startrek_round := v22656;
+v22657 := __startrek_round;
+v22658 := zero_extend(8, 32, v22657);
+v22659 := zero_extend(8, 32, v22655);
+TO: main_bb5315_end;
+
+FROM: main_bb5315_end;
+assume(v22658 sgt v22659);
+TO: main___VERIFIER_assumeexitii14ii23i;
+
+FROM: main_bb5315_end;
+assume(v22658 sle v22659);
+TO: main_bb5322;
+
+FROM: main___VERIFIER_assumeexitii14ii23i;
+v22661 := __startrek_round;
+v22662 := zero_extend(8, 32, v22661);
+v22663 := __startrek_job_end;
+v22664 := zero_extend(8, 32, v22663);
+TO: main___VERIFIER_assumeexitii14ii23i_end;
+
+FROM: main___VERIFIER_assumeexitii14ii23i_end;
+assume(v22662 sle v22664);
+TO: main___VERIFIER_assumeexit1ii15ii24i;
+
+FROM: main___VERIFIER_assumeexitii14ii23i_end;
+assume(v22662 sgt v22664);
+TO: main_bb5321;
+
+FROM: main___VERIFIER_assumeexit1ii15ii24i;
+v22666 := __startrek_round;
+v22667 := zero_extend(8, 32, v22666);
+v22668 := __startrek_job_end;
+v22669 := zero_extend(8, 32, v22668);
+TO: main___VERIFIER_assumeexit1ii15ii24i_end;
+
+FROM: main___VERIFIER_assumeexit1ii15ii24i_end;
+assume(v22667 != v22669);
+TO: main_bb5316;
+
+FROM: main___VERIFIER_assumeexit1ii15ii24i_end;
+assume(v22667 == v22669);
+TO: main___startrek_write_obstacle_flagexit21iii;
+
+FROM: main_bb5316;
+v22671 := 0;
+v22672 := select_array(v__startrek_start_t1, 0);
+v22673 := zero_extend(8, 32, v22672);
+v22674 := __startrek_round;
+v22675 := zero_extend(8, 32, v22674);
+TO: main_bb5316_end;
+
+FROM: main_bb5316_end;
+assume(v22673 slt v22675);
+TO: main_bb5317;
+
+FROM: main_bb5316_end;
+assume(v22673 sge v22675);
+TO: main___VERIFIER_assumeexit2ii16ii25i;
+
+FROM: main_bb5317;
+v22677 := __startrek_round;
+v22678 := zero_extend(8, 32, v22677);
+v22679 := 0;
+v22680 := select_array(v__startrek_end_t1, 0);
+v22681 := zero_extend(8, 32, v22680);
+TO: main_bb5317_end;
+
+FROM: main_bb5317_end;
+assume(v22678 sgt v22681);
+TO: main___VERIFIER_assumeexit2ii16ii25i;
+
+FROM: main_bb5317_end;
+assume(v22678 sle v22681);
+TO: main_bb5318;
+
+FROM: main_bb5318;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main___VERIFIER_assumeexit2ii16ii25i;
+v22683 := 1;
+v22684 := select_array(v__startrek_start_t1, 1);
+v22685 := zero_extend(8, 32, v22684);
+v22686 := __startrek_round;
+v22687 := zero_extend(8, 32, v22686);
+TO: main___VERIFIER_assumeexit2ii16ii25i_end;
+
+FROM: main___VERIFIER_assumeexit2ii16ii25i_end;
+assume(v22685 slt v22687);
+TO: main_bb5319;
+
+FROM: main___VERIFIER_assumeexit2ii16ii25i_end;
+assume(v22685 sge v22687);
+TO: main___startrek_write_obstacle_flagexit21iii;
+
+FROM: main_bb5319;
+v22689 := __startrek_round;
+v22690 := zero_extend(8, 32, v22689);
+v22691 := 1;
+v22692 := select_array(v__startrek_end_t1, 1);
+v22693 := zero_extend(8, 32, v22692);
+TO: main_bb5319_end;
+
+FROM: main_bb5319_end;
+assume(v22690 sgt v22693);
+TO: main___startrek_write_obstacle_flagexit21iii;
+
+FROM: main_bb5319_end;
+assume(v22690 sle v22693);
+TO: main_bb5320;
+
+FROM: main_bb5320;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5321;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5322;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_LeafBlock4i18ii27i;
+TO: main_LeafBlock4i18ii27i_end;
+
+FROM: main_LeafBlock4i18ii27i_end;
+assume(v22647 == 1);
+TO: main_bb5323;
+
+FROM: main_LeafBlock4i18ii27i_end;
+assume(v22647 != 1);
+TO: main___startrek_write_obstacle_flagexit21iii;
+
+FROM: main_bb5323;
+v22695 := __startrek_is_first_cs;
+v22696 := extract(0, 0, v22695);
+TO: main_bb5323_end;
+
+FROM: main_bb5323_end;
+assume(v22696 != 0);
+TO: main_bb5324;
+
+FROM: main_bb5323_end;
+assume(v22696 == 0);
+TO: main_bb5325;
+
+FROM: main_bb5324;
+__startrek_is_first_cs := 0;
+TO: main_bb5325;
+
+FROM: main_bb5325;
+v22697 := __startrek_lock;
+v22698 := extract(0, 0, v22697);
+TO: main_bb5325_end;
+
+FROM: main_bb5325_end;
+assume(v22698 != 0);
+TO: main___startrek_write_obstacle_flagexit21iii;
+
+FROM: main_bb5325_end;
+assume(v22698 == 0);
+TO: main_bb5326;
+
+FROM: main_bb5326;
+TO: main_bb5326_v22699;
+
+FROM: main_bb5326_v22699;
+assume(nondet() != 0);
+v22699 := 1;
+TO: main_bb5326_sv22699;
+
+FROM: main_bb5326_v22699;
+assume(nondet() != 0);
+v22699 := 0;
+TO: main_bb5326_sv22699;
+
+FROM: main_bb5326_sv22699;
+v22700 := zero_extend(1, 8, v22699);
+v22701 := extract(0, 0, v22700);
+TO: main_bb5326_end;
+
+FROM: main_bb5326_end;
+assume(v22701 != 0);
+TO: main___startrek_write_obstacle_flagexit21iii;
+
+FROM: main_bb5326_end;
+assume(v22701 == 0);
+TO: main_bb5327;
+
+FROM: main_bb5327;
+v22702 := __startrek_round;
+v22703 := nondet();
+__startrek_round := v22703;
+v22704 := __startrek_round;
+v22705 := zero_extend(8, 32, v22704);
+v22706 := zero_extend(8, 32, v22702);
+TO: main_bb5327_end;
+
+FROM: main_bb5327_end;
+assume(v22705 sgt v22706);
+TO: main___VERIFIER_assumeexiti1i19ii28i;
+
+FROM: main_bb5327_end;
+assume(v22705 sle v22706);
+TO: main_bb5329;
+
+FROM: main___VERIFIER_assumeexiti1i19ii28i;
+v22708 := __startrek_round;
+v22709 := zero_extend(8, 32, v22708);
+v22710 := __startrek_job_end;
+v22711 := zero_extend(8, 32, v22710);
+TO: main___VERIFIER_assumeexiti1i19ii28i_end;
+
+FROM: main___VERIFIER_assumeexiti1i19ii28i_end;
+assume(v22709 sle v22711);
+TO: main___startrek_write_obstacle_flagexit21iii;
+
+FROM: main___VERIFIER_assumeexiti1i19ii28i_end;
+assume(v22709 sgt v22711);
+TO: main_bb5328;
+
+FROM: main_bb5328;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5329;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main___startrek_write_obstacle_flagexit21iii;
+v22713 := __startrek_round;
+v22714 := zero_extend(8, 64, v22713);
+v22715 := v22714;
+v_obstacle_flag_ := store_array(v_obstacle_flag_, v22714, 1);
+v22716 := __startrek_task;
+v22717 := zero_extend(8, 32, v22716);
+TO: main___startrek_write_obstacle_flagexit21iii_end;
+
+FROM: main___startrek_write_obstacle_flagexit21iii_end;
+assume(v22717 slt 1);
+TO: main_LeafBlocki24iii;
+
+FROM: main___startrek_write_obstacle_flagexit21iii_end;
+assume(v22717 sge 1);
+TO: main_LeafBlock4i29iii;
+
+FROM: main_LeafBlocki24iii;
+TO: main_LeafBlocki24iii_end;
+
+FROM: main_LeafBlocki24iii_end;
+assume(v22717 == 0);
+TO: main_bb5330;
+
+FROM: main_LeafBlocki24iii_end;
+assume(v22717 != 0);
+TO: main___startrek_write_cmd_forwardexitii29i;
+
+FROM: main_bb5330;
+v22718 := __startrek_is_first_cs;
+v22719 := extract(0, 0, v22718);
+TO: main_bb5330_end;
+
+FROM: main_bb5330_end;
+assume(v22719 != 0);
+TO: main_bb5331;
+
+FROM: main_bb5330_end;
+assume(v22719 == 0);
+TO: main_bb5332;
+
+FROM: main_bb5331;
+__startrek_is_first_cs := 0;
+TO: main_bb5332;
+
+FROM: main_bb5332;
+v22720 := __startrek_lock;
+v22721 := extract(0, 0, v22720);
+TO: main_bb5332_end;
+
+FROM: main_bb5332_end;
+assume(v22721 != 0);
+TO: main___startrek_write_cmd_forwardexitii29i;
+
+FROM: main_bb5332_end;
+assume(v22721 == 0);
+TO: main_bb5333;
+
+FROM: main_bb5333;
+TO: main_bb5333_v22722;
+
+FROM: main_bb5333_v22722;
+assume(nondet() != 0);
+v22722 := 1;
+TO: main_bb5333_sv22722;
+
+FROM: main_bb5333_v22722;
+assume(nondet() != 0);
+v22722 := 0;
+TO: main_bb5333_sv22722;
+
+FROM: main_bb5333_sv22722;
+v22723 := zero_extend(1, 8, v22722);
+v22724 := extract(0, 0, v22723);
+TO: main_bb5333_end;
+
+FROM: main_bb5333_end;
+assume(v22724 != 0);
+TO: main___startrek_write_cmd_forwardexitii29i;
+
+FROM: main_bb5333_end;
+assume(v22724 == 0);
+TO: main_bb5334;
+
+FROM: main_bb5334;
+v22725 := __startrek_round;
+v22726 := nondet();
+__startrek_round := v22726;
+v22727 := __startrek_round;
+v22728 := zero_extend(8, 32, v22727);
+v22729 := zero_extend(8, 32, v22725);
+TO: main_bb5334_end;
+
+FROM: main_bb5334_end;
+assume(v22728 sgt v22729);
+TO: main___VERIFIER_assumeexitii25iii;
+
+FROM: main_bb5334_end;
+assume(v22728 sle v22729);
+TO: main_bb5341;
+
+FROM: main___VERIFIER_assumeexitii25iii;
+v22731 := __startrek_round;
+v22732 := zero_extend(8, 32, v22731);
+v22733 := __startrek_job_end;
+v22734 := zero_extend(8, 32, v22733);
+TO: main___VERIFIER_assumeexitii25iii_end;
+
+FROM: main___VERIFIER_assumeexitii25iii_end;
+assume(v22732 sle v22734);
+TO: main___VERIFIER_assumeexit1ii26iii;
+
+FROM: main___VERIFIER_assumeexitii25iii_end;
+assume(v22732 sgt v22734);
+TO: main_bb5340;
+
+FROM: main___VERIFIER_assumeexit1ii26iii;
+v22736 := __startrek_round;
+v22737 := zero_extend(8, 32, v22736);
+v22738 := __startrek_job_end;
+v22739 := zero_extend(8, 32, v22738);
+TO: main___VERIFIER_assumeexit1ii26iii_end;
+
+FROM: main___VERIFIER_assumeexit1ii26iii_end;
+assume(v22737 != v22739);
+TO: main_bb5335;
+
+FROM: main___VERIFIER_assumeexit1ii26iii_end;
+assume(v22737 == v22739);
+TO: main___startrek_write_cmd_forwardexitii29i;
+
+FROM: main_bb5335;
+v22741 := 0;
+v22742 := select_array(v__startrek_start_t1, 0);
+v22743 := zero_extend(8, 32, v22742);
+v22744 := __startrek_round;
+v22745 := zero_extend(8, 32, v22744);
+TO: main_bb5335_end;
+
+FROM: main_bb5335_end;
+assume(v22743 slt v22745);
+TO: main_bb5336;
+
+FROM: main_bb5335_end;
+assume(v22743 sge v22745);
+TO: main___VERIFIER_assumeexit2ii27iii;
+
+FROM: main_bb5336;
+v22747 := __startrek_round;
+v22748 := zero_extend(8, 32, v22747);
+v22749 := 0;
+v22750 := select_array(v__startrek_end_t1, 0);
+v22751 := zero_extend(8, 32, v22750);
+TO: main_bb5336_end;
+
+FROM: main_bb5336_end;
+assume(v22748 sgt v22751);
+TO: main___VERIFIER_assumeexit2ii27iii;
+
+FROM: main_bb5336_end;
+assume(v22748 sle v22751);
+TO: main_bb5337;
+
+FROM: main_bb5337;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main___VERIFIER_assumeexit2ii27iii;
+v22753 := 1;
+v22754 := select_array(v__startrek_start_t1, 1);
+v22755 := zero_extend(8, 32, v22754);
+v22756 := __startrek_round;
+v22757 := zero_extend(8, 32, v22756);
+TO: main___VERIFIER_assumeexit2ii27iii_end;
+
+FROM: main___VERIFIER_assumeexit2ii27iii_end;
+assume(v22755 slt v22757);
+TO: main_bb5338;
+
+FROM: main___VERIFIER_assumeexit2ii27iii_end;
+assume(v22755 sge v22757);
+TO: main___startrek_write_cmd_forwardexitii29i;
+
+FROM: main_bb5338;
+v22759 := __startrek_round;
+v22760 := zero_extend(8, 32, v22759);
+v22761 := 1;
+v22762 := select_array(v__startrek_end_t1, 1);
+v22763 := zero_extend(8, 32, v22762);
+TO: main_bb5338_end;
+
+FROM: main_bb5338_end;
+assume(v22760 sgt v22763);
+TO: main___startrek_write_cmd_forwardexitii29i;
+
+FROM: main_bb5338_end;
+assume(v22760 sle v22763);
+TO: main_bb5339;
+
+FROM: main_bb5339;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5340;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5341;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_LeafBlock4i29iii;
+TO: main_LeafBlock4i29iii_end;
+
+FROM: main_LeafBlock4i29iii_end;
+assume(v22717 == 1);
+TO: main_bb5342;
+
+FROM: main_LeafBlock4i29iii_end;
+assume(v22717 != 1);
+TO: main___startrek_write_cmd_forwardexitii29i;
+
+FROM: main_bb5342;
+v22765 := __startrek_is_first_cs;
+v22766 := extract(0, 0, v22765);
+TO: main_bb5342_end;
+
+FROM: main_bb5342_end;
+assume(v22766 != 0);
+TO: main_bb5343;
+
+FROM: main_bb5342_end;
+assume(v22766 == 0);
+TO: main_bb5344;
+
+FROM: main_bb5343;
+__startrek_is_first_cs := 0;
+TO: main_bb5344;
+
+FROM: main_bb5344;
+v22767 := __startrek_lock;
+v22768 := extract(0, 0, v22767);
+TO: main_bb5344_end;
+
+FROM: main_bb5344_end;
+assume(v22768 != 0);
+TO: main___startrek_write_cmd_forwardexitii29i;
+
+FROM: main_bb5344_end;
+assume(v22768 == 0);
+TO: main_bb5345;
+
+FROM: main_bb5345;
+TO: main_bb5345_v22769;
+
+FROM: main_bb5345_v22769;
+assume(nondet() != 0);
+v22769 := 1;
+TO: main_bb5345_sv22769;
+
+FROM: main_bb5345_v22769;
+assume(nondet() != 0);
+v22769 := 0;
+TO: main_bb5345_sv22769;
+
+FROM: main_bb5345_sv22769;
+v22770 := zero_extend(1, 8, v22769);
+v22771 := extract(0, 0, v22770);
+TO: main_bb5345_end;
+
+FROM: main_bb5345_end;
+assume(v22771 != 0);
+TO: main___startrek_write_cmd_forwardexitii29i;
+
+FROM: main_bb5345_end;
+assume(v22771 == 0);
+TO: main_bb5346;
+
+FROM: main_bb5346;
+v22772 := __startrek_round;
+v22773 := nondet();
+__startrek_round := v22773;
+v22774 := __startrek_round;
+v22775 := zero_extend(8, 32, v22774);
+v22776 := zero_extend(8, 32, v22772);
+TO: main_bb5346_end;
+
+FROM: main_bb5346_end;
+assume(v22775 sgt v22776);
+TO: main___VERIFIER_assumeexiti1i30iii;
+
+FROM: main_bb5346_end;
+assume(v22775 sle v22776);
+TO: main_bb5348;
+
+FROM: main___VERIFIER_assumeexiti1i30iii;
+v22778 := __startrek_round;
+v22779 := zero_extend(8, 32, v22778);
+v22780 := __startrek_job_end;
+v22781 := zero_extend(8, 32, v22780);
+TO: main___VERIFIER_assumeexiti1i30iii_end;
+
+FROM: main___VERIFIER_assumeexiti1i30iii_end;
+assume(v22779 sle v22781);
+TO: main___startrek_write_cmd_forwardexitii29i;
+
+FROM: main___VERIFIER_assumeexiti1i30iii_end;
+assume(v22779 sgt v22781);
+TO: main_bb5347;
+
+FROM: main_bb5347;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main_bb5348;
+TO: __startrek_init_shared_bb9501_ret;
+
+FROM: main___startrek_write_cmd_forwardexitii29i;
+v22783 := __startrek_round;
+v22784 := zero_extend(8, 64, v22783);
+v22785 := v22784;
+v_cmd_forward_ := store_array(v_cmd_forward_, v22784, -100);
+v22786 := __startrek_task;
+v22787 := zero_extend(8, 32, v22786);
+TO: main___startrek_write_cmd_forwardexitii29i_end;
+
+FROM: main___startrek_write_cmd_forwardexitii29i_end;
+assume(v22787 slt 1);
+TO: main_LeafBlocki34iii;
+
+FROM: main___startrek_write_cmd_forwardexitii29i_end;
+assume(v22787 sge 1);
+TO: main_LeafBlock4i39iii;
+
+FROM: main_LeafBlocki34iii;
+TO: main_LeafBlocki34iii_end;
+
+FROM: main_LeafBlocki34iii_end;
+assume(v22787 == 0);
+TO: main_bb5349;
+
+FROM: main_LeafBlocki34iii_end;
+assume(v22787 != 0);
+TO: main___startrek_write_cmd_turnexitii30i;
+
+FROM: main_bb5349;
+v22788 := __startrek_is_first_cs;
+v22789 := extract(0, 0, v22788);
+TO: main_bb5349_end;
+
+FROM: main_bb5349_end;
+assume(v22789 != 0);
+TO: main_bb5350;
+
+FROM: main_bb5349_end;
+assume(v22789 == 0);
+TO: main_bb5351;
+
+FROM: main_bb5350;
+__startrek_is_first_cs := 0;
+TO: main_bb5351;
+
+FROM: main_bb5351;

@@ -189,16 +189,15 @@ module LRA = struct
             ~f:
               ( neq_atom tvar >> function
                 | First t ->
+                    let tx = Term.mk_var tvar T_real.SReal in
                     Normalizer.normalize_atom
                     @@
                     let lhs =
                       Evaluator.eval_term @@ Map.Poly.find_exn model tvar
                     in
                     let rhs = Evaluator.eval_term @@ Term.subst model t in
-                    if Value.compare true Z.Compare.( > ) Q.( > ) lhs rhs then
-                      T_real.mk_rgt (Term.mk_var tvar T_real.SReal) t
-                    else if Value.compare true Z.Compare.( < ) Q.( < ) lhs rhs
-                    then T_real.mk_rgt t (Term.mk_var tvar T_real.SReal)
+                    if Value.gt lhs rhs then T_real.mk_rgt tx t
+                    else if Value.lt lhs rhs then T_real.mk_rgt t tx
                     else failwith "elim_neq"
                 | Second atm -> atm )
         in
@@ -207,79 +206,88 @@ module LRA = struct
         let glb = glb model lb in
         print
         @@ lazy
-             ("[mbp lra] lb: "
-             ^ String.concat_map_set ~sep:", " lb ~f:(fun (t, eps) ->
-                   sprintf "%s %s %s" (Term.str_of t)
-                     (if eps then "<" else "<=")
-                     (Ident.name_of_tvar tvar)));
+             (sprintf "[mbp lra] lb: %s"
+             @@ String.concat_map_set ~sep:", " lb ~f:(fun (t, eps) ->
+                 sprintf "%s %s %s" (Term.str_of t)
+                   (if eps then "<" else "<=")
+                   (Ident.name_of_tvar tvar)));
         print
         @@ lazy
-             ("[mbp lra] ub: "
-             ^ String.concat_map_set ~sep:", " ub ~f:(fun (t, eps) ->
-                   sprintf "%s %s %s" (Term.str_of t)
-                     (if eps then ">" else ">=")
-                     (Ident.name_of_tvar tvar)));
+             (sprintf "[mbp lra] ub: %s"
+             @@ String.concat_map_set ~sep:", " ub ~f:(fun (t, eps) ->
+                 sprintf "%s %s %s" (Term.str_of t)
+                   (if eps then ">" else ">=")
+                   (Ident.name_of_tvar tvar)));
         (match glb with
         | None -> ()
         | Some (t, eps) ->
             print
             @@ lazy
-                 ("[mbp lra] glb: "
-                 ^ sprintf "%s %s %s" (Term.str_of t)
-                     (if eps then "<" else "<=")
-                     (Ident.name_of_tvar tvar)));
+                 (sprintf "[mbp lra] glb: %s %s %s" (Term.str_of t)
+                    (if eps then "<" else "<=")
+                    (Ident.name_of_tvar tvar)));
         (match lub with
         | None -> ()
         | Some (t, eps) ->
             print
             @@ lazy
-                 ("[mbp lra] lub: "
-                 ^ sprintf "%s %s %s" (Term.str_of t)
-                     (if eps then ">" else ">=")
-                     (Ident.name_of_tvar tvar)));
+                 (sprintf "[mbp lra] lub: %s %s %s" (Term.str_of t)
+                    (if eps then ">" else ">=")
+                    (Ident.name_of_tvar tvar)));
         print
         @@ lazy
-             ("[mbp lra] rest: "
-             ^ String.concat_map_set ~sep:", " rest ~f:(fun atm ->
-                   sprintf "%s" (Atom.str_of atm)));
+             (sprintf "[mbp lra] rest: %s"
+             @@ String.concat_map_set ~sep:", " rest ~f:(fun atm ->
+                 sprintf "%s" (Atom.str_of atm)));
         match (lub, glb) with
-        | Some (_, _), Some (glb, glb_eps) ->
+        | Some (lub, _), Some (glb, glb_eps) ->
             Set.Poly.union_list
               [
-                rest;
+                (let sub =
+                   Map.Poly.singleton tvar
+                   @@ T_real.mk_rmul (T_real.mk_radd lub glb)
+                        (T_real.mk_real (Q.of_float 0.5))
+                 in
+                 Set.Poly.map rest ~f:(Atom.subst sub));
                 Set.concat_map lb ~f:(fun (t, eps) ->
                     normalize_mbp model
-                    @@ (if Stdlib.(glb_eps = eps) || glb_eps (*ToDo*) then
-                          T_real.mk_rgeq
-                        else T_real.mk_rgt)
-                         glb t);
+                    @@
+                    if Stdlib.(glb_eps = eps) || glb_eps (*ToDo*) then
+                      T_real.mk_rgeq glb t
+                    else T_real.mk_rgt glb t);
                 Set.concat_map ub ~f:(fun (t, eps) ->
                     normalize_mbp model
-                    @@ (if (not glb_eps) && not eps then T_real.mk_rgeq
-                        else T_real.mk_rgt)
-                         t glb);
+                    @@
+                    if (not glb_eps) && not eps then T_real.mk_rgeq t glb
+                    else T_real.mk_rgt t glb);
               ]
         | Some (lub, lub_eps), None ->
-            Set.union rest
+            Set.union
+              (let sub =
+                 Map.Poly.singleton tvar @@ T_real.mk_rsub lub (T_real.rone ())
+               in
+               Set.Poly.map rest ~f:(Atom.subst sub))
               (Set.concat_map ub ~f:(fun (t, eps) ->
                    normalize_mbp model
-                   @@ (if Stdlib.(lub_eps = eps) || lub_eps (*ToDo*) then
-                         T_real.mk_rgeq
-                       else T_real.mk_rgt)
-                        t lub))
+                   @@
+                   if Stdlib.(lub_eps = eps) || lub_eps (*ToDo*) then
+                     T_real.mk_rgeq t lub
+                   else T_real.mk_rgt t lub))
         | None, Some (glb, glb_eps) ->
-            Set.union rest
+            Set.union
+              (let sub =
+                 Map.Poly.singleton tvar @@ T_real.mk_radd glb (T_real.rone ())
+               in
+               Set.Poly.map rest ~f:(Atom.subst sub))
               (Set.concat_map lb ~f:(fun (t, eps) ->
                    normalize_mbp model
-                   @@ (if Stdlib.(glb_eps = eps) || glb_eps (*ToDo*) then
-                         T_real.mk_rgeq
-                       else T_real.mk_rgt)
-                        glb t))
+                   @@
+                   if Stdlib.(glb_eps = eps) || glb_eps (*ToDo*) then
+                     T_real.mk_rgeq glb t
+                   else T_real.mk_rgt glb t))
         | None, None ->
-            if Set.exists rest ~f:(fun atom -> Set.mem (Atom.fvs_of atom) tvar)
-            then raise NotNormalized
-              (*failwith @@ "no constraint on " ^ Ident.name_of_tvar tvar*)
-            else rest (* reachable here when simplification eliminated tvar *))
+            let sub = Map.Poly.singleton tvar @@ Term.mk_dummy T_real.SReal in
+            Set.Poly.map rest ~f:(Atom.subst sub))
 end
 
 module LIA = struct
@@ -444,16 +452,16 @@ module LIA = struct
   let lub model ub =
     fst
     @@ Set.fold ub ~init:(None, Q.inf) ~f:(fun (lub, lub_val) (c, t) ->
-           let tv = Evaluator.eval_term @@ Term.subst model t in
-           let v = Q.make (Value.int_of tv) c in
-           if Q.(lub_val > v) then (Some (c, t), v) else (lub, lub_val))
+        let tv = Evaluator.eval_term @@ Term.subst model t in
+        let v = Q.make (Value.int_of tv) c in
+        if Q.(lub_val > v) then (Some (c, t), v) else (lub, lub_val))
 
   let glb model lb =
     fst
     @@ Set.fold lb ~init:(None, Q.minus_inf) ~f:(fun (glb, glb_val) (c, t) ->
-           let tv = Evaluator.eval_term @@ Term.subst model t in
-           let v = Q.make (Value.int_of tv) c in
-           if Q.(glb_val < v) then (Some (c, t), v) else (glb, glb_val))
+        let tv = Evaluator.eval_term @@ Term.subst model t in
+        let v = Q.make (Value.int_of tv) c in
+        if Q.(glb_val < v) then (Some (c, t), v) else (glb, glb_val))
 
   (* resolve(M, ax <= t, bx >= s) *)
   let resolve model av t bv s =
@@ -526,7 +534,7 @@ module LIA = struct
             Map.Poly.singleton tvar
               T_int.(mk_div Value.Euclidean (mk_add glb lub) (from_int 2))
           in
-          if true then rest else Set.Poly.map rest ~f:(Atom.subst sub)
+          Set.Poly.map rest ~f:(Atom.subst sub)
         in
         print
         @@ lazy
@@ -551,7 +559,7 @@ module LIA = struct
             @@ T_int.mk_div Value.Euclidean tub
             @@ T_int.mk_int cub
           in
-          if true then rest else Set.Poly.map rest ~f:(Atom.subst sub)
+          Set.Poly.map rest ~f:(Atom.subst sub)
         in
         Set.concat_map ~f:(normalize_mbp model)
         @@ Set.Poly.union_list [ ubformulas; rest ]
@@ -569,15 +577,13 @@ module LIA = struct
                  (T_int.mk_div Value.Euclidean tlb @@ T_int.mk_int clb)
                  (T_int.one ())
           in
-          if true then rest else Set.Poly.map rest ~f:(Atom.subst sub)
+          Set.Poly.map rest ~f:(Atom.subst sub)
         in
         Set.concat_map ~f:(normalize_mbp model)
         @@ Set.Poly.union_list [ lbformulas; rest ]
     | None, None ->
-        if Set.exists rest ~f:(fun atom -> Set.mem (Atom.fvs_of atom) tvar) then
-          raise NotNormalized
-          (*failwith @@ "no constraint on " ^ Ident.name_of_tvar tvar*)
-        else rest (* reachable here when simplification eliminated tvar *)
+        let sub = Map.Poly.singleton tvar @@ Term.mk_dummy T_int.SInt in
+        Set.Poly.map rest ~f:(Atom.subst sub)
 
   let rec model_based_projection ~print model tvar atoms =
     match Set.find_map atoms ~f:(eq_atom tvar) with
@@ -604,10 +610,8 @@ module LIA = struct
                     @@
                     let lhs = Evaluator.eval_term @@ Term.subst model cx in
                     let rhs = Evaluator.eval_term @@ Term.subst model t in
-                    if Value.compare true Z.Compare.( > ) Q.( > ) lhs rhs then
-                      T_int.mk_gt cx t
-                    else if Value.compare true Z.Compare.( < ) Q.( < ) lhs rhs
-                    then T_int.mk_gt t cx
+                    if Value.gt lhs rhs then T_int.mk_gt cx t
+                    else if Value.lt lhs rhs then T_int.mk_gt t cx
                     else failwith "elim_neq"
                 | Second atm -> atm )
         in
@@ -673,4 +677,590 @@ module Boolean = struct
         then raise NotNormalized
           (*failwith @@ "no constraint on " ^ Ident.name_of_tvar tvar*)
         else atoms (* reachable here when simplification eliminated tvar *)
+end
+
+module ADT = struct
+  let eq_atom tvar = function
+    | Atom.App (Predicate.Psym T_bool.Eq, [ Term.Var (x, _, _); t ], _)
+      when Ident.tvar_equal x tvar && (not @@ Set.mem (Term.fvs_of t) x) ->
+        Some t
+    | Atom.App (Predicate.Psym T_bool.Eq, [ t; Term.Var (x, _, _) ], _)
+      when Ident.tvar_equal x tvar && (not @@ Set.mem (Term.fvs_of t) x) ->
+        Some t
+    | _ -> None
+
+  (* TODO now, only check eq_atom *)
+  let model_based_projection ~print:_ model tvar atoms =
+    match Set.find_map atoms ~f:(eq_atom tvar) with
+    | Some t ->
+        let sub = Map.Poly.singleton tvar t in
+        Set.concat_map atoms ~f:(Atom.subst sub >> normalize_mbp model)
+    | None -> (
+        match Map.Poly.find model tvar with
+        | Some value ->
+            let sub = Map.Poly.singleton tvar value in
+            Set.concat_map atoms ~f:(Atom.subst sub >> normalize_mbp model)
+        | None -> atoms)
+end
+
+module SAtom = struct
+  type t = Atom.t * Term.t Set.Poly.t
+
+  let get_atom (atom, _) = atom
+  let get_set (_, s) = s
+  let of_atom ?(s = Set.Poly.empty) atom = (atom, s)
+end
+
+module ARR = struct
+  let eq_atom tvar = function
+    | Atom.App (Predicate.Psym T_bool.Eq, [ Term.Var (x, _, _); t ], _)
+      when Ident.tvar_equal x tvar && (not @@ Set.mem (Term.fvs_of t) x) ->
+        Some t
+    | Atom.App (Predicate.Psym T_bool.Eq, [ t; Term.Var (x, _, _) ], _)
+      when Ident.tvar_equal x tvar && (not @@ Set.mem (Term.fvs_of t) x) ->
+        Some t
+    | _ -> None
+
+  let neq_atom tvar = function
+    | Atom.App (Predicate.Psym T_bool.Neq, [ Term.Var (x, _, _); t ], _)
+      when Ident.tvar_equal x tvar && (not @@ Set.mem (Term.fvs_of t) x) ->
+        Some t
+    | Atom.App (Predicate.Psym T_bool.Neq, [ t; Term.Var (x, _, _) ], _)
+      when Ident.tvar_equal x tvar && (not @@ Set.mem (Term.fvs_of t) x) ->
+        Some t
+    | _ -> None
+
+  let triv_eq satoms =
+    let term_equal t1 t2 =
+      match (t1, t2) with
+      | Term.Var (v1, _, _), Term.Var (v2, _, _) -> Ident.tvar_equal v1 v2
+      | _ -> false
+      (*TODO Other terms*)
+    in
+
+    let is_triv_eq_atom atom =
+      match atom with
+      | Atom.App (Predicate.Psym T_bool.Eq, [ t1; t2 ], _) ->
+          if term_equal t1 t2 then true else false
+      | _ -> false
+    in
+    Set.filter satoms ~f:(fun (atom, _) -> not (is_triv_eq_atom atom))
+
+  let is_store = function
+    | Term.FunApp (T_array.AStore _, _, _) -> true
+    | _ -> false
+
+  let symm satoms =
+    let is_symm_target atom =
+      match atom with
+      | Atom.App (_, [ t1; t2 ], _) -> (not (is_store t1)) && is_store t2
+      | _ -> false
+    in
+
+    Set.Poly.map satoms ~f:(fun (atom, set) ->
+        if is_symm_target atom then
+          match atom with
+          | Atom.App (pred, [ t1; t2 ], info) ->
+              SAtom.of_atom ~s:set (Atom.App (pred, [ t2; t1 ], info))
+          | _ -> SAtom.of_atom ~s:set atom
+        else SAtom.of_atom ~s:set atom)
+
+  let rec eval_satom model (atom, set) =
+    match atom with
+    | Atom.App (Predicate.Psym T_bool.Eq, [ t1; t2 ], info) -> (
+        match t1 with
+        | Term.FunApp (T_array.AStore (idx_s, elem_s), _, _) ->
+            let tmp_t1 =
+              Set.fold set ~init:t1 ~f:(fun acc i ->
+                  T_array.mk_store idx_s elem_s acc i
+                    (T_array.mk_select idx_s elem_s t2 i))
+            in
+            Evaluator.eval_atom
+            @@ Atom.subst model
+                 (Atom.mk_app (Predicate.Psym T_bool.Eq) [ tmp_t1; t2 ] ~info)
+        | _ -> Evaluator.eval_atom @@ Atom.subst model atom)
+    | Atom.App (Predicate.Psym T_bool.Neq, args, info) ->
+        not
+          (eval_satom model
+             (Atom.mk_app ~info (Predicate.Psym T_bool.Eq) args, set))
+    | Atom.App (_, _, _) -> Evaluator.eval_atom @@ Atom.subst model atom
+    | Atom.True _ -> true
+    | Atom.False _ -> false
+
+  let mem_by_model model i set =
+    let i_v = Evaluator.eval_term @@ Term.subst model i in
+    Set.find set ~f:(fun t ->
+        Value.eq i_v @@ Evaluator.eval_term @@ Term.subst model t)
+
+  let mbp_disjunction model satom1 satom2 =
+    if eval_satom model satom1 then Some satom1
+    else if eval_satom model satom2 then Some satom2
+    else None
+
+  let rec aux_elim_wr_rd model term =
+    match term with
+    | Term.FunApp
+        ( T_array.ASelect (idx_s, elemm_s),
+          [ Term.FunApp (T_array.AStore (_, _), [ t; i; v ], _); j ],
+          _ ) ->
+        if
+          Value.eq
+            (Evaluator.eval_term @@ Term.subst model i)
+            (Evaluator.eval_term @@ Term.subst model j)
+        then
+          let extra, new_v = aux_elim_wr_rd model v in
+          ( Set.add extra
+              (Atom.mk_app (Predicate.Psym T_bool.Eq) [ i; j ], Set.Poly.empty),
+            new_v )
+        else
+          let extra_t, new_t = aux_elim_wr_rd model t in
+          let extra_j, new_j = aux_elim_wr_rd model j in
+          let extra_t_j = Set.union extra_t extra_j in
+          ( Set.add extra_t_j
+              (Atom.mk_app (Predicate.Psym T_bool.Neq) [ i; j ], Set.Poly.empty),
+            T_array.mk_select idx_s elemm_s new_t new_j )
+    | Term.FunApp (fun_sym, args, info) ->
+        let extra_atoms, new_args =
+          List.fold_map args ~init:Set.Poly.empty ~f:(fun acc arg ->
+              let extra, new_arg = aux_elim_wr_rd model arg in
+              (Set.union acc extra, new_arg))
+        in
+        (extra_atoms, Term.mk_fsym_app fun_sym new_args ~info)
+    | Term.LetTerm (tvar, sort, t1, t2, info) ->
+        let extra1, new_t1 = aux_elim_wr_rd model t1 in
+        let extra2, new_t2 = aux_elim_wr_rd model t2 in
+        (Set.union extra1 extra2, Term.mk_let_term tvar sort new_t1 new_t2 ~info)
+    | _ -> (Set.Poly.empty, term)
+
+  let elim_wr_rd model satoms =
+    Set.concat_map satoms ~f:(fun (atom, set) ->
+        match atom with
+        | Atom.App (pred, args, info) ->
+            let extra_atoms, new_args =
+              List.fold_map args ~init:Set.Poly.empty ~f:(fun acc arg ->
+                  let extra, new_arg = aux_elim_wr_rd model arg in
+                  (Set.union acc extra, new_arg))
+            in
+            Set.add extra_atoms (Atom.mk_app pred new_args ~info, set)
+        | _ -> Set.Poly.singleton (atom, set))
+
+  let elim_wr_eq_satom model (atom, set) =
+    match atom with
+    | Atom.App (_, args, info) -> (
+        match args with
+        | [ wrt; t2 ] -> (
+            match wrt with
+            | Term.FunApp (T_array.AStore (idx_s, val_s), [ t1; j; v ], _) -> (
+                match mem_by_model model j set with
+                | Some t ->
+                    let eq1 =
+                      let atm1 =
+                        Atom.mk_app ~info (Predicate.Psym T_bool.Eq) [ t1; t2 ]
+                      in
+                      SAtom.of_atom ~s:set atm1
+                    in
+                    let eq2 =
+                      let atm2 =
+                        Atom.mk_app ~info (Predicate.Psym T_bool.Eq) [ j; t ]
+                      in
+                      SAtom.of_atom atm2
+                    in
+                    Set.Poly.of_list [ eq1; eq2 ]
+                | None ->
+                    let eq1 =
+                      let atm1 =
+                        Atom.mk_app ~info (Predicate.Psym T_bool.Eq) [ t1; t2 ]
+                      in
+                      let set1 = Set.add set j in
+                      SAtom.of_atom ~s:set1 atm1
+                    in
+                    let eq2 =
+                      let rdt = T_array.mk_select idx_s val_s t2 j in
+                      let atm2 =
+                        Atom.mk_app ~info (Predicate.Psym T_bool.Eq) [ v; rdt ]
+                      in
+                      SAtom.of_atom atm2
+                    in
+                    let neq_set =
+                      Set.Poly.map set ~f:(fun t ->
+                          ( Atom.mk_app ~info (Predicate.Psym T_bool.Neq)
+                              [ j; t ],
+                            Set.Poly.empty ))
+                    in
+                    Set.union neq_set (Set.Poly.of_list [ eq1; eq2 ]))
+            | _ -> failwith "elim_wr_eq: not a write term")
+        | _ -> failwith "elim_wr_eq: not a binary predicate")
+    | _ -> failwith "elim_wr_eq: not apply"
+
+  let elim_wr_eq model satoms =
+    Set.concat_map satoms ~f:(fun satom ->
+        let atom = SAtom.get_atom satom in
+        match atom with
+        | Atom.App (Predicate.Psym T_bool.Eq, [ t1; _ ], _) when is_store t1 ->
+            elim_wr_eq_satom model satom
+        | _ -> Set.Poly.singleton satom)
+
+  let elim_wr_neq_satom model (atom, set) =
+    match atom with
+    | Atom.App (_, args, info) -> (
+        match args with
+        | [ wrt; t2 ] -> (
+            match wrt with
+            | Term.FunApp (T_array.AStore (idx_s, elem_s), [ t1; j; v ], _) -> (
+                match mem_by_model model j set with
+                | Some t ->
+                    let neq =
+                      let atm1 =
+                        Atom.mk_app ~info (Predicate.Psym T_bool.Neq) [ t1; t2 ]
+                      in
+                      SAtom.of_atom ~s:set atm1
+                    in
+                    let eq =
+                      let atm2 =
+                        Atom.mk_app ~info (Predicate.Psym T_bool.Eq) [ j; t ]
+                      in
+                      SAtom.of_atom atm2
+                    in
+                    Set.Poly.of_list [ neq; eq ]
+                | None -> (
+                    let neq1 =
+                      let atm1 =
+                        Atom.mk_app ~info (Predicate.Psym T_bool.Neq) [ t1; t2 ]
+                      in
+                      let set1 = Set.add set j in
+                      SAtom.of_atom ~s:set1 atm1
+                    in
+                    let neq2 =
+                      let rdt = T_array.mk_select idx_s elem_s t2 j in
+                      let atm2 =
+                        Atom.mk_app ~info (Predicate.Psym T_bool.Neq) [ v; rdt ]
+                      in
+                      SAtom.of_atom atm2
+                    in
+                    let neq_set =
+                      Set.Poly.map set ~f:(fun t ->
+                          ( Atom.mk_app ~info (Predicate.Psym T_bool.Neq)
+                              [ j; t ],
+                            Set.Poly.empty ))
+                    in
+                    match mbp_disjunction model neq1 neq2 with
+                    | Some atm -> Set.add neq_set atm
+                    | None ->
+                        Set.Poly.singleton (Atom.mk_false (), Set.Poly.empty)))
+            | _ -> failwith "elim_wr_neq: not a write term")
+        | _ -> failwith "elim_wr_neq: not a binary predicate")
+    | _ -> failwith "elim_wr_neq: not apply"
+
+  let elim_wr_neq model satoms =
+    Set.concat_map satoms ~f:(fun satom ->
+        let atom = SAtom.get_atom satom in
+        match atom with
+        | Atom.App (Predicate.Psym T_bool.Neq, [ t1; _ ], _) when is_store t1 ->
+            elim_wr_neq_satom model satom
+        | _ -> Set.Poly.singleton satom)
+
+  let rec aux_elim_write model satoms =
+    let rec exist_write_term = function
+      | Term.FunApp (T_array.AStore (_, _), _, _) -> true
+      | Term.FunApp (T_array.ASelect (_, _), [ arr; ind ], _) ->
+          exist_write_term arr || exist_write_term ind
+      | Term.FunApp (T_array.AConst (_, _), [ value ], _) ->
+          exist_write_term value
+      | _ -> false
+    in
+
+    let exist_write =
+      Set.exists satoms ~f:(fun (atm, _) ->
+          match atm with
+          | Atom.App (_, args, _) -> List.exists args ~f:exist_write_term
+          | _ -> false)
+    in
+
+    if exist_write then
+      satoms |> symm |> triv_eq |> elim_wr_rd model |> elim_wr_eq model
+      |> elim_wr_neq model |> aux_elim_write model
+    else satoms
+
+  let elim_write model satoms = aux_elim_write model satoms |> triv_eq
+
+  let rec aux_factor_out model tvar term =
+    match term with
+    | Term.FunApp (T_array.ASelect (idx_s, elemm_s), [ t1; t2 ], _) -> (
+        let extra2, new_t2 = aux_factor_out model tvar t2 in
+        match t1 with
+        | Term.Var (x, sort, info) when Ident.tvar_equal tvar x ->
+            let s = Term.mk_fresh_var elemm_s in
+            let new_read =
+              T_array.mk_select idx_s elemm_s
+                (Term.mk_var tvar sort ~info)
+                new_t2
+            in
+            ( Set.Poly.singleton
+                ( Atom.mk_app (Predicate.Psym T_bool.Eq) [ s; new_read ],
+                  Set.Poly.empty ),
+              s )
+        | _ ->
+            let extra1, new_t1 = aux_factor_out model tvar t1 in
+            ( Set.union extra1 extra2,
+              T_array.mk_select idx_s elemm_s new_t1 new_t2 ))
+    | Term.FunApp (fun_sym, args, info) ->
+        let extra_satoms, new_args =
+          List.fold args ~init:(Set.Poly.empty, [])
+            ~f:(fun (acc_atoms, acc_args) arg ->
+              let atom, new_arg = aux_factor_out model tvar arg in
+              (Set.union acc_atoms atom, new_arg :: acc_args))
+          |> fun (res_atoms, res_args) -> (res_atoms, List.rev res_args)
+        in
+        (extra_satoms, Term.mk_fsym_app ~info fun_sym new_args)
+    | Term.LetTerm (tvar, sort, t1, t2, info) ->
+        let extra1, new_t1 = aux_factor_out model tvar t1 in
+        let extra2, new_t2 = aux_factor_out model tvar t2 in
+        (Set.union extra1 extra2, Term.mk_let_term ~info tvar sort new_t1 new_t2)
+    | _ -> (Set.Poly.empty, term)
+
+  let factor_out model tvar satoms =
+    (*CaseSplitEq*)
+    (* We don't have to implement since in this point, we think only atomic formulas*)
+    (*FactorRd*)
+    Set.concat_map satoms ~f:(fun (atom, set) ->
+        match atom with
+        | Atom.App (pred, args, info) ->
+            let extra_satoms, new_args =
+              List.fold args ~init:(Set.Poly.empty, [])
+                ~f:(fun (acc_atoms, acc_args) arg ->
+                  let atom, new_arg = aux_factor_out model tvar arg in
+                  (Set.union acc_atoms atom, new_arg :: acc_args))
+              |> fun (res_atoms, res_args) -> (res_atoms, List.rev res_args)
+            in
+            Set.add extra_satoms (Atom.mk_app pred new_args ~info, set)
+        | _ -> Set.Poly.singleton (atom, set))
+
+  let elim_eq _model tvar satoms =
+    match
+      Set.find_map satoms ~f:(fun (atom, set) ->
+          match eq_atom tvar atom with Some t -> Some (t, set) | None -> None)
+    with
+    | Some (t, set) -> (
+        match Term.sort_of t with
+        | T_array.SArray (idx_s, elem_s) ->
+            let updated_t =
+              Set.fold set ~init:t ~f:(fun acc i ->
+                  let fresh_var = Term.mk_fresh_var elem_s in
+                  T_array.mk_store idx_s elem_s acc i fresh_var)
+            in
+            let sub = Map.Poly.singleton tvar updated_t in
+            Some
+              (Set.Poly.map satoms ~f:(fun (atom, set) ->
+                   (Atom.subst sub atom, set)))
+        | _ -> failwith "elim_eq: tvar not array")
+    | None -> None
+
+  let elim_neq _model tvar satoms =
+    Set.filter satoms ~f:(fun (atom, _) ->
+        match neq_atom tvar atom with Some _ -> false | None -> true)
+
+  let ackermann model tvar satoms =
+    let reads, other_satoms =
+      Set.fold satoms ~init:([], Set.Poly.empty)
+        ~f:(fun (pairs, others) (atom, set) ->
+          match atom with
+          | Atom.App
+              ( Predicate.Psym T_bool.Eq,
+                [
+                  s;
+                  Term.FunApp
+                    (T_array.ASelect (_, _), [ Term.Var (a, _, _); t ], _);
+                ],
+                _ )
+          | Atom.App
+              ( Predicate.Psym T_bool.Eq,
+                [
+                  Term.FunApp
+                    (T_array.ASelect (_, _), [ Term.Var (a, _, _); t ], _);
+                  s;
+                ],
+                _ ) ->
+              if Ident.tvar_equal a tvar then ((t, s) :: pairs, others)
+              else (pairs, Set.add others (atom, set))
+          | _ -> (pairs, Set.add others (atom, set)))
+    in
+    let reads_with_values =
+      List.map reads ~f:(fun (t, s) ->
+          let v = Evaluator.eval_term (Term.subst model t) in
+          (v, (t, s)))
+    in
+
+    let sorted_reads =
+      List.sort reads_with_values ~compare:(fun (v1, _) (v2, _) ->
+          if Value.eq v1 v2 then 0 else if Value.geq v1 v2 then 1 else -1)
+    in
+    let groups =
+      List.group sorted_reads ~break:(fun (v1, _) (v2, _) -> Value.neq v1 v2)
+    in
+
+    let equivalence_class_atoms =
+      Set.Poly.of_list
+      @@ List.concat_map groups ~f:(fun group ->
+          match List.map group ~f:snd with
+          | (t_rep, s_rep) :: others ->
+              List.concat_map others ~f:(fun (t_nrep, s_nrep) ->
+                  [
+                    ( Atom.mk_app (Predicate.Psym T_bool.Eq) [ t_rep; t_nrep ],
+                      Set.Poly.empty );
+                    ( Atom.mk_app (Predicate.Psym T_bool.Eq) [ s_rep; s_nrep ],
+                      Set.Poly.empty );
+                  ])
+          | _ -> [])
+    in
+
+    let representatives =
+      List.filter_map groups ~f:(fun group ->
+          Option.map (List.hd group) ~f:(fun (_, ts) -> ts))
+    in
+
+    let rec inter_constraints = function
+      | (t1, _) :: (t2, s2) :: rest ->
+          (Atom.mk_app (Predicate.Psym T_int.Lt) [ t1; t2 ], Set.Poly.empty)
+          :: inter_constraints ((t2, s2) :: rest)
+      | _ -> []
+    in
+
+    let inter_atoms = Set.Poly.of_list @@ inter_constraints representatives in
+
+    Set.Poly.union_list [ other_satoms; equivalence_class_atoms; inter_atoms ]
+
+  let target_var_elim model tvar satoms =
+    match elim_eq model tvar satoms with
+    | Some satoms -> satoms
+    | None -> satoms |> elim_neq model tvar |> ackermann model tvar
+
+  let diseq_atom tvar = function
+    | Atom.App (Predicate.Psym T_bool.Neq, [ Term.Var (x, _, _); t ], _)
+      when Ident.tvar_equal x tvar && (not @@ Set.mem (Term.fvs_of t) x) ->
+        Some t
+    | Atom.App (Predicate.Psym T_bool.Neq, [ t; Term.Var (x, _, _) ], _)
+      when Ident.tvar_equal x tvar && (not @@ Set.mem (Term.fvs_of t) x) ->
+        Some t
+    | _ -> None
+
+  let model_based_projection ~print:_ model tvar atoms =
+    (*
+    let () =
+      Stdlib.print_endline "--------------------------------------------------";
+      Stdlib.print_endline ("::: [Array MBP] Target TVar (x): " ^ Ident.name_of_tvar tvar);
+      let model_str = String.concat_map_list ~sep:", " (Map.Poly.to_alist model)
+          ~f:(fun (Ident.Tvar v, value) -> Printf.sprintf "%s |-> %s" v (Term.str_of value)) in
+      Stdlib.print_endline ("::: [Array MBP] Full Model: [" ^ model_str ^ "]");
+      let atoms_str = String.concat ~sep:", " (List.map (Set.to_list atoms) ~f:Atom.str_of) in
+      Stdlib.print_endline ("::: [Array MBP] Atoms: {" ^ atoms_str ^ "}");
+      Stdlib.print_endline "--------------------------------------------------";
+      Stdlib.flush Stdlib.stdout
+    in
+    *)
+    match Set.find_map atoms ~f:(eq_atom tvar) with
+    | Some t ->
+        let sub = Map.Poly.singleton tvar t in
+        Set.concat_map atoms ~f:(Atom.subst sub >> normalize_mbp model)
+    | None ->
+        (*TODO: Implement for constant arrays*)
+        (*In the current implementation, if a constant is present, *)
+        (*we give up on model-based projection and directly substitute.*)
+        (*Warning: Inparticular, the situation changes if there is a constant around NEQ*)
+        let rec contains_aconst t =
+          match t with
+          | Term.Var (_, _, _) -> false
+          | Term.FunApp (sym, args, _) -> (
+              match sym with
+              | T_array.AConst (_, _) -> true
+              | _ -> List.exists ~f:contains_aconst args)
+          | Term.LetTerm (_, _, t1, t2, _) ->
+              contains_aconst t1 || contains_aconst t2
+        in
+
+        if
+          Set.exists atoms ~f:(fun atom ->
+              match atom with
+              | Atom.App (_, [ t1; t2 ], _) ->
+                  contains_aconst t1 || contains_aconst t2
+              | _ -> false)
+        then
+          match Map.Poly.find model tvar with
+          | Some value ->
+              let sub = Map.Poly.singleton tvar value in
+              Set.concat_map atoms ~f:(Atom.subst sub >> normalize_mbp model)
+          | None -> atoms
+        else
+          (*Equality with Sets*)
+          let satoms = Set.Poly.map atoms ~f:(fun atom -> SAtom.of_atom atom) in
+          (*
+        let() =
+          Stdlib.print_endline "--------------------------------------------------";
+          let atoms = Set.Poly.map(satoms) ~f: (fun (atom, _) -> atom) in
+          let atoms_str = String.concat ~sep:", " (List.map (Set.to_list atoms) ~f:Atom.str_of) in
+          Stdlib.print_endline ("::: [Start Atoms] Atoms: {" ^ atoms_str ^ "}");
+          Stdlib.flush Stdlib.stdout
+        in
+        *)
+
+          (*Elim Write*)
+          let elim_write_atoms = elim_write model satoms in
+          (*
+        let() =
+          let atoms = Set.Poly.map(elim_write_atoms) ~f: (fun (atom, _) -> atom) in
+          let atoms_str = String.concat ~sep:", " (List.map (Set.to_list atoms) ~f:Atom.str_of) in
+          Stdlib.print_endline ("::: [Elim Write] Atoms: {" ^ atoms_str ^ "}");
+          Stdlib.flush Stdlib.stdout
+        in
+        *)
+
+          (*Factor out qualities and read terms*)
+          let factor_out_atoms = factor_out model tvar elim_write_atoms in
+
+          (*LiftEqDiseqRd*)
+          (*We don't have to implement since we think formulas as a set of atomic formulas*)
+
+          (*Target Variables Elimination*)
+          let target_var_elim_atoms =
+            target_var_elim model tvar factor_out_atoms
+          in
+          (*
+        let() =
+          let atoms = Set.Poly.map(target_var_elim_atoms) ~f: (fun (atom, _) -> atom) in
+          let atoms_str = String.concat ~sep:", " (List.map (Set.to_list atoms) ~f:Atom.str_of) in
+          Stdlib.print_endline ("::: [Target Variables Elimination] Atoms: {" ^ atoms_str ^ "}");
+          Stdlib.flush Stdlib.stdout
+        in
+        *)
+
+          (*Output*)
+          let out_atoms =
+            Set.concat_map target_var_elim_atoms ~f:(fun (atom, set) ->
+                let updated_atom =
+                  if Set.is_empty set then atom
+                  else
+                    match atom with
+                    | Atom.App (Predicate.Psym T_bool.Eq, [ t1; t2 ], info) -> (
+                        match t1 with
+                        | Term.FunApp (T_array.AStore (idx_s, elem_s), _, _) ->
+                            let new_t1 =
+                              Set.fold set ~init:t1 ~f:(fun acc i ->
+                                  let v = T_array.mk_select idx_s elem_s t2 i in
+                                  T_array.mk_store idx_s elem_s acc i v)
+                            in
+                            Atom.mk_app (Predicate.Psym T_bool.Eq)
+                              [ new_t1; t2 ] ~info
+                        | _ -> atom)
+                    | _ -> atom
+                in
+                normalize_mbp model updated_atom)
+          in
+          (*
+        let() =
+          let atoms_str = String.concat ~sep:", " (List.map (Set.to_list out_atoms) ~f:Atom.str_of) in
+          Stdlib.print_endline ("::: [Output] Atoms: {" ^ atoms_str ^ "}");
+          Stdlib.print_endline "--------------------------------------------------";
+          Stdlib.flush Stdlib.stdout
+        in
+        *)
+          out_atoms
 end

@@ -12,6 +12,8 @@ rule main = parse
 | "//"[^'\n']*?'\n' { Lexing.new_line lexbuf; main lexbuf }
 | "/*" { comment (Lexing.lexeme_start_p lexbuf) lexbuf; main lexbuf }
 
+| "tt" { Parser.TT }
+| "ff" { Parser.FF }
 | "true" { Parser.TRUE }
 | "false" { Parser.FALSE }
 | "int" { Parser.INT }

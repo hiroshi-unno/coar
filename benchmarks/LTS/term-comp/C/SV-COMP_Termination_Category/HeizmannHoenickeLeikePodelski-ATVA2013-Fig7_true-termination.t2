@@ -1,0 +1,63 @@
+///*** 1_main ***///
+START: main_bb0;
+FROM: main_bb0;
+v0 := nondet();
+TO: main_bb0_end;
+
+FROM: main_bb0_end;
+assume(v0 slt 1);
+TO: main_bb6;
+
+FROM: main_bb0_end;
+assume(v0 sge 1);
+TO: main_bb1;
+
+FROM: main_bb1;
+v2 := zero_extend(32, 64, v0);
+v4 := nondet();
+var__temp_vi.0 := 0;
+var__temp_vi.0 := 0;
+TO: main_bb2;
+
+FROM: main_bb2;
+vi.0 := var__temp_vi.0;
+TO: main_bb2_end;
+
+FROM: main_bb2_end;
+assume(vi.0 slt v0);
+TO: main_bb3;
+
+FROM: main_bb2_end;
+assume(vi.0 sge v0);
+TO: main_bb5;
+
+FROM: main_bb3;
+v6 := sign_extend(32, 64, vi.0);
+v7 := v6;
+v8 := select_array(v4, v6);
+TO: main_bb3_end;
+
+FROM: main_bb3_end;
+assume(v8 slt 0);
+TO: main_bb5;
+
+FROM: main_bb3_end;
+assume(v8 sge 0);
+TO: main_bb4;
+
+FROM: main_bb4;
+v10 := vi.0 + 1;
+v11 := sign_extend(32, 64, vi.0);
+v12 := v11;
+v13 := select_array(v4, v11);
+v14 := v10 + v13;
+var__temp_vi.0 := v14;
+var__temp_vi.0 := v14;
+TO: main_bb2;
+
+FROM: main_bb5;
+TO: main_bb6;
+
+FROM: main_bb6;
+TO: main_bb6_ret;
+

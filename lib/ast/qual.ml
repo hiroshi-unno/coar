@@ -13,6 +13,40 @@ let split_params_by_theory =
 let str_of_term_list = String.concat_map_list ~sep:"," ~f:Term.str_of
 let str_of_term_list_list = String.concat_map_list ~sep:"\n" ~f:str_of_term_list
 
+let div_mod_filter (_, phi) =
+  Set.exists (Formula.funsyms_of phi) ~f:(function
+    | T_int.(Div _ | Rem _) -> true
+    | _ -> false)
+
+let neg (params, phi) =
+  (params, Normalizer.normalize @@ Evaluator.simplify_neg phi)
+
+let add_neg quals = Set.union quals @@ Set.Poly.map quals ~f:neg
+
+let add_homogeneous quals =
+  Set.union quals
+  @@ Set.Poly.map quals ~f:(fun (params, phi) ->
+      (params, Normalizer.homogenize phi))
+
+let rec mk_let_to_cond conds bvs fvs tvs lenv =
+  let lenv' =
+    Map.Poly.filteri lenv ~f:(fun ~key ~data ->
+        Set.mem fvs (key, Term.sort_of data))
+  in
+  let conds' =
+    Map.Poly.to_alist lenv'
+    |> List.map ~f:(fun (var, def) ->
+        Formula.eq (Term.mk_var var (Term.sort_of def)) def)
+  in
+  let tvs' =
+    Set.union tvs (Set.Poly.union_list @@ List.map conds' ~f:Formula.sort_env_of)
+  in
+  let fvs' = Set.diff tvs' bvs in
+  let conds' = Set.union conds (Set.Poly.of_list conds') in
+  if Set.length fvs = Set.length fvs' then
+    (tvs', fvs, Set.to_list conds' |> Formula.and_of)
+  else mk_let_to_cond conds' bvs fvs' tvs' lenv
+
 let mk_func_app_terms
     (term_map : (Sort.t, (Term.t * Formula.t list) Set.Poly.t) Map.Poly.t) fenv
     =

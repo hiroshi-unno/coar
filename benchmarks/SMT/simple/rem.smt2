@@ -1,0 +1,6 @@
+(declare-const modulo Int)
+(declare-const remainder Int)
+(assert (= modulo (mod -1 3)))
+(assert (= remainder (rem -1 3)))
+(check-sat)
+(get-model)

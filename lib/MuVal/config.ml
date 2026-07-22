@@ -33,6 +33,7 @@ type t = {
   use_alternation_depth : bool;
   ignore_nu_components : bool;
   qelim : MuCLP.Qelim.Config.t;
+  output_certificates : string option;
   gen_extra_partial_sols : bool;
   random_ex_size : int;
   random_ex_bound : int;

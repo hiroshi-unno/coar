@@ -422,7 +422,7 @@ and cgen_atom ~print senv atom =
                 Sort.args_of t,
                 Set.Poly.of_list
                 @@ List.map2_exn par_tys (Sort.args_of t) ~f:(fun ty1 ty2 ->
-                       CEq (ty1, ty2)) )
+                    CEq (ty1, ty2)) )
           | None ->
               ( Map.Poly.add_exn senv ~key:(Tvar var)
                   ~data:(Sort.mk_fun @@ par_tys @ [ T_bool.SBool ]),
@@ -929,8 +929,8 @@ let solve ~print cs =
   let eqs =
     Set.to_list
     @@ Set.Poly.filter_map cs ~f:(function
-         | CEq (s1, s2) -> Some (s1, s2)
-         | CNum _ -> None)
+      | CEq (s1, s2) -> Some (s1, s2)
+      | CNum _ -> None)
   in
   let nums =
     Set.Poly.filter_map cs ~f:(function
@@ -952,14 +952,14 @@ let elim_nums ?(to_sus = false) ~default nums map =
   let map_nums =
     Map.of_set_exn
     @@ Set.Poly.map nums ~f:(fun svar ->
-           ( svar,
-             match default with
-             | Some sort -> sort
-             | None ->
-                 if (*ToDo*) false && to_sus then
-                   T_dt.SUS (Ident.name_of_svar svar, [])
-                 else (* ToDo: z3 does not support polymophic (in)equalities *)
-                   Sort.SVar svar ))
+        ( svar,
+          match default with
+          | Some sort -> sort
+          | None ->
+              if (*ToDo*) false && to_sus then
+                T_dt.SUS (Ident.name_of_svar svar, [])
+              else (* ToDo: z3 does not support polymophic (in)equalities *)
+                Sort.SVar svar ))
   in
   Map.force_merge map_nums
     (Map.Poly.map map ~f:(Term.subst_sorts_sort map_nums))

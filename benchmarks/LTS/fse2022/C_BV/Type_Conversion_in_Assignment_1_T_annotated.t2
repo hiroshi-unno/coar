@@ -1,0 +1,68 @@
+///*** 1_main ***///
+START: main_bb3;
+
+TYPE v12: bv(32);
+
+FROM: main_bb3;
+flag := 0;
+TO: main_bb4;
+
+FROM: main_bb4;
+v8 := flag;
+var__temp_v.0.i := -1;
+TO: main_bb4_end;
+
+FROM: main_bb4_end;
+assume(v8 sgt 1000);
+var__temp_v.0.i := -1;
+TO: main_fgetcexit;
+
+FROM: main_bb4_end;
+assume(v8 sle 1000);
+TO: main_bb5;
+
+FROM: main_bb5;
+v10 := flag;
+v11 := v10 + 1;
+flag := v11;
+v12 := nondet();
+v14 := 0 - v12;
+TO: main_bb5_v..i;
+FROM: main_bb5_v..i;
+assume(v12 slt 0);
+v..i := v14;
+TO: main_bb5_sv..i;
+
+FROM: main_bb5_v..i;
+assume(v12 sge 0);
+v..i := v12;
+TO: main_bb5_sv..i;
+
+FROM: main_bb5_sv..i;
+v15 := v..i srem 256;
+var__temp_v.0.i := v15;
+var__temp_v.0.i := v15;
+TO: main_fgetcexit;
+
+FROM: main_fgetcexit;
+v.0.i := var__temp_v.0.i;
+TO: main_LeafBlock;
+
+FROM: main_LeafBlock;
+v.0.i.off := v.0.i + 1;
+TO: main_LeafBlock_end;
+
+FROM: main_LeafBlock_end;
+assume(v.0.i.off ule 1);
+TO: main_bb6;
+
+FROM: main_LeafBlock_end;
+assume(v.0.i.off ugt 1);
+TO: main_NewDefault;
+
+FROM: main_bb6;
+TO: main_bb6_ret;
+
+FROM: main_NewDefault;
+TO: main_bb4;
+

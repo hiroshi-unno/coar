@@ -1,0 +1,59 @@
+///*** 1_main ***///
+START: main_bb3;
+FROM: main_bb3;
+v5 := nondet();
+TO: main_bb3_end;
+
+FROM: main_bb3_end;
+assume(v5 slt 0);
+TO: main_twoWayexit;
+
+FROM: main_bb3_end;
+assume(v5 sge 0);
+TO: main_bb4;
+
+FROM: main_bb4;
+v7 := nondet();
+TO: main_bb4_end;
+
+FROM: main_bb4_end;
+assume(v7 slt 0);
+TO: main_twoWayexit;
+
+FROM: main_bb4_end;
+assume(v7 sge 0);
+TO: main_bb5;
+
+FROM: main_bb5;
+v9 := nondet();
+var__temp_vaccumulator.tr.i := 1;
+var__temp_vn.tr.i := v5;
+var__temp_vaccumulator.tr.i := 1;
+var__temp_vn.tr.i := v5;
+TO: main_tailrecursei;
+
+FROM: main_tailrecursei;
+vaccumulator.tr.i := var__temp_vaccumulator.tr.i;
+vn.tr.i := var__temp_vn.tr.i;
+TO: main_tailrecursei_end;
+
+FROM: main_tailrecursei_end;
+assume(vn.tr.i slt 0);
+TO: main_twoWayexit;
+
+FROM: main_tailrecursei_end;
+assume(vn.tr.i sge 0);
+TO: main_bb6;
+
+FROM: main_twoWayexit;
+TO: main_twoWayexit_ret;
+
+FROM: main_bb6;
+v11 := vn.tr.i + -1;
+v12 := v11 * vaccumulator.tr.i;
+var__temp_vaccumulator.tr.i := v12;
+var__temp_vn.tr.i := v11;
+var__temp_vaccumulator.tr.i := v12;
+var__temp_vn.tr.i := v11;
+TO: main_tailrecursei;
+

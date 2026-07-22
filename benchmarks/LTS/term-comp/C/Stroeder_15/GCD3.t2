@@ -1,0 +1,118 @@
+///*** 1_main ***///
+START: main_bb0;
+FROM: main_bb0;
+v0 := nondet();
+v1 := nondet();
+var__temp_vy.0 := v1;
+var__temp_vx.0 := v0;
+var__temp_vy.0 := v1;
+var__temp_vx.0 := v0;
+TO: main_bb1;
+
+FROM: main_bb1;
+vy.0 := var__temp_vy.0;
+vx.0 := var__temp_vx.0;
+TO: main_bb1_end;
+
+FROM: main_bb1_end;
+assume((vy.0 sgt 0) && (vx.0 sgt 0));
+TO: main_bb2;
+
+FROM: main_bb1_end;
+assume((vy.0 sle 0) || (vx.0 sle 0));
+TO: main_bb9;
+
+FROM: main_bb2;
+var__temp_vxtmp.1 := vx.0;
+TO: main_bb2_end;
+
+FROM: main_bb2_end;
+assume(vy.0 == 0);
+var__temp_vxtmp.1 := vx.0;
+TO: main_bb4;
+
+FROM: main_bb2_end;
+assume(vy.0 != 0);
+TO: main_bb3;
+
+FROM: main_bb3;
+v6 := 0 - vx.0;
+TO: main_bb3_v.x.0;
+FROM: main_bb3_v.x.0;
+assume(vy.0 slt 0);
+v.x.0 := v6;
+TO: main_bb3_sv.x.0;
+
+FROM: main_bb3_v.x.0;
+assume(vy.0 sge 0);
+v.x.0 := vx.0;
+TO: main_bb3_sv.x.0;
+
+FROM: main_bb3_sv.x.0;
+var__temp_vxtmp.1 := v.x.0;
+var__temp_vxtmp.1 := v.x.0;
+TO: main_bb4;
+
+FROM: main_bb4;
+vxtmp.1 := var__temp_vxtmp.1;
+var__temp_vxtmp.2 := vxtmp.1;
+var__temp_vxtmp.3 := vxtmp.1;
+TO: main_bb4_end;
+
+FROM: main_bb4_end;
+assume(vxtmp.1 sgt 0);
+var__temp_vxtmp.2 := vxtmp.1;
+TO: main_bb5;
+
+FROM: main_bb4_end;
+assume(vxtmp.1 sle 0);
+var__temp_vxtmp.3 := vxtmp.1;
+TO: main_bb7;
+
+FROM: main_bb5;
+vxtmp.2 := var__temp_vxtmp.2;
+var__temp_vy.0 := vxtmp.2;
+var__temp_vx.0 := vy.0;
+TO: main_bb5_end;
+
+FROM: main_bb5_end;
+assume(vxtmp.2 sge vy.0);
+TO: main_bb6;
+
+FROM: main_bb5_end;
+assume(vxtmp.2 slt vy.0);
+var__temp_vy.0 := vxtmp.2;
+var__temp_vx.0 := vy.0;
+TO: main_bb1;
+
+FROM: main_bb6;
+v9 := vxtmp.2 - vy.0;
+var__temp_vxtmp.2 := v9;
+var__temp_vxtmp.2 := v9;
+TO: main_bb5;
+
+FROM: main_bb7;
+vxtmp.3 := var__temp_vxtmp.3;
+var__temp_vy.0 := vxtmp.3;
+var__temp_vx.0 := vy.0;
+TO: main_bb7_end;
+
+FROM: main_bb7_end;
+assume(vxtmp.3 slt 0);
+TO: main_bb8;
+
+FROM: main_bb7_end;
+assume(vxtmp.3 sge 0);
+var__temp_vy.0 := vxtmp.3;
+var__temp_vx.0 := vy.0;
+TO: main_bb1;
+
+FROM: main_bb8;
+v11 := vxtmp.3 - vy.0;
+var__temp_vxtmp.3 := v11;
+var__temp_vxtmp.3 := v11;
+TO: main_bb7;
+
+FROM: main_bb9;
+TO: main_bb9_ret;
+

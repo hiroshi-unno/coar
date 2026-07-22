@@ -1,0 +1,93 @@
+///*** 1_main ***///
+START: main_bb0;
+FROM: main_bb0;
+v0 := nondet();
+v1 := nondet();
+v2 := nondet();
+v3 := nondet();
+v4 := nondet();
+v5 := v0 + v2;
+var__temp_vy.0 := v2;
+var__temp_vtx.0 := v1;
+var__temp_vx.0 := v0;
+var__temp_vty.0 := v3;
+TO: main_bb0_end;
+
+FROM: main_bb0_end;
+assume(v5 sge 0);
+var__temp_vy.0 := v2;
+var__temp_vtx.0 := v1;
+var__temp_vx.0 := v0;
+var__temp_vty.0 := v3;
+TO: main_bb1;
+
+FROM: main_bb0_end;
+assume(v5 slt 0);
+TO: main_critedge;
+
+FROM: main_bb1;
+vy.0 := var__temp_vy.0;
+vtx.0 := var__temp_vtx.0;
+vx.0 := var__temp_vx.0;
+vty.0 := var__temp_vty.0;
+TO: main_bb1_end;
+
+FROM: main_bb1_end;
+assume(vx.0 sle v4);
+TO: main_bb2;
+
+FROM: main_bb1_end;
+assume(vx.0 sgt v4);
+TO: main_critedge;
+
+FROM: main_bb2;
+v8 := 2 * vtx.0;
+v9 := v8 + vy.0;
+v11 := vty.0 + 1;
+v13 := vtx.0 + 1;
+TO: main_bb2_end;
+
+FROM: main_bb2_end;
+assume(((vx.0 sge v9) && (vy.0 sge v11)) && (vx.0 sge v13));
+TO: main_bb3;
+
+FROM: main_bb2_end;
+assume(((vx.0 slt v9) || (vy.0 slt v11)) || (vx.0 slt v13));
+TO: main_critedge;
+
+FROM: main_bb3;
+v15 := nondet();
+v17 := nondet();
+var__temp_vy.0 := vy.0;
+var__temp_vtx.0 := vx.0;
+var__temp_vx.0 := v17;
+var__temp_vty.0 := vty.0;
+TO: main_bb3_end;
+
+FROM: main_bb3_end;
+assume(v15 != 0);
+TO: main_bb4;
+
+FROM: main_bb3_end;
+assume(v15 == 0);
+var__temp_vy.0 := vy.0;
+var__temp_vtx.0 := vx.0;
+var__temp_vx.0 := v17;
+var__temp_vty.0 := vty.0;
+TO: main_bb1;
+
+FROM: main_bb4;
+v18 := nondet();
+var__temp_vy.0 := v18;
+var__temp_vtx.0 := vx.0;
+var__temp_vx.0 := v17;
+var__temp_vty.0 := vy.0;
+var__temp_vy.0 := v18;
+var__temp_vtx.0 := vx.0;
+var__temp_vx.0 := v17;
+var__temp_vty.0 := vy.0;
+TO: main_bb1;
+
+FROM: main_critedge;
+TO: main_critedge_ret;
+

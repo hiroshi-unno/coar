@@ -7,5 +7,6 @@
     "seeds": null,
     "bound_each_coeff": null,
     "threshold_coeff": null,
-    "threshold_const": 3
+    "threshold_const": 3,
+    "add_mod2_quals": false
 }

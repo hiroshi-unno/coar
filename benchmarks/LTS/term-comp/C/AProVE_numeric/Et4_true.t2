@@ -1,0 +1,99 @@
+///*** 1_main ***///
+START: main_bb0;
+FROM: main_bb0;
+v0 := nondet();
+v1 := nondet();
+v2 := nondet();
+v3 := nondet();
+v5 := 0 - v3;
+TO: main_bb0_v.0.i;
+FROM: main_bb0_v.0.i;
+assume(v3 slt 0);
+v.0.i := v5;
+TO: main_bb0_sv.0.i;
+
+FROM: main_bb0_v.0.i;
+assume(v3 sge 0);
+v.0.i := v3;
+TO: main_bb0_sv.0.i;
+
+FROM: main_bb0_sv.0.i;
+v6 := nondet();
+v8 := 0 - v6;
+TO: main_bb0_v.0.i1;
+FROM: main_bb0_v.0.i1;
+assume(v6 slt 0);
+v.0.i1 := v8;
+TO: main_bb0_sv.0.i1;
+
+FROM: main_bb0_v.0.i1;
+assume(v6 sge 0);
+v.0.i1 := v6;
+TO: main_bb0_sv.0.i1;
+
+FROM: main_bb0_sv.0.i1;
+v9 := nondet();
+v11 := 0 - v9;
+TO: main_bb0_v.0.i2;
+FROM: main_bb0_v.0.i2;
+assume(v9 slt 0);
+v.0.i2 := v11;
+TO: main_bb0_sv.0.i2;
+
+FROM: main_bb0_v.0.i2;
+assume(v9 sge 0);
+v.0.i2 := v9;
+TO: main_bb0_sv.0.i2;
+
+FROM: main_bb0_sv.0.i2;
+var__temp_va.tr.i := v.0.i;
+var__temp_vb.tr.i := v.0.i1;
+var__temp_vc.tr.i := v.0.i2;
+var__temp_va.tr.i := v.0.i;
+var__temp_vb.tr.i := v.0.i1;
+var__temp_vc.tr.i := v.0.i2;
+TO: main_tailrecursei;
+
+FROM: main_tailrecursei;
+va.tr.i := var__temp_va.tr.i;
+vb.tr.i := var__temp_vb.tr.i;
+vc.tr.i := var__temp_vc.tr.i;
+v12 := vb.tr.i - vc.tr.i;
+TO: main_tailrecursei_end;
+
+FROM: main_tailrecursei_end;
+assume((v12 sge 1) && (va.tr.i == vc.tr.i));
+TO: main_bb1;
+
+FROM: main_tailrecursei_end;
+assume((v12 slt 1) || (va.tr.i != vc.tr.i));
+TO: main_loopexit;
+
+FROM: main_bb1;
+v15 := nondet();
+v17 := 0 - v15;
+TO: main_bb1_v.0.i.i;
+FROM: main_bb1_v.0.i.i;
+assume(v15 slt 0);
+v.0.i.i := v17;
+TO: main_bb1_sv.0.i.i;
+
+FROM: main_bb1_v.0.i.i;
+assume(v15 sge 0);
+v.0.i.i := v15;
+TO: main_bb1_sv.0.i.i;
+
+FROM: main_bb1_sv.0.i.i;
+v18 := vc.tr.i + 1;
+v19 := v18 + v.0.i.i;
+var__temp_va.tr.i := v19;
+var__temp_vb.tr.i := 10;
+var__temp_vc.tr.i := v19;
+var__temp_va.tr.i := v19;
+var__temp_vb.tr.i := 10;
+var__temp_vc.tr.i := v19;
+TO: main_tailrecursei;
+
+FROM: main_loopexit;
+TO: main_loopexit_ret;
+

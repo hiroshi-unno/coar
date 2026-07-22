@@ -1,0 +1,4 @@
+forall (n: int). E n
+s.t.
+E (n: int): bool =mu V n;
+V (n: int): bool =nu exists (b: int). b >= 0 /\ n <= 0 /\ V (n + 1) \/ b < 0 /\ E (n - 1);

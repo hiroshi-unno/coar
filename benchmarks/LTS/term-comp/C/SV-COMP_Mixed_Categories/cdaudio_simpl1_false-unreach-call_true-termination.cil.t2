@@ -1,0 +1,5978 @@
+///*** 1_main ***///
+START: main_bb917;
+FROM: main_bb917;
+UNLOADED := 0;
+NP := 0;
+DC := 0;
+SKIP1 := 0;
+SKIP2 := 0;
+MPR1 := 0;
+MPR3 := 0;
+IPC := 0;
+s := 0;
+pended := 0;
+compFptr := 0;
+compRegistered := 0;
+lowerDriverReturn := 0;
+setEventCalled := 0;
+customIrp := 0;
+Executive := 0;
+KernelMode := 0;
+myStatus := 0;
+DeviceUsageTypePaging := 0;
+Suspended := 0;
+routine := 0;
+pirp := 0;
+v1926 := nondet();
+v1927 := nondet();
+v1928 := nondet();
+v1929 := nondet();
+v1930 := nondet();
+v1931 := nondet();
+s := 0;
+UNLOADED := 0;
+NP := 0;
+DC := 0;
+SKIP1 := 0;
+SKIP2 := 0;
+MPR1 := 0;
+MPR3 := 0;
+IPC := 0;
+pended := 0;
+compFptr := 0;
+compRegistered := 0;
+lowerDriverReturn := 0;
+setEventCalled := 0;
+customIrp := 0;
+routine := 0;
+myStatus := 0;
+pirp := 0;
+Executive := 0;
+Suspended := 5;
+KernelMode := 0;
+DeviceUsageTypePaging := 1;
+pirp := v1928;
+UNLOADED := 0;
+NP := 1;
+DC := 2;
+SKIP1 := 3;
+SKIP2 := 4;
+MPR1 := 5;
+MPR3 := 6;
+IPC := 7;
+v1932 := UNLOADED;
+s := v1932;
+pended := 0;
+compFptr := 0;
+compRegistered := 0;
+lowerDriverReturn := 0;
+setEventCalled := 0;
+customIrp := 0;
+TO: main_bb917_end;
+
+FROM: main_bb917_end;
+assume(v1927 sge 0);
+TO: main_bb918;
+
+FROM: main_bb917_end;
+assume(v1927 slt 0);
+var__temp_vstatus.1 := v1927;
+TO: main_bb1387;
+
+FROM: main_bb918;
+v1934 := NP;
+s := v1934;
+customIrp := 0;
+v1935 := customIrp;
+setEventCalled := v1935;
+v1936 := setEventCalled;
+lowerDriverReturn := v1936;
+v1937 := lowerDriverReturn;
+compRegistered := v1937;
+v1938 := compRegistered;
+compFptr := v1938;
+v1939 := compFptr;
+pended := v1939;
+myStatus := 0;
+TO: main_bb918_v.;
+FROM: main_bb918_v.;
+assume(v1930 == 0);
+v. := -1073741637;
+TO: main_bb918_sv.;
+
+FROM: main_bb918_v.;
+assume(v1930 != 0);
+v. := 0;
+TO: main_bb918_sv.;
+
+FROM: main_bb918_sv.;
+myStatus := v.;
+v1941 := NP;
+s := v1941;
+customIrp := 0;
+v1942 := customIrp;
+setEventCalled := v1942;
+v1943 := setEventCalled;
+lowerDriverReturn := v1943;
+v1944 := lowerDriverReturn;
+compRegistered := v1944;
+v1945 := compRegistered;
+compFptr := v1945;
+v1946 := compFptr;
+pended := v1946;
+TO: main_bb918_end;
+
+FROM: main_bb918_end;
+assume(v1927 slt 0);
+var__temp_v.0 := -1;
+TO: main_bb1406;
+
+FROM: main_bb918_end;
+assume(v1927 sge 0);
+TO: main_bb919;
+
+FROM: main_bb919;
+v1948 := nondet();
+TO: main_bb919_end;
+
+FROM: main_bb919_end;
+assume(v1948 == 2);
+TO: main_bb920;
+
+FROM: main_bb919_end;
+assume(v1948 != 2);
+TO: main_bb1227;
+
+FROM: main_bb920;
+v1950 := nondet();
+TO: main_bb920_end;
+
+FROM: main_bb920_end;
+assume(v1950 slt 3);
+TO: main_NodeBlocki;
+
+FROM: main_bb920_end;
+assume(v1950 sge 3);
+TO: main_NodeBlock43i;
+
+FROM: main_NodeBlocki;
+TO: main_NodeBlocki_end;
+
+FROM: main_NodeBlocki_end;
+assume(v1950 slt 2);
+TO: main_LeafBlocki;
+
+FROM: main_NodeBlocki_end;
+assume(v1950 sge 2);
+TO: main_bb951;
+
+FROM: main_LeafBlocki;
+TO: main_LeafBlocki_end;
+
+FROM: main_LeafBlocki_end;
+assume(v1950 == 1);
+TO: main_bb921;
+
+FROM: main_LeafBlocki_end;
+assume(v1950 != 1);
+TO: main_NewDefaulti;
+
+FROM: main_bb921;
+v1951 := nondet();
+v1952 := nondet();
+v1953 := nondet();
+v1955 := nondet();
+v1956 := nondet();
+v1957 := nondet();
+TO: main_bb921_end;
+
+FROM: main_bb921_end;
+assume(v1951 == 147464);
+TO: main_bb922;
+
+FROM: main_bb921_end;
+assume(v1951 != 147464);
+TO: main_bb924;
+
+FROM: main_bb922;
+myStatus := -1073741670;
+v1958 := s;
+v1959 := NP;
+TO: main_bb922_end;
+
+FROM: main_bb922_end;
+assume(v1958 == v1959);
+TO: main_IofCompleteRequestexiti20i;
+
+FROM: main_bb922_end;
+assume(v1958 != v1959);
+TO: main_bb923;
+
+FROM: main_IofCompleteRequestexiti20i;
+v1961 := DC;
+s := v1961;
+var__temp_vstatus.0 := -1073741670;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb923;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb924;
+v1962 := s;
+v1963 := NP;
+TO: main_bb924_end;
+
+FROM: main_bb924_end;
+assume(v1962 == v1963);
+TO: main_bb925;
+
+FROM: main_bb924_end;
+assume(v1962 != v1963);
+TO: main_bb950;
+
+FROM: main_bb925;
+v1965 := SKIP1;
+s := v1965;
+v1966 := nondet();
+v1967 := nondet();
+v1968 := compRegistered;
+TO: main_bb925_end;
+
+FROM: main_bb925_end;
+assume(v1968 != 0);
+TO: main_bb926;
+
+FROM: main_bb925_end;
+assume(v1968 == 0);
+TO: main_bb938;
+
+FROM: main_bb926;
+v1970 := routine;
+TO: main_bb926_end;
+
+FROM: main_bb926_end;
+assume(v1970 == 0);
+TO: main_bb927;
+
+FROM: main_bb926_end;
+assume(v1970 != 0);
+TO: main_bb933;
+
+FROM: main_bb927;
+v1972 := nondet();
+v1973 := nondet();
+TO: main_bb927_end;
+
+FROM: main_bb927_end;
+assume(v1972 != 0);
+TO: main_bb928;
+
+FROM: main_bb927_end;
+assume(v1972 == 0);
+TO: main_bb931;
+
+FROM: main_bb928;
+v1975 := pended;
+TO: main_bb928_end;
+
+FROM: main_bb928_end;
+assume(v1975 == 0);
+TO: main_bb929;
+
+FROM: main_bb928_end;
+assume(v1975 != 0);
+TO: main_bb930;
+
+FROM: main_bb929;
+pended := 1;
+TO: main_bb931;
+
+FROM: main_bb930;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb931;
+v1977 := myStatus;
+TO: main_bb931_end;
+
+FROM: main_bb931_end;
+assume(v1977 sge 0);
+TO: main_bb932;
+
+FROM: main_bb931_end;
+assume(v1977 slt 0);
+TO: main_HPCdrCompletionexitiii21i;
+
+FROM: main_bb932;
+v1979 := nondet();
+TO: main_HPCdrCompletionexitiii21i;
+
+FROM: main_HPCdrCompletionexitiii21i;
+v1980 := myStatus;
+var__temp_vcompRetStatus.1.i.i.i22.i := v1980;
+TO: main_bb935;
+
+FROM: main_bb933;
+v1981 := routine;
+TO: main_bb933_end;
+
+FROM: main_bb933_end;
+assume(v1981 == 1);
+TO: main_bb934;
+
+FROM: main_bb933_end;
+assume(v1981 != 1);
+var__temp_vcompRetStatus.1.i.i.i22.i := -1073741802;
+TO: main_bb935;
+
+FROM: main_bb934;
+v1983 := nondet();
+setEventCalled := 1;
+var__temp_vcompRetStatus.1.i.i.i22.i := -1073741802;
+TO: main_bb935;
+
+FROM: main_bb935;
+vcompRetStatus.1.i.i.i22.i := var__temp_vcompRetStatus.1.i.i.i22.i;
+v1984 := sign_extend(32, 64, vcompRetStatus.1.i.i.i22.i);
+TO: main_bb935_end;
+
+FROM: main_bb935_end;
+assume(v1984 == -1073741802);
+TO: main_bb936;
+
+FROM: main_bb935_end;
+assume(v1984 != -1073741802);
+TO: main_bb938;
+
+FROM: main_bb936;
+v1986 := s;
+v1987 := NP;
+TO: main_bb936_end;
+
+FROM: main_bb936_end;
+assume(v1986 == v1987);
+TO: main_stubMoreProcessingRequiredexitiii23i;
+
+FROM: main_bb936_end;
+assume(v1986 != v1987);
+TO: main_bb937;
+
+FROM: main_stubMoreProcessingRequiredexitiii23i;
+v1989 := MPR1;
+s := v1989;
+TO: main_bb938;
+
+FROM: main_bb937;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb938;
+TO: main_bb938_end;
+
+FROM: main_bb938_end;
+assume(v1966 != 0);
+var__temp_vreturnVal2.1.i.i.i25.i := 259;
+TO: main_bb941;
+
+FROM: main_bb938_end;
+assume(v1966 == 0);
+TO: main_bb939;
+
+FROM: main_bb939;
+v1991 := nondet();
+TO: main_bb939_end;
+
+FROM: main_bb939_end;
+assume(v1991 == 0);
+var__temp_vreturnVal2.1.i.i.i25.i := 0;
+TO: main_bb941;
+
+FROM: main_bb939_end;
+assume(v1991 != 0);
+TO: main_bb940;
+
+FROM: main_bb940;
+v1993 := nondet();
+TO: main_bb940_v..i.i.i24.i;
+FROM: main_bb940_v..i.i.i24.i;
+assume(v1993 == 1);
+v..i.i.i24.i := -1073741823;
+TO: main_bb940_sv..i.i.i24.i;
+
+FROM: main_bb940_v..i.i.i24.i;
+assume(v1993 != 1);
+v..i.i.i24.i := 259;
+TO: main_bb940_sv..i.i.i24.i;
+
+FROM: main_bb940_sv..i.i.i24.i;
+var__temp_vreturnVal2.1.i.i.i25.i := v..i.i.i24.i;
+TO: main_bb941;
+
+FROM: main_bb941;
+vreturnVal2.1.i.i.i25.i := var__temp_vreturnVal2.1.i.i.i25.i;
+v1995 := s;
+v1996 := NP;
+TO: main_bb941_end;
+
+FROM: main_bb941_end;
+assume(v1995 == v1996);
+TO: main_bb942;
+
+FROM: main_bb941_end;
+assume(v1995 != v1996);
+TO: main_bb943;
+
+FROM: main_bb942;
+v1998 := IPC;
+s := v1998;
+lowerDriverReturn := vreturnVal2.1.i.i.i25.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i.i25.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb943;
+v1999 := s;
+v2000 := MPR1;
+TO: main_bb943_end;
+
+FROM: main_bb943_end;
+assume(v1999 == v2000);
+TO: main_bb944;
+
+FROM: main_bb943_end;
+assume(v1999 != v2000);
+TO: main_bb947;
+
+FROM: main_bb944;
+TO: main_bb944_end;
+
+FROM: main_bb944_end;
+assume(vreturnVal2.1.i.i.i25.i == 259);
+TO: main_bb945;
+
+FROM: main_bb944_end;
+assume(vreturnVal2.1.i.i.i25.i != 259);
+TO: main_bb946;
+
+FROM: main_bb945;
+v2003 := MPR3;
+s := v2003;
+lowerDriverReturn := vreturnVal2.1.i.i.i25.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i.i25.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb946;
+v2004 := NP;
+s := v2004;
+lowerDriverReturn := vreturnVal2.1.i.i.i25.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i.i25.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb947;
+v2005 := s;
+v2006 := SKIP1;
+TO: main_bb947_end;
+
+FROM: main_bb947_end;
+assume(v2005 == v2006);
+TO: main_bb948;
+
+FROM: main_bb947_end;
+assume(v2005 != v2006);
+TO: main_bb949;
+
+FROM: main_bb948;
+v2008 := SKIP2;
+s := v2008;
+lowerDriverReturn := vreturnVal2.1.i.i.i25.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i.i25.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb949;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb950;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb951;
+v2009 := nondet();
+v2010 := nondet();
+v2011 := nondet();
+v2012 := nondet();
+v2013 := nondet();
+v2014 := nondet();
+v2015 := nondet();
+v2016 := nondet();
+v2017 := nondet();
+v2018 := nondet();
+v2019 := nondet();
+v2020 := nondet();
+v2021 := nondet();
+v2022 := nondet();
+v2023 := nondet();
+v2024 := nondet();
+v2025 := nondet();
+v2026 := nondet();
+v2027 := nondet();
+v2028 := nondet();
+v2029 := nondet();
+v2030 := nondet();
+v2031 := nondet();
+v2032 := nondet();
+v2033 := nondet();
+v2034 := nondet();
+v2035 := nondet();
+v2036 := nondet();
+v2037 := nondet();
+v2038 := nondet();
+TO: main_bb951_end;
+
+FROM: main_bb951_end;
+assume(v2014 slt 147500);
+TO: main_NodeBlock45ii;
+
+FROM: main_bb951_end;
+assume(v2014 sge 147500);
+TO: main_NodeBlock63ii;
+
+FROM: main_NodeBlock45ii;
+TO: main_NodeBlock45ii_end;
+
+FROM: main_NodeBlock45ii_end;
+assume(v2014 slt 147476);
+TO: main_NodeBlockii;
+
+FROM: main_NodeBlock45ii_end;
+assume(v2014 sge 147476);
+TO: main_NodeBlock43ii;
+
+FROM: main_NodeBlockii;
+TO: main_NodeBlockii_end;
+
+FROM: main_NodeBlockii_end;
+assume(v2014 slt 147460);
+TO: main_LeafBlockii;
+
+FROM: main_NodeBlockii_end;
+assume(v2014 sge 147460);
+TO: main_LeafBlock33ii;
+
+FROM: main_LeafBlockii;
+TO: main_LeafBlockii_end;
+
+FROM: main_LeafBlockii_end;
+assume(v2014 == 147456);
+TO: main_bb952;
+
+FROM: main_LeafBlockii_end;
+assume(v2014 != 147456);
+TO: main_CdAudioIsPlayActiveexit27ii;
+
+FROM: main_bb952;
+TO: main_bb952_end;
+
+FROM: main_bb952_end;
+assume(v2015 != 0);
+var__temp_vstatus.1.i.i := -1073741789;
+TO: main_bb1004;
+
+FROM: main_bb952_end;
+assume(v2015 == 0);
+TO: main_bb953;
+
+FROM: main_bb953;
+v2040 := nondet();
+v2041 := nondet();
+v2042 := nondet();
+v2043 := nondet();
+v2044 := nondet();
+v2045 := nondet();
+v2046 := nondet();
+TO: main_bb953_end;
+
+FROM: main_bb953_end;
+assume(((v2040 == 0) || (v2046 == 0)) || (v2043 == 0));
+var__temp_v.0.i9.i.i := 0;
+TO: main_CdAudioIsPlayActiveexit10ii;
+
+FROM: main_bb953_end;
+assume(((v2040 != 0) && (v2046 != 0)) && (v2043 != 0));
+TO: main_bb954;
+
+FROM: main_bb954;
+v2050 := sign_extend(32, 64, v2045);
+TO: main_bb954_end;
+
+FROM: main_bb954_end;
+assume(v2050 == 259);
+TO: main_bb955;
+
+FROM: main_bb954_end;
+assume(v2050 != 259);
+var__temp_vstatus.0.i7.i.i := v2045;
+TO: main_bb961;
+
+FROM: main_bb955;
+v2052 := s;
+v2053 := MPR3;
+v2055 := setEventCalled;
+TO: main_bb955_end;
+
+FROM: main_bb955_end;
+assume((v2052 == v2053) && (v2055 == 1));
+TO: main_bb956;
+
+FROM: main_bb955_end;
+assume((v2052 != v2053) || (v2055 != 1));
+TO: main_bb957;
+
+FROM: main_bb956;
+v2057 := NP;
+s := v2057;
+setEventCalled := 0;
+TO: main_KeWaitForSingleObjectexiti6ii;
+
+FROM: main_bb957;
+v2058 := customIrp;
+TO: main_bb957_end;
+
+FROM: main_bb957_end;
+assume(v2058 == 1);
+TO: main_bb958;
+
+FROM: main_bb957_end;
+assume(v2058 != 1);
+TO: main_bb959;
+
+FROM: main_bb958;
+v2060 := NP;
+s := v2060;
+customIrp := 0;
+TO: main_KeWaitForSingleObjectexiti6ii;
+
+FROM: main_bb959;
+v2061 := s;
+v2062 := MPR3;
+TO: main_bb959_end;
+
+FROM: main_bb959_end;
+assume(v2061 == v2062);
+TO: main_bb960;
+
+FROM: main_bb959_end;
+assume(v2061 != v2062);
+TO: main_KeWaitForSingleObjectexiti6ii;
+
+FROM: main_bb960;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_KeWaitForSingleObjectexiti6ii;
+v2064 := nondet();
+var__temp_vstatus.0.i7.i.i := v2041;
+TO: main_bb961;
+
+FROM: main_bb961;
+vstatus.0.i7.i.i := var__temp_vstatus.0.i7.i.i;
+TO: main_bb961_end;
+
+FROM: main_bb961_end;
+assume(vstatus.0.i7.i.i slt 0);
+var__temp_v.0.i9.i.i := 0;
+TO: main_CdAudioIsPlayActiveexit10ii;
+
+FROM: main_bb961_end;
+assume(vstatus.0.i7.i.i sge 0);
+TO: main_bb962;
+
+FROM: main_bb962;
+TO: main_bb962_v..i8.i.i;
+FROM: main_bb962_v..i8.i.i;
+assume(v2042 == 17);
+v..i8.i.i := 1;
+TO: main_bb962_sv..i8.i.i;
+
+FROM: main_bb962_v..i8.i.i;
+assume(v2042 != 17);
+v..i8.i.i := 0;
+TO: main_bb962_sv..i8.i.i;
+
+FROM: main_bb962_sv..i8.i.i;
+var__temp_v.0.i9.i.i := v..i8.i.i;
+TO: main_CdAudioIsPlayActiveexit10ii;
+
+FROM: main_CdAudioIsPlayActiveexit10ii;
+v.0.i9.i.i := var__temp_v.0.i9.i.i;
+TO: main_CdAudioIsPlayActiveexit10ii_end;
+
+FROM: main_CdAudioIsPlayActiveexit10ii_end;
+assume(v.0.i9.i.i != 0);
+var__temp_vstatus.1.i.i := -2147483631;
+TO: main_bb1004;
+
+FROM: main_CdAudioIsPlayActiveexit10ii_end;
+assume(v.0.i9.i.i == 0);
+TO: main_bb963;
+
+FROM: main_bb963;
+TO: main_bb963_end;
+
+FROM: main_bb963_end;
+assume(v2037 == 0);
+TO: main_bb964;
+
+FROM: main_bb963_end;
+assume(v2037 != 0);
+TO: main_bb966;
+
+FROM: main_bb964;
+myStatus := -1073741670;
+v2069 := s;
+v2070 := NP;
+TO: main_bb964_end;
+
+FROM: main_bb964_end;
+assume(v2069 == v2070);
+TO: main_AG_SetStatusAndReturnexit11ii;
+
+FROM: main_bb964_end;
+assume(v2069 != v2070);
+TO: main_bb965;
+
+FROM: main_AG_SetStatusAndReturnexit11ii;
+v2072 := DC;
+s := v2072;
+var__temp_vstatus.0 := -1073741670;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb965;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb966;
+v2073 := nondet();
+v2074 := nondet();
+v2075 := nondet();
+myStatus := -1073741670;
+v2076 := s;
+v2077 := NP;
+TO: main_bb966_end;
+
+FROM: main_bb966_end;
+assume(v2076 == v2077);
+TO: main_AG_SetStatusAndReturnexit13ii;
+
+FROM: main_bb966_end;
+assume(v2076 != v2077);
+TO: main_bb967;
+
+FROM: main_AG_SetStatusAndReturnexit13ii;
+v2079 := DC;
+s := v2079;
+var__temp_vstatus.0 := -1073741670;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb967;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_LeafBlock33ii;
+TO: main_LeafBlock33ii_end;
+
+FROM: main_LeafBlock33ii_end;
+assume(v2014 == 147460);
+TO: main_bb968;
+
+FROM: main_LeafBlock33ii_end;
+assume(v2014 != 147460);
+TO: main_CdAudioIsPlayActiveexit27ii;
+
+FROM: main_bb968;
+TO: main_bb968_end;
+
+FROM: main_bb968_end;
+assume(v2016 slt v2032);
+var__temp_vstatus.1.i.i := -1073741820;
+TO: main_bb1004;
+
+FROM: main_bb968_end;
+assume(v2016 sge v2032);
+TO: main_bb969;
+
+FROM: main_bb969;
+v2081 := nondet();
+v2082 := nondet();
+v2083 := nondet();
+var__temp_vstatus.1.i.i := -1073741670;
+TO: main_bb1004;
+
+FROM: main_NodeBlock43ii;
+TO: main_NodeBlock43ii_end;
+
+FROM: main_NodeBlock43ii_end;
+assume(v2014 slt 147480);
+TO: main_LeafBlock35ii;
+
+FROM: main_NodeBlock43ii_end;
+assume(v2014 sge 147480);
+TO: main_NodeBlock41ii;
+
+FROM: main_LeafBlock35ii;
+TO: main_LeafBlock35ii_end;
+
+FROM: main_LeafBlock35ii_end;
+assume(v2014 == 147476);
+var__temp_vstatus.1.i.i := -1073741808;
+TO: main_bb1004;
+
+FROM: main_LeafBlock35ii_end;
+assume(v2014 != 147476);
+TO: main_CdAudioIsPlayActiveexit27ii;
+
+FROM: main_NodeBlock41ii;
+TO: main_NodeBlock41ii_end;
+
+FROM: main_NodeBlock41ii_end;
+assume(v2014 slt 147496);
+TO: main_LeafBlock37ii;
+
+FROM: main_NodeBlock41ii_end;
+assume(v2014 sge 147496);
+TO: main_LeafBlock39ii;
+
+FROM: main_LeafBlock37ii;
+TO: main_LeafBlock37ii_end;
+
+FROM: main_LeafBlock37ii_end;
+assume(v2014 == 147480);
+TO: main_bb970;
+
+FROM: main_LeafBlock37ii_end;
+assume(v2014 != 147480);
+TO: main_CdAudioIsPlayActiveexit27ii;
+
+FROM: main_bb970;
+TO: main_bb970_end;
+
+FROM: main_bb970_end;
+assume(v2016 slt v2024);
+var__temp_vstatus.1.i.i := -1073741820;
+TO: main_bb1004;
+
+FROM: main_bb970_end;
+assume(v2016 sge v2024);
+TO: main_bb971;
+
+FROM: main_bb971;
+v2085 := nondet();
+v2086 := nondet();
+v2087 := nondet();
+var__temp_vstatus.1.i.i := -1073741670;
+TO: main_bb1004;
+
+FROM: main_LeafBlock39ii;
+TO: main_LeafBlock39ii_end;
+
+FROM: main_LeafBlock39ii_end;
+assume(v2014 == 147496);
+var__temp_vstatus.1.i.i := -1073741808;
+TO: main_bb1004;
+
+FROM: main_LeafBlock39ii_end;
+assume(v2014 != 147496);
+TO: main_CdAudioIsPlayActiveexit27ii;
+
+FROM: main_NodeBlock63ii;
+TO: main_NodeBlock63ii_end;
+
+FROM: main_NodeBlock63ii_end;
+assume(v2014 slt 147512);
+TO: main_NodeBlock51ii;
+
+FROM: main_NodeBlock63ii_end;
+assume(v2014 sge 147512);
+TO: main_NodeBlock61ii;
+
+FROM: main_NodeBlock51ii;
+TO: main_NodeBlock51ii_end;
+
+FROM: main_NodeBlock51ii_end;
+assume(v2014 slt 147508);
+TO: main_LeafBlock47ii;
+
+FROM: main_NodeBlock51ii_end;
+assume(v2014 sge 147508);
+TO: main_LeafBlock49ii;
+
+FROM: main_LeafBlock47ii;
+TO: main_LeafBlock47ii_end;
+
+FROM: main_LeafBlock47ii_end;
+assume(v2014 == 147500);
+TO: main_bb972;
+
+FROM: main_LeafBlock47ii_end;
+assume(v2014 != 147500);
+TO: main_CdAudioIsPlayActiveexit27ii;
+
+FROM: main_bb972;
+TO: main_bb972_end;
+
+FROM: main_bb972_end;
+assume(v2015 slt v2022);
+var__temp_vstatus.1.i.i := -1073741789;
+TO: main_bb1004;
+
+FROM: main_bb972_end;
+assume(v2015 sge v2022);
+TO: main_bb973;
+
+FROM: main_bb973;
+TO: main_bb973_end;
+
+FROM: main_bb973_end;
+assume(v2038 == 0);
+TO: main_bb974;
+
+FROM: main_bb973_end;
+assume(v2038 != 0);
+TO: main_bb976;
+
+FROM: main_bb974;
+myStatus := -1073741670;
+v2090 := s;
+v2091 := NP;
+TO: main_bb974_end;
+
+FROM: main_bb974_end;
+assume(v2090 == v2091);
+TO: main_AG_SetStatusAndReturnexit14ii;
+
+FROM: main_bb974_end;
+assume(v2090 != v2091);
+TO: main_bb975;
+
+FROM: main_AG_SetStatusAndReturnexit14ii;
+v2093 := DC;
+s := v2093;
+var__temp_vstatus.0 := -1073741670;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb975;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb976;
+TO: main_bb976_end;
+
+FROM: main_bb976_end;
+assume(v2023 != 1);
+TO: main_bb977;
+
+FROM: main_bb976_end;
+assume(v2023 == 1);
+TO: main_bb979;
+
+FROM: main_bb977;
+myStatus := -1073741823;
+v2095 := s;
+v2096 := NP;
+TO: main_bb977_end;
+
+FROM: main_bb977_end;
+assume(v2095 == v2096);
+TO: main_AG_SetStatusAndReturnexit15ii;
+
+FROM: main_bb977_end;
+assume(v2095 != v2096);
+TO: main_bb978;
+
+FROM: main_AG_SetStatusAndReturnexit15ii;
+v2098 := DC;
+s := v2098;
+var__temp_vstatus.0 := -1073741823;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb978;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb979;
+v2099 := nondet();
+v2100 := nondet();
+v2101 := nondet();
+var__temp_vstatus.1.i.i := -1073741670;
+TO: main_bb1004;
+
+FROM: main_LeafBlock49ii;
+TO: main_LeafBlock49ii_end;
+
+FROM: main_LeafBlock49ii_end;
+assume(v2014 == 147508);
+var__temp_vstatus.1.i.i := -1073741808;
+TO: main_bb1004;
+
+FROM: main_LeafBlock49ii_end;
+assume(v2014 != 147508);
+TO: main_CdAudioIsPlayActiveexit27ii;
+
+FROM: main_NodeBlock61ii;
+TO: main_NodeBlock61ii_end;
+
+FROM: main_NodeBlock61ii_end;
+assume(v2014 slt 149504);
+TO: main_LeafBlock53ii;
+
+FROM: main_NodeBlock61ii_end;
+assume(v2014 sge 149504);
+TO: main_NodeBlock59ii;
+
+FROM: main_LeafBlock53ii;
+TO: main_LeafBlock53ii_end;
+
+FROM: main_LeafBlock53ii_end;
+assume(v2014 == 147512);
+TO: main_bb980;
+
+FROM: main_LeafBlock53ii_end;
+assume(v2014 != 147512);
+TO: main_CdAudioIsPlayActiveexit27ii;
+
+FROM: main_bb980;
+v2102 := nondet();
+v2103 := nondet();
+v2104 := nondet();
+v2105 := nondet();
+v2106 := nondet();
+v2107 := nondet();
+v2108 := nondet();
+TO: main_bb980_end;
+
+FROM: main_bb980_end;
+assume(((v2102 == 0) || (v2108 == 0)) || (v2105 == 0));
+var__temp_v.0.i.i.i := 0;
+TO: main_CdAudioIsPlayActiveexitii;
+
+FROM: main_bb980_end;
+assume(((v2102 != 0) && (v2108 != 0)) && (v2105 != 0));
+TO: main_bb981;
+
+FROM: main_bb981;
+v2112 := sign_extend(32, 64, v2107);
+TO: main_bb981_end;
+
+FROM: main_bb981_end;
+assume(v2112 == 259);
+TO: main_bb982;
+
+FROM: main_bb981_end;
+assume(v2112 != 259);
+var__temp_vstatus.0.i.i.i := v2107;
+TO: main_bb988;
+
+FROM: main_bb982;
+v2114 := s;
+v2115 := MPR3;
+v2117 := setEventCalled;
+TO: main_bb982_end;
+
+FROM: main_bb982_end;
+assume((v2114 == v2115) && (v2117 == 1));
+TO: main_bb983;
+
+FROM: main_bb982_end;
+assume((v2114 != v2115) || (v2117 != 1));
+TO: main_bb984;
+
+FROM: main_bb983;
+v2119 := NP;
+s := v2119;
+setEventCalled := 0;
+TO: main_KeWaitForSingleObjectexitiii;
+
+FROM: main_bb984;
+v2120 := customIrp;
+TO: main_bb984_end;
+
+FROM: main_bb984_end;
+assume(v2120 == 1);
+TO: main_bb985;
+
+FROM: main_bb984_end;
+assume(v2120 != 1);
+TO: main_bb986;
+
+FROM: main_bb985;
+v2122 := NP;
+s := v2122;
+customIrp := 0;
+TO: main_KeWaitForSingleObjectexitiii;
+
+FROM: main_bb986;
+v2123 := s;
+v2124 := MPR3;
+TO: main_bb986_end;
+
+FROM: main_bb986_end;
+assume(v2123 == v2124);
+TO: main_bb987;
+
+FROM: main_bb986_end;
+assume(v2123 != v2124);
+TO: main_KeWaitForSingleObjectexitiii;
+
+FROM: main_bb987;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_KeWaitForSingleObjectexitiii;
+v2126 := nondet();
+var__temp_vstatus.0.i.i.i := v2103;
+TO: main_bb988;
+
+FROM: main_bb988;
+vstatus.0.i.i.i := var__temp_vstatus.0.i.i.i;
+TO: main_bb988_end;
+
+FROM: main_bb988_end;
+assume(vstatus.0.i.i.i slt 0);
+var__temp_v.0.i.i.i := 0;
+TO: main_CdAudioIsPlayActiveexitii;
+
+FROM: main_bb988_end;
+assume(vstatus.0.i.i.i sge 0);
+TO: main_bb989;
+
+FROM: main_bb989;
+TO: main_bb989_v..i.i.i;
+FROM: main_bb989_v..i.i.i;
+assume(v2104 == 17);
+v..i.i.i := 1;
+TO: main_bb989_sv..i.i.i;
+
+FROM: main_bb989_v..i.i.i;
+assume(v2104 != 17);
+v..i.i.i := 0;
+TO: main_bb989_sv..i.i.i;
+
+FROM: main_bb989_sv..i.i.i;
+var__temp_v.0.i.i.i := v..i.i.i;
+TO: main_CdAudioIsPlayActiveexitii;
+
+FROM: main_CdAudioIsPlayActiveexitii;
+v.0.i.i.i := var__temp_v.0.i.i.i;
+TO: main_CdAudioIsPlayActiveexitii_end;
+
+FROM: main_CdAudioIsPlayActiveexitii_end;
+assume(v.0.i.i.i != 0);
+var__temp_vstatus.1.i.i := -2147483631;
+TO: main_bb1004;
+
+FROM: main_CdAudioIsPlayActiveexitii_end;
+assume(v.0.i.i.i == 0);
+TO: main_bb990;
+
+FROM: main_bb990;
+TO: main_bb990_end;
+
+FROM: main_bb990_end;
+assume(v2015 != 0);
+var__temp_vstatus.1.i.i := -1073741789;
+TO: main_bb1004;
+
+FROM: main_bb990_end;
+assume(v2015 == 0);
+TO: main_bb991;
+
+FROM: main_bb991;
+TO: main_bb991_end;
+
+FROM: main_bb991_end;
+assume(v2034 == 0);
+TO: main_bb992;
+
+FROM: main_bb991_end;
+assume(v2034 != 0);
+TO: main_bb994;
+
+FROM: main_bb992;
+myStatus := -1073741670;
+v2132 := s;
+v2133 := NP;
+TO: main_bb992_end;
+
+FROM: main_bb992_end;
+assume(v2132 == v2133);
+TO: main_AG_SetStatusAndReturnexitii;
+
+FROM: main_bb992_end;
+assume(v2132 != v2133);
+TO: main_bb993;
+
+FROM: main_AG_SetStatusAndReturnexitii;
+v2135 := DC;
+s := v2135;
+var__temp_vstatus.0 := -1073741670;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb993;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb994;
+v2136 := nondet();
+v2137 := nondet();
+v2138 := nondet();
+myStatus := -1073741670;
+v2139 := s;
+v2140 := NP;
+TO: main_bb994_end;
+
+FROM: main_bb994_end;
+assume(v2139 == v2140);
+TO: main_AG_SetStatusAndReturnexit2ii;
+
+FROM: main_bb994_end;
+assume(v2139 != v2140);
+TO: main_bb995;
+
+FROM: main_AG_SetStatusAndReturnexit2ii;
+v2142 := DC;
+s := v2142;
+var__temp_vstatus.0 := -1073741670;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb995;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_NodeBlock59ii;
+TO: main_NodeBlock59ii_end;
+
+FROM: main_NodeBlock59ii_end;
+assume(v2014 slt 149512);
+TO: main_LeafBlock55ii;
+
+FROM: main_NodeBlock59ii_end;
+assume(v2014 sge 149512);
+TO: main_LeafBlock57ii;
+
+FROM: main_LeafBlock55ii;
+TO: main_LeafBlock55ii_end;
+
+FROM: main_LeafBlock55ii_end;
+assume(v2014 == 149504);
+TO: main_bb996;
+
+FROM: main_LeafBlock55ii_end;
+assume(v2014 != 149504);
+TO: main_CdAudioIsPlayActiveexit27ii;
+
+FROM: main_bb996;
+v2143 := nondet();
+v2144 := nondet();
+v2145 := nondet();
+v2146 := nondet();
+v2147 := nondet();
+v2148 := nondet();
+v2149 := nondet();
+v2153 := sign_extend(32, 64, v2148);
+TO: main_bb996_end;
+
+FROM: main_bb996_end;
+assume((!(((v2143 == 0) || (v2149 == 0)) || (v2146 == 0))) && (v2153 == 259));
+TO: main_bb997;
+
+FROM: main_bb996_end;
+assume((((v2143 == 0) || (v2149 == 0)) || (v2146 == 0)) || (v2153 != 259));
+TO: main_CdAudioIsPlayActiveexit27ii;
+
+FROM: main_bb997;
+v2155 := s;
+v2156 := MPR3;
+v2158 := setEventCalled;
+TO: main_bb997_end;
+
+FROM: main_bb997_end;
+assume((v2155 == v2156) && (v2158 == 1));
+TO: main_bb998;
+
+FROM: main_bb997_end;
+assume((v2155 != v2156) || (v2158 != 1));
+TO: main_bb999;
+
+FROM: main_bb998;
+v2160 := NP;
+s := v2160;
+setEventCalled := 0;
+TO: main_KeWaitForSingleObjectexiti23ii;
+
+FROM: main_bb999;
+v2161 := customIrp;
+TO: main_bb999_end;
+
+FROM: main_bb999_end;
+assume(v2161 == 1);
+TO: main_bb1000;
+
+FROM: main_bb999_end;
+assume(v2161 != 1);
+TO: main_bb1001;
+
+FROM: main_bb1000;
+v2163 := NP;
+s := v2163;
+customIrp := 0;
+TO: main_KeWaitForSingleObjectexiti23ii;
+
+FROM: main_bb1001;
+v2164 := s;
+v2165 := MPR3;
+TO: main_bb1001_end;
+
+FROM: main_bb1001_end;
+assume(v2164 == v2165);
+TO: main_bb1002;
+
+FROM: main_bb1001_end;
+assume(v2164 != v2165);
+TO: main_KeWaitForSingleObjectexiti23ii;
+
+FROM: main_bb1002;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_KeWaitForSingleObjectexiti23ii;
+v2167 := nondet();
+TO: main_CdAudioIsPlayActiveexit27ii;
+
+FROM: main_LeafBlock57ii;
+TO: main_LeafBlock57ii_end;
+
+FROM: main_LeafBlock57ii_end;
+assume(v2014 == 149512);
+TO: main_bb1003;
+
+FROM: main_LeafBlock57ii_end;
+assume(v2014 != 149512);
+TO: main_CdAudioIsPlayActiveexit27ii;
+
+FROM: main_bb1003;
+v2168 := nondet();
+v2169 := nondet();
+v2170 := nondet();
+var__temp_vstatus.1.i.i := -1073741670;
+TO: main_bb1004;
+
+FROM: main_bb1004;
+vstatus.1.i.i := var__temp_vstatus.1.i.i;
+myStatus := vstatus.1.i.i;
+v2171 := s;
+v2172 := NP;
+TO: main_bb1004_end;
+
+FROM: main_bb1004_end;
+assume(v2171 == v2172);
+TO: main_AG_SetStatusAndReturnexit28ii;
+
+FROM: main_bb1004_end;
+assume(v2171 != v2172);
+TO: main_bb1005;
+
+FROM: main_AG_SetStatusAndReturnexit28ii;
+v2174 := DC;
+s := v2174;
+var__temp_vstatus.0 := vstatus.1.i.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1005;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_CdAudioIsPlayActiveexit27ii;
+v2175 := nondet();
+v2176 := nondet();
+v2177 := nondet();
+v2178 := s;
+v2179 := NP;
+TO: main_CdAudioIsPlayActiveexit27ii_end;
+
+FROM: main_CdAudioIsPlayActiveexit27ii_end;
+assume(v2178 == v2179);
+TO: main_bb1006;
+
+FROM: main_CdAudioIsPlayActiveexit27ii_end;
+assume(v2178 != v2179);
+TO: main_bb1031;
+
+FROM: main_bb1006;
+v2181 := SKIP1;
+s := v2181;
+v2182 := nondet();
+v2183 := nondet();
+v2184 := compRegistered;
+TO: main_bb1006_end;
+
+FROM: main_bb1006_end;
+assume(v2184 != 0);
+TO: main_bb1007;
+
+FROM: main_bb1006_end;
+assume(v2184 == 0);
+TO: main_bb1019;
+
+FROM: main_bb1007;
+v2186 := routine;
+TO: main_bb1007_end;
+
+FROM: main_bb1007_end;
+assume(v2186 == 0);
+TO: main_bb1008;
+
+FROM: main_bb1007_end;
+assume(v2186 != 0);
+TO: main_bb1014;
+
+FROM: main_bb1008;
+v2188 := nondet();
+v2189 := nondet();
+TO: main_bb1008_end;
+
+FROM: main_bb1008_end;
+assume(v2188 != 0);
+TO: main_bb1009;
+
+FROM: main_bb1008_end;
+assume(v2188 == 0);
+TO: main_bb1012;
+
+FROM: main_bb1009;
+v2191 := pended;
+TO: main_bb1009_end;
+
+FROM: main_bb1009_end;
+assume(v2191 == 0);
+TO: main_bb1010;
+
+FROM: main_bb1009_end;
+assume(v2191 != 0);
+TO: main_bb1011;
+
+FROM: main_bb1010;
+pended := 1;
+TO: main_bb1012;
+
+FROM: main_bb1011;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1012;
+v2193 := myStatus;
+TO: main_bb1012_end;
+
+FROM: main_bb1012_end;
+assume(v2193 sge 0);
+TO: main_bb1013;
+
+FROM: main_bb1012_end;
+assume(v2193 slt 0);
+TO: main_HPCdrCompletionexitiiii;
+
+FROM: main_bb1013;
+v2195 := nondet();
+TO: main_HPCdrCompletionexitiiii;
+
+FROM: main_HPCdrCompletionexitiiii;
+v2196 := myStatus;
+var__temp_vcompRetStatus.1.i.i.i.i := v2196;
+TO: main_bb1016;
+
+FROM: main_bb1014;
+v2197 := routine;
+TO: main_bb1014_end;
+
+FROM: main_bb1014_end;
+assume(v2197 == 1);
+TO: main_bb1015;
+
+FROM: main_bb1014_end;
+assume(v2197 != 1);
+var__temp_vcompRetStatus.1.i.i.i.i := -1073741802;
+TO: main_bb1016;
+
+FROM: main_bb1015;
+v2199 := nondet();
+setEventCalled := 1;
+var__temp_vcompRetStatus.1.i.i.i.i := -1073741802;
+TO: main_bb1016;
+
+FROM: main_bb1016;
+vcompRetStatus.1.i.i.i.i := var__temp_vcompRetStatus.1.i.i.i.i;
+v2200 := sign_extend(32, 64, vcompRetStatus.1.i.i.i.i);
+TO: main_bb1016_end;
+
+FROM: main_bb1016_end;
+assume(v2200 == -1073741802);
+TO: main_bb1017;
+
+FROM: main_bb1016_end;
+assume(v2200 != -1073741802);
+TO: main_bb1019;
+
+FROM: main_bb1017;
+v2202 := s;
+v2203 := NP;
+TO: main_bb1017_end;
+
+FROM: main_bb1017_end;
+assume(v2202 == v2203);
+TO: main_stubMoreProcessingRequiredexitiiii;
+
+FROM: main_bb1017_end;
+assume(v2202 != v2203);
+TO: main_bb1018;
+
+FROM: main_stubMoreProcessingRequiredexitiiii;
+v2205 := MPR1;
+s := v2205;
+TO: main_bb1019;
+
+FROM: main_bb1018;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1019;
+TO: main_bb1019_end;
+
+FROM: main_bb1019_end;
+assume(v2182 != 0);
+var__temp_vreturnVal2.1.i.i.i.i := 259;
+TO: main_bb1022;
+
+FROM: main_bb1019_end;
+assume(v2182 == 0);
+TO: main_bb1020;
+
+FROM: main_bb1020;
+v2207 := nondet();
+TO: main_bb1020_end;
+
+FROM: main_bb1020_end;
+assume(v2207 == 0);
+var__temp_vreturnVal2.1.i.i.i.i := 0;
+TO: main_bb1022;
+
+FROM: main_bb1020_end;
+assume(v2207 != 0);
+TO: main_bb1021;
+
+FROM: main_bb1021;
+v2209 := nondet();
+TO: main_bb1021_v..i.i.i.i;
+FROM: main_bb1021_v..i.i.i.i;
+assume(v2209 == 1);
+v..i.i.i.i := -1073741823;
+TO: main_bb1021_sv..i.i.i.i;
+
+FROM: main_bb1021_v..i.i.i.i;
+assume(v2209 != 1);
+v..i.i.i.i := 259;
+TO: main_bb1021_sv..i.i.i.i;
+
+FROM: main_bb1021_sv..i.i.i.i;
+var__temp_vreturnVal2.1.i.i.i.i := v..i.i.i.i;
+TO: main_bb1022;
+
+FROM: main_bb1022;
+vreturnVal2.1.i.i.i.i := var__temp_vreturnVal2.1.i.i.i.i;
+v2211 := s;
+v2212 := NP;
+TO: main_bb1022_end;
+
+FROM: main_bb1022_end;
+assume(v2211 == v2212);
+TO: main_bb1023;
+
+FROM: main_bb1022_end;
+assume(v2211 != v2212);
+TO: main_bb1024;
+
+FROM: main_bb1023;
+v2214 := IPC;
+s := v2214;
+lowerDriverReturn := vreturnVal2.1.i.i.i.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i.i.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1024;
+v2215 := s;
+v2216 := MPR1;
+TO: main_bb1024_end;
+
+FROM: main_bb1024_end;
+assume(v2215 == v2216);
+TO: main_bb1025;
+
+FROM: main_bb1024_end;
+assume(v2215 != v2216);
+TO: main_bb1028;
+
+FROM: main_bb1025;
+TO: main_bb1025_end;
+
+FROM: main_bb1025_end;
+assume(vreturnVal2.1.i.i.i.i == 259);
+TO: main_bb1026;
+
+FROM: main_bb1025_end;
+assume(vreturnVal2.1.i.i.i.i != 259);
+TO: main_bb1027;
+
+FROM: main_bb1026;
+v2219 := MPR3;
+s := v2219;
+lowerDriverReturn := vreturnVal2.1.i.i.i.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i.i.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1027;
+v2220 := NP;
+s := v2220;
+lowerDriverReturn := vreturnVal2.1.i.i.i.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i.i.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1028;
+v2221 := s;
+v2222 := SKIP1;
+TO: main_bb1028_end;
+
+FROM: main_bb1028_end;
+assume(v2221 == v2222);
+TO: main_bb1029;
+
+FROM: main_bb1028_end;
+assume(v2221 != v2222);
+TO: main_bb1030;
+
+FROM: main_bb1029;
+v2224 := SKIP2;
+s := v2224;
+lowerDriverReturn := vreturnVal2.1.i.i.i.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i.i.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1030;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1031;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_NodeBlock43i;
+TO: main_NodeBlock43i_end;
+
+FROM: main_NodeBlock43i_end;
+assume(v1950 slt 7);
+TO: main_LeafBlock39i;
+
+FROM: main_NodeBlock43i_end;
+assume(v1950 sge 7);
+TO: main_LeafBlock41i;
+
+FROM: main_LeafBlock39i;
+TO: main_LeafBlock39i_end;
+
+FROM: main_LeafBlock39i_end;
+assume(v1950 == 3);
+TO: main_bb1032;
+
+FROM: main_LeafBlock39i_end;
+assume(v1950 != 3);
+TO: main_NewDefaulti;
+
+FROM: main_bb1032;
+v2225 := nondet();
+v2226 := nondet();
+v2227 := nondet();
+v2228 := nondet();
+v2229 := nondet();
+v2230 := nondet();
+v2231 := nondet();
+v2232 := nondet();
+v2233 := nondet();
+v2234 := nondet();
+v2235 := nondet();
+v2236 := nondet();
+v2237 := nondet();
+v2238 := nondet();
+v2239 := nondet();
+v2240 := nondet();
+v2241 := nondet();
+v2242 := nondet();
+v2243 := nondet();
+TO: main_bb1032_end;
+
+FROM: main_bb1032_end;
+assume(v2225 slt 147480);
+TO: main_NodeBlock52ii;
+
+FROM: main_bb1032_end;
+assume(v2225 sge 147480);
+TO: main_NodeBlock74ii;
+
+FROM: main_NodeBlock52ii;
+TO: main_NodeBlock52ii_end;
+
+FROM: main_NodeBlock52ii_end;
+assume(v2225 slt 147468);
+TO: main_NodeBlock40ii;
+
+FROM: main_NodeBlock52ii_end;
+assume(v2225 sge 147468);
+TO: main_NodeBlock50ii;
+
+FROM: main_NodeBlock40ii;
+TO: main_NodeBlock40ii_end;
+
+FROM: main_NodeBlock40ii_end;
+assume(v2225 slt 147460);
+TO: main_LeafBlocki2i;
+
+FROM: main_NodeBlock40ii_end;
+assume(v2225 sge 147460);
+TO: main_NodeBlocki12i;
+
+FROM: main_LeafBlocki2i;
+TO: main_LeafBlocki2i_end;
+
+FROM: main_LeafBlocki2i_end;
+assume(v2225 == 147456);
+TO: main_bb1033;
+
+FROM: main_LeafBlocki2i_end;
+assume(v2225 != 147456);
+TO: main_NewDefaulti18i;
+
+FROM: main_bb1033;
+TO: main_bb1033_end;
+
+FROM: main_bb1033_end;
+assume(v2226 slt v2228);
+var__temp_vstatus.4.i.i := -1073741789;
+TO: main_bb1116;
+
+FROM: main_bb1033_end;
+assume(v2226 sge v2228);
+TO: main_bb1034;
+
+FROM: main_bb1034;
+v2245 := nondet();
+v2246 := nondet();
+v2247 := nondet();
+v2248 := nondet();
+v2249 := nondet();
+v2250 := nondet();
+v2251 := nondet();
+TO: main_bb1034_end;
+
+FROM: main_bb1034_end;
+assume(((v2245 == 0) || (v2251 == 0)) || (v2248 == 0));
+var__temp_v.0.i.i9.i := 0;
+TO: main_CdAudioIsPlayActiveexiti10i;
+
+FROM: main_bb1034_end;
+assume(((v2245 != 0) && (v2251 != 0)) && (v2248 != 0));
+TO: main_bb1035;
+
+FROM: main_bb1035;
+v2255 := sign_extend(32, 64, v2250);
+TO: main_bb1035_end;
+
+FROM: main_bb1035_end;
+assume(v2255 == 259);
+TO: main_bb1036;
+
+FROM: main_bb1035_end;
+assume(v2255 != 259);
+var__temp_vstatus.0.i.i7.i := v2250;
+TO: main_bb1042;
+
+FROM: main_bb1036;
+v2257 := s;
+v2258 := MPR3;
+v2260 := setEventCalled;
+TO: main_bb1036_end;
+
+FROM: main_bb1036_end;
+assume((v2257 == v2258) && (v2260 == 1));
+TO: main_bb1037;
+
+FROM: main_bb1036_end;
+assume((v2257 != v2258) || (v2260 != 1));
+TO: main_bb1038;
+
+FROM: main_bb1037;
+v2262 := NP;
+s := v2262;
+setEventCalled := 0;
+TO: main_KeWaitForSingleObjectexitii6i;
+
+FROM: main_bb1038;
+v2263 := customIrp;
+TO: main_bb1038_end;
+
+FROM: main_bb1038_end;
+assume(v2263 == 1);
+TO: main_bb1039;
+
+FROM: main_bb1038_end;
+assume(v2263 != 1);
+TO: main_bb1040;
+
+FROM: main_bb1039;
+v2265 := NP;
+s := v2265;
+customIrp := 0;
+TO: main_KeWaitForSingleObjectexitii6i;
+
+FROM: main_bb1040;
+v2266 := s;
+v2267 := MPR3;
+TO: main_bb1040_end;
+
+FROM: main_bb1040_end;
+assume(v2266 == v2267);
+TO: main_bb1041;
+
+FROM: main_bb1040_end;
+assume(v2266 != v2267);
+TO: main_KeWaitForSingleObjectexitii6i;
+
+FROM: main_bb1041;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_KeWaitForSingleObjectexitii6i;
+v2269 := nondet();
+var__temp_vstatus.0.i.i7.i := v2246;
+TO: main_bb1042;
+
+FROM: main_bb1042;
+vstatus.0.i.i7.i := var__temp_vstatus.0.i.i7.i;
+TO: main_bb1042_end;
+
+FROM: main_bb1042_end;
+assume(vstatus.0.i.i7.i slt 0);
+var__temp_v.0.i.i9.i := 0;
+TO: main_CdAudioIsPlayActiveexiti10i;
+
+FROM: main_bb1042_end;
+assume(vstatus.0.i.i7.i sge 0);
+TO: main_bb1043;
+
+FROM: main_bb1043;
+TO: main_bb1043_v..i.i8.i;
+FROM: main_bb1043_v..i.i8.i;
+assume(v2247 == 17);
+v..i.i8.i := 1;
+TO: main_bb1043_sv..i.i8.i;
+
+FROM: main_bb1043_v..i.i8.i;
+assume(v2247 != 17);
+v..i.i8.i := 0;
+TO: main_bb1043_sv..i.i8.i;
+
+FROM: main_bb1043_sv..i.i8.i;
+var__temp_v.0.i.i9.i := v..i.i8.i;
+TO: main_CdAudioIsPlayActiveexiti10i;
+
+FROM: main_CdAudioIsPlayActiveexiti10i;
+v.0.i.i9.i := var__temp_v.0.i.i9.i;
+TO: main_CdAudioIsPlayActiveexiti10i_end;
+
+FROM: main_CdAudioIsPlayActiveexiti10i_end;
+assume(v.0.i.i9.i != 0);
+var__temp_vstatus.4.i.i := -2147483631;
+TO: main_bb1116;
+
+FROM: main_CdAudioIsPlayActiveexiti10i_end;
+assume(v.0.i.i9.i == 0);
+TO: main_bb1044;
+
+FROM: main_bb1044;
+TO: main_bb1044_end;
+
+FROM: main_bb1044_end;
+assume(v2240 == 0);
+TO: main_bb1045;
+
+FROM: main_bb1044_end;
+assume(v2240 != 0);
+TO: main_bb1047;
+
+FROM: main_bb1045;
+myStatus := -1073741670;
+v2274 := s;
+v2275 := NP;
+TO: main_bb1045_end;
+
+FROM: main_bb1045_end;
+assume(v2274 == v2275);
+TO: main_IofCompleteRequestexitii;
+
+FROM: main_bb1045_end;
+assume(v2274 != v2275);
+TO: main_bb1046;
+
+FROM: main_IofCompleteRequestexitii;
+v2277 := DC;
+s := v2277;
+var__temp_vstatus.0 := -1073741670;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1046;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1047;
+v2278 := nondet();
+v2279 := nondet();
+v2280 := nondet();
+myStatus := -1073741670;
+v2281 := s;
+v2282 := NP;
+TO: main_bb1047_end;
+
+FROM: main_bb1047_end;
+assume(v2281 == v2282);
+TO: main_IofCompleteRequestexit2ii;
+
+FROM: main_bb1047_end;
+assume(v2281 != v2282);
+TO: main_bb1048;
+
+FROM: main_IofCompleteRequestexit2ii;
+v2284 := DC;
+s := v2284;
+var__temp_vstatus.0 := -1073741670;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1048;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_NodeBlocki12i;
+TO: main_NodeBlocki12i_end;
+
+FROM: main_NodeBlocki12i_end;
+assume(v2225 slt 147464);
+TO: main_LeafBlock36ii;
+
+FROM: main_NodeBlocki12i_end;
+assume(v2225 sge 147464);
+TO: main_LeafBlock38ii;
+
+FROM: main_LeafBlock36ii;
+TO: main_LeafBlock36ii_end;
+
+FROM: main_LeafBlock36ii_end;
+assume(v2225 == 147460);
+TO: main_bb1049;
+
+FROM: main_LeafBlock36ii_end;
+assume(v2225 != 147460);
+TO: main_NewDefaulti18i;
+
+FROM: main_bb1049;
+TO: main_bb1049_end;
+
+FROM: main_bb1049_end;
+assume(v2227 slt v2233);
+var__temp_vstatus.4.i.i := -1073741820;
+TO: main_bb1116;
+
+FROM: main_bb1049_end;
+assume(v2227 sge v2233);
+TO: main_bb1050;
+
+FROM: main_bb1050;
+v2286 := nondet();
+v2287 := nondet();
+v2288 := nondet();
+var__temp_vstatus.4.i.i := -1073741670;
+TO: main_bb1116;
+
+FROM: main_LeafBlock38ii;
+TO: main_LeafBlock38ii_end;
+
+FROM: main_LeafBlock38ii_end;
+assume(v2225 == 147464);
+TO: main_bb1063;
+
+FROM: main_LeafBlock38ii_end;
+assume(v2225 != 147464);
+TO: main_NewDefaulti18i;
+
+FROM: main_NodeBlock50ii;
+TO: main_NodeBlock50ii_end;
+
+FROM: main_NodeBlock50ii_end;
+assume(v2225 slt 147472);
+TO: main_LeafBlock42ii;
+
+FROM: main_NodeBlock50ii_end;
+assume(v2225 sge 147472);
+TO: main_NodeBlock48ii;
+
+FROM: main_LeafBlock42ii;
+TO: main_LeafBlock42ii_end;
+
+FROM: main_LeafBlock42ii_end;
+assume(v2225 == 147468);
+TO: main_bb1051;
+
+FROM: main_LeafBlock42ii_end;
+assume(v2225 != 147468);
+TO: main_NewDefaulti18i;
+
+FROM: main_bb1051;
+TO: main_bb1051_end;
+
+FROM: main_bb1051_end;
+assume(v2241 == 0);
+TO: main_bb1052;
+
+FROM: main_bb1051_end;
+assume(v2241 != 0);
+TO: main_bb1054;
+
+FROM: main_bb1052;
+myStatus := -1073741670;
+v2290 := s;
+v2291 := NP;
+TO: main_bb1052_end;
+
+FROM: main_bb1052_end;
+assume(v2290 == v2291);
+TO: main_IofCompleteRequestexit7ii;
+
+FROM: main_bb1052_end;
+assume(v2290 != v2291);
+TO: main_bb1053;
+
+FROM: main_IofCompleteRequestexit7ii;
+v2293 := DC;
+s := v2293;
+var__temp_vstatus.0 := -1073741670;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1053;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1054;
+TO: main_bb1054_end;
+
+FROM: main_bb1054_end;
+assume(v2234 == 1);
+TO: main_bb1055;
+
+FROM: main_bb1054_end;
+assume(v2234 != 1);
+TO: main_bb1057;
+
+FROM: main_bb1055;
+myStatus := 0;
+v2295 := s;
+v2296 := NP;
+TO: main_bb1055_end;
+
+FROM: main_bb1055_end;
+assume(v2295 == v2296);
+TO: main_IofCompleteRequestexit8ii;
+
+FROM: main_bb1055_end;
+assume(v2295 != v2296);
+TO: main_bb1056;
+
+FROM: main_IofCompleteRequestexit8ii;
+v2298 := DC;
+s := v2298;
+var__temp_vstatus.0 := 0;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1056;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1057;
+v2299 := nondet();
+v2300 := nondet();
+v2301 := nondet();
+myStatus := -1073741670;
+v2302 := s;
+v2303 := NP;
+TO: main_bb1057_end;
+
+FROM: main_bb1057_end;
+assume(v2302 == v2303);
+TO: main_IofCompleteRequestexit10ii;
+
+FROM: main_bb1057_end;
+assume(v2302 != v2303);
+TO: main_bb1058;
+
+FROM: main_IofCompleteRequestexit10ii;
+v2305 := DC;
+s := v2305;
+var__temp_vstatus.0 := -1073741670;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1058;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_NodeBlock48ii;
+TO: main_NodeBlock48ii_end;
+
+FROM: main_NodeBlock48ii_end;
+assume(v2225 slt 147476);
+TO: main_LeafBlock44ii;
+
+FROM: main_NodeBlock48ii_end;
+assume(v2225 sge 147476);
+TO: main_LeafBlock46ii;
+
+FROM: main_LeafBlock44ii;
+TO: main_LeafBlock44ii_end;
+
+FROM: main_LeafBlock44ii_end;
+assume(v2225 == 147472);
+TO: main_bb1059;
+
+FROM: main_LeafBlock44ii_end;
+assume(v2225 != 147472);
+TO: main_NewDefaulti18i;
+
+FROM: main_bb1059;
+TO: main_bb1059_end;
+
+FROM: main_bb1059_end;
+assume(v2234 == 0);
+TO: main_bb1060;
+
+FROM: main_bb1059_end;
+assume(v2234 != 0);
+TO: main_bb1062;
+
+FROM: main_bb1060;
+myStatus := -1073741823;
+v2307 := s;
+v2308 := NP;
+TO: main_bb1060_end;
+
+FROM: main_bb1060_end;
+assume(v2307 == v2308);
+TO: main_IofCompleteRequestexit13ii;
+
+FROM: main_bb1060_end;
+assume(v2307 != v2308);
+TO: main_bb1061;
+
+FROM: main_IofCompleteRequestexit13ii;
+v2310 := DC;
+s := v2310;
+var__temp_vstatus.0 := -1073741823;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1061;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1062;
+v2311 := nondet();
+v2312 := nondet();
+v2313 := nondet();
+var__temp_vstatus.4.i.i := -1073741670;
+TO: main_bb1116;
+
+FROM: main_LeafBlock46ii;
+TO: main_LeafBlock46ii_end;
+
+FROM: main_LeafBlock46ii_end;
+assume(v2225 == 147476);
+var__temp_vstatus.4.i.i := -1073741808;
+TO: main_bb1116;
+
+FROM: main_LeafBlock46ii_end;
+assume(v2225 != 147476);
+TO: main_NewDefaulti18i;
+
+FROM: main_NodeBlock74ii;
+TO: main_NodeBlock74ii_end;
+
+FROM: main_NodeBlock74ii_end;
+assume(v2225 slt 147508);
+TO: main_NodeBlock62ii;
+
+FROM: main_NodeBlock74ii_end;
+assume(v2225 sge 147508);
+TO: main_NodeBlock72ii;
+
+FROM: main_NodeBlock62ii;
+TO: main_NodeBlock62ii_end;
+
+FROM: main_NodeBlock62ii_end;
+assume(v2225 slt 147496);
+TO: main_LeafBlock54ii;
+
+FROM: main_NodeBlock62ii_end;
+assume(v2225 sge 147496);
+TO: main_NodeBlock60ii;
+
+FROM: main_LeafBlock54ii;
+TO: main_LeafBlock54ii_end;
+
+FROM: main_LeafBlock54ii_end;
+assume(v2225 == 147480);
+TO: main_bb1063;
+
+FROM: main_LeafBlock54ii_end;
+assume(v2225 != 147480);
+TO: main_NewDefaulti18i;
+
+FROM: main_bb1063;
+v2314 := nondet();
+v2315 := nondet();
+v2316 := nondet();
+TO: main_bb1063_end;
+
+FROM: main_bb1063_end;
+assume(v2225 == 147464);
+TO: main_bb1064;
+
+FROM: main_bb1063_end;
+assume(v2225 != 147464);
+TO: main_bb1066;
+
+FROM: main_bb1064;
+myStatus := -1073741670;
+v2318 := s;
+v2319 := NP;
+TO: main_bb1064_end;
+
+FROM: main_bb1064_end;
+assume(v2318 == v2319);
+TO: main_IofCompleteRequestexit4ii;
+
+FROM: main_bb1064_end;
+assume(v2318 != v2319);
+TO: main_bb1065;
+
+FROM: main_IofCompleteRequestexit4ii;
+v2321 := DC;
+s := v2321;
+var__temp_vstatus.0 := -1073741670;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1065;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1066;
+TO: main_bb1066_end;
+
+FROM: main_bb1066_end;
+assume(v2227 slt v2232);
+var__temp_vstatus.4.i.i := -1073741820;
+TO: main_bb1116;
+
+FROM: main_bb1066_end;
+assume(v2227 sge v2232);
+TO: main_bb1067;
+
+FROM: main_bb1067;
+v2323 := nondet();
+v2324 := nondet();
+v2325 := nondet();
+var__temp_vstatus.4.i.i := -1073741670;
+TO: main_bb1116;
+
+FROM: main_NodeBlock60ii;
+TO: main_NodeBlock60ii_end;
+
+FROM: main_NodeBlock60ii_end;
+assume(v2225 slt 147500);
+TO: main_LeafBlock56ii;
+
+FROM: main_NodeBlock60ii_end;
+assume(v2225 sge 147500);
+TO: main_LeafBlock58ii;
+
+FROM: main_LeafBlock56ii;
+TO: main_LeafBlock56ii_end;
+
+FROM: main_LeafBlock56ii_end;
+assume(v2225 == 147496);
+var__temp_vstatus.4.i.i := -1073741808;
+TO: main_bb1116;
+
+FROM: main_LeafBlock56ii_end;
+assume(v2225 != 147496);
+TO: main_NewDefaulti18i;
+
+FROM: main_LeafBlock58ii;
+TO: main_LeafBlock58ii_end;
+
+FROM: main_LeafBlock58ii_end;
+assume(v2225 == 147500);
+TO: main_bb1068;
+
+FROM: main_LeafBlock58ii_end;
+assume(v2225 != 147500);
+TO: main_NewDefaulti18i;
+
+FROM: main_bb1068;
+TO: main_bb1068_end;
+
+FROM: main_bb1068_end;
+assume(v2226 slt v2236);
+var__temp_vstatus.4.i.i := -1073741789;
+TO: main_bb1116;
+
+FROM: main_bb1068_end;
+assume(v2226 sge v2236);
+TO: main_bb1069;
+
+FROM: main_bb1069;
+TO: main_bb1069_end;
+
+FROM: main_bb1069_end;
+assume(v2243 == 0);
+TO: main_bb1070;
+
+FROM: main_bb1069_end;
+assume(v2243 != 0);
+TO: main_bb1072;
+
+FROM: main_bb1070;
+myStatus := -1073741670;
+v2328 := s;
+v2329 := NP;
+TO: main_bb1070_end;
+
+FROM: main_bb1070_end;
+assume(v2328 == v2329);
+TO: main_IofCompleteRequestexit15ii;
+
+FROM: main_bb1070_end;
+assume(v2328 != v2329);
+TO: main_bb1071;
+
+FROM: main_IofCompleteRequestexit15ii;
+v2331 := DC;
+s := v2331;
+var__temp_vstatus.0 := -1073741670;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1071;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1072;
+TO: main_bb1072_end;
+
+FROM: main_bb1072_end;
+assume(v2242 != 1);
+TO: main_bb1073;
+
+FROM: main_bb1072_end;
+assume(v2242 == 1);
+TO: main_bb1075;
+
+FROM: main_bb1073;
+myStatus := -1073741823;
+v2333 := s;
+v2334 := NP;
+TO: main_bb1073_end;
+
+FROM: main_bb1073_end;
+assume(v2333 == v2334);
+TO: main_IofCompleteRequestexit16ii;
+
+FROM: main_bb1073_end;
+assume(v2333 != v2334);
+TO: main_bb1074;
+
+FROM: main_IofCompleteRequestexit16ii;
+v2336 := DC;
+s := v2336;
+var__temp_vstatus.0 := -1073741823;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1074;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1075;
+v2337 := nondet();
+v2338 := nondet();
+v2339 := nondet();
+var__temp_vstatus.4.i.i := -1073741670;
+TO: main_bb1116;
+
+FROM: main_NodeBlock72ii;
+TO: main_NodeBlock72ii_end;
+
+FROM: main_NodeBlock72ii_end;
+assume(v2225 slt 149504);
+TO: main_LeafBlock64ii;
+
+FROM: main_NodeBlock72ii_end;
+assume(v2225 sge 149504);
+TO: main_NodeBlock70ii;
+
+FROM: main_LeafBlock64ii;
+TO: main_LeafBlock64ii_end;
+
+FROM: main_LeafBlock64ii_end;
+assume(v2225 == 147508);
+var__temp_vstatus.4.i.i := -1073741808;
+TO: main_bb1116;
+
+FROM: main_LeafBlock64ii_end;
+assume(v2225 != 147508);
+TO: main_NewDefaulti18i;
+
+FROM: main_NodeBlock70ii;
+TO: main_NodeBlock70ii_end;
+
+FROM: main_NodeBlock70ii_end;
+assume(v2225 slt 149512);
+TO: main_LeafBlock66ii;
+
+FROM: main_NodeBlock70ii_end;
+assume(v2225 sge 149512);
+TO: main_LeafBlock68ii;
+
+FROM: main_LeafBlock66ii;
+TO: main_LeafBlock66ii_end;
+
+FROM: main_LeafBlock66ii_end;
+assume(v2225 == 149504);
+TO: main_bb1076;
+
+FROM: main_LeafBlock66ii_end;
+assume(v2225 != 149504);
+TO: main_NewDefaulti18i;
+
+FROM: main_bb1076;
+v2340 := nondet();
+v2341 := nondet();
+v2342 := nondet();
+v2343 := nondet();
+v2344 := nondet();
+v2345 := nondet();
+v2346 := nondet();
+TO: main_bb1076_end;
+
+FROM: main_bb1076_end;
+assume(((v2340 == 0) || (v2346 == 0)) || (v2343 == 0));
+var__temp_v.0.i25.i.i := 0;
+TO: main_CdAudioIsPlayActiveexit26ii;
+
+FROM: main_bb1076_end;
+assume(((v2340 != 0) && (v2346 != 0)) && (v2343 != 0));
+TO: main_bb1077;
+
+FROM: main_bb1077;
+v2350 := sign_extend(32, 64, v2345);
+TO: main_bb1077_end;
+
+FROM: main_bb1077_end;
+assume(v2350 == 259);
+TO: main_bb1078;
+
+FROM: main_bb1077_end;
+assume(v2350 != 259);
+var__temp_vstatus.0.i23.i.i := v2345;
+TO: main_bb1084;
+
+FROM: main_bb1078;
+v2352 := s;
+v2353 := MPR3;
+v2355 := setEventCalled;
+TO: main_bb1078_end;
+
+FROM: main_bb1078_end;
+assume((v2352 == v2353) && (v2355 == 1));
+TO: main_bb1079;
+
+FROM: main_bb1078_end;
+assume((v2352 != v2353) || (v2355 != 1));
+TO: main_bb1080;
+
+FROM: main_bb1079;
+v2357 := NP;
+s := v2357;
+setEventCalled := 0;
+TO: main_KeWaitForSingleObjectexiti22ii;
+
+FROM: main_bb1080;
+v2358 := customIrp;
+TO: main_bb1080_end;
+
+FROM: main_bb1080_end;
+assume(v2358 == 1);
+TO: main_bb1081;
+
+FROM: main_bb1080_end;
+assume(v2358 != 1);
+TO: main_bb1082;
+
+FROM: main_bb1081;
+v2360 := NP;
+s := v2360;
+customIrp := 0;
+TO: main_KeWaitForSingleObjectexiti22ii;
+
+FROM: main_bb1082;
+v2361 := s;
+v2362 := MPR3;
+TO: main_bb1082_end;
+
+FROM: main_bb1082_end;
+assume(v2361 == v2362);
+TO: main_bb1083;
+
+FROM: main_bb1082_end;
+assume(v2361 != v2362);
+TO: main_KeWaitForSingleObjectexiti22ii;
+
+FROM: main_bb1083;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_KeWaitForSingleObjectexiti22ii;
+v2364 := nondet();
+var__temp_vstatus.0.i23.i.i := v2341;
+TO: main_bb1084;
+
+FROM: main_bb1084;
+vstatus.0.i23.i.i := var__temp_vstatus.0.i23.i.i;
+TO: main_bb1084_end;
+
+FROM: main_bb1084_end;
+assume(vstatus.0.i23.i.i slt 0);
+var__temp_v.0.i25.i.i := 0;
+TO: main_CdAudioIsPlayActiveexit26ii;
+
+FROM: main_bb1084_end;
+assume(vstatus.0.i23.i.i sge 0);
+TO: main_bb1085;
+
+FROM: main_bb1085;
+TO: main_bb1085_v..i24.i.i;
+FROM: main_bb1085_v..i24.i.i;
+assume(v2342 == 17);
+v..i24.i.i := 1;
+TO: main_bb1085_sv..i24.i.i;
+
+FROM: main_bb1085_v..i24.i.i;
+assume(v2342 != 17);
+v..i24.i.i := 0;
+TO: main_bb1085_sv..i24.i.i;
+
+FROM: main_bb1085_sv..i24.i.i;
+var__temp_v.0.i25.i.i := v..i24.i.i;
+TO: main_CdAudioIsPlayActiveexit26ii;
+
+FROM: main_CdAudioIsPlayActiveexit26ii;
+v.0.i25.i.i := var__temp_v.0.i25.i.i;
+TO: main_CdAudioIsPlayActiveexit26ii_end;
+
+FROM: main_CdAudioIsPlayActiveexit26ii_end;
+assume(v.0.i25.i.i == 1);
+TO: main_bb1086;
+
+FROM: main_CdAudioIsPlayActiveexit26ii_end;
+assume(v.0.i25.i.i != 1);
+TO: main_bb1088;
+
+FROM: main_bb1086;
+myStatus := 0;
+v2368 := s;
+v2369 := NP;
+TO: main_bb1086_end;
+
+FROM: main_bb1086_end;
+assume(v2368 == v2369);
+TO: main_IofCompleteRequestexit27ii;
+
+FROM: main_bb1086_end;
+assume(v2368 != v2369);
+TO: main_bb1087;
+
+FROM: main_IofCompleteRequestexit27ii;
+v2371 := DC;
+s := v2371;
+var__temp_vstatus.0 := 0;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1087;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1088;
+v2372 := nondet();
+v2373 := nondet();
+v2374 := nondet();
+v2375 := s;
+v2376 := NP;
+TO: main_bb1088_end;
+
+FROM: main_bb1088_end;
+assume(v2375 == v2376);
+TO: main_bb1089;
+
+FROM: main_bb1088_end;
+assume(v2375 != v2376);
+TO: main_bb1114;
+
+FROM: main_bb1089;
+v2378 := SKIP1;
+s := v2378;
+v2379 := nondet();
+v2380 := nondet();
+v2381 := compRegistered;
+TO: main_bb1089_end;
+
+FROM: main_bb1089_end;
+assume(v2381 != 0);
+TO: main_bb1090;
+
+FROM: main_bb1089_end;
+assume(v2381 == 0);
+TO: main_bb1102;
+
+FROM: main_bb1090;
+v2383 := routine;
+TO: main_bb1090_end;
+
+FROM: main_bb1090_end;
+assume(v2383 == 0);
+TO: main_bb1091;
+
+FROM: main_bb1090_end;
+assume(v2383 != 0);
+TO: main_bb1097;
+
+FROM: main_bb1091;
+v2385 := nondet();
+v2386 := nondet();
+TO: main_bb1091_end;
+
+FROM: main_bb1091_end;
+assume(v2385 != 0);
+TO: main_bb1092;
+
+FROM: main_bb1091_end;
+assume(v2385 == 0);
+TO: main_bb1095;
+
+FROM: main_bb1092;
+v2388 := pended;
+TO: main_bb1092_end;
+
+FROM: main_bb1092_end;
+assume(v2388 == 0);
+TO: main_bb1093;
+
+FROM: main_bb1092_end;
+assume(v2388 != 0);
+TO: main_bb1094;
+
+FROM: main_bb1093;
+pended := 1;
+TO: main_bb1095;
+
+FROM: main_bb1094;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1095;
+v2390 := myStatus;
+TO: main_bb1095_end;
+
+FROM: main_bb1095_end;
+assume(v2390 sge 0);
+TO: main_bb1096;
+
+FROM: main_bb1095_end;
+assume(v2390 slt 0);
+TO: main_HPCdrCompletionexitiii13i;
+
+FROM: main_bb1096;
+v2392 := nondet();
+TO: main_HPCdrCompletionexitiii13i;
+
+FROM: main_HPCdrCompletionexitiii13i;
+v2393 := myStatus;
+var__temp_vcompRetStatus.1.i.i.i14.i := v2393;
+TO: main_bb1099;
+
+FROM: main_bb1097;
+v2394 := routine;
+TO: main_bb1097_end;
+
+FROM: main_bb1097_end;
+assume(v2394 == 1);
+TO: main_bb1098;
+
+FROM: main_bb1097_end;
+assume(v2394 != 1);
+var__temp_vcompRetStatus.1.i.i.i14.i := -1073741802;
+TO: main_bb1099;
+
+FROM: main_bb1098;
+v2396 := nondet();
+setEventCalled := 1;
+var__temp_vcompRetStatus.1.i.i.i14.i := -1073741802;
+TO: main_bb1099;
+
+FROM: main_bb1099;
+vcompRetStatus.1.i.i.i14.i := var__temp_vcompRetStatus.1.i.i.i14.i;
+v2397 := sign_extend(32, 64, vcompRetStatus.1.i.i.i14.i);
+TO: main_bb1099_end;
+
+FROM: main_bb1099_end;
+assume(v2397 == -1073741802);
+TO: main_bb1100;
+
+FROM: main_bb1099_end;
+assume(v2397 != -1073741802);
+TO: main_bb1102;
+
+FROM: main_bb1100;
+v2399 := s;
+v2400 := NP;
+TO: main_bb1100_end;
+
+FROM: main_bb1100_end;
+assume(v2399 == v2400);
+TO: main_stubMoreProcessingRequiredexitiii15i;
+
+FROM: main_bb1100_end;
+assume(v2399 != v2400);
+TO: main_bb1101;
+
+FROM: main_stubMoreProcessingRequiredexitiii15i;
+v2402 := MPR1;
+s := v2402;
+TO: main_bb1102;
+
+FROM: main_bb1101;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1102;
+TO: main_bb1102_end;
+
+FROM: main_bb1102_end;
+assume(v2379 != 0);
+var__temp_vreturnVal2.1.i.i.i17.i := 259;
+TO: main_bb1105;
+
+FROM: main_bb1102_end;
+assume(v2379 == 0);
+TO: main_bb1103;
+
+FROM: main_bb1103;
+v2404 := nondet();
+TO: main_bb1103_end;
+
+FROM: main_bb1103_end;
+assume(v2404 == 0);
+var__temp_vreturnVal2.1.i.i.i17.i := 0;
+TO: main_bb1105;
+
+FROM: main_bb1103_end;
+assume(v2404 != 0);
+TO: main_bb1104;
+
+FROM: main_bb1104;
+v2406 := nondet();
+TO: main_bb1104_v..i.i.i16.i;
+FROM: main_bb1104_v..i.i.i16.i;
+assume(v2406 == 1);
+v..i.i.i16.i := -1073741823;
+TO: main_bb1104_sv..i.i.i16.i;
+
+FROM: main_bb1104_v..i.i.i16.i;
+assume(v2406 != 1);
+v..i.i.i16.i := 259;
+TO: main_bb1104_sv..i.i.i16.i;
+
+FROM: main_bb1104_sv..i.i.i16.i;
+var__temp_vreturnVal2.1.i.i.i17.i := v..i.i.i16.i;
+TO: main_bb1105;
+
+FROM: main_bb1105;
+vreturnVal2.1.i.i.i17.i := var__temp_vreturnVal2.1.i.i.i17.i;
+v2408 := s;
+v2409 := NP;
+TO: main_bb1105_end;
+
+FROM: main_bb1105_end;
+assume(v2408 == v2409);
+TO: main_bb1106;
+
+FROM: main_bb1105_end;
+assume(v2408 != v2409);
+TO: main_bb1107;
+
+FROM: main_bb1106;
+v2411 := IPC;
+s := v2411;
+lowerDriverReturn := vreturnVal2.1.i.i.i17.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i.i17.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1107;
+v2412 := s;
+v2413 := MPR1;
+TO: main_bb1107_end;
+
+FROM: main_bb1107_end;
+assume(v2412 == v2413);
+TO: main_bb1108;
+
+FROM: main_bb1107_end;
+assume(v2412 != v2413);
+TO: main_bb1111;
+
+FROM: main_bb1108;
+TO: main_bb1108_end;
+
+FROM: main_bb1108_end;
+assume(vreturnVal2.1.i.i.i17.i == 259);
+TO: main_bb1109;
+
+FROM: main_bb1108_end;
+assume(vreturnVal2.1.i.i.i17.i != 259);
+TO: main_bb1110;
+
+FROM: main_bb1109;
+v2416 := MPR3;
+s := v2416;
+lowerDriverReturn := vreturnVal2.1.i.i.i17.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i.i17.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1110;
+v2417 := NP;
+s := v2417;
+lowerDriverReturn := vreturnVal2.1.i.i.i17.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i.i17.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1111;
+v2418 := s;
+v2419 := SKIP1;
+TO: main_bb1111_end;
+
+FROM: main_bb1111_end;
+assume(v2418 == v2419);
+TO: main_bb1112;
+
+FROM: main_bb1111_end;
+assume(v2418 != v2419);
+TO: main_bb1113;
+
+FROM: main_bb1112;
+v2421 := SKIP2;
+s := v2421;
+lowerDriverReturn := vreturnVal2.1.i.i.i17.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i.i17.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1113;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1114;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_LeafBlock68ii;
+TO: main_LeafBlock68ii_end;
+
+FROM: main_LeafBlock68ii_end;
+assume(v2225 == 149512);
+TO: main_bb1115;
+
+FROM: main_LeafBlock68ii_end;
+assume(v2225 != 149512);
+TO: main_NewDefaulti18i;
+
+FROM: main_bb1115;
+v2422 := nondet();
+v2423 := nondet();
+v2424 := nondet();
+var__temp_vstatus.4.i.i := -1073741670;
+TO: main_bb1116;
+
+FROM: main_bb1116;
+vstatus.4.i.i := var__temp_vstatus.4.i.i;
+myStatus := vstatus.4.i.i;
+v2425 := s;
+v2426 := NP;
+TO: main_bb1116_end;
+
+FROM: main_bb1116_end;
+assume(v2425 == v2426);
+TO: main_IofCompleteRequestexit34ii;
+
+FROM: main_bb1116_end;
+assume(v2425 != v2426);
+TO: main_bb1117;
+
+FROM: main_IofCompleteRequestexit34ii;
+v2428 := DC;
+s := v2428;
+var__temp_vstatus.0 := vstatus.4.i.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1117;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_NewDefaulti18i;
+v2429 := nondet();
+v2430 := nondet();
+v2431 := nondet();
+v2432 := s;
+v2433 := NP;
+TO: main_NewDefaulti18i_end;
+
+FROM: main_NewDefaulti18i_end;
+assume(v2432 == v2433);
+TO: main_bb1118;
+
+FROM: main_NewDefaulti18i_end;
+assume(v2432 != v2433);
+TO: main_bb1143;
+
+FROM: main_bb1118;
+v2435 := SKIP1;
+s := v2435;
+v2436 := nondet();
+v2437 := nondet();
+v2438 := compRegistered;
+TO: main_bb1118_end;
+
+FROM: main_bb1118_end;
+assume(v2438 != 0);
+TO: main_bb1119;
+
+FROM: main_bb1118_end;
+assume(v2438 == 0);
+TO: main_bb1131;
+
+FROM: main_bb1119;
+v2440 := routine;
+TO: main_bb1119_end;
+
+FROM: main_bb1119_end;
+assume(v2440 == 0);
+TO: main_bb1120;
+
+FROM: main_bb1119_end;
+assume(v2440 != 0);
+TO: main_bb1126;
+
+FROM: main_bb1120;
+v2442 := nondet();
+v2443 := nondet();
+TO: main_bb1120_end;
+
+FROM: main_bb1120_end;
+assume(v2442 != 0);
+TO: main_bb1121;
+
+FROM: main_bb1120_end;
+assume(v2442 == 0);
+TO: main_bb1124;
+
+FROM: main_bb1121;
+v2445 := pended;
+TO: main_bb1121_end;
+
+FROM: main_bb1121_end;
+assume(v2445 == 0);
+TO: main_bb1122;
+
+FROM: main_bb1121_end;
+assume(v2445 != 0);
+TO: main_bb1123;
+
+FROM: main_bb1122;
+pended := 1;
+TO: main_bb1124;
+
+FROM: main_bb1123;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1124;
+v2447 := myStatus;
+TO: main_bb1124_end;
+
+FROM: main_bb1124_end;
+assume(v2447 sge 0);
+TO: main_bb1125;
+
+FROM: main_bb1124_end;
+assume(v2447 slt 0);
+TO: main_HPCdrCompletionexitii28ii;
+
+FROM: main_bb1125;
+v2449 := nondet();
+TO: main_HPCdrCompletionexitii28ii;
+
+FROM: main_HPCdrCompletionexitii28ii;
+v2450 := myStatus;
+var__temp_vcompRetStatus.1.i.i29.i.i := v2450;
+TO: main_bb1128;
+
+FROM: main_bb1126;
+v2451 := routine;
+TO: main_bb1126_end;
+
+FROM: main_bb1126_end;
+assume(v2451 == 1);
+TO: main_bb1127;
+
+FROM: main_bb1126_end;
+assume(v2451 != 1);
+var__temp_vcompRetStatus.1.i.i29.i.i := -1073741802;
+TO: main_bb1128;
+
+FROM: main_bb1127;
+v2453 := nondet();
+setEventCalled := 1;
+var__temp_vcompRetStatus.1.i.i29.i.i := -1073741802;
+TO: main_bb1128;
+
+FROM: main_bb1128;
+vcompRetStatus.1.i.i29.i.i := var__temp_vcompRetStatus.1.i.i29.i.i;
+v2454 := sign_extend(32, 64, vcompRetStatus.1.i.i29.i.i);
+TO: main_bb1128_end;
+
+FROM: main_bb1128_end;
+assume(v2454 == -1073741802);
+TO: main_bb1129;
+
+FROM: main_bb1128_end;
+assume(v2454 != -1073741802);
+TO: main_bb1131;
+
+FROM: main_bb1129;
+v2456 := s;
+v2457 := NP;
+TO: main_bb1129_end;
+
+FROM: main_bb1129_end;
+assume(v2456 == v2457);
+TO: main_stubMoreProcessingRequiredexitii30ii;
+
+FROM: main_bb1129_end;
+assume(v2456 != v2457);
+TO: main_bb1130;
+
+FROM: main_stubMoreProcessingRequiredexitii30ii;
+v2459 := MPR1;
+s := v2459;
+TO: main_bb1131;
+
+FROM: main_bb1130;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1131;
+TO: main_bb1131_end;
+
+FROM: main_bb1131_end;
+assume(v2436 != 0);
+var__temp_vreturnVal2.1.i.i32.i.i := 259;
+TO: main_bb1134;
+
+FROM: main_bb1131_end;
+assume(v2436 == 0);
+TO: main_bb1132;
+
+FROM: main_bb1132;
+v2461 := nondet();
+TO: main_bb1132_end;
+
+FROM: main_bb1132_end;
+assume(v2461 == 0);
+var__temp_vreturnVal2.1.i.i32.i.i := 0;
+TO: main_bb1134;
+
+FROM: main_bb1132_end;
+assume(v2461 != 0);
+TO: main_bb1133;
+
+FROM: main_bb1133;
+v2463 := nondet();
+TO: main_bb1133_v..i.i31.i.i;
+FROM: main_bb1133_v..i.i31.i.i;
+assume(v2463 == 1);
+v..i.i31.i.i := -1073741823;
+TO: main_bb1133_sv..i.i31.i.i;
+
+FROM: main_bb1133_v..i.i31.i.i;
+assume(v2463 != 1);
+v..i.i31.i.i := 259;
+TO: main_bb1133_sv..i.i31.i.i;
+
+FROM: main_bb1133_sv..i.i31.i.i;
+var__temp_vreturnVal2.1.i.i32.i.i := v..i.i31.i.i;
+TO: main_bb1134;
+
+FROM: main_bb1134;
+vreturnVal2.1.i.i32.i.i := var__temp_vreturnVal2.1.i.i32.i.i;
+v2465 := s;
+v2466 := NP;
+TO: main_bb1134_end;
+
+FROM: main_bb1134_end;
+assume(v2465 == v2466);
+TO: main_bb1135;
+
+FROM: main_bb1134_end;
+assume(v2465 != v2466);
+TO: main_bb1136;
+
+FROM: main_bb1135;
+v2468 := IPC;
+s := v2468;
+lowerDriverReturn := vreturnVal2.1.i.i32.i.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i32.i.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1136;
+v2469 := s;
+v2470 := MPR1;
+TO: main_bb1136_end;
+
+FROM: main_bb1136_end;
+assume(v2469 == v2470);
+TO: main_bb1137;
+
+FROM: main_bb1136_end;
+assume(v2469 != v2470);
+TO: main_bb1140;
+
+FROM: main_bb1137;
+TO: main_bb1137_end;
+
+FROM: main_bb1137_end;
+assume(vreturnVal2.1.i.i32.i.i == 259);
+TO: main_bb1138;
+
+FROM: main_bb1137_end;
+assume(vreturnVal2.1.i.i32.i.i != 259);
+TO: main_bb1139;
+
+FROM: main_bb1138;
+v2473 := MPR3;
+s := v2473;
+lowerDriverReturn := vreturnVal2.1.i.i32.i.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i32.i.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1139;
+v2474 := NP;
+s := v2474;
+lowerDriverReturn := vreturnVal2.1.i.i32.i.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i32.i.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1140;
+v2475 := s;
+v2476 := SKIP1;
+TO: main_bb1140_end;
+
+FROM: main_bb1140_end;
+assume(v2475 == v2476);
+TO: main_bb1141;
+
+FROM: main_bb1140_end;
+assume(v2475 != v2476);
+TO: main_bb1142;
+
+FROM: main_bb1141;
+v2478 := SKIP2;
+s := v2478;
+lowerDriverReturn := vreturnVal2.1.i.i32.i.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i32.i.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1142;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1143;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_LeafBlock41i;
+TO: main_LeafBlock41i_end;
+
+FROM: main_LeafBlock41i_end;
+assume(v1950 == 7);
+TO: main_bb1144;
+
+FROM: main_LeafBlock41i_end;
+assume(v1950 != 7);
+TO: main_NewDefaulti;
+
+FROM: main_bb1144;
+v2479 := nondet();
+v2480 := nondet();
+TO: main_bb1144_end;
+
+FROM: main_bb1144_end;
+assume(v2479 == 147512);
+TO: main_bb1145;
+
+FROM: main_bb1144_end;
+assume(v2479 != 147512);
+TO: main_bb1174;
+
+FROM: main_bb1145;
+v2482 := s;
+v2483 := NP;
+TO: main_bb1145_end;
+
+FROM: main_bb1145_end;
+assume(v2482 != v2483);
+TO: main_bb1146;
+
+FROM: main_bb1145_end;
+assume(v2482 == v2483);
+TO: main_bb1147;
+
+FROM: main_bb1146;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1147;
+v2485 := compRegistered;
+TO: main_bb1147_end;
+
+FROM: main_bb1147_end;
+assume(v2485 != 0);
+TO: main_bb1148;
+
+FROM: main_bb1147_end;
+assume(v2485 == 0);
+TO: main_bb1149;
+
+FROM: main_bb1148;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1149;
+compRegistered := 1;
+routine := 0;
+v2487 := nondet();
+v2488 := nondet();
+v2489 := compRegistered;
+TO: main_bb1149_end;
+
+FROM: main_bb1149_end;
+assume(v2489 != 0);
+TO: main_bb1150;
+
+FROM: main_bb1149_end;
+assume(v2489 == 0);
+TO: main_bb1162;
+
+FROM: main_bb1150;
+v2491 := routine;
+TO: main_bb1150_end;
+
+FROM: main_bb1150_end;
+assume(v2491 == 0);
+TO: main_bb1151;
+
+FROM: main_bb1150_end;
+assume(v2491 != 0);
+TO: main_bb1157;
+
+FROM: main_bb1151;
+v2493 := nondet();
+v2494 := nondet();
+TO: main_bb1151_end;
+
+FROM: main_bb1151_end;
+assume(v2493 != 0);
+TO: main_bb1152;
+
+FROM: main_bb1151_end;
+assume(v2493 == 0);
+TO: main_bb1155;
+
+FROM: main_bb1152;
+v2496 := pended;
+TO: main_bb1152_end;
+
+FROM: main_bb1152_end;
+assume(v2496 == 0);
+TO: main_bb1153;
+
+FROM: main_bb1152_end;
+assume(v2496 != 0);
+TO: main_bb1154;
+
+FROM: main_bb1153;
+pended := 1;
+TO: main_bb1155;
+
+FROM: main_bb1154;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1155;
+v2498 := myStatus;
+TO: main_bb1155_end;
+
+FROM: main_bb1155_end;
+assume(v2498 sge 0);
+TO: main_bb1156;
+
+FROM: main_bb1155_end;
+assume(v2498 slt 0);
+TO: main_HPCdrCompletionexitiii;
+
+FROM: main_bb1156;
+v2500 := nondet();
+TO: main_HPCdrCompletionexitiii;
+
+FROM: main_HPCdrCompletionexitiii;
+v2501 := myStatus;
+var__temp_vcompRetStatus.1.i.i.i := v2501;
+TO: main_bb1159;
+
+FROM: main_bb1157;
+v2502 := routine;
+TO: main_bb1157_end;
+
+FROM: main_bb1157_end;
+assume(v2502 == 1);
+TO: main_bb1158;
+
+FROM: main_bb1157_end;
+assume(v2502 != 1);
+var__temp_vcompRetStatus.1.i.i.i := -1073741802;
+TO: main_bb1159;
+
+FROM: main_bb1158;
+v2504 := nondet();
+setEventCalled := 1;
+var__temp_vcompRetStatus.1.i.i.i := -1073741802;
+TO: main_bb1159;
+
+FROM: main_bb1159;
+vcompRetStatus.1.i.i.i := var__temp_vcompRetStatus.1.i.i.i;
+v2505 := sign_extend(32, 64, vcompRetStatus.1.i.i.i);
+TO: main_bb1159_end;
+
+FROM: main_bb1159_end;
+assume(v2505 == -1073741802);
+TO: main_bb1160;
+
+FROM: main_bb1159_end;
+assume(v2505 != -1073741802);
+TO: main_bb1162;
+
+FROM: main_bb1160;
+v2507 := s;
+v2508 := NP;
+TO: main_bb1160_end;
+
+FROM: main_bb1160_end;
+assume(v2507 == v2508);
+TO: main_stubMoreProcessingRequiredexitiii;
+
+FROM: main_bb1160_end;
+assume(v2507 != v2508);
+TO: main_bb1161;
+
+FROM: main_stubMoreProcessingRequiredexitiii;
+v2510 := MPR1;
+s := v2510;
+TO: main_bb1162;
+
+FROM: main_bb1161;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1162;
+TO: main_bb1162_end;
+
+FROM: main_bb1162_end;
+assume(v2487 != 0);
+var__temp_vreturnVal2.1.i.i.i := 259;
+TO: main_bb1165;
+
+FROM: main_bb1162_end;
+assume(v2487 == 0);
+TO: main_bb1163;
+
+FROM: main_bb1163;
+v2512 := nondet();
+TO: main_bb1163_end;
+
+FROM: main_bb1163_end;
+assume(v2512 == 0);
+var__temp_vreturnVal2.1.i.i.i := 0;
+TO: main_bb1165;
+
+FROM: main_bb1163_end;
+assume(v2512 != 0);
+TO: main_bb1164;
+
+FROM: main_bb1164;
+v2514 := nondet();
+TO: main_bb1164_v..i.i27.i;
+FROM: main_bb1164_v..i.i27.i;
+assume(v2514 == 1);
+v..i.i27.i := -1073741823;
+TO: main_bb1164_sv..i.i27.i;
+
+FROM: main_bb1164_v..i.i27.i;
+assume(v2514 != 1);
+v..i.i27.i := 259;
+TO: main_bb1164_sv..i.i27.i;
+
+FROM: main_bb1164_sv..i.i27.i;
+var__temp_vreturnVal2.1.i.i.i := v..i.i27.i;
+TO: main_bb1165;
+
+FROM: main_bb1165;
+vreturnVal2.1.i.i.i := var__temp_vreturnVal2.1.i.i.i;
+v2516 := s;
+v2517 := NP;
+TO: main_bb1165_end;
+
+FROM: main_bb1165_end;
+assume(v2516 == v2517);
+TO: main_bb1166;
+
+FROM: main_bb1165_end;
+assume(v2516 != v2517);
+TO: main_bb1167;
+
+FROM: main_bb1166;
+v2519 := IPC;
+s := v2519;
+lowerDriverReturn := vreturnVal2.1.i.i.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1167;
+v2520 := s;
+v2521 := MPR1;
+TO: main_bb1167_end;
+
+FROM: main_bb1167_end;
+assume(v2520 == v2521);
+TO: main_bb1168;
+
+FROM: main_bb1167_end;
+assume(v2520 != v2521);
+TO: main_bb1171;
+
+FROM: main_bb1168;
+TO: main_bb1168_end;
+
+FROM: main_bb1168_end;
+assume(vreturnVal2.1.i.i.i == 259);
+TO: main_bb1169;
+
+FROM: main_bb1168_end;
+assume(vreturnVal2.1.i.i.i != 259);
+TO: main_bb1170;
+
+FROM: main_bb1169;
+v2524 := MPR3;
+s := v2524;
+lowerDriverReturn := vreturnVal2.1.i.i.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1170;
+v2525 := NP;
+s := v2525;
+lowerDriverReturn := vreturnVal2.1.i.i.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1171;
+v2526 := s;
+v2527 := SKIP1;
+TO: main_bb1171_end;
+
+FROM: main_bb1171_end;
+assume(v2526 == v2527);
+TO: main_bb1172;
+
+FROM: main_bb1171_end;
+assume(v2526 != v2527);
+TO: main_bb1173;
+
+FROM: main_bb1172;
+v2529 := SKIP2;
+s := v2529;
+lowerDriverReturn := vreturnVal2.1.i.i.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1173;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1174;
+v2530 := nondet();
+v2531 := nondet();
+v2532 := nondet();
+v2533 := s;
+v2534 := NP;
+TO: main_bb1174_end;
+
+FROM: main_bb1174_end;
+assume(v2533 == v2534);
+TO: main_bb1175;
+
+FROM: main_bb1174_end;
+assume(v2533 != v2534);
+TO: main_bb1200;
+
+FROM: main_bb1175;
+v2536 := SKIP1;
+s := v2536;
+v2537 := nondet();
+v2538 := nondet();
+v2539 := compRegistered;
+TO: main_bb1175_end;
+
+FROM: main_bb1175_end;
+assume(v2539 != 0);
+TO: main_bb1176;
+
+FROM: main_bb1175_end;
+assume(v2539 == 0);
+TO: main_bb1188;
+
+FROM: main_bb1176;
+v2541 := routine;
+TO: main_bb1176_end;
+
+FROM: main_bb1176_end;
+assume(v2541 == 0);
+TO: main_bb1177;
+
+FROM: main_bb1176_end;
+assume(v2541 != 0);
+TO: main_bb1183;
+
+FROM: main_bb1177;
+v2543 := nondet();
+v2544 := nondet();
+TO: main_bb1177_end;
+
+FROM: main_bb1177_end;
+assume(v2543 != 0);
+TO: main_bb1178;
+
+FROM: main_bb1177_end;
+assume(v2543 == 0);
+TO: main_bb1181;
+
+FROM: main_bb1178;
+v2546 := pended;
+TO: main_bb1178_end;
+
+FROM: main_bb1178_end;
+assume(v2546 == 0);
+TO: main_bb1179;
+
+FROM: main_bb1178_end;
+assume(v2546 != 0);
+TO: main_bb1180;
+
+FROM: main_bb1179;
+pended := 1;
+TO: main_bb1181;
+
+FROM: main_bb1180;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1181;
+v2548 := myStatus;
+TO: main_bb1181_end;
+
+FROM: main_bb1181_end;
+assume(v2548 sge 0);
+TO: main_bb1182;
+
+FROM: main_bb1181_end;
+assume(v2548 slt 0);
+TO: main_HPCdrCompletionexitiii28i;
+
+FROM: main_bb1182;
+v2550 := nondet();
+TO: main_HPCdrCompletionexitiii28i;
+
+FROM: main_HPCdrCompletionexitiii28i;
+v2551 := myStatus;
+var__temp_vcompRetStatus.1.i.i.i29.i := v2551;
+TO: main_bb1185;
+
+FROM: main_bb1183;
+v2552 := routine;
+TO: main_bb1183_end;
+
+FROM: main_bb1183_end;
+assume(v2552 == 1);
+TO: main_bb1184;
+
+FROM: main_bb1183_end;
+assume(v2552 != 1);
+var__temp_vcompRetStatus.1.i.i.i29.i := -1073741802;
+TO: main_bb1185;
+
+FROM: main_bb1184;
+v2554 := nondet();
+setEventCalled := 1;
+var__temp_vcompRetStatus.1.i.i.i29.i := -1073741802;
+TO: main_bb1185;
+
+FROM: main_bb1185;
+vcompRetStatus.1.i.i.i29.i := var__temp_vcompRetStatus.1.i.i.i29.i;
+v2555 := sign_extend(32, 64, vcompRetStatus.1.i.i.i29.i);
+TO: main_bb1185_end;
+
+FROM: main_bb1185_end;
+assume(v2555 == -1073741802);
+TO: main_bb1186;
+
+FROM: main_bb1185_end;
+assume(v2555 != -1073741802);
+TO: main_bb1188;
+
+FROM: main_bb1186;
+v2557 := s;
+v2558 := NP;
+TO: main_bb1186_end;
+
+FROM: main_bb1186_end;
+assume(v2557 == v2558);
+TO: main_stubMoreProcessingRequiredexitiii30i;
+
+FROM: main_bb1186_end;
+assume(v2557 != v2558);
+TO: main_bb1187;
+
+FROM: main_stubMoreProcessingRequiredexitiii30i;
+v2560 := MPR1;
+s := v2560;
+TO: main_bb1188;
+
+FROM: main_bb1187;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1188;
+TO: main_bb1188_end;
+
+FROM: main_bb1188_end;
+assume(v2537 != 0);
+var__temp_vreturnVal2.1.i.i.i32.i := 259;
+TO: main_bb1191;
+
+FROM: main_bb1188_end;
+assume(v2537 == 0);
+TO: main_bb1189;
+
+FROM: main_bb1189;
+v2562 := nondet();
+TO: main_bb1189_end;
+
+FROM: main_bb1189_end;
+assume(v2562 == 0);
+var__temp_vreturnVal2.1.i.i.i32.i := 0;
+TO: main_bb1191;
+
+FROM: main_bb1189_end;
+assume(v2562 != 0);
+TO: main_bb1190;
+
+FROM: main_bb1190;
+v2564 := nondet();
+TO: main_bb1190_v..i.i.i31.i;
+FROM: main_bb1190_v..i.i.i31.i;
+assume(v2564 == 1);
+v..i.i.i31.i := -1073741823;
+TO: main_bb1190_sv..i.i.i31.i;
+
+FROM: main_bb1190_v..i.i.i31.i;
+assume(v2564 != 1);
+v..i.i.i31.i := 259;
+TO: main_bb1190_sv..i.i.i31.i;
+
+FROM: main_bb1190_sv..i.i.i31.i;
+var__temp_vreturnVal2.1.i.i.i32.i := v..i.i.i31.i;
+TO: main_bb1191;
+
+FROM: main_bb1191;
+vreturnVal2.1.i.i.i32.i := var__temp_vreturnVal2.1.i.i.i32.i;
+v2566 := s;
+v2567 := NP;
+TO: main_bb1191_end;
+
+FROM: main_bb1191_end;
+assume(v2566 == v2567);
+TO: main_bb1192;
+
+FROM: main_bb1191_end;
+assume(v2566 != v2567);
+TO: main_bb1193;
+
+FROM: main_bb1192;
+v2569 := IPC;
+s := v2569;
+lowerDriverReturn := vreturnVal2.1.i.i.i32.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i.i32.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1193;
+v2570 := s;
+v2571 := MPR1;
+TO: main_bb1193_end;
+
+FROM: main_bb1193_end;
+assume(v2570 == v2571);
+TO: main_bb1194;
+
+FROM: main_bb1193_end;
+assume(v2570 != v2571);
+TO: main_bb1197;
+
+FROM: main_bb1194;
+TO: main_bb1194_end;
+
+FROM: main_bb1194_end;
+assume(vreturnVal2.1.i.i.i32.i == 259);
+TO: main_bb1195;
+
+FROM: main_bb1194_end;
+assume(vreturnVal2.1.i.i.i32.i != 259);
+TO: main_bb1196;
+
+FROM: main_bb1195;
+v2574 := MPR3;
+s := v2574;
+lowerDriverReturn := vreturnVal2.1.i.i.i32.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i.i32.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1196;
+v2575 := NP;
+s := v2575;
+lowerDriverReturn := vreturnVal2.1.i.i.i32.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i.i32.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1197;
+v2576 := s;
+v2577 := SKIP1;
+TO: main_bb1197_end;
+
+FROM: main_bb1197_end;
+assume(v2576 == v2577);
+TO: main_bb1198;
+
+FROM: main_bb1197_end;
+assume(v2576 != v2577);
+TO: main_bb1199;
+
+FROM: main_bb1198;
+v2579 := SKIP2;
+s := v2579;
+lowerDriverReturn := vreturnVal2.1.i.i.i32.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i.i32.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1199;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1200;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_NewDefaulti;
+v2580 := nondet();
+v2581 := nondet();
+v2582 := nondet();
+v2583 := s;
+v2584 := NP;
+TO: main_NewDefaulti_end;
+
+FROM: main_NewDefaulti_end;
+assume(v2583 == v2584);
+TO: main_bb1201;
+
+FROM: main_NewDefaulti_end;
+assume(v2583 != v2584);
+TO: main_bb1226;
+
+FROM: main_bb1201;
+v2586 := SKIP1;
+s := v2586;
+v2587 := nondet();
+v2588 := nondet();
+v2589 := compRegistered;
+TO: main_bb1201_end;
+
+FROM: main_bb1201_end;
+assume(v2589 != 0);
+TO: main_bb1202;
+
+FROM: main_bb1201_end;
+assume(v2589 == 0);
+TO: main_bb1214;
+
+FROM: main_bb1202;
+v2591 := routine;
+TO: main_bb1202_end;
+
+FROM: main_bb1202_end;
+assume(v2591 == 0);
+TO: main_bb1203;
+
+FROM: main_bb1202_end;
+assume(v2591 != 0);
+TO: main_bb1209;
+
+FROM: main_bb1203;
+v2593 := nondet();
+v2594 := nondet();
+TO: main_bb1203_end;
+
+FROM: main_bb1203_end;
+assume(v2593 != 0);
+TO: main_bb1204;
+
+FROM: main_bb1203_end;
+assume(v2593 == 0);
+TO: main_bb1207;
+
+FROM: main_bb1204;
+v2596 := pended;
+TO: main_bb1204_end;
+
+FROM: main_bb1204_end;
+assume(v2596 == 0);
+TO: main_bb1205;
+
+FROM: main_bb1204_end;
+assume(v2596 != 0);
+TO: main_bb1206;
+
+FROM: main_bb1205;
+pended := 1;
+TO: main_bb1207;
+
+FROM: main_bb1206;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1207;
+v2598 := myStatus;
+TO: main_bb1207_end;
+
+FROM: main_bb1207_end;
+assume(v2598 sge 0);
+TO: main_bb1208;
+
+FROM: main_bb1207_end;
+assume(v2598 slt 0);
+TO: main_HPCdrCompletionexitii34i;
+
+FROM: main_bb1208;
+v2600 := nondet();
+TO: main_HPCdrCompletionexitii34i;
+
+FROM: main_HPCdrCompletionexitii34i;
+v2601 := myStatus;
+var__temp_vcompRetStatus.1.i.i35.i := v2601;
+TO: main_bb1211;
+
+FROM: main_bb1209;
+v2602 := routine;
+TO: main_bb1209_end;
+
+FROM: main_bb1209_end;
+assume(v2602 == 1);
+TO: main_bb1210;
+
+FROM: main_bb1209_end;
+assume(v2602 != 1);
+var__temp_vcompRetStatus.1.i.i35.i := -1073741802;
+TO: main_bb1211;
+
+FROM: main_bb1210;
+v2604 := nondet();
+setEventCalled := 1;
+var__temp_vcompRetStatus.1.i.i35.i := -1073741802;
+TO: main_bb1211;
+
+FROM: main_bb1211;
+vcompRetStatus.1.i.i35.i := var__temp_vcompRetStatus.1.i.i35.i;
+v2605 := sign_extend(32, 64, vcompRetStatus.1.i.i35.i);
+TO: main_bb1211_end;
+
+FROM: main_bb1211_end;
+assume(v2605 == -1073741802);
+TO: main_bb1212;
+
+FROM: main_bb1211_end;
+assume(v2605 != -1073741802);
+TO: main_bb1214;
+
+FROM: main_bb1212;
+v2607 := s;
+v2608 := NP;
+TO: main_bb1212_end;
+
+FROM: main_bb1212_end;
+assume(v2607 == v2608);
+TO: main_stubMoreProcessingRequiredexitii36i;
+
+FROM: main_bb1212_end;
+assume(v2607 != v2608);
+TO: main_bb1213;
+
+FROM: main_stubMoreProcessingRequiredexitii36i;
+v2610 := MPR1;
+s := v2610;
+TO: main_bb1214;
+
+FROM: main_bb1213;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1214;
+TO: main_bb1214_end;
+
+FROM: main_bb1214_end;
+assume(v2587 != 0);
+var__temp_vreturnVal2.1.i.i38.i := 259;
+TO: main_bb1217;
+
+FROM: main_bb1214_end;
+assume(v2587 == 0);
+TO: main_bb1215;
+
+FROM: main_bb1215;
+v2612 := nondet();
+TO: main_bb1215_end;
+
+FROM: main_bb1215_end;
+assume(v2612 == 0);
+var__temp_vreturnVal2.1.i.i38.i := 0;
+TO: main_bb1217;
+
+FROM: main_bb1215_end;
+assume(v2612 != 0);
+TO: main_bb1216;
+
+FROM: main_bb1216;
+v2614 := nondet();
+TO: main_bb1216_v..i.i37.i;
+FROM: main_bb1216_v..i.i37.i;
+assume(v2614 == 1);
+v..i.i37.i := -1073741823;
+TO: main_bb1216_sv..i.i37.i;
+
+FROM: main_bb1216_v..i.i37.i;
+assume(v2614 != 1);
+v..i.i37.i := 259;
+TO: main_bb1216_sv..i.i37.i;
+
+FROM: main_bb1216_sv..i.i37.i;
+var__temp_vreturnVal2.1.i.i38.i := v..i.i37.i;
+TO: main_bb1217;
+
+FROM: main_bb1217;
+vreturnVal2.1.i.i38.i := var__temp_vreturnVal2.1.i.i38.i;
+v2616 := s;
+v2617 := NP;
+TO: main_bb1217_end;
+
+FROM: main_bb1217_end;
+assume(v2616 == v2617);
+TO: main_bb1218;
+
+FROM: main_bb1217_end;
+assume(v2616 != v2617);
+TO: main_bb1219;
+
+FROM: main_bb1218;
+v2619 := IPC;
+s := v2619;
+lowerDriverReturn := vreturnVal2.1.i.i38.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i38.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1219;
+v2620 := s;
+v2621 := MPR1;
+TO: main_bb1219_end;
+
+FROM: main_bb1219_end;
+assume(v2620 == v2621);
+TO: main_bb1220;
+
+FROM: main_bb1219_end;
+assume(v2620 != v2621);
+TO: main_bb1223;
+
+FROM: main_bb1220;
+TO: main_bb1220_end;
+
+FROM: main_bb1220_end;
+assume(vreturnVal2.1.i.i38.i == 259);
+TO: main_bb1221;
+
+FROM: main_bb1220_end;
+assume(vreturnVal2.1.i.i38.i != 259);
+TO: main_bb1222;
+
+FROM: main_bb1221;
+v2624 := MPR3;
+s := v2624;
+lowerDriverReturn := vreturnVal2.1.i.i38.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i38.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1222;
+v2625 := NP;
+s := v2625;
+lowerDriverReturn := vreturnVal2.1.i.i38.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i38.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1223;
+v2626 := s;
+v2627 := SKIP1;
+TO: main_bb1223_end;
+
+FROM: main_bb1223_end;
+assume(v2626 == v2627);
+TO: main_bb1224;
+
+FROM: main_bb1223_end;
+assume(v2626 != v2627);
+TO: main_bb1225;
+
+FROM: main_bb1224;
+v2629 := SKIP2;
+s := v2629;
+lowerDriverReturn := vreturnVal2.1.i.i38.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i38.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1225;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1226;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1227;
+v2630 := nondet();
+TO: main_bb1227_end;
+
+FROM: main_bb1227_end;
+assume(v2630 == 3);
+TO: main_bb1228;
+
+FROM: main_bb1227_end;
+assume(v2630 != 3);
+TO: main_bb1360;
+
+FROM: main_bb1228;
+v2632 := nondet();
+v2633 := nondet();
+v2634 := nondet();
+v2635 := nondet();
+v2636 := nondet();
+v2637 := nondet();
+TO: main_bb1228_end;
+
+FROM: main_bb1228_end;
+assume(v2633 slt 22);
+TO: main_LeafBlocki5;
+
+FROM: main_bb1228_end;
+assume(v2633 sge 22);
+TO: main_LeafBlock16i;
+
+FROM: main_LeafBlocki5;
+TO: main_LeafBlocki5_end;
+
+FROM: main_LeafBlocki5_end;
+assume(v2633 == 0);
+TO: main_bb1229;
+
+FROM: main_LeafBlocki5_end;
+assume(v2633 != 0);
+TO: main_NewDefaulti18;
+
+FROM: main_bb1229;
+v2638 := nondet();
+v2639 := nondet();
+v2640 := nondet();
+v2641 := nondet();
+v2642 := nondet();
+v2643 := nondet();
+v2644 := nondet();
+v2645 := s;
+v2646 := NP;
+TO: main_bb1229_end;
+
+FROM: main_bb1229_end;
+assume(v2645 != v2646);
+TO: main_bb1230;
+
+FROM: main_bb1229_end;
+assume(v2645 == v2646);
+TO: main_bb1231;
+
+FROM: main_bb1230;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1231;
+v2648 := compRegistered;
+TO: main_bb1231_end;
+
+FROM: main_bb1231_end;
+assume(v2648 != 0);
+TO: main_bb1232;
+
+FROM: main_bb1231_end;
+assume(v2648 == 0);
+TO: main_bb1233;
+
+FROM: main_bb1232;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1233;
+compRegistered := 1;
+routine := 1;
+v2650 := nondet();
+v2651 := nondet();
+v2652 := compRegistered;
+TO: main_bb1233_end;
+
+FROM: main_bb1233_end;
+assume(v2652 != 0);
+TO: main_bb1234;
+
+FROM: main_bb1233_end;
+assume(v2652 == 0);
+TO: main_bb1246;
+
+FROM: main_bb1234;
+v2654 := routine;
+TO: main_bb1234_end;
+
+FROM: main_bb1234_end;
+assume(v2654 == 0);
+TO: main_bb1235;
+
+FROM: main_bb1234_end;
+assume(v2654 != 0);
+TO: main_bb1241;
+
+FROM: main_bb1235;
+v2656 := nondet();
+v2657 := nondet();
+TO: main_bb1235_end;
+
+FROM: main_bb1235_end;
+assume(v2656 != 0);
+TO: main_bb1236;
+
+FROM: main_bb1235_end;
+assume(v2656 == 0);
+TO: main_bb1239;
+
+FROM: main_bb1236;
+v2659 := pended;
+TO: main_bb1236_end;
+
+FROM: main_bb1236_end;
+assume(v2659 == 0);
+TO: main_bb1237;
+
+FROM: main_bb1236_end;
+assume(v2659 != 0);
+TO: main_bb1238;
+
+FROM: main_bb1237;
+pended := 1;
+TO: main_bb1239;
+
+FROM: main_bb1238;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1239;
+v2661 := myStatus;
+TO: main_bb1239_end;
+
+FROM: main_bb1239_end;
+assume(v2661 sge 0);
+TO: main_bb1240;
+
+FROM: main_bb1239_end;
+assume(v2661 slt 0);
+TO: main_HPCdrCompletionexitiiii6;
+
+FROM: main_bb1240;
+v2663 := nondet();
+TO: main_HPCdrCompletionexitiiii6;
+
+FROM: main_HPCdrCompletionexitiiii6;
+v2664 := myStatus;
+var__temp_vcompRetStatus.1.i.i.i.i7 := v2664;
+TO: main_bb1243;
+
+FROM: main_bb1241;
+v2665 := routine;
+TO: main_bb1241_end;
+
+FROM: main_bb1241_end;
+assume(v2665 == 1);
+TO: main_bb1242;
+
+FROM: main_bb1241_end;
+assume(v2665 != 1);
+var__temp_vcompRetStatus.1.i.i.i.i7 := -1073741802;
+TO: main_bb1243;
+
+FROM: main_bb1242;
+v2667 := nondet();
+setEventCalled := 1;
+var__temp_vcompRetStatus.1.i.i.i.i7 := -1073741802;
+TO: main_bb1243;
+
+FROM: main_bb1243;
+vcompRetStatus.1.i.i.i.i7 := var__temp_vcompRetStatus.1.i.i.i.i7;
+v2668 := sign_extend(32, 64, vcompRetStatus.1.i.i.i.i7);
+TO: main_bb1243_end;
+
+FROM: main_bb1243_end;
+assume(v2668 == -1073741802);
+TO: main_bb1244;
+
+FROM: main_bb1243_end;
+assume(v2668 != -1073741802);
+TO: main_bb1246;
+
+FROM: main_bb1244;
+v2670 := s;
+v2671 := NP;
+TO: main_bb1244_end;
+
+FROM: main_bb1244_end;
+assume(v2670 == v2671);
+TO: main_stubMoreProcessingRequiredexitiiii8;
+
+FROM: main_bb1244_end;
+assume(v2670 != v2671);
+TO: main_bb1245;
+
+FROM: main_stubMoreProcessingRequiredexitiiii8;
+v2673 := MPR1;
+s := v2673;
+TO: main_bb1246;
+
+FROM: main_bb1245;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1246;
+TO: main_bb1246_end;
+
+FROM: main_bb1246_end;
+assume(v2650 != 0);
+var__temp_vreturnVal2.1.i.i.i.i10 := 259;
+TO: main_bb1249;
+
+FROM: main_bb1246_end;
+assume(v2650 == 0);
+TO: main_bb1247;
+
+FROM: main_bb1247;
+v2675 := nondet();
+TO: main_bb1247_end;
+
+FROM: main_bb1247_end;
+assume(v2675 == 0);
+var__temp_vreturnVal2.1.i.i.i.i10 := 0;
+TO: main_bb1249;
+
+FROM: main_bb1247_end;
+assume(v2675 != 0);
+TO: main_bb1248;
+
+FROM: main_bb1248;
+v2677 := nondet();
+TO: main_bb1248_v..i.i.i.i9;
+FROM: main_bb1248_v..i.i.i.i9;
+assume(v2677 == 1);
+v..i.i.i.i9 := -1073741823;
+TO: main_bb1248_sv..i.i.i.i9;
+
+FROM: main_bb1248_v..i.i.i.i9;
+assume(v2677 != 1);
+v..i.i.i.i9 := 259;
+TO: main_bb1248_sv..i.i.i.i9;
+
+FROM: main_bb1248_sv..i.i.i.i9;
+var__temp_vreturnVal2.1.i.i.i.i10 := v..i.i.i.i9;
+TO: main_bb1249;
+
+FROM: main_bb1249;
+vreturnVal2.1.i.i.i.i10 := var__temp_vreturnVal2.1.i.i.i.i10;
+v2679 := s;
+v2680 := NP;
+TO: main_bb1249_end;
+
+FROM: main_bb1249_end;
+assume(v2679 == v2680);
+TO: main_bb1250;
+
+FROM: main_bb1249_end;
+assume(v2679 != v2680);
+TO: main_bb1251;
+
+FROM: main_bb1250;
+v2682 := IPC;
+s := v2682;
+lowerDriverReturn := vreturnVal2.1.i.i.i.i10;
+TO: main_IofCallDriverexitiii;
+
+FROM: main_bb1251;
+v2683 := s;
+v2684 := MPR1;
+TO: main_bb1251_end;
+
+FROM: main_bb1251_end;
+assume(v2683 == v2684);
+TO: main_bb1252;
+
+FROM: main_bb1251_end;
+assume(v2683 != v2684);
+TO: main_bb1255;
+
+FROM: main_bb1252;
+TO: main_bb1252_end;
+
+FROM: main_bb1252_end;
+assume(vreturnVal2.1.i.i.i.i10 == 259);
+TO: main_bb1253;
+
+FROM: main_bb1252_end;
+assume(vreturnVal2.1.i.i.i.i10 != 259);
+TO: main_bb1254;
+
+FROM: main_bb1253;
+v2687 := MPR3;
+s := v2687;
+lowerDriverReturn := vreturnVal2.1.i.i.i.i10;
+TO: main_IofCallDriverexitiii;
+
+FROM: main_bb1254;
+v2688 := NP;
+s := v2688;
+lowerDriverReturn := vreturnVal2.1.i.i.i.i10;
+TO: main_IofCallDriverexitiii;
+
+FROM: main_bb1255;
+v2689 := s;
+v2690 := SKIP1;
+TO: main_bb1255_end;
+
+FROM: main_bb1255_end;
+assume(v2689 == v2690);
+TO: main_bb1256;
+
+FROM: main_bb1255_end;
+assume(v2689 != v2690);
+TO: main_bb1265;
+
+FROM: main_bb1256;
+v2692 := SKIP2;
+s := v2692;
+lowerDriverReturn := vreturnVal2.1.i.i.i.i10;
+TO: main_IofCallDriverexitiii;
+
+FROM: main_IofCallDriverexitiii;
+v2693 := s;
+v2694 := MPR3;
+v2696 := setEventCalled;
+TO: main_IofCallDriverexitiii_end;
+
+FROM: main_IofCallDriverexitiii_end;
+assume((v2693 == v2694) && (v2696 == 1));
+TO: main_bb1257;
+
+FROM: main_IofCallDriverexitiii_end;
+assume((v2693 != v2694) || (v2696 != 1));
+TO: main_bb1258;
+
+FROM: main_bb1257;
+v2698 := NP;
+s := v2698;
+setEventCalled := 0;
+TO: main_CdAudioForwardIrpSynchronousexitii;
+
+FROM: main_bb1258;
+v2699 := customIrp;
+TO: main_bb1258_end;
+
+FROM: main_bb1258_end;
+assume(v2699 == 1);
+TO: main_bb1259;
+
+FROM: main_bb1258_end;
+assume(v2699 != 1);
+TO: main_bb1260;
+
+FROM: main_bb1259;
+v2701 := NP;
+s := v2701;
+customIrp := 0;
+TO: main_CdAudioForwardIrpSynchronousexitii;
+
+FROM: main_bb1260;
+v2702 := s;
+v2703 := MPR3;
+TO: main_bb1260_end;
+
+FROM: main_bb1260_end;
+assume(v2702 == v2703);
+TO: main_bb1261;
+
+FROM: main_bb1260_end;
+assume(v2702 != v2703);
+TO: main_CdAudioForwardIrpSynchronousexitii;
+
+FROM: main_bb1261;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_CdAudioForwardIrpSynchronousexitii;
+v2705 := nondet();
+v2706 := myStatus;
+TO: main_CdAudioForwardIrpSynchronousexitii_end;
+
+FROM: main_CdAudioForwardIrpSynchronousexitii_end;
+assume(v2706 slt 0);
+var__temp_v.0.i.i := v2706;
+TO: main_CdAudioStartDeviceexiti;
+
+FROM: main_CdAudioForwardIrpSynchronousexitii_end;
+assume(v2706 sge 0);
+TO: main_bb1262;
+
+FROM: main_bb1262;
+TO: main_bb1262_end;
+
+FROM: main_bb1262_end;
+assume((v2638 == 255) || (v2706 slt 0));
+var__temp_v.0.i.i := 0;
+TO: main_CdAudioStartDeviceexiti;
+
+FROM: main_bb1262_end;
+assume((v2638 != 255) && (v2706 sge 0));
+TO: main_bb1263;
+
+FROM: main_bb1263;
+v2710 := nondet();
+var__temp_v.0.i.i := 0;
+TO: main_CdAudioStartDeviceexiti;
+
+FROM: main_CdAudioStartDeviceexiti;
+v.0.i.i := var__temp_v.0.i.i;
+myStatus := v.0.i.i;
+v2711 := s;
+v2712 := NP;
+TO: main_CdAudioStartDeviceexiti_end;
+
+FROM: main_CdAudioStartDeviceexiti_end;
+assume(v2711 == v2712);
+TO: main_IofCompleteRequestexiti;
+
+FROM: main_CdAudioStartDeviceexiti_end;
+assume(v2711 != v2712);
+TO: main_bb1264;
+
+FROM: main_IofCompleteRequestexiti;
+v2714 := DC;
+s := v2714;
+var__temp_vstatus.0 := v.0.i.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1264;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1265;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_LeafBlock16i;
+TO: main_LeafBlock16i_end;
+
+FROM: main_LeafBlock16i_end;
+assume(v2633 == 22);
+TO: main_bb1266;
+
+FROM: main_LeafBlock16i_end;
+assume(v2633 != 22);
+TO: main_NewDefaulti18;
+
+FROM: main_bb1266;
+v2715 := DeviceUsageTypePaging;
+TO: main_bb1266_end;
+
+FROM: main_bb1266_end;
+assume(v2634 != v2715);
+TO: main_bb1267;
+
+FROM: main_bb1266_end;
+assume(v2634 == v2715);
+TO: main_bb1294;
+
+FROM: main_bb1267;
+v2717 := nondet();
+v2718 := nondet();
+v2719 := nondet();
+v2720 := s;
+v2721 := NP;
+TO: main_bb1267_end;
+
+FROM: main_bb1267_end;
+assume(v2720 == v2721);
+TO: main_bb1268;
+
+FROM: main_bb1267_end;
+assume(v2720 != v2721);
+TO: main_bb1293;
+
+FROM: main_bb1268;
+v2723 := SKIP1;
+s := v2723;
+v2724 := nondet();
+v2725 := nondet();
+v2726 := compRegistered;
+TO: main_bb1268_end;
+
+FROM: main_bb1268_end;
+assume(v2726 != 0);
+TO: main_bb1269;
+
+FROM: main_bb1268_end;
+assume(v2726 == 0);
+TO: main_bb1281;
+
+FROM: main_bb1269;
+v2728 := routine;
+TO: main_bb1269_end;
+
+FROM: main_bb1269_end;
+assume(v2728 == 0);
+TO: main_bb1270;
+
+FROM: main_bb1269_end;
+assume(v2728 != 0);
+TO: main_bb1276;
+
+FROM: main_bb1270;
+v2730 := nondet();
+v2731 := nondet();
+TO: main_bb1270_end;
+
+FROM: main_bb1270_end;
+assume(v2730 != 0);
+TO: main_bb1271;
+
+FROM: main_bb1270_end;
+assume(v2730 == 0);
+TO: main_bb1274;
+
+FROM: main_bb1271;
+v2733 := pended;
+TO: main_bb1271_end;
+
+FROM: main_bb1271_end;
+assume(v2733 == 0);
+TO: main_bb1272;
+
+FROM: main_bb1271_end;
+assume(v2733 != 0);
+TO: main_bb1273;
+
+FROM: main_bb1272;
+pended := 1;
+TO: main_bb1274;
+
+FROM: main_bb1273;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1274;
+v2735 := myStatus;
+TO: main_bb1274_end;
+
+FROM: main_bb1274_end;
+assume(v2735 sge 0);
+TO: main_bb1275;
+
+FROM: main_bb1274_end;
+assume(v2735 slt 0);
+TO: main_HPCdrCompletionexitiii12;
+
+FROM: main_bb1275;
+v2737 := nondet();
+TO: main_HPCdrCompletionexitiii12;
+
+FROM: main_HPCdrCompletionexitiii12;
+v2738 := myStatus;
+var__temp_vcompRetStatus.1.i.i.i13 := v2738;
+TO: main_bb1278;
+
+FROM: main_bb1276;
+v2739 := routine;
+TO: main_bb1276_end;
+
+FROM: main_bb1276_end;
+assume(v2739 == 1);
+TO: main_bb1277;
+
+FROM: main_bb1276_end;
+assume(v2739 != 1);
+var__temp_vcompRetStatus.1.i.i.i13 := -1073741802;
+TO: main_bb1278;
+
+FROM: main_bb1277;
+v2741 := nondet();
+setEventCalled := 1;
+var__temp_vcompRetStatus.1.i.i.i13 := -1073741802;
+TO: main_bb1278;
+
+FROM: main_bb1278;
+vcompRetStatus.1.i.i.i13 := var__temp_vcompRetStatus.1.i.i.i13;
+v2742 := sign_extend(32, 64, vcompRetStatus.1.i.i.i13);
+TO: main_bb1278_end;
+
+FROM: main_bb1278_end;
+assume(v2742 == -1073741802);
+TO: main_bb1279;
+
+FROM: main_bb1278_end;
+assume(v2742 != -1073741802);
+TO: main_bb1281;
+
+FROM: main_bb1279;
+v2744 := s;
+v2745 := NP;
+TO: main_bb1279_end;
+
+FROM: main_bb1279_end;
+assume(v2744 == v2745);
+TO: main_stubMoreProcessingRequiredexitiii14;
+
+FROM: main_bb1279_end;
+assume(v2744 != v2745);
+TO: main_bb1280;
+
+FROM: main_stubMoreProcessingRequiredexitiii14;
+v2747 := MPR1;
+s := v2747;
+TO: main_bb1281;
+
+FROM: main_bb1280;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1281;
+TO: main_bb1281_end;
+
+FROM: main_bb1281_end;
+assume(v2724 != 0);
+var__temp_vreturnVal2.1.i.i.i16 := 259;
+TO: main_bb1284;
+
+FROM: main_bb1281_end;
+assume(v2724 == 0);
+TO: main_bb1282;
+
+FROM: main_bb1282;
+v2749 := nondet();
+TO: main_bb1282_end;
+
+FROM: main_bb1282_end;
+assume(v2749 == 0);
+var__temp_vreturnVal2.1.i.i.i16 := 0;
+TO: main_bb1284;
+
+FROM: main_bb1282_end;
+assume(v2749 != 0);
+TO: main_bb1283;
+
+FROM: main_bb1283;
+v2751 := nondet();
+TO: main_bb1283_v..i.i.i15;
+FROM: main_bb1283_v..i.i.i15;
+assume(v2751 == 1);
+v..i.i.i15 := -1073741823;
+TO: main_bb1283_sv..i.i.i15;
+
+FROM: main_bb1283_v..i.i.i15;
+assume(v2751 != 1);
+v..i.i.i15 := 259;
+TO: main_bb1283_sv..i.i.i15;
+
+FROM: main_bb1283_sv..i.i.i15;
+var__temp_vreturnVal2.1.i.i.i16 := v..i.i.i15;
+TO: main_bb1284;
+
+FROM: main_bb1284;
+vreturnVal2.1.i.i.i16 := var__temp_vreturnVal2.1.i.i.i16;
+v2753 := s;
+v2754 := NP;
+TO: main_bb1284_end;
+
+FROM: main_bb1284_end;
+assume(v2753 == v2754);
+TO: main_bb1285;
+
+FROM: main_bb1284_end;
+assume(v2753 != v2754);
+TO: main_bb1286;
+
+FROM: main_bb1285;
+v2756 := IPC;
+s := v2756;
+lowerDriverReturn := vreturnVal2.1.i.i.i16;
+var__temp_vstatus.0 := vreturnVal2.1.i.i.i16;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1286;
+v2757 := s;
+v2758 := MPR1;
+TO: main_bb1286_end;
+
+FROM: main_bb1286_end;
+assume(v2757 == v2758);
+TO: main_bb1287;
+
+FROM: main_bb1286_end;
+assume(v2757 != v2758);
+TO: main_bb1290;
+
+FROM: main_bb1287;
+TO: main_bb1287_end;
+
+FROM: main_bb1287_end;
+assume(vreturnVal2.1.i.i.i16 == 259);
+TO: main_bb1288;
+
+FROM: main_bb1287_end;
+assume(vreturnVal2.1.i.i.i16 != 259);
+TO: main_bb1289;
+
+FROM: main_bb1288;
+v2761 := MPR3;
+s := v2761;
+lowerDriverReturn := vreturnVal2.1.i.i.i16;
+var__temp_vstatus.0 := vreturnVal2.1.i.i.i16;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1289;
+v2762 := NP;
+s := v2762;
+lowerDriverReturn := vreturnVal2.1.i.i.i16;
+var__temp_vstatus.0 := vreturnVal2.1.i.i.i16;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1290;
+v2763 := s;
+v2764 := SKIP1;
+TO: main_bb1290_end;
+
+FROM: main_bb1290_end;
+assume(v2763 == v2764);
+TO: main_bb1291;
+
+FROM: main_bb1290_end;
+assume(v2763 != v2764);
+TO: main_bb1292;
+
+FROM: main_bb1291;
+v2766 := SKIP2;
+s := v2766;
+lowerDriverReturn := vreturnVal2.1.i.i.i16;
+var__temp_vstatus.0 := vreturnVal2.1.i.i.i16;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1292;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1293;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1294;
+v2767 := s;
+v2768 := MPR3;
+v2770 := setEventCalled;
+TO: main_bb1294_end;
+
+FROM: main_bb1294_end;
+assume((v2767 == v2768) && (v2770 == 1));
+TO: main_bb1295;
+
+FROM: main_bb1294_end;
+assume((v2767 != v2768) || (v2770 != 1));
+TO: main_bb1296;
+
+FROM: main_bb1295;
+v2772 := NP;
+s := v2772;
+setEventCalled := 0;
+TO: main_KeWaitForSingleObjectexiti;
+
+FROM: main_bb1296;
+v2773 := customIrp;
+TO: main_bb1296_end;
+
+FROM: main_bb1296_end;
+assume(v2773 == 1);
+TO: main_bb1297;
+
+FROM: main_bb1296_end;
+assume(v2773 != 1);
+TO: main_bb1298;
+
+FROM: main_bb1297;
+v2775 := NP;
+s := v2775;
+customIrp := 0;
+TO: main_KeWaitForSingleObjectexiti;
+
+FROM: main_bb1298;
+v2776 := s;
+v2777 := MPR3;
+TO: main_bb1298_end;
+
+FROM: main_bb1298_end;
+assume(v2776 == v2777);
+TO: main_bb1299;
+
+FROM: main_bb1298_end;
+assume(v2776 != v2777);
+TO: main_KeWaitForSingleObjectexiti;
+
+FROM: main_bb1299;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_KeWaitForSingleObjectexiti;
+v2779 := nondet();
+v2780 := nondet();
+v2781 := nondet();
+v2782 := s;
+v2783 := NP;
+TO: main_KeWaitForSingleObjectexiti_end;
+
+FROM: main_KeWaitForSingleObjectexiti_end;
+assume(v2782 != v2783);
+TO: main_bb1300;
+
+FROM: main_KeWaitForSingleObjectexiti_end;
+assume(v2782 == v2783);
+TO: main_bb1301;
+
+FROM: main_bb1300;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1301;
+v2785 := compRegistered;
+TO: main_bb1301_end;
+
+FROM: main_bb1301_end;
+assume(v2785 != 0);
+TO: main_bb1302;
+
+FROM: main_bb1301_end;
+assume(v2785 == 0);
+TO: main_bb1303;
+
+FROM: main_bb1302;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1303;
+compRegistered := 1;
+routine := 1;
+v2787 := nondet();
+v2788 := nondet();
+v2789 := compRegistered;
+TO: main_bb1303_end;
+
+FROM: main_bb1303_end;
+assume(v2789 != 0);
+TO: main_bb1304;
+
+FROM: main_bb1303_end;
+assume(v2789 == 0);
+TO: main_bb1316;
+
+FROM: main_bb1304;
+v2791 := routine;
+TO: main_bb1304_end;
+
+FROM: main_bb1304_end;
+assume(v2791 == 0);
+TO: main_bb1305;
+
+FROM: main_bb1304_end;
+assume(v2791 != 0);
+TO: main_bb1311;
+
+FROM: main_bb1305;
+v2793 := nondet();
+v2794 := nondet();
+TO: main_bb1305_end;
+
+FROM: main_bb1305_end;
+assume(v2793 != 0);
+TO: main_bb1306;
+
+FROM: main_bb1305_end;
+assume(v2793 == 0);
+TO: main_bb1309;
+
+FROM: main_bb1306;
+v2796 := pended;
+TO: main_bb1306_end;
+
+FROM: main_bb1306_end;
+assume(v2796 == 0);
+TO: main_bb1307;
+
+FROM: main_bb1306_end;
+assume(v2796 != 0);
+TO: main_bb1308;
+
+FROM: main_bb1307;
+pended := 1;
+TO: main_bb1309;
+
+FROM: main_bb1308;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1309;
+v2798 := myStatus;
+TO: main_bb1309_end;
+
+FROM: main_bb1309_end;
+assume(v2798 sge 0);
+TO: main_bb1310;
+
+FROM: main_bb1309_end;
+assume(v2798 slt 0);
+TO: main_HPCdrCompletionexitii2i;
+
+FROM: main_bb1310;
+v2800 := nondet();
+TO: main_HPCdrCompletionexitii2i;
+
+FROM: main_HPCdrCompletionexitii2i;
+v2801 := myStatus;
+var__temp_vcompRetStatus.1.i.i3.i := v2801;
+TO: main_bb1313;
+
+FROM: main_bb1311;
+v2802 := routine;
+TO: main_bb1311_end;
+
+FROM: main_bb1311_end;
+assume(v2802 == 1);
+TO: main_bb1312;
+
+FROM: main_bb1311_end;
+assume(v2802 != 1);
+var__temp_vcompRetStatus.1.i.i3.i := -1073741802;
+TO: main_bb1313;
+
+FROM: main_bb1312;
+v2804 := nondet();
+setEventCalled := 1;
+var__temp_vcompRetStatus.1.i.i3.i := -1073741802;
+TO: main_bb1313;
+
+FROM: main_bb1313;
+vcompRetStatus.1.i.i3.i := var__temp_vcompRetStatus.1.i.i3.i;
+v2805 := sign_extend(32, 64, vcompRetStatus.1.i.i3.i);
+TO: main_bb1313_end;
+
+FROM: main_bb1313_end;
+assume(v2805 == -1073741802);
+TO: main_bb1314;
+
+FROM: main_bb1313_end;
+assume(v2805 != -1073741802);
+TO: main_bb1316;
+
+FROM: main_bb1314;
+v2807 := s;
+v2808 := NP;
+TO: main_bb1314_end;
+
+FROM: main_bb1314_end;
+assume(v2807 == v2808);
+TO: main_stubMoreProcessingRequiredexitii4i;
+
+FROM: main_bb1314_end;
+assume(v2807 != v2808);
+TO: main_bb1315;
+
+FROM: main_stubMoreProcessingRequiredexitii4i;
+v2810 := MPR1;
+s := v2810;
+TO: main_bb1316;
+
+FROM: main_bb1315;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1316;
+TO: main_bb1316_end;
+
+FROM: main_bb1316_end;
+assume(v2787 != 0);
+var__temp_vreturnVal2.1.i.i6.i := 259;
+TO: main_bb1319;
+
+FROM: main_bb1316_end;
+assume(v2787 == 0);
+TO: main_bb1317;
+
+FROM: main_bb1317;
+v2812 := nondet();
+TO: main_bb1317_end;
+
+FROM: main_bb1317_end;
+assume(v2812 == 0);
+var__temp_vreturnVal2.1.i.i6.i := 0;
+TO: main_bb1319;
+
+FROM: main_bb1317_end;
+assume(v2812 != 0);
+TO: main_bb1318;
+
+FROM: main_bb1318;
+v2814 := nondet();
+TO: main_bb1318_v..i.i5.i;
+FROM: main_bb1318_v..i.i5.i;
+assume(v2814 == 1);
+v..i.i5.i := -1073741823;
+TO: main_bb1318_sv..i.i5.i;
+
+FROM: main_bb1318_v..i.i5.i;
+assume(v2814 != 1);
+v..i.i5.i := 259;
+TO: main_bb1318_sv..i.i5.i;
+
+FROM: main_bb1318_sv..i.i5.i;
+var__temp_vreturnVal2.1.i.i6.i := v..i.i5.i;
+TO: main_bb1319;
+
+FROM: main_bb1319;
+vreturnVal2.1.i.i6.i := var__temp_vreturnVal2.1.i.i6.i;
+v2816 := s;
+v2817 := NP;
+TO: main_bb1319_end;
+
+FROM: main_bb1319_end;
+assume(v2816 == v2817);
+TO: main_bb1320;
+
+FROM: main_bb1319_end;
+assume(v2816 != v2817);
+TO: main_bb1321;
+
+FROM: main_bb1320;
+v2819 := IPC;
+s := v2819;
+lowerDriverReturn := vreturnVal2.1.i.i6.i;
+TO: main_IofCallDriverexitii;
+
+FROM: main_bb1321;
+v2820 := s;
+v2821 := MPR1;
+TO: main_bb1321_end;
+
+FROM: main_bb1321_end;
+assume(v2820 == v2821);
+TO: main_bb1322;
+
+FROM: main_bb1321_end;
+assume(v2820 != v2821);
+TO: main_bb1325;
+
+FROM: main_bb1322;
+TO: main_bb1322_end;
+
+FROM: main_bb1322_end;
+assume(vreturnVal2.1.i.i6.i == 259);
+TO: main_bb1323;
+
+FROM: main_bb1322_end;
+assume(vreturnVal2.1.i.i6.i != 259);
+TO: main_bb1324;
+
+FROM: main_bb1323;
+v2824 := MPR3;
+s := v2824;
+lowerDriverReturn := vreturnVal2.1.i.i6.i;
+TO: main_IofCallDriverexitii;
+
+FROM: main_bb1324;
+v2825 := NP;
+s := v2825;
+lowerDriverReturn := vreturnVal2.1.i.i6.i;
+TO: main_IofCallDriverexitii;
+
+FROM: main_bb1325;
+v2826 := s;
+v2827 := SKIP1;
+TO: main_bb1325_end;
+
+FROM: main_bb1325_end;
+assume(v2826 == v2827);
+TO: main_bb1326;
+
+FROM: main_bb1325_end;
+assume(v2826 != v2827);
+TO: main_bb1333;
+
+FROM: main_bb1326;
+v2829 := SKIP2;
+s := v2829;
+lowerDriverReturn := vreturnVal2.1.i.i6.i;
+TO: main_IofCallDriverexitii;
+
+FROM: main_IofCallDriverexitii;
+v2830 := s;
+v2831 := MPR3;
+v2833 := setEventCalled;
+TO: main_IofCallDriverexitii_end;
+
+FROM: main_IofCallDriverexitii_end;
+assume((v2830 == v2831) && (v2833 == 1));
+TO: main_bb1327;
+
+FROM: main_IofCallDriverexitii_end;
+assume((v2830 != v2831) || (v2833 != 1));
+TO: main_bb1328;
+
+FROM: main_bb1327;
+v2835 := NP;
+s := v2835;
+setEventCalled := 0;
+TO: main_CdAudioForwardIrpSynchronousexiti;
+
+FROM: main_bb1328;
+v2836 := customIrp;
+TO: main_bb1328_end;
+
+FROM: main_bb1328_end;
+assume(v2836 == 1);
+TO: main_bb1329;
+
+FROM: main_bb1328_end;
+assume(v2836 != 1);
+TO: main_bb1330;
+
+FROM: main_bb1329;
+v2838 := NP;
+s := v2838;
+customIrp := 0;
+TO: main_CdAudioForwardIrpSynchronousexiti;
+
+FROM: main_bb1330;
+v2839 := s;
+v2840 := MPR3;
+TO: main_bb1330_end;
+
+FROM: main_bb1330_end;
+assume(v2839 == v2840);
+TO: main_bb1331;
+
+FROM: main_bb1330_end;
+assume(v2839 != v2840);
+TO: main_CdAudioForwardIrpSynchronousexiti;
+
+FROM: main_bb1331;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_CdAudioForwardIrpSynchronousexiti;
+v2842 := nondet();
+v2843 := myStatus;
+v2844 := nondet();
+setEventCalled := 1;
+v2845 := s;
+v2846 := NP;
+TO: main_CdAudioForwardIrpSynchronousexiti_end;
+
+FROM: main_CdAudioForwardIrpSynchronousexiti_end;
+assume(v2845 == v2846);
+TO: main_IofCompleteRequestexit7i;
+
+FROM: main_CdAudioForwardIrpSynchronousexiti_end;
+assume(v2845 != v2846);
+TO: main_bb1332;
+
+FROM: main_IofCompleteRequestexit7i;
+v2848 := DC;
+s := v2848;
+var__temp_vstatus.0 := v2843;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1332;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1333;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_NewDefaulti18;
+v2849 := nondet();
+v2850 := nondet();
+v2851 := nondet();
+v2852 := s;
+v2853 := NP;
+TO: main_NewDefaulti18_end;
+
+FROM: main_NewDefaulti18_end;
+assume(v2852 == v2853);
+TO: main_bb1334;
+
+FROM: main_NewDefaulti18_end;
+assume(v2852 != v2853);
+TO: main_bb1359;
+
+FROM: main_bb1334;
+v2855 := SKIP1;
+s := v2855;
+v2856 := nondet();
+v2857 := nondet();
+v2858 := compRegistered;
+TO: main_bb1334_end;
+
+FROM: main_bb1334_end;
+assume(v2858 != 0);
+TO: main_bb1335;
+
+FROM: main_bb1334_end;
+assume(v2858 == 0);
+TO: main_bb1347;
+
+FROM: main_bb1335;
+v2860 := routine;
+TO: main_bb1335_end;
+
+FROM: main_bb1335_end;
+assume(v2860 == 0);
+TO: main_bb1336;
+
+FROM: main_bb1335_end;
+assume(v2860 != 0);
+TO: main_bb1342;
+
+FROM: main_bb1336;
+v2862 := nondet();
+v2863 := nondet();
+TO: main_bb1336_end;
+
+FROM: main_bb1336_end;
+assume(v2862 != 0);
+TO: main_bb1337;
+
+FROM: main_bb1336_end;
+assume(v2862 == 0);
+TO: main_bb1340;
+
+FROM: main_bb1337;
+v2865 := pended;
+TO: main_bb1337_end;
+
+FROM: main_bb1337_end;
+assume(v2865 == 0);
+TO: main_bb1338;
+
+FROM: main_bb1337_end;
+assume(v2865 != 0);
+TO: main_bb1339;
+
+FROM: main_bb1338;
+pended := 1;
+TO: main_bb1340;
+
+FROM: main_bb1339;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1340;
+v2867 := myStatus;
+TO: main_bb1340_end;
+
+FROM: main_bb1340_end;
+assume(v2867 sge 0);
+TO: main_bb1341;
+
+FROM: main_bb1340_end;
+assume(v2867 slt 0);
+TO: main_HPCdrCompletionexitii8i;
+
+FROM: main_bb1341;
+v2869 := nondet();
+TO: main_HPCdrCompletionexitii8i;
+
+FROM: main_HPCdrCompletionexitii8i;
+v2870 := myStatus;
+var__temp_vcompRetStatus.1.i.i9.i := v2870;
+TO: main_bb1344;
+
+FROM: main_bb1342;
+v2871 := routine;
+TO: main_bb1342_end;
+
+FROM: main_bb1342_end;
+assume(v2871 == 1);
+TO: main_bb1343;
+
+FROM: main_bb1342_end;
+assume(v2871 != 1);
+var__temp_vcompRetStatus.1.i.i9.i := -1073741802;
+TO: main_bb1344;
+
+FROM: main_bb1343;
+v2873 := nondet();
+setEventCalled := 1;
+var__temp_vcompRetStatus.1.i.i9.i := -1073741802;
+TO: main_bb1344;
+
+FROM: main_bb1344;
+vcompRetStatus.1.i.i9.i := var__temp_vcompRetStatus.1.i.i9.i;
+v2874 := sign_extend(32, 64, vcompRetStatus.1.i.i9.i);
+TO: main_bb1344_end;
+
+FROM: main_bb1344_end;
+assume(v2874 == -1073741802);
+TO: main_bb1345;
+
+FROM: main_bb1344_end;
+assume(v2874 != -1073741802);
+TO: main_bb1347;
+
+FROM: main_bb1345;
+v2876 := s;
+v2877 := NP;
+TO: main_bb1345_end;
+
+FROM: main_bb1345_end;
+assume(v2876 == v2877);
+TO: main_stubMoreProcessingRequiredexitii10i;
+
+FROM: main_bb1345_end;
+assume(v2876 != v2877);
+TO: main_bb1346;
+
+FROM: main_stubMoreProcessingRequiredexitii10i;
+v2879 := MPR1;
+s := v2879;
+TO: main_bb1347;
+
+FROM: main_bb1346;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1347;
+TO: main_bb1347_end;
+
+FROM: main_bb1347_end;
+assume(v2856 != 0);
+var__temp_vreturnVal2.1.i.i12.i := 259;
+TO: main_bb1350;
+
+FROM: main_bb1347_end;
+assume(v2856 == 0);
+TO: main_bb1348;
+
+FROM: main_bb1348;
+v2881 := nondet();
+TO: main_bb1348_end;
+
+FROM: main_bb1348_end;
+assume(v2881 == 0);
+var__temp_vreturnVal2.1.i.i12.i := 0;
+TO: main_bb1350;
+
+FROM: main_bb1348_end;
+assume(v2881 != 0);
+TO: main_bb1349;
+
+FROM: main_bb1349;
+v2883 := nondet();
+TO: main_bb1349_v..i.i11.i;
+FROM: main_bb1349_v..i.i11.i;
+assume(v2883 == 1);
+v..i.i11.i := -1073741823;
+TO: main_bb1349_sv..i.i11.i;
+
+FROM: main_bb1349_v..i.i11.i;
+assume(v2883 != 1);
+v..i.i11.i := 259;
+TO: main_bb1349_sv..i.i11.i;
+
+FROM: main_bb1349_sv..i.i11.i;
+var__temp_vreturnVal2.1.i.i12.i := v..i.i11.i;
+TO: main_bb1350;
+
+FROM: main_bb1350;
+vreturnVal2.1.i.i12.i := var__temp_vreturnVal2.1.i.i12.i;
+v2885 := s;
+v2886 := NP;
+TO: main_bb1350_end;
+
+FROM: main_bb1350_end;
+assume(v2885 == v2886);
+TO: main_bb1351;
+
+FROM: main_bb1350_end;
+assume(v2885 != v2886);
+TO: main_bb1352;
+
+FROM: main_bb1351;
+v2888 := IPC;
+s := v2888;
+lowerDriverReturn := vreturnVal2.1.i.i12.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i12.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1352;
+v2889 := s;
+v2890 := MPR1;
+TO: main_bb1352_end;
+
+FROM: main_bb1352_end;
+assume(v2889 == v2890);
+TO: main_bb1353;
+
+FROM: main_bb1352_end;
+assume(v2889 != v2890);
+TO: main_bb1356;
+
+FROM: main_bb1353;
+TO: main_bb1353_end;
+
+FROM: main_bb1353_end;
+assume(vreturnVal2.1.i.i12.i == 259);
+TO: main_bb1354;
+
+FROM: main_bb1353_end;
+assume(vreturnVal2.1.i.i12.i != 259);
+TO: main_bb1355;
+
+FROM: main_bb1354;
+v2893 := MPR3;
+s := v2893;
+lowerDriverReturn := vreturnVal2.1.i.i12.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i12.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1355;
+v2894 := NP;
+s := v2894;
+lowerDriverReturn := vreturnVal2.1.i.i12.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i12.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1356;
+v2895 := s;
+v2896 := SKIP1;
+TO: main_bb1356_end;
+
+FROM: main_bb1356_end;
+assume(v2895 == v2896);
+TO: main_bb1357;
+
+FROM: main_bb1356_end;
+assume(v2895 != v2896);
+TO: main_bb1358;
+
+FROM: main_bb1357;
+v2898 := SKIP2;
+s := v2898;
+lowerDriverReturn := vreturnVal2.1.i.i12.i;
+var__temp_vstatus.0 := vreturnVal2.1.i.i12.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1358;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1359;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1360;
+v2899 := nondet();
+TO: main_bb1360_end;
+
+FROM: main_bb1360_end;
+assume(v2899 == 4);
+TO: main_bb1361;
+
+FROM: main_bb1360_end;
+assume(v2899 != 4);
+var__temp_v.0 := -1;
+TO: main_bb1406;
+
+FROM: main_bb1361;
+v2901 := nondet();
+v2902 := nondet();
+v2903 := nondet();
+v2904 := s;
+v2905 := NP;
+TO: main_bb1361_end;
+
+FROM: main_bb1361_end;
+assume(v2904 == v2905);
+TO: main_bb1362;
+
+FROM: main_bb1361_end;
+assume(v2904 != v2905);
+TO: main_bb1386;
+
+FROM: main_bb1362;
+v2907 := SKIP1;
+s := v2907;
+v2908 := nondet();
+v2909 := compRegistered;
+TO: main_bb1362_end;
+
+FROM: main_bb1362_end;
+assume(v2909 != 0);
+TO: main_bb1363;
+
+FROM: main_bb1362_end;
+assume(v2909 == 0);
+TO: main_bb1375;
+
+FROM: main_bb1363;
+v2911 := routine;
+TO: main_bb1363_end;
+
+FROM: main_bb1363_end;
+assume(v2911 == 0);
+TO: main_bb1364;
+
+FROM: main_bb1363_end;
+assume(v2911 != 0);
+TO: main_bb1370;
+
+FROM: main_bb1364;
+v2913 := nondet();
+v2914 := nondet();
+TO: main_bb1364_end;
+
+FROM: main_bb1364_end;
+assume(v2913 != 0);
+TO: main_bb1365;
+
+FROM: main_bb1364_end;
+assume(v2913 == 0);
+TO: main_bb1368;
+
+FROM: main_bb1365;
+v2916 := pended;
+TO: main_bb1365_end;
+
+FROM: main_bb1365_end;
+assume(v2916 == 0);
+TO: main_bb1366;
+
+FROM: main_bb1365_end;
+assume(v2916 != 0);
+TO: main_bb1367;
+
+FROM: main_bb1366;
+pended := 1;
+TO: main_bb1368;
+
+FROM: main_bb1367;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1368;
+v2918 := myStatus;
+TO: main_bb1368_end;
+
+FROM: main_bb1368_end;
+assume(v2918 sge 0);
+TO: main_bb1369;
+
+FROM: main_bb1368_end;
+assume(v2918 slt 0);
+TO: main_HPCdrCompletionexitii;
+
+FROM: main_bb1369;
+v2920 := nondet();
+TO: main_HPCdrCompletionexitii;
+
+FROM: main_HPCdrCompletionexitii;
+v2921 := myStatus;
+var__temp_vcompRetStatus.1.i.i := v2921;
+TO: main_bb1372;
+
+FROM: main_bb1370;
+v2922 := routine;
+TO: main_bb1370_end;
+
+FROM: main_bb1370_end;
+assume(v2922 == 1);
+TO: main_bb1371;
+
+FROM: main_bb1370_end;
+assume(v2922 != 1);
+var__temp_vcompRetStatus.1.i.i := -1073741802;
+TO: main_bb1372;
+
+FROM: main_bb1371;
+v2924 := nondet();
+setEventCalled := 1;
+var__temp_vcompRetStatus.1.i.i := -1073741802;
+TO: main_bb1372;
+
+FROM: main_bb1372;
+vcompRetStatus.1.i.i := var__temp_vcompRetStatus.1.i.i;
+v2925 := sign_extend(32, 64, vcompRetStatus.1.i.i);
+TO: main_bb1372_end;
+
+FROM: main_bb1372_end;
+assume(v2925 == -1073741802);
+TO: main_bb1373;
+
+FROM: main_bb1372_end;
+assume(v2925 != -1073741802);
+TO: main_bb1375;
+
+FROM: main_bb1373;
+v2927 := s;
+v2928 := NP;
+TO: main_bb1373_end;
+
+FROM: main_bb1373_end;
+assume(v2927 == v2928);
+TO: main_stubMoreProcessingRequiredexitii;
+
+FROM: main_bb1373_end;
+assume(v2927 != v2928);
+TO: main_bb1374;
+
+FROM: main_stubMoreProcessingRequiredexitii;
+v2930 := MPR1;
+s := v2930;
+TO: main_bb1375;
+
+FROM: main_bb1374;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1375;
+v2931 := nondet();
+TO: main_bb1375_end;
+
+FROM: main_bb1375_end;
+assume(v2931 == 0);
+var__temp_vreturnVal.0.i.i := 0;
+TO: main_bb1377;
+
+FROM: main_bb1375_end;
+assume(v2931 != 0);
+TO: main_bb1376;
+
+FROM: main_bb1376;
+v2933 := nondet();
+TO: main_bb1376_v..i.i;
+FROM: main_bb1376_v..i.i;
+assume(v2933 == 1);
+v..i.i := -1073741823;
+TO: main_bb1376_sv..i.i;
+
+FROM: main_bb1376_v..i.i;
+assume(v2933 != 1);
+v..i.i := 259;
+TO: main_bb1376_sv..i.i;
+
+FROM: main_bb1376_sv..i.i;
+var__temp_vreturnVal.0.i.i := v..i.i;
+TO: main_bb1377;
+
+FROM: main_bb1377;
+vreturnVal.0.i.i := var__temp_vreturnVal.0.i.i;
+v2935 := s;
+v2936 := NP;
+TO: main_bb1377_end;
+
+FROM: main_bb1377_end;
+assume(v2935 == v2936);
+TO: main_bb1378;
+
+FROM: main_bb1377_end;
+assume(v2935 != v2936);
+TO: main_bb1379;
+
+FROM: main_bb1378;
+v2938 := IPC;
+s := v2938;
+lowerDriverReturn := vreturnVal.0.i.i;
+var__temp_vstatus.0 := vreturnVal.0.i.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1379;
+v2939 := s;
+v2940 := MPR1;
+TO: main_bb1379_end;
+
+FROM: main_bb1379_end;
+assume(v2939 == v2940);
+TO: main_bb1380;
+
+FROM: main_bb1379_end;
+assume(v2939 != v2940);
+TO: main_bb1383;
+
+FROM: main_bb1380;
+v2942 := sign_extend(32, 64, vreturnVal.0.i.i);
+TO: main_bb1380_end;
+
+FROM: main_bb1380_end;
+assume(v2942 == 259);
+TO: main_bb1381;
+
+FROM: main_bb1380_end;
+assume(v2942 != 259);
+TO: main_bb1382;
+
+FROM: main_bb1381;
+v2944 := MPR3;
+s := v2944;
+lowerDriverReturn := vreturnVal.0.i.i;
+var__temp_vstatus.0 := vreturnVal.0.i.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1382;
+v2945 := NP;
+s := v2945;
+lowerDriverReturn := vreturnVal.0.i.i;
+var__temp_vstatus.0 := vreturnVal.0.i.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_bb1383;
+v2946 := s;
+v2947 := SKIP1;
+TO: main_bb1383_end;
+
+FROM: main_bb1383_end;
+assume(v2946 == v2947);
+TO: main_bb1384;
+
+FROM: main_bb1383_end;
+assume(v2946 != v2947);
+TO: main_bb1385;
+
+FROM: main_bb1384;
+v2949 := SKIP2;
+s := v2949;
+lowerDriverReturn := vreturnVal.0.i.i;
+var__temp_vstatus.0 := vreturnVal.0.i.i;
+TO: main_CdAudioDeviceControlexit;
+
+FROM: main_CdAudioDeviceControlexit;
+vstatus.0 := var__temp_vstatus.0;
+var__temp_vstatus.1 := vstatus.0;
+TO: main_bb1387;
+
+FROM: main_bb1385;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1386;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1387;
+vstatus.1 := var__temp_vstatus.1;
+v2950 := pended;
+TO: main_bb1387_end;
+
+FROM: main_bb1387_end;
+assume(v2950 == 1);
+TO: main_bb1388;
+
+FROM: main_bb1387_end;
+assume(v2950 != 1);
+TO: main_bb1390;
+
+FROM: main_bb1388;
+v2952 := s;
+v2953 := NP;
+TO: main_bb1388_end;
+
+FROM: main_bb1388_end;
+assume(v2952 == v2953);
+TO: main_bb1389;
+
+FROM: main_bb1388_end;
+assume(v2952 != v2953);
+TO: main_bb1390;
+
+FROM: main_bb1389;
+v2955 := NP;
+s := v2955;
+var__temp_v.0 := vstatus.1;
+TO: main_bb1406;
+
+FROM: main_bb1390;
+v2956 := pended;
+TO: main_bb1390_end;
+
+FROM: main_bb1390_end;
+assume(v2956 == 1);
+TO: main_bb1391;
+
+FROM: main_bb1390_end;
+assume(v2956 != 1);
+TO: main_bb1393;
+
+FROM: main_bb1391;
+v2958 := s;
+v2959 := MPR3;
+TO: main_bb1391_end;
+
+FROM: main_bb1391_end;
+assume(v2958 == v2959);
+TO: main_bb1392;
+
+FROM: main_bb1391_end;
+assume(v2958 != v2959);
+TO: main_bb1393;
+
+FROM: main_bb1392;
+v2961 := MPR3;
+s := v2961;
+var__temp_v.0 := vstatus.1;
+TO: main_bb1406;
+
+FROM: main_bb1393;
+v2962 := s;
+v2963 := UNLOADED;
+TO: main_bb1393_end;
+
+FROM: main_bb1393_end;
+assume((v2962 != v2963) && (vstatus.1 != -1));
+TO: main_bb1394;
+
+FROM: main_bb1393_end;
+assume((v2962 == v2963) || (vstatus.1 == -1));
+var__temp_v.0 := vstatus.1;
+TO: main_bb1406;
+
+FROM: main_bb1394;
+v2966 := s;
+v2967 := SKIP2;
+TO: main_bb1394_end;
+
+FROM: main_bb1394_end;
+assume(v2966 != v2967);
+TO: main_bb1395;
+
+FROM: main_bb1394_end;
+assume(v2966 == v2967);
+TO: main_bb1398;
+
+FROM: main_bb1395;
+v2969 := s;
+v2970 := IPC;
+TO: main_bb1395_end;
+
+FROM: main_bb1395_end;
+assume(v2969 != v2970);
+TO: main_bb1396;
+
+FROM: main_bb1395_end;
+assume(v2969 == v2970);
+TO: main_bb1398;
+
+FROM: main_bb1396;
+v2972 := s;
+v2973 := DC;
+TO: main_bb1396_end;
+
+FROM: main_bb1396_end;
+assume(v2972 != v2973);
+TO: main_bb1397;
+
+FROM: main_bb1396_end;
+assume(v2972 == v2973);
+TO: main_bb1398;
+
+FROM: main_bb1397;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1398;
+v2975 := pended;
+TO: main_bb1398_end;
+
+FROM: main_bb1398_end;
+assume(v2975 != 1);
+TO: main_bb1399;
+
+FROM: main_bb1398_end;
+assume(v2975 == 1);
+TO: main_bb1404;
+
+FROM: main_bb1399;
+v2977 := s;
+v2978 := DC;
+TO: main_bb1399_end;
+
+FROM: main_bb1399_end;
+assume(v2977 == v2978);
+TO: main_bb1400;
+
+FROM: main_bb1399_end;
+assume(v2977 != v2978);
+TO: main_bb1402;
+
+FROM: main_bb1400;
+TO: main_bb1400_end;
+
+FROM: main_bb1400_end;
+assume(vstatus.1 == 259);
+TO: main_bb1401;
+
+FROM: main_bb1400_end;
+assume(vstatus.1 != 259);
+var__temp_v.0 := vstatus.1;
+TO: main_bb1406;
+
+FROM: main_bb1401;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1402;
+v2981 := lowerDriverReturn;
+TO: main_bb1402_end;
+
+FROM: main_bb1402_end;
+assume(vstatus.1 != v2981);
+TO: main_bb1403;
+
+FROM: main_bb1402_end;
+assume(vstatus.1 == v2981);
+var__temp_v.0 := vstatus.1;
+TO: main_bb1406;
+
+FROM: main_bb1403;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1404;
+TO: main_bb1404_end;
+
+FROM: main_bb1404_end;
+assume(vstatus.1 != 259);
+TO: main_bb1405;
+
+FROM: main_bb1404_end;
+assume(vstatus.1 == 259);
+var__temp_v.0 := vstatus.1;
+TO: main_bb1406;
+
+FROM: main_bb1405;
+TO: ZwClose_bb1469_ret;
+
+FROM: main_bb1406;
+v.0 := var__temp_v.0;
+TO: main_bb1406_ret;
+

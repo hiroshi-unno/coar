@@ -1,12 +1,12 @@
 services:
         solver:
-                image: "chccomp:latest"
+                image: "coar:latest"
                 tty: true
                 stdin_open: true
                 volumes:
                         - type: bind
-                          source: ./script
-                          target: /coar/script
+                          source: ..
+                          target: /root/coar/script
                         - type: bind
-                          source: ./benchmarks
-                          target: /coar/benchmarks
+                          source: ../../benchmarks
+                          target: /root/coar/benchmarks

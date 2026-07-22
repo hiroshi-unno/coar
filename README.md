@@ -11,7 +11,7 @@
 * OptPCSat: An optimizing CHC solver based on predicate constraint solving
 * HOMCSat: A SAT/QSAT/DQSAT/HOSAT solver based on higher-order model checking
 
-An overview of the fixed-point logic solvers MuVal, MuStrat, and MuCyc for $`\mu`$CLP, HFL, QFL, and QHFL, along with the backend solver PCSat used in MuVal, is provided in [these slides](https://www.riec.tohoku.ac.jp/~unno/slides/epit2025.pdf). An overview of the verification methods for algebraic effects and handlers implemented in RCaml and EffCaml is available in [these slides](https://www.riec.tohoku.ac.jp/~unno/slides/chocola2025.pdf), and a summary of techniques for relational verification using PCSat and MuCyc can be found in [these slides](https://www.riec.tohoku.ac.jp/~unno/slides/vmcai2024.pdf).
+An overview of the fixed-point logic solvers MuVal, MuStrat, and MuCyc for $`\mu`$CLP, HFL, QFL, and QHFL, along with the backend solver PCSat used in MuVal, is provided in [these slides](https://www.riec.tohoku.ac.jp/~unno/slides/epit2025.pdf). An overview of the verification methods for algebraic effects and handlers implemented in RCaml and EffCaml is available in [these slides](https://www.riec.tohoku.ac.jp/~unno/slides/chocola2025.pdf), and a summary of techniques for relational verification using PCSat and MuCyc can be found in [these slides](https://www.riec.tohoku.ac.jp/~unno/slides/vmcai2024.pdf). For a summary of some of the satisfiability and validity-checking problem classes supported by CoAR, please refer to [these slides](https://www.riec.tohoku.ac.jp/~unno/slides/ismvl2026.pdf).
 
 
 ## Installation from source code
@@ -67,7 +67,7 @@ An overview of the fixed-point logic solvers MuVal, MuStrat, and MuCyc for $`\mu
 
 - `hoice` (https://github.com/hopv/hoice)
 - `clang` (https://clang.llvm.org/)
-- `llvm2kittel` (https://github.com/addmai/llvm2kittel/tree/termcomp2025)
+- `llvm2kittel` (https://github.com/addmai/llvm2kittel/tree/svcomp2026)
 - `ltl3ba` (https://sourceforge.net/projects/ltl3ba/)
 - `horsat2` (https://github.com/hopv/horsat2)
 - `polyqent` (https://github.com/ChatterjeeGroup-ISTA/polyqent)
@@ -271,6 +271,12 @@ git submodule update --init benchmarks/sygus-comp/
 ./_build/default/main.exe -c ./config/solver/dbg_muval_parallel_exc_tbq_ar.json -p muclp ./benchmarks/muCLP/popl2023mod/sas2019_ctl1.hes
 ```
 
+#### with MuVal<sub>PPM</sub> (Parallel Mode with Clause Exchange)
+
+```bash
+./_build/default/main.exe -c ./config/solver/dbg_muval_parallel_exc_ppm_tbq_ar.json -p muclp ./benchmarks/muCLP/popl2023mod/sas2019_ctl1.hes
+```
+
 #### with MuVal (Interactive Conditional Mode)
 
 ```bash
@@ -315,6 +321,20 @@ Here, the `dual` action lets MuVal infer a precondition under which the query do
 Build `PolyQEnt` and place it to run as `./polyqent/PolyQEnt`.
 ```bash
 ./_build/default/main.exe -c ./config/solver/dbg_muval_quant_polyqent_deg3.json -p qfl ./benchmarks/QFL/ert_random_walk_2nd_lb.qhes
+```
+
+### QFL Almost-Sure Satisfiability Checking of &omega;-Regular Properties using MuVal<sup>QFL</sup>
+
+Build `PolyQEnt` and place it to run as `./polyqent/PolyQEnt`.
+```bash
+./_build/default/main.exe -c ./config/solver/dbg_muval_quant_polyqent_deg1.json -p qfl ./benchmarks/QFL/omega_regular/ex3_9.qhes
+```
+
+### QFL Upper Bound Checking of Posterior Distributions using MuVal<sup>QFL</sup>
+
+Build `PolyQEnt` and place it to run as `./polyqent/PolyQEnt`.
+```bash
+./_build/default/main.exe -c ./config/solver/muval_quant_polyqent_deg1.json -p qfl ./benchmarks/QFL/distribution_bounds/threedim_deg2.qhes
 ```
 
 ### HFL and QHFL Validity Checking using MuVal<sup>HFL</sup> and MuVal<sup>QHFL</sup>
@@ -394,19 +414,25 @@ Build `horsat2` and place it in the current directory.
 
 1. Yuki Satake, Hiroshi Unno, and Hinata Yanagi. Probabilistic Inference for Predicate Constraint Satisfaction. AAAI 2020.
 
-### MuVal & MuVal<sup>HFL</sup> & MuVal<sup>QFL</sup> & MuVal<sup>QHFL</sup>
+### MuVal
 
-1. Kazuki Watanabe, Mayuko Kori, Taro Sekiyama, Satoshi Kura, and Hiroshi Unno. A Categorical Product Construction for Temporal Verification of Effectful Higher-Order Programs. 2026.
+1. Hiroshi Unno, Tachio Terauchi, Yu Gu, and Eric Koskinen. Modular Primal-Dual Fixpoint Logic Solving for Temporal Verification. POPL 2023.
+
+1. Satoshi Kura, Hiroshi Unno, and Ichiro Hasuo. Decision Tree Learning in CEGIS-Based Termination Analysis. CAV 2021.
+
+### MuVal<sup>QFL</sup>
+
+1. Kazuki Watanabe and Hiroshi Unno. Automated Safety Verification of Posterior Distributions of Probabilistic Programs. IJCAI 2026.
 
 1. Satoshi Kura and Hiroshi Unno. A Hierarchy of Supermartingales for &omega;-Regular Verification. PLDI 2026.
 
 1. Satoshi Kura, Hiroshi Unno, and Takeshi Tsukada. Supermartingales for Unique Fixed Points: A Unified Approach to Lower Bound Verification. PLDI 2026.
 
+### MuVal<sup>HFL</sup> & MuVal<sup>QHFL</sup>
+
+1. Kazuki Watanabe, Mayuko Kori, Taro Sekiyama, Satoshi Kura, and Hiroshi Unno. A Categorical Product Construction for Temporal Verification of Effectful Higher-Order Programs. 2026.
+
 1. Satoshi Kura and Hiroshi Unno. Automated Verification of Higher-Order Probabilistic Programs via a Dependent Refinement Type System. ICFP 2024.
-
-1. Hiroshi Unno, Tachio Terauchi, Yu Gu, and Eric Koskinen. Modular Primal-Dual Fixpoint Logic Solving for Temporal Verification. POPL 2023.
-
-1. Satoshi Kura, Hiroshi Unno, and Ichiro Hasuo. Decision Tree Learning in CEGIS-Based Termination Analysis. CAV 2021.
 
 ### MuCyc
 
@@ -428,4 +454,4 @@ Build `horsat2` and place it in the current directory.
 
 ## Acknowledgements
 
-We thank Ziteng Wang for contributing the Docker build workflow. We also thank Hiroyuki Katsura, Philippe Heim, Ehsan Goharshady, Elaine Li, Benedikt Maderbacher, and Alvin George for reporting bugs in PCSat and MuVal. We are also grateful to the organizer of termCOMP 2023, Akihisa Yamada, and participants Florian Frohn and Nils Lommen, as thanks to them, we were able to identify a bug in MuVal. We further thank Florian Frohn, as the organizer of termCOMP 2025, for valuable feedback that helped improve the robustness of MuVal’s C program (non-)termination verification. We also thank the artifact evaluation committees of POPL, PLDI, CAV, OOPSLA, and ICFP for their valuable feedback.
+We thank Ziteng Wang for contributing the Docker build workflow. We also thank Hiroyuki Katsura, Philippe Heim, Ehsan Goharshady, Elaine Li, Benedikt Maderbacher, Alvin George, and Moritz Leven Rosarius for reporting bugs in PCSat and MuVal. We are also grateful to the organizer of termCOMP 2023, Akihisa Yamada, and participants Florian Frohn and Nils Lommen, as thanks to them, we were able to identify a bug in MuVal. We further thank Florian Frohn, as the organizer of termCOMP 2025, for valuable feedback that helped improve the robustness of MuVal's C program (non-)termination verification. We also thank the artifact evaluation committees of POPL, PLDI, CAV, OOPSLA, and ICFP for their valuable feedback.

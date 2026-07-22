@@ -83,6 +83,8 @@ module Make
       Z3Smt.Z3interfaceNew.Make (Z3Smt.Z3interfaceNew.ExtTerm) in
     fun senv phi -> Z3interface.check_sat [ phi ] senv (Z3.mk_context [])
 
+  let print_log = false
+
   let check_clause_param_strat_synth ?(timeout = None) fenv params_senv uni_senv
       phi =
     let open StratSynth in
@@ -125,14 +127,14 @@ module Make
                 ~params:(PCSP.Params.make @@ Map.of_list_exn params)
               @@ Set.Poly.of_list chc
             in
-            if false then (
+            if print_log then (
               Debug.print
               @@ lazy "recursion-free CHC problem for determinization:";
               Debug.print @@ lazy (PCSP.Problem.str_of problem);
               Debug.print @@ lazy "");
             match PCSP.ForwardPropagate.solve problem with
             | Ok (PCSP.Problem.Sat subs) ->
-                if false then
+                if print_log then
                   Debug.print
                   @@ lazy
                        ("solution:\n"
@@ -141,7 +143,7 @@ module Make
                   Map.Poly.map det ~f:(fun (senv, t) ->
                       (senv, Logic.ExtTerm.subst subs t))
                 in
-                (* if false then (
+                (* if print_log then (
                    print_endline
                      (sprintf "determinized strategy for %s:"
                         (player_to_string p));
@@ -171,25 +173,27 @@ module Make
       Set.partition_tf ~f:(fst >> Quintuple.trd >> Map.Poly.is_empty)
       @@ Set.Poly.map clauses ~f:(fun cl ->
           let uni_senv, clause = Clause.to_senv_formula cl in
-          if false then
+          if print_log then
             Debug.print
             @@ lazy
-                 ("size before: " ^ string_of_int
-                 @@ Logic.ExtTerm.ast_size clause);
-          if false then
-            Debug.print
-            @@ lazy
-                 (sprintf "[check clause] %s"
+                 (sprintf "[check clause] [%d] %s"
+                    (Logic.ExtTerm.ast_size clause)
                  @@ Formula.str_of
                  @@ Logic.ExtTerm.to_old_fml
                       (PCSP.Problem.senv_of APCSP.problem)
                       (Map.force_merge params_senv uni_senv)
                       clause);
           let phi = Logic.Term.subst cand_map clause in
-          if false then
+          if print_log then
             Debug.print
             @@ lazy
-                 ("size after: " ^ string_of_int @@ Logic.ExtTerm.ast_size phi);
+                 (sprintf "[substituted clause] [%d] %s"
+                    (Logic.ExtTerm.ast_size phi)
+                    (Formula.str_of
+                    @@ Logic.ExtTerm.to_old_fml
+                         (PCSP.Problem.senv_of APCSP.problem)
+                         (Map.force_merge params_senv uni_senv)
+                         phi));
           let phi =
             try
               Logic.ExtTerm.to_old_fml Map.Poly.empty
@@ -202,6 +206,9 @@ module Make
                    (CandSol.str_of (params_senv, cand)))
           in
           let phi = Evaluator.simplify phi in
+          if print_log then
+            Debug.print
+            @@ lazy (sprintf "[simplified clause] %s" (Formula.str_of phi));
           let fvs = Formula.tvs_of phi in
           let uni_senv' = Map.Poly.filter_keys uni_senv ~f:(Set.mem fvs) in
           let params_senv' =

@@ -8,8 +8,10 @@ let parse_from_lexbuf ~print lexbuf =
     SMT.(Parser.program Lexer.token lexbuf)
     |> SMT.Smtlib2.toplevel ~print ~inline:false []
          {
+           uni_sort = Set.Poly.empty;
            uni_senv = Map.Poly.empty;
            exi_senv = Map.Poly.empty;
+           dep_map = Map.Poly.empty;
            kind_map = Map.Poly.empty;
            fenv = Map.Poly.empty;
            dtenv = Map.Poly.empty;
@@ -44,8 +46,8 @@ let parse_from_lexbuf ~print lexbuf =
                assert (String.(Ident.name_of_tvar f = "cfg_init"));
                match args with
                | [ pc'; src; rel ] ->
-                   assert (Ident.tvar_equal pc (fst @@ fst @@ Term.let_var pc'));
-                   ( Ident.name_of_tvar @@ fst @@ fst @@ Term.let_var src,
+                   assert (Ident.tvar_equal pc (Term.tvar_of pc'));
+                   ( Ident.name_of_tvar @@ Term.tvar_of src,
                      T_bool.let_formula rel )
                | _ -> failwith ""
              in
@@ -67,21 +69,17 @@ let parse_from_lexbuf ~print lexbuf =
              let res =
                Formula.disjuncts_of phi
                |> Set.Poly.map ~f:(fun phi ->
-                      let t, _, _ = Formula.let_eq phi in
-                      let f, _, _, args, _ = Term.let_fvar_app t in
-                      assert (String.(Ident.name_of_tvar f = "cfg_trans2"));
-                      match args with
-                      | [ pc1'; src; pc2'; dst; rel ] ->
-                          assert (
-                            Ident.tvar_equal pc1
-                              (fst @@ fst @@ Term.let_var pc1'));
-                          assert (
-                            Ident.tvar_equal pc2
-                              (fst @@ fst @@ Term.let_var pc2'));
-                          ( Ident.name_of_tvar @@ fst @@ fst @@ Term.let_var src,
-                            Ident.name_of_tvar @@ fst @@ fst @@ Term.let_var dst,
-                            T_bool.let_formula rel )
-                      | _ -> failwith "")
+                   let t, _, _ = Formula.let_eq phi in
+                   let f, _, _, args, _ = Term.let_fvar_app t in
+                   assert (String.(Ident.name_of_tvar f = "cfg_trans2"));
+                   match args with
+                   | [ pc1'; src; pc2'; dst; rel ] ->
+                       assert (Ident.tvar_equal pc1 (Term.tvar_of pc1'));
+                       assert (Ident.tvar_equal pc2 (Term.tvar_of pc2'));
+                       ( Ident.name_of_tvar @@ Term.tvar_of src,
+                         Ident.name_of_tvar @@ Term.tvar_of dst,
+                         T_bool.let_formula rel )
+                   | _ -> failwith "")
              in
              Second (ff, args1, args2, res))
            else failwith @@ sprintf "%s not supported" f)

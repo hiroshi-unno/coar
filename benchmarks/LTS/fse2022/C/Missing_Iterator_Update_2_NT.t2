@@ -1,0 +1,108 @@
+///*** 1_main ***///
+START: main_bb3;
+FROM: main_bb3;
+flag := 0;
+v6 := nondet();
+v7 := flag;
+v8 := v7 + 1;
+flag := v8;
+v9 := flag;
+var__temp_v.0.i := 1;
+TO: main_bb3_end;
+
+FROM: main_bb3_end;
+assume(v9 sgt 1000);
+var__temp_v.0.i := 1;
+TO: main_mdb_cursor_getexit;
+
+FROM: main_bb3_end;
+assume(v9 sle 1000);
+TO: main_bb4;
+
+FROM: main_bb4;
+TO: main_bb4_v..i;
+FROM: main_bb4_v..i;
+assume(v6 sge 0);
+v..i := 0;
+TO: main_bb4_sv..i;
+
+FROM: main_bb4_v..i;
+assume(v6 slt 0);
+v..i := 1;
+TO: main_bb4_sv..i;
+
+FROM: main_bb4_sv..i;
+var__temp_v.0.i := v..i;
+var__temp_v.0.i := v..i;
+TO: main_mdb_cursor_getexit;
+
+FROM: main_mdb_cursor_getexit;
+v.0.i := var__temp_v.0.i;
+v12 := nondet();
+var__temp_vrc.0 := v.0.i;
+var__temp_vrc.0 := v.0.i;
+TO: main_mdb_cursor_getexit3;
+
+FROM: main_mdb_cursor_getexit3;
+vrc.0 := var__temp_vrc.0;
+TO: main_mdb_cursor_getexit3_end;
+
+FROM: main_mdb_cursor_getexit3_end;
+assume(vrc.0 == 0);
+TO: main_bb5;
+
+FROM: main_mdb_cursor_getexit3_end;
+assume(vrc.0 != 0);
+TO: main_bb8;
+
+FROM: main_bb5;
+var__temp_vrc.0 := vrc.0;
+TO: main_bb5_end;
+
+FROM: main_bb5_end;
+assume(v12 sle 0);
+var__temp_vrc.0 := vrc.0;
+TO: main_mdb_cursor_getexit3;
+
+FROM: main_bb5_end;
+assume(v12 sgt 0);
+TO: main_bb6;
+
+FROM: main_bb6;
+v15 := nondet();
+v16 := flag;
+v17 := v16 + 1;
+flag := v17;
+v18 := flag;
+var__temp_vrc.0 := 1;
+TO: main_bb6_end;
+
+FROM: main_bb6_end;
+assume(v18 sgt 1000);
+var__temp_vrc.0 := 1;
+TO: main_mdb_cursor_getexit3;
+
+FROM: main_bb6_end;
+assume(v18 sle 1000);
+TO: main_bb7;
+
+FROM: main_bb7;
+TO: main_bb7_v..i1;
+FROM: main_bb7_v..i1;
+assume(v15 sge 0);
+v..i1 := 0;
+TO: main_bb7_sv..i1;
+
+FROM: main_bb7_v..i1;
+assume(v15 slt 0);
+v..i1 := 1;
+TO: main_bb7_sv..i1;
+
+FROM: main_bb7_sv..i1;
+var__temp_vrc.0 := v..i1;
+var__temp_vrc.0 := v..i1;
+TO: main_mdb_cursor_getexit3;
+
+FROM: main_bb8;
+TO: main_bb8_ret;
+

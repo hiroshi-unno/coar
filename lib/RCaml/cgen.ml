@@ -1206,8 +1206,10 @@ module Make (Config : Config.ConfigType) = struct
       PCSP.Problem.make ~skolem_pred phis
       @@ SMT.Problem.
            {
+             uni_sort = Set.Poly.empty;
              uni_senv = Map.Poly.empty;
              exi_senv;
+             dep_map = Map.Poly.empty;
              kind_map;
              fenv = Map.Poly.filter envs.fenv ~f:Quintuple.fth (*ToDo*);
              dtenv = envs.dtenv;

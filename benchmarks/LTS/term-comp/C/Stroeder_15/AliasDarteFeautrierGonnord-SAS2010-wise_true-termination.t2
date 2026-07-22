@@ -1,0 +1,70 @@
+///*** 1_main ***///
+START: main_bb0;
+FROM: main_bb0;
+v0 := nondet();
+v1 := nondet();
+var__temp_vx.0 := v0;
+var__temp_vy.0 := v1;
+TO: main_bb0_end;
+
+FROM: main_bb0_end;
+assume((v0 sge 0) && (v1 sge 0));
+var__temp_vx.0 := v0;
+var__temp_vy.0 := v1;
+TO: main_bb1;
+
+FROM: main_bb0_end;
+assume((v0 slt 0) || (v1 slt 0));
+TO: main_bb2;
+
+FROM: main_bb1;
+vx.0 := var__temp_vx.0;
+vy.0 := var__temp_vy.0;
+v4 := vx.0 - vy.0;
+v6 := vy.0 - vx.0;
+TO: main_bb1_end;
+
+FROM: main_bb1_end;
+assume((v4 sgt 2) || (v6 sgt 2));
+TO: main_critedge;
+
+FROM: main_bb1_end;
+assume((v4 sle 2) && (v6 sle 2));
+TO: main_bb2;
+
+FROM: main_critedge;
+v9 := vx.0 + 1;
+v10 := vy.0 + 1;
+TO: main_critedge_vx.1;
+FROM: main_critedge_vx.1;
+assume(vx.0 slt vy.0);
+vx.1 := v9;
+TO: main_critedge_svx.1;
+
+FROM: main_critedge_vx.1;
+assume(vx.0 sge vy.0);
+vx.1 := vx.0;
+TO: main_critedge_svx.1;
+
+FROM: main_critedge_svx.1;
+TO: main_critedge_vy.1;
+FROM: main_critedge_vy.1;
+assume(vx.0 slt vy.0);
+vy.1 := vy.0;
+TO: main_critedge_svy.1;
+
+FROM: main_critedge_vy.1;
+assume(vx.0 sge vy.0);
+vy.1 := v10;
+TO: main_critedge_svy.1;
+
+FROM: main_critedge_svy.1;
+var__temp_vx.0 := vx.1;
+var__temp_vy.0 := vy.1;
+var__temp_vx.0 := vx.1;
+var__temp_vy.0 := vy.1;
+TO: main_bb1;
+
+FROM: main_bb2;
+TO: main_bb2_ret;
+

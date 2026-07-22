@@ -8,7 +8,7 @@
 
 %token BOOL NAT REAL CONST
 %token RPARAM NPARAM
-%token EOF 
+%token EOF
 %token SKIP WHILE
 %token IF ELSE
 %token TICK OBSERVE LOOP
@@ -38,19 +38,19 @@
 %%
 
 toplevel:
-    decls=Declarations insts=Instructions queries=Query EOF 
+    decls=Declarations insts=Instructions queries=Query EOF
 		{ decls |> ( fun (vars,consts) -> Program.make (vars,consts) insts queries ) }
-    | decls=Declarations insts=Instructions EOF 
-		{ 
-			let termination = 
+    | decls=Declarations insts=Instructions EOF
+		{
+			let termination =
 			  Query.mk_expectation (T_real.rone ())
 			in
-			decls |> ( fun (vars,consts) -> Program.make (vars,consts) insts termination ) 
+			decls |> ( fun (vars,consts) -> Program.make (vars,consts) insts termination )
 			}
 
 expr:
 	expr=Expr EOF { expr }
-	
+
 Declarations:
 	var=VarDeclaration decls=Declarations { decls |> fun (vars, consts) -> (var :: vars, consts) }
 	| const=ConstantDeclaration decls=Declarations { decls |> fun (vars, consts) -> (vars, const :: consts) }
@@ -109,7 +109,7 @@ Query:
 /*PlotBlock:
 	v1=ID { Program.PlotVar (Ident.Tvar v1) }
   | v1=ID COMMA v2=ID { Program.PlotVarPair (Ident.Tvar v1, Ident.Tvar v2) }
-  | v1=ID COMMA v2=ID COMMA lit=Literal { 
+  | v1=ID COMMA v2=ID COMMA lit=Literal {
 	  let bound =
 		match lit with
 		| Program.LitInt n -> Term.mk_int n
@@ -167,9 +167,9 @@ T_boolAnd:
 	e1=T_boolAnd AND e2=T_boolNeg
 		{ T_bool.of_formula @@ Formula.mk_and (Formula.of_bool_term e1) (Formula.of_bool_term e2) }
 	| T_boolNeg { $1 }
-	
+
 T_boolNeg:
-  NOT e=T_boolNeg 		 
+  NOT e=T_boolNeg
   		{ T_bool.negate e}
   | T_boolAtom { $1 }
 
@@ -177,7 +177,7 @@ T_boolAtom:
   | atom=Atom { T_bool.of_atom atom }
   | varname=ID { Term.mk_var (Ident.Tvar varname) @@ Sort.mk_fresh_svar () }
   | LPAREN T_bool RPAREN { $2 }
-  
+
 
 Atom:
   |	TRUE { Atom.True Dummy }

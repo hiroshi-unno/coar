@@ -5,11 +5,12 @@ open Ast
 open Ast.LogicOld
 open SgclSyntax
 
-(* 
+(*
 let rec typeinf_stmt ~print stmts =
-    stmts = Typeinf.typeinf_term ~print ~default:None
-                ~senv_opt:(Map.Poly.of_alist_exn stmt.args)
-                stmt.body *)
+  stmts
+  = Typeinf.typeinf_term ~print ~default:None
+      ~senv_opt:(Map.Poly.of_alist_exn stmt.args)
+      stmt.body *)
 
 let typeinf_eqs ~print (sgcl : Program.t) (eqs : EquationSystem.t) :
     EquationSystem.t =

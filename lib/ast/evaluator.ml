@@ -57,16 +57,17 @@ let rec eval_term ?(env = Map.Poly.empty) =
       | Value.Arr (dummy, v, m) ->
           let v2 = eval_term ~env t2 in
           let v3 = eval_term ~env t3 in
-          if Value.equal v v3 then Value.Arr (dummy, v, Map.Poly.remove m v2)
+          if Value.eq v v3 then Value.Arr (dummy, v, Map.Poly.remove m v2)
           else Value.Arr (dummy, v, Map.Poly.set m ~key:v2 ~data:v3)
       | _ ->
           failwith @@ "Array store: first term must be an array"
           ^ Term.str_of t1)
-  | FunApp (T_array.ASelect _, [ t1 ], _) -> (
+  | FunApp (T_array.ASelect _, [ t1; t2 ], _) -> (
       match eval_term ~env t1 with
       | Value.Arr (_dummy, v, m) -> (
-          let v1 = eval_term ~env t1 in
-          match Map.Poly.find m v1 with Some v' -> v' | None -> v)
+          match Map.Poly.find m (eval_term ~env t2) with
+          | Some v' -> v'
+          | None -> v)
       | _ ->
           failwith @@ "Array select: first term must be an array"
           ^ Term.str_of t1)
@@ -75,6 +76,30 @@ let rec eval_term ?(env = Map.Poly.empty) =
       if List.length ts' <> List.length sorts then
         failwith "Tuple constructor: number of terms does not match sorts";
       Value.TupleCons ts'
+  | FunApp (T_dt.DTSel (sel_name, dt, _), [ t1 ], _) -> (
+      match eval_term ~env t1 with
+      | Value.DTCons (cons_name, _pvs, vs) -> (
+          match Datatype.look_up_cons dt cons_name with
+          | Some cons -> (
+              match
+                List.fold2_exn (Datatype.sels_of_cons cons) vs ~init:None
+                  ~f:(fun ret sel v ->
+                    match ret with
+                    | Some _ -> ret
+                    | None ->
+                        if String.(Datatype.name_of_sel sel = sel_name) then
+                          Some v
+                        else None)
+              with
+              | Some v -> v
+              | None ->
+                  failwith
+                    (sprintf "Selector %s is not found in the constructor %s"
+                       sel_name cons_name))
+          | None -> failwith @@ cons_name ^ " not found")
+      | _ ->
+          failwith @@ Term.str_of t1
+          ^ " must be evaluated to a datatype constructor application")
   | FunApp (T_dt.DTCons (name, sorts, dt), ts, _) ->
       let vs = List.map ~f:(eval_term ~env) ts in
       if List.length vs <> List.length sorts then
@@ -216,10 +241,10 @@ let rec eval_term ?(env = Map.Poly.empty) =
         _ )
     when T_bv.eq_size size1 size2
          &&
-         try
-           let _ = Z.to_int i2 in
-           true
-         with _ -> false ->
+           try
+             let _ = Z.to_int i2 in
+             true
+           with _ -> false ->
       let size = T_bv.merge_size size1 size2 in
       Value.BV (size, bvshl (T_bv.bits_of size) i1 i2)
   | FunApp
@@ -231,10 +256,10 @@ let rec eval_term ?(env = Map.Poly.empty) =
         _ )
     when T_bv.eq_size size1 size2
          &&
-         try
-           let _ = Z.to_int i2 in
-           true
-         with _ -> false ->
+           try
+             let _ = Z.to_int i2 in
+             true
+           with _ -> false ->
       let size = T_bv.merge_size size1 size2 in
       Value.BV (size, bvlshr i1 i2)
   | FunApp
@@ -246,10 +271,10 @@ let rec eval_term ?(env = Map.Poly.empty) =
         _ )
     when T_bv.eq_size size1 size2
          &&
-         try
-           let _ = Z.to_int i2 in
-           true
-         with _ -> false ->
+           try
+             let _ = Z.to_int i2 in
+             true
+           with _ -> false ->
       let size = T_bv.merge_size size1 size2 in
       Value.BV (size, bvashr (T_bv.bits_of size) i1 i2)
   | FunApp
@@ -301,7 +326,7 @@ let rec eval_term ?(env = Map.Poly.empty) =
         @@ eval_term ~env def
       in
       eval_term ~env @@ Term.subst subst body
-  | _ -> failwith "[eval_term] not supported"
+  | t -> failwith (sprintf "[eval_term] not supported: %s" (Term.str_of t))
 
 (*val eval_pred: pred_sym -> Term.t list -> bool*)
 and eval_pred ?(env = Map.Poly.empty) psym terms =
@@ -317,14 +342,9 @@ and eval_pred ?(env = Map.Poly.empty) psym terms =
       | T_bool.Eq, [ BV (size1, i1); BV (size2, i2) ]
         when T_bv.eq_size size1 size2 ->
           Z.Compare.(i1 = i2)
-      | T_bool.Eq, [ t1; t2 ] -> Value.equal t1 t2
       | T_bool.Neq, [ BV (size1, i1); BV (size2, i2) ]
         when T_bv.eq_size size1 size2 ->
           Z.Compare.(i1 <> i2)
-      | T_bool.Neq, [ t1; t2 ] ->
-          Value.compare false Z.Compare.( <> ) Q.( <> ) ~opb:Stdlib.( <> ) t1 t2
-      | (T_int.Leq | T_real.RLeq | T_bv.BVLeq (_, Some false)), [ t1; t2 ] ->
-          Value.compare true Z.Compare.( <= ) Q.( <= ) t1 t2
       | ( T_bv.BVLeq (_ (*Some s*), Some true),
           [ Value.BV (s1, i1); Value.BV (s2, i2) ] )
         when (*s = s1 &&*) T_bv.eq_size s1 s2 -> (
@@ -335,20 +355,6 @@ and eval_pred ?(env = Map.Poly.empty) psym terms =
           | false, true -> false
           | true, false -> true
           | _ -> Z.Compare.(i1 <= i2))
-      | (T_int.Geq | T_real.RGeq | T_bv.BVGeq (_, Some false)), [ t1; t2 ] ->
-          Value.compare true Z.Compare.( >= ) Q.( >= ) t1 t2
-      | ( T_bv.BVGeq (_ (*Some s*), Some true),
-          [ Value.BV (s1, i1); Value.BV (s2, i2) ] )
-        when (*s = s1 &&*) T_bv.eq_size s1 s2 -> (
-          match
-            ( Z.testbit i1 (T_bv.bits_of s1 - 1),
-              Z.testbit i2 (T_bv.bits_of s2 - 1) )
-          with
-          | false, true -> true
-          | true, false -> false
-          | _ -> Z.Compare.(i1 >= i2))
-      | (T_int.Lt | T_real.RLt | T_bv.BVLt (_, Some false)), [ t1; t2 ] ->
-          Value.compare true Z.Compare.( < ) Q.( < ) t1 t2
       | ( T_bv.BVLt (_ (*Some s*), Some true),
           [ Value.BV (s1, i1); Value.BV (s2, i2) ] )
         when (*s = s1 &&*) T_bv.eq_size s1 s2 -> (
@@ -359,8 +365,16 @@ and eval_pred ?(env = Map.Poly.empty) psym terms =
           | false, true -> false
           | true, false -> true
           | _ -> Z.Compare.(i1 < i2))
-      | (T_int.Gt | T_real.RGt | T_bv.BVGt (_, Some false)), [ t1; t2 ] ->
-          Value.compare true Z.Compare.( > ) Q.( > ) t1 t2
+      | ( T_bv.BVGeq (_ (*Some s*), Some true),
+          [ Value.BV (s1, i1); Value.BV (s2, i2) ] )
+        when (*s = s1 &&*) T_bv.eq_size s1 s2 -> (
+          match
+            ( Z.testbit i1 (T_bv.bits_of s1 - 1),
+              Z.testbit i2 (T_bv.bits_of s2 - 1) )
+          with
+          | false, true -> true
+          | true, false -> false
+          | _ -> Z.Compare.(i1 >= i2))
       | ( T_bv.BVGt (_ (*Some s*), Some true),
           [ Value.BV (s1, i1); Value.BV (s2, i2) ] )
         when (*s = s1 &&*) T_bv.eq_size s1 s2 -> (
@@ -371,14 +385,20 @@ and eval_pred ?(env = Map.Poly.empty) psym terms =
           | false, true -> true
           | true, false -> false
           | _ -> Z.Compare.(i1 > i2))
+      | T_bool.Eq, [ t1; t2 ] -> Value.eq t1 t2
+      | T_bool.Neq, [ t1; t2 ] -> Value.neq t1 t2
+      | (T_int.Leq | T_real.RLeq | T_bv.BVLeq (_, Some false)), [ t1; t2 ] ->
+          Value.leq t1 t2
+      | (T_int.Geq | T_real.RGeq | T_bv.BVGeq (_, Some false)), [ t1; t2 ] ->
+          Value.geq t1 t2
+      | (T_int.Lt | T_real.RLt | T_bv.BVLt (_, Some false)), [ t1; t2 ] ->
+          Value.lt t1 t2
+      | (T_int.Gt | T_real.RGt | T_bv.BVGt (_, Some false)), [ t1; t2 ] ->
+          Value.gt t1 t2
       | T_int.PDiv, [ t1; t2 ] ->
-          Value.compare true Z.Compare.( = ) Q.( = )
-            (Value.rem Euclidean t2 t1)
-            (Value.Int Z.zero)
+          Value.eq (Value.rem Euclidean t2 t1) (Value.Int Z.zero)
       | T_int.NotPDiv, [ t1; t2 ] ->
-          Value.compare true Z.Compare.( <> ) Q.( <> )
-            (Value.rem Euclidean t2 t1)
-            (Value.Int Z.zero)
+          Value.neq (Value.rem Euclidean t2 t1) (Value.Int Z.zero)
       | _ -> failwith "[eval_pred] not supported")
 
 (*val eval_atom: Atom.t -> bool*)
@@ -454,20 +474,32 @@ and simplify_term = function
       with _ -> (
         match (fsym, ts') with
         | T_bool.Formula phi, [] -> T_bool.of_formula (simplify phi) ~info
-        | fsym, [ t1; FunApp (T_bool.IfThenElse, [ t21; t22; t23 ], _) ]
+        | fsym, [ FunApp (T_bool.IfThenElse, [ t1; t2; t3 ], _) ]
           when simplify_ite_case ->
-            (* the following makes z3 much slower *)
+            (* the following could make z3 much slower *)
+            simplify_term
+            @@ T_bool.mk_if_then_else t1
+                 (Term.mk_fsym_app fsym [ t2 ])
+                 (Term.mk_fsym_app fsym [ t3 ])
+        | fsym, [ t1; FunApp (T_bool.IfThenElse, [ t21; t22; t23 ], _) ]
+          when simplify_ite_case && (not @@ T_bv.is_sbv t1) ->
+            (* the following could make z3 much slower *)
             simplify_term
             @@ T_bool.mk_if_then_else t21
                  (Term.mk_fsym_app fsym [ t1; t22 ])
                  (Term.mk_fsym_app fsym [ t1; t23 ])
         | fsym, [ FunApp (T_bool.IfThenElse, [ t21; t22; t23 ], _); t1 ]
-          when simplify_ite_case ->
-            (* the following makes z3 much slower *)
+          when simplify_ite_case && (not @@ T_bv.is_sbv t1) ->
+            (* the following could make z3 much slower *)
             simplify_term
             @@ T_bool.mk_if_then_else t21
                  (Term.mk_fsym_app fsym [ t22; t1 ])
                  (Term.mk_fsym_app fsym [ t23; t1 ])
+        | fsym, [ FunApp (T_int.Case n, t1 :: branches, _) ]
+          when simplify_ite_case ->
+            simplify_term
+            @@ T_int.mk_case n t1
+                 (List.map branches ~f:(fun t -> Term.mk_fsym_app fsym [ t ]))
         | fsym, [ t1; FunApp (T_int.Case n, t2 :: branches, _) ]
           when simplify_ite_case ->
             simplify_term
@@ -834,7 +866,8 @@ and simplify_atom = function
           Formula.mk_false ()
       | ( Predicate.Psym psym,
           [ t1; FunApp (T_bool.IfThenElse, [ t21; t22; t23 ], _) ] )
-        when simplify_ite_case ->
+        when simplify_ite_case && ((not (T_bv.is_sbv t1)) || T_bv.is_bvnum t1)
+        ->
           (* the following makes z3 much slower *)
           Formula.of_bool_term @@ simplify_term
           @@ T_bool.mk_if_then_else t21
@@ -842,7 +875,8 @@ and simplify_atom = function
                (T_bool.of_atom @@ Atom.mk_psym_app psym [ t1; t23 ])
       | ( Predicate.Psym psym,
           [ FunApp (T_bool.IfThenElse, [ t21; t22; t23 ], _); t1 ] )
-        when simplify_ite_case ->
+        when simplify_ite_case && ((not (T_bv.is_sbv t1)) || T_bv.is_bvnum t1)
+        ->
           (* the following makes z3 much slower *)
           Formula.of_bool_term @@ simplify_term
           @@ T_bool.mk_if_then_else t21
@@ -1076,7 +1110,7 @@ and simplify_atom = function
           [ t; Term.FunApp (T_tuple.TupleCons sorts, ts, _) ] ) ->
           simplify @@ Formula.and_of
           @@ List.mapi ts ~f:(fun i ti ->
-                 Formula.eq ti @@ T_tuple.mk_tuple_sel sorts t i)
+              Formula.eq ti @@ T_tuple.mk_tuple_sel sorts t i)
       | ( Predicate.Psym T_bool.Neq,
           [
             Term.FunApp (T_tuple.TupleCons _, ts1, _);
@@ -1089,7 +1123,7 @@ and simplify_atom = function
           [ t; Term.FunApp (T_tuple.TupleCons sorts, ts, _) ] ) ->
           simplify @@ Formula.or_of
           @@ List.mapi ts ~f:(fun i ti ->
-                 Formula.neq ti @@ T_tuple.mk_tuple_sel sorts t i)
+              Formula.neq ti @@ T_tuple.mk_tuple_sel sorts t i)
       | ( Predicate.Psym (T_dt.IsCons (name, _)),
           [ Term.FunApp (T_dt.DTCons (name1, _, _), _, _) ] ) ->
           Formula.mk_bool @@ String.(name1 = name)
@@ -1222,17 +1256,15 @@ and simplify_and phis =
     in
     Formula.and_of
     @@ Map.Poly.fold map ~init:rest ~f:(fun ~key:(t1, t2) ~data:psyms acc ->
-           if false && Set.length psyms = 1 then
-             (Formula.mk_atom
-             @@ Atom.mk_psym_app (Set.choose_exn psyms) [ t1; t2 ])
-             :: acc
-           else
-             match and_psym_list psyms with
-             | None -> Formula.mk_false () :: acc
-             | Some psyms ->
-                 Set.fold ~init:acc psyms ~f:(fun acc psym ->
-                     (Formula.mk_atom @@ Atom.mk_psym_app psym [ t1; t2 ])
-                     :: acc))
+        if false && Set.length psyms = 1 then
+          (Formula.mk_atom @@ Atom.mk_psym_app (Set.choose_exn psyms) [ t1; t2 ])
+          :: acc
+        else
+          match and_psym_list psyms with
+          | None -> Formula.mk_false () :: acc
+          | Some psyms ->
+              Set.fold ~init:acc psyms ~f:(fun acc psym ->
+                  (Formula.mk_atom @@ Atom.mk_psym_app psym [ t1; t2 ]) :: acc))
 
 and or_psym psym1 psym2 =
   (* simplification rules for background theories *)
@@ -1319,17 +1351,15 @@ and simplify_or phis =
     in
     Formula.or_of
     @@ Map.Poly.fold map ~init:rest ~f:(fun ~key:(t1, t2) ~data:psyms acc ->
-           if false && Set.length psyms = 1 then
-             (Formula.mk_atom
-             @@ Atom.mk_psym_app (Set.choose_exn psyms) [ t1; t2 ])
-             :: acc
-           else
-             match or_psym_list psyms with
-             | None -> Formula.mk_true () :: acc
-             | Some psyms ->
-                 Set.fold ~init:acc psyms ~f:(fun acc psym ->
-                     (Formula.mk_atom @@ Atom.mk_psym_app psym [ t1; t2 ])
-                     :: acc))
+        if false && Set.length psyms = 1 then
+          (Formula.mk_atom @@ Atom.mk_psym_app (Set.choose_exn psyms) [ t1; t2 ])
+          :: acc
+        else
+          match or_psym_list psyms with
+          | None -> Formula.mk_true () :: acc
+          | Some psyms ->
+              Set.fold ~init:acc psyms ~f:(fun acc psym ->
+                  (Formula.mk_atom @@ Atom.mk_psym_app psym [ t1; t2 ]) :: acc))
 
 (*val simplify: Formula.t -> Formula.t*)
 and simplify ?(next = Fn.id) = function

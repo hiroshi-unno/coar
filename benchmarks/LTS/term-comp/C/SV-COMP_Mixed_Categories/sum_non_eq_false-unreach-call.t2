@@ -1,0 +1,47 @@
+///*** 1_main ***///
+START: main_bb3;
+FROM: main_bb3;
+var__temp_vn.tr.i := nondef.0;
+var__temp_vm.tr.i := nondef.1;
+TO: main_tailrecursei;
+
+FROM: main_tailrecursei;
+vn.tr.i := var__temp_vn.tr.i;
+vm.tr.i := var__temp_vm.tr.i;
+TO: main_tailrecursei_end;
+
+FROM: main_tailrecursei_end;
+assume(vn.tr.i == 0);
+TO: main_sumexit;
+
+FROM: main_tailrecursei_end;
+assume(vn.tr.i != 0);
+TO: main_bb6;
+
+FROM: main_sumexit;
+v4 := nondef.4 + nondef.5;
+TO: main_sumexit_end;
+
+FROM: main_sumexit_end;
+assume(vm.tr.i == v4);
+TO: main_bb4;
+
+FROM: main_sumexit_end;
+assume(vm.tr.i != v4);
+TO: main_bb5;
+
+FROM: main_bb4;
+TO: main_bb5;
+
+FROM: main_bb5;
+TO: main_bb5_ret;
+
+FROM: main_bb6;
+v6 := vn.tr.i - 1;
+v7 := vm.tr.i + 1;
+var__temp_vn.tr.i := v6;
+var__temp_vm.tr.i := v7;
+var__temp_vn.tr.i := v6;
+var__temp_vm.tr.i := v7;
+TO: main_tailrecursei;
+

@@ -1,0 +1,94 @@
+///*** 1_main ***///
+START: main_bb0;
+FROM: main_bb0;
+v0 := nondet();
+TO: main_bb0_end;
+
+FROM: main_bb0_end;
+assume((v0 sle 0) || (v0 sgt 1000));
+TO: main_bb9;
+
+FROM: main_bb0_end;
+assume((v0 sgt 0) && (v0 sle 1000));
+TO: main_bb1;
+
+FROM: main_bb1;
+v3 := zero_extend(32, 64, v0);
+v5 := nondet();
+var__temp_vi.0 := 0;
+var__temp_vi.0 := 0;
+TO: main_bb2;
+
+FROM: main_bb2;
+vi.0 := var__temp_vi.0;
+v7 := nondet();
+TO: main_bb2_end;
+
+FROM: main_bb2_end;
+assume(vi.0 slt v0);
+TO: main_bb3;
+
+FROM: main_bb2_end;
+assume(vi.0 sge v0);
+TO: main_bb4;
+
+FROM: main_bb3;
+v8 := sign_extend(32, 64, vi.0);
+v9 := v8;
+v5 := store_array(v5, v8, v7);
+v10 := vi.0 + 1;
+var__temp_vi.0 := v10;
+var__temp_vi.0 := v10;
+TO: main_bb2;
+
+FROM: main_bb4;
+var__temp_ventry.0 := v7;
+TO: main_bb4_end;
+
+FROM: main_bb4_end;
+assume(v7 slt 0);
+TO: main_bb8;
+
+FROM: main_bb4_end;
+assume(v7 sge 0);
+var__temp_ventry.0 := v7;
+TO: main_bb5;
+
+FROM: main_bb5;
+ventry.0 := var__temp_ventry.0;
+TO: main_bb5_end;
+
+FROM: main_bb5_end;
+assume(ventry.0 sge v0);
+TO: main_bb8;
+
+FROM: main_bb5_end;
+assume(ventry.0 slt v0);
+TO: main_bb6;
+
+FROM: main_bb6;
+v13 := sign_extend(32, 64, ventry.0);
+v14 := v13;
+v15 := select_array(v5, v13);
+TO: main_bb6_end;
+
+FROM: main_bb6_end;
+assume(v15 != 0);
+TO: main_bb7;
+
+FROM: main_bb6_end;
+assume(v15 == 0);
+TO: main_bb8;
+
+FROM: main_bb7;
+v17 := ventry.0 + 1;
+var__temp_ventry.0 := v17;
+var__temp_ventry.0 := v17;
+TO: main_bb5;
+
+FROM: main_bb8;
+TO: main_bb9;
+
+FROM: main_bb9;
+TO: main_bb9_ret;
+

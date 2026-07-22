@@ -5,13 +5,15 @@ type t = {
   kind : Predicate.fixpoint;
   name : Ident.pvar;
   args : sort_env_list;
+  arg_original_names : Ident.tvar list;
   body : Formula.t;
 }
 
-val make : Predicate.fixpoint -> Ident.pvar -> sort_env_list -> Formula.t -> t
+val make : Predicate.fixpoint -> Ident.pvar -> sort_env_list -> ?arg_original_names: Ident.tvar list -> Formula.t -> t
 val map : (Formula.t -> Formula.t) -> t -> t
 val map_list : (Formula.t -> Formula.t) -> t list -> t list
 val pvars_of_list : t list -> Ident.pvar list
+val tvars_of_list : sort_env_list -> Ident.tvar list
 val pred_sort_env_of_list : t list -> pred_sort_env_set
 val pred_sort_env_map_of_list : pred_sort_env_map -> t list -> pred_sort_env_map
 val sort_env_of_list : t list -> Logic.sort_env_set

@@ -36,7 +36,9 @@ module Make (Cfg : Config.ConfigType) = struct
     (Problem.of_muclp ~dtenv muclp
     |> preprocess ~print:Debug.print
     |>
-    if true then ProofSearch.solve ~print:Debug.print ~config pcsp_solver
+    (* Instead of storing it inside Problem.t, pass it directly to ProofSearch here *)
+    (* ToDo: Pass everything from pCSP to muCLP *)
+    if true then ProofSearch.solve ~dtenv ~print:Debug.print ~config pcsp_solver
     else RelProofSearch.solve ~print:Debug.print ~config pcsp_solver)
     >>= fun (sol, _) ->
     if print_sol then print_endline @@ MuCLP.Problem.str_of_solution sol;
@@ -106,6 +108,18 @@ module Make (Cfg : Config.ConfigType) = struct
       | LIA ->
           let open Qsat.QSAT (Mbp.LIA) in
           solve ~config ~print:Debug.print quantifiers f
+      | PLRA -> (
+          try
+            let open Pqsat.PQSAT_gen (Mbp.LRA) in
+            solve ~print:Debug.print quantifiers f 0.5
+          with exc ->
+            if true then raise exc
+            else
+              let open Sqsat.SampleQSAT (Mbp.LRA) in
+              solve ~print:Debug.print quantifiers f 0.5)
+      | PLIA ->
+          let open Pqsat.PQSAT_gen (Mbp.LIA) in
+          solve ~print:Debug.print quantifiers f 0.5
     in
     let solution =
       match res with

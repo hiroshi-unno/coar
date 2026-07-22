@@ -1,0 +1,87 @@
+///*** 1_main ***///
+START: main_bb10;
+FROM: main_bb10;
+memory0_freeIndex := 1;
+memory1_freeIndex := 1;
+vmemory0 := nondet();
+vmemory1 := nondet();
+v29 := nondet();
+var__temp_vtail.0.i := 0;
+var__temp_vj.0.i := 0;
+TO: main_bb10_end;
+
+FROM: main_bb10_end;
+assume(v29 slt 1);
+TO: main_traverseexit;
+
+FROM: main_bb10_end;
+assume(v29 sge 1);
+var__temp_vtail.0.i := 0;
+var__temp_vj.0.i := 0;
+TO: main_bb11;
+
+FROM: main_bb11;
+vtail.0.i := var__temp_vtail.0.i;
+vj.0.i := var__temp_vj.0.i;
+var__temp_vcurr.0.i := vtail.0.i;
+TO: main_bb11_end;
+
+FROM: main_bb11_end;
+assume(vj.0.i slt v29);
+TO: main_bb12;
+
+FROM: main_bb11_end;
+assume(vj.0.i sge v29);
+var__temp_vcurr.0.i := vtail.0.i;
+TO: main_init_listexit;
+
+FROM: main_bb12;
+v32 := memory0_freeIndex;
+v33 := memory0_freeIndex;
+v34 := v33 + 1;
+memory0_freeIndex := v34;
+v35 := nondet();
+v36 := sign_extend(32, 64, v32);
+v37 := select_array(vmemory0, v36);
+v38v1 := select_tuple(v37, 1, 2);
+v38v2 := constr_tuple(v35, v38v1);
+vmemory0 := store_array(vmemory0, v36, v38v2);
+v39 := sign_extend(32, 64, v32);
+v40 := select_array(vmemory0, v39);
+v41v0 := select_tuple(v40, 0, 2);
+v41v2 := constr_tuple(v41v0, vtail.0.i);
+vmemory0 := store_array(vmemory0, v39, v41v2);
+v42 := vj.0.i + 1;
+var__temp_vtail.0.i := v32;
+var__temp_vj.0.i := v42;
+var__temp_vtail.0.i := v32;
+var__temp_vj.0.i := v42;
+TO: main_bb11;
+
+FROM: main_init_listexit;
+vcurr.0.i := var__temp_vcurr.0.i;
+v43 := sign_extend(32, 64, vcurr.0.i);
+v44 := select_array(vmemory0, v43);
+v46 := select_tuple(v44, 1, 2);
+v47 := sign_extend(32, 64, v46);
+TO: main_init_listexit_end;
+
+FROM: main_init_listexit_end;
+assume(v47 != 0);
+TO: main_bb13;
+
+FROM: main_init_listexit_end;
+assume(v47 == 0);
+TO: main_traverseexit;
+
+FROM: main_bb13;
+v50 := sign_extend(32, 64, vcurr.0.i);
+v51 := select_array(vmemory0, v50);
+v53 := select_tuple(v51, 1, 2);
+var__temp_vcurr.0.i := v53;
+var__temp_vcurr.0.i := v53;
+TO: main_init_listexit;
+
+FROM: main_traverseexit;
+TO: main_traverseexit_ret;
+

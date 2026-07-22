@@ -149,40 +149,38 @@ let resolve_one_step ~print mode (param_senv, (papp : term)) exi_senv
      let _ = print @@ lazy "backward:" in
      c_pos)
   |> Set.Poly.filter_map ~f:(fun papp' ->
-         let atm2 = ExtTerm.to_old_atm exi_senv uni_senv' papp' in
-         print @@ lazy ("atm1: " ^ LogicOld.Atom.str_of atm1);
-         print @@ lazy ("atm2: " ^ LogicOld.Atom.str_of atm2);
-         let open Option.Monad_infix in
-         LogicOld.Atom.unify (Map.key_set exi_senv) atm2 atm1
-         >>= fun theta (*ToDo*) ->
-         let theta = Map.Poly.map ~f:ExtTerm.of_old_term theta in
-         let c_pos' =
-           Set.Poly.map
-             (if Stdlib.(mode = `Backward) then Set.remove c_pos papp'
-              else c_pos)
-             ~f:
-               (ExtTerm.subst theta
-               >> ExtTerm.to_old_atm exi_senv uni_senv'
-               >> Normalizer.normalize_let_atom >> Normalizer.normalize
-               >> ExtTerm.of_old_formula)
-         in
-         let c_neg' =
-           Set.Poly.map
-             (if Stdlib.(mode = `Forward) then Set.remove c_neg papp' else c_neg)
-             ~f:
-               (ExtTerm.subst theta
-               >> ExtTerm.to_old_atm exi_senv uni_senv'
-               >> Normalizer.normalize_let_atom >> Normalizer.normalize
-               >> ExtTerm.of_old_formula)
-         in
-         let c_phi' =
-           ExtTerm.to_old_fml exi_senv uni_senv' (ExtTerm.subst theta c_phi)
-           |> Evaluator.simplify |> ExtTerm.of_old_formula
-         in
-         let cl' = (uni_senv', c_pos', c_neg', c_phi') in
-         print @@ lazy ("cl': " ^ str_of exi_senv cl');
-         Some
-           (cl', Map.Poly.map theta ~f:(ExtTerm.to_old_trm exi_senv uni_senv')))
+      let atm2 = ExtTerm.to_old_atm exi_senv uni_senv' papp' in
+      print @@ lazy ("atm1: " ^ LogicOld.Atom.str_of atm1);
+      print @@ lazy ("atm2: " ^ LogicOld.Atom.str_of atm2);
+      let open Option.Monad_infix in
+      LogicOld.Atom.unify (Map.key_set exi_senv) atm2 atm1
+      >>= fun theta (*ToDo*) ->
+      let theta = Map.Poly.map ~f:ExtTerm.of_old_term theta in
+      let c_pos' =
+        Set.Poly.map
+          (if Stdlib.(mode = `Backward) then Set.remove c_pos papp' else c_pos)
+          ~f:
+            (ExtTerm.subst theta
+            >> ExtTerm.to_old_atm exi_senv uni_senv'
+            >> Normalizer.normalize_let_atom >> Normalizer.normalize
+            >> ExtTerm.of_old_formula)
+      in
+      let c_neg' =
+        Set.Poly.map
+          (if Stdlib.(mode = `Forward) then Set.remove c_neg papp' else c_neg)
+          ~f:
+            (ExtTerm.subst theta
+            >> ExtTerm.to_old_atm exi_senv uni_senv'
+            >> Normalizer.normalize_let_atom >> Normalizer.normalize
+            >> ExtTerm.of_old_formula)
+      in
+      let c_phi' =
+        ExtTerm.to_old_fml exi_senv uni_senv' (ExtTerm.subst theta c_phi)
+        |> Evaluator.simplify |> ExtTerm.of_old_formula
+      in
+      let cl' = (uni_senv', c_pos', c_neg', c_phi') in
+      print @@ lazy ("cl': " ^ str_of exi_senv cl');
+      Some (cl', Map.Poly.map theta ~f:(ExtTerm.to_old_trm exi_senv uni_senv')))
 
 (* val resolve: Atom.t Set.Poly.t -> Atom.t Set.Poly.t -> t -> t Set.Poly.t *)
 let resolve_one_step_all ~print positive negative exi_senv (c : t) =
@@ -209,29 +207,29 @@ let refresh_pvar_args exi_senv ((senv, ps, ns, phi) : t) =
   let ps', pres =
     Set.unzip
     @@ Set.Poly.map ps ~f:(fun atm ->
-           let pvar, args = Term.let_var_app atm in
-           let env =
-             mk_fresh_sort_env_list @@ Sort.args_of
-             @@ Map.Poly.find_exn exi_senv pvar
-           in
-           ( Term.mk_var_app pvar @@ List.map env ~f:(fst >> Term.mk_var),
-             ( env,
-               List.map2_exn args env ~f:(fun arg (x, s) ->
-                   Term.mk_apps (BoolTerm.mk_neq s) [ Term.mk_var x; arg ]) ) ))
+        let pvar, args = Term.let_var_app atm in
+        let env =
+          mk_fresh_sort_env_list @@ Sort.args_of
+          @@ Map.Poly.find_exn exi_senv pvar
+        in
+        ( Term.mk_var_app pvar @@ List.map env ~f:(fst >> Term.mk_var),
+          ( env,
+            List.map2_exn args env ~f:(fun arg (x, s) ->
+                Term.mk_apps (BoolTerm.mk_neq s) [ Term.mk_var x; arg ]) ) ))
   in
   let xss1, pneqss = Set.unzip pres in
   let ns', nres =
     Set.unzip
     @@ Set.Poly.map ns ~f:(fun atm ->
-           let pvar, args = Term.let_var_app atm in
-           let env =
-             mk_fresh_sort_env_list @@ Sort.args_of
-             @@ Map.Poly.find_exn exi_senv pvar
-           in
-           ( Term.mk_var_app pvar @@ List.map env ~f:(fst >> Term.mk_var),
-             ( env,
-               List.map2_exn args env ~f:(fun arg (x, s) ->
-                   Term.mk_apps (BoolTerm.mk_neq s) [ Term.mk_var x; arg ]) ) ))
+        let pvar, args = Term.let_var_app atm in
+        let env =
+          mk_fresh_sort_env_list @@ Sort.args_of
+          @@ Map.Poly.find_exn exi_senv pvar
+        in
+        ( Term.mk_var_app pvar @@ List.map env ~f:(fst >> Term.mk_var),
+          ( env,
+            List.map2_exn args env ~f:(fun arg (x, s) ->
+                Term.mk_apps (BoolTerm.mk_neq s) [ Term.mk_var x; arg ]) ) ))
   in
   let xss2, nneqss = Set.unzip nres in
   let senv' =
@@ -266,10 +264,10 @@ let reduce_sort_map (senv, ps, ns, phi) =
   (Map.Poly.filter_keys senv ~f:(Set.mem ftvs), ps, ns, phi)
 
 let rename ren ((uni_senv, ps, ns, phi) : t) =
-  ( uni_senv,
-    Set.Poly.map ~f:(BoolTerm.rename ren) ps,
-    Set.Poly.map ~f:(BoolTerm.rename ren) ns,
-    phi )
+  ( Map.rename_keys_map ren uni_senv,
+    Set.Poly.map ~f:(ExtTerm.rename ren) ps,
+    Set.Poly.map ~f:(ExtTerm.rename ren) ns,
+    ExtTerm.rename ren phi )
 
 let subst exi_senv sub ((uni_senv, ps, ns, phi) : t) : t =
   let ps1, ps2 =
@@ -361,3 +359,10 @@ let must_be_satisfied ?(print = fun _ -> ()) target_pvars
 
 let simplify exi_senv ((senv, ps, ns, phi) : t) =
   (senv, ps, ns, ExtTerm.simplify_formula exi_senv senv phi)
+
+let disj (senv1, ps1, ns1, phi1) (senv2, ps2, ns2, phi2) =
+  let senv = Map.force_merge senv1 senv2 in
+  let ps = Set.union ps1 ps2 in
+  let ns = Set.union ns1 ns2 in
+  let phi = BoolTerm.or_of [ phi1; phi2 ] in
+  (senv, ps, ns, phi)

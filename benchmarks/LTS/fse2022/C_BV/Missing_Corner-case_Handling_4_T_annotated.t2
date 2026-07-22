@@ -1,0 +1,169 @@
+///*** 1_main ***///
+START: main_bb10;
+
+TYPE v45: bv(32);
+
+FROM: main_bb10;
+memory0_freeIndex := 1;
+memory1_freeIndex := 1;
+vmemory0 := nondet();
+vmemory1 := nondet();
+v45 := nondet();
+TO: main_bb10_end;
+
+FROM: main_bb10_end;
+assume((v45 sle 0) || (v45 sgt 65534));
+TO: main_bb19;
+
+FROM: main_bb10_end;
+assume((v45 sgt 0) && (v45 sle 65534));
+TO: main_bb11;
+
+FROM: main_bb11;
+v48 := memory0_freeIndex;
+v49 := memory0_freeIndex;
+v50 := v49 + 1;
+memory0_freeIndex := v50;
+v51 := sign_extend(32, 64, v48);
+v52 := select_array(vmemory0, v51);
+v53v1 := select_tuple(v52, 1, 2);
+v53v2 := constr_tuple(1, v53v1);
+vmemory0 := store_array(vmemory0, v51, v53v2);
+v54 := sign_extend(32, 64, v48);
+v55 := select_array(vmemory0, v54);
+v56v0 := select_tuple(v55, 0, 2);
+v56v2 := constr_tuple(v56v0, 0);
+vmemory0 := store_array(vmemory0, v54, v56v2);
+var__temp_vcyclic.0.i := v48;
+var__temp_vi.0.i := 2;
+var__temp_vcyclic.0.i := v48;
+var__temp_vi.0.i := 2;
+TO: main_bb12;
+
+FROM: main_bb12;
+vcyclic.0.i := var__temp_vcyclic.0.i;
+vi.0.i := var__temp_vi.0.i;
+TO: main_bb12_end;
+
+FROM: main_bb12_end;
+assume(vi.0.i sle v45);
+TO: main_bb13;
+
+FROM: main_bb12_end;
+assume(vi.0.i sgt v45);
+TO: main_initLinkexit;
+
+FROM: main_bb13;
+v58 := memory0_freeIndex;
+v59 := memory0_freeIndex;
+v60 := v59 + 1;
+memory0_freeIndex := v60;
+v61 := sign_extend(32, 64, v58);
+v62 := select_array(vmemory0, v61);
+v63v1 := select_tuple(v62, 1, 2);
+v63v2 := constr_tuple(vi.0.i, v63v1);
+vmemory0 := store_array(vmemory0, v61, v63v2);
+v64 := sign_extend(32, 64, v58);
+v65 := select_array(vmemory0, v64);
+v66v0 := select_tuple(v65, 0, 2);
+v66v2 := constr_tuple(v66v0, 0);
+vmemory0 := store_array(vmemory0, v64, v66v2);
+v67 := sign_extend(32, 64, vcyclic.0.i);
+v68 := select_array(vmemory0, v67);
+v69v0 := select_tuple(v68, 0, 2);
+v69v2 := constr_tuple(v69v0, v58);
+vmemory0 := store_array(vmemory0, v67, v69v2);
+v70 := sign_extend(32, 64, vcyclic.0.i);
+v71 := select_array(vmemory0, v70);
+v73 := select_tuple(v71, 1, 2);
+v74 := vi.0.i + 1;
+var__temp_vcyclic.0.i := v73;
+var__temp_vi.0.i := v74;
+var__temp_vcyclic.0.i := v73;
+var__temp_vi.0.i := v74;
+TO: main_bb12;
+
+FROM: main_initLinkexit;
+v75 := sign_extend(32, 64, vcyclic.0.i);
+v76 := select_array(vmemory0, v75);
+v77v0 := select_tuple(v76, 0, 2);
+v77v2 := constr_tuple(v77v0, v48);
+vmemory0 := store_array(vmemory0, v75, v77v2);
+var__temp_vbegin.0.i := v48;
+var__temp_vbegin.0.i := v48;
+TO: main_bb14;
+
+FROM: main_bb14;
+vbegin.0.i := var__temp_vbegin.0.i;
+v78 := sign_extend(32, 64, vbegin.0.i);
+v79 := select_array(vmemory0, v78);
+v81 := select_tuple(v79, 1, 2);
+var__temp_vh0 := 0.000000e+00;
+var__temp_vnode.0 := v48;
+TO: main_bb14_end;
+
+FROM: main_bb14_end;
+assume(v81 != v48);
+TO: main_bb15;
+
+FROM: main_bb14_end;
+assume(v81 == v48);
+var__temp_vnode.0 := v48;
+TO: main_findEndexit;
+
+FROM: main_bb15;
+v83 := sign_extend(32, 64, vbegin.0.i);
+v84 := select_array(vmemory0, v83);
+v86 := select_tuple(v84, 1, 2);
+var__temp_vbegin.0.i := v86;
+var__temp_vbegin.0.i := v86;
+TO: main_bb14;
+
+FROM: main_findEndexit;
+vnode.0 := var__temp_vnode.0;
+TO: main_findEndexit_end;
+
+FROM: main_findEndexit_end;
+assume(vnode.0 != vbegin.0.i);
+TO: main_bb16;
+
+FROM: main_findEndexit_end;
+assume(vnode.0 == vbegin.0.i);
+TO: main_bb19;
+
+FROM: main_bb16;
+v88 := sign_extend(32, 64, vnode.0);
+v89 := select_array(vmemory0, v88);
+v91 := select_tuple(v89, 0, 2);
+v92 := sbv2real(32, v91);
+var__temp_vh1 := vh0;
+TO: main_bb16_end;
+
+FROM: main_bb16_end;
+assume(nondet() != 0);
+TO: main_bb17;
+
+FROM: main_bb16_end;
+assume(nondet() != 0);
+TO: main_bb18;
+
+FROM: main_bb17;
+v94 := sign_extend(32, 64, vnode.0);
+v95 := select_array(vmemory0, v94);
+v97 := select_tuple(v95, 0, 2);
+v98 := sbv2real(32, v97);
+var__temp_vh1 := v98;
+TO: main_bb18;
+
+FROM: main_bb18;
+v99 := sign_extend(32, 64, vnode.0);
+v100 := select_array(vmemory0, v99);
+v102 := select_tuple(v100, 1, 2);
+var__temp_vh0 := vh1;
+var__temp_vnode.0 := v102;
+var__temp_vnode.0 := v102;
+TO: main_findEndexit;
+
+FROM: main_bb19;
+TO: main_bb19_ret;
+

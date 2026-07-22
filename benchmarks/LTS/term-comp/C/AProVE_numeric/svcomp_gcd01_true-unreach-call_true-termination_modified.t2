@@ -1,0 +1,103 @@
+///*** 1_main ***///
+START: main_bb6;
+FROM: main_bb6;
+v6 := nondet();
+TO: main_bb6_end;
+
+FROM: main_bb6_end;
+assume(v6 sle 0);
+TO: main_bb10;
+
+FROM: main_bb6_end;
+assume(v6 sgt 0);
+TO: main_bb7;
+
+FROM: main_bb7;
+v8 := nondet();
+var__temp_vy1.tr.i := v6;
+var__temp_vy2.tr.i := v8;
+TO: main_bb7_end;
+
+FROM: main_bb7_end;
+assume(v8 sle 0);
+TO: main_bb10;
+
+FROM: main_bb7_end;
+assume(v8 sgt 0);
+var__temp_vy1.tr.i := v6;
+var__temp_vy2.tr.i := v8;
+TO: main_tailrecursei;
+
+FROM: main_tailrecursei;
+vy1.tr.i := var__temp_vy1.tr.i;
+vy2.tr.i := var__temp_vy2.tr.i;
+var__temp_v.0.i := 0;
+TO: main_tailrecursei_end;
+
+FROM: main_tailrecursei_end;
+assume((vy1.tr.i sle 0) || (vy2.tr.i sle 0));
+var__temp_v.0.i := 0;
+TO: main_gcdexit;
+
+FROM: main_tailrecursei_end;
+assume((vy1.tr.i sgt 0) && (vy2.tr.i sgt 0));
+TO: main_bb8;
+
+FROM: main_bb8;
+var__temp_v.0.i := vy1.tr.i;
+TO: main_bb8_end;
+
+FROM: main_bb8_end;
+assume(vy1.tr.i == vy2.tr.i);
+var__temp_v.0.i := vy1.tr.i;
+TO: main_gcdexit;
+
+FROM: main_bb8_end;
+assume(vy1.tr.i != vy2.tr.i);
+TO: main_bb11;
+
+FROM: main_gcdexit;
+v.0.i := var__temp_v.0.i;
+TO: main_gcdexit_end;
+
+FROM: main_gcdexit_end;
+assume(((v.0.i slt 1) && (v6 sgt 0)) && (v8 sgt 0));
+TO: main_bb9;
+
+FROM: main_gcdexit_end;
+assume(((v.0.i sge 1) || (v6 sle 0)) || (v8 sle 0));
+TO: main_bb10;
+
+FROM: main_bb9;
+TO: main_bb13_ret;
+
+FROM: main_bb10;
+TO: main_bb10_ret;
+
+FROM: main_bb11;
+TO: main_bb11_end;
+
+FROM: main_bb11_end;
+assume(vy1.tr.i sgt vy2.tr.i);
+TO: main_bb12;
+
+FROM: main_bb11_end;
+assume(vy1.tr.i sle vy2.tr.i);
+TO: main_bb13;
+
+FROM: main_bb12;
+v17 := vy1.tr.i - vy2.tr.i;
+var__temp_vy1.tr.i := v17;
+var__temp_vy2.tr.i := vy2.tr.i;
+var__temp_vy1.tr.i := v17;
+var__temp_vy2.tr.i := vy2.tr.i;
+TO: main_tailrecursei;
+
+FROM: main_bb13;
+v18 := vy2.tr.i - vy1.tr.i;
+var__temp_vy1.tr.i := vy1.tr.i;
+var__temp_vy2.tr.i := v18;
+var__temp_vy1.tr.i := vy1.tr.i;
+var__temp_vy2.tr.i := v18;
+TO: main_tailrecursei;
+

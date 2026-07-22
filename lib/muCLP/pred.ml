@@ -8,13 +8,18 @@ type t = {
   kind : Predicate.fixpoint;
   name : Ident.pvar;
   args : sort_env_list;
+  arg_original_names :
+    Ident.tvar list (* List of variable names before renaming *);
   body : Formula.t;
 }
 
-let make kind name args body = { kind; name; args; body }
+let make kind name args ?(arg_original_names = []) body =
+  { kind; name; args; arg_original_names; body }
+
 let map f pred = { pred with body = f pred.body }
 let map_list f = List.map ~f:(map f)
 let pvars_of_list = List.map ~f:(fun pred -> pred.name)
+let tvars_of_list = List.map ~f:fst
 
 let pred_sort_env_of_list preds =
   Set.Poly.of_list
@@ -59,11 +64,20 @@ let kind_of_exn preds pvar =
 let kind_of preds pvar =
   match lookup preds pvar with Some (kind, _, _) -> Some kind | None -> None
 
+let print_orig_name = false
+
 let str_of pred =
   sprintf "%s%s: bool =%s %s;"
     (Ident.name_of_pvar pred.name)
     (if List.length pred.args > 0 then
-       " " ^ str_of_sort_env_list Term.str_of_sort pred.args
+       " "
+       ^ str_of_sort_env_list Term.str_of_sort pred.args
+       ^
+       if print_orig_name then
+         "\n(original arg names in Pred: "
+         ^ Ident.str_of_tvar_list ~sep:" " pred.arg_original_names
+         ^ ")\n"
+       else ""
      else "")
     (Predicate.str_of_fop pred.kind)
     (Formula.str_of pred.body)

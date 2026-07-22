@@ -1,0 +1,160 @@
+///*** 1_main ***///
+START: main_bb7;
+FROM: main_bb7;
+flag := 0;
+v11 := nondet();
+flag := 0;
+var__temp_verrno.0 := 0;
+var__temp_vpos.0 := 0;
+TO: main_bb7_end;
+
+FROM: main_bb7_end;
+assume((v11 sle 0) || (v11 sgt 65536));
+TO: main_bb17;
+
+FROM: main_bb7_end;
+assume((v11 sgt 0) && (v11 sle 65536));
+var__temp_verrno.0 := 0;
+var__temp_vpos.0 := 0;
+TO: main_bb8;
+
+FROM: main_bb8;
+verrno.0 := var__temp_verrno.0;
+vpos.0 := var__temp_vpos.0;
+TO: main_bb8_end;
+
+FROM: main_bb8_end;
+assume(vpos.0 slt v11);
+TO: main_bb9;
+
+FROM: main_bb8_end;
+assume(vpos.0 sge v11);
+TO: main_bb17;
+
+FROM: main_bb9;
+v15 := v11 - vpos.0;
+v16 := flag;
+var__temp_vcount.0.i := 0;
+var__temp_v.01.i := vpos.0;
+var__temp_v.0.i := 0;
+TO: main_bb9_end;
+
+FROM: main_bb9_end;
+assume(v16 == 1);
+var__temp_v.0.i := 0;
+TO: main_readexit;
+
+FROM: main_bb9_end;
+assume(v16 != 1);
+var__temp_vcount.0.i := 0;
+var__temp_v.01.i := vpos.0;
+TO: main_bb10;
+
+FROM: main_bb10;
+vcount.0.i := var__temp_vcount.0.i;
+v.01.i := var__temp_v.01.i;
+var__temp_v.0.i := vcount.0.i;
+TO: main_bb10_end;
+
+FROM: main_bb10_end;
+assume(v.01.i slt v15);
+TO: main_bb11;
+
+FROM: main_bb10_end;
+assume(v.01.i sge v15);
+var__temp_v.0.i := vcount.0.i;
+TO: main_readexit;
+
+FROM: main_bb11;
+v19 := nondet();
+var__temp_v.0.i := -1;
+TO: main_bb11_end;
+
+FROM: main_bb11_end;
+assume(v19 == 0);
+var__temp_v.0.i := -1;
+TO: main_readexit;
+
+FROM: main_bb11_end;
+assume(v19 != 0);
+TO: main_bb12;
+
+FROM: main_bb12;
+v22 := 0 - v19;
+TO: main_bb12_v..i;
+FROM: main_bb12_v..i;
+assume(v19 slt 0);
+v..i := v22;
+TO: main_bb12_sv..i;
+
+FROM: main_bb12_v..i;
+assume(v19 sge 0);
+v..i := v19;
+TO: main_bb12_sv..i;
+
+FROM: main_bb12_sv..i;
+v23 := v..i srem 1000;
+v24 := vcount.0.i + 1;
+TO: main_bb12_end;
+
+FROM: main_bb12_end;
+assume(v23 slt 995);
+TO: main_bb13;
+
+FROM: main_bb12_end;
+assume(v23 sge 995);
+TO: main_bb14;
+
+FROM: main_bb13;
+v26 := v.01.i + 1;
+var__temp_vcount.0.i := v24;
+var__temp_v.01.i := v26;
+var__temp_vcount.0.i := v24;
+var__temp_v.01.i := v26;
+TO: main_bb10;
+
+FROM: main_bb14;
+flag := 1;
+var__temp_v.0.i := v24;
+var__temp_v.0.i := v24;
+TO: main_readexit;
+
+FROM: main_readexit;
+v.0.i := var__temp_v.0.i;
+TO: main_readexit_end;
+
+FROM: main_readexit_end;
+assume(v.0.i == -1);
+TO: main_bb15;
+
+FROM: main_readexit_end;
+assume(v.0.i != -1);
+TO: main_bb16;
+
+FROM: main_bb15;
+v28 := verrno.0 + 1;
+var__temp_verrno.0 := v28;
+var__temp_vpos.0 := vpos.0;
+TO: main_bb15_end;
+
+FROM: main_bb15_end;
+assume(v28 == 5);
+TO: main_bb17;
+
+FROM: main_bb15_end;
+assume(v28 != 5);
+var__temp_verrno.0 := v28;
+var__temp_vpos.0 := vpos.0;
+TO: main_bb8;
+
+FROM: main_bb16;
+v30 := vpos.0 + v.0.i;
+var__temp_verrno.0 := verrno.0;
+var__temp_vpos.0 := v30;
+var__temp_verrno.0 := verrno.0;
+var__temp_vpos.0 := v30;
+TO: main_bb8;
+
+FROM: main_bb17;
+TO: main_bb17_ret;
+

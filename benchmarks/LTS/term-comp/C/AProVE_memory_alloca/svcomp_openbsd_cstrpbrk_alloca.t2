@@ -1,0 +1,109 @@
+///*** 1_main ***///
+START: main_bb7;
+FROM: main_bb7;
+memory0_freeIndex := 1;
+vmemory0 := nondet();
+v17 := nondet();
+v18 := nondet();
+TO: main_bb7_v.;
+FROM: main_bb7_v.;
+assume(v17 slt 1);
+v. := 1;
+TO: main_bb7_sv.;
+
+FROM: main_bb7_v.;
+assume(v17 sge 1);
+v. := v17;
+TO: main_bb7_sv.;
+
+FROM: main_bb7_sv.;
+TO: main_bb7_vlength2.0;
+FROM: main_bb7_vlength2.0;
+assume(v18 slt 1);
+vlength2.0 := 1;
+TO: main_bb7_svlength2.0;
+
+FROM: main_bb7_vlength2.0;
+assume(v18 sge 1);
+vlength2.0 := v18;
+TO: main_bb7_svlength2.0;
+
+FROM: main_bb7_svlength2.0;
+v21 := v. * 1;
+v22 := memory0_freeIndex;
+v23 := memory0_freeIndex;
+v24 := v23 + v21;
+memory0_freeIndex := v24;
+v25 := vlength2.0 * 1;
+v26 := memory0_freeIndex;
+v27 := memory0_freeIndex;
+v28 := v27 + v25;
+memory0_freeIndex := v28;
+v29 := v. - 1;
+v30 := v22 + v29;
+v31 := sign_extend(32, 64, v30);
+v32 := v31;
+vmemory0 := store_array(vmemory0, v31, 0);
+v33 := vlength2.0 - 1;
+v34 := v26 + v33;
+v35 := sign_extend(32, 64, v34);
+v36 := v35;
+vmemory0 := store_array(vmemory0, v35, 0);
+var__temp_v.01.i := v22;
+var__temp_v.01.i := v22;
+TO: main_bb8;
+
+FROM: main_bb8;
+v.01.i := var__temp_v.01.i;
+v37 := v.01.i + 1;
+v38 := sign_extend(32, 64, v.01.i);
+v39 := v38;
+v40 := select_array(vmemory0, v38);
+v41 := sign_extend(8, 32, v40);
+var__temp_vscanp.0.i := v26;
+TO: main_bb8_end;
+
+FROM: main_bb8_end;
+assume(v41 != 0);
+var__temp_vscanp.0.i := v26;
+TO: main_bb9;
+
+FROM: main_bb8_end;
+assume(v41 == 0);
+TO: main_cstrpbrkexit;
+
+FROM: main_bb9;
+vscanp.0.i := var__temp_vscanp.0.i;
+v43 := vscanp.0.i + 1;
+v44 := sign_extend(32, 64, vscanp.0.i);
+v45 := v44;
+v46 := select_array(vmemory0, v44);
+v47 := sign_extend(8, 32, v46);
+var__temp_v.01.i := v37;
+TO: main_bb9_end;
+
+FROM: main_bb9_end;
+assume(v47 != 0);
+TO: main_bb10;
+
+FROM: main_bb9_end;
+assume(v47 == 0);
+var__temp_v.01.i := v37;
+TO: main_bb8;
+
+FROM: main_bb10;
+var__temp_vscanp.0.i := v43;
+TO: main_bb10_end;
+
+FROM: main_bb10_end;
+assume(v47 == v41);
+TO: main_cstrpbrkexit;
+
+FROM: main_bb10_end;
+assume(v47 != v41);
+var__temp_vscanp.0.i := v43;
+TO: main_bb9;
+
+FROM: main_cstrpbrkexit;
+TO: main_cstrpbrkexit_ret;
+

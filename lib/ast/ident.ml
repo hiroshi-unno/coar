@@ -15,7 +15,8 @@ let mk_fresh_tvar ?(prefix = None) () =
 
 let name_of_tvar (Tvar name) = name
 let str_of_tvar x = (*if is_dontcare x then "_" else*) name_of_tvar x
-let str_of_tvars ~sep tvs = String.concat_map_set ~sep ~f:name_of_tvar tvs
+let str_of_tvars = String.concat_map_set ~f:name_of_tvar
+let str_of_tvar_list = String.concat_map_list ~f:str_of_tvar
 let tvar_compare (Tvar var1) (Tvar var2) = String.compare var1 var2
 let tvar_equal (Tvar var1) (Tvar var2) = String.equal var1 var2
 

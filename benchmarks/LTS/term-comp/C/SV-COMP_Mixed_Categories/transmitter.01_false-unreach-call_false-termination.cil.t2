@@ -1,0 +1,590 @@
+///*** 1_main ***///
+START: main_bb121;
+FROM: main_bb121;
+m_pc := 0;
+t1_pc := 0;
+M_E := 2;
+T1_E := 2;
+E_1 := 2;
+m_st := 0;
+t1_st := 0;
+m_i := 0;
+t1_i := 0;
+m_i := 1;
+t1_i := 1;
+v198 := m_i;
+TO: main_bb121_end;
+
+FROM: main_bb121_end;
+assume(v198 == 1);
+TO: main_bb122;
+
+FROM: main_bb121_end;
+assume(v198 != 1);
+TO: main_bb123;
+
+FROM: main_bb122;
+m_st := 0;
+TO: main_bb124;
+
+FROM: main_bb123;
+m_st := 2;
+TO: main_bb124;
+
+FROM: main_bb124;
+v200 := t1_i;
+TO: main_bb124_end;
+
+FROM: main_bb124_end;
+assume(v200 == 1);
+TO: main_bb125;
+
+FROM: main_bb124_end;
+assume(v200 != 1);
+TO: main_bb126;
+
+FROM: main_bb125;
+t1_st := 0;
+TO: main_init_threadsexiti;
+
+FROM: main_bb126;
+t1_st := 2;
+TO: main_init_threadsexiti;
+
+FROM: main_init_threadsexiti;
+v202 := M_E;
+TO: main_init_threadsexiti_end;
+
+FROM: main_init_threadsexiti_end;
+assume(v202 == 0);
+TO: main_bb127;
+
+FROM: main_init_threadsexiti_end;
+assume(v202 != 0);
+TO: main_bb128;
+
+FROM: main_bb127;
+M_E := 1;
+TO: main_bb128;
+
+FROM: main_bb128;
+v204 := T1_E;
+TO: main_bb128_end;
+
+FROM: main_bb128_end;
+assume(v204 == 0);
+TO: main_bb129;
+
+FROM: main_bb128_end;
+assume(v204 != 0);
+TO: main_bb130;
+
+FROM: main_bb129;
+T1_E := 1;
+TO: main_bb130;
+
+FROM: main_bb130;
+v206 := E_1;
+TO: main_bb130_end;
+
+FROM: main_bb130_end;
+assume(v206 == 0);
+TO: main_bb131;
+
+FROM: main_bb130_end;
+assume(v206 != 0);
+TO: main_fire_delta_eventsexit11i;
+
+FROM: main_bb131;
+E_1 := 1;
+TO: main_fire_delta_eventsexit11i;
+
+FROM: main_fire_delta_eventsexit11i;
+v208 := m_pc;
+v210 := M_E;
+TO: main_fire_delta_eventsexit11i_end;
+
+FROM: main_fire_delta_eventsexit11i_end;
+assume((v208 == 1) && (v210 == 1));
+TO: main_bb132;
+
+FROM: main_fire_delta_eventsexit11i_end;
+assume((v208 != 1) || (v210 != 1));
+TO: main_bb133;
+
+FROM: main_bb132;
+m_st := 0;
+TO: main_bb133;
+
+FROM: main_bb133;
+v212 := t1_pc;
+v214 := E_1;
+TO: main_bb133_end;
+
+FROM: main_bb133_end;
+assume((v212 == 1) && (v214 == 1));
+TO: main_bb134;
+
+FROM: main_bb133_end;
+assume((v212 != 1) || (v214 != 1));
+TO: main_activate_threadsexit16i;
+
+FROM: main_bb134;
+t1_st := 0;
+TO: main_activate_threadsexit16i;
+
+FROM: main_activate_threadsexit16i;
+v216 := M_E;
+TO: main_activate_threadsexit16i_end;
+
+FROM: main_activate_threadsexit16i_end;
+assume(v216 == 1);
+TO: main_bb135;
+
+FROM: main_activate_threadsexit16i_end;
+assume(v216 != 1);
+TO: main_bb136;
+
+FROM: main_bb135;
+M_E := 2;
+TO: main_bb136;
+
+FROM: main_bb136;
+v218 := T1_E;
+TO: main_bb136_end;
+
+FROM: main_bb136_end;
+assume(v218 == 1);
+TO: main_bb137;
+
+FROM: main_bb136_end;
+assume(v218 != 1);
+TO: main_bb138;
+
+FROM: main_bb137;
+T1_E := 2;
+TO: main_bb138;
+
+FROM: main_bb138;
+v220 := E_1;
+TO: main_bb138_end;
+
+FROM: main_bb138_end;
+assume(v220 == 1);
+TO: main_bb139;
+
+FROM: main_bb138_end;
+assume(v220 != 1);
+TO: main_reset_delta_eventsexit17i;
+
+FROM: main_bb139;
+E_1 := 2;
+TO: main_reset_delta_eventsexit17i;
+
+FROM: main_reset_delta_eventsexit17i;
+v222 := m_st;
+v224 := t1_st;
+TO: main_reset_delta_eventsexit17i_end;
+
+FROM: main_reset_delta_eventsexit17i_end;
+assume((v222 == 0) || (v224 == 0));
+TO: main_bb140;
+
+FROM: main_reset_delta_eventsexit17i_end;
+assume((v222 != 0) && (v224 != 0));
+TO: main_evalexiti;
+
+FROM: main_bb140;
+v226 := m_st;
+TO: main_bb140_end;
+
+FROM: main_bb140_end;
+assume(v226 == 0);
+TO: main_bb141;
+
+FROM: main_bb140_end;
+assume(v226 != 0);
+TO: main_bb147;
+
+FROM: main_bb141;
+v228 := nondet();
+TO: main_bb141_end;
+
+FROM: main_bb141_end;
+assume(v228 != 0);
+TO: main_bb142;
+
+FROM: main_bb141_end;
+assume(v228 == 0);
+TO: main_bb147;
+
+FROM: main_bb142;
+m_st := 1;
+v230 := m_pc;
+v232 := m_pc;
+TO: main_bb142_end;
+
+FROM: main_bb142_end;
+assume((v230 != 0) && (v232 == 1));
+TO: main_masterexitii;
+
+FROM: main_bb142_end;
+assume((v230 == 0) || (v232 != 1));
+TO: main_bb143;
+
+FROM: main_bb143;
+E_1 := 1;
+v234 := m_pc;
+v236 := M_E;
+TO: main_bb143_end;
+
+FROM: main_bb143_end;
+assume((v234 == 1) && (v236 == 1));
+TO: main_bb144;
+
+FROM: main_bb143_end;
+assume((v234 != 1) || (v236 != 1));
+TO: main_bb145;
+
+FROM: main_bb144;
+m_st := 0;
+TO: main_bb145;
+
+FROM: main_bb145;
+v238 := t1_pc;
+v240 := E_1;
+TO: main_bb145_end;
+
+FROM: main_bb145_end;
+assume((v238 == 1) && (v240 == 1));
+TO: main_bb146;
+
+FROM: main_bb145_end;
+assume((v238 != 1) || (v240 != 1));
+TO: main_immediate_notifyexitiii;
+
+FROM: main_bb146;
+t1_st := 0;
+TO: main_immediate_notifyexitiii;
+
+FROM: main_immediate_notifyexitiii;
+E_1 := 2;
+TO: main_masterexitii;
+
+FROM: main_masterexitii;
+m_pc := 1;
+m_st := 2;
+TO: main_bb147;
+
+FROM: main_bb147;
+v242 := t1_st;
+TO: main_bb147_end;
+
+FROM: main_bb147_end;
+assume(v242 == 0);
+TO: main_bb148;
+
+FROM: main_bb147_end;
+assume(v242 != 0);
+TO: main_reset_delta_eventsexit17i;
+
+FROM: main_bb148;
+v244 := nondet();
+TO: main_bb148_end;
+
+FROM: main_bb148_end;
+assume(v244 != 0);
+TO: main_bb149;
+
+FROM: main_bb148_end;
+assume(v244 == 0);
+TO: main_reset_delta_eventsexit17i;
+
+FROM: main_bb149;
+t1_st := 1;
+v246 := t1_pc;
+v248 := t1_pc;
+TO: main_bb149_end;
+
+FROM: main_bb149_end;
+assume((v246 != 0) && (v248 == 1));
+TO: main_bb150;
+
+FROM: main_bb149_end;
+assume((v246 == 0) || (v248 != 1));
+TO: main_transmit1exitii;
+
+FROM: main_bb150;
+TO: main_start_simulationexit_ret;
+
+FROM: main_transmit1exitii;
+t1_pc := 1;
+t1_st := 2;
+TO: main_reset_delta_eventsexit17i;
+
+FROM: main_evalexiti;
+v250 := M_E;
+TO: main_evalexiti_end;
+
+FROM: main_evalexiti_end;
+assume(v250 == 0);
+TO: main_bb151;
+
+FROM: main_evalexiti_end;
+assume(v250 != 0);
+TO: main_bb152;
+
+FROM: main_bb151;
+M_E := 1;
+TO: main_bb152;
+
+FROM: main_bb152;
+v252 := T1_E;
+TO: main_bb152_end;
+
+FROM: main_bb152_end;
+assume(v252 == 0);
+TO: main_bb153;
+
+FROM: main_bb152_end;
+assume(v252 != 0);
+TO: main_bb154;
+
+FROM: main_bb153;
+T1_E := 1;
+TO: main_bb154;
+
+FROM: main_bb154;
+v254 := E_1;
+TO: main_bb154_end;
+
+FROM: main_bb154_end;
+assume(v254 == 0);
+TO: main_bb155;
+
+FROM: main_bb154_end;
+assume(v254 != 0);
+TO: main_fire_delta_eventsexiti;
+
+FROM: main_bb155;
+E_1 := 1;
+TO: main_fire_delta_eventsexiti;
+
+FROM: main_fire_delta_eventsexiti;
+v256 := m_pc;
+v258 := M_E;
+TO: main_fire_delta_eventsexiti_end;
+
+FROM: main_fire_delta_eventsexiti_end;
+assume((v256 == 1) && (v258 == 1));
+TO: main_bb156;
+
+FROM: main_fire_delta_eventsexiti_end;
+assume((v256 != 1) || (v258 != 1));
+TO: main_bb157;
+
+FROM: main_bb156;
+m_st := 0;
+TO: main_bb157;
+
+FROM: main_bb157;
+v260 := t1_pc;
+v262 := E_1;
+TO: main_bb157_end;
+
+FROM: main_bb157_end;
+assume((v260 == 1) && (v262 == 1));
+TO: main_bb158;
+
+FROM: main_bb157_end;
+assume((v260 != 1) || (v262 != 1));
+TO: main_activate_threadsexit7i;
+
+FROM: main_bb158;
+t1_st := 0;
+TO: main_activate_threadsexit7i;
+
+FROM: main_activate_threadsexit7i;
+v264 := M_E;
+TO: main_activate_threadsexit7i_end;
+
+FROM: main_activate_threadsexit7i_end;
+assume(v264 == 1);
+TO: main_bb159;
+
+FROM: main_activate_threadsexit7i_end;
+assume(v264 != 1);
+TO: main_bb160;
+
+FROM: main_bb159;
+M_E := 2;
+TO: main_bb160;
+
+FROM: main_bb160;
+v266 := T1_E;
+TO: main_bb160_end;
+
+FROM: main_bb160_end;
+assume(v266 == 1);
+TO: main_bb161;
+
+FROM: main_bb160_end;
+assume(v266 != 1);
+TO: main_bb162;
+
+FROM: main_bb161;
+T1_E := 2;
+TO: main_bb162;
+
+FROM: main_bb162;
+v268 := E_1;
+TO: main_bb162_end;
+
+FROM: main_bb162_end;
+assume(v268 == 1);
+TO: main_bb163;
+
+FROM: main_bb162_end;
+assume(v268 != 1);
+TO: main_reset_delta_eventsexiti;
+
+FROM: main_bb163;
+E_1 := 2;
+TO: main_reset_delta_eventsexiti;
+
+FROM: main_reset_delta_eventsexiti;
+v270 := m_st;
+v272 := t1_st;
+TO: main_reset_delta_eventsexiti_v__retres1.0.i.i;
+FROM: main_reset_delta_eventsexiti_v__retres1.0.i.i;
+assume((v270 == 0) || (v272 == 0));
+v__retres1.0.i.i := 1;
+TO: main_reset_delta_eventsexiti_sv__retres1.0.i.i;
+
+FROM: main_reset_delta_eventsexiti_v__retres1.0.i.i;
+assume((v270 != 0) && (v272 != 0));
+v__retres1.0.i.i := 0;
+TO: main_reset_delta_eventsexiti_sv__retres1.0.i.i;
+
+FROM: main_reset_delta_eventsexiti_sv__retres1.0.i.i;
+TO: main_reset_delta_eventsexiti_end;
+
+FROM: main_reset_delta_eventsexiti_end;
+assume(v__retres1.0.i.i == 0);
+TO: main_bb164;
+
+FROM: main_reset_delta_eventsexiti_end;
+assume(v__retres1.0.i.i != 0);
+TO: main_reset_time_eventsexiti;
+
+FROM: main_bb164;
+M_E := 1;
+v275 := m_pc;
+v277 := M_E;
+TO: main_bb164_end;
+
+FROM: main_bb164_end;
+assume((v275 == 1) && (v277 == 1));
+TO: main_bb165;
+
+FROM: main_bb164_end;
+assume((v275 != 1) || (v277 != 1));
+TO: main_bb166;
+
+FROM: main_bb165;
+m_st := 0;
+TO: main_bb166;
+
+FROM: main_bb166;
+v279 := t1_pc;
+v281 := E_1;
+TO: main_bb166_end;
+
+FROM: main_bb166_end;
+assume((v279 == 1) && (v281 == 1));
+TO: main_bb167;
+
+FROM: main_bb166_end;
+assume((v279 != 1) || (v281 != 1));
+TO: main_activate_threadsexiti;
+
+FROM: main_bb167;
+t1_st := 0;
+TO: main_activate_threadsexiti;
+
+FROM: main_activate_threadsexiti;
+v283 := M_E;
+TO: main_activate_threadsexiti_end;
+
+FROM: main_activate_threadsexiti_end;
+assume(v283 == 1);
+TO: main_bb168;
+
+FROM: main_activate_threadsexiti_end;
+assume(v283 != 1);
+TO: main_bb169;
+
+FROM: main_bb168;
+M_E := 2;
+TO: main_bb169;
+
+FROM: main_bb169;
+v285 := T1_E;
+TO: main_bb169_end;
+
+FROM: main_bb169_end;
+assume(v285 == 1);
+TO: main_bb170;
+
+FROM: main_bb169_end;
+assume(v285 != 1);
+TO: main_bb171;
+
+FROM: main_bb170;
+T1_E := 2;
+TO: main_bb171;
+
+FROM: main_bb171;
+v287 := E_1;
+TO: main_bb171_end;
+
+FROM: main_bb171_end;
+assume(v287 == 1);
+TO: main_bb172;
+
+FROM: main_bb171_end;
+assume(v287 != 1);
+TO: main_reset_time_eventsexiti;
+
+FROM: main_bb172;
+E_1 := 2;
+TO: main_reset_time_eventsexiti;
+
+FROM: main_reset_time_eventsexiti;
+v289 := m_st;
+v291 := t1_st;
+TO: main_reset_time_eventsexiti_v__retres2.0.i.i;
+FROM: main_reset_time_eventsexiti_v__retres2.0.i.i;
+assume((v289 == 0) || (v291 == 0));
+v__retres2.0.i.i := 0;
+TO: main_reset_time_eventsexiti_sv__retres2.0.i.i;
+
+FROM: main_reset_time_eventsexiti_v__retres2.0.i.i;
+assume((v289 != 0) && (v291 != 0));
+v__retres2.0.i.i := 1;
+TO: main_reset_time_eventsexiti_sv__retres2.0.i.i;
+
+FROM: main_reset_time_eventsexiti_sv__retres2.0.i.i;
+TO: main_reset_time_eventsexiti_end;
+
+FROM: main_reset_time_eventsexiti_end;
+assume(v__retres2.0.i.i != 0);
+TO: main_start_simulationexit;
+
+FROM: main_reset_time_eventsexiti_end;
+assume(v__retres2.0.i.i == 0);
+TO: main_reset_delta_eventsexit17i;
+
+FROM: main_start_simulationexit;
+TO: main_start_simulationexit_ret;
+

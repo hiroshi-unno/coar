@@ -217,25 +217,23 @@ end = struct
             let names, cc =
               Set.unzip
               @@ Set.Poly.map s ~f:(fun (n, p) ->
-                     if Set.length n = 1 && Set.is_empty p then
-                       (Second (Set.choose_exn n), strue true)
-                     else if Set.length p = 1 && Set.is_empty n then
-                       (First (Set.choose_exn p), strue true)
-                     else
-                       let name =
-                         Ident.mk_fresh_pvar () |> function
-                         | Ident.Pvar name -> name
-                       in
-                       ( First name,
-                         Set.add
-                           (Set.union
-                              (Set.Poly.map n ~f:(fun atm ->
-                                   ( Set.Poly.empty,
-                                     Set.Poly.of_list [ name; atm ] )))
-                              (Set.Poly.map p ~f:(fun atm ->
-                                   ( Set.Poly.singleton atm,
-                                     Set.Poly.singleton name ))))
-                           (Set.add n name, p) ))
+                  if Set.length n = 1 && Set.is_empty p then
+                    (Second (Set.choose_exn n), strue true)
+                  else if Set.length p = 1 && Set.is_empty n then
+                    (First (Set.choose_exn p), strue true)
+                  else
+                    let name =
+                      Ident.mk_fresh_pvar () |> function
+                      | Ident.Pvar name -> name
+                    in
+                    ( First name,
+                      Set.add
+                        (Set.union
+                           (Set.Poly.map n ~f:(fun atm ->
+                                (Set.Poly.empty, Set.Poly.of_list [ name; atm ])))
+                           (Set.Poly.map p ~f:(fun atm ->
+                                (Set.Poly.singleton atm, Set.Poly.singleton name))))
+                        (Set.add n name, p) ))
             in
             let ps, ns = Set.partition_map names ~f:Fn.id in
             (Set.Poly.singleton (ns, ps), Set.union c (Set.concat cc))
@@ -251,25 +249,23 @@ end = struct
             let names, cc =
               Set.unzip
               @@ Set.Poly.map s ~f:(fun (n, p) ->
-                     if Set.length n = 1 && Set.is_empty p then
-                       (Second (Set.choose_exn n), strue true)
-                     else if Set.length p = 1 && Set.is_empty n then
-                       (First (Set.choose_exn p), strue true)
-                     else
-                       let name =
-                         Ident.mk_fresh_pvar () |> function
-                         | Ident.Pvar name -> name
-                       in
-                       ( First name,
-                         Set.add
-                           (Set.union
-                              (Set.Poly.map n ~f:(fun atm ->
-                                   ( Set.Poly.of_list [ name; atm ],
-                                     Set.Poly.empty )))
-                              (Set.Poly.map p ~f:(fun atm ->
-                                   ( Set.Poly.singleton name,
-                                     Set.Poly.singleton atm ))))
-                           (p, Set.add n name) ))
+                  if Set.length n = 1 && Set.is_empty p then
+                    (Second (Set.choose_exn n), strue true)
+                  else if Set.length p = 1 && Set.is_empty n then
+                    (First (Set.choose_exn p), strue true)
+                  else
+                    let name =
+                      Ident.mk_fresh_pvar () |> function
+                      | Ident.Pvar name -> name
+                    in
+                    ( First name,
+                      Set.add
+                        (Set.union
+                           (Set.Poly.map n ~f:(fun atm ->
+                                (Set.Poly.of_list [ name; atm ], Set.Poly.empty)))
+                           (Set.Poly.map p ~f:(fun atm ->
+                                (Set.Poly.singleton name, Set.Poly.singleton atm))))
+                        (p, Set.add n name) ))
             in
             let ps, ns = Set.partition_map names ~f:Fn.id in
             (Set.Poly.singleton (ns, ps), Set.union c (Set.concat cc))

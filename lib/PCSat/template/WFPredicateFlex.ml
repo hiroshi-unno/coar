@@ -190,7 +190,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
   let gen_template ~ucore:_ (hspace : HypSpace.hspace) =
     assert (List.length hspace.params mod 2 = 0);
     let template =
-      Templ.gen_simplified_wf_predicate
+      Templ.gen_simplified_wf_predicate ~print:Debug.print
         (*config.use_ifte*)
         {
           consts = Set.to_list hspace.consts;

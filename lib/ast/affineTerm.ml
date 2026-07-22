@@ -71,7 +71,7 @@ let real_to_int monomials =
   let lcm =
     Q.of_bigint
     @@ Map.Poly.fold monomials ~init:Z.one ~f:(fun ~key:_ ~data n ->
-           Z.lcm n @@ Q.den @@ Value.real_of data)
+        Z.lcm n @@ Q.den @@ Value.real_of data)
   in
   Map.Poly.fold (real_mul monomials (Value.Real lcm)) ~init:Map.Poly.empty
     ~f:(fun ~key ~data map ->
@@ -115,10 +115,8 @@ let subst_eqterm cterm eqterm tvar atom monomials_of =
               (mk_mul (Term.of_value (get_dtenv ()) a) eqterm)
               (mk_mul cterm (mk_int_term rest))
           in
-          if
-            Value.compare true Z.Compare.( >= ) Q.( >= ) (Term.value_of cterm)
-              (Value.Int Z.zero)
-          then mk_geq term t0
+          if Value.geq (Term.value_of cterm) (Value.Int Z.zero) then
+            mk_geq term t0
           else mk_leq term t0
       | None -> atom)
   | Atom.App (Predicate.Psym ((PDiv | NotPDiv) as sym), [ d; t ], _) -> (
@@ -139,8 +137,8 @@ let subst_eqterm cterm eqterm tvar atom monomials_of =
 let str_of =
   Map.Poly.to_alist
   >> List.to_string ~f:(function
-       | Some term, v -> sprintf "%s*%s" (Term.str_of term) (Value.str_of v)
-       | None, v -> Value.str_of v)
+    | Some term, v -> sprintf "%s*%s" (Term.str_of term) (Value.str_of v)
+    | None, v -> Value.str_of v)
 
 (* ToDo: merge the code below with the code above *)
 

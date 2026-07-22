@@ -126,7 +126,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
   let str_of_phase_list n =
     config.phase_list
     |> String.concat_mapi_list ~sep:" >> " ~f:(fun i phase ->
-           Config.str_of_phase phase |> if i = n then String.bracket else Fn.id)
+        Config.str_of_phase phase |> if i = n then String.bracket else Fn.id)
 
   let print_status iter n =
     let header =
@@ -224,164 +224,152 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
       |> Ast.ClauseSet.to_old_clause_set (PCSP.Problem.senv_of pcsp)
       |> Set.to_list
       |> List.classify (fun (_, _, ns1, _) (_, _, ns2, _) ->
-             Ast.Ident.pvar_equal
-               (Ast.LogicOld.Atom.pvar_of @@ Set.choose_exn ns1)
-               (Ast.LogicOld.Atom.pvar_of @@ Set.choose_exn ns2))
+          Ast.Ident.pvar_equal
+            (Ast.LogicOld.Atom.pvar_of @@ Set.choose_exn ns1)
+            (Ast.LogicOld.Atom.pvar_of @@ Set.choose_exn ns2))
       |> List.partition_map ~f:(function
-           | [] -> assert false
-           | (_, _, ns, _) :: _ as lst -> (
-               let cls =
-                 Ast.ClauseSet.of_old_clause_set @@ Set.Poly.of_list lst
-               in
-               let open Ast in
-               let open Ast.LogicOld in
-               let pvar, sorts, _, _ = Atom.let_pvar_app @@ Set.choose_exn ns in
-               let args = mk_fresh_sort_env_list sorts in
-               let params = Term.of_sort_env args in
-               let body =
-                 Formula.and_of
-                 @@ List.map lst ~f:(fun (uni_senv, _, ns, phi) ->
-                        let uni_senv = Logic.to_old_sort_env_map uni_senv in
-                        let _, _, ts, _ =
-                          Atom.let_pvar_app @@ Set.choose_exn ns
+        | [] -> assert false
+        | (_, _, ns, _) :: _ as lst -> (
+            let cls = Ast.ClauseSet.of_old_clause_set @@ Set.Poly.of_list lst in
+            let open Ast in
+            let open Ast.LogicOld in
+            let pvar, sorts, _, _ = Atom.let_pvar_app @@ Set.choose_exn ns in
+            let args = mk_fresh_sort_env_list sorts in
+            let params = Term.of_sort_env args in
+            let body =
+              Formula.and_of
+              @@ List.map lst ~f:(fun (uni_senv, _, ns, phi) ->
+                  let uni_senv = Logic.to_old_sort_env_map uni_senv in
+                  let _, _, ts, _ = Atom.let_pvar_app @@ Set.choose_exn ns in
+                  Z3Smt.Z3interface.qelim ~id:None ~fenv:(get_fenv ())
+                  @@ Formula.mk_forall_if_bounded (Map.Poly.to_alist uni_senv)
+                  @@ Formula.mk_imply
+                       (Formula.and_of @@ List.map2_exn ts params ~f:Formula.eq)
+                       phi)
+            in
+            let args, ret = List.rest_last args in
+            let phi =
+              Evaluator.simplify_neg @@ Formula.elim_ite
+              @@ Formula.mk_forall_if_bounded args
+              @@ Formula.mk_exists_if_bounded [ ret ]
+              @@ Formula.aconv_tvar body
+            in
+            let open StratSynth in
+            match LIA.formula_of_term @@ Logic.ExtTerm.of_old_formula phi with
+            | Some phi -> (
+                let p, s =
+                  LIAStrategySynthesis.nondet_strategy_synthesis solve phi
+                in
+                match p with
+                | SAT -> raise NoSolution
+                | UNSAT -> (
+                    let f = PreFormula.neg_formula LIA.neg_atom phi in
+                    let fml, chc, det, params =
+                      LIAStrategySynthesis.loseCHC [] s f
+                    in
+                    let chc =
+                      ( Map.Poly.empty,
+                        Logic.ExtTerm.imply_of fml
+                          (Logic.BoolTerm.mk_bool false) )
+                      :: chc
+                    in
+                    let problem =
+                      PCSP.Problem.of_formulas
+                        ~params:(PCSP.Params.make @@ Map.of_list_exn params)
+                      @@ Set.Poly.of_list chc
+                    in
+                    match PCSP.ForwardPropagate.solve problem with
+                    | Ok (PCSP.Problem.Sat subs) ->
+                        let ds =
+                          Map.Poly.map det ~f:(fun (senv, t) ->
+                              (senv, Logic.ExtTerm.subst subs t))
                         in
-                        Z3Smt.Z3interface.qelim ~id:None ~fenv:(get_fenv ())
-                        @@ Formula.mk_forall_if_bounded
-                             (Map.Poly.to_alist uni_senv)
-                        @@ Formula.mk_imply
-                             (Formula.and_of
-                             @@ List.map2_exn ts params ~f:Formula.eq)
-                             phi)
-               in
-               let args, ret = List.rest_last args in
-               let phi =
-                 Evaluator.simplify_neg @@ Formula.elim_ite
-                 @@ Formula.mk_forall_if_bounded args
-                 @@ Formula.mk_exists_if_bounded [ ret ]
-                 @@ Formula.aconv_tvar body
-               in
-               let open StratSynth in
-               match
-                 LIA.formula_of_term @@ Logic.ExtTerm.of_old_formula phi
-               with
-               | Some phi -> (
-                   let p, s =
-                     LIAStrategySynthesis.nondet_strategy_synthesis solve phi
-                   in
-                   match p with
-                   | SAT -> raise NoSolution
-                   | UNSAT -> (
-                       let f = PreFormula.neg_formula LIA.neg_atom phi in
-                       let fml, chc, det, params =
-                         LIAStrategySynthesis.loseCHC [] s f
-                       in
-                       let chc =
-                         ( Map.Poly.empty,
-                           Logic.ExtTerm.imply_of fml
-                             (Logic.BoolTerm.mk_bool false) )
-                         :: chc
-                       in
-                       let problem =
-                         PCSP.Problem.of_formulas
-                           ~params:(PCSP.Params.make @@ Map.of_list_exn params)
-                         @@ Set.Poly.of_list chc
-                       in
-                       match PCSP.ForwardPropagate.solve problem with
-                       | Ok (PCSP.Problem.Sat subs) ->
-                           let ds =
-                             Map.Poly.map det ~f:(fun (senv, t) ->
-                                 (senv, Logic.ExtTerm.subst subs t))
-                           in
-                           let sub =
-                             Map.Poly.of_alist_exn
-                             @@ List.map (Map.Poly.to_alist ds)
-                                  ~f:(fun (x, (senv, t)) ->
-                                    let t =
-                                      fix
-                                        ~f:
-                                          (Logic.Term.subst
-                                             (Map.Poly.map ds ~f:snd))
-                                        ~equal:Stdlib.( = ) t
-                                    in
-                                    (x, (senv, t)))
-                           in
-                           let tret = Logic.Term.mk_var @@ fst ret in
-                           let senv, t = Map.Poly.find_exn sub @@ fst ret in
-                           Second
-                             ( Ident.pvar_to_tvar pvar,
-                               Logic.Term.mk_lambda
-                                 (Map.to_alist senv
-                                 @ [
-                                     ( fst ret,
-                                       Logic.ExtTerm.of_old_sort @@ snd ret );
-                                   ])
-                               @@ Logic.BoolTerm.eq_of
-                                    (Logic.ExtTerm.of_old_sort @@ snd ret)
-                                    tret t )
-                       | _ -> First cls))
-               | None -> (
-                   match
-                     LRA.formula_of_term @@ Logic.ExtTerm.of_old_formula phi
-                   with
-                   | None -> First cls
-                   | Some phi -> (
-                       let p, s =
-                         LRAStrategySynthesis.nondet_strategy_synthesis solve
-                           phi
-                       in
-                       match p with
-                       | SAT -> raise NoSolution
-                       | UNSAT -> (
-                           let f = PreFormula.neg_formula LRA.neg_atom phi in
-                           let fml, chc, det, params =
-                             LRAStrategySynthesis.loseCHC [] s f
-                           in
-                           let chc =
-                             ( Map.Poly.empty,
-                               Logic.ExtTerm.imply_of fml
-                                 (Logic.BoolTerm.mk_bool false) )
-                             :: chc
-                           in
-                           let problem =
-                             PCSP.Problem.of_formulas
-                               ~params:
-                                 (PCSP.Params.make @@ Map.of_list_exn params)
-                             @@ Set.Poly.of_list chc
-                           in
-                           match PCSP.ForwardPropagate.solve problem with
-                           | Ok (PCSP.Problem.Sat subs) ->
-                               let ds =
-                                 Map.Poly.map det ~f:(fun (senv, t) ->
-                                     (senv, Logic.ExtTerm.subst subs t))
-                               in
-                               let sub =
-                                 Map.Poly.of_alist_exn
-                                 @@ List.map (Map.Poly.to_alist ds)
-                                      ~f:(fun (x, (senv, t)) ->
-                                        let t =
-                                          fix
-                                            ~f:
-                                              (Logic.Term.subst
-                                                 (Map.Poly.map ds ~f:snd))
-                                            ~equal:Stdlib.( = ) t
-                                        in
-                                        (x, (senv, t)))
-                               in
-                               let tret = Logic.Term.mk_var @@ fst ret in
-                               let senv, t = Map.Poly.find_exn sub @@ fst ret in
-                               Second
-                                 ( Ident.pvar_to_tvar pvar,
-                                   Logic.Term.mk_lambda
-                                     (Map.to_alist senv
-                                     @ [
-                                         ( fst ret,
-                                           Logic.ExtTerm.of_old_sort @@ snd ret
-                                         );
-                                       ])
-                                   @@ Logic.BoolTerm.eq_of
-                                        (Logic.ExtTerm.of_old_sort @@ snd ret)
-                                        tret t )
-                           | _ -> First cls)))))
+                        let sub =
+                          Map.Poly.of_alist_exn
+                          @@ List.map (Map.Poly.to_alist ds)
+                               ~f:(fun (x, (senv, t)) ->
+                                 let t =
+                                   fix
+                                     ~f:
+                                       (Logic.Term.subst
+                                          (Map.Poly.map ds ~f:snd))
+                                     ~equal:Stdlib.( = ) t
+                                 in
+                                 (x, (senv, t)))
+                        in
+                        let tret = Logic.Term.mk_var @@ fst ret in
+                        let senv, t = Map.Poly.find_exn sub @@ fst ret in
+                        Second
+                          ( Ident.pvar_to_tvar pvar,
+                            Logic.Term.mk_lambda
+                              (Map.to_alist senv
+                              @ [
+                                  (fst ret, Logic.ExtTerm.of_old_sort @@ snd ret);
+                                ])
+                            @@ Logic.BoolTerm.eq_of
+                                 (Logic.ExtTerm.of_old_sort @@ snd ret)
+                                 tret t )
+                    | _ -> First cls))
+            | None -> (
+                match
+                  LRA.formula_of_term @@ Logic.ExtTerm.of_old_formula phi
+                with
+                | None -> First cls
+                | Some phi -> (
+                    let p, s =
+                      LRAStrategySynthesis.nondet_strategy_synthesis solve phi
+                    in
+                    match p with
+                    | SAT -> raise NoSolution
+                    | UNSAT -> (
+                        let f = PreFormula.neg_formula LRA.neg_atom phi in
+                        let fml, chc, det, params =
+                          LRAStrategySynthesis.loseCHC [] s f
+                        in
+                        let chc =
+                          ( Map.Poly.empty,
+                            Logic.ExtTerm.imply_of fml
+                              (Logic.BoolTerm.mk_bool false) )
+                          :: chc
+                        in
+                        let problem =
+                          PCSP.Problem.of_formulas
+                            ~params:(PCSP.Params.make @@ Map.of_list_exn params)
+                          @@ Set.Poly.of_list chc
+                        in
+                        match PCSP.ForwardPropagate.solve problem with
+                        | Ok (PCSP.Problem.Sat subs) ->
+                            let ds =
+                              Map.Poly.map det ~f:(fun (senv, t) ->
+                                  (senv, Logic.ExtTerm.subst subs t))
+                            in
+                            let sub =
+                              Map.Poly.of_alist_exn
+                              @@ List.map (Map.Poly.to_alist ds)
+                                   ~f:(fun (x, (senv, t)) ->
+                                     let t =
+                                       fix
+                                         ~f:
+                                           (Logic.Term.subst
+                                              (Map.Poly.map ds ~f:snd))
+                                         ~equal:Stdlib.( = ) t
+                                     in
+                                     (x, (senv, t)))
+                            in
+                            let tret = Logic.Term.mk_var @@ fst ret in
+                            let senv, t = Map.Poly.find_exn sub @@ fst ret in
+                            Second
+                              ( Ident.pvar_to_tvar pvar,
+                                Logic.Term.mk_lambda
+                                  (Map.to_alist senv
+                                  @ [
+                                      ( fst ret,
+                                        Logic.ExtTerm.of_old_sort @@ snd ret );
+                                    ])
+                                @@ Logic.BoolTerm.eq_of
+                                     (Logic.ExtTerm.of_old_sort @@ snd ret)
+                                     tret t )
+                        | _ -> First cls)))))
     in
     let pvs1 = Set.Poly.of_list @@ List.map ~f:fst sol_eliminated in
     let params = PCSP.Problem.params_of pcsp in
@@ -397,7 +385,12 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
         (Set.Poly.union_list (cls12 :: cls2 :: clss)) )
 
   let solve ?(oracle = None) pcsp =
-    if Map.Poly.is_empty @@ PCSP.Problem.senv_of pcsp then
+    if
+      Set.exists
+        (PCSP.Problem.formulas_of pcsp)
+        ~f:(snd >> Ast.Logic.BoolTerm.is_false)
+    then Ok (PCSP.Problem.Unsat None (*ToDo*), { State.num_cegis_iters = 0 })
+    else if Map.Poly.is_empty @@ PCSP.Problem.senv_of pcsp then
       let phi =
         Ast.ClauseSetOld.to_formula
         @@ Ast.ClauseSet.to_old_clause_set Map.Poly.empty

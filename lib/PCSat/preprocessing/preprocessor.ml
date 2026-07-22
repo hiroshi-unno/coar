@@ -158,8 +158,8 @@ module Make (Config : Config.ConfigType) = struct
         (*ToDo*)
         Formula.cnf_of (Logic.to_old_sort_env_map exi_senv) phi
         |> Set.concat_map ~f:(fun (_ps, _ns, phi) ->
-               (*Set.union (Set.concat_map ~f:Atom.fvs_of @@ Set.union ps ns) @@*)
-               Formula.fvs_of phi)
+            (*Set.union (Set.concat_map ~f:Atom.fvs_of @@ Set.union ps ns) @@*)
+            Formula.fvs_of phi)
       in
       let bool_senv, other_senv =
         Map.Poly.partition_mapi uni_senv ~f:(fun ~key ~data ->
@@ -170,9 +170,9 @@ module Make (Config : Config.ConfigType) = struct
       if 0 < num_bool_vars && num_bool_vars <= config.num_elim_bool_vars then
         Map.Poly.to_alist bool_senv
         |> List.power (fun (x, _) ->
-               [ (x, T_bool.mk_true ()); (x, T_bool.mk_false ()) ])
+            [ (x, T_bool.mk_true ()); (x, T_bool.mk_false ()) ])
         |> List.map ~f:(fun map ->
-               (other_senv, Formula.subst (Map.Poly.of_alist_exn map) phi))
+            (other_senv, Formula.subst (Map.Poly.of_alist_exn map) phi))
         |> Set.Poly.of_list
       else Set.Poly.singleton (uni_senv, phi)
 
@@ -257,9 +257,37 @@ module Make (Config : Config.ConfigType) = struct
         Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
         Debug.print @@ lazy "");
       let pcsp =
-        PCSP.Problem.(remove_unused_params @@ elim_dup_nwf_predicate pcsp)
+        PCSP.Problem.(
+          remove_unused_params
+          @@ elim_unsat_nwf_predicates ~print:Debug.print pcsp)
       in
-      Debug.print @@ lazy "duplicate nwf predicates eliminated:";
+      Debug.print @@ lazy "unsat nwf predicates eliminated:";
+      Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
+      if print_pcsp then (
+        Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
+        Debug.print @@ lazy "");
+      let pcsp =
+        PCSP.Problem.(
+          remove_unused_params
+          @@ elim_unsat_parity_predicates ~print:Debug.print pcsp)
+      in
+      Debug.print @@ lazy "unsat parity predicates eliminated:";
+      Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
+      if print_pcsp then (
+        Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
+        Debug.print @@ lazy "");
+      let pcsp =
+        PCSP.Problem.(remove_unused_params @@ elim_triv_nwf_predicate pcsp)
+      in
+      Debug.print @@ lazy "trivial nwf predicates eliminated:";
+      Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
+      if print_pcsp then (
+        Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
+        Debug.print @@ lazy "");
+      let pcsp =
+        PCSP.Problem.(remove_unused_params @@ elim_triv_parity_predicate pcsp)
+      in
+      Debug.print @@ lazy "trivial parity predicates eliminated:";
       Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
       if print_pcsp then (
         Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
@@ -325,17 +353,25 @@ module Make (Config : Config.ConfigType) = struct
         else pcsp
       in
       let pcsp =
-        PCSP.Problem.(remove_unused_params @@ elim_dup_nwf_predicate pcsp)
+        PCSP.Problem.(remove_unused_params @@ elim_triv_nwf_predicate pcsp)
       in
-      Debug.print @@ lazy "duplicate nwf predicates eliminated:";
+      Debug.print @@ lazy "trivial nwf predicates eliminated:";
       Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
       if print_pcsp then (
         Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
         Debug.print @@ lazy "");
       let pcsp =
-        PCSP.Problem.(remove_unused_params @@ elim_dup_fn_predicate pcsp)
+        PCSP.Problem.(remove_unused_params @@ elim_triv_parity_predicate pcsp)
       in
-      Debug.print @@ lazy "duplicate fn predicates eliminated:";
+      Debug.print @@ lazy "trivial parity predicates eliminated:";
+      Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
+      if print_pcsp then (
+        Debug.print @@ lazy (PCSP.Problem.str_of pcsp);
+        Debug.print @@ lazy "");
+      let pcsp =
+        PCSP.Problem.(remove_unused_params @@ elim_triv_fn_predicate pcsp)
+      in
+      Debug.print @@ lazy "trivial fn predicates eliminated:";
       Debug.print @@ lazy (PCSP.Problem.str_of_info pcsp);
       if print_pcsp then (
         Debug.print @@ lazy (PCSP.Problem.str_of pcsp);

@@ -119,22 +119,28 @@ module Make
                      (Logic.Term.subst sub phi)
               in
               let phi =
-                LogicOld.Formula.forall (LogicOld.get_dummy_term_senv ())
-                @@
                 let bounds =
                   Map.to_alist @@ Logic.to_old_sort_env_map uni_senv
                 in
-                (if inst then
-                   LogicOld.Formula.subst
-                     (Map.Poly.of_alist_exn
-                     @@ List.map bounds ~f:(fun (x, s) ->
-                         (x, LogicOld.Term.mk_dummy s)))
-                 else LogicOld.Formula.forall bounds)
-                  phi
+                if inst then
+                  let sub =
+                    Map.Poly.of_alist_exn
+                    @@ List.map bounds ~f:(fun (x, s) ->
+                        (x, LogicOld.Term.mk_dummy s))
+                  in
+                  (*LogicOld.Formula.subst_preds
+                    (LogicOld.Formula.psub_of_sub sub)
+                  @@*)
+                  LogicOld.Formula.subst sub phi
+                else LogicOld.Formula.forall bounds phi
               in
-              assert (Set.is_subset (LogicOld.Formula.fvs_of phi) ~of_:psenv);
-              not
-              @@ Evaluator.is_valid (Z3Smt.Z3interface.is_valid ~id fenv) phi)
+              let phi =
+                LogicOld.Formula.forall (LogicOld.get_dummy_term_senv ()) phi
+              in
+              if Set.is_subset (LogicOld.Formula.fvs_of phi) ~of_:psenv then
+                not
+                @@ Evaluator.is_valid (Z3Smt.Z3interface.is_valid ~id fenv) phi
+              else failwith @@ "Invalid formula: " ^ LogicOld.Formula.str_of phi)
         in
         match cex with
         | None -> None

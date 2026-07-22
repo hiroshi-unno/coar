@@ -6,7 +6,7 @@
 
 %}
 
-%token EOF 
+%token EOF
 %token WHILE
 %token IF ELSE FLIP
 %token RETURN FAIL OBSERVE SAMPLE
@@ -32,7 +32,7 @@
 %%
 
 toplevel:
-    insts=Instructions return=Return EOF 
+    insts=Instructions return=Return EOF
 		{ Program.make insts return }
 
 expr:
@@ -63,7 +63,7 @@ Instruction:
 
   | IF FLIP LPAREN prob=T_Num RPAREN then_blk=Block ELSE else_stmt=Instruction
       { Statement.mk_choice prob then_blk else_stmt }
-  
+
   | varname=ID SAMPLE rfun=Distribution {
 	  rfun (Ident.Tvar varname) Statement.mk_assign
 	}
@@ -97,9 +97,9 @@ Block:
 Distribution:
 	UNIFORMDISC LPAREN a=NATL COMMA b=NATL RPAREN
 		{
-			fun var assign-> 
+			fun var assign->
 			if a=b then assign var (T_real.mk_real (Q.of_int a))
-			else 
+			else
 				let a' = T_real.mk_real (Q.of_int a) in
 				let b' = T_real.mk_real (Q.of_int b) in
 				let prob = T_real.mk_rdiv (T_real.rone ()) (T_real.mk_radd (T_real.mk_rsub b' a') @@ T_real.rone ()) in
@@ -132,7 +132,7 @@ Distribution:
 			let branch_false = assign var (T_real.rzero ()) in
 			Statement.mk_choice prob branch_true branch_false
 		}
-	// | CATEGORICAL 
+	// | CATEGORICAL
 
 
 T_bool:
@@ -147,9 +147,9 @@ T_boolAnd:
 	e1=T_boolAnd AND e2=T_boolNeg
 		{ T_bool.of_formula @@ Formula.mk_and (Formula.of_bool_term e1) (Formula.of_bool_term e2) }
 	| T_boolNeg { $1 }
-	
+
 T_boolNeg:
-  NOT e=T_boolNeg 		 
+  NOT e=T_boolNeg
   		{ T_bool.negate e}
   | T_boolAtom { $1 }
 
@@ -157,7 +157,7 @@ T_boolAtom:
   | atom=Atom { T_bool.of_atom atom }
   | varname=ID { Term.mk_var (Ident.Tvar varname) @@ Sort.mk_fresh_svar () }
   | LPAREN T_bool RPAREN { $2 }
-  
+
 Atom:
   | e1=T_Num op=PREDSYM e2=T_Num { Atom.mk_app (Predicate.mk_psym op) [e1; e2] }
 

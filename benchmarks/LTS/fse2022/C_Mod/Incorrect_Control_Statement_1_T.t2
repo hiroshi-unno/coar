@@ -1,0 +1,195 @@
+///*** 1_main ***///
+START: main_bb6;
+FROM: main_bb6;
+memory0_freeIndex := 1;
+vmemory0 := nondet();
+v15 := memory0_freeIndex;
+v16 := memory0_freeIndex;
+v17 := v16 + 101;
+memory0_freeIndex := v17;
+v18 := v15;
+var__temp_vi.0 := 0;
+var__temp_vi.0 := 0;
+TO: main_wrap_aroundexit;
+
+FROM: main_wrap_aroundexit;
+vi.0 := var__temp_vi.0;
+TO: main_wrap_aroundexit_end;
+
+FROM: main_wrap_aroundexit_end;
+assume(vi.0 < 100);
+TO: main_bb7;
+
+FROM: main_wrap_aroundexit_end;
+assume(vi.0 >= 100);
+TO: main_bb11;
+
+FROM: main_bb7;
+v20 := nondet_char();
+v21 := v18 + vi.0;
+v22 := v21;
+vmemory0 := store_array(vmemory0, v21, v20);
+v23 := vi.0 + 1;
+TO: main_bb7_end;
+
+FROM: main_bb7_end;
+assume(v23 > 2147483647);
+TO: main_bb8;
+
+FROM: main_bb7_end;
+assume(v23 <= 2147483647);
+TO: main_bb9;
+
+FROM: main_bb8;
+v25 := v23 - 2147483647;
+v26 := v25 - 1;
+v27 := v26 % 4294967296;
+v28 := -2147483648 + v27;
+var__temp_vi.0 := v28;
+var__temp_vi.0 := v28;
+TO: main_wrap_aroundexit;
+
+FROM: main_bb9;
+var__temp_vi.0 := v23;
+TO: main_bb9_end;
+
+FROM: main_bb9_end;
+assume(v23 < -2147483648);
+TO: main_bb10;
+
+FROM: main_bb9_end;
+assume(v23 >= -2147483648);
+var__temp_vi.0 := v23;
+TO: main_wrap_aroundexit;
+
+FROM: main_bb10;
+v30 := -2147483648 - v23;
+v31 := v30 - 1;
+v32 := v31 % 4294967296;
+v33 := 2147483647 - v32;
+var__temp_vi.0 := v33;
+var__temp_vi.0 := v33;
+TO: main_wrap_aroundexit;
+
+FROM: main_bb11;
+v34 := v15 + 100;
+v35 := v34;
+v36 := v35;
+vmemory0 := store_array(vmemory0, v35, 0);
+var__temp_vstop.0 := 0;
+var__temp_vp.0 := v15;
+var__temp_vstop.0 := 0;
+var__temp_vp.0 := v15;
+TO: main_bb12;
+
+FROM: main_bb12;
+vstop.0 := var__temp_vstop.0;
+vp.0 := var__temp_vp.0;
+v37 := vp.0;
+v38 := v37;
+v39 := select_array(vmemory0, v37);
+TO: main_bb12_end;
+
+FROM: main_bb12_end;
+assume((v39 != 0) && (!(vstop.0 != 0)));
+TO: main_bb13;
+
+FROM: main_bb12_end;
+assume((v39 == 0) || (vstop.0 != 0));
+TO: main_critedge;
+
+FROM: main_bb13;
+v43 := vp.0;
+v44 := v43;
+v45 := select_array(vmemory0, v43);
+TO: main_NodeBlock;
+
+FROM: main_NodeBlock;
+TO: main_NodeBlock_end;
+
+FROM: main_NodeBlock_end;
+assume(v45 < 125);
+TO: main_LeafBlock;
+
+FROM: main_NodeBlock_end;
+assume(v45 >= 125);
+TO: main_LeafBlock2;
+
+FROM: main_LeafBlock;
+TO: main_LeafBlock_end;
+
+FROM: main_LeafBlock_end;
+assume(v45 == 58);
+TO: main_bb14;
+
+FROM: main_LeafBlock_end;
+assume(v45 != 58);
+TO: main_NewDefault;
+
+FROM: main_bb14;
+v46 := vp.0 + 1;
+v47 := v46;
+v48 := v47;
+v49 := select_array(vmemory0, v47);
+TO: main_bb14_end;
+
+FROM: main_bb14_end;
+assume(v49 != 0);
+TO: main_bb15;
+
+FROM: main_bb14_end;
+assume(v49 == 0);
+TO: main_bb17;
+
+FROM: main_bb15;
+v51 := vp.0 + 1;
+v52 := v51;
+v53 := v52;
+v54 := select_array(vmemory0, v52);
+TO: main_bb15_end;
+
+FROM: main_bb15_end;
+assume(v54 == 45);
+TO: main_bb16;
+
+FROM: main_bb15_end;
+assume(v54 != 45);
+TO: main_bb17;
+
+FROM: main_bb16;
+v56 := vp.0 + 2;
+var__temp_vstop.0 := 1;
+var__temp_vp.0 := v56;
+var__temp_vstop.0 := 1;
+var__temp_vp.0 := v56;
+TO: main_bb12;
+
+FROM: main_LeafBlock2;
+var__temp_vstop.0 := 1;
+var__temp_vp.0 := vp.0;
+TO: main_LeafBlock2_end;
+
+FROM: main_LeafBlock2_end;
+assume(v45 == 125);
+var__temp_vstop.0 := 1;
+var__temp_vp.0 := vp.0;
+TO: main_bb12;
+
+FROM: main_LeafBlock2_end;
+assume(v45 != 125);
+TO: main_NewDefault;
+
+FROM: main_NewDefault;
+TO: main_bb17;
+
+FROM: main_bb17;
+v57 := vp.0 + 1;
+var__temp_vstop.0 := vstop.0;
+var__temp_vp.0 := v57;
+var__temp_vstop.0 := vstop.0;
+var__temp_vp.0 := v57;
+TO: main_bb12;
+
+FROM: main_critedge;
+TO: main_critedge_ret;
+

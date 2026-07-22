@@ -63,10 +63,13 @@ let of_formula exi_senv phi : t Set.Poly.t =
   @@ Formula.cnf_of exi_senv @@ snd
   @@ Formula.rm_quant ~forall:true
   @@ Evaluator.simplify
-  @@ (*LogicOld.Formula.elim_let_with_unknowns (Map.key_set exi_senv) @@
-       Normalizer.normalize_let ~rename:true*) phi
+  @@
+  (*LogicOld.Formula.elim_let_with_unknowns (Map.key_set exi_senv) @@
+       Normalizer.normalize_let ~rename:true*)
+  phi
 
-(** Generate determinacy conjecture [p(~x,y1), p(~x,y2) |- y1 = y2] from predicates *)
+(** Generate determinacy conjecture [p(~x,y1), p(~x,y2) |- y1 = y2] from
+    predicates *)
 let generate_determinacy_conjecture preds =
   List.filter_map preds ~f:(fun (pred : MuCLP.Pred.t) ->
       match pred.args with
@@ -156,13 +159,13 @@ let normalize_body seq =
   let left_atms', eqss =
     List.unzip
     @@ List.map seq.left_atms ~f:(fun (atm, guard) ->
-           let pvar, sorts, args, _ = Atom.let_pvar_app atm in
-           let args' =
-             List.map2_exn args sorts ~f:(fun _ ->
-                 Term.mk_var (Ident.mk_fresh_tvar ()))
-           in
-           ( (Atom.mk_pvar_app pvar sorts args', guard),
-             List.map2_exn args' args ~f:Formula.eq ))
+        let pvar, sorts, args, _ = Atom.let_pvar_app atm in
+        let args' =
+          List.map2_exn args sorts ~f:(fun _ ->
+              Term.mk_var (Ident.mk_fresh_tvar ()))
+        in
+        ( (Atom.mk_pvar_app pvar sorts args', guard),
+          List.map2_exn args' args ~f:Formula.eq ))
   in
   let bounds =
     Logic.of_old_sort_env_map @@ Map.of_set_exn @@ Set.Poly.union_list
@@ -199,8 +202,10 @@ let normalize_body seq =
   let phi5 =
     (*Normalizer.normalize @@*)
     Evaluator.simplify
-    @@ (*if s * n <= 400(*ToDo*) then Z3Smt.Z3interface.qelim ~id:None ~fenv:(LogicOld.get_fenv ()) phi4
-         else*) phi4
+    @@
+    (*if s * n <= 400(*ToDo*) then Z3Smt.Z3interface.qelim ~id:None ~fenv:(LogicOld.get_fenv ()) phi4
+         else*)
+    phi4
   in
   if false then print_endline @@ "5: " ^ Formula.str_of phi5;
   {
@@ -212,16 +217,23 @@ let normalize_body seq =
 
 (*let forall_elim tenv sequent =
   let bvs =
-  Set.union
-  (Set.Poly.of_list @@
-   List.concat_map ~f:(fst >> Atom.let_pvar_app >> fun (_, _, args, _) ->
-                       List.map args ~f:(Term.let_var >> fst >> fst))
-     (sequent.left_atms @ sequent.right_atms))
-  (Formula.tvs_of sequent.right_phi)
+    Set.union
+      (Set.Poly.of_list
+      @@ List.concat_map
+           ~f:
+             ( fst >> Atom.let_pvar_app >> fun (_, _, args, _) ->
+               List.map args ~f:Term.tvar_of )
+           (sequent.left_atms @ sequent.right_atms))
+      (Formula.tvs_of sequent.right_phi)
   in
-  { sequent with
-  left_phi = Qelim.elim_fvs_heap ~not_elim_fvs:bvs @@ Qelim.fa_elim tenv bvs sequent.left_phi;
-  right_atms = List.map ~f:(fun (atm, _(*ToDo*)) -> atm, []) sequent.right_atms }*)
+  {
+    sequent with
+    left_phi =
+      Qelim.elim_fvs_heap ~not_elim_fvs:bvs
+      @@ Qelim.fa_elim tenv bvs sequent.left_phi;
+    right_atms =
+      List.map ~f:(fun (atm, _ (*ToDo*)) -> (atm, [])) sequent.right_atms;
+  }*)
 
 (** {6 Printers} *)
 
@@ -400,17 +412,17 @@ let is_valid sequent =
       (* bind remaining eqvars *)
       @@ Formula.mk_imply sequent.left_phi sequent.right_phi
       || List.exists sequent.right_atms ~f:(fun (pvar_right, _) ->
-             let right_pvar, _, right_args, _ = Atom.let_pvar_app pvar_right in
-             List.exists sequent.left_atms ~f:(fun (pvar_left, _) ->
-                 let left_pvar, _, left_args, _ = Atom.let_pvar_app pvar_left in
-                 Stdlib.(left_pvar = right_pvar)
-                 && Z3Smt.Z3interface.is_valid ~id:None (FunEnv.mk_empty ())
-                    @@ Evaluator.simplify
-                    @@ Formula.exists (Map.Poly.to_alist sequent.eqvars)
-                    (* bind remaining eqvars *)
-                    @@ Formula.mk_imply sequent.left_phi
-                         (Formula.and_of
-                         @@ List.map2_exn left_args right_args ~f:Formula.eq))))
+          let right_pvar, _, right_args, _ = Atom.let_pvar_app pvar_right in
+          List.exists sequent.left_atms ~f:(fun (pvar_left, _) ->
+              let left_pvar, _, left_args, _ = Atom.let_pvar_app pvar_left in
+              Stdlib.(left_pvar = right_pvar)
+              && Z3Smt.Z3interface.is_valid ~id:None (FunEnv.mk_empty ())
+                 @@ Evaluator.simplify
+                 @@ Formula.exists (Map.Poly.to_alist sequent.eqvars)
+                 (* bind remaining eqvars *)
+                 @@ Formula.mk_imply sequent.left_phi
+                      (Formula.and_of
+                      @@ List.map2_exn left_args right_args ~f:Formula.eq))))
   @@ mk_eqvars_inst sequent
 
 let is_valid ~print sequent =

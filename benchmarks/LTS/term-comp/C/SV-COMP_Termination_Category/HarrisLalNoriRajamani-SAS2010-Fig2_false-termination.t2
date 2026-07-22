@@ -1,0 +1,133 @@
+///*** 1_main ***///
+START: main_bb8;
+FROM: main_bb8;
+v7 := nondet();
+v8 := nondet();
+v10 := 1 - 1;
+TO: main_bb8_v.;
+FROM: main_bb8_v.;
+assume(v8 != 0);
+v. := v10;
+TO: main_bb8_sv.;
+
+FROM: main_bb8_v.;
+assume(v8 == 0);
+v. := 1;
+TO: main_bb8_sv.;
+
+FROM: main_bb8_sv.;
+v11 := nondet();
+TO: main_bb8_end;
+
+FROM: main_bb8_end;
+assume(v11 != 0);
+TO: main_fooexit;
+
+FROM: main_bb8_end;
+assume(v11 == 0);
+TO: main_bb9;
+
+FROM: main_fooexit;
+v13 := nondet();
+v14 := nondet();
+v15 := nondet();
+v16 := nondet();
+TO: main_bb9;
+
+FROM: main_bb9;
+v17 := nondet();
+TO: main_bb9_end;
+
+FROM: main_bb9_end;
+assume(v17 != 0);
+TO: main_fooexit6;
+
+FROM: main_bb9_end;
+assume(v17 == 0);
+TO: main_bb10;
+
+FROM: main_fooexit6;
+v19 := nondet();
+v20 := nondet();
+v21 := nondet();
+v22 := nondet();
+TO: main_bb10;
+
+FROM: main_bb10;
+v23 := nondet();
+TO: main_bb10_end;
+
+FROM: main_bb10_end;
+assume(v23 != 0);
+TO: main_fooexit12;
+
+FROM: main_bb10_end;
+assume(v23 == 0);
+TO: main_bb11;
+
+FROM: main_fooexit12;
+v25 := nondet();
+v26 := nondet();
+v27 := nondet();
+v28 := nondet();
+TO: main_bb11;
+
+FROM: main_bb11;
+v29 := nondet();
+TO: main_bb11_end;
+
+FROM: main_bb11_end;
+assume(v29 != 0);
+TO: main_fooexit18;
+
+FROM: main_bb11_end;
+assume(v29 == 0);
+TO: main_bb12;
+
+FROM: main_fooexit18;
+v31 := nondet();
+v32 := nondet();
+v33 := nondet();
+v34 := nondet();
+TO: main_bb12;
+
+FROM: main_bb12;
+v35 := nondet();
+v37 := v. - 1;
+TO: main_bb12_v..;
+FROM: main_bb12_v..;
+assume(v35 != 0);
+v.. := v37;
+TO: main_bb12_sv..;
+
+FROM: main_bb12_v..;
+assume(v35 == 0);
+v.. := v.;
+TO: main_bb12_sv..;
+
+FROM: main_bb12_sv..;
+var__temp_vx.0 := v7;
+var__temp_vx.0 := v7;
+TO: main_bb13;
+
+FROM: main_bb13;
+vx.0 := var__temp_vx.0;
+TO: main_bb13_end;
+
+FROM: main_bb13_end;
+assume(vx.0 sgt 0);
+TO: main_bb14;
+
+FROM: main_bb13_end;
+assume(vx.0 sle 0);
+TO: main_bb15;
+
+FROM: main_bb14;
+v39 := vx.0 - v..;
+var__temp_vx.0 := v39;
+var__temp_vx.0 := v39;
+TO: main_bb13;
+
+FROM: main_bb15;
+TO: main_bb15_ret;
+
