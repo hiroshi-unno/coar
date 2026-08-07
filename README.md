@@ -348,7 +348,7 @@ Build `PolyQEnt` and place it to run as `./polyqent/PolyQEnt`.
 #### with MuCyc
 
 ```bash
-./_build/default/main.exe -c ./config/solver/mucyc.json -p smt ./benchmarks/QSMT/max.smt2
+./_build/default/main.exe -c ./config/solver/mucyc_progress_ncr.json -p smt ./benchmarks/QSMT/max.smt2
 ```
 
 ### Boolean Satisfiability Checking (SAT, QSAT, DQSAT, and HOSAT) using HOMCSat

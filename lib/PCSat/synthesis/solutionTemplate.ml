@@ -241,8 +241,16 @@ module Make
   let extracted_consts =
     if not config.extract_constants then Map.Poly.empty
     else
+      let str_consts =
+        Set.concat_map (PCSP.Problem.old_formulas_of APCSP.problem)
+          ~f:(fun phi ->
+            Set.Poly.filter_map (Formula.funsyms_of phi) ~f:(function
+              | T_string.StrConst _ as fsym -> Some (Term.mk_fsym_app fsym [])
+              | _ -> None))
+      in
       Map.Poly.mapi extracted_qualifiers ~f:(fun ~key ~data:(_, phis) ->
-          Set.concat_map ~f:(function
+          Set.union str_consts
+          @@ Set.concat_map ~f:(function
             | T_int.Int n
               when Z.(Compare.(n <> zero && n <> one && n <> minus_one)) ->
                 Set.Poly.of_list [ T_int.mk_int n; T_int.mk_int Z.(-n) ]
