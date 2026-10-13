@@ -1,3 +1,7 @@
+(* Union-find over the integers [0, n), in place in an array: a root holds
+   the negated size of its class, any other element its parent.  [root]
+   compresses paths; [union_set] links two roots and returns the same array.
+   [find_class] and [all_classes] are linear and quadratic scans. *)
 open Core
 open Ext
 

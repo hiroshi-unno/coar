@@ -1,3 +1,13 @@
+(* Propositional formulas over named atoms, as the SAT layer and the
+   example labeling use them, with clausal conversions.  A clause is a pair
+   of the negated atoms' names and the positive ones'.  [cnf_of] distributes
+   disjunction over conjunction, so its result is equivalent and may be
+   exponential; it expects negation only on atoms, constants and negations
+   (apply [nnf_of] first).  [tseitinize] is the Tseitin encoding: it names a
+   compound subformula by a fresh atom (from the global fresh-name counter)
+   with the clauses defining it, so its result is only equisatisfiable with
+   the input, linear in size.  [eval] decides a formula whose value does not
+   depend on its atoms, and raises otherwise. *)
 open Core
 open Common.Ext
 

@@ -6,7 +6,7 @@
 (declare-sort a51 0)
 (declare-sort a52 0)
 (declare-sort a53 0)
-(declare-datatypes (T) ((List nil (cons (hd T) (tl (List))))))
+(declare-datatypes ((List 1)) ((par (T) ((nil) (cons (hd T) (tl (List T)))))))
 
 (declare-fun find ((a48) (List X) (a50) (a51) (a52) (a53)) Bool)
 

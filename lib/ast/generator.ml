@@ -1,3 +1,19 @@
+(* Helpers of the probabilistic quantified-satisfiability procedure
+   ([MuCyc.Pqsat]), for formulas whose innermost quantifier draws one
+   numeric variable uniformly from an interval [t1, t2].
+
+   At a model of the other variables, [eval_ephi] reads a conjunction or
+   disjunction of linear atoms over the random variable as a list of
+   disjoint subintervals of [t1, t2], each with the bound terms that attain
+   its end points; [compute_real] (real draw) and [compute_int] (integer
+   draw, counting lattice points) give the probability that the formula
+   holds as the subintervals' total share of the interval, and
+   [mk_numterm]/[mk_denterm] (and their integer forms) give that share's
+   numerator and denominator as terms, from which [mk_newterm] builds the
+   constraint [theta * den - num] comparing it with a threshold.  The
+   remaining functions move between vertices and rays of the region of
+   models.  An atom outside the linear fragment, or a [Bool]-sorted draw, is
+   an assertion failure. *)
 open Core
 open Common.Combinator
 open LogicOld

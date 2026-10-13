@@ -4,27 +4,15 @@ open Core
 module Bool = struct
   include Bool
 
-  let string_of b = if b then "true" else "false"
-  let pr ppf b = Format.fprintf ppf "%s" (string_of b)
+  let pr ppf b = Format.fprintf ppf "%s" (to_string b)
   let pr_yn ppf b = Format.fprintf ppf "%s" (if b then "yes" else "no")
   let imply b1 b2 = (not b1) || b2
 end
 
 (** Integers *)
 module Integer = struct
-  let pr ppf n = Format.fprintf ppf "%d" n
-
   (** @return the factorial of n *)
   let rec fact n = if n = 0 then 1 else n * fact (n - 1)
-
-  (** @return n1 to the power of n2 *)
-  let rec pow n1 n2 = if n2 = 0 then 1 else n1 * pow n1 (n2 - 1)
-
-  (** the greatest representable integer *)
-  let max_int = pow 2 30 - 1
-
-  (** the smallest representable integer *)
-  let min_int = -pow 2 30
 
   (** @return the sum of the integers from 0 to n *)
   let rec sum n = if n = 0 then 0 else n + sum (n - 1)
@@ -106,7 +94,6 @@ end
 module Float = struct
   include Float
 
-  let log2 x = log x /. log 2.
   let pi = 4. *. Stdlib.atan 1.
   let pr ppf f = Format.fprintf ppf "%9.6f" f
 
@@ -127,27 +114,24 @@ module Float = struct
      else num_of_positive_float f
   *)
 
+  (** The numerator and denominator of [f] as integers of any size: a float's
+      exact rational value can have a numerator or denominator of over a
+      thousand bits, which a native int cannot hold. *)
   let rat_of_float f =
-    (Q.of_float f |> Q.num |> Z.to_int, Q.of_float f |> Q.den |> Z.to_int)
+    let q = Q.of_float f in
+    (Q.num q, Q.den q)
 
   let of_q q =
     (Q.num q |> Big_int_Z.float_of_big_int)
     /. (Q.den q |> Big_int_Z.float_of_big_int)
 
-  let round f =
+  (** Rounds to the nearest integer, ties going down. Named so that it does not
+      shadow Core's [Float.round : float -> float]. *)
+  let round_to_int f =
     let f_ceil = Stdlib.ceil f in
     let f_floor = Stdlib.floor f in
     if f_ceil -. f < f -. f_floor then int_of_float f_ceil
     else int_of_float f_floor
-
-  let sum =
-    List.fold_left
-      ~f:(fun x1 x2 ->
-        x1
-        +.
-        (*/*)
-        x2)
-      ~init:0. (*Num.num_of_int 0*)
 
   let prod =
     List.fold_left
@@ -157,9 +141,6 @@ module Float = struct
         (*/*)
         x2)
       ~init:1. (*Num.num_of_int 1*)
-
-  (** @return the sum of floating point numbers *)
-  let sum_list = List.fold_left ~f:( +. ) ~init:0.0
 
   let rand (s, e) seed =
     (float_of_int (Integer.rand seed) /. 65536. *. (e -. s)) +. s
@@ -211,8 +192,6 @@ end
 module String = struct
   include String
 
-  let pr ppf str = Format.fprintf ppf "%s" str
-
   let is_int s =
     try
       let _ = int_of_string s in
@@ -259,8 +238,6 @@ end
 module Option = struct
   include Option
 
-  let elem_of = function None -> assert false | Some x -> x
-
   let elem_of_nf = function
     | None -> raise @@ Not_found_s (Sexplib0.Sexp.message "" [])
     | Some x -> x
@@ -271,28 +248,19 @@ module Option = struct
     | Some res -> res
 
   let of_nf f x = try Some (f x) with Not_found_s _ -> None
-  let of_exc f x = try Some (f x) with _ -> None
+  let of_exc f x = try Some (f x) with exn_ when not (Timer.is_async exn_) -> None
 
   let pr epr none ppf = function
     | None -> Format.fprintf ppf "%s" none
     | Some x -> epr ppf x
-
-  let str_of str_of_none str_of_some = function
-    | None -> str_of_none
-    | Some elem -> str_of_some elem
 end
 
 (** Pairs *)
 module Pair = struct
-  let make x1 x2 = (x1, x2)
   let of_list = function [ x1; x2 ] -> (x1, x2) | _ -> failwith ""
   let list_of (x1, x2) = [ x1; x2 ]
-  let map f1 f2 (x1, x2) = (f1 x1, f2 x2)
-  let map_fst f (x1, x2) = (f x1, x2)
-  let map_snd f (x1, x2) = (x1, f x2)
   let map2 f1 f2 (x1, x2) (y1, y2) = (f1 x1 y1, f2 x2 y2)
   let fold f (x1, x2) = f x1 x2
-  let lift f (x1, x2) = (f x1, f x2)
   let lift2 f (x1, x2) (y1, y2) = (f x1 y1, f x2 y2)
   let unfold f1 f2 x = (f1 x, f2 x)
 
@@ -307,9 +275,6 @@ module Triple = struct
   let make x1 x2 x3 = (x1, x2, x3)
   let of_list = function [ x1; x2; x3 ] -> (x1, x2, x3) | _ -> failwith ""
   let list_of (x1, x2, x3) = [ x1; x2; x3 ]
-  let fst (x1, _x2, _x3) = x1
-  let snd (_x1, x2, _x3) = x2
-  let trd (_x1, _x2, x3) = x3
   let get12 (x1, x2, _x3) = (x1, x2)
   let get13 (x1, _x2, x3) = (x1, x3)
   let get21 (x1, x2, _x3) = (x2, x1)
@@ -573,7 +538,11 @@ module List = struct
 
   let dummy_node () = { hd = Obj.magic (); tl = [] }
 
-  let unique ?(equal = Stdlib.( = )) l =
+  (** [dedup_keep_last l] removes duplicates modulo [equal], keeping the
+      {e last} occurrence of each element and the relative order of those
+      occurrences. Differs from [List.stable_dedup] (keeps the first) and
+      [List.dedup_and_sort] (sorts). O(n^2). *)
+  let dedup_keep_last ?(equal = Stdlib.( = )) l =
     let rec loop dst = function
       | [] -> ()
       | h :: t -> (
@@ -592,16 +561,7 @@ module List = struct
     | [] -> []
     | x :: xs -> if f x then xs else x :: remove_if ~f xs
 
-  (** {6 Constructors} *)
-
-  let cons x xs = x :: xs
-  let return x = [ x ]
-
   (** {6 Destructors} *)
-
-  let rec delete p = function
-    | [] -> []
-    | x :: xs' -> if p x then xs' else x :: delete p xs'
 
   let rec delete_all p = function
     | [] -> []
@@ -644,7 +604,7 @@ module List = struct
     | [] -> assert false
     | (i, xs) :: rest -> (
         let open Combinator in
-        match findi ~f:(curry2 (snd >> ( = ) x)) xs with
+        match findi ~f:(Tuple2.curry (snd >> ( = ) x)) xs with
         | Some res -> (i, fst res)
         | None -> assoc_inverse rest x)
 
@@ -749,12 +709,6 @@ module List = struct
 
   (** {6 Zipping and unzipping operators} *)
 
-  let rec zip3 xs ys zs =
-    match (xs, ys, zs) with
-    | [], [], [] -> []
-    | x :: xs', y :: ys', z :: zs' -> (x, y, z) :: zip3 xs' ys' zs'
-    | _ -> assert false
-
   let zip3_exn lst1 lst2 lst3 =
     let rec aux lst1 lst2 lst3 ret =
       match (lst1, lst2, lst3) with
@@ -774,13 +728,6 @@ module List = struct
       | _ -> assert false
     in
     aux (List.rev lst1) (List.rev lst2) (List.rev lst3) (List.rev lst4) []
-
-  let rec unzip3 ls =
-    match ls with
-    | [] -> ([], [], [])
-    | (x, y, z) :: ls ->
-        let xs, ys, zs = unzip3 ls in
-        (x :: xs, y :: ys, z :: zs)
 
   let split3 = unzip3
 
@@ -905,23 +852,6 @@ module List = struct
     |> map ~f:snd
 
   (** {6 Operators for sublists} *)
-
-  (** @require xs is not empty
-      @return xs without the last element *)
-  let rec initial = function
-    | [] -> assert false
-    | [ _ ] -> []
-    | x :: xs' -> x :: initial xs'
-
-  (** \[1; 2; 3\] = \[\[\]; \[1\]; \[1; 2\]; \[1; 2; 3\]\] *)
-  let inits xs =
-    xs
-    |> fold_left
-         ~f:(fun (prefix, prefixes) x ->
-           let prefix' = prefix @ [ x ] in
-           (prefix', prefixes @ [ prefix' ]))
-         ~init:([], [ [] ])
-    |> snd
 
   (*let rec split_at n xs =
     if n < 0 then failwith "split_at"
@@ -1252,19 +1182,14 @@ module List = struct
 
   (** {6 Generating operators} *)
 
-  let gen n f =
-    let rec aux i = if i >= n then [] else f i :: aux (i + 1) in
-    aux 0
-
   let rec unfold f seed =
     match f seed with None -> [] | Some (x, seed') -> x :: unfold f seed'
-
-  let from_to s e = unfold (fun i -> if i <= e then Some (i, i + 1) else None) s
 
   let duplicate x size =
     unfold (fun i -> if i < size then Some (x, i + 1) else None) 0
 
-  let prefixes xs = map ~f:(take xs) (from_to 0 (List.length xs))
+  (** [prefixes [1; 2; 3]] = [[[]; [1]; [1; 2]; [1; 2; 3]]] *)
+  let prefixes xs = map ~f:(take xs) (range ~stop:`inclusive 0 (List.length xs))
 
   (** {6 Unclassified operators} *)
 
@@ -1283,7 +1208,7 @@ module List = struct
   let reachable ids next =
     let rec loop ids nids =
       let ids' = ids @ nids in
-      let nids' = diff (unique @@ concat_map ~f:next nids) ids' in
+      let nids' = diff (dedup_keep_last @@ concat_map ~f:next nids) ids' in
       if is_empty nids' then ids' else loop ids' nids'
     in
     loop [] ids
@@ -1601,13 +1526,22 @@ end
 module Set = struct
   include Set
 
+  (* The tree shape of a Base set is a function of the operations that built
+     it, not of its elements: [add] up, [add] down, [union], [diff] and
+     [of_list] give five different trees for the same forty integers, and
+     polymorphic [compare] orders those trees by shape (while polymorphic
+     equality raises on them), so a set whose elements contain sets can hold
+     two members that are extensionally the same value, and [mem], [diff] and
+     length-based convergence tests miss it.  [canon] rebuilds a set from its
+     sorted elements, which gives one tree per extension.  Anything that
+     contains sets or maps and is itself put into a set or used as a key --
+     a clause, an example clause, a parametric atom -- is built from
+     canonical parts, and a producer that has used [union], [diff], [filter],
+     [add] or [remove] on such a part ends by calling this. *)
+  let canon s = Set.Poly.of_list (Set.to_list s)
   let is_singleton s = length s = 1
   let eqlen b1 b2 = Set.length b1 = Set.length b2
   let of_map m = Set.Poly.of_list @@ Map.Poly.to_alist m
-
-  (* s1 is recommended to be smaller than s2 for efficiency *)
-  (*Set.is_empty (Set.inter s1 s2)*)
-  let disjoint s1 s2 = Set.for_all s1 ~f:(fun x -> not @@ Set.mem s2 x)
 
   let subsets_with_duplicates lst n =
     List.fold_left ~init:(Set.Poly.singleton [])
@@ -1660,6 +1594,8 @@ end
 module Map = struct
   include Map
 
+  (* the map counterpart of [Set.canon]: one tree per extension *)
+  let canon m = Map.Poly.of_alist_exn @@ Map.Poly.to_alist m
   let of_set_exn s = Map.Poly.of_alist_exn @@ Set.to_list s
 
   let of_list_exn l =
@@ -1710,9 +1646,13 @@ module Map = struct
         | `Both (data1, data2) ->
           if Stdlib.(data1 = data2) then Some data1
           else (catch_dup (key, data1, data2); failwith "force_merge"))*)
-  let force_merge ?(catch_dup = ignore) =
+  (* [equal] decides whether two values under one key agree; a caller whose
+     values are large and often physically shared passes an equality that
+     answers [true] on physically equal arguments first, since [Stdlib.( = )]
+     walks the whole value even then. *)
+  let force_merge ?(catch_dup = ignore) ?(equal = Stdlib.( = )) =
     Map.Poly.merge_skewed ~combine:(fun ~key data1 data2 ->
-        if Stdlib.(data1 = data2) then data1
+        if equal data1 data2 then data1
         else (
           catch_dup (key, data1, data2);
           failwith "force_merge"))
@@ -1740,12 +1680,57 @@ module Map = struct
   let find_with ~f map = Map.Poly.filter map ~f |> to_alist
 end
 
+(** Hash tables *)
+module Hashtbl = struct
+  include Hashtbl
+
+  (* [Hashtbl.Poly] hashes its keys with [Hashtbl.hash], which stops after ten
+     meaningful nodes.  On a formula, an atom or a clause those ten nodes are
+     the top of a tree that most keys share, so a table keyed on such values
+     degenerates into a few long buckets that every lookup walks with a
+     structural comparison -- a solve's 585 clause-graph vertices fell into
+     14 buckets, 258 memoised formulas into 22.  [PolyDeep] is [Poly] with a
+     hash that reads up to 100 meaningful nodes and 1000 in total; equality is
+     still polymorphic comparison, so it is a drop-in for a [Poly] table whose
+     keys are terms or formulas.  It is not a remedy for keys that hold
+     closures or Base sets and maps: polymorphic comparison handles those no
+     better here than it did in [Poly]. *)
+  module PolyDeep = struct
+    let hashable : 'a Hashable.t =
+      {
+        Base.Hashable.hash = (fun x -> Hashtbl.hash_param 100 1000 x);
+        compare = Stdlib.compare;
+        sexp_of_t = (fun _ -> Sexp.Atom "<key>");
+      }
+
+    let create ?growth_allowed ?size () =
+      Using_hashable.create ?growth_allowed ?size ~hashable ()
+  end
+
+  (* A hash for tables whose equality is [phys_equal]: the value's current
+     address, read as an integer.  Contract: with [phys_equal] as equality a
+     table so hashed never returns an entry for another value, whatever this
+     function returns, because the hash only chooses the bucket.  The address
+     is stable for a value in the major heap; a young value moves once when
+     promoted (and every value moves under an explicit [Gc.compact]), and then
+     a lookup misses the entry made before the move and the caller computes
+     again -- a lost reuse, never a wrong answer.  Why not a structural hash:
+     on a formula whose variables carry datatype sorts, even 256 meaningful
+     nodes are spent inside the sorts, so the nodes of a multiplied clausal
+     form, which differ only in their variables and atoms, fell into a few
+     buckets and every lookup walked one.  The integer is computed with a
+     shift, so it is an ordinary tagged integer by the time it is hashed and
+     is never mistaken for the block it was read from. *)
+  let phys_hash (x : 'a) : int =
+    let a : int = Stdlib.Obj.magic (Stdlib.Obj.repr x) in
+    Stdlib.Hashtbl.hash (a lsr 3)
+end
+
 (** Arrays *)
 module Array = struct
   include Array
 
   let remove a idx = Array.filteri a ~f:(fun i _ -> i <> idx)
-  let unzip ar = (Array.map ~f:fst ar, Array.map ~f:snd ar)
 end
 
 module IncrArray = struct

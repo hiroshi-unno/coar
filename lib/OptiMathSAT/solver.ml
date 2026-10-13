@@ -4,14 +4,17 @@ open Ast
 open Ast.LogicOld
 
 let minimize constrs obj =
-  let filename = "temp_optimathsat.smt2" in
-  (* output generated OMT *)
-  let ppf =
-    Format.formatter_of_out_channel
-    @@ if true then Stdlib.open_out filename else Out_channel.stdout
+  let filename =
+    (* the process id keeps two concurrent runs in one directory from writing,
+       reading and overwriting the same file *)
+    sprintf "temp_optimathsat_p%d.smt2" (Pid.to_int @@ Core_unix.getpid ())
   in
+  let senv =
+    Set.union (Formula.term_sort_env_of (Formula.and_of constrs))
+      (Term.term_sort_env_of obj)
+  in
+  (* output generated OMT *)
   let s =
-    let senv = Formula.term_sort_env_of @@ Formula.and_of constrs in
     String.concat
       ("(set-logic OMT_QF_NRA)"
        :: Set.to_list
@@ -27,7 +30,8 @@ let minimize constrs obj =
       @ [ sprintf "(minimize %s)\n" (SMT.Smtlib2.str_of_term obj) ]
       @ [ "(check-sat)\n"; "(get-objectives)\n"; "(get-model)\n" ])
   in
-  Format.fprintf ppf "%s@." s;
+  Out_channel.with_file filename ~f:(fun channel ->
+      Format.fprintf (Format.formatter_of_out_channel channel) "%s@." s);
   let res =
     let cmd =
       if true then (*ToDo*)
@@ -35,25 +39,31 @@ let minimize constrs obj =
          -opt.strategy=ada -opt.abort_interval=2 " ^ filename
       else "./cvc5 --produce-models " ^ filename
     in
-    let cin = Core_unix.open_process_in cmd in
-    let s0 = In_channel.input_line cin in
-    let ss1 =
-      ignore (In_channel.input_line cin);
-      ignore (In_channel.input_line cin);
-      ignore (In_channel.input_line cin);
-      ignore (In_channel.input_line cin);
-      ignore (In_channel.input_line cin);
-      let rec loop acc =
-        match In_channel.input_line cin with
-        | None -> acc
-        | Some s -> loop (s :: acc)
-      in
-      List.rev @@ List.tl_exn @@ loop []
+    let (s0, lines), status =
+      Common.Util.Command.read_process cmd ~f:(fun cin ->
+          let s0 = In_channel.input_line cin in
+          let lines = In_channel.input_lines cin in
+          (s0, lines))
     in
-    In_channel.close cin;
-    match (Core_unix.close_process_in cin, s0) with
+    match (status, s0) with
     | Error _err, _ -> None
-    | Ok _, Some "sat" -> Some (Some ss1)
+    | Ok _, Some "sat" ->
+        if List.is_empty lines then None
+        else
+          let responses =
+            try SMT.Parser.program SMT.Lexer.token
+                  (Lexing.from_string (String.concat ~sep:"\n" lines))
+            with exn_ when not (Common.Timer.is_async exn_) -> failwith "invalid OMT response"
+          in
+          let open Ppx_sexp_conv_lib.Sexp in
+          (match responses with
+          | [ List objectives; List entries ]
+            when (match objectives with
+                  | Atom "objectives" :: _ | List _ :: _ -> true
+                  | _ -> false) ->
+              let entries = match entries with Atom "model" :: rest -> rest | _ -> entries in
+              Some (Some entries)
+          | _ -> failwith "invalid OMT response")
     | Ok _, Some "unsat" -> Some None
     | Ok _, Some s -> failwith s
     | Ok _, None -> None
@@ -61,17 +71,14 @@ let minimize constrs obj =
   match res with
   | None -> (*Or_error.error_string*) failwith "OMT solving failed"
   | Some (Some ss) ->
-      if false then print_endline (String.concat ~sep:"\n" ss);
+      let seen = Hash_set.create (module String) in
       let model =
-        let re =
-          Str.regexp
-            "^[ \t]*(define-fun[ \t]+\\([^ \t]+\\)[ \t]+()[ \t]+Real[ \
-             \t]+\\((.*)\\))[ \t]*$"
-        in
-        List.filter_map ss ~f:(fun line ->
-            if Str.string_match re line 0 then
-              let name = Str.matched_group 1 line in
-              let body = Str.matched_group 2 line in
+        List.map ss ~f:(fun entry ->
+            let open Ppx_sexp_conv_lib.Sexp in
+            match entry with
+            | List [ Atom "define-fun"; Atom name; List []; Atom "Real"; body ] ->
+              if Hash_set.mem seen name then failwith "duplicate OMT model entry";
+              Hash_set.add seen name;
               let t =
                 try
                   Option.return
@@ -84,6 +91,8 @@ let minimize constrs obj =
                        ~inline:true
                        SMT.Problem.
                          {
+                           decl_reading = SMT.Problem.Synthesize;
+                           candidates = Map.Poly.empty;
                            uni_sort = Set.Poly.empty;
                            uni_senv = Map.Poly.empty;
                            exi_senv = Map.Poly.empty;
@@ -92,16 +101,16 @@ let minimize constrs obj =
                            fenv = Map.Poly.empty;
                            dtenv = Map.Poly.empty;
                          }
-                  @@ SMT.Parser.sexp SMT.Lexer.token
-                  @@ Lexing.from_string body
-                with e ->
-                  if false then print_endline (Exn.to_string e);
-                  None
+                  @@ body
+                with exn_ when not (Common.Timer.is_async exn_) -> failwith "invalid OMT model value"
               in
-              Some ((Ident.Tvar name, T_real.SReal), t)
-            else (
-              if false then print_endline line;
-              None))
+              ((Ident.Tvar name, T_real.SReal), t)
+            | _ -> failwith "invalid OMT model entry")
       in
+      (* Callers substitute this model before evaluating the objective and bounds.
+         A structurally valid partial model leaves those expressions open. *)
+      Set.iter senv ~f:(fun (x, _) ->
+          if not (Hash_set.mem seen (Ident.name_of_tvar x)) then
+            failwith "incomplete OMT model");
       Some (None, None, model)
   | Some None -> None

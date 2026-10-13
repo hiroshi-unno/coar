@@ -1,3 +1,11 @@
+(* Extended higher-order macro tree transducers: their syntax, a simple type
+   discipline separating input trees from output trees, and the pieces of their
+   translation into recursion schemes with finite data.  [rsfd_of] compiles
+   pattern matching on an input tree into a nondeterministic branch over the
+   input automaton's transitions (an unmatched constructor becomes the [fail]
+   terminal); [alphaRules] and [beta_rules] build the two copies of the rules
+   used to check the whole program and each coercion separately, and
+   [eta_expand] gives each rule as many parameters as its sort demands. *)
 open Core
 open Common.Ext
 open Common.Combinator
@@ -206,7 +214,7 @@ let size_of_prog (rules : t) =
   List.fold_left ~init:0 ~f:( + ) @@ List.map ~f:(snd >> snd >> size) rules
 
 let terminals (rules : t) =
-  List.unique @@ List.concat_map ~f:(snd >> snd >> terms) rules
+  List.dedup_keep_last @@ List.concat_map ~f:(snd >> snd >> terms) rules
 
 let rec pr_aux b ppf = function
   | Fd n -> Format.fprintf ppf "%d" n
@@ -474,7 +482,7 @@ and beta_term (q, tm, idx) term =
   (*  Format.eprintf "Term: %a\n" Term.pr tm; *)
   let cs = coerces term in
   let ec (_, t, _) = elim_coerce (q, tm, idx) t in
-  if List.exists cs ~f:(Triple.trd >> ( = ) idx) then
+  if List.exists cs ~f:(trd3 >> ( = ) idx) then
     let t1 = alpha tm in
     let t2s = List.map ~f:ec cs in
     (*    let t2 = elim_coerce (q,tm,idx) tm in *)
@@ -537,8 +545,15 @@ let eta_expand env rules =
         in
         let d = List.length sorts - List.length ids in
         assert (d >= 0);
+        (* The new parameters sit beside the rule's own, which may be
+           program variables spelled like a drawn [x<n>]; a repeated parameter
+           would bind the body's occurrence to the wrong one. *)
         let ids' =
-          List.init d ~f:(fun _ -> Ident.mk_fresh_tvar ~prefix:(Some "x") ())
+          List.init d ~f:(fun _ ->
+              Ident.mk_fresh_tvar_avoiding ~prefix:"x"
+                ~taken:(List.mem ~equal:Ident.tvar_equal ids)
+                ())
         in
         (id, (ids @ ids', apps t (List.map ids' ~f:mk_var)))
-      with _ -> failwith (Ident.name_of_tvar id ^ " is not bound"))
+      with exn_ when not (Common.Timer.is_async exn_) ->
+        failwith (Ident.name_of_tvar id ^ " is not bound"))

@@ -1,3 +1,6 @@
+(* The flexible variant of the integer-valued function template: the same
+   guarded piecewise affine term, with the number of condition conjuncts kept
+   per piece ([shape]) so that growth can widen one piece's guard alone. *)
 open Core
 open Common
 open Common.Ext
@@ -8,27 +11,27 @@ open Function
 
 module Config = struct
   type t = {
-    verbose : bool;
-    shape : int list;
-    depth : int;
-    ext : int;
-    upper_bound_expr_coeff : int option;
-    upper_bound_expr_const : int option;
-    expr_seeds : int list option;
-    upper_bound_cond_coeff : int option;
-    upper_bound_cond_const : int option;
-    cond_seeds : int list option;
-    max_number_of_cond_conj : int option;
-    lower_bound_expr_coeff : int option;
-    lower_bound_cond_coeff : int option;
-    bound_each_expr_coeff : int option;
-    bound_each_cond_coeff : int option;
-    threshold_expr_coeff : int option;
-    threshold_expr_const : int option;
-    threshold_cond_coeff : int option;
-    threshold_cond_const : int option;
-    ignore_bool : bool;
-    fix_shape : bool;
+    verbose : bool; [@default false]
+    shape : int list; [@default [ 1 ]]
+    depth : int; [@default 0]
+    ext : int; [@default 0]
+    upper_bound_expr_coeff : int option; [@default Some 1]
+    upper_bound_expr_const : int option; [@default Some 0]
+    expr_seeds : int list option; [@default None]
+    upper_bound_cond_coeff : int option; [@default Some 1]
+    upper_bound_cond_const : int option; [@default Some 0]
+    cond_seeds : int list option; [@default None]
+    max_number_of_cond_conj : int option; [@default None]
+    lower_bound_expr_coeff : int option; [@default None]
+    lower_bound_cond_coeff : int option; [@default None]
+    bound_each_expr_coeff : int option; [@default None]
+    bound_each_cond_coeff : int option; [@default None]
+    threshold_expr_coeff : int option; [@default None]
+    threshold_expr_const : int option; [@default None]
+    threshold_cond_coeff : int option; [@default None]
+    threshold_cond_const : int option; [@default None]
+    ignore_bool : bool; [@default true]
+    fix_shape : bool; [@default false]
   }
   [@@deriving yojson]
 
@@ -38,17 +41,14 @@ module Config = struct
 
   let instantiate_ext_files cfg = Ok cfg
 
-  let load_ext_file = function
-    | ExtFile.Instance x -> Ok (ExtFile.Instance x)
-    | Filename filename -> (
-        let open Or_error in
-        try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
-        match of_yojson raw_json with
-        | Ok x -> instantiate_ext_files x >>= fun x -> Ok (ExtFile.Instance x)
-        | Error msg ->
-            error_string
-            @@ sprintf "Invalid IntFunction Configuration (%s): %s" filename msg
-        )
+  include MakeExtFile (struct
+    type nonrec t = t
+
+    let of_yojson = of_yojson
+    let to_yojson = to_yojson
+    let name = "IntFunction"
+    let instantiate = instantiate_ext_files
+  end)
 end
 
 module type ArgType = sig
@@ -106,6 +106,9 @@ let state_of param labels : state =
   ( param.shp,
     param.depth,
     param.ext,
+    (* [Z.to_int] is safe: the bounds are the template's configured
+       coefficient and constant bounds, grown by one step at a time, never a
+       model integer *)
     Option.map ~f:Z.to_int param.ubec,
     Option.map ~f:Z.to_int param.ubed,
     Option.map ~f:Z.to_int param.ubcc,
@@ -174,6 +177,8 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
 
   let name_of () = Arg.name
   let kind_of () = sprintf "flexible %s" (Kind.str_of Kind.IntFun)
+  let kind = Kind.IntFun
+  let flexible = true
   let sort_of () = Sort.mk_fun @@ Arg.sorts @ [ T_int.SInt ]
   let params_of () = sort_env_list_of_sorts Arg.sorts
 
@@ -209,8 +214,11 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
   let update_hspace hspace =
     HypSpace.qualifiers_of ~fenv:Arg.fenv !param.depth hspace
 
+  let kind_cert_template () = None
+
   let gen_template ~ucore:_ (hspace : HypSpace.hspace) =
     let template =
+      Function.refuse_without_template @@ fun () ->
       Templ.gen_fun ~print:Debug.print ~ignore_bool:config.ignore_bool
         {
           consts = Set.to_list hspace.consts;
@@ -598,7 +606,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     if
       List.exists Arg.sorts ~f:(fun s ->
           Term.is_dt_sort s || Term.is_array_sort s)
-      && List.fold param.shp ~init:1 ~f:( * ) > Integer.pow (param.depth + 1) 3
+      && List.fold param.shp ~init:1 ~f:( * ) > Int.pow (param.depth + 1) 3
     then increase_depth_ext (param, actions)
     else
       match

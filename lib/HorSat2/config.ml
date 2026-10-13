@@ -1,7 +1,10 @@
+(* Configuration of the HorSat2 wrapper: each Boolean field switches on the
+   command-line flag of the same name ([-noce]: no counterexample is printed,
+   [-merge], [-gfp]) of the external [horsat2] executable. *)
 open Core
 open Common.Util
 
-type t = { verbose : bool; noce : bool; merge : bool; gfp : bool }
+type t = { verbose : bool; [@default false] noce : bool; [@default true] merge : bool; [@default false] gfp : bool [@default false] }
 [@@deriving yojson]
 
 module type ConfigType = sig
@@ -10,13 +13,11 @@ end
 
 let instantiate_ext_files cfg = Ok cfg
 
-let load_ext_file = function
-  | ExtFile.Instance x -> Ok (ExtFile.Instance x)
-  | Filename filename -> (
-      let open Or_error in
-      try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
-      match of_yojson raw_json with
-      | Ok x -> instantiate_ext_files x >>= fun x -> Ok (ExtFile.Instance x)
-      | Error msg ->
-          error_string
-          @@ sprintf "Invalid HorSat2 Configuration (%s): %s" filename msg)
+include MakeExtFile (struct
+  type nonrec t = t
+
+  let of_yojson = of_yojson
+  let to_yojson = to_yojson
+  let name = "HorSat2"
+  let instantiate = instantiate_ext_files
+end)

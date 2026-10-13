@@ -52,20 +52,38 @@ source .venv/bin/activate
 ```
 This command reproduces the results in Table 1 in the paper.
 
-### (Optional) Running a Single Benchmark
+### (Optional) Running the Tool on a Single Benchmark
 
-If you want to run the solver on an individual benchmark file, use the following commands:
+If you want to run the tool on an individual benchmark file, use the following commands:
 ```bash
 # activate python venv for PolyQEnt
 source .venv/bin/activate
 
 # with debug output
-./_build/default/main.exe -c ./config/solver/dbg_muval_quant_polyqent_deg1.json -p qfl benchmarks/QFL/omega_regular/ex3_9.qhes
+./_build/default/main.exe -c ./config/solver/dbg_muval_quant_omega_lexpmsm_polyqent_deg1.json -p qfl benchmarks/QFL/omega_regular/ex3_9.qhes
 
 # without debug output
-./_build/default/main.exe -c ./config/solver/muval_quant_polyqent_deg1.json -p qfl benchmarks/QFL/omega_regular/ex3_9.qhes
+./_build/default/main.exe -c ./config/solver/muval_quant_omega_lexpmsm_polyqent_deg1.json -p qfl benchmarks/QFL/omega_regular/ex3_9.qhes
 ```
 Here, `./config/solver/muval_quant_polyqent_deg1.json` is a configuration file.
+
+We provide five types of configurations for different kinds of certificates.
+- LexPMSM: `./config/solver/muval_quant_omega_lexpmsm_polyqent_deg1.json`
+- LexGSSM: `./config/solver/muval_quant_omega_lexgssm_polyqent_deg1.json`
+- PSSM: `./config/solver/muval_quant_omega_pmsm_polyqent_deg1.json`
+- GSSM: `./config/solver/muval_quant_omega_gssm_polyqent_deg1.json`
+- SSM: `./config/solver/muval_quant_omega_ssm_polyqent_deg1.json`
+
+
+Synthesized certificates can be found in the debug output.
+Note that conditionals are enclosed by `(<` and `>)` in debug output.
+```
+synthesized ranking supermartingale for (X0, 2, 0): (m:real) (n:real) |-> real(0)
+synthesized ranking supermartingale for (X1, 2, 0): (m:real) (n:real) |-> if (<real(0) <. real(1) +. m /\ n >=. real(0)>) then if (<m >. real(0)>) then real(3) +. m else real(1) else real(2)
+synthesized ranking supermartingale for (Y, 2, 0):  |-> real(0)
+```
+For lexicographic certificates (LexPMSM and LexGSSM), certificates are synthesized component by component (cf. Section 6 of the paper) and hence printed component by component.
+
 
 
 ## Expected Results

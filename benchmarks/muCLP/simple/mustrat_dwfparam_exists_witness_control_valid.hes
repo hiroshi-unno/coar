@@ -1,0 +1,19 @@
+/* Control for mustrat_dwfparam_exists_witness_invalid.hes: the same system with one
+   base case added (x = 1).  A fix for the witness-reads-the-record unsoundness must
+   still answer this one.
+
+   Verdict: VALID.  P 1 holds by the base case; P 0 holds by the witness z = 1,
+   which is in range and leads to P 1.  (R is false, as in the sibling, and plays
+   no part.)
+
+   The honest strategy is the constant witness z = 1, which reads neither x nor
+   the record r, with one ranking for the single recursive step 0 -> 1, e.g.
+   max(1 - a, 0) > max(1 - b, 0).  The cheating strategy of the sibling also wins
+   here, so the verdict does not separate the two; what the file checks is that a
+   repair which forbids the witness from depending on the record -- or restricts
+   the witness template in any other way -- does not lose a valid instance whose
+   witness is trivial. */
+P 0
+s.t.
+P (x: int): bool =mu x = 1 \/ (exists (z: int). 0 <= z /\ z <= 1 /\ P z) \/ R x;
+R (y: int): bool =nu y > 0 /\ R (y - 1);

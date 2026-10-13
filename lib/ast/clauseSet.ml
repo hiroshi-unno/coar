@@ -1,3 +1,17 @@
+(* Sets of clauses over the higher-order term language [Logic] (a
+   [Clause.t Set.Poly.t]), with the conversions from and to [ClauseOld] and
+   to formulas, and per-predicate summaries.
+
+   A clause set is a [Set.Poly] whose elements contain sets and maps, so it
+   is ordered by tree shape: [canon] (and [of_formulas], which canonicalises
+   each clause it builds) is what makes two shapes of one clause one member.
+   [count_pvar_apps] counts each unknown's occurrences in the atom sets only,
+   which assumes no unknown occurs in a clause's pure part; every
+   elimination rule that decides from it inherits that assumption.
+   [pred_of_pos]/[pred_of_neg] read off the disjunction of an unknown's
+   definite clauses (its least candidate from them) and the conjunction of
+   its co-definite ones.  [partial_sols_of] says which unknowns a candidate
+   solution already solves, given lower bounds for the others. *)
 open Core
 open Common.Ext
 open Common.Combinator
@@ -6,7 +20,9 @@ open Logic
 type t = Clause.t Set.Poly.t
 
 let of_old_clause_set = Set.Poly.map ~f:Clause.of_old_clause
-let to_old_clause_set exi_senv = Set.Poly.map ~f:(Clause.to_old_clause exi_senv)
+let to_old_clause_set exi_senv cls =
+  Clause.with_dt_scope @@ fun () ->
+  Set.Poly.map cls ~f:(Clause.to_old_clause exi_senv)
 let svs_of = Set.concat_map ~f:Clause.svs_of
 let pvs_of = Set.concat_map ~f:Clause.pvs_of
 let fvs_of = Set.concat_map ~f:Clause.fvs_of
@@ -53,8 +69,14 @@ let to_formulas clauses = Set.Poly.map ~f:Clause.to_senv_formula clauses
 
 let of_formulas exi_senv phis =
   Set.concat_map phis ~f:(fun (uni_senv, phi) ->
-      Set.Poly.map ~f:(fun (ps, ns, phi) -> (uni_senv, ps, ns, phi))
+      Set.Poly.map ~f:(fun (ps, ns, phi) ->
+          Clause.canon (uni_senv, ps, ns, phi))
       @@ BoolTerm.cnf_of exi_senv uni_senv phi)
+
+(* rebuilds every clause, and the set, in canonical shape (see
+   [Common.Ext.Set.canon]); two members that were the same clause in two
+   shapes become one *)
+let canon = Set.Poly.map ~f:Clause.canon
 
 let preds_of_pos exi_senv cs tvar =
   List.map ~f:snd @@ Set.to_list
@@ -73,7 +95,7 @@ let pred_of_pos exi_senv cs tvar =
         ( mk_fresh_sort_env_list @@ Sort.args_of
           @@ Map.Poly.find_exn exi_senv tvar,
           BoolTerm.mk_bool false )
-      with _ ->
+      with exn_ when not (Common.Timer.is_async exn_) ->
         failwith
         @@ sprintf "[pred_of_pos] %s not found" (Ident.name_of_tvar tvar))
   | (env, phi) :: ps ->
@@ -95,7 +117,7 @@ let pred_of_neg exi_senv cs tvar =
         ( mk_fresh_sort_env_list @@ Sort.args_of
           @@ Map.Poly.find_exn exi_senv tvar,
           BoolTerm.mk_bool true )
-      with _ ->
+      with exn_ when not (Common.Timer.is_async exn_) ->
         failwith
         @@ sprintf "[pred_of_neg] %s not found" (Ident.name_of_tvar tvar))
   | (env, phi) :: ps ->
@@ -119,7 +141,7 @@ let pred_of exi_senv cs tvar =
             ( mk_fresh_sort_env_list @@ Sort.args_of
               @@ Map.Poly.find_exn exi_senv tvar,
               BoolTerm.mk_bool true )
-          with _ ->
+          with exn_ when not (Common.Timer.is_async exn_) ->
             failwith
             @@ sprintf "[pred_of] %s not found" (Ident.name_of_tvar tvar))
       | (env, phi) :: ps ->

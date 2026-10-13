@@ -1,9 +1,6 @@
 {
     "verbose": true,
     "num_labelings": 1,
-    "strategy": [
-        "SAT"
-    ],
     "sat_solver": [
         "Filename",
         "./config/solver/dbg_minisat_dim_red.json"

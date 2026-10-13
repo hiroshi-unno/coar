@@ -2,7 +2,7 @@
 # coding: utf-8
 
 # usage:
-# e.g.) ./bench.rb --bin './build/default/bin/main.exe' --args '--algorithm rec-limit --format smt-lib2 --valid' --bench './benchmarks/chc-comp18'
+# e.g.) ./bench.rb --bin './_build/default/main.exe' --args '--algorithm rec-limit --format smt-lib2 --valid' --bench './benchmarks/chc-comp18'
 
 require 'open3'
 require 'timeout'
@@ -145,7 +145,7 @@ end
 
 `dune build`
 
-params = ARGV.getopts('', 'bin:./_build/default/bin/main.exe',
+params = ARGV.getopts('', 'bin:./_build/default/main.exe',
                       'args: --synthesizer tb',
                       'bench:./benchmarks/sygus-comp/comp/2017/Inv_Track',
                       'recursive',

@@ -1,3 +1,8 @@
+(* Octahedron qualifier domain: for each labelled example, the halfspaces
+   [sum_i (+-x_i) >= c] over every subset of the integer parameters and every
+   choice of signs, [c] the example's value of the left-hand side -- a number
+   exponential in the parameters.  Bool parameters give [b = true]; other
+   sorts give nothing. *)
 open Core
 open Common.Ext
 open Common.Combinator
@@ -34,13 +39,16 @@ let octahedron_half_spaces_of sorts examples =
       |> Set.Poly.filter_map ~f:(function
            | x, T_bool.SBool -> Some (Term.mk_var x T_bool.SBool)
            | _, T_int.SInt -> None
-           | _, T_real.SReal -> failwith "real"
-           | _, s -> failwith ("not supported" ^ Term.str_of_sort s))
+           | _, _ ->
+               (* an integer abstract domain: a parameter of any other sort
+                  (real, bit-vector, datatype, ...) gets no qualifier from
+                  it, the same as an integer one, instead of a crash *)
+               None)
       |> Set.Poly.map ~f:(fun x -> Formula.eq x (T_bool.mk_true ())))
       (Set.concat_map examples ~f:(fun terms ->
            List.map2_exn params terms ~f:(fun (x, s) t ->
                (Term.mk_var x s, s, t))
-           |> List.filter ~f:(Triple.snd >> Fn.non Term.is_bool_sort)
+           |> List.filter ~f:(snd3 >> Term.is_int_sort)
            |> Set.Poly.of_list |> make)) )
 
 let qualifiers_of _pvar sorts labeled_atoms _examples =

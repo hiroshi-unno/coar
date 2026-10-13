@@ -1,0 +1,7 @@
+# A geometric loop: count the successes of fair coin flips until the first failure.
+# Expected: the tool answers unknown (it gives no bound for this query) on stdout, not a backtrace.
+n := 0;
+while flip(1/2) {
+    n += 1;
+}
+return n

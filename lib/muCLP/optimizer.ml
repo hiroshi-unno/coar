@@ -1,3 +1,17 @@
+(* Meaning-preserving simplification of a muCLP problem before it is solved.
+   [f] runs, in order: removal of redundant quantifiers and of lets; inlining of
+   a predicate called exactly once, from a predicate defined before it;
+   optionally, elimination of quantifiers over variables that are adjustable
+   (each occurs once, so the term ranges over its whole sort and the quantifier
+   can move onto the argument position); removal of predicates unreachable from
+   the query; removal of predicate arguments that are the same constant at every
+   call; replacement of each quantified subformula free of predicate variables
+   by [true] when Z3 shows it valid, or by [false] when Z3 shows it
+   unsatisfiable (an undecided query leaves it alone); and a final
+   simplification and inlining.  With [enable] off only the first step runs.
+   Every step must preserve validity of the query; a syntactic test used to
+   license one (the adjustable variables) may miss a variable but must never
+   claim one that is not. *)
 open Core
 open Common
 open Common.Ext
@@ -7,23 +21,53 @@ open Ast
 open Ast.LogicOld
 
 module Config = struct
-  type t = { enable : bool; erase_quantifiers : bool; verbose : bool }
+  type t = {
+    enable : bool; [@default true]
+    erase_quantifiers : bool; [@default false]
+    erq_keep_query_binder : bool; [@default true]
+        (** with [erase_quantifiers]: leave a quantifier block the query reaches from its root
+            through conjunctions only.  Such a universal is already a clause variable of the
+            primal problem (and an existential one is skolemised alike either way), so erasing it
+            only adds a nullary predicate whose body is the callee unfolded once, which pins the
+            callee's solution less. *)
+    erq_keep_same_scc : bool; [@default false]
+        (** with [erase_quantifiers]: leave a quantified call in a predicate's body when the
+            called predicate is in the same call-graph SCC as that predicate (the origin of a
+            predicate erasure created standing for it).  Erasing such a call adds the fresh
+            predicate to the recursion, and the fixpoint-to-pfwCSP reduction then threads copies
+            of the members' arguments through each indirectly recursive member and adds a
+            well-foundedness unknown per member. *)
+    erq_keep_same_scc_if_grows : bool; [@default false]
+        (** with [erase_quantifiers]: the rule of [erq_keep_same_scc] restricted to the
+            strongly connected components the erasure would grow.  The erasure is first run
+            without the rule; a component of the original call graph grows when, in the
+            problem that run produces, two predicates standing for one original predicate (the
+            original itself, or a predicate the erasure made from it) lie in one strongly
+            connected component of the call graph restricted to what the query reaches.  Then
+            the original is still called beside its fresh copy, and the fixpoint-to-pfwCSP
+            reduction pays for the extra member.  Where every original predicate has at most
+            one representative in each component (a fresh predicate that replaces its
+            original in the recursion, the original left unreachable or outside the cycle),
+            the erasure is kept.  Only same-component calls of a grown component are declined,
+            in a second run. *)
+    verbose : bool; [@default false]
+  }
   [@@deriving yojson]
 
   module type ConfigType = sig
     val config : t
   end
 
-  let load_ext_file = function
-    | ExtFile.Instance x -> Ok (ExtFile.Instance x)
-    | Filename filename -> (
-        let open Or_error in
-        try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
-        match of_yojson raw_json with
-        | Ok x -> Ok (ExtFile.Instance x)
-        | Error msg ->
-            error_string
-            @@ sprintf "Invalid Optimizer Configuration (%s): %s" filename msg)
+  include MakeExtFile (struct
+    type nonrec t = t
+
+    let of_yojson = of_yojson
+    let to_yojson = to_yojson
+    let name = "Optimizer"
+
+    (* a leaf: no nested config to load *)
+    let instantiate = Or_error.return
+  end)
 end
 
 module type OptimizerType = sig
@@ -59,9 +103,9 @@ module Make (Config : Config.ConfigType) = struct
            ~f:
              (Formula.pvs_of
              >> Set.Poly.map ~f:(fun pvar ->
-                    try Hashtbl.Poly.find_exn pvar_to_id pvar
-                    with _ ->
-                      failwith @@ "not found: " ^ Ident.name_of_pvar pvar)
+                 try Hashtbl.Poly.find_exn pvar_to_id pvar
+                 with exn_ when not (Common.Timer.is_async exn_) ->
+                   failwith @@ "not found: " ^ Ident.name_of_pvar pvar)
              >> Set.to_list)
       |> Array.of_list
 
@@ -168,16 +212,40 @@ module Make (Config : Config.ConfigType) = struct
 
   module EraseQuantifiers : sig
     val optimize :
-      ?elim_forall:bool -> ?elim_exists:bool -> Problem.t -> Problem.t
+      ?keep_query_binder:bool ->
+      ?keep_same_scc:bool ->
+      ?keep_same_scc_if_grows:bool ->
+      ?elim_forall:bool ->
+      ?elim_exists:bool ->
+      Problem.t ->
+      Problem.t
   end = struct
     let seed = 1007
 
-    (* AV(a+1) = {a}
+    (* The adjustable variables AV(t) of a term: the bound variables [a] such that, with the other
+       variables fixed, [fun a -> t] is onto the sort, so that [exists a. P t] can become
+       [exists y. P y] (and [forall] likewise).  The rules below are only a sufficient syntactic
+       test and must never claim a variable that is not adjustable: over the integers [a + a + a]
+       and [a + 2 * a] are [3a], which is not onto, and [|a|] is never onto (neither over the
+       integers nor the reals), yet these were once claimed, which turned an invalid
+       [exists a. P (a + a + a)] into a valid one.  So [|a|] contributes nothing, and a variable is
+       kept only when it occurs exactly once in the whole term, along additions, subtractions and
+       negations; a single occurrence under [+], [-] and unary [-] is a translate of [a] or [-a],
+       which is onto in every sort these arms cover.
+       AV(a+1) = {a}
        AV(a*2) = {}
        AV(a + a + b) = {b}
        AV(a + b + c) = {a, b, c}
        AV(1) = {} *)
-    let rec adj_vars_of_term = function
+    let rec occurrences_of v = function
+      | Term.Var (x, _, _) -> if Stdlib.( = ) x v then 1 else 0
+      | FunApp (T_bool.Formula phi, [], _) ->
+          if Set.mem (Formula.tvs_of phi) v then 2 else 0
+      | FunApp (_, args, _) ->
+          List.fold args ~init:0 ~f:(fun n t -> n + occurrences_of v t)
+      | LetTerm _ as t -> if Set.mem (Term.tvs_of t) v then 2 else 0
+
+    let rec adj_vars_of_term_raw = function
       | Term.Var (tvar, _, _) ->
           (* AV(a) = {a} *)
           Set.Poly.singleton tvar
@@ -187,20 +255,17 @@ module Make (Config : Config.ConfigType) = struct
             [],
             _ ) ->
           Set.Poly.empty
-      | FunApp
-          ( ( T_int.(Neg | Abs)
-            | T_real.(RNeg | RAbs)
-            | T_bv.(BVNeg _ (*| BVAbs*)) ),
-            [ a ],
-            _ ) ->
-          (* AV(-a) = AV(|a|) = AV(a) *) adj_vars_of_term a
+      | FunApp ((T_int.Neg | T_real.RNeg | T_bv.BVNeg _), [ a ], _) ->
+          (* AV(-a) = AV(a) *) adj_vars_of_term_raw a
+      | FunApp ((T_int.Abs | T_real.RAbs), [ _ ], _) ->
+          (* |a| is not onto: AV(|a|) = {} *) Set.Poly.empty
       | FunApp
           ( (T_int.(Add | Sub) | T_real.(RAdd | RSub) | T_bv.(BVAdd _ | BVSub _)),
             [ a; b ],
             _ ) ->
           (* AV(a + b) = AV(a - b) = AV(a) + AV(b) - (AV(a) and AV(b)) *)
-          let av1 = adj_vars_of_term a in
-          let av2 = adj_vars_of_term b in
+          let av1 = adj_vars_of_term_raw a in
+          let av2 = adj_vars_of_term_raw b in
           Set.diff (Set.union av1 av2) (Set.inter av1 av2)
       | FunApp
           ( ( T_int.(Mul | Div _ | Rem _ | Power)
@@ -213,6 +278,9 @@ module Make (Config : Config.ConfigType) = struct
       | term ->
           if true then (*ToDo*) Set.Poly.empty
           else failwith @@ sprintf "unknown operation: %s" (Term.str_of term)
+
+    let adj_vars_of_term t =
+      Set.filter (adj_vars_of_term_raw t) ~f:(fun v -> occurrences_of v t = 1)
 
     let check_separatable avfvs =
       let avfvs = Array.of_list avfvs in
@@ -227,13 +295,13 @@ module Make (Config : Config.ConfigType) = struct
       Array.iteri avfvs ~f:(fun idx ->
           snd >> Set.to_list
           >> List.iter ~f:(fun tvar ->
-                 let current_count =
-                   match Hashtbl.Poly.find fv_count tvar with
-                   | None -> 0
-                   | Some x -> x
-                 in
-                 Hashtbl.Poly.set fv_count ~key:tvar ~data:(current_count + 1);
-                 Hashtbl.Poly.add_multi indexes_of_ftv ~key:tvar ~data:idx));
+              let current_count =
+                match Hashtbl.Poly.find fv_count tvar with
+                | None -> 0
+                | Some x -> x
+              in
+              Hashtbl.Poly.set fv_count ~key:tvar ~data:(current_count + 1);
+              Hashtbl.Poly.add_multi indexes_of_ftv ~key:tvar ~data:idx));
       let tvars = Hashtbl.Poly.keys fv_count in
       let is_assigned = Array.init (Array.length avfvs) ~f:(fun _ -> false) in
       let queue = Queue.create () in
@@ -245,17 +313,14 @@ module Make (Config : Config.ConfigType) = struct
         if Hashtbl.Poly.find_exn fv_count tvar = 1 then
           Hashtbl.find_multi indexes_of_ftv tvar
           |> List.iter ~f:(fun idx ->
-                 if (not is_assigned.(idx)) && Set.mem (fst avfvs.(idx)) tvar
-                 then (
-                   is_assigned.(idx) <- true;
-                   Set.iter
-                     (snd avfvs.(idx))
-                     ~f:(fun tvar' ->
-                       let nxt_count =
-                         Hashtbl.Poly.find_exn fv_count tvar' - 1
-                       in
-                       Hashtbl.Poly.set fv_count ~key:tvar' ~data:nxt_count;
-                       if nxt_count = 1 then Queue.enqueue queue tvar')))
+              if (not is_assigned.(idx)) && Set.mem (fst avfvs.(idx)) tvar then (
+                is_assigned.(idx) <- true;
+                Set.iter
+                  (snd avfvs.(idx))
+                  ~f:(fun tvar' ->
+                    let nxt_count = Hashtbl.Poly.find_exn fv_count tvar' - 1 in
+                    Hashtbl.Poly.set fv_count ~key:tvar' ~data:nxt_count;
+                    if nxt_count = 1 then Queue.enqueue queue tvar')))
       done;
       Array.for_all ~f:Fn.id is_assigned
 
@@ -375,8 +440,60 @@ module Make (Config : Config.ConfigType) = struct
     let is_from_if fml =
       match let_if_opt fml with Some _ -> true | None -> false
 
-    let optimize ?(elim_forall = true) ?(elim_exists = true) muclp =
+    (* [scc_of_preds preds a b]: whether [a] and [b] are in one strongly connected component of
+       the call graph of [preds] (an edge P -> Q when Q occurs in P's body), that is [a = b] or
+       each reaches the other by one or more calls.  A name that is not in [preds] reaches
+       nothing.  [a = b] is only asked of an application of [a] inside [a]'s own body, which is
+       a cycle, so counting every predicate as in its own component costs nothing. *)
+    let scc_of_preds (preds : Pred.t list) =
+      let callees =
+        Map.Poly.of_alist_reduce ~f:Set.union
+        @@ List.map preds ~f:(fun (p : Pred.t) -> (p.name, Formula.pvs_of p.body))
+      in
+      let reach_of p =
+        (* every predicate reachable from [p] by one or more calls *)
+        let rec go seen = function
+          | [] -> seen
+          | q :: rest ->
+              let next =
+                Set.diff
+                  (Option.value ~default:Set.Poly.empty (Map.Poly.find callees q))
+                  seen
+              in
+              go (Set.union seen next) (Set.to_list next @ rest)
+        in
+        go Set.Poly.empty [ p ]
+      in
+      let reach =
+        Map.Poly.of_alist_reduce ~f:(fun a _ -> a)
+        @@ List.map preds ~f:(fun (p : Pred.t) -> (p.name, reach_of p.name))
+      in
+      let reaches a b =
+        match Map.Poly.find reach a with Some r -> Set.mem r b | None -> false
+      in
+      fun a b -> Stdlib.(a = b) || (reaches a b && reaches b a)
+
+    (* Optional rules that decline an erasure ([keep_query_binder], [keep_same_scc],
+       [keep_same_scc_if_grows]; see the config fields of the same names).  A declined
+       application keeps its quantifier, exactly as this pass leaves one whose bound arguments
+       are not adjustable, so no later step can rely on an erasure having fired: every rule
+       preserves the query's validity whatever it decides (also when [keep_same_scc_if_grows]
+       decides from a first run's output), and changes only the shape of the problem handed on.
+
+       One run of the erasure.  [decline_scc q] holds for the original predicates [q] whose
+       same-component calls are left quantified (the rule of [keep_same_scc], restricted to the
+       components it names).  Returns the erased problem and, for each of its predicates, the
+       original predicate it stands for. *)
+    let run ~keep_query_binder ~decline_scc ~elim_forall ~elim_exists muclp =
       let preds = Array.of_list muclp.Problem.preds in
+      let same_scc = scc_of_preds muclp.Problem.preds in
+      (* the original predicate a predicate made by [add_pred] stands for (itself otherwise) *)
+      let origin_of : (Ident.pvar, Ident.pvar) Hashtbl.t =
+        Hashtbl.Poly.create ~size:seed ()
+      in
+      let origin p = Option.value ~default:p (Hashtbl.Poly.find origin_of p) in
+      (* the predicate whose body is being erased; [None] while the query is *)
+      let owner : Ident.pvar option ref = ref None in
       let pvar_to_pred : (Ident.pvar, Pred.t) Hashtbl.t =
         Hashtbl.Poly.create ~size:seed ()
       in
@@ -443,6 +560,7 @@ module Make (Config : Config.ConfigType) = struct
         Hashtbl.Poly.set pvar_to_nxtpvar ~key:pred.name ~data:nxtpvar;
         (* update pvar_to_pred *)
         Hashtbl.Poly.set pvar_to_pred ~key:pred.name ~data:pred;
+        Hashtbl.Poly.set origin_of ~key:pred.name ~data:(origin pvar);
         (* update pvar_to_fpvar, pvar_to_epvar *)
         Hashtbl.Poly.set
           (Hashtbl.find_exn (ht_of_binder binder) pvar)
@@ -476,7 +594,10 @@ module Make (Config : Config.ConfigType) = struct
         | _ -> assert false
       in
       (* erase quantifiers in [binder] [bounds]. [fml] *)
-      let rec erase_quantifiers_rep_bind binder bounds fml =
+      (* [keep] holds while [binder] [bounds] is the query's outermost quantifier block under
+         [keep_query_binder]: an application under it keeps its quantifier. *)
+      let rec erase_quantifiers_rep_bind ?(keep = false) binder bounds fml =
+        let erase_quantifiers_rep_bind' = erase_quantifiers_rep_bind ~keep in
         let ftv = SimpleFormula.get_ftv fml in
         let bounds = List.filter ~f:(fst >> Set.mem ftv) bounds in
         if List.is_empty bounds then erase_quantifiers_rep fml
@@ -487,7 +608,7 @@ module Make (Config : Config.ConfigType) = struct
           if Stdlib.(binder_of_op binder = op) then
             (* exists a. P(a) \/ P(b) -> (exists a. P(a)) \/ (exists a. P(b)) *)
             SimpleFormula.mk_branch op
-            @@ List.map ~f:(erase_quantifiers_rep_bind binder bounds) fmls
+            @@ List.map ~f:(erase_quantifiers_rep_bind' binder bounds) fmls
           else if is_from_if fml then (
             (* forall x. (P /\ Q) \/ (not P /\ R)
                -> forall x. (P => Q) /\ (not P => R)
@@ -502,12 +623,12 @@ module Make (Config : Config.ConfigType) = struct
             let fml1 =
               SimpleFormula.mk_branch_with_simplification_one op
                 [ SimpleFormula.neg cond_fml; fml1 ]
-              |> erase_quantifiers_rep_bind binder bounds
+              |> erase_quantifiers_rep_bind' binder bounds
             in
             let fml2 =
               SimpleFormula.mk_branch_with_simplification_one op
                 [ cond_fml; fml2 ]
-              |> erase_quantifiers_rep_bind binder bounds
+              |> erase_quantifiers_rep_bind' binder bounds
             in
             SimpleFormula.mk_branch_with_simplification_one
               (Formula.flip_binop op) [ fml1; fml2 ])
@@ -547,27 +668,26 @@ module Make (Config : Config.ConfigType) = struct
             let fmls = Array.of_list fmls in
             UnionFind.get_groups uf
             |> List.map ~f:(fun ids ->
-                   let fmls' = List.map ~f:(fun id -> fmls.(id)) ids in
-                   match fmls' with
-                   | [ fml' ] -> erase_quantifiers_rep_bind binder bounds fml'
-                   (* try let_if *)
-                   | [ _; _ ] ->
-                       (* TODO *)
-                       let fml' =
-                         SimpleFormula.mk_branch_with_simplification_one op
-                           fmls'
-                       in
-                       if is_from_if fml' then
-                         erase_quantifiers_rep_bind binder bounds fml'
-                       else
-                         List.map ~f:erase_quantifiers_rep fmls'
-                         |> SimpleFormula.mk_branch_with_simplification_one op
-                         |> SimpleFormula.mk_bind_with_filter binder bounds
-                   | _ ->
-                       (* List.length fmls >= 2 *)
-                       List.map ~f:erase_quantifiers_rep fmls'
-                       |> SimpleFormula.mk_branch_with_simplification_one op
-                       |> SimpleFormula.mk_bind_with_filter binder bounds)
+                let fmls' = List.map ~f:(fun id -> fmls.(id)) ids in
+                match fmls' with
+                | [ fml' ] -> erase_quantifiers_rep_bind' binder bounds fml'
+                (* try let_if *)
+                | [ _; _ ] ->
+                    (* TODO *)
+                    let fml' =
+                      SimpleFormula.mk_branch_with_simplification_one op fmls'
+                    in
+                    if is_from_if fml' then
+                      erase_quantifiers_rep_bind' binder bounds fml'
+                    else
+                      List.map ~f:erase_quantifiers_rep fmls'
+                      |> SimpleFormula.mk_branch_with_simplification_one op
+                      |> SimpleFormula.mk_bind_with_filter binder bounds
+                | _ ->
+                    (* List.length fmls >= 2 *)
+                    List.map ~f:erase_quantifiers_rep fmls'
+                    |> SimpleFormula.mk_branch_with_simplification_one op
+                    |> SimpleFormula.mk_bind_with_filter binder bounds)
             |> SimpleFormula.mk_branch_with_simplification_one op)
         else if SimpleFormula.is_bind fml then
           let binder', bounds', fml' = SimpleFormula.let_bind fml in
@@ -577,7 +697,7 @@ module Make (Config : Config.ConfigType) = struct
             (*let new_bounds = bounds @ bounds' in
               assert (Stdlib.(SimpleFormula.update_bounds bounds bounds' = new_bounds));*)
             let new_bounds = SimpleFormula.update_bounds bounds bounds' in
-            erase_quantifiers_rep_bind binder new_bounds fml'
+            erase_quantifiers_rep_bind' binder new_bounds fml'
           else
             (* forall x. exists y. P
                1. process [exists y. P]
@@ -588,15 +708,25 @@ module Make (Config : Config.ConfigType) = struct
               let binder', _, _ = SimpleFormula.let_bind fml in
               if Stdlib.(binder <> binder') then
                 SimpleFormula.mk_bind_with_filter binder bounds fml
-              else erase_quantifiers_rep_bind binder bounds fml
-            else erase_quantifiers_rep_bind binder bounds fml
+              else erase_quantifiers_rep_bind' binder bounds fml
+            else erase_quantifiers_rep_bind' binder bounds fml
         else if SimpleFormula.is_app fml then (
           let pvar, args = SimpleFormula.let_app fml in
           Debug.print
           @@ lazy
                (sprintf "erase_quantifiers_rep_bind(is_app): "
                ^ SimpleFormula.string_of fml);
-          match bound_flags_of_app_opt bounds args with
+          let declined =
+            keep
+            || decline_scc (origin pvar)
+               &&
+               match !owner with
+               | Some p -> same_scc (origin p) (origin pvar)
+               | None -> false
+          in
+          match
+            if declined then None else bound_flags_of_app_opt bounds args
+          with
           | Some bound_flags ->
               SimpleFormula.mk_app (get_or_add_pred binder bound_flags pvar)
               @@ List.map ~f:fst
@@ -606,10 +736,11 @@ module Make (Config : Config.ConfigType) = struct
         else if SimpleFormula.is_cond fml then
           SimpleFormula.mk_bind_with_filter binder bounds fml
         else assert false
-      and erase_quantifiers_rep fml =
+      (* [top] holds on the query's root and on what it reaches through conjunctions only *)
+      and erase_quantifiers_rep ?(top = false) fml =
         if SimpleFormula.is_and fml then
           SimpleFormula.let_and fml
-          |> List.map ~f:erase_quantifiers_rep
+          |> List.map ~f:(erase_quantifiers_rep ~top)
           |> SimpleFormula.mk_and
         else if SimpleFormula.is_or fml then
           SimpleFormula.let_or fml
@@ -621,31 +752,35 @@ module Make (Config : Config.ConfigType) = struct
             Stdlib.(
               (elim_forall && binder = Formula.Forall)
               || (elim_exists && binder = Formula.Exists))
-          then erase_quantifiers_rep_bind binder bounds fml'
+          then
+            erase_quantifiers_rep_bind ~keep:(top && keep_query_binder) binder
+              bounds fml'
           else fml
         else if SimpleFormula.is_atom fml then fml
         else assert false
       in
-      let erase_quantifiers fml =
+      let erase_quantifiers ?(top = false) fml =
         try
           Debug.print
           @@ lazy (sprintf "erase_quantifiers before: " ^ Formula.str_of fml);
           let fml = SimpleFormula.of_formula @@ Formula.nnf_of fml in
           Debug.print
           @@ lazy
-               (sprintf "erase_quantifiers after: "
+               (sprintf "erase_quantifiers normalized: "
                ^ SimpleFormula.string_of fml);
-          SimpleFormula.formula_of @@ erase_quantifiers_rep fml
-        with _ -> fml
+          SimpleFormula.formula_of @@ erase_quantifiers_rep ~top fml
+        with exn_ when not (Common.Timer.is_async exn_) -> fml
       in
       (* init queue *)
       Array.iter preds ~f:(fun pred -> Queue.enqueue queue pred.name);
-      let query = erase_quantifiers muclp.Problem.query in
+      owner := None;
+      let query = erase_quantifiers ~top:true muclp.Problem.query in
       while Fn.non Queue.is_empty queue do
         let pvar = Queue.dequeue_exn queue in
         let pred = Hashtbl.Poly.find_exn pvar_to_pred pvar in
         assert (Stdlib.( = ) pvar pred.name);
         Debug.print @@ lazy (sprintf "%s: " (Ident.name_of_pvar pvar));
+        owner := Some pvar;
         Hashtbl.Poly.set pvar_to_pred ~key:pvar
           ~data:{ pred with body = erase_quantifiers pred.body }
       done;
@@ -657,24 +792,94 @@ module Make (Config : Config.ConfigType) = struct
         @@ Hashtbl.Poly.find_exn pvar_to_pred !current_pvar;
         current_pvar := Hashtbl.Poly.find_exn pvar_to_nxtpvar !current_pvar
       done;
-      Problem.make ((*ToDo*) Queue.to_list preds_queue) query
+      (Problem.make ((*ToDo*) Queue.to_list preds_queue) query, origin)
+
+    (* The original predicates whose call-graph component the erasure [erased] grew: those in
+       the original component of an original predicate [q] with two representatives (by
+       [origin]) in one strongly connected component of [erased]'s call graph restricted to
+       the predicates the query reaches.  Each call edge of [erased] maps by [origin] to a
+       call edge of the original problem (a fresh predicate's body is its original's body with
+       some quantified calls renamed to fresh copies of their callees), so each component of
+       [erased] maps into one original component; two representatives of one original in a
+       component are therefore exactly a component larger than the original's image. *)
+    let grown_sccs ~original ~erased ~origin =
+      let same_scc_orig = scc_of_preds original.Problem.preds in
+      let same_scc_er = scc_of_preds erased.Problem.preds in
+      let callees =
+        Map.Poly.of_alist_reduce ~f:Set.union
+        @@ List.map erased.Problem.preds ~f:(fun (p : Pred.t) ->
+            (p.name, Formula.pvs_of p.body))
+      in
+      let reached =
+        let rec go seen = function
+          | [] -> seen
+          | q :: rest ->
+              let next =
+                Set.diff
+                  (Option.value ~default:Set.Poly.empty (Map.Poly.find callees q))
+                  seen
+              in
+              go (Set.union seen next) (Set.to_list next @ rest)
+        in
+        let roots = Formula.pvs_of erased.Problem.query in
+        go roots (Set.to_list roots)
+      in
+      let members =
+        List.filter_map erased.Problem.preds ~f:(fun (p : Pred.t) ->
+            if Set.mem reached p.name then Some p.name else None)
+      in
+      let dup_origins =
+        List.fold members ~init:Set.Poly.empty ~f:(fun acc a ->
+            if
+              List.exists members ~f:(fun b ->
+                  Stdlib.(a <> b && origin a = origin b) && same_scc_er a b)
+            then Set.add acc (origin a)
+            else acc)
+      in
+      fun q -> Set.exists dup_origins ~f:(fun d -> same_scc_orig d q)
+
+    let optimize ?(keep_query_binder = false) ?(keep_same_scc = false)
+        ?(keep_same_scc_if_grows = false) ?(elim_forall = true)
+        ?(elim_exists = true) muclp =
+      if keep_same_scc || not keep_same_scc_if_grows then
+        fst
+        @@ run ~keep_query_binder
+             ~decline_scc:(fun _ -> keep_same_scc)
+             ~elim_forall ~elim_exists muclp
+      else
+        let erased, origin =
+          run ~keep_query_binder
+            ~decline_scc:(fun _ -> false)
+            ~elim_forall ~elim_exists muclp
+        in
+        let grown = grown_sccs ~original:muclp ~erased ~origin in
+        if
+          List.for_all muclp.Problem.preds ~f:(fun (p : Pred.t) ->
+              not (grown p.name))
+        then erased
+        else
+          fst
+          @@ run ~keep_query_binder ~decline_scc:grown ~elim_forall
+               ~elim_exists muclp
   end
 
   (* exists x. 0 <= x /\ x <= 100 -> true *)
   module CheckAndReplaceToTopOrBot : sig
-    val optimize : id:int option -> Problem.t -> Problem.t
+    val optimize :
+      id:int option -> ?timeout_milliseconds:int -> Problem.t -> Problem.t
   end = struct
     let bind_free_tvas_with_forall fml =
       let bounds = Set.to_list @@ Formula.term_sort_env_of fml in
       Formula.mk_forall_if_bounded bounds fml ~info:Dummy
 
-    let gen_smt_solver timeout_milliseconds =
-      let ctx =
-        Z3.mk_context [ ("timeout", string_of_int timeout_milliseconds) ]
-      in
-      (Z3.Solver.mk_simple_solver ctx, ctx)
+    (* One Z3 context per optimisation pass, not per query: creating a context
+       costs about nine milliseconds, and this pass asks two questions of every
+       quantified subformula, so on a muCLP with a few dozen of them the
+       context creation was 80% of the pass (0.32 s of 0.40 s, 35 questions).
+       The solver is still fresh for every question. *)
+    let gen_smt_solver ctx = Z3.Solver.mk_simple_solver ctx
 
-    let check_always_true ~id ?(timeout_milliseconds = 1000) fml =
+    let check_always_true ~id ~ctx fml =
       if Fn.non Set.is_empty @@ Formula.pvs_of fml then false
       else (
         Debug.print @@ lazy "\n[optimize][check_always_true]";
@@ -682,45 +887,81 @@ module Make (Config : Config.ConfigType) = struct
         (* x >= 10 -> forall (x: int). x >= 10 *)
         let fml = bind_free_tvas_with_forall fml in
         (* to smt format and solve it with z3 *)
-        let solver, ctx = gen_smt_solver timeout_milliseconds in
+        let solver = gen_smt_solver ctx in
         let fenv =
           Map.Poly.empty
           (*ToDo*)
           (*PCSP.Problem.fenv_of APCSP.problem*)
         in
         let dtenv =
-          Set.Poly.empty
-          (*ToDo*)
-          (*Z3Smt.Z3interface.z3_dtenv_of_dtenv ctx (PCSP.Problem.dtenv_of APCSP.problem)*)
+          (* The datatypes have to be declared to the solver before a term over
+             them is converted for it, and this used to pass the EMPTY set with
+             the correct call commented out beside it.  A formula mentioning a
+             constructor or a selector then ended the run in an uncaught
+             failure naming a datatype that the input had declared perfectly
+             well -- no verdict, a backtrace -- because the set the conversion
+             searches had size zero.  A fixpoint-logic problem has no
+             environment of its own to read, so the process-wide one is the
+             source; whatever reduced a constraint problem to this one
+             registers it there on the way in. *)
+          Z3Smt.Z3interface.z3_dtenv_of_formula ctx fml
         in
         let expr = Z3Smt.Z3interface.of_formula ~id ctx [] [] fenv dtenv fml in
         Debug.print @@ lazy (sprintf "expr: %s" (Z3.Expr.to_string expr));
         try
-          let z3result = Z3.Solver.check solver [ expr ] in
+          (* ALWAYS TRUE IS NOT SATISFIABLE.  The question asked here decides
+             whether a subformula may be replaced by true, so it has to be
+             "true in every model of the theory" -- which is the negation being
+             unsatisfiable.  Asking whether the formula itself is satisfiable
+             answers "true in SOME model", and the two part company exactly
+             where the theory leaves a term open: a read outside a sequence, a
+             selector on a datatype with several constructors, an uninterpreted
+             function, a division.  A twenty-line input asserting that two
+             out-of-range reads of different sequences agree is satisfiable and
+             not valid, and it was being replaced by true, which turned a
+             refutation into "satisfiable" for the whole problem.
+
+             The caller's second arm is then right as it stands: a formula is
+             always false exactly when its negation is always true.
+
+             An undecided or failed query leaves the formula alone, which is
+             the safe direction -- the replacement is an optimisation and not
+             an obligation. *)
+          let z3result =
+            Z3.Solver.check solver [ Z3.Boolean.mk_not ctx expr ]
+          in
           Debug.print
-          @@ lazy (sprintf "Z3: %s\n" (Z3.Solver.string_of_status z3result));
-          match z3result with Z3.Solver.SATISFIABLE -> true | _ -> false
+          @@ lazy
+               (sprintf "Z3 on the negation: %s\n"
+                  (Z3.Solver.string_of_status z3result));
+          match z3result with Z3.Solver.UNSATISFIABLE -> true | _ -> false
         with Z3.Error reason ->
           (* timeout *)
           Debug.print @@ lazy (sprintf "Z3 Error: %s" reason);
           false)
 
-    let rec replace_to_topbot ~id = function
+    let rec replace_to_topbot ~id ~ctx = function
       | Formula.BinaryOp (op, phi1, phi2, info) ->
           Formula.mk_binop ~info op
-            (replace_to_topbot ~id phi1)
-            (replace_to_topbot ~id phi2)
+            (replace_to_topbot ~id ~ctx phi1)
+            (replace_to_topbot ~id ~ctx phi2)
       | Formula.UnaryOp (op, phi1, info) ->
-          Formula.mk_unop ~info op (replace_to_topbot ~id phi1)
+          Formula.mk_unop ~info op (replace_to_topbot ~id ~ctx phi1)
       | Formula.Atom (_, _) as phi -> phi
       | Formula.Bind (binder, bounds, fml, info) as phi ->
-          if check_always_true ~id phi then Formula.mk_true ()
-          else if check_always_true ~id (Evaluator.simplify_neg phi) then
+          if check_always_true ~id ~ctx phi then Formula.mk_true ()
+          else if check_always_true ~id ~ctx (Evaluator.simplify_neg phi) then
             Formula.mk_false ()
-          else Formula.mk_bind binder bounds ~info @@ replace_to_topbot ~id fml
+          else
+            Formula.mk_bind binder bounds ~info
+            @@ replace_to_topbot ~id ~ctx fml
       | _ -> failwith "replace_to_topbot"
 
-    let optimize ~id = Problem.map_formula (replace_to_topbot ~id)
+    let optimize ~id ?(timeout_milliseconds = 1000) muclp =
+      let ctx =
+        Z3.mk_context [ ("timeout", string_of_int timeout_milliseconds) ]
+      in
+      Problem.map_formula (replace_to_topbot ~id ~ctx) muclp
   end
 
   module EraseConstVariables : sig
@@ -779,10 +1020,10 @@ module Make (Config : Config.ConfigType) = struct
         ~key:tvar ~data:NonConst;
       Hashtbl.Poly.find_exn graph pt
       |> List.iter ~f:(fun (nxt_pvar, nxt_tvar, _) ->
-             let nxt_pt = (nxt_pvar, nxt_tvar) in
-             let env = Hashtbl.Poly.find_exn ht_vt nxt_pvar in
-             if Stdlib.( <> ) (Hashtbl.Poly.find_exn env nxt_tvar) NonConst then
-               nonconst_update ht_vt graph nxt_pt)
+          let nxt_pt = (nxt_pvar, nxt_tvar) in
+          let env = Hashtbl.Poly.find_exn ht_vt nxt_pvar in
+          if Stdlib.( <> ) (Hashtbl.Poly.find_exn env nxt_tvar) NonConst then
+            nonconst_update ht_vt graph nxt_pt)
 
     let rec vt_of_term env = function
       | Term.Var (tvar, _, _) ->
@@ -805,12 +1046,18 @@ module Make (Config : Config.ConfigType) = struct
             | T_int.Add, [ ConstInt x; ConstInt y ] -> ConstInt (Z.( + ) x y)
             | T_int.Sub, [ ConstInt x; ConstInt y ] -> ConstInt (Z.( - ) x y)
             | T_int.Mul, [ ConstInt x; ConstInt y ] -> ConstInt (Z.( * ) x y)
-            | T_int.Div m, [ ConstInt x; ConstInt y ] ->
+            | T_int.Div m, [ ConstInt x; ConstInt y ]
+              when Z.Compare.(y <> Z.zero) ->
                 ConstInt (Value.div_of m x y)
-            | T_int.Rem m, [ ConstInt x; ConstInt y ] ->
+            | T_int.Rem m, [ ConstInt x; ConstInt y ]
+              when Z.Compare.(y <> Z.zero) ->
                 ConstInt (Value.rem_of m x y)
-            | T_int.Power, [ ConstInt x; ConstInt y ] ->
-                ConstInt (Z.pow x (Z.to_int (*ToDo*) y))
+            | T_int.Power, [ ConstInt x; ConstInt y ] -> (
+                (* not folded where the exponent is negative or too large for
+                   the power to be computed: the term is then left as it is *)
+                match Value.pow_of x y with
+                | Some z -> ConstInt z
+                | None -> NonConst)
             | T_real.Real x, [] -> ConstReal x
             | T_real.RNeg, [ ConstReal x ] -> ConstReal (Q.neg x)
             | T_real.RAbs, [ ConstReal x ] -> ConstReal (Q.abs x)
@@ -868,7 +1115,12 @@ module Make (Config : Config.ConfigType) = struct
                    try
                      ( (pvar', tvar', value_of_const_term arg) :: consts,
                        nonconsts )
-                   with _ -> (*ToDo*) (consts, nonconsts)
+                   with exn_ when not (Common.Timer.is_async exn_) ->
+                     (* a ground argument whose value cannot be computed
+                        (division by zero, ite, datatype constructors, select,
+                        ...) is not known to agree with the other call sites'
+                        values, so the position is not constant *)
+                     (consts, (pvar', tvar') :: nonconsts)
                  else if Set.is_empty @@ Set.diff ftv arg_tvars then (
                    Set.iter (Set.inter ftv arg_tvars) ~f:(fun tvar ->
                        let pt = (pvar, tvar) in
@@ -1046,7 +1298,11 @@ module Make (Config : Config.ConfigType) = struct
         Debug.print @@ lazy ("\ninlined: " ^ Problem.str_of muclp);
       muclp)
       |> (if config.erase_quantifiers then
-            EraseQuantifiers.optimize ~elim_forall ~elim_exists
+            EraseQuantifiers.optimize
+              ~keep_query_binder:config.erq_keep_query_binder
+              ~keep_same_scc:config.erq_keep_same_scc
+              ~keep_same_scc_if_grows:config.erq_keep_same_scc_if_grows
+              ~elim_forall ~elim_exists
           else Fn.id)
       |> (fun muclp ->
       if print_log then

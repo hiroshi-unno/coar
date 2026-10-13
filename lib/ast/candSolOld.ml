@@ -30,7 +30,7 @@ let of_fundef (Ident.Tvar x, t) : pred_subst_elem =
         Formula.rename map
         @@ Logic.ExtTerm.to_old_fml Map.Poly.empty (Map.of_list_exn args) t' )
     )
-  with _ ->
+  with exn_ when not (Common.Timer.is_async exn_) ->
     failwith
     @@ sprintf "[of_fundef] the given solution for %s(%s) is ill-formed: %s" x
          (String.concat_map_list ~sep:"," ~f:(fst >> Ident.name_of_tvar) args)

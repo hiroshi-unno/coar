@@ -1,3 +1,10 @@
+(* Minimality check for one predicate of an OptPCSat solution: builds the
+   auxiliary pfwCSP whose satisfiability certifies that no solution with a
+   strictly smaller interpretation of the predicate exists, using the
+   backward clauses of the problem's definite clauses with a well-founded
+   predicate ranking the derivations, and solves it with the configured
+   constraint solver.  It returns [OptSat] on [sat] and [Unknown] otherwise;
+   [unsat] proves nothing here. *)
 open Core
 open Common
 open Common.Ext
@@ -343,7 +350,14 @@ module Make (Config : Config.ConfigType) :
     let exi_senv = exi_senv1 in
     let pcsp' =
       let clauses =
-        (* Set.concat_map ~f:(simplify_fnpvs exi_senv fnpvs) @@ *)
+        (* A whole-clause-set pass once stood here, over the constructed problem:
+        for a functional predicate's application in a clause body it derived
+        the application's result variable from the clause's own equations,
+        substituted it, and dropped the application.  It was removed the day
+        after it was written, by the same rework that produced the
+        per-application quantifier-elimination filter this file still uses,
+        and NEITHER name on the original line survives -- so this is a record
+        of what stood here, not a call that can be switched back on. *)
         Set.union trans_clauses goal
       in
       let params =

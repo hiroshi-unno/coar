@@ -1,3 +1,11 @@
+(* Integer affine expressions [c + a1*x1 + ... + an*xn] over [Logic] term
+   variables, as a map from [Some x] to its coefficient and [None] to the
+   constant.  Coefficients are arbitrary-precision.  A zero coefficient is
+   kept rather than removed, so [( = )] and [compare] distinguish [x - x] from
+   [0]; [make] raises on a repeated variable; [eval] raises on a variable the
+   valuation lacks unless a default is given.  [of_term] recognises only
+   integer literals, variables, [+], [-], negation and multiplication by a
+   literal, and gives [None] for anything else. *)
 open Core
 open Common.Ext
 open Common.Combinator

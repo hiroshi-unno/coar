@@ -1,0 +1,12 @@
+/* The third rung of the ladder transcribed entirely to integers: the same
+   rotation, the same alternating flag gating the good state, no reals
+   anywhere.  It does NOT answer at 240 s, while the flagless integer
+   version answers in under a second -- which is what rules the real sort
+   out as the explanation for the third rung being hard.  The sorts are
+   joined into one numeric sort for the ranking template when a real is
+   present, and that was the standing suspect; this file exonerates it. */
+Main 0
+s.t.
+Main (z:int): bool =mu forall (a:int). forall (b:int). (a = 0 /\ b = 0) \/ L6 a b 0;
+L6 (a:int) (b:int) (tick:int): bool =mu tick = 1 /\ a > 0 /\ b >= 0 \/ L7 a b 0;
+L7 (a:int) (b:int) (tick:int): bool =mu tick = 1 /\ a > 0 /\ b >= 0 \/ L6 (-b) a 1;

@@ -1,0 +1,24 @@
+/* Termination of a terminating nested loop, after one unfolding of the outer
+   loop into the query (the form the optimizer gives function_bubblesort of
+   popl2023mod), with the bounds 10 lowered to 2:
+int main() {
+  int x1, x2;
+  while (x1 <= 2) {
+    x2 = 2;
+    while (x2 > 1)
+      x2 = x2 - 1;
+    x1 = x1 + 1;
+  }
+  return 0;
+}
+   Valid.  The refuter's existential for x2' is nested in its existential for
+   x1; once the refuter's x1 has two term alternatives, a strategy check that
+   copies the clause per alternative without renaming the nested choice's
+   result apart makes the refuter's check clause vacuous, and MuStrat answered
+   invalid, with and without the optimizer's quantifier erasure. */
+forall (d: int). Q d
+s.t.
+I (x1: int) (x2: int): bool =mu x1 > 2 \/ (forall (x2': int). negP x2 x2' \/ I (x1 + 1) x2') /\ J 2;
+Q (d: int): bool =mu forall (x1: int) (x2: int). x1 > 2 \/ (forall (x2': int). negP x2 x2' \/ I (x1 + 1) x2') /\ J 2;
+J (x2: int): bool =mu x2 <= 1 \/ J (x2 - 1);
+negP (x2: int) (x2': int): bool =nu (x2 > 1 \/ x2 != x2') /\ (x2 <= 1 \/ negP (x2 - 1) x2');

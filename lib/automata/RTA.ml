@@ -38,7 +38,7 @@ let canonize_body u =
     | Leaf | Label (_, _, _) -> [ u ]
     | Alter (u1, u2) ->
         let x = aux u1 @ aux u2 in
-        let x' = List.unique x in
+        let x' = List.dedup_keep_last x in
         (*let _ = assert (x = x') in*)
         x'
     | Emp -> []
@@ -51,7 +51,8 @@ let canonize_body u =
 let rec next_ids_body = function
   | Leaf -> []
   | Label (_id1, id2, id3) -> [ id2; id3 ]
-  | Alter (u1, u2) -> (*List.unique*) next_ids_body u1 @ next_ids_body u2
+  | Alter (u1, u2) ->
+      (*List.dedup_keep_last*) next_ids_body u1 @ next_ids_body u2
   | Emp -> []
 
 let rec tta_body_of (body : ('lab, 'sym) body) : TTA.body =

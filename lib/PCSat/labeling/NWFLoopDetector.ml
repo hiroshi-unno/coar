@@ -103,9 +103,47 @@ let detect_nwf ~print name m (graph, components, node_map_rev) res =
             print @@ lazy "A non-NWF cycle found: [";
             let papps = get_papps_nwf ~print name m node_map_rev [] cycle in
             print @@ lazy "]\n";
-            Set.add acc
-              ExClause.
-                { positive = Set.Poly.empty; negative = Set.Poly.of_list papps }))
+            (* canonicalised: a [Set.Poly] orders by the shape of the tree it
+               was built as, so one clause built in two orders is two elements *)
+            Set.add acc @@ ExClause.canon
+            @@ ExClause.
+                 { positive = Set.Poly.empty; negative = Set.Poly.of_list papps }))
+
+(* The parity condition: an infinite chain is allowed exactly when the least
+   priority it visits infinitely often is accepting.  [priority_of] raises on a
+   tag the family's priority function does not map, so it must be given the
+   family's real record, never a placeholder. *)
+let priority_of (nwf : Kind.nwf) tag = Map.Poly.find_exn nwf.Kind.sigma tag
+let is_accepting_priority (nwf : Kind.nwf) pri = Set.mem nwf.Kind.acc_set pri
+
+(* A self-loop among the sample: an atom over a diagonal tag pair (t, t) whose
+   left and right node, after the shared arguments, are equal.  It is caught
+   before the graph is built and refuted by a unit negative lemma.  [allowed nwf
+   t] says the family permits an infinite chain staying at tag [t]; the first
+   self-loop in the sample's order that is not allowed is returned. *)
+let find_self_loop ~allowed m sample =
+  Set.find_map sample ~f:(fun (pv, (idl, idr), terms) ->
+      if Ident.tvar_equal idl idr then
+        let nwf, sorts_shared, _, _ = Map.Poly.find_exn m (idl, idr) in
+        if
+          (not (allowed nwf idl))
+          && ExClause.has_self_loop
+               ~drop:(Some (List.length sorts_shared))
+               terms
+        then Some (ExClause.mk_unit_neg (ExAtom.PApp (pv, terms)))
+        else None
+      else None)
+
+(* Non-well-foundedness forbids every infinite chain, so every self-loop is a
+   violation.  The family record in [m] is not read, which is what lets the
+   labeler pass a placeholder there. *)
+let nwf_self_loop m sample = find_self_loop ~allowed:(fun _ _ -> false) m sample
+
+(* A self-loop is an infinite chain visiting one priority, so under the parity
+   condition it is a violation only when that priority is rejecting. *)
+let parity_self_loop m sample =
+  find_self_loop m sample ~allowed:(fun nwf tag ->
+      is_accepting_priority nwf (priority_of nwf tag))
 
 let is_sat_parity_cond m node_map_rev = function
   | v1 :: v2 :: tl ->
@@ -113,12 +151,11 @@ let is_sat_parity_cond m node_map_rev = function
       let _, idr = Map.Poly.find_exn node_map_rev v2 in
       let nwf, _, _, _ = Map.Poly.find_exn m (idl, idr) in
       let min =
-        List.fold_left ~init:(Map.Poly.find_exn nwf.Kind.sigma idl) (v2 :: tl)
-          ~f:(fun m v ->
+        List.fold_left ~init:(priority_of nwf idl) (v2 :: tl) ~f:(fun m v ->
             let _, id = Map.Poly.find_exn node_map_rev v in
-            min m (Map.Poly.find_exn nwf.Kind.sigma id))
+            min m (priority_of nwf id))
       in
-      Set.mem nwf.Kind.acc_set min
+      is_accepting_priority nwf min
   | _ -> assert false
 
 let rec get_papps_parity ~print m node_map_rev acc = function
@@ -156,9 +193,9 @@ let detect_parity ~print m (graph, components, node_map_rev) res =
               print @@ lazy "A non-parity cycle found: [";
               let papps = get_papps_parity ~print m node_map_rev [] cycle in
               print @@ lazy "]\n";
-              Set.add acc
-                ExClause.
-                  {
-                    positive = Set.Poly.empty;
-                    negative = Set.Poly.of_list papps;
-                  })))
+              Set.add acc @@ ExClause.canon
+              @@ ExClause.
+                   {
+                     positive = Set.Poly.empty;
+                     negative = Set.Poly.of_list papps;
+                   })))

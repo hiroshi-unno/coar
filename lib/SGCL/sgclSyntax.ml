@@ -1,3 +1,13 @@
+(* Abstract syntax of sGCL, a probabilistic guarded command language with
+   real-valued variables, and its reduction to QFL.  Statements are
+   assignment (also in increment and decrement form), conditional, loop,
+   probabilistic choice, a loop that continues with a given probability
+   ([WHILE_FLIP]) and observation; a program's variables are all those its
+   statements mention, read as reals.  [Program.wpt] is the
+   weakest-preexpectation transformer: it returns the preexpectation of the
+   program's post-expectation as a real-valued term together with one
+   least-fixpoint equation per loop, the input of the QFL solver.  A failing
+   observation contributes 0, so the result is unnormalised. *)
 open Core
 open Common.Ext
 open Ast.LogicOld
@@ -295,6 +305,13 @@ end
 and Program : sig
   type kind = LB | UB
 
+  type bound = {
+    post : Term.t;
+    kind : kind;
+    value : Term.t;
+    strict : bool;
+  }
+
   type query = {
     bounds : sort_env_list;
     left : Formula.t option;
@@ -304,14 +321,27 @@ and Program : sig
     bound : Term.t;
   }
 
-  type t = { vars : sort_env_list; stmts : Statement.t; f : Term.t }
+  type t = {
+    vars : sort_env_list;
+    stmts : Statement.t;
+    f : Term.t;
+    bound : bound option;
+  }
 
-  val make : Statement.t -> Term.t -> t
+  val make : ?bound:bound -> Statement.t -> Term.t -> t
+  val mk_bound : Term.t -> kind -> ?strict:bool -> Term.t -> bound
   val str_of : t -> string
   val wpt : print:(string lazy_t -> unit) -> t -> EquationSystem.t
 end = struct
   type kind = LB | UB
 
+  type bound = {
+    post : Term.t;
+    kind : kind;
+    value : Term.t;
+    strict : bool;
+  }
+
   type query = {
     bounds : sort_env_list;
     left : Formula.t option;
@@ -321,9 +351,18 @@ end = struct
     bound : Term.t;
   }
 
-  type t = { vars : sort_env_list; stmts : Statement.t; f : Term.t }
+  type t = {
+    vars : sort_env_list;
+    stmts : Statement.t;
+    f : Term.t;
+    bound : bound option;
+  }
 
-  let make stmts f = { vars = Statement.collect_all_vars stmts; stmts; f }
+  let make ?bound stmts f =
+    { vars = Statement.collect_all_vars stmts; stmts; f; bound }
+
+  let mk_bound post kind ?(strict = false) value =
+    { post; kind; value; strict }
 
   let str_of pgcl =
     sprintf "Variables:%s\nStmts:%s"

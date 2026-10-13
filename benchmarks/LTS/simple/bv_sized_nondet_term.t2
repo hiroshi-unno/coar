@@ -1,0 +1,14 @@
+// A sized nondet stored in a bit-vector variable in BV mode.
+// Until 2026-09-06 nondet_int() had sort Int regardless of the mode and -p ltstermbv failed with
+// "unification failure: bv32 = int".  Expected: YES under -p ltsterm and -p ltstermbv.
+START: 0;
+TYPE x: bv(32);
+
+FROM: 0;
+x := nondet_int();
+assume(x > 0);
+TO: 1;
+FROM: 1;
+assume(x > 0);
+x := x - 1;
+TO: 1;

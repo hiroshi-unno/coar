@@ -11,10 +11,6 @@
             "./config/solver/dbg_pcsat_tb.json"
         ],
         "verbose": true,
-        "one_by_one": true,
-        "improve_current": true,
-        "mode": [
-            "NoSideCond"
-        ]
+        "improve_current": true
     }
 ]

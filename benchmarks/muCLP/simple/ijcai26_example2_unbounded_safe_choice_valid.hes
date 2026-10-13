@@ -1,0 +1,11 @@
+/* Example 2 of Chatterjee, Goharshady, Karrabi, Seeliger, Zikelic, "Automated Approach
+   for Solving Infinite-state Polynomial Reachability Games" (IJCAI 2026): the SAFE player
+   first picks an arbitrary real x, then REACH decrements x by one each step until x < 0.
+   REACH wins from every choice, yet that paper's real-valued ranking certificate cannot
+   prove it: the certificate must be finite at the initial state and bound every choice.
+   A well-founded relation on REACH's steps alone (x' = x - 1 with x >= 0) says nothing
+   about SAFE's move before it, so a transition-invariant style proof exists.
+   REACH's side, a least fixpoint; the query is valid. */
+forall (x: real). R x
+s.t.
+R (x: real): bool =mu x < 0.0 \/ R (x - 1.0);

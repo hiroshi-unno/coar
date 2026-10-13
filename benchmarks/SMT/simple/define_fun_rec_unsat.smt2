@@ -1,0 +1,6 @@
+(set-logic ALL)
+(define-fun-rec f ((n Int)) Int (+ n 1))
+(declare-const x Int)
+(assert (= x 2))
+(assert (distinct (f x) 3))
+(check-sat)

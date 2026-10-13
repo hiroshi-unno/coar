@@ -123,8 +123,12 @@ rule token = parse
 
   (*| "?" lsnum* { UNKNOWN (Lexing.lexeme lexbuf) }*)
 
-  (*| "let" { LET }
+  (* "in" is live: the parser's [term IN eff] rule reads temporal specifications
+     [x in ev(a) ev(b)*] (the token had been left in
+     this commented block, so every benchmarks/OCaml/temporal file failed with
+     MenhirBasics.Error) *)
   | "in" { IN }
+  (*| "let" { LET }
   | "<-" { LARROW }
   | ":=" { COLEQ }
 

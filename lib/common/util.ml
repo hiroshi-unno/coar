@@ -1,3 +1,21 @@
+(* Shared utilities.  In order:
+   - fixed-width bit-vector arithmetic on non-negative [Z.t] values, with
+     SMT-LIB's total semantics (division and remainder by zero, and a
+     shift by the width or more, have the values the standard fixes);
+   - [ExtFile] and [MakeExtFile], the configuration-loading protocol: a
+     config field is either a file name or an instance, and every [Config]
+     module states how to load its nested configs (a leaf writes
+     [Or_error.return]);
+   - [Command], external processes run through [bash -c], preferring a tool
+     in the working directory to one on the PATH; [sync_command] closes and
+     reaps the child whatever its reader raises, and turns an interrupt into
+     [Sys_unix.Break] and any other failure into [Shell_error];
+   - [Task], a copy of Domainslib's task pool whose promises keep the
+     backtrace of a worker's exception;
+   - small list-based vectors, matrices, bit vectors, graphs (strongly
+     connected components), partial orders, permutations and combinations;
+   - [ALMap], a sorted association list compared by polymorphic equality,
+     whose [find_exn] raises [Stdlib.Not_found] (not Base's [Not_found_s]). *)
 open Core
 open Ext
 
@@ -40,11 +58,15 @@ let bvsdiv n x y =
   let from_signed z = Z.erem z two_n in
   let sx = to_signed x in
   let sy = to_signed y in
-  if Z.equal sy Z.zero then Z.zero else from_signed (Z.div sx sy)
+  if Z.equal sy Z.zero then
+    (* SMT-LIB: bvsdiv s #b0 = all-ones if msb s = 0, else #b1 *)
+    if Z.sign sx >= 0 then Z.pred two_n else Z.one
+  else from_signed (Z.div sx sy)
 
 let bvudiv n x y =
   let two_n = Z.shift_left Z.one n in
-  if Z.equal y Z.zero then Z.zero else Z.erem (Z.div x y) two_n
+  if Z.equal y Z.zero then Z.pred two_n (* SMT-LIB: bvudiv s #b0 = all-ones *)
+  else Z.erem (Z.div x y) two_n
 
 let bvsrem n x y =
   let two_n = Z.shift_left Z.one n in
@@ -53,24 +75,36 @@ let bvsrem n x y =
   let from_signed z = Z.erem z two_n in
   let sx = to_signed x in
   let sy = to_signed y in
-  if Z.equal sy Z.zero then Z.zero else from_signed (Z.rem sx sy)
+  if Z.equal sy Z.zero then x (* SMT-LIB: bvsrem s #b0 = s *)
+  else from_signed (Z.rem sx sy)
 
-let bvurem _n x y = if Z.equal y Z.zero then Z.zero else Z.rem x y
+let bvurem _n x y =
+  if Z.equal y Z.zero then x (* SMT-LIB: bvurem s #b0 = s *) else Z.rem x y
 
 let bvshl n x y =
   let mask = Z.(shift_left one n - one) in
-  Z.(shift_left x (Z.to_int y) land mask)
+  (* SMT-LIB: a shift of the width or more gives 0 *)
+  if Z.geq y (Z.of_int n) then Z.zero
+  else Z.(shift_left x (Z.to_int y) land mask)
 
-let bvlshr x y = Z.(shift_right x (Z.to_int y))
+(* A shift by at least the number of bits of a non-negative [x] gives 0, which
+   is answered without narrowing [y]: the shift amount is a term's value and
+   can exceed a native int. *)
+let bvlshr x y =
+  if Z.sign x >= 0 && Z.geq y (Z.of_int (Z.numbits x)) then Z.zero
+  else Z.(shift_right x (Z.to_int y))
 
 let bvashr n x y =
   let mask = Z.(shift_left one n - one) in
-  let i = Z.(shift_right x (Z.to_int y)) in
-  let i' =
-    if Z.testbit x (n - 1) then Z.logor i (Z.shift_left mask (n - Z.to_int y))
-    else i
-  in
-  Z.logand i' mask
+  (* SMT-LIB: a shift of the width or more gives all sign bits *)
+  if Z.geq y (Z.of_int n) then if Z.testbit x (n - 1) then mask else Z.zero
+  else
+    let i = Z.(shift_right x (Z.to_int y)) in
+    let i' =
+      if Z.testbit x (n - 1) then Z.logor i (Z.shift_left mask (n - Z.to_int y))
+      else i
+    in
+    Z.logand i' mask
 
 let int2bv n x =
   let two_n = Z.shift_left Z.one n in
@@ -130,6 +164,93 @@ end
 
 type 'a ext_file = 'a ExtFile.t [@@deriving yojson]
 
+(* The value a config reader builds from a JSON literal, for a field's
+   [@default] whose value is not a constant: [config_default reader "{}"] is a
+   nested record with every field at its own default, and a variant carrying a
+   record is written the way a config file writes it.  Going through the reader
+   makes the default mean exactly what the same text in a config file means.
+   Raises when the literal does not read, which the first load of any config of
+   the enclosing type exercises. *)
+let config_default (reader : Yojson.Safe.t -> ('a, string) result)
+    (json : string) : 'a =
+  match reader (Yojson.Safe.from_string json) with
+  | Ok x -> x
+  | Error msg -> failwith (sprintf "config_default %s: %s" json msg)
+
+(* The config-loading protocol -- [Filename] -> parse the JSON -> recurse into
+   the nested configs -> [Instance] -- was hand-copied into 62 [Config] modules,
+   and eight of the copies left the recursion out.  All
+   eight were leaves, so nothing was broken; what was missing was the
+   *distinction* between "a leaf, the recursion is unnecessary" and "the
+   recursion was forgotten", since adding one nested [ext_file] field to such a
+   module compiles cleanly and then fails at run time with [Filename ... cannot
+   unwrap], far from the edit.  A module built through this functor has to state
+   the answer: a leaf writes [let instantiate = Or_error.return]. *)
+(* Every config module built through [MakeExtFile] registers itself here when
+   its module is initialised: a loader that reads a file, instantiates its
+   nested configs and prints the instantiated value back as JSON, and a reader
+   that parses JSON without instantiating anything and prints it back.  Nothing
+   on the solving path reads this; it exists so that a self-check can print the
+   configuration a binary builds from every file under [config/] and compare
+   two binaries, which is how a change to a field's default, or a config file
+   rewritten to state only what differs from the defaults, is shown to leave
+   every instantiated configuration as it was.  Names are not unique (two
+   template modules share one), so the list keeps every registration. *)
+module ConfigRegistry = struct
+  type entry = {
+    name : string;
+    load : string -> Yojson.Safe.t Or_error.t;
+    reparse : Yojson.Safe.t -> (Yojson.Safe.t, string) result;
+  }
+
+  let entries : entry list ref = ref []
+end
+
+module MakeExtFile (X : sig
+  type t
+
+  val of_yojson : Yojson.Safe.t -> (t, string) result
+  val to_yojson : t -> Yojson.Safe.t
+
+  val name : string
+  (** the module's name as it appears in "Invalid <name> Configuration", the
+      only diagnostic a user gets for a bad config *)
+
+  val instantiate : t -> t Or_error.t
+  (** load the nested configs; a leaf writes [Or_error.return] *)
+end) : sig
+  val load_ext_file : X.t ExtFile.t -> X.t ExtFile.t Or_error.t
+end = struct
+  (* An [Instance] is instantiated too, not passed through: a config written
+     inline (a batch driver's composed chain, a [config_default] literal) can
+     leave out a nested-config field, whose default is a [Filename], and that
+     file has to be loaded like one the text names.  Passing an [Instance]
+     through left such a field a [Filename] that fails at its first use.
+     Instantiating is idempotent: a value with no [Filename] left in it comes
+     back as it was. *)
+  let load_ext_file = function
+    | ExtFile.Instance x ->
+        Or_error.map (X.instantiate x) ~f:(fun x -> ExtFile.Instance x)
+    | ExtFile.Filename filename -> (
+        let open Or_error in
+        try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
+        match X.of_yojson raw_json with
+        | Ok x -> X.instantiate x >>= fun x -> Ok (ExtFile.Instance x)
+        | Error msg ->
+            error_string
+            @@ sprintf "Invalid %s Configuration (%s): %s" X.name filename msg)
+
+  let () =
+    let load filename =
+      Or_error.bind (load_ext_file (ExtFile.Filename filename)) ~f:(function
+        | ExtFile.Instance x -> Ok (X.to_yojson x)
+        | ExtFile.Filename _ -> Or_error.error_string "not instantiated")
+    in
+    let reparse json = Result.map (X.of_yojson json) ~f:X.to_yojson in
+    ConfigRegistry.entries :=
+      { ConfigRegistry.name = X.name; load; reparse } :: !ConfigRegistry.entries
+end
+
 module LexingHelper = struct
   let get_position_string (lexbuf : Lexing.lexbuf) =
     let pos = lexbuf.lex_curr_p in
@@ -158,10 +279,22 @@ let output_lines ch lines =
 module Command : sig
   exception Shell_error of string
 
+  val resolve_tool : string -> string
   val async_command : string -> string list -> Core_unix.Process_channels.t
+
+  val read_process :
+    string -> f:(In_channel.t -> 'a) -> 'a * Core_unix.Exit_or_signal.t
+
   val sync_command : string -> string list -> string list -> string list
 end = struct
   exception Shell_error of string
+
+  (* README tells users to place external binaries in the current directory;
+     prefer [./tool] when it is there and fall back to [tool] on PATH, so every
+     wrapper resolves a tool the same way *)
+  let resolve_tool tool =
+    let local = "./" ^ tool in
+    if Sys_unix.is_file_exn local then local else tool
 
   let async_command (name : string) (arguments : string list) :
       Core_unix.Process_channels.t =
@@ -169,24 +302,47 @@ end = struct
       (sprintf "bash -c '%s %s 2>&1'" name (String.concat ~sep:" " arguments))
       ~env:(Core_unix.environment ())
 
+  (* close_process_in owns both channel closure and waiting for the shell.
+     Reading (including a raising signal handler) must stay inside its scope. *)
+  let read_process command ~f =
+    let status = ref None in
+    let channel = Core_unix.open_process_in command in
+    let value =
+      Exn.protect
+        ~f:(fun () -> f channel)
+        ~finally:(fun () -> status := Some (Core_unix.close_process_in channel))
+    in
+    (value, Option.value_exn !status)
+
   let sync_command (name : string) (arguments : string list)
       (input : string list) : string list =
     let pcs = async_command name arguments in
-    output_lines pcs.stdin input;
-    let out = map_channel_lines Fn.id pcs.stdout in
-    match Core_unix.close_process_full pcs with
+    let status = ref None in
+    (* Failed buffered writes still need stdin closed before close/wait. *)
+    let out =
+      Exn.protect
+        ~f:(fun () ->
+          output_lines pcs.stdin input;
+          map_channel_lines Fn.id pcs.stdout)
+        ~finally:(fun () ->
+          Out_channel.close_no_err pcs.stdin;
+          status := Some (Core_unix.close_process_full pcs))
+    in
+    match Option.value_exn !status with
     | Ok _ -> out
-    | Error (`Exit_non_zero _) ->
-        raise (Shell_error (String.concat ~sep:"\n" out))
-    | Error (`Signal x) ->
-        if Signal.equal x Signal.int then raise Sys_unix.Break else out
+    | Error (`Signal x) when Signal.equal x Signal.int -> raise Sys_unix.Break
+    | Error _ -> raise (Shell_error (String.concat ~sep:"\n" out))
 end
 
 module Task = struct
   (* Copied from Domainslib.Task*)
 
   type 'a task = unit -> 'a
-  type 'a promise = ('a, exn) result option Atomic.t
+
+  (* A task that raised keeps the backtrace of the raise, and [await] re-raises
+     with it, so that an exception escaping a worker domain is reported where
+     it was raised rather than where it was awaited. *)
+  type 'a promise = ('a, exn * Stdlib.Printexc.raw_backtrace) result option Atomic.t
 
   exception TasksActive
 
@@ -202,13 +358,18 @@ module Task = struct
       let res = f () in
       Atomic.set p (Some (Ok res))
     with e -> (
-      Atomic.set p (Some (Error e));
+      let bt = Stdlib.Printexc.get_raw_backtrace () in
+      Atomic.set p (Some (Error (e, bt)));
       match e with TasksActive -> raise e | _ -> ())
 
   let setup_pool ~num_additional_domains =
     let task_chan =
       Domainslib__Multi_channel.make (num_additional_domains + 1)
     in
+    (* backtrace recording is per domain in OCaml 5 and a spawned domain
+       starts without it, so a worker records exactly when the domain that
+       made the pool does *)
+    let record = Stdlib.Printexc.backtrace_status () in
     let rec worker () =
       match Domainslib__Multi_channel.recv task_chan with
       | Quit -> Domainslib__Multi_channel.clear_local_state task_chan
@@ -217,7 +378,10 @@ module Task = struct
           worker ()
     in
     let domains =
-      Array.init num_additional_domains ~f:(fun _ -> Domain.spawn worker)
+      Array.init num_additional_domains ~f:(fun _ ->
+          Domain.spawn (fun () ->
+              Stdlib.Printexc.record_backtrace record;
+              worker ()))
     in
     { domains; task_chan }
 
@@ -236,7 +400,7 @@ module Task = struct
          with Exit -> Domain.cpu_relax ());
         await pool promise
     | Some (Ok v) -> v
-    | Some (Error e) -> raise e
+    | Some (Error (e, bt)) -> Stdlib.Printexc.raise_with_backtrace e bt
 
   let teardown_pool pool =
     for _i = 1 to Array.length pool.domains do
@@ -334,7 +498,7 @@ module Task = struct
     with
     | None -> await_any_promise pool promises
     | Some (Ok v) -> v
-    | Some (Error v) -> raise v
+    | Some (Error (v, bt)) -> Stdlib.Printexc.raise_with_backtrace v bt
 end
 
 module Array2D = struct
@@ -386,7 +550,7 @@ module Vector = struct
   let pr_float = List.pr Float.pr " "
   let pr_bool = List.pr Bool.pr " "
   let map f = List.map f
-  let dot xs ys = Float.sum @@ List.map2_exn xs ys ~f:(fun x y -> x *. y)
+  let dot xs ys = List.sum_float @@ List.map2_exn xs ys ~f:(fun x y -> x *. y)
   let array_of = Array.of_list
   let of_array = Array.to_list
 
@@ -397,12 +561,7 @@ module Vector = struct
   (** [product f [[1; 2; 3]; [4]; [5; 6]]] returns
       [[f [1; 4; 5]; f [1; 4; 6]; f [2; 4; 5]; f [2; 4; 6]; f [3; 4; 5]; f [3;
        4; 6]]] *)
-  let product f xss =
-    let rec aux ac = function
-      | [] -> [ f ac ]
-      | xs :: xss -> xs |> List.concat_map ~f:(fun x -> aux (ac @ [ x ]) xss)
-    in
-    aux [] xss
+  let product f xss = List.map ~f (List.n_cartesian_product xss)
 
   let producti f xss =
     let cnt = ref 0 in
@@ -456,7 +615,7 @@ module Matrix = struct
   let thread xss =
     let minlength = Integer.min_list (List.map ~f:List.length xss) in
     List.map
-      (List.from_to 0 (minlength - 1))
+      (List.range ~stop:`inclusive 0 (minlength - 1))
       ~f:(fun k -> List.map ~f:(fun ys -> List.nth ys k) xss)
 
   let row i xss = List.nth xss i
@@ -466,22 +625,23 @@ module Matrix = struct
 
   let diag_rd (i, j) xss =
     let n = List.length xss in
-    List.from_to (-n) n
+    List.range ~stop:`inclusive (-n) n
     |> List.filter ~f:(fun k ->
-           i + k >= 0 && i + k < n && j + k >= 0 && j + k < n)
+        i + k >= 0 && i + k < n && j + k >= 0 && j + k < n)
     |> List.map ~f:(fun k -> List.nth_exn (List.nth_exn xss (i + k)) (j + k))
 
   let diag_ld (i, j) xss =
     let n = List.length xss in
-    List.from_to (-n) n
+    List.range ~stop:`inclusive (-n) n
     |> List.filter ~f:(fun k ->
-           i + k >= 0 && i + k < n && j - k >= 0 && j - k < n)
+        i + k >= 0 && i + k < n && j - k >= 0 && j - k < n)
     |> List.map ~f:(fun k -> List.nth_exn (List.nth_exn xss (i + k)) (j - k))
 
   let map f = List.map ~f:(List.map ~f)
 
   let id one zero n =
-    List.gen n (fun i -> List.gen n (fun j -> if i = j then one else zero))
+    List.init n ~f:(fun i ->
+        List.init n ~f:(fun j -> if i = j then one else zero))
 
   let array_of xss = Array.of_list (List.map ~f:Array.of_list xss)
   let of_array ar = Array.to_list (Array.map ~f:Array.to_list ar)
@@ -588,14 +748,14 @@ module Graph0 = struct
       let visited, l =
         List.fold_left (succs es v)
           ~init:(v :: visited, l)
-          ~f:(Combinator.uncurry (visit es))
+          ~f:(Tuple2.uncurry (visit es))
       in
       (visited, v :: l)
 
   let scc es =
-    let vs = List.map ~f:fst es @ List.map ~f:snd es |> List.unique in
+    let vs = List.map ~f:fst es @ List.map ~f:snd es |> List.dedup_keep_last in
     let _, l =
-      List.fold_left vs ~init:([], []) ~f:(Combinator.uncurry (visit es))
+      List.fold_left vs ~init:([], []) ~f:(Tuple2.uncurry (visit es))
     in
     List.fold_left ~f:(fun assigned v -> assign es assigned v v) ~init:[] l
 end
@@ -638,10 +798,9 @@ module Permutation = struct
       | xs ->
           List.concat
           @@ List.init (List.length xs) ~f:(fun i ->
-                 match List.split_n xs i with
-                 | xs1, x :: xs2 ->
-                     xs1 @ xs2 |> aux |> List.map ~f:(List.cons x)
-                 | _ -> failwith "")
+              match List.split_n xs i with
+              | xs1, x :: xs2 -> xs1 @ xs2 |> aux |> List.map ~f:(List.cons x)
+              | _ -> failwith "")
     in
     aux (List.init n ~f:Fn.id)
 
@@ -661,7 +820,7 @@ end
 module Combination = struct
   let comb2 xs =
     List.concat_mapi xs ~f:(fun i x ->
-        List.map ~f:(Pair.make x) (List.drop xs (i + 1)))
+        List.map ~f:(Tuple2.create x) (List.drop xs (i + 1)))
 end
 
 (** Map implemented with asocc list ( Stdlib.(=) can be used for equality check

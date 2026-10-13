@@ -1,0 +1,5 @@
+(set-logic AUFLIRA)
+(declare-const x Int)
+(assert (= x 0))
+(assert (> 1.5 (+ x 1)))
+(check-sat)

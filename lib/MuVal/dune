@@ -12,6 +12,6 @@
   CoAR.PCSPSolver
   CoAR.MuCyc
   CoAR.OptiMathSAT)
- (modules config solver)
+ (modules config solver qflSolver)
  (synopsis
   "A fixpoint logic validity checker based on predicate constraint solving"))

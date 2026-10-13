@@ -10,7 +10,7 @@ oopsla25ae
 pldi26ae_lower
 pldi26ae_omega
 cav26ae
-forStarExec
+script/starexec
 learner
 script
 !script/chccomp2026/gather_dependencies.sh

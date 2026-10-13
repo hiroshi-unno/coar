@@ -1,0 +1,16 @@
+; array state initialised to the constant 0 array; the write makes a[0] = 1
+; (an earlier version declared the zero after the state, which the reference parser rejects)
+1 sort bitvec 2
+2 sort bitvec 8
+3 sort array 1 2
+4 sort bitvec 1
+5 zero 2
+6 state 3 a
+7 init 3 6 5
+8 zero 1
+9 one 2
+10 write 3 6 8 9
+11 next 3 6 10
+12 read 2 6 8
+13 eq 4 12 9
+14 bad 13

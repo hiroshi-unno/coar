@@ -1,3 +1,15 @@
+(* Labelled transition systems (control-flow automata whose edges carry guarded
+   commands: assumptions, assignments, sequencing and nondeterministic choice),
+   the common form of the T2 and integer-transition-system frontends, with the
+   property to verify (safety, termination, their negations, mu-calculus or
+   relational).  Beside the syntax and the type inference of its variables, this
+   provides a weakest-precondition transformer over commands ([wp]), the
+   bounding of sized nondeterministic values to their machine range
+   ([bind_nondet]), and [analyze], which simplifies the automaton by contracting
+   edges and pass-through locations and returns its live variables and a set of
+   cut points covering every cycle.  Nondeterministic values are fresh variables
+   whose names begin with [#nondet], and a sized one carries its width and
+   signedness in its name, which [range_of_nondet] reads back. *)
 open Core
 open Graph
 open Common.Ext
@@ -64,7 +76,7 @@ let commands_of_formula ~print args rel =
   let args_set = Set.Poly.of_list @@ List.map ~f:fst args in
   let phis_cond, phis_rest =
     Set.partition_tf (Formula.conjuncts_of rel) ~f:(fun phi ->
-        Set.disjoint (Formula.fvs_of phi) args_set)
+        Set.are_disjoint (Formula.fvs_of phi) args_set)
   in
   let sub, phis_rest, phis_cond =
     let rec loop (sub, phis_rest, phis_cond) =
@@ -76,15 +88,15 @@ let commands_of_formula ~print args rel =
               if
                 Term.is_var t1
                 && Set.mem args_set (Term.tvar_of t1)
-                && Set.disjoint (Term.fvs_of t2) args_set
+                && Set.are_disjoint (Term.fvs_of t2) args_set
               then First (fst @@ Term.let_var t1, t2)
               else if
                 Term.is_var t2
                 && Set.mem args_set (Term.tvar_of t2)
-                && Set.disjoint (Term.fvs_of t1) args_set
+                && Set.are_disjoint (Term.fvs_of t1) args_set
               then First (fst @@ Term.let_var t2, t1)
               else Second phi
-            with _ -> Second phi)
+            with exn_ when not (Common.Timer.is_async exn_) -> Second phi)
       in
       if Set.is_empty sub' then (sub, phis_rest, phis_cond)
       else
@@ -97,7 +109,8 @@ let commands_of_formula ~print args rel =
               | t :: ts ->
                   ( (arg, t),
                     Set.Poly.of_list
-                    @@ List.map ts ~f:(Formula.eq (uncurry Term.mk_var arg)) ))
+                    @@ List.map ts
+                         ~f:(Formula.eq (Tuple2.uncurry Term.mk_var arg)) ))
           @@ List.classify (fun x y -> Stdlib.(fst x = fst y))
           @@ Set.to_list sub'
         in
@@ -239,7 +252,10 @@ let typeinf ?(bv_mode = false) (s, types, e, c, trans) =
     Typeinf.solve constrs ~print:(fun s ->
         if print_log then print_endline (force s) else ())
   in
-  let default_size = Some (*ToDo*) 32 in
+  let default_size =
+    Some !T_bv.default_bits
+    (* --bv-default *)
+  in
   let map =
     Typeinf.elim_nums ~to_sus:false
       ~default:(Some (if bv_mode then T_bv.SBV default_size else T_int.SInt))
@@ -285,7 +301,7 @@ let rec is_effect_free = function
           not @@ String.is_prefix (Ident.name_of_tvar x) ~prefix:nondet_prefix)
   | Seq (c1, c2) | Choice (c1, c2) -> is_effect_free c1 && is_effect_free c2
 
-let qelim_records = Hashtbl.Poly.create ()
+let qelim_records = Hashtbl.PolyDeep.create ()
 let clean () = Hashtbl.Poly.clear qelim_records
 
 let qelim phi =
@@ -298,23 +314,50 @@ let qelim phi =
       Hashtbl.Poly.set qelim_records ~key:phi ~data:ret;
       ret
 
+(* the value range of a sized nondet variable [#nondetN_<bits>_<s|u>], if any *)
+let range_of_nondet (x, s) =
+  match (String.split ~on:'_' (Ident.name_of_tvar x), s) with
+  | [ _; bits; signed ], T_int.SInt ->
+      let bits = int_of_string bits in
+      let is_signed = String.(signed = "s") in
+      Some
+        (Formula.and_of
+        @@ Formula.mk_range (Term.mk_var x s) (min_num bits is_signed)
+             (max_num bits is_signed))
+  | [ _; bits; signed ], T_bv.SBV (Some width) ->
+      (* BV mode: the variable is a [width]-bit vector and plain
+         comparisons are signed, so the C type's range is stated with signed
+         bit-vector comparisons.  A signed nondet as wide as the variable
+         needs no constraint; an unsigned one as wide as the variable keeps
+         only the sign bit clear -- its upper half, [2^(width-1), 2^width),
+         is not representable under signed comparison, and is lost -- a known
+         limitation.  Narrower nondets get their full range. *)
+      let bits = int_of_string bits in
+      let is_signed = String.(signed = "s") in
+      let size = Some width in
+      let const n = T_bv.mk_bvnum ~size n in
+      let v = Term.mk_var x s in
+      let geq lo =
+        Formula.mk_atom (T_bv.mk_bvgeq ~size ~signed:(Some true) v (const lo))
+      in
+      let leq hi =
+        Formula.mk_atom (T_bv.mk_bvleq ~size ~signed:(Some true) v (const hi))
+      in
+      if bits < width then
+        Some
+          (Formula.mk_and
+             (geq (min_num bits is_signed))
+             (leq (max_num bits is_signed)))
+      else if is_signed then None
+      else Some (geq Z.zero)
+  | _ (*ToDo*) -> None
+
 let bind_nondet nondet_senv phi =
   let nondet_senv =
     let tvs = Formula.tvs_of phi in
     List.filter nondet_senv ~f:(fst >> Set.mem tvs)
   in
-  let range =
-    List.filter_map nondet_senv ~f:(fun (x, s) ->
-        match (String.split ~on:'_' (Ident.name_of_tvar x), s) with
-        | [ _; bits; signed ], T_int.SInt ->
-            let bits = int_of_string bits in
-            let is_signed = String.(signed = "s") in
-            Some
-              (Formula.and_of
-              @@ Formula.mk_range (Term.mk_var x s) (min_num bits is_signed)
-                   (max_num bits is_signed))
-        | _ (*ToDo*) -> None)
-  in
+  let range = List.filter_map nondet_senv ~f:range_of_nondet in
   Formula.mk_forall_if_bounded nondet_senv
   @@
   if List.is_empty range then phi
@@ -360,7 +403,9 @@ let rec wp c phi =
   else
     let res =
       let nondet_senv_int =
-        Set.filter nondet_senv ~f:(snd >> LogicOld.Term.is_int_sort)
+        (* integer and bit-vector nondets: both carry a width range *)
+        Set.filter nondet_senv ~f:(fun (_, s) ->
+            LogicOld.Term.is_int_sort s || LogicOld.Term.is_bv_sort s)
       in
       if Set.is_empty nondet_senv_int then phi
       else (
@@ -382,10 +427,19 @@ let rec wp c phi =
                   Set.filter nondet_senv_int ~f:(fst >> Set.mem tvs >> not)
                 in
                 let lhs =
+                  (* the eliminated nondet variables keep their value range:
+                     [bind_nondet] only sees the variables that survive, so
+                     without this a sized nondet was unbounded exactly when
+                     it was eliminated here *)
+                  let ranges =
+                    List.filter_map
+                      (Set.to_list nondet_senv_int_lhs)
+                      ~f:range_of_nondet
+                  in
                   qelim
                   @@ Formula.mk_exists_if_bounded
                        (Set.to_list nondet_senv_int_lhs)
-                       lhs
+                       (Formula.and_of (lhs :: ranges))
                 in
                 if Formula.is_false lhs then None
                 else if Formula.is_true lhs then Some rhs

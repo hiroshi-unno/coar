@@ -1,3 +1,8 @@
+(* Syntax-guided synthesis problems as read from the SyGuS input format: the
+   functions to synthesise, each with its sort and optional grammar (a
+   context-free grammar over terms, [CFG]), the declared universal variables,
+   and the constraints.  The background logic is fixed by the term module the
+   functor is applied to; only linear integer arithmetic is provided. *)
 open Core
 open Common.Ext
 open Ast

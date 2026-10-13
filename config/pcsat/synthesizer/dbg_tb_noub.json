@@ -3,17 +3,11 @@
     "Template",
     {
       "verbose": true,
-      "generalize": false,
       "solution_template": {
         "update_strategy": [
           "UnsatCore"
         ],
-        "smt_timeout": null,
         "compute_ucores": true,
-        "extract_qualifiers": true,
-        "extract_terms": false,
-        "extract_constants": true,
-        "reduce_quals_terms": false,
         "learn_quals_from_ucores": false,
         "qualifier_generator": [
           "Filename",
@@ -22,7 +16,6 @@
         "pex_strategy": [
           "InstDefault"
         ],
-        "sync_threshold": null,
         "restart_threshold": null,
         "predicate_template": [
           "DNF",
@@ -76,6 +69,5 @@
     }
   ],
   "check_candidates": true,
-  "refine_candidates": false,
   "verbose": true
 }

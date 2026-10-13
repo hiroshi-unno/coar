@@ -1,3 +1,18 @@
+; A reproducer for a Z3 4.8.7 defect, kept without a note of what the defect was.
+;
+; RE-MEASURED 2026-09-20 ON Z3 4.15.2 AND IT NO LONGER SHOWS ANYTHING. The file
+; has no (get-model), so `sat` alone says nothing about a MODEL GENERATION
+; defect, which the name suggests it was. Asked with :produce-models, the model
+; asserted back into the problem as equations and re-checked, all eight values
+; pinned: Z3 4.15.2 and cvc5 both answer `sat`, so the model is genuine.
+;
+; Nothing in the code or the documents mentions 4.8.7, and this file's only
+; history entry is a directory rename, so no workaround was ever tied to it by
+; name. It is kept because deleting a reproducer costs more than storing one,
+; and because the method above is how the other version-tagged notes in this
+; tree should be retired -- there are two more, about don't-care entries in a
+; model, that name a version long past and have no reproducer at all.
+;
 (declare-fun |#tvar806| () Int)
 (declare-fun |#tvar803| () Int)
 (declare-fun |#tvar805| () Int)

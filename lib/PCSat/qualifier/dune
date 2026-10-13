@@ -22,4 +22,5 @@
   SVM
   NN
   union
+  qualPropagation
   generator))

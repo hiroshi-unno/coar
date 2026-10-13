@@ -1,3 +1,12 @@
+(* Reading and type inference for QFL problems (the [.qhes] format): the reader
+   parses, rejects ill-formed inputs (a function applied to the wrong number of
+   arguments, or a parameter named like a function) with a message naming the
+   culprit, and infers sorts, defaulting to [Real].  Beside it are two
+   transformations used by the solver: [get_greatest_approx], which reads every
+   equation as a greatest fixpoint, and [lower_bound_by_unroll], which replaces
+   the query's bound by a finite unrolling of the equations.  A problem whose
+   functions are tuple-valued, and so does not type as it is, is split into one
+   problem per tuple component. *)
 open Core
 open Common.Ext
 open Common.Util
@@ -68,18 +77,84 @@ let typeinf ~print qfl =
     query = typeinf_query ~print qfl.query;
   }
 
+(* Two mistakes in an input that the type inference below does not report and
+   that the solver then trips over far from their cause: a function applied to
+   fewer or more arguments than it declares -- the grammar is curried, so
+   [F (x - 1.0)] parses for a two-parameter [F] -- and a parameter given the
+   name of a function, which the unfolding then reads as that function used
+   without its arguments.  The first ended in a list-length mismatch inside a
+   substitution, the second in an assertion inside another; both are the
+   input's fault, so they are reported as such, naming the function and what
+   is wrong with it.  [None] when neither occurs.
+
+   A variable that is not a parameter is NOT one of them: the corpus uses
+   such variables on purpose (a nullary function written without arguments,
+   the components [@1], [@2] of a tuple-valued bound, symbolic constants), so
+   only the two shapes above are refused. *)
+let ill_formed qfl =
+  let arity =
+    Map.Poly.of_alist_reduce ~f:(fun n _ -> n)
+    @@ List.map qfl.preds ~f:(fun (pred : Pred.t) ->
+        (pred.name, List.length pred.args))
+  in
+  let arity_error ~where t =
+    Set.find_map (Term.fvar_apps_of t) ~f:(function
+      | Term.FunApp (FVar (name, _, _), args, _) -> (
+          let given = List.length args in
+          match Map.Poly.find arity name with
+          | Some declared when declared <> given ->
+              Some
+                (sprintf
+                   "%s applies %s to %d argument(s), but %s is declared with \
+                    %d parameter(s)"
+                   where (Ident.name_of_tvar name) given
+                   (Ident.name_of_tvar name) declared)
+          | _ -> None)
+      | _ -> None)
+  in
+  let pred_error (pred : Pred.t) =
+    let fname = Ident.name_of_tvar pred.name in
+    match
+      List.find pred.args ~f:(fun (x, _) ->
+          match Map.Poly.find arity x with Some n -> n > 0 | None -> false)
+    with
+    | Some (x, _) ->
+        Some
+          (sprintf
+             "%s has a parameter named %s, which is also the name of a \
+              function with parameters; rename one of them"
+             fname (Ident.name_of_tvar x))
+    | None -> arity_error ~where:(sprintf "the body of %s" fname) pred.body
+  in
+  match List.find_map qfl.preds ~f:pred_error with
+  | Some _ as err -> err
+  | None -> (
+      let where = "the query" in
+      match qfl.query with
+      | Check { name; args; _ }
+      | DistCheck { name; args; _ }
+      | ASAT (Some (name, args), _, _) ->
+          arity_error ~where
+            (Term.mk_fvar_app name
+               (List.map args ~f:(fun _ -> T_real.SReal))
+               T_real.SReal args)
+      | ASAT (None, _, _) -> None)
+
 let parse_from_lexbuf ~print lexbuf =
   try
     let qfl = Parser.toplevel Lexer.main lexbuf in
-    try Ok [ typeinf ~print qfl ]
-    with _ ->
-      let rec loop i =
-        match nth i qfl with None -> [] | Some ith -> ith :: loop (i + 1)
-      in
-      let res = loop 0 in
-      Ok
-        (List.map ~f:(typeinf ~print)
-        @@ if List.is_empty res then [ qfl ] else res)
+    match ill_formed qfl with
+    | Some msg -> Or_error.error_string msg
+    | None -> (
+        try Ok [ typeinf ~print qfl ]
+        with exn_ when not (Common.Timer.is_async exn_) ->
+          let rec loop i =
+            match nth i qfl with None -> [] | Some ith -> ith :: loop (i + 1)
+          in
+          let res = loop 0 in
+          Ok
+            (List.map ~f:(typeinf ~print)
+            @@ if List.is_empty res then [ qfl ] else res))
   with
   | Parser.Error ->
       print_endline
@@ -111,8 +186,9 @@ let parse_query_from_lexbuf ~print lexbuf =
               (LexingHelper.get_position_string lexbuf)
               error)
 
-let from_file ~print =
-  In_channel.create >> Lexing.from_channel >> parse_from_lexbuf ~print
+let from_file ~print filename =
+  In_channel.with_file filename ~f:(fun channel ->
+      parse_from_lexbuf ~print (Lexing.from_channel channel))
 
 let from_string ~print = Lexing.from_string >> parse_from_lexbuf ~print
 
@@ -122,7 +198,7 @@ let query_from_string ~print =
 let get_dual _qfl = assert false
 (*let pvars = List.map qfl.preds ~f:(fun pred -> pred.name) in
   let subst formula =
-    List.fold ~init:formula pvars ~f:(Fn.flip Formula.subst_neg)
+    Formula.subst_negs (Set.Poly.of_list pvars) formula
   in
   make
     (List.map qfl.preds ~f:(fun pred ->

@@ -1,3 +1,19 @@
+(* Sort inference for [LogicOld] terms, atoms and formulas, by constraint
+   generation and unification.
+
+   [cgen_*] walk a term and return the sort environment met so far, the
+   term's sort and constraints: [CEq] equates two sorts, [CNum v] says the
+   sort variable [v] must be numeric (an operator such as [+] the reader
+   could not resolve to [Int], [Real] or a bit-vector).  [solve] unifies the
+   equations and returns the substitution, fully resolved, with the numeric
+   variables still open; [elim_nums] sends those to [default] (or leaves
+   them variables when there is none).  The [typeinf_*] entry points do all
+   three and substitute the result back.  A sort variable in [rigid] stands
+   for a universally quantified sort ([declare-forall-sort]): it is a value
+   inference may assign, never a unification target, and its use in
+   arithmetic is refused as ill-sorted.  An unsatisfiable constraint set
+   raises.  [sort_of_name] maps the sort names of the annotation languages
+   to sorts, datatypes looked up in the given environment. *)
 open Core
 open Common
 open Common.Ext
@@ -254,10 +270,10 @@ let rec cgen_term ~print senv term =
           Set.union constrs (Set.Poly.singleton (CEq (ty, T_bv.SBV size))) )
     | FunApp (T_string.StrConst _, [], _) ->
         (senv, T_string.SString, Set.Poly.empty)
-    | FunApp (T_sequence.(SeqEpsilon | SeqSymbol _), [], _) ->
-        (senv, T_sequence.SSequence true, Set.Poly.empty)
+    | FunApp (T_trace.(TrEpsilon | TrSymbol _), [], _) ->
+        (senv, T_trace.STrace true, Set.Poly.empty)
     | FunApp
-        ( T_sequence.(SeqConcat fin | SeqLeftQuotient fin | SeqRightQuotient fin),
+        ( T_trace.(TrConcat fin | TrLeftQuotient fin | TrRightQuotient fin),
           [ t1; t2 ],
           _ ) ->
         let senv, ty1, constrs1 = cgen_term ~print senv t1 in
@@ -270,11 +286,10 @@ let rec cgen_term ~print senv term =
               constrs2;
               Set.Poly.of_list
                 [
-                  CEq (ty1, T_sequence.SSequence true);
-                  CEq (ty2, T_sequence.SSequence fin);
+                  CEq (ty1, T_trace.STrace true); CEq (ty2, T_trace.STrace fin);
                 ];
             ] )
-    | FunApp (T_regex.(RegEmpty | RegFull | RegEpsilon), [], _) ->
+    | FunApp (T_regex.(RegEmpty | RegFull | RegAllChar | RegEpsilon), [], _) ->
         (senv, T_regex.SRegEx, Set.Poly.empty)
     | FunApp (T_regex.RegStr, [ t1 ], _) ->
         let senv, ty1, constrs1 = cgen_term ~print senv t1 in
@@ -302,6 +317,14 @@ let rec cgen_term ~print senv term =
                 [ CEq (ty1, T_regex.SRegEx); CEq (ty2, T_regex.SRegEx) ];
             ] )
     | FunApp (T_array.AConst (s1, s2), [ t1 ], _) ->
+        let senv, ty, constrs = cgen_term ~print senv t1 in
+        ( senv,
+          T_array.SArray (s1, s2),
+          Set.union constrs (Set.Poly.singleton (CEq (s2, ty))) )
+    | FunApp (T_array.ALambda ((_, s1), s2), [ t1 ], _) ->
+        (* the binder is globally fresh, so typing the body in [senv] binds it
+           there exactly as an ordinary variable would; the environment is
+           discarded by every caller anyway *)
         let senv, ty, constrs = cgen_term ~print senv t1 in
         ( senv,
           T_array.SArray (s1, s2),
@@ -384,6 +407,71 @@ let rec cgen_term ~print senv term =
               constrs2;
               Set.Poly.singleton (CEq (T_ref.SRef sort, ty1));
               Set.Poly.singleton (CEq (sort, ty2));
+            ] )
+    | FunApp (T_seq.SqEmpty se, [], _) -> (senv, T_seq.SSeq se, Set.Poly.empty)
+    | FunApp (T_seq.SqUnit se, [ t1 ], _) ->
+        let senv, ty1, constrs1 = cgen_term ~print senv t1 in
+        (senv, T_seq.SSeq se, Set.add constrs1 (CEq (se, ty1)))
+    | FunApp (T_seq.SqConcat se, [ t1; t2 ], _) ->
+        let senv, ty1, constrs1 = cgen_term ~print senv t1 in
+        let senv, ty2, constrs2 = cgen_term ~print senv t2 in
+        ( senv,
+          T_seq.SSeq se,
+          Set.Poly.union_list
+            [
+              constrs1;
+              constrs2;
+              Set.Poly.of_list
+                [ CEq (T_seq.SSeq se, ty1); CEq (T_seq.SSeq se, ty2) ];
+            ] )
+    | FunApp (T_seq.SqLen se, [ t1 ], _) ->
+        let senv, ty1, constrs1 = cgen_term ~print senv t1 in
+        (senv, T_int.SInt, Set.add constrs1 (CEq (T_seq.SSeq se, ty1)))
+    | FunApp (T_seq.SqNth se, [ t1; t2 ], _) ->
+        let senv, ty1, constrs1 = cgen_term ~print senv t1 in
+        let senv, ty2, constrs2 = cgen_term ~print senv t2 in
+        ( senv,
+          se,
+          Set.Poly.union_list
+            [
+              constrs1;
+              constrs2;
+              Set.Poly.of_list
+                [ CEq (T_seq.SSeq se, ty1); CEq (T_int.SInt, ty2) ];
+            ] )
+    | FunApp (T_seq.SqStore se, [ t1; t2; t3 ], _) ->
+        let senv, ty1, constrs1 = cgen_term ~print senv t1 in
+        let senv, ty2, constrs2 = cgen_term ~print senv t2 in
+        let senv, ty3, constrs3 = cgen_term ~print senv t3 in
+        ( senv,
+          T_seq.SSeq se,
+          Set.Poly.union_list
+            [
+              constrs1;
+              constrs2;
+              constrs3;
+              Set.Poly.of_list
+                [
+                  CEq (T_seq.SSeq se, ty1); CEq (T_int.SInt, ty2); CEq (se, ty3);
+                ];
+            ] )
+    | FunApp (T_seq.SqExtract se, [ t1; t2; t3 ], _) ->
+        let senv, ty1, constrs1 = cgen_term ~print senv t1 in
+        let senv, ty2, constrs2 = cgen_term ~print senv t2 in
+        let senv, ty3, constrs3 = cgen_term ~print senv t3 in
+        ( senv,
+          T_seq.SSeq se,
+          Set.Poly.union_list
+            [
+              constrs1;
+              constrs2;
+              constrs3;
+              Set.Poly.of_list
+                [
+                  CEq (T_seq.SSeq se, ty1);
+                  CEq (T_int.SInt, ty2);
+                  CEq (T_int.SInt, ty3);
+                ];
             ] )
     | LetTerm (_, sort, def, body, _) ->
         let senv, ty1, constrs1 = cgen_term ~print senv def in
@@ -503,12 +591,11 @@ and cgen_atom ~print senv atom =
                 [ CNum svar; CEq (ty1, ty2); CEq (ty1, Sort.SVar svar) ];
             ] )
     | App
-        ( Predicate.Psym T_sequence.(IsPrefix fin | NotIsPrefix fin),
-          [ t1; t2 ],
-          _ ) ->
+        (Predicate.Psym T_trace.(IsPrefix fin | NotIsPrefix fin), [ t1; t2 ], _)
+      ->
         let senv, ty1, constrs1 = cgen_term ~print senv t1 in
         let senv, ty2, constrs2 = cgen_term ~print senv t2 in
-        let sort = T_sequence.SSequence fin in
+        let sort = T_trace.STrace fin in
         ( senv,
           Set.Poly.union_list
             [
@@ -518,12 +605,11 @@ and cgen_atom ~print senv atom =
             ] )
     | App
         ( Predicate.Psym
-            T_sequence.(
-              SeqInRegExp (fin, _regexp) | NotSeqInRegExp (fin, _regexp)),
+            T_trace.(TrInRegExp (fin, _regexp) | NotTrInRegExp (fin, _regexp)),
           [ t1 ],
           _ ) ->
         let senv, ty1, constrs1 = cgen_term ~print senv t1 in
-        let sort = T_sequence.SSequence fin in
+        let sort = T_trace.STrace fin in
         (senv, Set.union constrs1 (Set.Poly.singleton (CEq (ty1, sort))))
     | App (Predicate.Psym T_regex.(StrInRegExp | NotStrInRegExp), [ t1; t2 ], _)
       ->
@@ -547,6 +633,17 @@ and cgen_atom ~print senv atom =
       ->
         let senv, ty1, constrs1 = cgen_term ~print senv t1 in
         (senv, Set.union constrs1 (Set.Poly.singleton (CEq (T_dt.SDT dt, ty1))))
+    | App (Predicate.Psym T_irb.IsInt, [ t1 ], _) ->
+        (* [is_int] asks of a REAL whether it denotes an integer, so its
+           argument has to be visited and constrained like every other one.  The
+           fallback below neither visits nor constrains, so a literal argument
+           kept the fresh sort variable it is parsed with and reached the solver
+           boundary unresolved: [(is_int 1.5)] was refused with "not supported:
+           value(3/2:#svar...)".  Giving the argument a name and a sort first
+           hid it, which is why a typed-variable example is not a test of this
+           operator. *)
+        let senv, ty1, constrs1 = cgen_term ~print senv t1 in
+        (senv, Set.union constrs1 (Set.Poly.singleton (CEq (ty1, T_real.SReal))))
     | _ -> (senv, Set.Poly.empty)
   in
   print @@ lazy (sprintf "atom constrs:\n%s" @@ str_of_constrs constrs);
@@ -617,7 +714,7 @@ and cgen_formula ~print senv phi =
     | LetFormula (var, sort, def, body, info) ->
         let senv, ty, constrs =
           cgen_term ~print senv
-          @@ Term.LetTerm (var, sort, def, T_bool.of_formula body, info)
+          @@ Term.mk_let_term ~info var sort def (T_bool.of_formula body)
         in
         (senv, Set.add constrs (CEq (ty, T_bool.SBool)))
   in
@@ -631,8 +728,12 @@ let sort_of_name ?(rectyps = None) dtenv ?(args = []) = function
   | "float" | "real" (* | "Real"*) -> T_real.SReal
   | "prop" -> T_real.SReal (*ToDo*)
   | "string" -> T_string.SString
-  | "finseq" -> T_sequence.SSequence true
-  | "infseq" -> T_sequence.SSequence false
+  (* the finite and infinite trace sorts.  [finseq]/[infseq] are what input
+     written before the theory was renamed says, and they keep working: these
+     are names a user writes in a type annotation, so dropping one would refuse
+     a file that used to be read. *)
+  | "fintrace" | "finseq" -> T_trace.STrace true
+  | "inftrace" | "infseq" -> T_trace.STrace false
   | "regex" -> T_regex.SRegEx
   | "int_array" -> T_array.mk_array_sort T_int.SInt T_int.SInt
   (*| "list" -> Datatype.sort_of list_dt*)
@@ -842,30 +943,78 @@ and unify_triple c1 c2 =
   ((c1.val_type, c2.val_type) :: unify_eff c1.cont_eff c2.cont_eff)
   @ unify_opsig c2.op_sig c1.op_sig
 
-let rec unify_sort ~print map = function
-  | [] -> map
+(* Unification used to keep its substitution *composed*: every new binding
+   rewrote every entry already in the map, so V bindings cost V map rebuilds and
+   the whole thing was quadratic. Reading a 64 KB quantified-SMT file spent 82%
+   of its time here, and the exponent measured about 2.5 against file size.
+
+   Keep the bindings uncomposed in a table instead and resolve on demand. A
+   variable is looked up, its value resolved, and the resolved value written
+   back, so the next lookup of that variable is one step -- the usual path
+   compression -- and a chain of variable-to-variable bindings is walked once
+   rather than once per binding. Nothing here can loop: the caller orients a
+   variable-variable equation by [Ident.svar_compare] and refuses a binding
+   whose right-hand side contains the variable, so the graph is acyclic.
+
+   The map handed back to [solve]'s callers is still fully resolved, because
+   they substitute with it in one pass and would otherwise stop halfway. *)
+let rec resolve_sort tbl s =
+  match s with
+  | Sort.SVar svar -> (
+      match Hashtbl.Poly.find tbl svar with
+      | None -> s
+      | Some s' ->
+          let r = resolve_sort tbl s' in
+          Hashtbl.Poly.set tbl ~key:svar ~data:r;
+          r)
+  | _ ->
+      let svs = Term.svs_of_sort s in
+      if Set.is_empty svs then s
+      else
+        Term.subst_sorts_sort
+          (Map.of_key_set svs ~f:(fun svar -> resolve_sort tbl (Sort.SVar svar)))
+          s
+
+(* [rigid]: the sort variables that stand for a universally quantified SORT --
+   `declare-forall-sort` -- and are therefore NOT inference variables.  They share
+   the [Sort.SVar] constructor with the sorts inference is free to instantiate,
+   and without this set nothing tells them apart, so two distinct forall-sorts
+   meeting here would be silently identified (whichever sorted first became the
+   other) and an ill-sorted problem answered as a different, well-sorted one.
+   A rigid variable may be the VALUE an inference variable takes; it may not be a
+   unification TARGET.  The argument is optional because forty-odd callers have
+   no forall-sorts and an empty set is right for them; the one reader that
+   creates forall-sorts (the SMT-LIB2 front end) must pass it, and a test pins
+   that it does. *)
+let rec unify_sort ~print ~rigid tbl = function
+  | [] -> ()
   | (s1, s2) :: eqs -> (
-      let s1, s2 =
-        (Term.subst_sorts_sort map s1, Term.subst_sorts_sort map s2)
-      in
+      let s1, s2 = (resolve_sort tbl s1, resolve_sort tbl s2) in
       print
       @@ lazy
            (sprintf "unify : %s = %s" (Term.str_of_sort s1)
               (Term.str_of_sort s2));
-      if Stdlib.(s1 = s2) then unify_sort ~print map eqs
+      if Stdlib.(s1 = s2) then unify_sort ~print ~rigid tbl eqs
       else
         match (s1, s2) with
         | Sort.SArrow (s1, t1), Sort.SArrow (s2, t2) ->
-            unify_sort ~print map (((s1, s2) :: unify_triple t1 t2) @ eqs)
+            unify_sort ~print ~rigid tbl (((s1, s2) :: unify_triple t1 t2) @ eqs)
         | T_bv.SBV size1, T_bv.SBV size2 when T_bv.eq_size size1 size2 ->
-            unify_sort ~print map eqs
+            unify_sort ~print ~rigid tbl eqs
         | T_array.SArray (s11, s12), T_array.SArray (s21, s22) ->
-            unify_sort ~print map ((s11, s21) :: (s12, s22) :: eqs)
+            unify_sort ~print ~rigid tbl ((s11, s21) :: (s12, s22) :: eqs)
+        | T_seq.SSeq se1, T_seq.SSeq se2 ->
+            (* Decompose like the array above.  Without this the only sequences
+               that unify are the ones already written with the same element
+               sort, so a literal whose sort is still being inferred -- the [1]
+               of [(seq.unit 1)] -- leaves [seq(int) = seq(#svarN)] unsolved and
+               the file is refused at type inference rather than answered. *)
+            unify_sort ~print ~rigid tbl ((se1, se2) :: eqs)
         | T_dt.SDT dt1, T_dt.SDT dt2 when String.(dt1.name = dt2.name) ->
             let sorts1 = Datatype.params_of dt1 in
             let sorts2 = Datatype.params_of dt2 in
             if List.eq_length sorts1 sorts2 then
-              unify_sort ~print map (List.zip_exn sorts1 sorts2 @ eqs)
+              unify_sort ~print ~rigid tbl (List.zip_exn sorts1 sorts2 @ eqs)
             else
               failwith
                 (sprintf "unification failure: %s = %s @ 1"
@@ -873,7 +1022,7 @@ let rec unify_sort ~print map = function
         | T_dt.SUS (name1, sorts1), T_dt.SUS (name2, sorts2)
           when String.(name1 = name2) ->
             if List.eq_length sorts1 sorts2 then
-              unify_sort ~print map (List.zip_exn sorts1 sorts2 @ eqs)
+              unify_sort ~print ~rigid tbl (List.zip_exn sorts1 sorts2 @ eqs)
             else
               failwith
                 (sprintf "unification failure: %s = %s @ 2"
@@ -882,7 +1031,7 @@ let rec unify_sort ~print map = function
           ->
             let sorts2 = Datatype.params_of dt2 in
             if List.eq_length sorts1 sorts2 then
-              unify_sort ~print map (List.zip_exn sorts1 sorts2 @ eqs)
+              unify_sort ~print ~rigid tbl (List.zip_exn sorts1 sorts2 @ eqs)
             else
               failwith
                 (sprintf "unification failure: %s = %s @ 3"
@@ -891,41 +1040,57 @@ let rec unify_sort ~print map = function
           ->
             let sorts1 = Datatype.params_of dt1 in
             if List.eq_length sorts1 sorts2 then
-              unify_sort ~print map (List.zip_exn sorts1 sorts2 @ eqs)
+              unify_sort ~print ~rigid tbl (List.zip_exn sorts1 sorts2 @ eqs)
             else
               failwith
                 (sprintf "unification failure: %s = %s @ 4"
                    (Term.str_of_sort s1) (Term.str_of_sort s2))
         | T_tuple.STuple sorts1, T_tuple.STuple sorts2 ->
             if List.eq_length sorts1 sorts2 then
-              unify_sort ~print map (List.zip_exn sorts1 sorts2 @ eqs)
+              unify_sort ~print ~rigid tbl (List.zip_exn sorts1 sorts2 @ eqs)
             else
               failwith
                 (sprintf "unification failure: %s = %s @ 5"
                    (Term.str_of_sort s1) (Term.str_of_sort s2))
         | Sort.SVar svar1, Sort.SVar svar2 ->
-            let svar, s =
-              if Ident.svar_compare svar1 svar2 < 0 then (svar1, Sort.SVar svar2)
-              else (svar2, Sort.SVar svar1)
-            in
-            unify_sort ~print
-              (update_sort_subst Term.subst_sorts_sort map svar s)
-              eqs
+            let r1, r2 = (Set.mem rigid svar1, Set.mem rigid svar2) in
+            if r1 && r2 then
+              failwith
+                (sprintf
+                   "ill-sorted: the universally quantified sorts %s and %s are \
+                    required to be one sort"
+                   (Ident.name_of_svar svar1) (Ident.name_of_svar svar2))
+            else
+              let svar, s =
+                (* the rigid side survives; otherwise the old name order *)
+                if r1 then (svar2, Sort.SVar svar1)
+                else if r2 then (svar1, Sort.SVar svar2)
+                else if Ident.svar_compare svar1 svar2 < 0 then
+                  (svar1, Sort.SVar svar2)
+                else (svar2, Sort.SVar svar1)
+              in
+              Hashtbl.Poly.add_exn tbl ~key:svar ~data:s;
+              unify_sort ~print ~rigid tbl eqs
         | Sort.SVar svar, s | s, Sort.SVar svar ->
-            if Term.occurs svar s then
+            if Set.mem rigid svar then
+              failwith
+                (sprintf
+                   "ill-sorted: the universally quantified sort %s is required \
+                    to be %s"
+                   (Ident.name_of_svar svar) (Term.str_of_sort s))
+            else if Term.occurs svar s then
               failwith
               @@ sprintf "unification failure: %s occurs in %s @ 6"
                    (Ident.name_of_svar svar) (Term.str_of_sort s)
-            else
-              unify_sort ~print
-                (update_sort_subst Term.subst_sorts_sort map svar s)
-                eqs
+            else (
+              Hashtbl.Poly.add_exn tbl ~key:svar ~data:s;
+              unify_sort ~print ~rigid tbl eqs)
         | _ ->
             failwith
               (sprintf "unification failure: %s = %s @ 7" (Term.str_of_sort s1)
                  (Term.str_of_sort s2)))
 
-let solve ~print cs =
+let solve ~print ?(rigid = Set.Poly.empty) cs =
   let eqs =
     Set.to_list
     @@ Set.Poly.filter_map cs ~f:(function
@@ -937,7 +1102,25 @@ let solve ~print cs =
       | CEq _ -> None
       | CNum svar -> Some svar)
   in
-  let map = unify_sort ~print Map.Poly.empty eqs in
+  (* A universally quantified sort that reaches here as a NUMERIC constraint
+     was used in arithmetic, which is ill-sorted; without this it would fall to
+     [elim_nums]'s default and be read as [Int] -- an ill-sorted file accepted
+     as a different one, by the silent-default route rather than the
+     unification one. *)
+  Set.iter (Set.inter nums rigid) ~f:(fun svar ->
+      failwith
+        (sprintf
+           "ill-sorted: the universally quantified sort %s is used where a \
+            numeric sort is required"
+           (Ident.name_of_svar svar)));
+  let map =
+    let tbl = Hashtbl.Poly.create () in
+    unify_sort ~print ~rigid tbl eqs;
+    (* one composition pass, so what leaves here is idempotent as before *)
+    Map.Poly.of_alist_exn
+    @@ List.map (Hashtbl.Poly.keys tbl) ~f:(fun svar ->
+        (svar, resolve_sort tbl (Sort.SVar svar)))
+  in
   ( Set.Poly.filter_map nums ~f:(fun svar ->
         match Map.Poly.find map svar with
         | None -> Some svar
@@ -948,7 +1131,7 @@ let solve ~print cs =
     map )
 
 let elim_nums ?(to_sus = false) ~default nums map =
-  (*assert (Set.disjoint nums (Map.Poly.key_set map));*)
+  (*assert (Set.are_disjoint nums (Map.Poly.key_set map));*)
   let map_nums =
     Map.of_set_exn
     @@ Set.Poly.map nums ~f:(fun svar ->
@@ -958,14 +1141,25 @@ let elim_nums ?(to_sus = false) ~default nums map =
           | None ->
               if (*ToDo*) false && to_sus then
                 T_dt.SUS (Ident.name_of_svar svar, [])
-              else (* ToDo: z3 does not support polymophic (in)equalities *)
+              else
+                (* An unresolved sort variable is left as a sort VARIABLE.
+                   Turning it into an uninterpreted sort instead is the branch
+                   above, and it is off.
+
+                   This carried "ToDo: z3 does not support polymophic
+                   (in)equalities", which misdescribes it twice.  SMT-LIB is
+                   monomorphic -- there is no polymorphic equality in the
+                   language for any solver to support or fail to support -- so
+                   this is a property of the format and not a defect of one
+                   tool, and no upgrade retires it.  It is therefore not a
+                   ToDo. *)
                 Sort.SVar svar ))
   in
   Map.force_merge map_nums
     (Map.Poly.map map ~f:(Term.subst_sorts_sort map_nums))
 
-let typeinf_term ~print ?(to_sus = false) ~default ?(senv = Map.Poly.empty)
-    ?(sort_opt = None) ?(constrs_opt = None) term =
+let typeinf_term ~print ?(to_sus = false) ?(rigid = Set.Poly.empty) ~default
+    ?(senv = Map.Poly.empty) ?(sort_opt = None) ?(constrs_opt = None) term =
   let _, s, constrs = cgen_term ~print senv term in
   let constrs =
     match sort_opt with
@@ -975,31 +1169,31 @@ let typeinf_term ~print ?(to_sus = false) ~default ?(senv = Map.Poly.empty)
   let constrs =
     match constrs_opt with None -> constrs | Some cs -> Set.union constrs cs
   in
-  let nums, map = solve ~print constrs in
+  let nums, map = solve ~print ~rigid constrs in
   let map = elim_nums ~to_sus ~default nums map in
   Term.subst_sorts map term
 
-let typeinf_atom ~print ?(to_sus = false) ~default atom =
+let typeinf_atom ~print ?(to_sus = false) ?(rigid = Set.Poly.empty) ~default atom =
   let _, constrs = cgen_atom ~print Map.Poly.empty atom in
-  let nums, map = solve ~print constrs in
+  let nums, map = solve ~print ~rigid constrs in
   let map = elim_nums ~to_sus ~default nums map in
   Atom.subst_sorts map atom
 
-let typeinf_formula ~print ?(senv = Map.Poly.empty) ?(to_sus = false) ~default
-    phi =
+let typeinf_formula ~print ?(senv = Map.Poly.empty) ?(to_sus = false)
+    ?(rigid = Set.Poly.empty) ~default phi =
   let _, constrs = cgen_formula ~print senv phi in
-  let nums, map = solve ~print constrs in
+  let nums, map = solve ~print ~rigid constrs in
   let map = elim_nums ~to_sus ~default nums map in
   Formula.subst_sorts map phi
 
-let typeinf ~print ?(to_sus = false) ~default phis =
+let typeinf ~print ?(to_sus = false) ?(rigid = Set.Poly.empty) ~default phis =
   print @@ lazy "============== inference start ===================";
   let phis' =
     if true (* *) then
       let _, constrs =
         cgen_formula ~print Map.Poly.empty (Formula.and_of phis)
       in
-      let nums, map = solve ~print constrs in
+      let nums, map = solve ~print ~rigid constrs in
       let map = elim_nums ~to_sus ~default nums map in
       List.map phis ~f:(Formula.subst_sorts map)
     else

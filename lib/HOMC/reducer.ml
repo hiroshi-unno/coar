@@ -1,3 +1,9 @@
+(* Reduction of an EHMTT verification problem to higher-order model checking.
+   [rsfds_of_ehmtt] returns a list of named RSFD problems: one ("main") for the
+   whole program against the output automaton, and one per coercion in the
+   rules, each checking that the coerced term meets the state it is coerced
+   to.  The EHMTT problem holds iff every returned problem does, which is how
+   the TRecS and HorSat2 wrappers combine their answers. *)
 open Core
 open Common.Ext
 open Common.Combinator
@@ -9,7 +15,9 @@ let rsfd_of is_main (rules0 : t) (trs : TTA.trs) (trs_out : TTA.trs)
     (id_nt, typs, id) =
   let trs_in =
     let ids = RefType.attr_of @@ RefType.make_type typs (RefType.Base id) in
-    let fds = List.unique @@ List.concat_map ~f:(snd >> snd >> trees) rules0 in
+    let fds =
+      List.dedup_keep_last @@ List.concat_map ~f:(snd >> snd >> trees) rules0
+    in
     TreeAutomaton.remove_unreachable ~next_ids_body:TTA.next_ids_body
       (List.map ~f:Ident.name_of_tvar (ids @ fds))
       trs
@@ -45,7 +53,7 @@ let rsfds_of_ehmtt ~print rules trs (id_nt, main_typ) =
   match RefType.args_and_ret main_typ with
   | main_type_args, RefType.Base main_type_ret ->
       let terminals =
-        List.unique
+        List.dedup_keep_last
         @@ List.map trs ~f:(fun (_q, (a, qs)) -> (Ident.Tvar a, List.length qs))
       in
       (* create "Copy" function *)
@@ -73,7 +81,7 @@ let rsfds_of_ehmtt ~print rules trs (id_nt, main_typ) =
       (* main transformation *)
       print @@ lazy "";
       print @@ lazy "Transformation from EHMTT to Recursion Schemes:";
-      let begin_t = Core_unix.time () in
+      let begin_t = Common.Clock.time_s () in
       let table = TTA.make trs in
       let trs_out = TTA.add_br_transitions trs in
       (* RSFD for verification of the whole program *)
@@ -116,7 +124,7 @@ let rsfds_of_ehmtt ~print rules trs (id_nt, main_typ) =
              print @@ lazy (sprintf "# of coercions: %d" ncoerces);*)
           assert false
       in
-      let elapsed_t = Core_unix.time () -. begin_t in
+      let elapsed_t = Common.Clock.time_s () -. begin_t in
       print @@ lazy (sprintf "Total time for transformation: %f sec" elapsed_t);
       rsfd :: rsfds
   | _, ret ->
@@ -142,7 +150,7 @@ let transform_rule (f, (xs, t)) =
     let x_i = List.nth xs (i - 1) in
     if is_intype ty_i then (x_i, copy1 x_i) else (x_i, x_i)
   in
-  let idx = List.from_to 1 (List.length xs) in
+  let idx = List.range ~stop:`inclusive 1 (List.length xs) in
   let sub = List.map make_subst idx in
   let rule_a = (copy1 f, (List.map copy1 xs, Term.subst sub (alpha t))) in
   let xs1 = List.map copy1 xs in
@@ -165,15 +173,15 @@ let rec beta_term t stref =
     | Term a -> []
     | Var (x, t) -> []
     | Nonterm f -> []
-    | App (t1, t2) -> List.unique (coerces t1 @ coerces t2)
+    | App (t1, t2) -> List.dedup_keep_last (coerces t1 @ coerces t2)
     | Case (x, pats) -> []
     | Tree q -> []
     | CaseState (q, pats) -> []
     | Coerce (q, t) ->
-        stref := List.unique (q :: !stref);
+        stref := List.dedup_keep_last (q :: !stref);
         [ (q, t) ]
     | CaseCoerce (q, t, pats) ->
-        stref := List.unique (q :: !stref);
+        stref := List.dedup_keep_last (q :: !stref);
         [ (q, t) ]
     | Copy _ | VarOrTerm _ -> failwith "coerces"
   in
@@ -223,7 +231,7 @@ let rec beta_term t stref =
 
 let beta rules terminals typeenv =
   let make_terminal_fun (a, n) =
-    let vs = List.from_to 1 n in
+    let vs = List.range ~stop:`inclusive 1 n in
     let vs = List.map (fun v -> "x" ^ string_of_int v) vs in
     let vs1 = List.map copy1 vs in
     let vs2 = List.map copy2 vs in
@@ -253,7 +261,7 @@ let beta rules terminals typeenv =
       let x_i = List.nth xs (i - 1) in
       if is_intype ty_i then (x_i, copy1 x_i) else (x_i, x_i)
     in
-    let idx = List.from_to 1 (List.length xs) in
+    let idx = List.range ~stop:`inclusive 1 (List.length xs) in
     let sub = List.map make_subst idx in
     (*    debug_print_sub sub; *)
     let rule_a = (copy1 f, (List.map copy1 xs, Term.subst sub (alpha t))) in

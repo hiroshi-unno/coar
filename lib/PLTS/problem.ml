@@ -1,5 +1,10 @@
+(* Programs given as a set of procedures with parameterised transition relations
+   (one relation formula per edge), as read from integer transition systems
+   written in SMT-LIB, with a termination or non-termination property.  [lts_of]
+   turns one into a single labelled transition system: each relation becomes the
+   commands that realise it, locations are qualified by their procedure, and a
+   fresh initial location runs the initial relation. *)
 open Common.Ext
-open Common.Combinator
 open Ast
 open Ast.LogicOld
 
@@ -29,7 +34,7 @@ let lts_of ~print
     ( init,
       LTS.Problem.seq
       @@ LTS.Problem.commands_of_formula ~print init_args init_rel
-      @ LTS.Problem.subst args (List.map init_args ~f:(uncurry Term.mk_var)),
+      @ LTS.Problem.subst args (List.map init_args ~f:(Core.Tuple2.uncurry Term.mk_var)),
       proc_loc init_proc init_loc )
     :: List.concat_map nexts ~f:(fun (proc, args1, args2, trans) ->
            Set.to_list
@@ -38,7 +43,7 @@ let lts_of ~print
                     LTS.Problem.seq
                     @@ LTS.Problem.commands_of_formula ~print args2 rel
                     @ LTS.Problem.subst args1
-                        (List.map args2 ~f:(uncurry Term.mk_var)),
+                        (List.map args2 ~f:(Core.Tuple2.uncurry Term.mk_var)),
                     proc_loc proc dst )))
   in
   (Some init, [], None, None, trans)

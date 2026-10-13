@@ -1,0 +1,8 @@
+; A binder (quantifier, let, lambda or formal parameter) must not capture a global that a
+; definition body mentions when that body is copied into its scope.
+(set-logic ALL)
+(declare-const x Int)
+(define-fun g () Int x)
+(assert (= x 1))
+(assert (let ((x 0)) (= g 1)))
+(check-sat)

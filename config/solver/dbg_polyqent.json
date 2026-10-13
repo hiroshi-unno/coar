@@ -1,9 +1,6 @@
 [
     "PolyQEnt",
     {
-        "path": "./polyqent/PolyQEnt",
-        "config_path": "",
-        "timeout": null,
         "verbose": true
     }
 ]

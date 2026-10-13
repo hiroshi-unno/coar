@@ -1,0 +1,15 @@
+(library
+ (name MuStrat)
+ (public_name CoAR.MuStrat)
+ (preprocess
+  (pps ppx_deriving.std ppx_deriving_yojson))
+ (libraries
+  core
+  CoAR.ast
+  CoAR.muCLP
+  CoAR.PCSPSolver
+  CoAR.PCSat
+  CoAR.Z3Smt
+  CoAR.MuCyc)
+ (modules config rankingCheck passedChoices initStrategy solver)
+ (synopsis "A fixpoint logic validity checker based on strategy synthesis"))

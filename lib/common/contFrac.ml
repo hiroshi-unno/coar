@@ -1,3 +1,10 @@
+(* Continued fractions over arbitrary-precision integers, and
+   [approximate_ratio], which replaces a vector of non-negative integers
+   (the coefficients of a learned hyperplane) by one with smaller entries
+   and roughly the same ratios: each level divides by the smallest nonzero
+   entry and recurses on the remainders, so a higher [level] is closer to
+   the exact ratio.  [continued_fraction_expansion_of_q] expands the
+   absolute value; the sign is restored by [continued_fraction_to_q ~neg]. *)
 open Core
 
 let rec continued_fraction_expansion n d =

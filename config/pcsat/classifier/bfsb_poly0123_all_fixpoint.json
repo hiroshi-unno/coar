@@ -1,0 +1,9 @@
+[
+    "BFSB",
+    {
+        "qualifier_generator": [
+            "Filename",
+            "./config/pcsat/qualifier/polyhedron0123_fixpoint.json"
+        ]
+    }
+]

@@ -66,7 +66,7 @@ let pr_judgement ppf
 let logpr_pvam (pva, m) =
   Logger.printf "(%a * " Pva.pr pva;
   Logger.printf0 "{";
-  List.iter (Logger.printf "_a%a, " Integer.pr) m;
+  List.iter (Logger.printf "_a%a, " Int.pp) m;
   Logger.printf0 "})"
 
 let rec logpr_pvams = function
@@ -82,7 +82,7 @@ let logpr_phi phi =
 let logpr_guard = function
   | None -> ()
   | Some (pv, m) ->
-    Logger.printf "(_a%a * " Integer.pr m;
+    Logger.printf "(_a%a * " Int.pp m;
     Logger.printf "%a)" Pvar.pr pv
 
 let rec logpr_gamma gamma =
@@ -124,7 +124,7 @@ let rec pr depth = function
       (fun i pt ->
          let depth' = i::depth in
          Format.printf "Unfold(Case %a): %a@."
-           (List.pr Integer.pr "-") (List.rev depth') Pvam.pr pvam;
+           (List.pr Int.pp "-") (List.rev depth') Pvam.pr pvam;
          pr depth' pt)
       ptrees
   | Induct(pvam, gam, ptree) ->
@@ -148,7 +148,7 @@ let rec pr depth = function
       "!! Invalid !!@.:: Invalid goal: %a@.:: Counterexample: %a@."
       Sequent.pr ent
       TermSubst.pr m
-  (*| Failure s -> Format.printf "Failure (%a)" String.pr s*)
+  (*| Failure s -> Format.printf "Failure (%a)" Format.pp_print_string s*)
   | Abort j -> pr_judgement j
 
 let pr = pr []
@@ -156,9 +156,9 @@ let pr = pr []
 let pr_all =
   List.iteri
     (fun i pt ->
-       Format.printf "@.[Theorem proving(No.%a)]@." Integer.pr i;
+       Format.printf "@.[Theorem proving(No.%a)]@." Int.pp i;
        pr pt;
-       Format.printf "---------QED(No.%a)----------@." Integer.pr i)
+       Format.printf "---------QED(No.%a)----------@." Int.pp i)
 
 let buff_lems = ref []
 let pr_tex pt =
@@ -219,7 +219,7 @@ let pr_tex pt =
         "!! Invalid !!@.invalid subgoal: %a@.counterexample: %a@"
         Sequent.pr_tex ent
         TermSubst.pr m
-    (*| Failure s -> Format.printf "Failure (%a)" String.pr s*)
+    (*| Failure s -> Format.printf "Failure (%a)" Format.pp_print_string s*)
     | Abort j -> ()
   in
   Format.printf "@.$$@.";
@@ -228,9 +228,9 @@ let pr_tex pt =
 let pr_all_tex =
   List.iteri
     (fun i pt ->
-       Format.printf "@.Theorem proving(No.%a)@." Integer.pr i;
+       Format.printf "@.Theorem proving(No.%a)@." Int.pp i;
        pr_tex pt;
-       Format.printf "QED(No.%a)@." Integer.pr i;
+       Format.printf "QED(No.%a)@." Int.pp i;
        Format.printf "where@.";
        buff_lems := List.rev (!buff_lems);
        List.iter
@@ -251,7 +251,7 @@ let rec pr_outline ppf pt =
   | Unfold(_, tl) ->
     let pr_branch ppf pt = pr_outline pt ppf in
     Format.fprintf ppf "@[<v 3>Unfold@;%a@]" (List.pr pr_branch "@;") tl
-  (*| Failure s -> Format.printf "Failure (%a)" String.pr s*)
+  (*| Failure s -> Format.printf "Failure (%a)" Format.pp_print_string s*)
   | Abort _           -> Format.fprintf ppf "Abort"
 
 let pr_json ppf pt =
@@ -309,7 +309,7 @@ module LivePT = struct
   let mk_fold = insert_new_node (fun () -> Fold ToProve)
 
   let mk_unfold p n =
-    insert_new_node (fun () -> Unfold (p, List.gen n (fun _ -> ToProve)))
+    insert_new_node (fun () -> Unfold (p, List.init n ~f:(fun _ -> ToProve)))
 
   let rec pr ppf (pt, depth) =
     for _ = 1 to depth do

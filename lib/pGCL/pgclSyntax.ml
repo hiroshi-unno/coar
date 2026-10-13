@@ -1,3 +1,14 @@
+(* Abstract syntax of pGCL, the probabilistic guarded command language, and
+   its reduction to QFL.  A program has declared variables and constants,
+   statements (assignment, conditional, loop, probabilistic choice weighted
+   by an expression, observation, cost ticks) and a query: an expected
+   value, a probability, or a bound on an expected value.  [Program.wpt] is
+   the weakest-preexpectation transformer: it returns the query's
+   preexpectation as a real-valued term together with one least-fixpoint
+   equation per loop, the input of the QFL solver.  An observation that
+   fails contributes 0 (the result is unnormalised), cost ticks are ignored,
+   and the bounded [LOOP] statement is not supported (it stops the run with
+   an assertion failure). *)
 open Core
 open Common.Ext
 open Ast.LogicOld
@@ -288,11 +299,14 @@ and Program : sig
   type t = {
     vars : sort_env_list;
     consts : const list;
+    nat_vars : Ident.tvar list;
     stmts : Statement.t;
     query : Query.t;
   }
 
-  val make : sort_env_list * const list -> Statement.t -> Query.t -> t
+  val make :
+    ?nat_vars:Ident.tvar list -> sort_env_list * const list -> Statement.t -> Query.t -> t
+
   val str_of : t -> string
   val sort_env_list_of_decls : t -> sort_env_list
   val typeinf_consts : print:(string lazy_t -> unit) -> t -> const list
@@ -312,11 +326,13 @@ end = struct
   type t = {
     vars : sort_env_list;
     consts : const list;
+    nat_vars : Ident.tvar list;
     stmts : Statement.t;
     query : Query.t;
   }
 
-  let make (vars, consts) stmts query = { vars; consts; stmts; query }
+  let make ?(nat_vars = []) (vars, consts) stmts query =
+    { vars; consts; nat_vars; stmts; query }
 
   let sort_env_list_of_decls pgcl =
     pgcl.vars @ (pgcl.consts |> List.map ~f:(fun (var, sort, _) -> (var, sort)))
@@ -420,18 +436,52 @@ end = struct
 end
 
 and Query : sig
-  type t = Expectation of Term.t | Probability of Formula.t
+  type bound_kind = Upper | Lower
+
+  type bound = {
+    post : Term.t;
+    kind : bound_kind;
+    value : Term.t;
+    strict : bool;
+  }
+
+  type t = Expectation of Term.t | Probability of Formula.t | Bound of bound
 
   val mk_expectation : Term.t -> t
+  val mk_bound : Term.t -> bound_kind -> ?strict:bool -> Term.t -> t
   val mk_probability : Formula.t -> t
   val of_term : t -> Term.t
+  val bound_of : t -> bound option
+
+  (** which of the three query forms this is, for a message the user reads *)
+  val describe : t -> string
 end = struct
-  type t = Expectation of Term.t | Probability of Formula.t
+  type bound_kind = Upper | Lower
+
+  type bound = {
+    post : Term.t;
+    kind : bound_kind;
+    value : Term.t;
+    strict : bool;
+  }
+
+  type t = Expectation of Term.t | Probability of Formula.t | Bound of bound
 
   let mk_expectation expr = Expectation expr
+  let mk_bound post kind ?(strict = false) value =
+    Bound { post; kind; value; strict }
+
   let mk_probability fml = Probability fml
 
   let of_term = function
     | Expectation expr -> expr
     | Probability fml -> T_bool.of_formula fml
+    | Bound { post; _ } -> post
+
+  let bound_of = function Bound bound -> Some bound | _ -> None
+
+  let describe = function
+    | Expectation _ -> "the expected value of an expression"
+    | Probability _ -> "the probability of a condition"
+    | Bound _ -> "a bound on the expected value of an expression"
 end

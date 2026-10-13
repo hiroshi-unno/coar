@@ -1,3 +1,15 @@
+(* RCaml's entry point: refinement type checking and inference for OCaml.
+
+   [solve_from_file] translates a [.ml] file with [Cgen.from_ml_file] into a
+   list of problems and solves them in order: an assertion problem by the
+   configured predicate constraint solver, with the least- and greatest-fixpoint
+   predicates passed as [preds]/[copreds] and the constructors' refinement
+   predicates renamed to their instantiated names; a type-optimization problem
+   by the configured CHC optimizer.  One line per problem is printed:
+   [verdict,iterations] followed by the assertion it answers.  An [unsat] of a
+   problem with an integrable unknown is reported as [unknown] (see the comment
+   at that branch). *)
+
 open Core
 open Common
 open Common.Ext
@@ -51,7 +63,7 @@ module Make (Config : Config.ConfigType) : SolverType = struct
         let pcsp =
           let ren_ref = ref Map.Poly.empty in
           let pcsp =
-            PCSP.Problem.map_if_raw_old pcsp ~f:(fun constrs ->
+            PCSP.Problem.map_raw_old_exn pcsp ~f:(fun constrs ->
                 let pren =
                   let pvs_preds =
                     Set.Poly.of_list @@ Map.Poly.(keys preds @ keys copreds)
@@ -63,7 +75,7 @@ module Make (Config : Config.ConfigType) : SolverType = struct
                 ren_ref :=
                   Map.Poly.of_alist_exn
                   @@ List.map ~f:(fun ((name, _), pvar) ->
-                         (Ident.Tvar name, Ident.pvar_to_tvar pvar))
+                      (Ident.Tvar name, Ident.pvar_to_tvar pvar))
                   @@ Map.Poly.to_alist pren;
                 Set.Poly.map constrs ~f:(fun (senv, phi) ->
                     (senv, LogicOld.Formula.rename_sorted_pvars pren phi)))
@@ -83,6 +95,32 @@ module Make (Config : Config.ConfigType) : SolverType = struct
         let timeout = config.timeout in
         PCSPSolver.solve ~timeout ~bpvs ~preds ~copreds pcsp
         >>= fun (solution, iter) ->
+        (* A refutation of a problem with an integrable unknown is not reported.
+           The constraint generator writes the expectation of a uniform sample,
+           [v <= int_0^1 N(y) dy], as the unknown's value at the midpoint,
+           [P(dom, 1/2, v)]. That equals the integral only for integrands affine in
+           the sample, which is the template's shape but not the kind's condition:
+           for a step integrand such as [if 2y >= 1 then 1 else 0] the midpoint
+           value is 1 while the integral is 1/2, so a program whose expectation
+           bound holds can be refuted. The midpoint premise is exact on the [sat]
+           side for the affine template, but a refutation through it proves
+           nothing about the program, so [unsat] becomes [unknown] here. *)
+        let solution =
+          match solution with
+          | PCSP.Problem.Unsat _
+            when Map.Poly.existsi (PCSP.Problem.kind_map_of pcsp)
+                   ~f:(fun ~key ~data ->
+                     Kind.is_integ data
+                     && Map.Poly.mem (PCSP.Problem.senv_of pcsp) key) ->
+              Debug.print
+              @@ lazy
+                   (sprintf
+                      "[ret] %s : unsat withheld (an integrable unknown's \
+                       sample is encoded at its midpoint), reported unknown"
+                      info);
+              PCSP.Problem.Unknown
+          | _ -> solution
+        in
         Debug.print
         @@ lazy
              (sprintf "[ret] %s : %s, %d" info

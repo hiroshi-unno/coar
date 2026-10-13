@@ -1,3 +1,10 @@
+(* Conversion between this tree's linear arithmetic atoms and the Apron
+   library's polyhedra, over the reals or the integers.  It builds a
+   polyhedron from a conjunction of normalised linear atoms and reads back its
+   constraints, its vertices (as models) and its rays; the QFL solver uses it
+   to enumerate the vertices of a polyhedron.  Atoms must be normalised first
+   (see the comment on the predicate-symbol tables), and only linear terms
+   over variables of the environment's sort are accepted. *)
 open Core
 open Ast
 open Ast.LogicOld
@@ -19,6 +26,14 @@ let mk_int_env varmap =
 
 let mk_expr env = Apron.Linexpr1.make env
 
+(* The two [of_*_psym] tables below accept only what [Normalizer.normalize_psym]
+   leaves behind: for integers [Geq]/[Eq]/[Neq] ([Leq] and [Lt] are swapped into
+   [Geq]/[Gt] and [Gt] into [Geq] with the bound shifted by one), for reals
+   [RGeq]/[RGt]/[Eq]/[Neq].  So **the caller must normalise first**, and the one
+   caller does ([MuVal.QflSolver]'s [generators_of] maps [Normalizer.normalize_atom]
+   over the atoms).  The [assert false] arms are that precondition, stated as a
+   crash: nothing checks it, and reaching one says the input was not normalised
+   rather than that anything is wrong here. *)
 let of_real_psym psym =
   match psym with
   | T_bool.Eq -> Apron.Lincons0.EQ

@@ -12,6 +12,7 @@
  (libraries core yojson zarith str ocamlgraph CoAR.common CoAR.grammar)
  (modules
   ident
+  physMemo
   value
   pattern
   propLogic
@@ -23,7 +24,13 @@
   affineTerm
   polyTerm
   evaluator
+  storeChainEq
+  seqAsArray
+  arrayAsFun
+  arrayPointwise
+  seqExistInst
   normalizer
+  intBinderSplit
   mbp
   qelim
   stratSynth
@@ -34,11 +41,14 @@
   qual
   qualDT
   qualArr
+  qualSeq
   rank
   exAtom
   exAtomSet
   clause
   clauseOld
+  relatedPositions
+  opaqueShapes
   clauseSet
   clauseSetOld
   clauseGraph

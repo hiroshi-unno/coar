@@ -1,3 +1,12 @@
+(* Boolean-function synthesis over a truth table: the dispatcher.
+
+   Given a predicate's truth table (rows are qualifiers, columns labelled
+   example atoms) and the qualifier and atom indices to use, [synthesize]
+   returns a propositional formula over the atoms [#qual_i] that is meant to
+   classify the labelled atoms; [BoolFunction.concretize] turns it back into a
+   first-order formula.  The configuration selects the learner: a greedy
+   decision tree, a Monte-Carlo-tree-search variant of it, or an unimplemented
+   placeholder that always returns an error. *)
 open Core
 open Common.Util
 open PCSatCommon
@@ -20,17 +29,16 @@ module Config = struct
     val config : t
   end
 
-  let load_ext_file = function
-    | ExtFile.Instance x -> Ok (ExtFile.Instance x)
-    | Filename filename -> (
-        let open Or_error in
-        try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
-        match of_yojson raw_json with
-        | Ok x -> Ok (ExtFile.Instance x)
-        | Error msg ->
-            error_string
-            @@ sprintf "Invalid BFSynthesizer Configuration (%s): %s" filename
-                 msg)
+  include MakeExtFile (struct
+    type nonrec t = t
+
+    let of_yojson = of_yojson
+    let to_yojson = to_yojson
+    let name = "BFSynthesizer"
+
+    (* a leaf: no nested config to load *)
+    let instantiate = Or_error.return
+  end)
 end
 
 module Make (Cfg : Config.ConfigType) : BFSynthesizerType =

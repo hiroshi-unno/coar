@@ -1,0 +1,5 @@
+/* exists a. P(a + 2 * a): the same 3a as erase_triple_multiple_invalid.hes, written with a product,
+   whose occurrence of a the erasure did not count.  Invalid. */
+exists (a: int). P (a + 2 * a)
+s.t.
+P (x: int): bool =mu x = 1;

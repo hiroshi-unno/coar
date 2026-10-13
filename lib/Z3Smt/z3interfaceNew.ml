@@ -316,10 +316,12 @@ end = struct
     if AST.is_var @@ Expr.ast_of_expr expr then
       let var = Expr.to_string expr in
       let index = List.length senv - Scanf.sscanf var "(:var %d)" Fn.id - 1 in
+      (* a de Bruijn-indexed bound variable in a model value (an array or
+         function value): the variable [senv] names at that index.  Logic terms
+         carry no sort on variables, so nothing is lost by not recording it
+         here; this used to be a [failwith]. *)
       let var, _sort = List.nth_exn senv index in
-      let _ = mk_var var in
-      failwith
-        "the sort of the variable must be managed with something like hashtable"
+      mk_var var
     else
       match Term.nullary_con_of expr with
       | Some e -> e

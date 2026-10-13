@@ -1,0 +1,10 @@
+{
+  "verbose": true,
+  "number_of_cells_per_array": 1,
+  "cell_boundary_quals": true,
+  "cell_guard_disjuncts": true,
+  "cell_guard_max_index_columns": 2,
+  "plain_template_first_sort_var_only": true,
+  "plain_template_failures": 3,
+  "cell_guard_reachable_bounds": 2
+}

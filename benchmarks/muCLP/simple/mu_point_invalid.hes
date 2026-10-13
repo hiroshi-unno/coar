@@ -1,0 +1,2 @@
+/* the least fixpoint of P is {0}, so not (P 0) is invalid; the smallest unsat-side witness input */
+not (P 0) s.t. P (x:int): bool =mu x = 0;

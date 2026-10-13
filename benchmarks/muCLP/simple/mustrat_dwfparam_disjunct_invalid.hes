@@ -1,0 +1,35 @@
+/* A DISJUNCT chosen from the recorded copy that the dwf reduction adds: the
+   quantifier-free twin of mustrat_dwfparam_exists_witness_invalid.hes (and of
+   Example 7.3 of Tsukada, Unno, Padon and Shoham, POPL 2025, arXiv:2501.01512v1).
+   There is no existential here, so no Skolem predicate is ever introduced: the
+   choice between the calls is an ordinary disjunction, and in the CHC check of the
+   transformed nu-problem that choice belongs to the solver's invariant, which is a
+   relation over ALL the arguments of P', record included.  (A boolean existential
+   is expanded into exactly such a disjunction by the Skolemisation, so this is
+   also the shape of any boolean choice.)
+
+   Verdict: INVALID.  R is false (its greatest fixpoint would need y - k > 0 for
+   every k).  From 0 or 1 the only moves are to P 0 or P 1, so every play stays in
+   P forever and P is a least fixpoint: the approximants are all false and P 0 is
+   false.  (R x reads x, which keeps the argument from being treated as unused.)
+
+   The added parameter: as in the sibling, P(x) becomes the nu-predicate P'(r, x)
+   and each call P(z) becomes P'(z, z) /\ P'(r, z) /\ WF_P(r, z).
+
+   The unsound strategy: take the disjunct P 1 when r = 0 and P 0 otherwise, with
+   WF_P the union of max(a,0) > max(b,0) and max(3-a,0) > max(3-b,0).  Reachable
+   records are 0 and 1, both choices satisfy WF_P against them, and P' = true is a
+   post-fixpoint: the transformed problem is VALID.  An honest choice (a function
+   of x only) produces a real play over {0,1} that repeats a value v, and the
+   record-keeping branch from the first v needs (v,v) in WF_P.  An implementation
+   whose check lets the invariant pick a disjunct per (r, x) answers "valid" here,
+   which is wrong -- and it needs no strategy synthesis at all to do so, only the
+   two rankings.
+
+   Compare benchmarks/muCLP/simple/dwf_disj_bug.hes and dwf_disj_bug_fix.hes (the
+   fix makes the choice an integer existential so that it is Skolemised over the
+   real arguments). */
+P 0
+s.t.
+P (x: int): bool =mu P 0 \/ P 1 \/ R x;
+R (y: int): bool =nu y > 0 /\ R (y - 1);

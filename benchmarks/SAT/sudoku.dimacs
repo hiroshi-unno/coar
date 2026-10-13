@@ -6,7 +6,7 @@ c  13 14|15 16
 c
 c 24*12+16+10+1 = 315
 c
-p cnf 164 315
+p cnf 164 313
 c
 c each cell contains 1, 2, 3, or 4
 c

@@ -1,0 +1,17 @@
+# A geometric loop.  The block comment below holds text that is not a program; the reader must skip
+# it whole.  A block comment opens with the two characters hash and equals, and a line comment that
+# also matched them used to win, so the block's body was parsed and refused as a syntax error.
+# Expected: the tool answers unknown (it gives no bound for this query), not a syntax error.
+Y := 0;
+while flip(1/2) {
+    Y += 1;
+}
+return Y
+
+#= Original code:
+
+while ( x > 0 ) {
+    {x := x + 1} [ 1/2 ] {x := x - 1};
+}
+
+=#

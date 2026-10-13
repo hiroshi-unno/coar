@@ -18,5 +18,6 @@
   CoAR.SMT
   CoAR.LTS
   CoAR.PLTS)
- (modules params problem LPParser LPLexer parser forwardPropagate)
+ (modules params refutation problem LPParser LPLexer parser forwardPropagate
+  recFunGraph)
  (synopsis "The definition of pfwnCSP"))

@@ -1,7 +1,6 @@
 [
     "Z3Sat",
     {
-        "dim_reduction": true,
-        "verbose": false
+        "dim_reduction": true
     }
 ]

@@ -1,0 +1,22 @@
+{
+  "strategy": [
+    "Classification",
+    {
+      "verbose": true,
+      "classifier": [
+        "Filename",
+        "./config/pcsat/classifier/dbg_bfsb_poly0123_all_fixpoint.json"
+      ],
+      "wf_classifier": [
+        "Filename",
+        "./config/pcsat/classifier/dbg_wf_dt_eager.json"
+      ],
+      "fn_classifier": [
+        "Filename",
+        "./config/pcsat/classifier/dbg_fn_tb_thr.json"
+      ]
+    }
+  ],
+  "check_candidates": true,
+  "verbose": true
+}

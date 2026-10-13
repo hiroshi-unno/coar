@@ -8,6 +8,14 @@ let parse_from_lexbuf ~print lexbuf =
     SMT.(Parser.program Lexer.token lexbuf)
     |> SMT.Smtlib2.toplevel ~print ~inline:false []
          {
+           (* an ITS file declares its locations with [declare-const l Loc]:
+              constants of an uninterpreted sort that are read from
+              [exi_senv] below, not unknowns to solve for.  The synthesis
+              reading would give each one a predicate kind, and there is no
+              kind for a function into an uninterpreted sort, so every such
+              file was refused *)
+           decl_reading = SMT.Problem.Uninterpreted;
+           candidates = Map.Poly.empty;
            uni_sort = Set.Poly.empty;
            uni_senv = Map.Poly.empty;
            exi_senv = Map.Poly.empty;
@@ -30,7 +38,7 @@ let parse_from_lexbuf ~print lexbuf =
            assert (Term.is_bool_sort ret && (not is_rec) && Formula.is_true prop);
            let phi =
              try T_bool.let_formula def
-             with _ -> Formula.eq def (T_bool.mk_true ())
+             with exn_ when not (Common.Timer.is_async exn_) -> Formula.eq def (T_bool.mk_true ())
            in
            let f = Ident.name_of_tvar key in
            let ff = String.sub f ~pos:5 ~len:(String.length f - 5) in
@@ -91,7 +99,8 @@ let parse_from_lexbuf ~print lexbuf =
   in
   Ok (locs, init, Map.Poly.data nexts)
 
-let from_file ~print =
-  In_channel.create >> Lexing.from_channel >> parse_from_lexbuf ~print
+let from_file ~print filename =
+  In_channel.with_file filename ~f:(fun channel ->
+      parse_from_lexbuf ~print (Lexing.from_channel channel))
 
 let from_string ~print = Lexing.from_string >> parse_from_lexbuf ~print

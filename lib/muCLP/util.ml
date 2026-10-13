@@ -35,7 +35,9 @@ let typeinf_query ~print query =
   Typeinf.typeinf_formula ~print ~default:(Some T_int.SInt (*ToDo*)) query
 
 let parse_from_lexbuf ~print lexbuf =
-  try Ok (typeinf ~print @@ Parser.toplevel Lexer.main lexbuf) with
+  try
+    Ok (Problem.elim_neg @@ typeinf ~print @@ Parser.toplevel Lexer.main lexbuf)
+  with
   | Parser.Error ->
       print_endline
       @@ sprintf "%s: syntax error" (LexingHelper.get_position_string lexbuf);
@@ -66,8 +68,9 @@ let parse_query_from_lexbuf ~print lexbuf =
               (LexingHelper.get_position_string lexbuf)
               error)
 
-let from_file ~print =
-  In_channel.create >> Lexing.from_channel >> parse_from_lexbuf ~print
+let from_file ~print filename =
+  In_channel.with_file filename ~f:(fun channel ->
+      parse_from_lexbuf ~print (Lexing.from_channel channel))
 
 let from_string ~print = Lexing.from_string >> parse_from_lexbuf ~print
 
@@ -77,9 +80,8 @@ let query_from_string ~print =
 (*val get_dual : t -> t*)
 let get_dual muclp =
   let pvars = List.map muclp.preds ~f:(fun pred -> pred.name) in
-  let subst formula =
-    List.fold ~init:formula pvars ~f:(Fn.flip Formula.subst_neg)
-  in
+  let pvars = Set.Poly.of_list pvars in
+  let subst formula = Formula.subst_negs pvars formula in
   make
     (List.map muclp.preds ~f:(fun pred ->
          {
@@ -228,6 +230,18 @@ let rename_args group =
 (*val of_chc : ?only_pos:bool -> PCSP.Problem.t -> t*)
 let of_chc ~print ?(only_pos = true) chc =
   ignore print;
+  (* A fixpoint-logic problem has no datatype or function environment, so what
+     the constraint problem carries in its own would be dropped here and never
+     reach the constraint problem this is reduced back to.  Register them in
+     the process-wide environments instead, which is where every other front
+     end puts them and where the conversion of a term for the solver reads them
+     -- without this an input whose constructors are all declared in its own
+     file ends in an uncaught failure naming a datatype, because the set the
+     lookup searches has size zero.  The merging writer rather than the blind
+     one: this runs before any solving, but the blind one would discard
+     whatever else the process had registered. *)
+  LogicOld.update_dtenv (PCSP.Problem.dtenv_of chc);
+  LogicOld.update_fenv (PCSP.Problem.fenv_of chc);
   let chc = PCSP.Problem.(to_cnf @@ to_nnf chc) in
   let groups =
     chc |> PCSP.Problem.clauses_of
@@ -262,8 +276,8 @@ let of_chc ~print ?(only_pos = true) chc =
                   Map.Poly.filter_keys senv ~f:(Set.mem @@ Formula.fvs_of phi)
                 in
                 let senv, phi =
-                  Pair.map_snd Evaluator.simplify_neg
-                  @@ Ast.Qelim.qelim_old
+                  Tuple2.map_snd ~f:Evaluator.simplify_neg
+                  @@ Ast.Qelim.elim_free_univ_vars_old
                        (Map.of_list_exn @@ Logic.ExtTerm.of_old_sort_env args)
                        (PCSP.Problem.senv_of chc)
                        (senv, Evaluator.simplify_neg phi)
@@ -292,8 +306,9 @@ let of_chc ~print ?(only_pos = true) chc =
                 Map.Poly.filter_keys senv
                   ~f:(Set.mem @@ Formula.tvs_of phi (*ToDo:also use pvs?*))
               in
-              Pair.map_snd Evaluator.simplify_neg
-              @@ Ast.Qelim.qelim_old Map.Poly.empty (PCSP.Problem.senv_of chc)
+              Tuple2.map_snd ~f:Evaluator.simplify_neg
+              @@ Ast.Qelim.elim_free_univ_vars_old Map.Poly.empty
+                   (PCSP.Problem.senv_of chc)
                    (senv, Evaluator.simplify_neg phi)
             in
             let unbound =

@@ -1,0 +1,49 @@
+/* An existential witness chosen from the recorded copy that the dwf reduction adds.
+   The predicate P of Tsukada, Unno, Padon and Shoham, "A Primal-Dual Perspective on
+   Program Verification Algorithms" (POPL 2025; arXiv:2501.01512v1, Example 7.3),
+   with the witness range made explicit (0 <= z <= 1, so the optimizer cannot erase
+   the quantifier into a nullary predicate) and a nu-conjunct R that the refuter has
+   to work for (see "why R" below).
+
+   Verdict: INVALID.  R is false: its greatest fixpoint needs y - k > 0 for every k.
+   So the approximants of P are P^0 = false, P^(k+1)(x) = exists z in {0,1}. P^k(z)
+   \/ false = false, and the least fixpoint is empty: P 0 is false.  In game terms
+   every play of the prover stays in P forever, visiting only 0 and 1, and P is a
+   least fixpoint.
+
+   The added parameter.  With use_dwf the reduction replaces the mu-predicate P(x)
+   by a nu-predicate P'(r, x), r a copy of an earlier visited argument, and each
+   recursive call P(z) by  P'(z, z) /\ P'(r, z) /\ WF_P(r, z)  (restart the record,
+   keep the record, and the record must dominate the new argument under the
+   disjunctively well-founded relation WF_P).  The query P 0 becomes P'(0, 0).
+
+   The unsound strategy.  z := (if r = 0 then 1 else 0) -- the witness reads the
+   record r -- with WF_P the union of  max(a,0) > max(b,0)  and
+   max(3-a,0) > max(3-b,0),  each a ranking into the naturals, so the union is
+   disjunctively well-founded.  Every reachable record is 0 or 1; from r = 1 the
+   witness 0 satisfies the first relation, from r = 0 the witness 1 the second, so
+   P' = true is a post-fixpoint and the transformed problem is VALID.  The real
+   play is 0, 1, 0, 1, ...: the branch that keeps the record 0 meets 0 again and
+   needs (0,0) in WF_P, which no well-founded relation contains.  The strategy wins
+   because the two branches at one real position see different records and make
+   different choices, which no single play can do.
+
+   An honest strategy (witness a function of x only) loses the transformed game:
+   from 0 the witnesses stay in {0,1}, some value v repeats, and the record-keeping
+   branch from the first v needs (v,v) in WF_P.  An implementation that lets the
+   witness see r answers "valid" here, which is wrong.
+
+   Where today's MuStrat leaks r although its Skolem predicate FN_P_z takes x
+   only (argued from the code, not measured): a strategy is a finite TERM SET and
+   the check substitutes each term into the clause and joins the results with
+   "or", so the choice AMONG the terms {z = 0, z = 1} is made by the CHC solver's
+   invariant for P'(r, x), which sees r.  The two constant terms plus the two
+   rankings above are therefore enough to reproduce the cheat.
+
+   Why R.  Without it the dual (a pure nu-problem with no strategy to find) wins at
+   its first check, so the cheat is never given a chance; R's dual is a
+   mu-predicate whose ranking the refuter must first synthesise. */
+P 0
+s.t.
+P (x: int): bool =mu (exists (z: int). 0 <= z /\ z <= 1 /\ P z) \/ R x;
+R (y: int): bool =nu y > 0 /\ R (y - 1);

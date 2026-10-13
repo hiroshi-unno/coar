@@ -1,0 +1,5 @@
+(set-logic HORN)
+(declare-const p Bool)
+(define-fun-rec b ((x Bool)) Bool (xor (b x) p))
+(assert p)
+(check-sat)

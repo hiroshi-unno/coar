@@ -1,3 +1,8 @@
+(* Template for a regular-expression-valued unknown ([Kind.RegEx]): a choice,
+   by an integer selector parameter at each node, among the empty, full and
+   empty-word expressions, the literal strings of the hypothesis space, and,
+   below the current depth, the regular operators applied to sub-templates.
+   A shape label raises the depth. *)
 open Core
 open Common
 open Common.Ext
@@ -7,7 +12,7 @@ open Ast.LogicOld
 open Function
 
 module Config = struct
-  type t = { verbose : bool; depth : int } [@@deriving yojson]
+  type t = { verbose : bool; [@default false] depth : int [@default 0] } [@@deriving yojson]
 
   module type ConfigType = sig
     val config : t
@@ -15,16 +20,14 @@ module Config = struct
 
   let instantiate_ext_files cfg = Ok cfg
 
-  let load_ext_file = function
-    | ExtFile.Instance x -> Ok (ExtFile.Instance x)
-    | Filename filename -> (
-        let open Or_error in
-        try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
-        match of_yojson raw_json with
-        | Ok x -> instantiate_ext_files x >>= fun x -> Ok (ExtFile.Instance x)
-        | Error msg ->
-            error_string
-            @@ sprintf "Invalid RegEx Configuration (%s): %s" filename msg)
+  include MakeExtFile (struct
+    type nonrec t = t
+
+    let of_yojson = of_yojson
+    let to_yojson = to_yojson
+    let name = "RegEx"
+    let instantiate = instantiate_ext_files
+  end)
 end
 
 module type ArgType = sig
@@ -53,6 +56,8 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
   let init = { depth = 0 }
   let name_of () = Arg.name
   let kind_of () = Kind.str_of Kind.RegEx
+  let kind = Kind.RegEx
+  let flexible = false
   let sort_of () = Sort.mk_fun @@ Arg.sorts @ [ T_regex.SRegEx ]
   let params_of () = sort_env_list_of_sorts Arg.sorts
 
@@ -70,6 +75,8 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
 
   let update_hspace hspace =
     HypSpace.qualifiers_of ~fenv:Arg.fenv !param.depth hspace
+
+  let kind_cert_template () = None
 
   let gen_template ~ucore:_ (hspace : HypSpace.hspace) =
     let temp_params = ref Map.Poly.empty in

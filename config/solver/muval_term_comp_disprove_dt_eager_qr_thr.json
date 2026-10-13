@@ -9,7 +9,7 @@
         "use_parity_progress_measure": false,
         "use_scc": true,
         "use_alternation_depth": true,
-        "ignore_nu_components": false,
+        "pack_rank_components": false,
         "pcsp_solver_primal": [
             "Filename",
             "./config/solver/pcsat_dt_qr_thr.json"

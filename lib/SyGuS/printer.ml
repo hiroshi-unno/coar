@@ -1,3 +1,8 @@
+(* Printing of answers in the SyGuS output format: a solution as one
+   [define-fun] per synthesised predicate (simplified first, with
+   disequalities expanded since the format has none), and the [fail] or
+   [infeasible] lines that the selected version of the format uses for an
+   unsatisfiable or undecided problem. *)
 open Core
 open Common.Ext
 open Ast
@@ -7,11 +12,24 @@ type mode = SyGuS_IF1 | SyGuS_IF2
 
 let mode = SyGuS_IF1
 
-let str_of_sort = function
+let rec str_of_sort = function
   | T_int.SInt -> "Int"
   | T_bool.SBool -> "Bool"
+  | T_array.SArray (index, value) ->
+      sprintf "(Array %s %s)" (str_of_sort index) (str_of_sort value)
   | s ->
       failwith (sprintf "[str_of_sort] %s not supported" (Term.str_of_sort s))
+
+(* Generated identifiers contain '#'; quote names at both binding and use sites.
+   SMT-LIB has no escape for a bar or backslash inside a quoted symbol. *)
+let str_of_ident name =
+  if String.exists name ~f:(fun c -> Char.equal c '|' || Char.equal c '\\') then
+    failwith "identifier cannot be represented as an SMT-LIB quoted symbol"
+  else "|" ^ name ^ "|"
+
+let str_of_params params =
+  String.concat_map_list ~sep:" " params ~f:(fun (Ident.Tvar name, sort) ->
+      sprintf "(%s %s)" (str_of_ident name) (str_of_sort sort))
 
 let rec str_of_formula = function
   | Formula.Atom (atom, _) -> str_of_atom atom
@@ -26,11 +44,11 @@ let rec str_of_formula = function
   | Formula.BinaryOp (Xor, _, _, _) -> failwith "'Xor' is not supported yet"
   | Formula.Bind (Forall, params, phi, _) ->
       sprintf "(forall (%s) %s)"
-        (str_of_sort_env_list str_of_sort params)
+        (str_of_params params)
         (str_of_formula phi)
   | Formula.Bind (Exists, params, phi, _) ->
       sprintf "(exists (%s) %s)"
-        (str_of_sort_env_list str_of_sort params)
+        (str_of_params params)
         (str_of_formula phi)
   | Formula.Bind (Random _, _, _, _) -> failwith "'Random' is not supported"
   | Formula.LetRec (_, _, _) -> failwith "'LetRec' is not supported yet"
@@ -60,19 +78,23 @@ and str_of_pred = function
   | _ -> failwith "unsupported predicate symbol"
 
 and str_of_term = function
-  | Term.Var (Ident.Tvar tvar, _, _) -> tvar
+  | Term.Var (Ident.Tvar tvar, _, _) -> str_of_ident tvar
   | Term.FunApp (T_bool.Formula phi, [], _) -> str_of_formula phi
   | Term.FunApp (T_bool.IfThenElse, [ cond; then_; else_ ], _) ->
       sprintf "(ite %s %s %s)" (str_of_term cond) (str_of_term then_)
         (str_of_term else_)
-  | Term.FunApp (T_int.Int n, [], _) -> (
-      match mode with
-      | SyGuS_IF1 -> Z.to_string n
-      | SyGuS_IF2 ->
-          Z.(
-            if Compare.( < ) n zero then "(- " ^ to_string (-n) ^ ")"
-            else to_string n))
+  | Term.FunApp (T_int.Int n, [], _) ->
+      if Z.sign n < 0 then sprintf "(- %s)" (Z.to_string (Z.neg n))
+      else Z.to_string n
   | Term.FunApp (T_real.Real _, [], _) -> failwith "real literal not supported"
+  | Term.FunApp (T_array.ASelect _, [ array; index ], _) ->
+      sprintf "(select %s %s)" (str_of_term array) (str_of_term index)
+  | Term.FunApp (T_array.AStore _, [ array; index; value ], _) ->
+      sprintf "(store %s %s %s)" (str_of_term array) (str_of_term index)
+        (str_of_term value)
+  | Term.FunApp (T_array.AConst (index, value), [ default ], _) ->
+      sprintf "((as const %s) %s)" (str_of_sort (T_array.SArray (index, value)))
+        (str_of_term default)
   | Term.FunApp (op, [ t1; t2 ], _) ->
       sprintf "(%s %s %s)" (str_of_funsym op) (str_of_term t1) (str_of_term t2)
   | Term.FunApp (T_int.Neg, [ t ], _) -> (
@@ -86,8 +108,12 @@ and str_of_funsym = function
   | T_int.Add -> "+"
   | T_int.Sub -> "-"
   | T_int.Mul -> "*"
-  | T_int.Div _ -> "div"
-  | T_int.Rem _ -> "mod" (*ToDo*)
+  | T_int.Div Value.Euclidean -> "div"
+  | T_int.Rem Value.Euclidean -> "mod"
+  | T_int.Div _ | T_int.Rem _ ->
+      failwith
+        "[SyGuS printing] non-Euclidean integer division/remainder requires an \
+         explicit encoding"
   (*| T_int.Power _ -> "pow"*)
   | T_bool.IfThenElse -> "ite"
   | _ -> failwith "unknown function symbol"
@@ -98,15 +124,18 @@ and str_of_psym = function
   | T_int.Geq -> ">="
   | T_int.Lt -> "<"
   | T_int.Gt -> ">"
-  | psym -> failwith "unknown pred symbol " ^ Predicate.str_of_psym psym
+  (* [@@] and not a bare [^]: [failwith "..." ^ s] applies [failwith] to the
+     literal alone and never evaluates the concatenation, so the symbol the
+     message is about was dropped *)
+  | psym -> failwith @@ "unknown pred symbol " ^ Predicate.str_of_psym psym
 
 let str_of_solution (params, sol) =
   if Fn.non Map.Poly.is_empty params && Set.is_empty sol then assert false
   else
     String.concat_map_set ~sep:"\n" sol
       ~f:(fun (Ident.Pvar ident, (params, formula)) ->
-        sprintf "(define-fun %s (%s) Bool %s)" ident
-          (str_of_sort_env_list str_of_sort params)
+        sprintf "(define-fun %s (%s) Bool %s)" (str_of_ident ident)
+          (str_of_params params)
         @@ str_of_formula @@ Formula.elim_neq
         (* T_bool.Neq is not supported by SyGuS-IF *)
         @@ Z3Smt.Z3interface.simplify ~id:None Map.Poly.empty

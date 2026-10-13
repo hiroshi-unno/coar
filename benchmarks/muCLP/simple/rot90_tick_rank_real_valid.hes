@@ -1,0 +1,21 @@
+/* Rung three of the isolation ladder, and the one that is still unsolved.  The
+   same rotation, with one integer that alternates 0 and 1 and gates the good
+   state -- the shape a C program gets from a statement counter.  Valid for the
+   same reason as the others: the rotation has period four and the good state is
+   visited when the flag is 1.
+
+   Rung two (extra predicates, no flag) answers in about 10 s with four pieces in
+   the well-founded template.  This one answers at no setting tried: four, six
+   and eight pieces, with and without two discriminator conjuncts, and with a
+   four-disjunct invariant template.  So ONE integer variable is what separates a
+   ten-second proof from none, and why is not known -- that is the open question
+   this file exists to pin.  One observation that may or may not be the cause:
+   the flag contributes six qualifiers to the template where the two reals
+   contribute five between them, and two of those six (`1 - x = 0` and
+   `-1 + x = 0`) are the same constraint written twice while one (`-2 + x >= 0`)
+   is vacuous for a variable that is 0 or 1. */
+Main 0
+s.t.
+Main (z:int): bool =mu forall (a:real). forall (b:real). (a = real(0) /\ b = real(0)) \/ L6 a b 0;
+L6 (a:real) (b:real) (tick:int): bool =mu tick = 1 /\ a >. real(0) /\ b >=. real(0) \/ L7 a b 0;
+L7 (a:real) (b:real) (tick:int): bool =mu tick = 1 /\ a >. real(0) /\ b >=. real(0) \/ L6 (-.b) a 1;

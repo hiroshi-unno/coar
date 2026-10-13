@@ -1,7 +1,6 @@
 [
     "OptPCSat",
     {
-        "load_init_sol": false,
         "improve_solver": [
             "Filename",
             "./config/solver/dbg_pcsat_tbq_ar.json"
@@ -10,11 +9,6 @@
             "Filename",
             "./config/solver/dbg_pcsat_tbq_ar.json"
         ],
-        "verbose": true,
-        "one_by_one": true,
-        "improve_current": false,
-        "mode": [
-            "NoSideCond"
-        ]
+        "verbose": true
     }
 ]

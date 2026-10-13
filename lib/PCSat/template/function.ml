@@ -5,9 +5,27 @@ open PCSatCommon
 type parameter_update_type = ..
 type parameter_update_type += TimeOut | QualDep | Shape
 
+(** [refuse_without_template f] is [f ()], except that a template generator's
+    report that it has no template for the unknown -- a result sort its family
+    has no form for, or a function into a universally quantified sort with no
+    candidate result (no argument of that sort and none stored in a datatype
+    argument) -- is raised as [PCSP.Problem.NoTemplate].  Such an unknown has
+    an empty hypothesis space, so the solver cannot exhibit a solution for it
+    and the answer is [unknown], an ordinary verdict; the generator's own
+    exception would reach the user as a backtrace. *)
+let refuse_without_template f =
+  try f () with Templ.No_function_template reason ->
+    raise (PCSP.Problem.NoTemplate reason)
+
 module type Type = sig
   val name_of : unit -> Ident.tvar
+
+  (* [kind_of] is for messages; control flow uses [kind] (the predicate kind
+     the template is for) and [flexible] (a [*Flex] template, whose
+     qualifiers are not refined from candidates) *)
   val kind_of : unit -> string
+  val kind : Kind.t
+  val flexible : bool
   val sort_of : unit -> LogicOld.Sort.t
   val params_of : unit -> LogicOld.sort_env_list
 
@@ -38,6 +56,9 @@ module type Type = sig
       * (Ident.tvar * (LogicOld.sort_env_list * LogicOld.Formula.t)) list)
       list
 
+  (* the ranking-function certificate template behind the last generated
+     template, for kinds that have one; [None] otherwise *)
+  val kind_cert_template : unit -> Templ.kind_cert_templ option
   val actions_of : parameter_update_type Set.Poly.t -> string list
   val update_with_labels : parameter_update_type Set.Poly.t -> unit
   val rl_action : parameter_update_type Set.Poly.t -> unit
@@ -51,7 +72,8 @@ let qdep_constr_of_envs (qdeps : (LogicOld.Formula.t, QualDep.t) Map.Poly.t) =
       ( true (*ToDo*),
         QualDep,
         Map.filter_map qdeps ~f:(fun qdep ->
-            try Some (QualDep.condition_of env qdep) with _ -> None)
+            try Some (QualDep.condition_of env qdep)
+            with exn_ when not (Common.Timer.is_async exn_) -> None)
         (* TODO: not empty map *)
         |> Map.Poly.data
         |> LogicOld.Formula.and_of |> Logic.ExtTerm.of_old_formula ))

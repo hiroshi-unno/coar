@@ -1,3 +1,13 @@
+(* Backend that hands a system of polynomial quantified entailments to the
+   external PolyQEnt tool.  Its unknowns must be real-valued constants
+   (template coefficients); a problem with any other unknown, such as a
+   predicate, is refused with an [Error] before anything is written.  The
+   entailments are printed as SMT-LIB assertions to a per-process file and
+   PolyQEnt is run on it as a separate process (under [timeout] when a budget
+   is given); a [sat] answer's model is parsed back into real values.
+   PolyQEnt's [unsat] and [unknown] both become the [Unknown] verdict, since
+   neither shows that no real assignment exists; a non-zero exit or empty
+   output becomes an [Error]. *)
 open Core
 open Common
 open Common.Ext
@@ -18,16 +28,42 @@ module Make (Config : Config.ConfigType) : SolverType = struct
   module Debug =
     Debug.Make ((val Debug.Config.(if config.verbose then enable else disable)))
 
+  (* PolyQEnt decides polynomial quantified entailments: its unknowns are
+     real-valued template coefficients, declared as constants, and it has no
+     notion of an unknown predicate (the translation below declares every
+     unknown that some constraint mentions as a [Real] constant).  A problem with one -- any CHC or pCSP
+     input given to this backend directly -- used to fail inside the
+     translation below with a message about SMT printing or the clausal form,
+     reported as a crash; it is a pairing this backend declines. *)
+  let non_real_unknowns pqes =
+    Map.Poly.fold
+      (PCSP.Problem.senv_of @@ PCSP.Problem.remove_unused_params pqes)
+      ~init:[]
+      ~f:(fun ~key ~data acc ->
+        if ExtTerm.is_real_sort data then acc else key :: acc)
+
   let solve ?(timeout = None) ?(print_sol = false) pqes =
+    match non_real_unknowns pqes with
+    | _ :: _ as unknowns ->
+        Or_error.error_string
+        @@ sprintf
+             "PolyQEnt solves polynomial quantified entailments whose \
+              unknowns are real-valued template coefficients, but this \
+              problem has %d unknown(s) of another sort, such as a predicate: \
+              %s.  Use PCSat."
+             (List.length unknowns)
+             (String.concat ~sep:", " (List.rev_map unknowns ~f:Ident.name_of_tvar))
+    | [] ->
     if false then (
       Debug.print @@ lazy (PCSP.Problem.str_of pqes);
       Debug.print @@ lazy "");
-    let filename = "temp_polyqent.smt2" in
-    (* output generated PQEs *)
-    let ppf =
-      Format.formatter_of_out_channel
-      @@ if true then Stdlib.open_out filename else Out_channel.stdout
+    let filename =
+      (* the process id keeps two concurrent runs in one directory from writing,
+         reading and overwriting the same file, which fed PolyQEnt another
+         run's half-written text *)
+      sprintf "temp_polyqent_p%d.smt2" (Pid.to_int @@ Core_unix.getpid ())
     in
+    (* output generated PQEs *)
     let s =
       if true then (
         let pqes =
@@ -98,7 +134,12 @@ module Make (Config : Config.ConfigType) : SolverType = struct
       else
         Printer.Smtlib2.of_pcsp ~id:None (*ToDo*) ~add_missing_forall:false pqes
     in
-    Format.fprintf ppf "%s@." s;
+    Out_channel.with_file filename ~f:(fun channel ->
+        Format.fprintf (Format.formatter_of_out_channel channel) "%s@." s);
+    (* why PolyQEnt gave no answer, for the error message: a non-zero exit
+       (its own parse error on a non-polynomial term is the usual case) or no
+       output at all *)
+    let failure_reason = ref "" in
     let res =
       (* PolyQEnt d9a87b83d406c21e904467c3a0549ed5e1e89b0d *)
       let cmd =
@@ -107,28 +148,36 @@ module Make (Config : Config.ConfigType) : SolverType = struct
          with
           | None -> ""
           | Some timeout -> sprintf "timeout %f " (float_of_int timeout /. 1000.))
-        ^ config.path ^ " " ^ filename ^ " " ^ config.config_path
+        ^ Filename.quote config.path ^ " " ^ Filename.quote filename
+        ^ if String.is_empty config.config_path then ""
+          else " " ^ Filename.quote config.config_path
       in
-      let cin = Core_unix.open_process_in cmd in
-      let s0 =
-        ignore (In_channel.input_line cin);
-        In_channel.input_line cin
+      let (s0, ss1), status =
+        Common.Util.Command.read_process cmd ~f:(fun cin ->
+          let s0 =
+            ignore (In_channel.input_line cin);
+            In_channel.input_line cin
+          in
+          let ss1 =
+            ignore (In_channel.input_line cin);
+            let rec loop acc =
+              match In_channel.input_line cin with
+              | None -> acc
+              | Some s -> loop (s :: acc)
+            in
+            List.rev @@ loop []
+          in
+          (s0, ss1))
       in
-      let ss1 =
-        ignore (In_channel.input_line cin);
-        let rec loop acc =
-          match In_channel.input_line cin with
-          | None -> acc
-          | Some s -> loop (s :: acc)
-        in
-        List.rev @@ loop []
-      in
-      In_channel.close cin;
-      match (Core_unix.close_process_in cin, s0) with
+      match (status, s0) with
       | Error err, _ ->
           Debug.print
           @@ lazy (Core_unix.Exit_or_signal.to_string_hum (Error err));
           Debug.print @@ lazy "Error";
+          failure_reason :=
+            sprintf "PolyQEnt %s on %s, which this run keeps for inspection"
+              (Core_unix.Exit_or_signal.to_string_hum (Error err))
+              filename;
           None
       | Ok _, Some "The system is sat" ->
           let ss =
@@ -143,12 +192,21 @@ module Make (Config : Config.ConfigType) : SolverType = struct
           in
           Some (Some ss)
       | Ok _, Some "The system is unsat" -> Some None
+      (* PolyQEnt could not decide the system.  Reported as the [unknown]
+         verdict, the same as its [unsat] just above (which is also not a
+         conclusion about the entailment): turning it into an exception made
+         the tool print a backtrace where it had an answer to give. *)
+      | Ok _, Some "The system is unknown" -> Some None
       | Ok _, Some s -> failwith s
-      | Ok _, None -> None
+      | Ok _, None ->
+          failure_reason := "PolyQEnt printed no answer";
+          None
     in
     let open Or_error in
     (match res with
-      | None -> Or_error.error_string "PQE solving failed"
+      | None ->
+          Or_error.error_string
+          @@ sprintf "PQE solving failed: %s" !failure_reason
       | Some (Some ss) ->
           Debug.print @@ lazy "satisfiable";
           let model =
@@ -164,6 +222,8 @@ module Make (Config : Config.ConfigType) : SolverType = struct
                         @@ SMT.Smtlib2.of_term ~print:Debug.print ~inline:true
                              SMT.Problem.
                                {
+                                 decl_reading = SMT.Problem.Synthesize;
+                                 candidates = Map.Poly.empty;
                                  uni_sort = Set.Poly.empty;
                                  uni_senv = Map.Poly.empty;
                                  exi_senv = Map.Poly.empty;

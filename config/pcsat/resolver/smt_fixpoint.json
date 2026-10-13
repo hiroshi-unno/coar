@@ -1,0 +1,9 @@
+[
+    "Graph",
+    {
+        "only_diff": true,
+        "resolve_against_problem_clauses": false,
+        "resolution_query_timeout": null,
+        "unify_parameters": false
+    }
+]

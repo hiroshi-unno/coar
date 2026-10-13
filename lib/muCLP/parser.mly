@@ -12,6 +12,7 @@
 %token NOT
 %token AND OR IMPLY IFF
 %token MINUS ADD MULT DIV MOD
+%token RMINUS RADD RMULT RDIV RABS
 %token <Ast.LogicOld.pred_sym> PREDSYM
 %token <int> INTL
 %token <string> REALL
@@ -89,15 +90,25 @@ FormulaAtom:
 
 /* Ast.LogicOld.Atom.t */
 Atom:
-    funname=ID args=AtomAppArgs {
+    funname=ID args=AtomAppArgs1 {
       Atom.mk_pvar_app (Ident.Pvar funname) (List.map args ~f:Term.sort_of) args
     }
   | atom=T_bool { atom }
-  | TRUE { Atom.True Dummy }
-  | FALSE { Atom.False Dummy }
+  | TRUE { Atom.mk_true ~info:Dummy () }
+  | FALSE { Atom.mk_false ~info:Dummy () }
 
 AtomAppArgs:
     { [] }
+  | arg=T_numAtom args=AtomAppArgs { arg :: args }
+
+/* Arguments of a predicate application in formula position. Must not accept an
+   empty argument list -- do not collapse this into AtomAppArgs. If a bare `ID`
+   were a nullary application, `( ID )` would be ambiguous between that and a
+   parenthesized term; LR(1) cannot resolve it, since the deciding token comes
+   after the `)`. Menhir then favours the predicate reading, which makes
+   `(x) > 0` a syntax error. A nullary predicate is applied as `P ()`. */
+AtomAppArgs1:
+    LPAREN RPAREN { [] }
   | arg=T_numAtom args=AtomAppArgs { arg :: args }
 
 
@@ -113,16 +124,22 @@ T_numAddSub:
     t=T_numMulDivMod { t }
   | t1=T_numAddSub ADD t2=T_numMulDivMod { T_num.mk_nadd t1 t2 }
   | t1=T_numAddSub MINUS t2=T_numMulDivMod { T_num.mk_nsub t1 t2 }
+  | t1=T_numAddSub RADD t2=T_numMulDivMod { T_real.mk_radd t1 t2 }
+  | t1=T_numAddSub RMINUS t2=T_numMulDivMod { T_real.mk_rsub t1 t2 }
 
 T_numMulDivMod:
     t=T_numNeg { t }
   | t1=T_numMulDivMod MULT t2=T_numNeg { T_num.mk_nmul t1 t2 }
+  | t1=T_numMulDivMod RMULT t2=T_numNeg { T_real.mk_rmul t1 t2 }
+  | t1=T_numMulDivMod RDIV t2=T_numNeg { T_real.mk_rdiv t1 t2 }
   | t1=T_numMulDivMod DIV t2=T_numNeg { T_num.mk_ndiv Value.Truncated t1 t2 }
   | t1=T_numMulDivMod MOD t2=T_numNeg { T_num.mk_nrem Value.Truncated t1 t2 }
 
 T_numNeg:
     t=T_numAtom { t }
   | MINUS t=T_numNeg { T_num.mk_nneg t }
+  | RMINUS t=T_numNeg { T_real.mk_rneg t }
+  | RABS t=T_numNeg { T_real.mk_rabs t }
 
 T_numAtom:
     LPAREN t=T_num RPAREN { t }

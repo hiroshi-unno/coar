@@ -1,3 +1,14 @@
+(* Dependency-quantified Boolean formulas (DQBF) read from DQDIMACS.
+
+   A problem is its quantifier prefix, as [SAT.Parser] returns it ([First] a
+   universal block, [Second (xs, None)] an existential block, [Second ([x],
+   Some ds)] a Henkin existential depending only on the universals [ds]), and
+   its CNF matrix.  [term_of] turns it into a higher-order Boolean term of
+   [Ast.Logic]: each dependency existential becomes a Boolean function over its
+   dependencies, quantified outside the whole prefix, and its occurrences in
+   the matrix become applications of that function; with [~quant:true] the
+   remaining free variables are closed existentially.  That term is what the
+   higher-order model-checking reduction consumes. *)
 open Core
 open Common.Ext
 open Common.Combinator
@@ -6,25 +17,17 @@ type t = DQSAT of SAT.Parser.quant list * SAT.Problem.clause list
 
 let make quants clauses = DQSAT (quants, clauses)
 
-let from_dqdimacs_file filename =
-  let ic = In_channel.create ~binary:false filename in
-  let res =
-    uncurry2 make
-    @@ SAT.Parser.parse ~no_quant:false [] [] [] (fun () ->
-           In_channel.input_line_exn ic)
-  in
-  In_channel.close ic;
-  res
+let from_dqdimacs_file ?print filename =
+  In_channel.with_file ~binary:false filename ~f:(fun ic ->
+      Tuple2.uncurry make
+      @@ SAT.Parser.parse ~no_quant:false ?print [] [] [] (fun () ->
+             In_channel.input_line_exn ic))
 
-let from_gzipped_dqdimacs_file filename =
-  let ic = Gzip.open_in filename in
-  let res =
-    uncurry2 make
-    @@ SAT.Parser.parse ~no_quant:false [] [] [] (fun () ->
-           SAT.Problem.input_line_exn ic)
-  in
-  Gzip.close_in ic;
-  res
+let from_gzipped_dqdimacs_file ?print filename =
+  SAT.Problem.with_gzipped_file filename ~f:(fun ic ->
+      Tuple2.uncurry make
+      @@ SAT.Parser.parse ~no_quant:false ?print [] [] [] (fun () ->
+             SAT.Problem.input_line_exn ic))
 
 let term_of ?(quant = true) =
   let open Ast.Logic in

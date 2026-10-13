@@ -1,0 +1,9 @@
+c expected: unsat
+c
+c An empty clause followed by the unit clause {1}.  An empty clause is false, so
+c the formula is refuted whatever else is in it; z3 agrees.
+c
+c It answered sat because the leading 0 was read as a literal of the same clause
+c rather than as the terminator of an empty one, so the empty clause vanished.
+p cnf 1 2
+0 1 0

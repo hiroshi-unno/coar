@@ -1,0 +1,13 @@
+; unsat witness regression: parametric examples (don't-cares of a partial model) in the refutation;
+; the checker must show each parametric example has an instance (a forall-exists check)
+(set-logic HORN)
+(declare-fun P (Int Int) Bool)
+(assert (forall ((x Int) (y Int)) (=> (= x 0) (P x y))))
+(assert (forall ((x Int) (y Int)) (=> (= x 1) (P x y))))
+(assert (forall ((x Int) (y Int)) (=> (= x 2) (P x y))))
+(assert (forall ((x Int) (y Int)) (=> (= x 3) (P x y))))
+(assert (forall ((x Int) (y Int)) (=> (and (P x y) (= x 0) (> y 5)) false)))
+(assert (forall ((x Int) (y Int)) (=> (and (P x y) (= x 1) (> y 6)) false)))
+(assert (forall ((x Int) (y Int)) (=> (and (P x y) (= x 2) (> y 7)) false)))
+(assert (forall ((x Int) (y Int)) (=> (and (P x y) (= x 3) (> y 8)) false)))
+(check-sat)

@@ -6,37 +6,37 @@ open Ident
 open LogicOld
 
 type config = {
-  depend_on_func_args : bool;
-  depend_on_ref_args : bool;
-  depend_on_unit_args : bool;
+  depend_on_func_args : bool; [@default false]
+  depend_on_ref_args : bool; [@default false]
+  depend_on_unit_args : bool; [@default false]
   (* generate a refinement predicate for each type variable *)
-  gen_ref_pred_for_type_vars : bool;
+  gen_ref_pred_for_type_vars : bool; [@default true]
   (* share a refinement predicate with all occurrences of the same type variable *)
-  share_ref_pred_with_same_type_vars : bool;
+  share_ref_pred_with_same_type_vars : bool; [@default false]
   (* generate a refinement predicate for each function type *)
-  gen_ref_pred_for_fun_types : bool;
+  gen_ref_pred_for_fun_types : bool; [@default false]
   (* generate a refinement predicate for each ref type *)
-  gen_ref_pred_for_ref_types : bool;
+  gen_ref_pred_for_ref_types : bool; [@default false]
   (* generate a refinement predicate for each tuple element *)
-  gen_ref_pred_for_tup_elems : bool;
+  gen_ref_pred_for_tup_elems : bool; [@default false]
   (* generate a refinement predicate for each datatype parameter *)
-  gen_ref_pred_for_dt_params : bool;
+  gen_ref_pred_for_dt_params : bool; [@default true]
   (* generate a refinement type template for each constructor *)
-  gen_ref_type_temp_for_constructors : bool;
+  gen_ref_type_temp_for_constructors : bool; [@default false]
   (* no assertion failure *)
-  never_fail : bool;
+  never_fail : bool; [@default false]
   (* only total applications can cause assertion failures *)
-  can_fail_only_at_total_apps : bool;
+  can_fail_only_at_total_apps : bool; [@default false]
   (* only total applications can cause temporal effects *)
-  can_cause_temp_eff_only_at_total_apps : bool;
+  can_cause_temp_eff_only_at_total_apps : bool; [@default false]
   (* enable dependent temporal control effects *)
-  enable_temp_eff : bool;
+  enable_temp_eff : bool; [@default false]
   (* enable predicate polymorphism for constructors *)
-  enable_pred_poly_for_constructors : bool;
+  enable_pred_poly_for_constructors : bool; [@default false]
   (* enable predicate polymorphism for ref types *)
-  enable_pred_poly_for_ref_types : bool;
+  enable_pred_poly_for_ref_types : bool; [@default false]
   (* instantiate unbound sort variables to int before constraint solving *)
-  instantiate_svars_to_int : bool;
+  instantiate_svars_to_int : bool; [@default true]
 }
 [@@deriving yojson]
 
@@ -170,12 +170,12 @@ let is_pure_temp ((x1, phi1), (_, phi2)) =
   &&
   let (x, sort), _ = Term.let_var t1 in
   String.(Ident.name_of_tvar x = Ident.name_of_tvar x1)
-  && Stdlib.(sort = T_sequence.SSequence true)
-  (*Stdlib.(t2 = T_sequence.mk_eps ())*)
+  && Stdlib.(sort = T_trace.STrace true)
+  (*Stdlib.(t2 = T_trace.mk_eps ())*)
   && Term.is_app t2
   &&
   let fsym, args, _ = Term.let_app t2 in
-  Stdlib.(fsym = T_sequence.SeqEpsilon) && List.is_empty args
+  Stdlib.(fsym = T_trace.TrEpsilon) && List.is_empty args
 
 let is_pure_comp ~config c =
   is_pure_opsig c.op_sig
@@ -544,8 +544,8 @@ let papp_of ~config either dom v sort =
 let mk_temp_val () =
   let x = mk_fresh_tvar_with "fin" in
   ( ( x,
-      Formula.eq (Term.mk_var x @@ T_sequence.SSequence true)
-      @@ T_sequence.mk_eps () ),
+      Formula.eq (Term.mk_var x @@ T_trace.STrace true)
+      @@ T_trace.mk_eps () ),
     (mk_fresh_tvar_with "inf", Formula.mk_false ()) )
 
 let mk_temp_trivial () =
@@ -554,9 +554,9 @@ let mk_temp_trivial () =
 
 let mk_temp_fresh ~config dom =
   let x = mk_fresh_tvar_with "fin" in
-  ( (x, papp_of ~config (Second "fin_pred") dom x @@ T_sequence.SSequence true),
+  ( (x, papp_of ~config (Second "fin_pred") dom x @@ T_trace.STrace true),
     let y = mk_fresh_tvar_with "inf" in
-    (y, papp_of ~config (Second "inf_pred") dom y @@ T_sequence.SSequence false)
+    (y, papp_of ~config (Second "inf_pred") dom y @@ T_trace.STrace false)
   )
 
 let rec nu_of_cont x = function
@@ -939,24 +939,24 @@ let mk_val ~config ?(svmap = Map.Poly.empty) sort =
 let compose_temp_eff es =
   let fin, infs =
     List.fold_left
-      ~init:(T_sequence.mk_eps (), [])
+      ~init:(T_trace.mk_eps (), [])
       es
       ~f:(fun (s, acc) ((x, _), (y, _)) ->
-        ( T_sequence.mk_concat ~fin:true s
-          @@ Term.mk_var x @@ T_sequence.SSequence true,
-          (T_sequence.mk_concat ~fin:false s
-          @@ Term.mk_var y @@ T_sequence.SSequence false)
+        ( T_trace.mk_concat ~fin:true s
+          @@ Term.mk_var x @@ T_trace.STrace true,
+          (T_trace.mk_concat ~fin:false s
+          @@ Term.mk_var y @@ T_trace.STrace false)
           :: acc ))
   in
   let x = mk_fresh_tvar_with "fin" in
   let y = mk_fresh_tvar_with "inf" in
   let xs =
     List.map es ~f:(fun ((x, _), _) ->
-        (x (*assume distinct*), T_sequence.SSequence true))
+        (x (*assume distinct*), T_trace.STrace true))
   in
   let ys =
     List.map es ~f:(fun (_, (y, _)) ->
-        (y (*assume distinct*), T_sequence.SSequence false))
+        (y (*assume distinct*), T_trace.STrace false))
   in
   let fin_senvs, fin_phis =
     List.unzip
@@ -969,7 +969,7 @@ let compose_temp_eff es =
   ( ( x,
       Formula.exists (List.concat (xs :: fin_senvs))
       @@ Formula.and_of
-      @@ Formula.eq (Term.mk_var x @@ T_sequence.SSequence true) fin
+      @@ Formula.eq (Term.mk_var x @@ T_trace.STrace true) fin
          :: fin_phis ),
     ( y,
       Formula.exists (List.concat @@ (xs :: ys :: fin_senvs) @ inf_senvs)
@@ -978,7 +978,7 @@ let compose_temp_eff es =
          @@ List.map2_exn (List.rev infs) inf_phis ~f:(fun inf inf_phi ->
                 Formula.and_of
                   [
-                    Formula.eq (Term.mk_var y @@ T_sequence.SSequence false) inf;
+                    Formula.eq (Term.mk_var y @@ T_trace.STrace false) inf;
                     inf_phi;
                   ]))
          :: fin_phis ) )
@@ -1012,13 +1012,13 @@ let rec set_sort_temp ~print subst ((x1, phi1), (x2, phi2)) =
   ( ( x1,
       let sub =
         Map.Poly.set subst ~key:x1
-          ~data:(Term.mk_var x1 @@ T_sequence.SSequence true)
+          ~data:(Term.mk_var x1 @@ T_trace.STrace true)
       in
       Typeinf.typeinf_formula ~print ~default:None @@ Formula.subst sub phi1 ),
     ( x2,
       let sub =
         Map.Poly.set subst ~key:x2
-          ~data:(Term.mk_var x2 @@ T_sequence.SSequence false)
+          ~data:(Term.mk_var x2 @@ T_trace.STrace false)
       in
       Typeinf.typeinf_formula ~print ~default:None @@ Formula.subst sub phi2 )
   )
@@ -1350,8 +1350,8 @@ and rename_pvars_val map = function
   | RPoly (svs, c) -> RPoly (svs, rename_pvars_comp map c)
 
 let rec aconv_temp map (pred1, pred2) =
-  ( aconv_pred ~prefix:"x" map pred1 @@ T_sequence.SSequence true,
-    aconv_pred ~prefix:"y" map pred2 @@ T_sequence.SSequence false )
+  ( aconv_pred ~prefix:"x" map pred1 @@ T_trace.STrace true,
+    aconv_pred ~prefix:"y" map pred2 @@ T_trace.STrace false )
 
 and aconv_cont map sort = function
   | Pure -> Pure
@@ -1486,8 +1486,8 @@ and tsub_of_val ~config sub = function
     when String.(Datatype.name_of dt = Datatype.name_of dt') -> (
       let sorts = Datatype.params_of dt' in
       try
-        List.fold2_exn params sorts ~init:sub ~f:(tsub_of_val ~config >> curry2)
-      with _ ->
+        List.fold2_exn params sorts ~init:sub ~f:(tsub_of_val ~config >> Tuple2.curry)
+      with exn_ when not (Common.Timer.is_async exn_) ->
         failwith
         @@ sprintf "[tsub_of_val] (%s) and (%s)"
              (String.concat_map_list ~sep:"," ~f:(str_of_val ~config) params)
@@ -1496,14 +1496,14 @@ and tsub_of_val ~config sub = function
     when String.(name = Datatype.name_of dt') -> (
       let sorts = Datatype.params_of dt' in
       try
-        List.fold2_exn params sorts ~init:sub ~f:(tsub_of_val ~config >> curry2)
-      with _ ->
+        List.fold2_exn params sorts ~init:sub ~f:(tsub_of_val ~config >> Tuple2.curry)
+      with exn_ when not (Common.Timer.is_async exn_) ->
         failwith
         @@ sprintf "[tsub_of_val] (%s) and (%s)"
              (String.concat_map_list ~sep:"," ~f:(str_of_val ~config) params)
              (String.concat_map_list ~sep:"," ~f:Term.str_of_sort sorts))
   | RTuple (elems, _), T_tuple.STuple sorts ->
-      List.fold2_exn elems sorts ~init:sub ~f:(tsub_of_val ~config >> curry2)
+      List.fold2_exn elems sorts ~init:sub ~f:(tsub_of_val ~config >> Tuple2.curry)
   | RRef (elem, _), T_ref.SRef sort -> tsub_of_val ~config sub (elem, sort)
   | RArrow ((*assume fresh*) _, t, c, _), Sort.SArrow (sort1, c') ->
       tsub_of_comp ~config (tsub_of_val ~config sub (t, sort1)) (c, c')
@@ -1511,12 +1511,12 @@ and tsub_of_val ~config sub = function
       tsub_of_comp ~config sub (c, Sort.mk_fresh_pure_triple_from_sort sort')
   | RPoly (svs1, c), Sort.SPoly (svs2, sort)
   (*ToDo: remove this*)
-    when not @@ Set.disjoint svs1 svs2 ->
+    when not @@ Set.are_disjoint svs1 svs2 ->
       tsub_of_val ~config sub
         ( mk_type_poly ~config (Set.diff svs1 svs2) c,
           Sort.mk_poly (Set.diff svs2 svs1) sort )
   | RPoly (svs, c), sort' ->
-      assert (Set.disjoint svs @@ Map.key_set sub);
+      assert (Set.are_disjoint svs @@ Map.key_set sub);
       let sub' =
         tsub_of_comp ~config sub (c, Sort.mk_fresh_pure_triple_from_sort sort')
       in
@@ -1601,10 +1601,17 @@ and instantiate_comp ~print ~config dom kind_map (sub, svmap) (c, c') =
 and instantiate_val ~print ~config dom kind_map (sub, svmap) = function
   | RGeneral ([], sort, pred), sort' -> (
       let sort_inst = Term.subst_sorts_sort sub sort in
-      let sort, sort_inst =
+      let sort_inst, sub =
         if Sort.is_svar sort_inst && (not @@ Sort.is_svar sort' (*ToDo*)) then
-          (sort', sort')
-        else (sort, sort_inst)
+          (* A late concrete instance also fixes the predicate's argument
+             rank; changing only the enclosing value sort leaves it generic. *)
+          let sub =
+            match sort with
+            | Sort.SVar svar -> Map.Poly.set sub ~key:svar ~data:sort'
+            | _ -> sub
+          in
+          (sort', sub)
+        else (sort_inst, sub)
       in
       let pred = Formula.subst_sorts_pred sub pred in
       if Stdlib.(sort_inst <> sort') && not (eq_dt sort_inst sort') then
@@ -1612,6 +1619,7 @@ and instantiate_val ~print ~config dom kind_map (sub, svmap) = function
         @@ sprintf "[instantiate_val] %s and %s does not match"
              (Term.str_of_sort sort_inst)
              (Term.str_of_sort sort');
+      (* The original sort variable identifies its supplied refinement template. *)
       match sort with
       | Sort.SVar svar when Map.Poly.mem svmap svar ->
           ( conj_pred_val pred (Map.Poly.find_exn svmap svar),
@@ -1619,7 +1627,16 @@ and instantiate_val ~print ~config dom kind_map (sub, svmap) = function
             kind_map )
       | Sort.SPoly (_svs, _sort) ->
           failwith "instantiation with a type polymorphic type is not supported"
-      | _ -> (mk_rbase sort (*ToDo: sort_inst?*) pred, Set.Poly.empty, kind_map)
+      | _ ->
+          (* The substitution determines the value's rank even when there
+             is no separately generated refinement template for it. *)
+          let ty = mk_rbase sort_inst pred in
+          let ty =
+            match sort_inst with
+            | Sort.SArrow _ -> subst_sorts_val ~config Map.Poly.empty ty
+            | _ -> ty
+          in
+          (ty, Set.Poly.empty, kind_map)
       )
   | RGeneral (params, T_dt.SDT dt, pred), T_dt.SDT dt'
     when String.(dt.name = dt'.name) ->
@@ -1630,7 +1647,7 @@ and instantiate_val ~print ~config dom kind_map (sub, svmap) = function
         List.unzip3
         @@ List.map2_exn params (Datatype.params_of dt')
              ~f:
-               (curry
+               (Tuple2.curry
                @@ instantiate_val ~print ~config dom kind_map (sub, svmap))
       in
       ( mk_rdt params dt pred,
@@ -1643,7 +1660,7 @@ and instantiate_val ~print ~config dom kind_map (sub, svmap) = function
         List.unzip3
         @@ List.map2_exn params (Datatype.params_of dt')
              ~f:
-               (curry
+               (Tuple2.curry
                @@ instantiate_val ~print ~config dom kind_map (sub, svmap))
       in
       ( mk_rdt params dt' pred,
@@ -1656,7 +1673,7 @@ and instantiate_val ~print ~config dom kind_map (sub, svmap) = function
         List.unzip3
         @@ List.map2_exn params sorts
              ~f:
-               (curry
+               (Tuple2.curry
                @@ instantiate_val ~print ~config dom kind_map (sub, svmap))
       in
       ( mk_rus params name' sorts pred,
@@ -1668,7 +1685,7 @@ and instantiate_val ~print ~config dom kind_map (sub, svmap) = function
         List.unzip3
         @@ List.map2_exn elems sorts
              ~f:
-               (curry
+               (Tuple2.curry
                @@ instantiate_val ~print ~config dom kind_map (sub, svmap))
       in
       ( mk_rtuple elems pred,
@@ -1729,18 +1746,29 @@ and instantiate_val ~print ~config dom kind_map (sub, svmap) = function
              (sprintf "pvars instantiated type: %s\nconstraints: %s"
                 (str_of_val ~config t')
                 (Formula.str_of @@ Formula.and_of @@ Set.to_list constrs''));
-        ( t',
-          constrs'',
-          Map.rename_keys_map
-            (Map.Poly.of_alist_exn
-            @@ List.map ~f:(fun (x, y) ->
-                   (Ident.pvar_to_tvar x, Ident.pvar_to_tvar y))
-            @@ Map.Poly.to_alist pmap)
-            kind_map ))
+        (* Every use of a generalised type makes its own copy of the
+           unknowns, and each copy carries the constraints of the original,
+           so each copy must also carry the original's kind: the entry is
+           copied, not moved.  Moving it (renaming the key) gave the kind to
+           the first copy only, and every later use of the same generalised
+           function got an ordinary unknown in its place -- for a recursive
+           function read as an expectation, an unknown in its return
+           refinement that was no longer admissible, whose least solution
+           [false] made every bound on that use hold vacuously.  The
+           original's entry stays, since the original's name may still
+           occur (in the definition's own constraints or in a later
+           instantiation of the same type). *)
+        let kind_map =
+          Map.Poly.fold pmap ~init:kind_map ~f:(fun ~key ~data acc ->
+              match Map.Poly.find kind_map (Ident.pvar_to_tvar key) with
+              | Some kind -> Map.Poly.set acc ~key:(Ident.pvar_to_tvar data) ~data:kind
+              | None -> acc)
+        in
+        (t', constrs'', kind_map))
       else failwith "not supported"
   | RPoly (svs1, c), Sort.SPoly (svs2, sort)
   (*ToDo: remove this*)
-    when not @@ Set.disjoint svs1 svs2 ->
+    when not @@ Set.are_disjoint svs1 svs2 ->
       instantiate_val ~print ~config dom kind_map (sub, svmap)
         ( mk_type_poly ~config (Set.diff svs1 svs2) c,
           Sort.mk_poly (Set.diff svs2 svs1) sort )
@@ -1795,7 +1823,7 @@ module Env = struct
 
   let disj_union (senv1, phis1) (senv2, phis2) : t =
     try (Map.force_merge senv1 senv2, Set.union phis1 phis2)
-    with _ ->
+    with exn_ when not (Common.Timer.is_async exn_) ->
       failwith
       @@ sprintf "duplicate definition: %s"
       @@ String.concat_map_set ~sep:"," ~f:Ident.name_of_tvar
@@ -1867,7 +1895,7 @@ module Env = struct
           Set.union acc @@ Formula.pred_sort_env_of ~bpvs phi)
     in
     try Map.of_set_exn pred_senv
-    with _ ->
+    with exn_ when not (Common.Timer.is_async exn_) ->
       failwith
       @@ String.concat_map_set ~sep:"\n" pred_senv ~f:(fun (pvar, sorts) ->
              Ident.name_of_pvar pvar ^ ": ("

@@ -1,3 +1,9 @@
+(* Propositional formulas over qualifier indices, the output of the
+   Boolean-function learners.  Qualifier [i] is the atom named [#qual_i];
+   [of_dt] reads a decision tree as the disjunction of its paths (for a search
+   tree, the head branch of each [Select]), and [concretize quals] replaces
+   each atom by [quals.(i)], so a formula built for one truth table is only
+   meaningful against that table's qualifier array. *)
 open Core
 open Common.Ext
 open Ast

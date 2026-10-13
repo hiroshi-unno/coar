@@ -1,0 +1,8 @@
+{
+    "cex_strategy": [
+        "AllExamples"
+    ],
+    "check_part_sol_with_lbs": false,
+    "houdini_before_synthesis": false,
+    "smt_timeout_quantified": null
+}

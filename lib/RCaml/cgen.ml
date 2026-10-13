@@ -1,3 +1,38 @@
+(* RCaml's constraint generator: refinement type checking and inference for
+   OCaml programs, reduced to predicate constraint satisfaction.
+
+   [from_ml_file] parses and type-checks the source with the OCaml compiler's
+   own front end and walks the typed structure item by item ([of_struct_item],
+   [top_level_aux]).  Item attributes drive what is produced: [[@@@rtype]]
+   declares refinement types (of program variables and of datatype
+   constructors), [[@@@constraints]] and [[@@@smtlib2]] add side constraints,
+   [[@@@mode]] selects reading Boolean properties as (conditional)
+   expectations, [[@@@check]]/[[@@@assert]] yield one [Problem.PAssertion] per
+   asserted subtyping [type_of(x) <: ty], and [[@@@infer]]/[[@@@optimize]]
+   yield a [Problem.POptimization] for maximally precise refinement types.
+
+   Expressions are traversed by [MBcgen.fold_expr] (simple types and effects,
+   solved by [MBcsol]); its callbacks here generate the refinement constraints:
+   subtyping ([cgen_subtype_val] and siblings), effect composition, pattern
+   matching, and generalisation and instantiation of refinement types.
+
+   Least and greatest fixpoint predicates ([mu_preds], [nu_preds]) are read off
+   by [fixpoint], which needs every intermediate predicate variable eliminated:
+   the preprocessor below is configured with an unbounded elimination threshold
+   for that reason.  Anything here that introduces an intermediate predicate
+   per nesting level therefore makes elimination exponential in practice;
+   distribute the context over the branches instead (as [MBcgen] does for
+   impure [&&]/[||] conditions), and keep continuation closures re-entrant,
+   since one may be invoked from several branches.
+
+   Implements the refinement type systems of Unno and Kobayashi (PPDP 2009),
+   Unno, Terauchi and Kobayashi (POPL 2013), Hashimoto and Unno (SAS 2015, the
+   optimization problems), Nanjo et al. (LICS 2018), Sekiyama and Unno (POPL
+   2023, POPL 2025), Kawamata et al. (POPL 2024), Kura and Unno (ICFP 2024,
+   the expectation modes) and Kura et al. (ESOP 2026).  Translation state is
+   global ([dtrenv], [mu_preds], the [Ast.LogicOld] environments) and reset by
+   [top_level], so a translation is not reentrant. *)
+
 open Core
 open Typedtree
 open Common
@@ -234,10 +269,16 @@ module Make (Config : Config.ConfigType) = struct
                   List.unzip
                   @@ List.map (Datatype.conses_of dt) ~f:(fun cons ->
                       (*print @@ lazy cons.name;*)
-                      let cty, constrs, _kind_map (*ToDo*) =
+                      (* No kind map is threaded here, and none is lost:
+                         a negative instantiation replaces the constructor
+                         type's predicate parameters by [true] before
+                         instantiating, so no kinded unknown is copied, and
+                         the fresh refinements it makes for type variables
+                         are ordinary. *)
+                      let cty, constrs, _kind_map =
                         let cty = Map.Poly.find_exn !dtrenv cons.name in
                         instantiate_val_con false ~config dom Map.Poly.empty
-                          (*ToDo*) (cty, None, ty)
+                          (cty, None, ty)
                       in
                       let args, _ret =
                         args_ret_of_val @@ aconv_val Map.Poly.empty cty
@@ -401,7 +442,8 @@ module Make (Config : Config.ConfigType) = struct
         @@ List.map boths
              ~f:
                (snd
-               >> uncurry @@ cgen_subtype_val ~first:false ~config ~depth renv)
+               >> Tuple2.uncurry
+                  @@ cgen_subtype_val ~first:false ~config ~depth renv)
       else
         failwith
         @@ sprintf "[cgen_subtype_opsig] %s and %s" (str_of_opsig ~config o1)
@@ -519,15 +561,15 @@ module Make (Config : Config.ConfigType) = struct
     let open Rtype in
     let sub1 =
       Map.Poly.singleton x2
-      @@ T_sequence.mk_concat ~fin:true
-           (Term.mk_var x1 @@ T_sequence.SSequence true)
-           (Term.mk_var x2 @@ T_sequence.SSequence true)
+      @@ T_trace.mk_concat ~fin:true
+           (Term.mk_var x1 @@ T_trace.STrace true)
+           (Term.mk_var x2 @@ T_trace.STrace true)
     in
     let sub2 =
       Map.Poly.singleton y2
-      @@ T_sequence.mk_concat ~fin:false
-           (Term.mk_var x1 @@ T_sequence.SSequence true)
-           (Term.mk_var y2 @@ T_sequence.SSequence false)
+      @@ T_trace.mk_concat ~fin:false
+           (Term.mk_var x1 @@ T_trace.STrace true)
+           (Term.mk_var y2 @@ T_trace.STrace false)
     in
     let _, psi1 = Formula.split_exists (*ToDo*) psi1 in
     let _, phi1 = Formula.split_exists (*ToDo*) phi1 in
@@ -540,11 +582,11 @@ module Make (Config : Config.ConfigType) = struct
               @@ Formula.rename (Map.Poly.singleton y2 y1) psi2)
        else Set.Poly.empty),
       ( ( x2,
-          Formula.forall [ (x1, T_sequence.SSequence true) ]
+          Formula.forall [ (x1, T_trace.STrace true) ]
           @@ Evaluator.simplify @@ Formula.mk_imply phi1
           @@ Formula.subst sub1 phi2 ),
         ( y2,
-          Formula.forall [ (x1, T_sequence.SSequence true) ]
+          Formula.forall [ (x1, T_trace.STrace true) ]
           @@ Evaluator.simplify @@ Formula.mk_imply phi1
           @@ Formula.subst sub2 psi2 ) ) )
 
@@ -771,16 +813,25 @@ module Make (Config : Config.ConfigType) = struct
           Set.Poly.empty,
           (* always match *) Formula.mk_false () )
     | PTuple pats, RTuple (elems, pred) ->
-        let renvs, constrss, not_matched, args, sorts, targs =
-          List.unzip6
-          @@ List.map2_exn pats elems ~f:(fun pi ti ->
+        let sorts = List.map elems ~f:Rtype.sort_of_val in
+        let renvs, constrss, not_matched, args, targs =
+          List.unzip5
+          @@ List.mapi (List.zip_exn pats elems) ~f:(fun i (pi, ti) ->
               let arg = Ident.mk_fresh_tvar () in
-              let sort = Rtype.sort_of_val ti in
+              let sort = List.nth_exn sorts i in
               let targ = Term.mk_var arg sort in
               let renv, constrs, not_matched =
                 pattern_match_with ~config renv pi (targ, ti)
               in
-              (renv, constrs, not_matched, (arg, ti), sort, targ))
+              (* the not-matched condition is used outside this branch, where
+                 [arg] is unbound: express it through the projection of the
+                 scrutinee instead *)
+              let not_matched =
+                Formula.subst
+                  (Map.Poly.singleton arg (T_tuple.mk_tuple_sel sorts term i))
+                  not_matched
+              in
+              (renv, constrs, not_matched, (arg, ti), targ))
         in
         let renv_args =
           ( Map.Poly.of_alist_exn args,
@@ -798,13 +849,16 @@ module Make (Config : Config.ConfigType) = struct
     | PCons (dt, cons_name, pats), RGeneral (_, T_dt.SDT dt', pred)
       when String.(Datatype.name_of dt = Datatype.name_of dt') ->
         (*Debug.print @@ lazy cons_name;*)
+        (* No kind map is threaded here, and none is lost: a negative
+           instantiation replaces the constructor type's predicate parameters
+           by [true] before instantiating, so no kinded unknown is copied. *)
         let ( cty (* may contain a predicate variable *),
               constrs,
-              _kind_map (*ToDo*) ) =
+              _kind_map ) =
           let cty = Map.Poly.find_exn !dtrenv cons_name in
           instantiate_val_con false ~config
             (Rtype.Env.dep_args_of renv)
-            Map.Poly.empty (*ToDo*)
+            Map.Poly.empty
             (cty, Some (List.map pats ~f:Pattern.sort_of), rty)
         in
         let args, _ret =
@@ -820,8 +874,21 @@ module Make (Config : Config.ConfigType) = struct
         in
         let renvs, constrss_args, not_matched =
           List.unzip3
-          @@ List.map3_exn pats ts args ~f:(fun pi ti argi ->
-              pattern_match_with renv ~config pi (ti, snd argi))
+          @@ List.mapi (List.zip_exn pats args) ~f:(fun i (pi, (xi, tyi)) ->
+              let renv, constrs, not_matched =
+                pattern_match_with renv ~config pi
+                  (Term.mk_var xi @@ Rtype.sort_of_val tyi, tyi)
+              in
+              (* see the tuple case: [xi] is bound only inside this branch, so
+                 the not-matched condition refers to the selector on the
+                 scrutinee *)
+              let not_matched =
+                Formula.subst
+                  (Map.Poly.singleton xi
+                     (T_dt.mk_sel_by_cons dt cons_name i term))
+                  not_matched
+              in
+              (renv, constrs, not_matched))
         in
         ( Rtype.Env.add_phi
             (Rtype.Env.disj_union_list (* assume distinct *)
@@ -1001,6 +1068,149 @@ module Make (Config : Config.ConfigType) = struct
                  (Formula.mk_false ()),
             kind_map )
 
+  (* The refinement predicates of a recursive function's result that must be
+     admissible: in the expectation modes, a recursive function whose result
+     is an answer value -- a [Prop], represented as a real, or with
+     conditioning as a pair of reals (the value and its score) -- is typed by
+     the fixpoint rule for answer values, which is sound only for an
+     admissible refinement (Scott induction), so each predicate in the
+     result's refinement gets kind [Adm].
+
+     The result must actually have the answer sort.  That was assumed
+     unchecked, and a result of any other sort was given [Adm] as well: a
+     Boolean, an integer or a datatype was excluded, but a unit, a string, a
+     type variable, a tuple with a non-real component, or a plain real under
+     conditioning was not, and the admissible template refuses every such sort
+     at solving time.  None of these can be an answer value, so they are
+     treated as the excluded sorts are -- ordinary refinements -- and the
+     refusal is reported.  A type variable is the one exception: a use may
+     instantiate it to the answer sort, so its refinement is decided at each
+     use ([adm_kinds_at_instance]) and nothing is reported at the
+     definition.
+
+     What the sort cannot say is whether a real result is an answer value or a
+     real number computed by the program: the source language's [prop] and
+     [float] are one sort here.  A real result is taken to be an answer value,
+     which the solver then reads over the non-negative reals; a real-valued
+     recursive function whose result can be negative is outside the mode.
+
+     [answer_refinement_pvars] is the sort test: [Some] the predicate
+     variables of [rett]'s refinement when its sort is the mode's answer
+     sort, [None] otherwise. *)
+  let answer_refinement_pvars ~with_cond rett =
+    let sort = Rtype.sort_of_val rett in
+    let is_answer_sort =
+      match sort with
+      | T_real.SReal -> not with_cond
+      | T_tuple.STuple [ T_real.SReal; T_real.SReal ] when with_cond -> true
+      | T_tuple.STuple (_ :: _ as sorts) ->
+          (not with_cond) && List.for_all sorts ~f:Term.is_real_sort
+      | _ -> false
+    in
+    if is_answer_sort then
+      let _, phi = Rtype.pred_of_val rett in
+      Some (Formula.pred_sort_env_of phi)
+    else None
+
+  (* The predicate variables of the result refinement of every recursive
+     function met in an expectation mode, whatever the result's sort.  A use
+     of a generalised function copies these unknowns, and when the result is
+     a type variable only the use knows whether it is an answer value, so the
+     use consults this set to recognise the return refinement of a recursive
+     function ([adm_kinds_at_instance]).  Unknown names are globally fresh,
+     so the set is only ever added to. *)
+  let rec_result_pvars = ref Set.Poly.empty
+
+  let adm_pvars_of_rec_result mode ~is_rec rty =
+    match mode with
+    | HFL_Expectation with_cond when is_rec -> (
+        let rett = Rtype.ret_of_val rty in
+        let sort = Rtype.sort_of_val rett in
+        (let _, phi = Rtype.pred_of_val rett in
+         rec_result_pvars :=
+           Set.union !rec_result_pvars
+             (Set.Poly.map ~f:fst @@ Formula.pred_sort_env_of phi));
+        match answer_refinement_pvars ~with_cond rett with
+        | Some penv ->
+            Set.Poly.map ~f:(fun (p, sorts) -> (p, with_cond, sorts)) penv
+        | None ->
+            let is_excluded =
+              Term.is_bool_sort sort || Term.is_int_sort sort
+              || Term.is_dt_sort sort
+            in
+            (* A type-variable result is decided at each use, where the
+               variable has been instantiated. *)
+            let is_deferred = match sort with Sort.SVar _ -> true | _ -> false in
+            if not (is_excluded || is_deferred) then
+              Debug.print
+              @@ lazy
+                   (sprintf
+                      "[warning] a recursive function's result has sort %s, \
+                       which is not the %s answer sort, so its refinement is \
+                       not made admissible"
+                      (Term.str_of_sort sort)
+                      (if with_cond then "conditional-expectation (real * real)"
+                       else "expectation (real)"));
+            Set.Poly.empty)
+    | HFL_Expectation _ | OCaml -> Set.Poly.empty
+
+  (* At a use of a variable whose type [xty0] has the result refinement of a
+     recursive function (one of [rec_result_pvars] occurs in it), give kind
+     [Adm] to every predicate of the instantiated result refinement when the
+     instantiated result sits at an answer-valued position.  Two things make
+     this necessary beyond the kind given at the definition.  A result of a
+     type-variable sort is refined at each use by a fresh unknown for the
+     variable, conjoined into the return refinement: the fixpoint rule needs
+     that whole set to contain bottom and be closed under chain suprema, and
+     an ordinary unknown there may take the empty set as its least solution,
+     so that every bound on the use holds vacuously.  And the definition's
+     kind was decided before the variable's sort was known.  Requiring each
+     conjunct to be admissible is sufficient for the conjunction (an
+     intersection of admissible sets is admissible); it restricts the search
+     to the admissible template, so a [sat] stays sound and answers can only
+     be lost, never gained. *)
+  let adm_kinds_at_instance mode ~xty0 ~xty kind_map =
+    match mode with
+    | HFL_Expectation with_cond -> (
+        let ret_pvs ty =
+          let _, phi =
+            Rtype.pred_of_val @@ Rtype.ret_of_val @@ Rtype.mono_type_of_val ty
+          in
+          Set.Poly.map ~f:fst @@ Formula.pred_sort_env_of phi
+        in
+        if not (Set.exists (ret_pvs xty0) ~f:(Set.mem !rec_result_pvars)) then
+          kind_map
+        else (
+          (* Preserve the obligation through a still-generic copy. Its sort
+             may become answer-valued only at a later use or assertion. *)
+          rec_result_pvars := Set.union !rec_result_pvars (ret_pvs xty);
+          match
+            answer_refinement_pvars ~with_cond
+            @@ Rtype.ret_of_val @@ Rtype.mono_type_of_val xty
+          with
+          | None -> kind_map
+          | Some penv ->
+              Set.fold penv ~init:kind_map ~f:(fun acc (p, _) ->
+                  Map.Poly.update acc (Ident.pvar_to_tvar p) ~f:(function
+                    | None | Some Kind.Ord -> Kind.Adm with_cond
+                    | Some kind -> kind))))
+    | OCaml -> kind_map
+
+  (* Follow the same value positions as structural arrow subtyping. An
+     actual argument flows into the callee's parameter contravariantly;
+     shared result predicates can then carry its obligation to the returned
+     function. Process arguments before results so this sharing is visible.
+     A parameter unrelated to the result does not mark that result. *)
+  let rec adm_kinds_at_subtype mode ~xty0 ~xty kind_map =
+    match (Rtype.mono_type_of_val xty0, Rtype.mono_type_of_val xty) with
+    | Rtype.RArrow (_, arg0, comp0, _), Rtype.RArrow (_, arg, comp, _) ->
+        let kind_map =
+          adm_kinds_at_subtype mode ~xty0:arg ~xty:arg0 kind_map
+        in
+        adm_kinds_at_subtype mode ~xty0:comp0.val_type ~xty:comp.val_type
+          kind_map
+    | _ -> adm_kinds_at_instance mode ~xty0 ~xty kind_map
+
   let rec env_and_rty_of_pat ~config mode ?(is_top_level = false) dom = function
     | Pattern.PAny _, is_fun, is_rec, sort ->
         let svmap =
@@ -1026,26 +1236,7 @@ module Make (Config : Config.ConfigType) = struct
           in
           Rtype.val_of_sort ~config ~refine ~svmap dom sort
         in
-        let adm_pvars =
-          match mode with
-          | HFL_Expectation with_cond ->
-              let rett = Rtype.ret_of_val rty in
-              if
-                is_rec
-                && not
-                     ((Term.is_bool_sort @@ Rtype.sort_of_val rett)
-                     || (Term.is_int_sort @@ Rtype.sort_of_val rett)
-                     || (Term.is_dt_sort @@ Rtype.sort_of_val rett))
-                (*ToDo*)
-              then
-                let _, phi = Rtype.pred_of_val rett in
-                Set.Poly.map ~f:(fun (p, sorts) -> (p, with_cond, sorts))
-                @@
-                (*ToDo:check if rett are props*)
-                Formula.pred_sort_env_of phi
-              else Set.Poly.empty
-          | OCaml -> Set.Poly.empty
-        in
+        let adm_pvars = adm_pvars_of_rec_result mode ~is_rec rty in
         (Rtype.Env.mk_empty (), rty, adm_pvars)
     | Pattern.PVar (x, _sort), is_fun, is_rec, sort ->
         let svmap =
@@ -1074,26 +1265,7 @@ module Make (Config : Config.ConfigType) = struct
           in
           Rtype.val_of_sort ~config ~refine ~svmap ~name dom sort
         in
-        let adm_pvars =
-          match mode with
-          | HFL_Expectation with_cond ->
-              let rett = Rtype.ret_of_val rty in
-              if
-                is_rec
-                && not
-                     ((Term.is_bool_sort @@ Rtype.sort_of_val rett)
-                     || (Term.is_int_sort @@ Rtype.sort_of_val rett)
-                     || (Term.is_dt_sort @@ Rtype.sort_of_val rett))
-                (*ToDo*)
-              then
-                let _, phi = Rtype.pred_of_val rett in
-                Set.Poly.map ~f:(fun (p, sorts) -> (p, with_cond, sorts))
-                @@
-                (*ToDo:check if rett are props*)
-                Formula.pred_sort_env_of phi
-              else Set.Poly.empty
-          | OCaml -> Set.Poly.empty
-        in
+        let adm_pvars = adm_pvars_of_rec_result mode ~is_rec rty in
         (Rtype.Env.singleton_ty x rty, rty, adm_pvars)
     | ( (Pattern.PTuple pats as pat),
         is_fun,
@@ -1133,12 +1305,14 @@ module Make (Config : Config.ConfigType) = struct
     | _ -> failwith "[env_and_rty_of_pat] unsupported pattern"
 
   module Preprocessor = Preprocessor.Make (struct
+    (* every preprocessing field not given here takes its default, as on the
+       constraint solver's own entry point *)
     let config =
-      Preprocessor.Config.make config.enable_pvar_elim false (*config.verbose*)
-        Int.max_value
-        (* [fixpoint] assumes that any intermediate predicate variables are eliminated for GFP predicate generation*)
-        4
-        false
+      Preprocessor.Config.make config.enable_pvar_elim false
+           (*config.verbose*)
+           Int.max_value
+           (* [fixpoint] assumes that any intermediate predicate variables are eliminated for GFP predicate generation*)
+           4 false
   end)
 
   type envs = {
@@ -1206,6 +1380,8 @@ module Make (Config : Config.ConfigType) = struct
       PCSP.Problem.make ~skolem_pred phis
       @@ SMT.Problem.
            {
+             decl_reading = SMT.Problem.Synthesize;
+             candidates = Map.Poly.empty;
              uni_sort = Set.Poly.empty;
              uni_senv = Map.Poly.empty;
              exi_senv;
@@ -1297,7 +1473,11 @@ module Make (Config : Config.ConfigType) = struct
       Rtype.cgen_config := config;
       Rtype.renv_ref := renv;
       set_dtenv dtenv;
-      Preprocessor.preprocess pcsp0 ~bpvs
+      (* not a satisfiability question: the clauses are simplified so that
+         the definitions of the (co)inductive predicates can be read off
+         them, and a refutation would replace them by [false] and leave no
+         definition to read *)
+      Preprocessor.preprocess pcsp0 ~bpvs ~refute:false
     in
     let clauses1, clauses2 =
       Set.partition_tf
@@ -1323,7 +1503,7 @@ module Make (Config : Config.ConfigType) = struct
               (Map.Poly.of_alist_exn env)
               t
           in
-          assert (Set.disjoint (Formula.pvs_of phi) pvs_dummy);
+          assert (Set.are_disjoint (Formula.pvs_of phi) pvs_dummy);
           let env = Logic.to_old_sort_env_list env in
           Debug.print
           @@ lazy
@@ -1348,7 +1528,7 @@ module Make (Config : Config.ConfigType) = struct
               (Map.Poly.of_alist_exn env)
               t
           in
-          assert (Set.disjoint (Formula.pvs_of phi) pvs_dummy);
+          assert (Set.are_disjoint (Formula.pvs_of phi) pvs_dummy);
           let env = Logic.to_old_sort_env_list env in
           Debug.print
           @@ lazy
@@ -1362,7 +1542,8 @@ module Make (Config : Config.ConfigType) = struct
       Set.Poly.map clauses1
         ~f:
           (Clause.normalize_uni_senv >> Clause.to_senv_formula
-          >> uncurry2 @@ Logic.ExtTerm.to_old_fml (PCSP.Problem.senv_of pcsp))
+          >> Tuple2.uncurry
+             @@ Logic.ExtTerm.to_old_fml (PCSP.Problem.senv_of pcsp))
     in
     Debug.print @@ lazy "*** predicate constraints extracted:";
     Debug.print @@ lazy "";
@@ -1393,7 +1574,7 @@ module Make (Config : Config.ConfigType) = struct
                 (not (Set.mem pvs_renv pvar)) && not (Set.mem pvs_dtrenv pvar))
           in
           try Map.of_set_exn penv_set
-          with _ ->
+          with exn_ when not (Common.Timer.is_async exn_) ->
             failwith @@ sprintf "duplicate: %s"
             @@ str_of_pred_sort_env_set Term.str_of_sort penv_set
         in
@@ -1415,8 +1596,15 @@ module Make (Config : Config.ConfigType) = struct
       @@ List.map3_exn pats (List.zip_exn is_funs is_pures) c1s
            ~f:(fun pat (is_fun, is_pure) c1 ->
              let dom = Env.dep_args_of renv in
+             (* Reusing a source name after shadowing must not reuse its old
+                predicate signature, whose dependency arguments may differ. *)
+             let name_top_level =
+               is_top_level
+               && Set.for_all (Pattern.tvars_of pat) ~f:(fun x ->
+                   Option.is_none (Env.look_up renv x))
+             in
              let pat_renv, t, adm_pvars =
-               env_and_rty_of_pat ~config mode ~is_top_level dom
+               env_and_rty_of_pat ~config mode ~is_top_level:name_top_level dom
                  (pat, is_fun, is_rec, c1.Sort.val_type)
              in
              let temp =
@@ -1526,7 +1714,8 @@ module Make (Config : Config.ConfigType) = struct
       (if generalizable then Set.Poly.empty else Set.Poly.union_list constrss),
       Map.force_merge_list kind_maps,
       renv_body,
-      map )
+      map,
+      constrss )
 
   let sort_of_either = function
     | First (_, _, c) -> c.Sort.val_type
@@ -1540,7 +1729,7 @@ module Make (Config : Config.ConfigType) = struct
     | Some (next, cont) -> Some (next, Term.subst_cont maps cont)
     | None -> None
 
-  let cgen_either ~config kind_map renv maps opsig =
+  let cgen_either ~config mode kind_map renv maps opsig =
     let open Rtype in
     function
     | First (pure, next, c (*c.op_sig*)) ->
@@ -1558,16 +1747,21 @@ module Make (Config : Config.ConfigType) = struct
         in
         ((x, c, false), next kind_map maps renv c)
     | Second (x, sort) ->
-        let c, constrs =
+        (* A variable in argument position is a use like any other: an
+           instance of a generalised type copies its unknowns, and the copies
+           take their kinds from the caller's kind map, which is returned
+           extended with them. *)
+        let c, constrs, kind_map =
           match Env.look_up renv x with
-          | Some xty ->
-              let xty, constrs, _kind_map (*ToDo*) =
+          | Some xty0 ->
+              let xty, constrs, kind_map =
                 instantiate_val ~print:Debug.print ~config
-                  (Env.dep_args_of renv) Map.Poly.empty (*ToDo*)
+                  (Env.dep_args_of renv) kind_map
                   (Map.Poly.empty, Map.Poly.empty)
-                  (xty, sort)
+                  (xty0, sort)
               in
-              (comp_of_term ~config (Term.mk_var x sort) xty, constrs)
+              let kind_map = adm_kinds_at_instance mode ~xty0 ~xty kind_map in
+              (comp_of_term ~config (Term.mk_var x sort) xty, constrs, kind_map)
           | None ->
               failwith
               @@ sprintf "[cgen_either] unbound variable: %s : %s\nrenv = %s"
@@ -1829,11 +2023,15 @@ module Make (Config : Config.ConfigType) = struct
              let xty, constrs, kind_map =
                match Env.look_up renv x with
                | Some xty ->
+                   let xty0 = xty in
                    let xty, constrs, kind_map =
                      instantiate_val ~print:Debug.print ~config
                        (Env.dep_args_of renv) kind_map
                        (Map.Poly.empty, Map.Poly.empty)
                        (xty, sort)
+                   in
+                   let kind_map =
+                     adm_kinds_at_instance mode ~xty0 ~xty kind_map
                    in
                    ( comp_of_term ~config (Term.mk_var x sort) xty,
                      constrs,
@@ -1843,6 +2041,13 @@ module Make (Config : Config.ConfigType) = struct
                    @@ sprintf "[rcaml:var] unbound variable: %s : %s\nrenv = %s"
                         (name_of_tvar x) (str_of_comp ~config ty)
                         (Env.str_of ~config renv)
+             in
+             (* A binding checks this value against a fresh return refinement.
+                Carry recursive-result provenance to that refinement as well
+                as to the instance, before the binding is generalised. *)
+             let kind_map =
+               adm_kinds_at_subtype mode ~xty0:xty.val_type ~xty:ty.val_type
+                 kind_map
              in
              Debug.print
              @@ lazy
@@ -1908,7 +2113,7 @@ module Make (Config : Config.ConfigType) = struct
                          (mk_fresh_trivial_pred ())
                      else assert false
                    else of_term ~print:Debug.print ~config term
-                 with _ -> of_term ~print:Debug.print ~config term
+                 with exn_ when not (Common.Timer.is_async exn_) -> of_term ~print:Debug.print ~config term
                in
                instantiate_val ~print:Debug.print ~config (Env.dep_args_of renv)
                  kind_map
@@ -1959,7 +2164,7 @@ module Make (Config : Config.ConfigType) = struct
                List.fold_right nexts_either ~init:([], Set.Poly.empty, kind_map)
                  ~f:(fun next (res, constrs1, kind_map) ->
                    let r, (constrs2, kind_map) =
-                     cgen_either ~config kind_map renv maps opsig next
+                     cgen_either ~config mode kind_map renv maps opsig next
                    in
                    (r :: res, Set.union constrs1 constrs2, kind_map))
              in
@@ -2010,7 +2215,7 @@ module Make (Config : Config.ConfigType) = struct
                  ~init:([], Set.Poly.empty, kind_map)
                  ~f:(fun next (res, constrs1, kind_map) ->
                    let r, (constrs2, kind_map) =
-                     cgen_either ~config kind_map renv maps opsig next
+                     cgen_either ~config mode kind_map renv maps opsig next
                    in
                    (r :: res, Set.union constrs1 constrs2, kind_map))
              in
@@ -2061,7 +2266,7 @@ module Make (Config : Config.ConfigType) = struct
                List.fold_right nexts_either ~init:([], Set.Poly.empty, kind_map)
                  ~f:(fun next (res, constrs1, kind_map) ->
                    let r, (constrs2, kind_map) =
-                     cgen_either ~config kind_map renv maps opsig next
+                     cgen_either ~config mode kind_map renv maps opsig next
                    in
                    (r :: res, Set.union constrs1 constrs2, kind_map))
              in
@@ -2244,7 +2449,7 @@ module Make (Config : Config.ConfigType) = struct
              (* *)
              let opsig = `Refined ty.op_sig in
              let matched, (constrs1, kind_map) =
-               cgen_either ~config kind_map renv maps opsig next1_either
+               cgen_either ~config mode kind_map renv maps opsig next1_either
              in
              Debug.print
              @@ lazy
@@ -2340,7 +2545,8 @@ module Make (Config : Config.ConfigType) = struct
                    constrs,
                    kind_map,
                    renv_body,
-                   map ) =
+                   map,
+                   _definition_constrss ) =
                let is_top_level = false in
                cgen_let ~config mode ~is_top_level ~opsig fenv dtenv is_rec pats
                  defs kind_map maps renv
@@ -2508,7 +2714,7 @@ module Make (Config : Config.ConfigType) = struct
                List.fold_right nexts_either ~init:([], Set.Poly.empty, kind_map)
                  ~f:(fun next (res, constrs1, kind_map) ->
                    let r, (constrs2, kind_map) =
-                     cgen_either ~config kind_map renv maps opsig next
+                     cgen_either ~config mode kind_map renv maps opsig next
                    in
                    (r :: res, Set.union constrs1 constrs2, kind_map))
              in
@@ -2840,6 +3046,198 @@ module Make (Config : Config.ConfigType) = struct
     @@ lazy
          (sprintf "==================== processing %s ====================" str)
 
+  (* The four [@@@...] annotations are parsed from a string, so a syntax error
+     in one surfaced as an uncaught [RtypeParser.MenhirBasics.Error] with a
+     stack trace and no indication of *which* annotation or *where* -- unlike
+     the OCaml source itself, which reports through
+     [LexingHelper.print_error_information].  This names the annotation and its
+     position before re-raising. *)
+  let parse_annotation ~what ~content parse =
+    let lexbuf = Lexing.from_string content in
+    try parse RtypeLexer.token lexbuf
+    with e ->
+      Printf.fprintf stderr "%s: syntax error in [@@@%s \"%s\"]\n"
+        (LexingHelper.get_position_string lexbuf)
+        what content;
+      raise e
+
+  let compiler_result_svar dtenv vb =
+    let visited = Hash_set.Poly.create () in
+    let rec result ty =
+      let repr = Types.Transient_expr.repr ty in
+      if Hash_set.mem visited repr.id then None
+      else (
+        Hash_set.add visited repr.id;
+        match repr.desc with
+        | Types.Tarrow (_, _, ret, _) -> result ret
+        | Types.Tvar _
+          when Types.get_level (Types.Transient_expr.type_expr repr)
+               = Btype.generic_level -> (
+            match MBcgen.sort_of_type_expr ~env:vb.vb_pat.pat_env dtenv ty with
+            | Sort.SVar sv -> Some sv
+            | _ -> None)
+        | _ -> None)
+    in
+    result vb.vb_pat.pat_type
+
+  (* This deliberately small prefix grammar makes the independence check
+     complete without relying on the shallow Formula.svs_of collector. *)
+  let prefix_constraint_independent sv pvs =
+    let scalar = function
+      | Sort.SVar other -> Poly.(other <> sv)
+      | T_int.SInt | T_real.SReal | T_bool.SBool -> true
+      | _ -> false
+    in
+    let term = function
+      | Term.Var (_, sort, _) -> scalar sort
+      | Term.FunApp ((T_int.Int _ | T_real.Real _), [], _) -> true
+      | _ -> false
+    in
+    let rec formula = function
+      | Formula.Atom ((Atom.True _ | Atom.False _), _) -> true
+      | Formula.Atom (Atom.App (Predicate.Var (pv, sorts), args, _), _) ->
+          (not (Set.mem pvs pv))
+          && List.for_all sorts ~f:scalar
+          && List.for_all args ~f:term
+      | Formula.UnaryOp (_, phi, _) -> formula phi
+      | Formula.BinaryOp (_, phi1, phi2, _) -> formula phi1 && formula phi2
+      | _ -> false
+    in
+    formula
+
+  (* An application can retain a compiler-generalized covariant result. Handle
+     only a locally empty-bound top-level expectation case independent of the
+     prefix constraints; keep weak arguments and environment predicates shared. *)
+  let generalize_application_result ~config (envs : envs) is_rec vbs constrs
+      renv =
+    match (envs.mode, is_rec, vbs) with
+    | HFL_Expectation false, false, [ vb ]
+      when Set.is_empty constrs && Map.is_empty !mu_preds
+           && Map.is_empty !nu_preds -> (
+        match (vb.vb_pat.pat_desc, vb.vb_expr.exp_desc) with
+        | Tpat_var (_, name, _), Texp_apply _ -> (
+            let key = Tvar name.txt in
+            match
+              (compiler_result_svar envs.dtenv vb, Rtype.Env.look_up renv key)
+            with
+            | Some compiler_sv, Some ty when Rtype.is_rarrow ty -> (
+                let args, ret = Rtype.args_ret_of_val ty in
+                match ret with
+                | Rtype.RGeneral ([], Sort.SVar sv, _)
+                  when Poly.(sv = compiler_sv)
+                       && (not (Set.mem (Rtype.Env.svs_of envs.renv) sv))
+                       && Set.for_all envs.constrs
+                            ~f:
+                              (prefix_constraint_independent sv
+                                 (Rtype.pvs_of_val ty))
+                       && List.for_all args ~f:(fun (_, arg) ->
+                           not
+                             (Set.mem
+                                (Term.svs_of_sort (Rtype.sort_of_val arg))
+                                sv)) ->
+                    let generalized =
+                      generalize ~config envs.renv
+                        (Map.Poly.singleton key ty)
+                        Set.Poly.empty
+                      |> fun types -> Map.Poly.find_exn types key
+                    in
+                    let available, body = Rtype.let_type_poly generalized in
+                    if Set.mem available sv then
+                      Rtype.Env.set_ty renv key
+                      @@ Rtype.mk_type_poly ~config (Set.Poly.singleton sv)
+                      @@ Rtype.pure_comp_of_val ~config body
+                    else renv
+                | _ -> renv)
+            | _ -> renv)
+        | _ -> renv)
+    | _ -> renv
+
+  (* An independent application sibling may share weak argument ranks, but not
+     the result being generalized or its refinement predicates. Inspect every
+     refinement formula as well as the value structure; rank collection alone
+     does not inspect formulas inside a refinement. *)
+  let application_sibling_independent ~config sv pvs ty =
+    let scalar = function
+      | Sort.SVar other -> Poly.(other <> sv)
+      | T_int.SInt | T_real.SReal | T_bool.SBool -> true
+      | _ -> false
+    in
+    let rec value = function
+      | Rtype.RGeneral ([], sort, _) -> scalar sort
+      | Rtype.RArrow (_, arg, comp, _) ->
+          value arg && Rtype.is_pure_comp ~config comp && value comp.val_type
+      | _ -> false
+    in
+    let independent = ref true in
+    ignore
+      (Rtype.map_formula_val ty ~f:(fun phi ->
+           independent :=
+             !independent && prefix_constraint_independent sv pvs phi;
+           phi));
+    Rtype.is_rarrow ty && value ty && !independent
+
+  (* Keep extracted ownership: sibling bounds stay in the enclosing problem.
+     Independent empty-bound application siblings are also admitted. Shadowing,
+     constrained higher-order siblings and recursive groups remain excluded. *)
+  let generalize_application_group ~config (envs : envs) is_rec vbs constrss
+      shadow_map renv =
+    let key_of vb =
+      match vb.vb_pat.pat_desc with
+      | Tpat_var (_, name, _) -> Some (Tvar name.txt)
+      | _ -> None
+    in
+    let scalar_sibling vb =
+      match Option.bind (key_of vb) ~f:(Rtype.Env.look_up renv) with
+      | Some
+          (Rtype.RGeneral ([], (T_int.SInt | T_real.SReal | T_bool.SBool), _))
+        ->
+          true
+      | _ -> false
+    in
+    if
+      is_rec
+      || List.length vbs < 2
+      || List.length vbs <> List.length constrss
+      || (not (Map.is_empty shadow_map))
+      || (not (Set.is_empty (snd renv)))
+      || not
+           (List.for_all vbs ~f:(fun vb ->
+                match key_of vb with
+                | Some key -> Option.is_none (Rtype.Env.look_up envs.renv key)
+                | None -> false))
+    then renv
+    else
+      List.foldi (List.zip_exn vbs constrss) ~init:renv
+        ~f:(fun index acc (vb, own_constrs) ->
+          if
+            Set.is_empty own_constrs
+            && List.for_alli vbs ~f:(fun other_index other ->
+                index = other_index || scalar_sibling other
+                ||
+                match
+                  ( compiler_result_svar envs.dtenv vb,
+                    Option.bind (key_of vb) ~f:(Rtype.Env.look_up renv),
+                    Option.bind (key_of other) ~f:(Rtype.Env.look_up renv),
+                    other.vb_expr.exp_desc )
+                with
+                | Some sv, Some ty, Some sibling_ty, Texp_apply _ ->
+                    Set.is_empty (List.nth_exn constrss other_index)
+                    && application_sibling_independent ~config sv
+                         (Rtype.pvs_of_val ty) sibling_ty
+                | _ -> false)
+          then
+            let context =
+              Rtype.Env.remove renv (Option.value_exn (key_of vb))
+            in
+            generalize_application_result ~config
+              {
+                envs with
+                renv = context;
+                constrs = Set.union envs.constrs (Set.Poly.union_list constrss);
+              }
+              false [ vb ] own_constrs acc
+          else acc)
+
   let of_struct_item ~config (envs : envs) item =
     match item.str_desc with
     | Tstr_eval (_expr, _) -> failwith "expression not supported"
@@ -2930,7 +3328,11 @@ module Make (Config : Config.ConfigType) = struct
             Set.iter opsig_constrs ~f:(fun (o1, o2) ->
                 Debug.print
                 @@ lazy (Term.str_of_opsig o1 ^ " <: " ^ Term.str_of_opsig o2));
-            let sol = MBcsol.solve eff_constrs opsig_constrs in
+            (* Unused function arguments may contain lifted effect/row variables
+               absent from every constraint. Resolve those before storing the
+               refinement, using the solver's existing defaults. *)
+            let templates = List.map defs ~f:trd3 in
+            let sol = MBcsol.solve ~templates eff_constrs opsig_constrs in
             let stheta =
               let stheta =
                 Map.Poly.map sol.stheta
@@ -2940,7 +3342,7 @@ module Make (Config : Config.ConfigType) = struct
                 Map.Poly.map !MBcgen.ref_id ~f:(Term.subst_sorts_sort stheta)
               in
               try Map.force_merge ref_id stheta
-              with _ ->
+              with exn_ when not (Common.Timer.is_async exn_) ->
                 failwith
                 @@ sprintf "fail to force merge:\nref_id: %s\nstheta: %s"
                      (str_of_sort_subst Term.str_of_sort ref_id)
@@ -2981,7 +3383,8 @@ module Make (Config : Config.ConfigType) = struct
               constrs',
               kind_map,
               renv_body,
-              _map (*ToDo*) ) =
+              shadow_map,
+              definition_constrss ) =
           cgen_let ~config envs.mode ~is_top_level:true envs.fenv envs.dtenv
             is_rec pats
             (is_pures, is_funs, next1s, cs)
@@ -2989,6 +3392,12 @@ module Make (Config : Config.ConfigType) = struct
         in
         match List.find cs ~f:(Fn.non @@ Rtype.is_pure_comp ~config) with
         | None ->
+            let renv_body =
+              generalize_application_result ~config envs is_rec vbs constrs'
+                renv_body
+              |> generalize_application_group ~config envs is_rec vbs
+                   definition_constrss shadow_map
+            in
             Debug.print
             @@ lazy
                  (sprintf "updated renv:\n%s"
@@ -3181,8 +3590,8 @@ module Make (Config : Config.ConfigType) = struct
               Set.Poly.map
                 ~f:(Typeinf.typeinf_formula ~print:Debug.print ~default:None)
               @@ Set.Poly.of_list
-              @@ RtypeParser.constraints RtypeLexer.token
-              @@ Lexing.from_string content
+              @@ parse_annotation ~what:"constraints" ~content
+                   RtypeParser.constraints
             in
             ({ envs with constrs = Set.union envs.constrs constrs' }, Skip)
         | "rtype" ->
@@ -3191,8 +3600,7 @@ module Make (Config : Config.ConfigType) = struct
               Rtype.cgen_config := config;
               Rtype.renv_ref := envs.renv;
               set_dtenv envs.dtenv;
-              RtypeParser.val_ty_env RtypeLexer.token
-              @@ Lexing.from_string content
+              parse_annotation ~what:"rtype" ~content RtypeParser.val_ty_env
             in
             Debug.print @@ lazy ("[rtype] " ^ Rtype.Env.str_of ~config renv0);
             let renv_cons, renv_vars =
@@ -3215,8 +3623,7 @@ module Make (Config : Config.ConfigType) = struct
               Rtype.cgen_config := config;
               Rtype.renv_ref := envs.renv;
               set_dtenv envs.dtenv;
-              RtypeParser.assertions RtypeLexer.token
-              @@ Lexing.from_string content
+              parse_annotation ~what:"assert" ~content RtypeParser.assertions
             in
             (envs, Check assertions)
         | "infer" | "optimize" | "infer_optimized_type" ->
@@ -3225,8 +3632,7 @@ module Make (Config : Config.ConfigType) = struct
               Rtype.cgen_config := config;
               Rtype.renv_ref := envs.renv;
               set_dtenv envs.dtenv;
-              RtypeParser.opt_problems RtypeLexer.token
-              @@ Lexing.from_string content
+              parse_annotation ~what:"infer" ~content RtypeParser.opt_problems
             in
             (envs, Infer problems)
         | name ->
@@ -3250,10 +3656,19 @@ module Make (Config : Config.ConfigType) = struct
                     match Rtype.Env.look_up envs.renv tvar with
                     | Some rty_def ->
                         let dom = Rtype.Env.dep_args_of envs.renv in
-                        Rtype.instantiate_val ~print:Debug.print ~config dom
-                          envs.kind_map
-                          (Map.Poly.empty, Map.Poly.empty)
-                          (rty_def, Rtype.sort_of_val rty)
+                        let rty_def0 = rty_def in
+                        let rty_def, constrs_def, kind_map_def =
+                          Rtype.instantiate_val ~print:Debug.print ~config dom
+                            envs.kind_map
+                            (Map.Poly.empty, Map.Poly.empty)
+                            (rty_def0, Rtype.sort_of_val rty)
+                        in
+                        (* An assertion is a use of the generalised value too:
+                           only this instance may reveal its answer sort. *)
+                        ( rty_def,
+                          constrs_def,
+                          adm_kinds_at_instance envs.mode ~xty0:rty_def0
+                            ~xty:rty_def kind_map_def )
                     | None ->
                         failwith @@ Ident.name_of_tvar tvar ^ " not defined"
                   in
@@ -3381,17 +3796,13 @@ module Make (Config : Config.ConfigType) = struct
 
   let from_ml_file config filename =
     let res =
-      let ic = In_channel.create filename in
-      let lexbuf = Lexing.from_channel ic in
-      Lexing.set_filename lexbuf filename;
-      try
-        let res = Parse.implementation lexbuf in
-        In_channel.close ic;
-        res
-      with e ->
-        LexingHelper.print_error_information lexbuf;
-        In_channel.close ic;
-        raise e
+      In_channel.with_file filename ~f:(fun ic ->
+          let lexbuf = Lexing.from_channel ic in
+          Lexing.set_filename lexbuf filename;
+          try Parse.implementation lexbuf
+          with e ->
+            LexingHelper.print_error_information lexbuf;
+            raise e)
     in
     top_level ~config res
 end

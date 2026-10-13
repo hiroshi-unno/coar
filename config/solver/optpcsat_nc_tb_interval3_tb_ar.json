@@ -1,7 +1,6 @@
 [
     "OptPCSat",
     {
-        "load_init_sol": false,
         "improve_solver": [
             "Filename",
             "./config/solver/pcsat_tb_interval3.json"
@@ -9,12 +8,6 @@
         "opt_check_solver": [
             "Filename",
             "./config/solver/pcsat_tb_ar.json"
-        ],
-        "verbose": false,
-        "one_by_one": true,
-        "improve_current": false,
-        "mode": [
-            "NoSideCond"
         ]
     }
 ]

@@ -1,3 +1,7 @@
+(* Qualifier domain intended to separate positive from negative examples by
+   learned halfspaces.  Unfinished: it offers [b = true] for each Bool
+   parameter and fails with "not implemented" as soon as both positive and
+   negative examples exist (and on a real or other non-integer parameter). *)
 open Core
 open Common.Ext
 open Ast

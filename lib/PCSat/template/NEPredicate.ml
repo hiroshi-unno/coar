@@ -7,12 +7,25 @@ open Ast.LogicOld
 open Function
 
 module Config = struct
+  (* The template a total predicate's witnesses are drawn from.
+     [Affine]: this module's own, one unguarded affine term (or constructor
+     term, or qualifier) per witness position.  [Functional]: the functional
+     predicate template's guarded piecewise terms, one per witness position,
+     so a total predicate searches at least the space a functional one does.
+     [Functional_or_relation]: that graph widened by a DNF relation over all
+     the arguments, a total relation that need not be single-valued.  The
+     last two are built by the functional template's module with its own
+     configuration, and need its non-flexible form. *)
+  type tot_witness_template = Affine | Functional | Functional_or_relation
+  [@@deriving yojson]
+
   type t = {
-    verbose : bool;
-    depth : int;
-    ext : int;
-    upper_bound_coeff : int;
-    upper_bound_const : int;
+    verbose : bool; [@default false]
+    depth : int; [@default 0]
+    ext : int; [@default 0]
+    upper_bound_coeff : int; [@default 1]
+    upper_bound_const : int; [@default 0]
+    tot_witness_template : tot_witness_template; [@default Affine]
   }
   [@@deriving yojson]
 
@@ -22,17 +35,14 @@ module Config = struct
 
   let instantiate_ext_files cfg = Ok cfg
 
-  let load_ext_file = function
-    | ExtFile.Instance x -> Ok (ExtFile.Instance x)
-    | Filename filename -> (
-        let open Or_error in
-        try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
-        match of_yojson raw_json with
-        | Ok x -> instantiate_ext_files x >>= fun x -> Ok (ExtFile.Instance x)
-        | Error msg ->
-            error_string
-            @@ sprintf "Invalid NEPredicate Configuration (%s): %s" filename msg
-        )
+  include MakeExtFile (struct
+    type nonrec t = t
+
+    let of_yojson = of_yojson
+    let to_yojson = to_yojson
+    let name = "NEPredicate"
+    let instantiate = instantiate_ext_files
+  end)
 end
 
 module type ArgType = sig
@@ -59,7 +69,14 @@ let state_of param labels : state =
     Set.mem labels Const,
     Set.mem labels TimeOut )
 
-module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
+(* The universally quantified positions of the total predicate this template
+   is for; [[]] is non-emptiness. *)
+module type TotalityType = sig
+  val universal : int list
+end
+
+module Make (Cfg : Config.ConfigType) (Arg : ArgType) (U : TotalityType) :
+  Function.Type = struct
   let config = Cfg.config
   let id = Arg.id
 
@@ -79,7 +96,9 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
 
   let init = { depth = 0; ext = 0; ubc = 1; ubd = 0 }
   let name_of () = Arg.name
-  let kind_of () = Kind.str_of Kind.NE
+  let kind = Kind.Tot U.universal
+  let kind_of () = Kind.str_of kind
+  let flexible = false
   let sort_of () = Sort.mk_fun @@ Arg.sorts @ [ T_bool.SBool ]
   let params_of () = sort_env_list_of_sorts Arg.sorts
 
@@ -104,10 +123,14 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
         ~qelim:(Z3Smt.Z3interface.qelim ~id ~fenv:Arg.fenv)
         params quals
     in
-    (quals', Set.union terms' (Templ.terms_over_set terms (List.initial params)))
+    ( quals',
+      Set.union terms' (Templ.terms_over_set terms (List.drop_last_exn params))
+    )
 
   let update_hspace hspace =
     HypSpace.qualifiers_of ~fenv:Arg.fenv !param.depth hspace
+
+  let kind_cert_template () = None
 
   let gen_template ~ucore:_ (hspace : HypSpace.hspace) =
     let quals =
@@ -118,7 +141,8 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     in
     let params = params_of () in
     let template =
-      Templ.gen_ne_template ~print:Debug.print
+      Function.refuse_without_template @@ fun () ->
+      Templ.gen_ne_template ~print:Debug.print ~universal:U.universal
         {
           consts = Set.to_list hspace.consts;
           terms = Set.to_list hspace.terms;

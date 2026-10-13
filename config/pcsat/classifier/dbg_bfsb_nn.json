@@ -6,9 +6,6 @@
             "Filename",
             "./config/pcsat/qualifier/nn.json"
         ],
-        "qual_order": [
-            "Rank"
-        ],
         "strategy": [
             "First"
         ],

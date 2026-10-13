@@ -1,3 +1,7 @@
+(* Dispatch for higher-order model checking problems: instantiates the TRecS or
+   HorSat2 wrapper the configuration names and returns its [solve].  Each
+   wrapper refuses, as an [Error], an input whose automaton dialect its tool
+   cannot read, so a mismatch reaches the caller as an error, not a verdict. *)
 open Core
 
 module type SolverType = sig

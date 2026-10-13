@@ -1,0 +1,6 @@
+/* One bucket, no emptying: Stepmother pours at most one litre per round and wins once the bucket
+   exceeds 2 - eps, for every positive eps.  Valid: three rounds of one litre each suffice. */
+forall (eps: real). eps > 0.0 => P 0.0 eps
+s.t.
+P (b: real) (eps: real): bool =mu
+  exists (d: real). d >= 0.0 /\ d <= 1.0 /\ (b + d > 2.0 - eps \/ P (b + d) eps);

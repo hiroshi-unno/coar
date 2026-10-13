@@ -1,0 +1,14 @@
+#! /bin/bash
+
+# The Hardware Model Checking Competition calls a tool as <tool> <model> <certificate>:
+# the answer (sat / unsat) on standard output, and on sat a BTOR2 witness in <certificate>,
+# which is checked with btorsim -c.  A sat whose witness cannot be built is withheld.
+export LD_LIBRARY_PATH=./
+export PATH=./:$PATH
+# Without a certificate path (a word-level run always passes one) the answer is given
+# without a witness, rather than every sat being withheld for want of a file to write.
+if [ -n "$2" ]; then
+  ./main.exe -c ./config/solver/spacer.json -p btor2 --btor2-witness "$2" --btor2-witness-strict "$1" 2> /dev/null
+else
+  ./main.exe -c ./config/solver/spacer.json -p btor2 "$1" 2> /dev/null
+fi

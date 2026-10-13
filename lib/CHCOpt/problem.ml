@@ -1,3 +1,13 @@
+(* CHC optimization problems, the input of OptPCSat (Yu Gu, Takeshi Tsukada
+   and Hiroshi Unno, "Optimal CHC Solving via Termination Proofs", POPL 2023):
+   a pfwCSP together with a direction per predicate (maximize, [DUp], or
+   minimize, [DDown]), a priority order among the predicates for the
+   lexicographic objective, and optional fronts restricting the region in
+   which a predicate is compared.  [genc] builds the constraint saying that a
+   predicate improves on its current solution in its direction (or, negated,
+   that it strictly does).  The solution type separates a plain solution
+   ([Sat]) from one shown optimal ([OptSat]) and one shown optimal only within
+   the template space searched ([OptSatInSpace]). *)
 open Core
 open Common.Ext
 open Common.Combinator

@@ -36,6 +36,33 @@ let stop_interval () =
 
 exception Timeout
 
+(* Exceptions that a [with _ ->] handler must never swallow: they carry the
+   control flow of a timeout or an interrupt (or a resource exhaustion) and
+   belong to the enclosing [enable_timeout] / driver, not to the local
+   fallback.  Handlers inside timed regions are written
+   [with e when not (Timer.is_async e) -> default]. *)
+let is_async = function
+  | Timeout | Sys_unix.Break | Stack_overflow | Out_of_memory -> true
+  | _ -> false
+
+(* The interrupts alone: a timeout or a user break, without the resource
+   exhaustions [is_async] also names.  For a handler that must let the
+   caller's budget through but should still turn a stack or heap exhaustion
+   into a local failure -- the solution checker, which runs after the answer
+   is printed and must not end the run. *)
+let is_interrupt = function Timeout | Sys_unix.Break -> true | _ -> false
+
+(* [Option.try_with] with the asynchronous exceptions let through: [Some (f ())]
+   when [f] returns, [None] when it raises an ordinary exception, and a
+   [Timeout], break or resource exhaustion re-raised.  [Option.try_with]
+   itself catches everything, so under an armed budget it turns a timeout
+   raised anywhere inside [f] into [None] and the computation carries on past
+   its deadline. *)
+let try_with_sync f =
+  match f () with
+  | v -> Some v
+  | exception exn_ when not (is_async exn_) -> None
+
 let sigalrm_catched = ref false
 
 let disable_timeout f arg =

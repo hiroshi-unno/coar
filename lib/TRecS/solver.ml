@@ -1,3 +1,11 @@
+(* Backend that decides a higher-order model checking problem with the external
+   TRecS model checker, run as a separate process.  A HORS with a trivial tree
+   automaton is printed into a per-process scratch directory and TRecS is run
+   there; the verdict is read positionally from its output (verified, or
+   refuted with a counterexample trace).  An EHMTT problem is first reduced to
+   a list of HORS model checking problems and is satisfied when every one of
+   them is.  An alternating-automaton input, a parse error, or output in an
+   unexpected shape becomes an [Error], never a verdict. *)
 open Core
 open Common
 open Automata
@@ -18,8 +26,28 @@ module Make (Config : Config.ConfigType) : SolverType = struct
 
   let rec solve ?(print_sol = false) homc =
     match homc with
+    | Problem.RSFD _ when Problem.reads_alternating homc ->
+        Or_error.error_string
+        @@ sprintf
+             "TRecS cannot read this input: it specifies %s, and TRecS reads \
+              only a trivial tree automaton. Run it with HorSat2 instead \
+              (-c config/solver/horsat2.json)."
+             (Problem.dialect_str_of homc)
     | Problem.RSFD (trs_in, rules, trs_out) ->
-        let filename = "temp_trecs.hors" in
+        let dir =
+          (* TRecS creates its own scratch files in the current directory under
+             fixed names ("log<n>.hrs", numbered by an internal counter that
+             carries no process id) and unlinks them when it is done, so two
+             concurrent runs in one directory delete each other's files and
+             TRecS aborts with ENOENT on the unlink.  Its stdout is then short,
+             the positional parsing below reads the wrong lines, and the run is
+             reported as "HORS verification failed" -- intermittently, only
+             under concurrency.  Give every run a directory of its own; that
+             also keeps two runs from overwriting the same input file. *)
+          sprintf "temp_trecs_p%d" (Pid.to_int @@ Core_unix.getpid ())
+        in
+        Core_unix.mkdir_p dir;
+        let filename = Filename.concat dir "input.hors" in
         Debug.print
         @@ lazy
              (sprintf "Size of HORS: %d (%d rules)" (RSFD.sizeof rules)
@@ -33,39 +61,43 @@ module Make (Config : Config.ConfigType) : SolverType = struct
              (sprintf "Number of states of output automaton: %d"
              @@ TreeAutomaton.number_of_states trs_out);
         (* output generated RSFD *)
-        let ppf =
-          Format.formatter_of_out_channel
-          @@ if true then Stdlib.open_out filename else Out_channel.stdout
-        in
-        HOMC.Problem.pr ppf homc;
+        Out_channel.with_file filename ~f:(fun channel ->
+            HOMC.Problem.pr (Format.formatter_of_out_channel channel) homc);
         let res =
           (* TRecS 1.2.1 and 1.2.2 *)
-          let cin = Core_unix.open_process_in ("./trecs " ^ filename) in
-          let s0 =
-            ignore (In_channel.input_line cin);
-            ignore (In_channel.input_line cin);
-            In_channel.input_line cin
+          let cmd =
+            (* run TRecS inside that directory, so its fixed-name scratch files
+               land there too; the executable itself is at the repository root,
+               which is where the tool must be started from *)
+            sprintf "cd %s && %s input.hors" (Filename.quote dir)
+              (Filename.quote (Filename.concat (Core_unix.getcwd ()) "trecs"))
           in
-          let s1 =
-            ignore (In_channel.input_line cin);
-            ignore (In_channel.input_line cin);
-            In_channel.input_line cin
+          let (s0, s1, s2), status =
+            Common.Util.Command.read_process cmd ~f:(fun cin ->
+              let s0 =
+                ignore (In_channel.input_line cin);
+                ignore (In_channel.input_line cin);
+                In_channel.input_line cin
+              in
+              let s1 =
+                ignore (In_channel.input_line cin);
+                ignore (In_channel.input_line cin);
+                In_channel.input_line cin
+              in
+              let s2 =
+                ignore (In_channel.input_line cin);
+                In_channel.input_line cin
+              in
+              (s0, s1, s2))
           in
-          let s2 =
-            ignore (In_channel.input_line cin);
-            In_channel.input_line cin
-          in
-          In_channel.close cin;
-          match (Core_unix.close_process_in cin, s0, s1, s2) with
+          match (status, s0, s1, s2) with
           | _ (*ToDo*), Some "Parse error", _, _ ->
               Debug.print @@ lazy "Parse error";
               None
           | Ok _, Some _, Some "The property is not satisfied.", Some s2 ->
               Some (Second s2)
-          | Ok _, Some _, Some s1, Some _ ->
-              assert (
-                String.(
-                  String.sub s1 ~pos:(String.length s1 - 3) ~len:3 = " : "));
+          | Ok _, Some _, Some s1, Some _
+            when String.is_suffix s1 ~suffix:" : " ->
               Some (First ())
           | _, _, _, _ -> None
         in
@@ -84,7 +116,7 @@ module Make (Config : Config.ConfigType) : SolverType = struct
         Ok sol
     | Problem.EHMTT (ehmtt, trs, (main, typ)) -> (
         try
-          let start_t = Core_unix.time () in
+          let start_t = Common.Clock.time_s () in
           let rsfds =
             Reducer.rsfds_of_ehmtt ~print:Debug.print ehmtt trs (main, typ)
           in
@@ -98,7 +130,7 @@ module Make (Config : Config.ConfigType) : SolverType = struct
                 | Ok Problem.Unknown -> raise U
                 | Error err -> raise (E err))
           in
-          let elapsed_t = Core_unix.time () -. start_t in
+          let elapsed_t = Common.Clock.time_s () -. start_t in
           Debug.print @@ lazy (sprintf "\nElapsed Time: %f sec" elapsed_t);
           let sol = if res then Problem.Sat else Problem.Unsat in
           if print_sol then print_endline (HOMC.Problem.str_of_solution sol);

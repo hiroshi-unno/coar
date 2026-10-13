@@ -1,3 +1,7 @@
+(* Dispatch from the SAT configuration to a backend's [solve], [opt_solve]
+   (weighted MaxSAT, offered by the Z3 backend only) and [incremental_solve]
+   (not offered by the Z3 backend).  An operation a backend lacks fails with
+   an exception when it is called, not when the module is built. *)
 open Core
 
 module type SolverType = sig

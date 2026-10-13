@@ -1,0 +1,27 @@
+{
+    "domains": [
+        [
+            "Polyhedron",
+            0
+        ],
+        [
+            "Polyhedron",
+            1
+        ],
+        [
+            "Polyhedron",
+            2
+        ],
+        [
+            "Polyhedron",
+            3
+        ]
+    ],
+    "extract_pcsp": true,
+    "add_bool": true,
+    "add_homogeneous": false,
+    "add_arg_transpositions": false,
+    "add_reflections": false,
+    "instantiate_quantified_quals": false,
+    "dedup_alpha_equivalent_disjuncts": false
+}

@@ -1,0 +1,5 @@
+(set-logic AUFLIRA)
+(declare-fun f (Int) Int)
+(assert (= (f 0) 1))
+(assert (> 1.5 (f 0)))
+(check-sat)

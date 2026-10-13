@@ -2,7 +2,7 @@ open Core
 open PCSatCommon
 
 module Config = struct
-  type t = { verbose : bool; coeff : float; bias : int (* must be positive *) }
+  type t = { verbose : bool; [@default false] coeff : float; [@default 2.0] bias : int (* must be positive *) [@default 1] }
   [@@deriving yojson]
 
   module type ConfigType = sig

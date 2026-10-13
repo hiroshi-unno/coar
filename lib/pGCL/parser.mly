@@ -38,32 +38,36 @@
 %%
 
 toplevel:
-    decls=Declarations insts=Instructions queries=Query EOF
-		{ decls |> ( fun (vars,consts) -> Program.make (vars,consts) insts queries ) }
-    | decls=Declarations insts=Instructions EOF
-		{
-			let termination =
+    decls=Declarations insts=Instructions queries=Query EOF 
+		{ decls |> ( fun (vars,consts,nat_vars) -> Program.make ~nat_vars (vars,consts) insts queries ) }
+    | decls=Declarations insts=Instructions EOF 
+		{ 
+			let termination = 
 			  Query.mk_expectation (T_real.rone ())
 			in
-			decls |> ( fun (vars,consts) -> Program.make (vars,consts) insts termination )
+			decls |> ( fun (vars,consts,nat_vars) -> Program.make ~nat_vars (vars,consts) insts termination ) 
 			}
 
 expr:
 	expr=Expr EOF { expr }
 
 Declarations:
-	var=VarDeclaration decls=Declarations { decls |> fun (vars, consts) -> (var :: vars, consts) }
-	| const=ConstantDeclaration decls=Declarations { decls |> fun (vars, consts) -> (vars, const :: consts) }
-	| { ([], []) }
+	var=VarDeclaration decls=Declarations {
+    decls |> fun (vars, consts, nat_vars) ->
+      let (decl, nat_var) = var in
+      (decl :: vars, consts, Option.to_list nat_var @ nat_vars)
+  }
+	| const=ConstantDeclaration decls=Declarations { decls |> fun (vars, consts, nat_vars) -> (vars, const :: consts, nat_vars) }
+	| { ([], [], []) }
 
 
 /* TODO: Implement the bounds for nat and real */
 VarDeclaration:
-	BOOL varname=ID { (Ident.Tvar varname, T_bool.SBool) }
-  | NAT varname=ID  { (Ident.Tvar varname, T_real.SReal) }
-  | REAL varname=ID { (Ident.Tvar varname, T_real.SReal) }
-  | RPARAM varname=ID { (Ident.Tvar varname, T_real.SReal) }
-  | NPARAM varname=ID { (Ident.Tvar varname, T_int.SInt) }
+	BOOL varname=ID { ((Ident.Tvar varname, T_bool.SBool), None) }
+  | NAT varname=ID  { ((Ident.Tvar varname, T_real.SReal), Some (Ident.Tvar varname)) }
+  | REAL varname=ID { ((Ident.Tvar varname, T_real.SReal), None) }
+  | RPARAM varname=ID { ((Ident.Tvar varname, T_real.SReal), None) }
+  | NPARAM varname=ID { ((Ident.Tvar varname, T_int.SInt), None) }
 
 ConstantDeclaration:
 | CONST varname=ID ASSIGN body=Expr { (Ident.Tvar varname, Term.sort_of body, body) }
@@ -99,6 +103,14 @@ Instruction:
 
 Query:
 	EXPECTATION LBRACKET expr=Expr RBRACKET { Query.mk_expectation expr }
+  | EXPECTATION LBRACKET post=Expr RBRACKET op=PREDSYM bound=Expr {
+      match op with
+      | T_num.NLeq _ -> Query.mk_bound post Query.Upper bound
+      | T_num.NLt _ -> Query.mk_bound post Query.Upper ~strict:true bound
+      | T_num.NGeq _ -> Query.mk_bound post Query.Lower bound
+      | T_num.NGt _ -> Query.mk_bound post Query.Lower ~strict:true bound
+      | _ -> failwith "unsupported pGCL expectation bound comparator"
+    }
  /*
  | PRQUERY LBRACKET expr=Expr RBRACKET { Program.prquery_of expr }
  | PRINT { Program.print_query () }
@@ -180,8 +192,8 @@ T_boolAtom:
 
 
 Atom:
-  |	TRUE { Atom.True Dummy }
-  |	FALSE { Atom.False Dummy }
+  |	TRUE { Atom.mk_true ~info:Dummy () }
+  |	FALSE { Atom.mk_false ~info:Dummy () }
   | e1=T_Num op=PREDSYM e2=T_Num { Atom.mk_app (Predicate.mk_psym op) [e1; e2] }
 //   | e1=Expr EQUAL e2=Expr {
 // 	Atom.mk_app (Predicate.mk_psym T_bool.Eq) [e1;e2]

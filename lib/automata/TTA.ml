@@ -17,7 +17,7 @@ let pr_pre ppf (trs : pre_trs) =
       Format.fprintf ppf "%s %s -> %a.@\n" q a pr_dest qs)
 
 let states (trs : pre_trs) =
-  List.unique @@ List.concat_map trs ~f:(fun (q, (_a, qs)) -> q :: qs)
+  List.dedup_keep_last @@ List.concat_map trs ~f:(fun (q, (_a, qs)) -> q :: qs)
 
 let br_symbol = "br"
 

@@ -47,7 +47,7 @@ let simplify (params_senv, cand) : t =
         (*ExtTerm.str_of term*)
         let simplified =
           try ExtTerm.simplify_formula Map.Poly.empty params_senv term
-          with _ -> ExtTerm.simplify_term Map.Poly.empty params_senv term
+          with exn_ when not (Common.Timer.is_async exn_) -> ExtTerm.simplify_term Map.Poly.empty params_senv term
         in
         (* print_endline @@ "after simplify:" ^ ExtTerm.str_of simplified; *)
         ((t, s), simplified)) )
@@ -67,7 +67,7 @@ let str_of (params_senv, cand) : string =
           LogicOld.Formula.str_of @@ Evaluator.simplify
           @@ LogicOld.Formula.rename map
           @@ ExtTerm.to_old_fml Map.Poly.empty senv term'
-        with _ ->
+        with exn_ when not (Common.Timer.is_async exn_) ->
           LogicOld.Term.str_of @@ Evaluator.simplify_term
           @@ LogicOld.Term.rename map
           @@ ExtTerm.to_old_trm Map.Poly.empty senv term'
@@ -99,7 +99,7 @@ let to_yojson (params_senv, cand) =
                    LogicOld.Formula.str_of @@ Evaluator.simplify
                    @@ LogicOld.Formula.rename map
                    @@ ExtTerm.to_old_fml Map.Poly.empty senv term'
-                 with _ ->
+                 with exn_ when not (Common.Timer.is_async exn_) ->
                    LogicOld.Term.str_of @@ Evaluator.simplify_term
                    @@ LogicOld.Term.rename map
                    @@ ExtTerm.to_old_trm Map.Poly.empty senv term'

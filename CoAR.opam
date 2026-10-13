@@ -1,6 +1,6 @@
 opam-version: "2.0"
 name: "CoAR"
-version: "3.5"
+version: "4.0"
 maintainer: "Hiroshi Unno <hiroshi.unno@acm.org>"
 authors: "Hiroshi Unno <hiroshi.unno@acm.org>"
 homepage: "https://github.com/hiroshi-unno/coar"
@@ -12,6 +12,7 @@ pin-depends: [
 ]
 depends: [
   "ocaml" {>= "5.4.0"}
+  "dune" {>= "3.10"}
   "core"
   "core_unix"
   "domainslib"
@@ -20,7 +21,7 @@ depends: [
   "ocaml-compiler-libs"
   "ocamlgraph"
   "zarith"
-  "z3"
+  "z3" {>= "5.1.0"}
   "minisat"
   "libsvm" {= "0.10.0~modified"}
   "camlzip"

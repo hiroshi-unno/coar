@@ -1,0 +1,8 @@
+// The self-loop at 1 is guarded by x < 0, impossible for nondet_uint(); x is
+// eliminated by wp before the range was added, so this answered NO while the
+// same program with x live (sized_nondet_term_live.t2) answered YES.
+// expected: -p ltsterm YES, -p ltsnterm NO
+START: 0;
+FROM: 0; x := nondet_uint(); assume(x < 0); TO: 1;
+FROM: 0; x := nondet_uint(); assume(x >= 0); TO: 2;
+FROM: 1; TO: 1;

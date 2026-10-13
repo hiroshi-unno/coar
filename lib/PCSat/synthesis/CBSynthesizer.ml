@@ -1,3 +1,10 @@
+(* The classification-based synthesis phase of PCSat's CEGIS loop: for every
+   labelling the labeling phase produced, learn one classifier per unknown
+   -- the well-founded, functional or ordinary classifier according to its
+   kind -- from the truth table and that labelling, and combine them into
+   candidates (the product of each unknown's classifiers).  A candidate
+   holds on the labelled examples by construction, not on the clauses;
+   validation decides that.  Any classifier's error fails the whole phase. *)
 open Core
 open Common
 open Common.Ext
@@ -8,10 +15,10 @@ open Classification
 
 module Config = struct
   type t = {
-    verbose : bool;
-    classifier : Classifier.Config.t ext_file;
-    wf_classifier : WFClassifier.Config.t ext_file;
-    fn_classifier : FNClassifier.Config.t ext_file; (*with_lb: bool*)
+    verbose : bool; [@default false]
+    classifier : Classifier.Config.t ext_file; [@default Common.Util.ExtFile.Filename "./config/pcsat/classifier/bfsb_nn.json"]
+    wf_classifier : WFClassifier.Config.t ext_file; [@default Common.Util.ExtFile.Filename "./config/pcsat/classifier/wf_dt_eager.json"]
+    fn_classifier : FNClassifier.Config.t ext_file; [@default Common.Util.ExtFile.Filename "./config/pcsat/classifier/fn_tb.json"] (*with_lb: bool*)
   }
   [@@deriving yojson]
 

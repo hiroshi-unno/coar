@@ -1,0 +1,7 @@
+// nondet_uint() ranges over 0..2^32-1, so the error
+// location is unreachable; the range used to be dropped when x was eliminated.
+// expected: -p ltssafe YES, -p ltsnsafe NO
+START: 0; ERROR: err;
+FROM: 0; x := nondet_uint(); TO: 1;
+FROM: 1; assume(x < 0); TO: err;
+FROM: 1; assume(x >= 0); TO: 2;

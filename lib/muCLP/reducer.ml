@@ -6,26 +6,37 @@ open Common.Combinator
 open Ast
 open Ast.LogicOld
 
+(* What an argument position that a reduction PREPENDS to a predicate holds.
+   The disjunctively well-founded reduction of a least-fixpoint predicate [P]
+   gives [P] and the members of its component a fresh copy of [P]'s parameters
+   (the remembered earlier visit, one [Copy] per parameter), and a member called
+   from outside the component also a Boolean flag ([Flag], true once [P] has
+   been visited since the component was entered).  The copy is chosen by the
+   refuting side among the visited states, so it is not a function of the play
+   history; the flag is.  Positions a predicate had before the reduction are not
+   listed: they are always the LAST ones, in their original order. *)
+type prefix_entry = Copy | Flag
+
 module Config = struct
   type mode = WF of bool * bool * bool | PPM of bool * bool * bool
   [@@deriving yojson]
 
-  type t = { verbose : bool; mode : mode } [@@deriving yojson]
+  type t = { verbose : bool; [@default false] mode : mode [@default WF (false, true, true)] } [@@deriving yojson]
 
   module type ConfigType = sig
     val config : t
   end
 
-  let load_ext_file = function
-    | ExtFile.Instance x -> Ok (ExtFile.Instance x)
-    | Filename filename -> (
-        let open Or_error in
-        try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
-        match of_yojson raw_json with
-        | Ok x -> Ok (ExtFile.Instance x)
-        | Error msg ->
-            error_string
-            @@ sprintf "Invalid Reducer Configuration (%s): %s" filename msg)
+  include MakeExtFile (struct
+    type nonrec t = t
+
+    let of_yojson = of_yojson
+    let to_yojson = to_yojson
+    let name = "Reducer"
+
+    (* a leaf: no nested config to load *)
+    let instantiate = Or_error.return
+  end)
 end
 
 module Make (Cfg : Config.ConfigType) = struct
@@ -52,7 +63,7 @@ module Make (Cfg : Config.ConfigType) = struct
           |> Set.Poly.map
                ~f:
                  (Formula.rm_quant ~forall:true
-                 >> Pair.map_fst Map.of_set_exn
+                 >> Tuple2.map_fst ~f:Map.of_set_exn
                  >> Formula.reduce_sort_map),
           Set.Poly.empty )
     | pred :: preds
@@ -76,7 +87,7 @@ module Make (Cfg : Config.ConfigType) = struct
           (*|> fun phi -> Debug.print ~id @@ lazy (Formula.str_of phi); phi*)
           |> Evaluator.simplify
           |> Formula.to_cnf
-          |> Set.Poly.map ~f:(curry2 Formula.reduce_sort_map uni_senv)
+          |> Set.Poly.map ~f:(Tuple2.curry Formula.reduce_sort_map uni_senv)
           |> Set.union clauses )
     | _ ->
         failwith "every mu predicate must be eliminated before applying elim_nu"
@@ -87,7 +98,7 @@ module Make (Cfg : Config.ConfigType) = struct
         (Map.to_set @@ Kind.pred_sort_env_map_of unknowns)
         query preds,
       Kind.add_pred_env_set unknowns Kind.Ord
-      @@ Set.Poly.map psenv ~f:(Pair.map_fst Ident.uninterp_pvar) )
+      @@ Set.Poly.map psenv ~f:(Tuple2.map_fst ~f:Ident.uninterp_pvar) )
 
   (* Dependency Graph for optimization of pfwCSP generation *)
   (* e.g.
@@ -130,33 +141,41 @@ module Make (Cfg : Config.ConfigType) = struct
     let ( => ) a b (g : t) =
       Set.mem
         (try Map.Poly.find_exn g a
-         with _ -> failwith ("not found: " ^ Ident.name_of_pvar a))
-          .forward b
+         with exn_ when not (Common.Timer.is_async exn_) ->
+           failwith ("not found: " ^ Ident.name_of_pvar a))
+          .forward
+        b
 
     let ( --> ) a b (g : t) =
       Set.mem
         (try Map.Poly.find_exn g a
-         with _ -> failwith ("not found: " ^ Ident.name_of_pvar a))
-          .backward b
+         with exn_ when not (Common.Timer.is_async exn_) ->
+           failwith ("not found: " ^ Ident.name_of_pvar a))
+          .backward
+        b
 
     let ( =-> ) a b (g : t) =
       let attr =
         try Map.Poly.find_exn g a
-        with _ -> failwith ("not found: " ^ Ident.name_of_pvar a)
+        with exn_ when not (Common.Timer.is_async exn_) ->
+          failwith ("not found: " ^ Ident.name_of_pvar a)
       in
       Set.mem attr.backward b || Set.mem attr.forward b
 
     let ( =>+ ) a b (g : t) =
       Set.mem
         (try Map.Poly.find_exn g a
-         with _ -> failwith ("not found: " ^ Ident.name_of_pvar a))
-          .forward_reachable b
+         with exn_ when not (Common.Timer.is_async exn_) ->
+           failwith ("not found: " ^ Ident.name_of_pvar a))
+          .forward_reachable
+        b
 
     let ( =>* ) a b (g : t) = Stdlib.(a = b) || (a =>+ b) g
 
     let reach_set_of g pvar =
       (try Map.Poly.find_exn g pvar
-       with _ -> failwith ("not found: " ^ Ident.name_of_pvar pvar))
+       with exn_ when not (Common.Timer.is_async exn_) ->
+         failwith ("not found: " ^ Ident.name_of_pvar pvar))
         .reachable
 
     let ( =->+ ) a b (g : t) = Set.mem (reach_set_of g a) b
@@ -167,7 +186,7 @@ module Make (Cfg : Config.ConfigType) = struct
 
     let level g a =
       try (Map.Poly.find_exn g a).level
-      with _ ->
+      with exn_ when not (Common.Timer.is_async exn_) ->
         if true then -1
         (* uninterpreted pvars are of level -1*) else
           failwith ("not found: " ^ Ident.name_of_pvar a)
@@ -231,13 +250,13 @@ module Make (Cfg : Config.ConfigType) = struct
                     try
                       Set.union forward_reachable
                         (Map.Poly.find_exn g p').forward_reachable
-                    with _ -> forward_reachable)
+                    with exn_ when not (Common.Timer.is_async exn_) -> forward_reachable)
               in
               let reachable =
                 Set.fold ~init:attr.reachable attr.reachable
                   ~f:(fun reachable p' ->
                     try Set.union reachable (Map.Poly.find_exn g p').reachable
-                    with _ -> reachable)
+                    with exn_ when not (Common.Timer.is_async exn_) -> reachable)
               in
               { attr with forward_reachable; reachable })
         in
@@ -266,7 +285,7 @@ module Make (Cfg : Config.ConfigType) = struct
                 Set.fold ~init:attr.reachable attr.reachable
                   ~f:(fun reachable p' ->
                     try Set.union reachable (Map.Poly.find_exn g p').reachable
-                    with _ -> reachable)
+                    with exn_ when not (Common.Timer.is_async exn_) -> reachable)
               in
               { attr with reachable })
         in
@@ -297,8 +316,11 @@ module Make (Cfg : Config.ConfigType) = struct
                (Ident.str_of_pvars ~sep:";" attr.reachable))
   end
 
-  let ufp_of ?(id = None) ?(is_nu = false) (use_dwf, use_scc) dg0 unknowns query
-      (pred : Pred.t) (nu_only : Pred.t list) rest =
+  (* [layout], when given, receives for every predicate this step extends the
+     entries it prepends ([prefix_entry]), in front of those an earlier step
+     prepended.  It changes nothing the reduction builds. *)
+  let ufp_of ?(id = None) ?(is_nu = false) ?layout (use_dwf, use_scc) dg0
+      unknowns query (pred : Pred.t) (nu_only : Pred.t list) rest =
     let dg =
       let relevant_pvs =
         Set.Poly.of_list
@@ -332,6 +354,35 @@ module Make (Cfg : Config.ConfigType) = struct
             Ident.pvar_equal pvar pvar'
             || (Map.Poly.mem dg pvar' && (pvar' =->+ pvar) dg))
     in
+    (* Invariant: a member of [indirect_rec_called] that is not called outside
+       is called only from [pred]'s body and from the bodies of members that
+       are not called outside either.  So neither [sigma_1] (which rewrites
+       the query, [rest] and [non_rec_called]) nor [sigma_5] (which rewrites
+       the members that are called outside) ever meets such a member, and the
+       flagless arm of [ext_arg] is reached only from [sigma_4] (from
+       [sigma_2] without [use_dwf], where [sigma_3] takes [sigma_5]'s place).
+       Why it holds: a call from the query, [rest] or [non_rec_called] puts the
+       callee in [seed] by construction; and if a member [q1] that is called
+       outside, by a witness [s] of [seed] with [s = q1] or [s =->+ q1], calls
+       [q], then [q] is a callee of [q1] inside the restricted graph, so the
+       transitive closure gives [s =->+ q] and [q] is called outside too.
+       The check changes no behaviour; it costs one [pvs_of] per body. *)
+    if use_scc then begin
+      let non_out =
+        Set.Poly.of_list
+        @@ List.filter_map indirect_rec_called ~f:(fun (p : Pred.t) ->
+            if is_called_outside p.name then None else Some p.name)
+      in
+      let calls_non_out phi =
+        not (Set.is_empty (Set.inter (Formula.pvs_of phi) non_out))
+      in
+      assert (
+        (not (calls_non_out query))
+        && List.for_all (rest @ non_rec_called) ~f:(fun (p : Pred.t) ->
+            not (calls_non_out p.body))
+        && List.for_all indirect_rec_called ~f:(fun (p : Pred.t) ->
+            (not (is_called_outside p.name)) || not (calls_non_out p.body)))
+    end;
     let bot, top = (T_bool.mk_false (), T_bool.mk_true ()) in
     let bi_term, bi_param =
       let bi_name = Ident.mk_fresh_tvar () in
@@ -345,7 +396,7 @@ module Make (Cfg : Config.ConfigType) = struct
           let ys_terms = Term.of_sort_env ys_params in
           let phi =
             Formula.mk_atom
-            @@ uncurry2 (Atom.mk_pvar_app pred'.name)
+            @@ Tuple2.uncurry (Atom.mk_pvar_app pred'.name)
             @@
             if (not use_scc) || is_called_outside pred'.name then
               ((T_bool.SBool :: xs_sorts) @ ys_sorts, (b :: xs_terms) @ ys_terms)
@@ -522,9 +573,22 @@ module Make (Cfg : Config.ConfigType) = struct
               }
           else { pred' with body = sigma_1 pred'.body })
     in
+    (match layout with
+    | None -> ()
+    | Some tbl ->
+        let copies = List.map xs_params ~f:(fun _ -> Copy) in
+        let prepend name entries =
+          Hashtbl.update tbl name ~f:(fun old ->
+              entries @ Option.value old ~default:[])
+        in
+        if use_dwf && ((not use_scc) || dir_rec) then prepend pred.name copies;
+        List.iter indirect_rec_called ~f:(fun pred' ->
+            if (not use_scc) || is_called_outside pred'.name then
+              prepend pred'.name (Flag :: copies)
+            else prepend pred'.name copies));
     (unknowns', query', nu_only', rest')
 
-  let elim_mu_bra ?(id = None) ?(conv_nu = false)
+  let elim_mu_bra ?(id = None) ?(conv_nu = false) ?layout
       (use_dwf, use_scc, _use_alt_dep) (query : Formula.t) (preds : Pred.t list)
       unknowns =
     let (dg0 : DepGraph.t) = DepGraph.gen_init_graph query preds in
@@ -537,8 +601,8 @@ module Make (Cfg : Config.ConfigType) = struct
           | Predicate.(Nu | Fix) ->
               if conv_nu then
                 let unknowns', query', nu_only', rest' =
-                  ufp_of ~id ~is_nu:true (use_dwf, use_scc) dg0 unknowns query
-                    pred nu_only rest
+                  ufp_of ~id ~is_nu:true ?layout (use_dwf, use_scc) dg0 unknowns
+                    query pred nu_only rest
                 in
                 inner unknowns' query' nu_only' rest'
               else
@@ -547,14 +611,14 @@ module Make (Cfg : Config.ConfigType) = struct
                   rest
           | Predicate.Mu ->
               let unknowns', query', nu_only', rest' =
-                ufp_of ~id ~is_nu:false (use_dwf, use_scc) dg0 unknowns query
-                  pred nu_only rest
+                ufp_of ~id ~is_nu:false ?layout (use_dwf, use_scc) dg0 unknowns
+                  query pred nu_only rest
               in
               inner unknowns' query' nu_only' rest')
     in
     inner unknowns query [] @@ List.rev preds
 
-  let elim_mu_ppm_scc ?(id = None) (use_alt_dep, ignore_nu_components)
+  let elim_mu_ppm_scc ?(id = None) (use_alt_dep, pack_rank_components)
       (query : Formula.t) (preds : Pred.t list) scc_i =
     let (dg0 : DepGraph.t) = DepGraph.gen_init_graph query preds in
     Debug.print ~id
@@ -613,14 +677,20 @@ module Make (Cfg : Config.ConfigType) = struct
           (Map.Poly.of_alist_exn res, Integer.max_list @@ List.map ~f:snd res)
         in
         Debug.print ~id @@ lazy (sprintf "amax = %d" amax);
+        (* [max_pri] is the number of ranking components and [trunc] maps a
+           priority to how many of them it compares: all [amax + 1] with the
+           identity (Def. 7.7), or packed in pairs, ceil((amax+1)/2) and
+           ceil(p/2) (Def. 7.8).  The priorities and the accepting set are the
+           same either way, so every consumer must test acceptance on the
+           priority and use [trunc] only for the component count. *)
         let max_pri =
-          if ignore_nu_components then
+          if pack_rank_components then
             if (amax + 1) mod 2 = 0 then (amax + 1) / 2 else (amax + 2) / 2
           else amax + 1
         in
         Debug.print ~id @@ lazy (sprintf "#ord = %d" max_pri);
         let trunc =
-          if ignore_nu_components then fun sigma_i ->
+          if pack_rank_components then fun sigma_i ->
             if sigma_i mod 2 = 0 then sigma_i / 2 else (sigma_i + 1) / 2
           else Fn.id
         in
@@ -769,7 +839,7 @@ module Make (Cfg : Config.ConfigType) = struct
     in
     inner [] Set.Poly.empty (List.rev preds)
 
-  let elim_mu_ppm ?(id = None) (use_scc, use_alt_dep, ignore_nu_components)
+  let elim_mu_ppm ?(id = None) (use_scc, use_alt_dep, pack_rank_components)
       (query : Formula.t) (preds : Pred.t list) unknowns =
     let open Graph in
     let open Pack.Digraph in
@@ -800,7 +870,7 @@ module Make (Cfg : Config.ConfigType) = struct
           then (preds, (Map.Poly.empty, Map.Poly.empty))
           else
             elim_mu_ppm_scc
-              (use_alt_dep, ignore_nu_components)
+              (use_alt_dep, pack_rank_components)
               ~id query preds scc_i)
     in
     ( ( query,
@@ -817,20 +887,26 @@ module Make (Cfg : Config.ConfigType) = struct
       ( Map.force_merge_list @@ (fst unknowns :: senvs),
         Map.force_merge_list @@ (snd unknowns :: kind_maps) ) )
 
-  let elim_mu ?(id = None) ?(conv_nu = false) (muclp : Problem.t) unknowns =
+  (* [layout] is filled in the [WF] modes only (see [ufp_of]); the [PPM] mode
+     prepends no copy. *)
+  let elim_mu ?(id = None) ?(conv_nu = false) ?layout (muclp : Problem.t)
+      unknowns =
     (match config.mode with
-    | PPM (use_scc, use_alt_dep, ignore_nu_components) ->
-        elim_mu_ppm ~id (use_scc, use_alt_dep, ignore_nu_components)
+    | PPM (use_scc, use_alt_dep, pack_rank_components) ->
+        elim_mu_ppm ~id (use_scc, use_alt_dep, pack_rank_components)
     | WF (use_dwf, use_scc, use_alt_dep) ->
-        elim_mu_bra ~id ~conv_nu (use_dwf, use_scc, use_alt_dep))
+        elim_mu_bra ~id ~conv_nu ?layout (use_dwf, use_scc, use_alt_dep))
       muclp.query muclp.preds unknowns
 
-  let f ?(id = None) ?(conv_nu = false) ~exchange ~messenger (muclp : Problem.t)
-      unknowns =
+  (* [layout], when given, receives the prepended argument positions of every
+     predicate the reduction extends, keyed by the predicate's name in [muclp]
+     (see [prefix_entry]); a predicate it does not hold was not extended. *)
+  let f ?(id = None) ?(conv_nu = false) ?layout ~exchange ~messenger
+      (muclp : Problem.t) unknowns =
     (*Debug.set_id id;*)
     Debug.print ~id @@ lazy "**************** elim_mu ***********";
     let (query', preds'), nu_wfs =
-      elim_mu ~id ~conv_nu muclp (Map.Poly.empty, Map.Poly.empty)
+      elim_mu ~id ~conv_nu ?layout muclp (Map.Poly.empty, Map.Poly.empty)
     in
     Debug.print ~id @@ lazy (Problem.str_of @@ Problem.make preds' query');
     Debug.print ~id @@ lazy "**************** elim_nu ***********";
@@ -857,8 +933,14 @@ module Make (Cfg : Config.ConfigType) = struct
         @@ List.map muclp.preds ~f:(fun (pred : Pred.t) ->
             (pred.name, pred.arg_original_names))
       in
+      (* Carry the datatype and function environments into the constraint
+         problem this reduction produces.  A fixpoint-logic problem has nowhere
+         to hold them -- it has no such field -- so between the two constraint
+         problems they live only in the process-wide environments, and one
+         built without them declares none to its consumers. *)
       PCSP.Params.make ~arg_original_names ~kind_map ~messenger ~id
-        ~stable_clauses exi_senv
+        ~stable_clauses ~dtenv:(LogicOld.get_dtenv ())
+        ~fenv:(LogicOld.get_fenv ()) exi_senv
     in
     (PCSP.Problem.of_old_formulas ~params clauses (* Insert metadata *), nu_wfs)
 end

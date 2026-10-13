@@ -1,3 +1,13 @@
+(* A message board shared by solver domains running in parallel: one
+   unbounded channel of broadcasts, requests and responses, each tagged with
+   its sender's and receiver's ids.  A reader takes a message off the
+   channel and puts back what is not for it, so every operation is a polling
+   scan over the messages present when it started ([length] is an upper
+   bound on the queue's occupancy).  A broadcast is re-sent until all
+   [max_client - 1] other clients have taken it.  [exec_request] carries out
+   the control requests [Terminate] (by raising [Terminated]), [Sleep],
+   [Pause] (blocking until [Resume]) and [Resume].  The payload type [info]
+   is extensible, so solvers add messages of their own. *)
 type id = int option
 and src_id = id
 and dst_id = id
@@ -55,9 +65,14 @@ let send t message =
   Chan.send t.queue message
 
 let receive t =
-  if Atomic.get t.length > 0 then Atomic.decr t.length;
-  let ret = Chan.recv_poll t.queue in
-  ret
+  (* decrement only for a message actually dequeued: [send] increments before
+     enqueueing, so [length] stays a non-negative upper bound on the queue
+     occupancy even with concurrent readers *)
+  match Chan.recv_poll t.queue with
+  | Some _ as ret ->
+      Atomic.decr t.length;
+      ret
+  | None -> None
 
 let iter messenger ~f =
   let rec inner i infos =

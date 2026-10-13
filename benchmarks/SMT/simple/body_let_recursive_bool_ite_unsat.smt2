@@ -1,0 +1,6 @@
+(set-logic ALL)
+(define-fun-rec f ((n Int)) Bool (let ((base (<= n 0))) (ite base true (f (- n 1)))))
+(declare-const x Int)
+(assert (= x 0))
+(assert (not (f x)))
+(check-sat)

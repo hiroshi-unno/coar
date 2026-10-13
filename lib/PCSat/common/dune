@@ -3,5 +3,5 @@
  (public_name CoAR.PCSat.common)
  (preprocess
   (pps ppx_deriving_yojson))
- (libraries core yojson CoAR.ast CoAR.common CoAR.Z3Smt CoAR.pCSP)
- (modules truthTable context state versionSpace RLConfig))
+ (libraries core threads.posix yojson CoAR.ast CoAR.common CoAR.Z3Smt CoAR.pCSP)
+ (modules scalarDiversity recFunReconstruct recFunDynamic templateLineage holeNaming candidateEquiv wordRanges boundHoist clausePieces guardedFacts truePrecondition witnessSeed unknownFreeSweep unfoldRefute axiomsFirst noUnknownLadder cellQual cellArray goalReads varyArrays sharedParams exampleInstance seqLengthForm truthTable context state witnessConfig countermodelWitness unsatWitness kindCert versionSpace seqInstantiation lemmaApplication seqPin scalarPin relationPin generalityMonitor refutationCensus solveDeadline forkedQuery parallelRace cvc5Proof weakenedQuery factExample factGoal falseProbe oracleProbe synthesisBudget phaseCount RLConfig))

@@ -1,0 +1,23 @@
+# Context filter for `docker build -f icfp24ae/Dockerfile ..`, read by BuildKit in
+# preference to the repository's root `.dockerignore`, which it REPLACES rather
+# than extends -- so this file repeats the root's entries and leaves out only
+# `icfp24ae` itself.  Without it, the root file removes `icfp24ae` from the context and the
+# image is built without the experiment scripts this package's README tells the
+# reader to run; the build succeeds anyway, which is how that went unnoticed for
+# a year.  Requires BuildKit (the default since Docker 23.0); under the classic
+# builder the root file applies instead and the package is broken again.
+
+.git
+_build
+.vscode
+
+cav21ae_dt
+cav21ae_rel
+popl24ae
+oopsla25ae
+pldi26ae_lower
+pldi26ae_omega
+cav26ae
+script/starexec
+learner
+script

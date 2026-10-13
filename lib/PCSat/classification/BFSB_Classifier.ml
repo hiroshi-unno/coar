@@ -1,3 +1,15 @@
+(* Classification-based candidate synthesis for an ordinary predicate: learn
+   a Boolean combination of qualifiers that separates its labelled examples.
+
+   [mk_classifier pvar params table labeling examples] walks the qualifier
+   generator's domains in order; for each it adds the domain's qualifiers to
+   the predicate's truth table, reduces the table, and asks the configured
+   Boolean-function learner for a formula over the qualifiers.  The strategy
+   decides whether a later domain is also tried after a success and which of
+   the formulas found are returned.  Each candidate is closed (no template
+   parameters).  When no domain separates the examples the result is an
+   error rather than a failed assertion; the abstract-domain qualifiers are
+   integer-only, so predicates over other sorts reach that error. *)
 open Core
 open Common
 open Common.Ext
@@ -19,11 +31,11 @@ module Config = struct
   type order = Rank | Shuffle [@@deriving yojson]
 
   type t = {
-    verbose : bool;
-    qualifier_generator : Qualifier.Generator.Config.t ext_file;
-    qual_order : order;  (** priority order for qualifiers *)
-    strategy : strategy;
-    bfsynth : BFSynthesizer.Config.t ext_file;
+    verbose : bool; [@default false]
+    qualifier_generator : Qualifier.Generator.Config.t ext_file; [@default Common.Util.ExtFile.Filename "./config/pcsat/qualifier/polyhedron012.json"]
+    qual_order : order; [@default Rank]  (** priority order for qualifiers *)
+    strategy : strategy; [@default All]
+    bfsynth : BFSynthesizer.Config.t ext_file; [@default Common.Util.config_default (Common.Util.ext_file_of_yojson BFSynthesizer.Config.of_yojson) {|["Instance", ["DTBF", {"verbose": false}]]|}]
   }
   [@@deriving yojson]
 
@@ -171,14 +183,27 @@ struct
       | Ok boolean_formula ->
           Debug.print @@ lazy "    succeeded";
           if n + 1 < G.num_of_domains && needs_to_refine_bf boolean_formula then
-            boolean_formula :: inner (n + 1)
-          else [ boolean_formula ]
-      | Error _ ->
+            inner (n + 1) >>| fun rest -> boolean_formula :: rest
+          else Ok [ boolean_formula ]
+      | Error e ->
           Debug.print @@ lazy "    failed";
-          assert (n + 1 < G.num_of_domains);
-          inner (n + 1)
+          if n + 1 < G.num_of_domains then inner (n + 1)
+          else
+            (* no qualifier domain separates the examples: report it instead
+               of asserting.  The abstract-domain qualifiers (interval,
+               octagon, octahedron, polyhedron) are integer-only, so this is
+               what a predicate over bit-vector, real or datatype arguments
+               reaches under a decision-tree configuration. *)
+            Or_error.error_string
+              (sprintf
+                 "no qualifier domain separates the examples of %s (%d \
+                  domain(s) tried, last error: %s); the abstract-domain \
+                  qualifiers are integer-only, so a predicate over bit-vector, \
+                  real or datatype arguments needs a template-based \
+                  configuration"
+                 (Ident.name_of_pvar pvar) (n + 1) (Error.to_string_hum e))
     in
-    let qbs = inner 0 in
+    inner 0 >>= fun qbs ->
     List.iteri qbs ~f:(fun i bf ->
         Debug.print
         @@ lazy

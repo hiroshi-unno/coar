@@ -1,3 +1,14 @@
+(* Backend that solves a CHC problem with Spacer, Z3's fixedpoint engine, run
+   in-process through the Z3 library.  The problem is preprocessed, refused
+   unless every predicate has the ordinary kind and every clause has at most
+   one positive literal, and registered as fixedpoint rules; the headless
+   clauses become one query.  Z3's [unsat] for the query is the problem's
+   [Sat]: the answer it prints is decoded into a predicate solution (a
+   predicate the answer does not define gets [true]) and, with
+   [check_validity], re-checked clause by clause.  Z3's [sat] is the problem's
+   [Unsat], with the derivation Z3 prints as the refutation when it can be
+   decoded.  A Z3 error becomes [Timeout] when it reports cancellation and
+   [Unknown] otherwise, and is printed like any verdict. *)
 open Core
 open Common
 open Common.Util
@@ -107,17 +118,59 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
       mk_solver ctx
       (*ToDo*)
     in
-    assert (
-      (Set.is_empty @@ PCSP.Problem.wfpvs_of pcsp)
-      && (Set.is_empty @@ PCSP.Problem.fnpvs_of pcsp)
-         (* ToDo: check if pcsp is of CHC *));
+    (* This backend solves CHC only, and `-p chc`, `-p pfwcsp`, `-p dqchc` … are
+       all the *same* problem constructor (the name documents the input, nothing
+       checks it), so the compatibility table cannot refuse the pairing: the
+       check has to happen here.  It used to be a bare [assert], which told the
+       operator nothing but a file and a line. *)
+    (* Every kind but [Ord] states an obligation the clauses do not: a
+       non-empty predicate may not be false everywhere, a disjunctively
+       well-founded one may not contain a self loop, and so on.  This engine
+       reads the clauses and nothing else, so it can only honour [Ord].
+       Listing the kinds to REFUSE, which is what this used to do, left the
+       ones nobody thought of accepted: only well-founded and functional were
+       named, so a disjunctively well-founded or non-empty predicate was
+       converted to an ordinary Horn relation with its obligation dropped, and
+       both fixtures that violate it came back sat.  Naming the one kind that
+       IS supported cannot go stale that way. *)
+    PCSP.Problem.refuse_non_ord_kinds ~backend:"SPACER" pcsp;
     let pcsp = PCSP.Problem.to_cnf @@ PCSP.Problem.to_nnf pcsp in
+    (* The same refusal for a clause with more than one positive literal: a
+       Horn engine has no rule for a disjunctive head.  Decided here, once,
+       with the count, rather than by a [failwith] inside the conversion of
+       the offending clause, which surfaced as a backtrace six clauses into
+       the input on six of the 41 tracked ADT files. *)
+    (let disjunctive =
+       Set.count (PCSP.Problem.clauses_of pcsp) ~f:(fun (_, ps, _, _) ->
+           Set.length ps > 1)
+     in
+     if disjunctive > 0 then
+       failwith
+       @@ sprintf
+            "Spacer solves Horn clauses only, but %d clause(s) of this problem \
+             have a disjunctive head (more than one positive literal).  Use \
+             PCSat."
+            disjunctive);
     Debug.print @@ lazy ("input:\n" ^ PCSP.Problem.str_of pcsp);
-    let dtenv =
-      Z3Smt.Z3interface.z3_dtenv_of_dtenv ctx @@ PCSP.Problem.dtenv_of pcsp
-    in
     let fenv = PCSP.Problem.fenv_of pcsp in
     let exi_senv = PCSP.Problem.senv_of pcsp in
+    let dtenv =
+      (* Register every datatype the clauses mention, not only the declared
+         ones, the way the SMT path does ([z3_dtenv_of_formula]).  A declared
+         [List T] and its instance [List X] in the clauses are different
+         names; a sort the converter does not find in this environment it
+         mints on the fly and forgets, so the variables of the rules ended up
+         in one Z3 datatype and the selectors' accessors in another, and Z3's
+         Horn engine rejected the rule with "Uninterpreted 'tl'": 20 of the 41
+         tracked ADT inputs answered nothing. *)
+      Set.fold
+        (PCSP.Problem.formulas_of pcsp)
+        ~init:
+          (Z3Smt.Z3interface.z3_dtenv_of_dtenv ctx @@ PCSP.Problem.dtenv_of pcsp)
+        ~f:(fun dtenv (uni_senv, term) ->
+          Z3Smt.Z3interface.z3_dtenv_of_formula ~init:dtenv ctx
+          @@ Logic.ExtTerm.to_old_fml exi_senv uni_senv term)
+    in
     (*let query_name = "__query__" in
       let exi_senv =
       Map.Poly.add_exn exi_senv ~key:(Ident.Tvar query_name) ~data:Logic.BoolTerm.SBool
@@ -137,6 +190,14 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
               (Z3.Boolean.mk_sort ctx) ))
     in
     List.iter penv ~f:(snd >> Z3.Fixedpoint.register_relation solver);
+    (* One converter for every clause, so the recursive functions of [fenv]
+       (among them the size function of each datatype the problem mentions)
+       are declared in [ctx] once.  Converting each clause with its own
+       [of_formula] declared them again per clause, which Z3 5.x refuses with
+       "recursive function ... already defined" and 4.x let pass. *)
+    let of_formula =
+      Z3Smt.Z3interface.formula_converter ~id:None (*ToDo*) ctx penv fenv dtenv
+    in
     let qs =
       PCSP.Problem.clauses_of pcsp
       |> Set.Poly.filter_map ~f:(fun (uni_senv, ps, ns, phi) ->
@@ -196,8 +257,7 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
                  Formula.forall senv phi'
                in
                let c =
-                 Z3Smt.Z3interface.of_formula ~id:None (*ToDo*) ctx []
-                   (*senv*) penv fenv dtenv phi'
+                 of_formula [] (*senv*) phi'
                in
                Debug.print
                @@ lazy
@@ -211,8 +271,7 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
                  Formula.forall senv phi'
                in
                let c =
-                 Z3Smt.Z3interface.of_formula ~id:None (*ToDo*) ctx []
-                   (*senv*) penv fenv dtenv phi'
+                 of_formula [] (*senv*) phi'
                in
                Debug.print
                @@ lazy
@@ -281,7 +340,11 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
                     | Failure err ->
                         Debug.print @@ lazy ("failed conversion: " ^ err);
                         failwith "conversion"
-                    | _ -> failwith "conversion"
+                    (* A timeout raised while the answer is converted belongs to
+                       the caller's budget: turned into [Failure "conversion"]
+                       it ended a MuStrat run as an uncaught exception, at the
+                       moment its second check's alarm fired. *)
+                    | e when not (Common.Timer.is_async e) -> failwith "conversion"
                   in
                   (*Debug.print @@ lazy ("answer: " ^ Formula.str_of phi);*)
                   let sol =
@@ -341,7 +404,7 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
                                    Logic.ExtTerm.mk_lambda
                                      (Logic.of_old_sort_env_list params)
                                      (Logic.ExtTerm.of_old_formula body) )
-                             with _ ->
+                             with exn_ when not (Common.Timer.is_async exn_) ->
                                let err =
                                  "cannot get a solution from Spacer: "
                                  ^ Formula.str_of phi
@@ -421,7 +484,7 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
                         failwith "conversion"
                     | e -> raise e (*failwith "conversion"*)
                   in
-                  PCSP.Problem.Unsat (Some phi)
+                  PCSP.Problem.Unsat (Some (PCSP.Problem.Formula phi))
               | None -> PCSP.Problem.Unsat None)
           | Z3.Solver.UNKNOWN -> PCSP.Problem.Unknown
         in
@@ -431,11 +494,21 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
       if print_sol then print_endline (PCSP.Problem.str_of_solution solution);
       Or_error.return solution
     with Z3.Error reason ->
-      if String.(reason = "spacer canceled" || reason = "canceled") then
-        Or_error.return PCSP.Problem.Timeout
-      else (
-        Debug.print @@ lazy (sprintf "Z3 Error: %s" reason);
-        Or_error.return PCSP.Problem.Unknown (* Or_error.error_string reason*))
+      (* The -p pcsp dispatch relies on this function to print the verdict
+         ([~print_sol:true]) and discards the value it returns, so a verdict
+         decided here and not printed reaches nobody: the process exits 0
+         with nothing on stdout, indistinguishable from a crash or a timeout
+         to every sweep that reads the first line.  Print it, the way the
+         success path does. *)
+      let solution =
+        if String.(reason = "spacer canceled" || reason = "canceled") then
+          PCSP.Problem.Timeout
+        else (
+          Debug.print @@ lazy (sprintf "Z3 Error: %s" reason);
+          PCSP.Problem.Unknown (* Or_error.error_string reason*))
+      in
+      if print_sol then print_endline (PCSP.Problem.str_of_solution solution);
+      Or_error.return solution
 end
 
 let make (config : Config.t) =

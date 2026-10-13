@@ -1,3 +1,18 @@
+(* Template for a well-founded predicate [WF(x, y)] over a relation whose
+   arguments split in half into a source [x] and a destination [y].
+
+   The template states that a piecewise lexicographic ranking function
+   decreases from [x] to [y] and stays bounded below: [number_of_rfun_pieces]
+   pieces selected by discriminators of [number_of_disc_conj] conjuncts each,
+   [number_of_rfun_lexicos] lexicographic components, affine terms over the
+   hypothesis space's terms with coefficient and constant bounds.  Every
+   instance is well-founded by construction, which is what makes a candidate
+   of this kind sound without a separate well-foundedness check; the ranking
+   function chosen is kept as a certificate ([kind_cert_template]).
+   [gen_template] returns the template with its bound constraints, each
+   labelled so that an unsat core says which bound to raise; a shape label
+   grows pieces, components and depth together ([increase_lexico_piece_conj]),
+   and [restart] returns to one piece and the smallest bounds. *)
 open Core
 open Common
 open Common.Ext
@@ -9,28 +24,28 @@ open Function
 
 module Config = struct
   type t = {
-    verbose : bool;
-    number_of_rfun_pieces : int;
-    number_of_disc_conj : int;
-    number_of_rfun_lexicos : int;
-    depth : int;
-    upper_bound_rfun_coeff : int option;
-    upper_bound_rfun_const : int option;
-    upper_bound_disc_coeff : int option;
-    upper_bound_disc_const : int option;
-    disc_seeds : int list option;
-    norm_type : int;
-    use_ifte : bool;
-    lower_bound_rfun_coeff : int option;
-    lower_bound_disc_coeff : int option;
-    bound_each_rfun_coeff : int option;
-    bound_each_disc_coeff : int option;
-    threshold_rfun_coeff : int option;
-    threshold_rfun_const : int option;
-    threshold_disc_coeff : int option;
-    threshold_disc_const : int option;
-    ignore_bool : bool;
-    fix_shape : bool;
+    verbose : bool; [@default false]
+    number_of_rfun_pieces : int; [@default 1]
+    number_of_disc_conj : int; [@default 0]
+    number_of_rfun_lexicos : int; [@default 1]
+    depth : int; [@default 0]
+    upper_bound_rfun_coeff : int option; [@default Some 1]
+    upper_bound_rfun_const : int option; [@default Some 0]
+    upper_bound_disc_coeff : int option; [@default Some 1]
+    upper_bound_disc_const : int option; [@default Some 0]
+    disc_seeds : int list option; [@default None]
+    norm_type : int; [@default 1]
+    use_ifte : bool; [@default false]
+    lower_bound_rfun_coeff : int option; [@default None]
+    lower_bound_disc_coeff : int option; [@default None]
+    bound_each_rfun_coeff : int option; [@default None]
+    bound_each_disc_coeff : int option; [@default None]
+    threshold_rfun_coeff : int option; [@default Some 3]
+    threshold_rfun_const : int option; [@default Some 3]
+    threshold_disc_coeff : int option; [@default Some 3]
+    threshold_disc_const : int option; [@default Some 3]
+    ignore_bool : bool; [@default true]
+    fix_shape : bool; [@default false]
   }
   [@@deriving yojson]
 
@@ -40,17 +55,14 @@ module Config = struct
 
   let instantiate_ext_files cfg = Ok cfg
 
-  let load_ext_file = function
-    | ExtFile.Instance x -> Ok (ExtFile.Instance x)
-    | Filename filename -> (
-        let open Or_error in
-        try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
-        match of_yojson raw_json with
-        | Ok x -> instantiate_ext_files x >>= fun x -> Ok (ExtFile.Instance x)
-        | Error msg ->
-            error_string
-            @@ sprintf "Invalid WFPredicate Configuration (%s): %s" filename msg
-        )
+  include MakeExtFile (struct
+    type nonrec t = t
+
+    let of_yojson = of_yojson
+    let to_yojson = to_yojson
+    let name = "WFPredicate"
+    let instantiate = instantiate_ext_files
+  end)
 end
 
 module type ArgType = sig
@@ -102,6 +114,9 @@ let state_of param labels : state =
     param.ndc,
     param.nl,
     param.depth,
+    (* [Z.to_int] is safe: the bounds are the template's configured
+       coefficient and constant bounds, grown by one step at a time, never a
+       model integer *)
     Option.map ~f:Z.to_int param.ubrc,
     Option.map ~f:Z.to_int param.ubrd,
     Option.map ~f:Z.to_int param.ubdc,
@@ -154,6 +169,8 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
 
   let name_of () = Arg.name
   let kind_of () = Kind.str_of Kind.WF
+  let kind = Kind.WF
+  let flexible = false
   let sort_of () = Sort.mk_fun @@ Arg.sorts @ [ T_bool.SBool ]
   let params_of () = sort_env_list_of_sorts Arg.sorts
 
@@ -207,6 +224,9 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
   let update_hspace hspace =
     HypSpace.qualifiers_of ~fenv:Arg.fenv !param.depth hspace
 
+  let last_cert : Templ.kind_cert_templ option ref = ref None
+  let kind_cert_template () = !last_cert
+
   let gen_template ~ucore:_ (hspace : HypSpace.hspace) =
     assert (List.length hspace.params mod 2 = 0);
     if true then (
@@ -243,6 +263,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
         }
         hspace.params
     in
+    last_cert := Some template.Templ.cert;
     Debug.print
     @@ lazy
          (sprintf "[%s] predicate template:\n  %s"

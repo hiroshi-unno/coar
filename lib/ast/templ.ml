@@ -1,3 +1,28 @@
+(* Solution templates: for each kind of unknown, a formula or term over the
+   unknown's parameters and fresh template parameters, plus constraints that
+   bound those parameters.  A model of the template parameters instantiates
+   the template to a candidate solution, so the hypothesis space is the
+   template's shape (disjuncts, conjuncts, pieces, degree) times its
+   vocabulary (the qualifiers and terms it is offered); both are chosen by
+   the caller.
+
+   A qualifier enters a template through a hole: each qualifier [q] gets an
+   integer key [k], read as [(k > 0 => q) /\ (k < 0 => not q)] -- [q], its
+   negation, or nothing when [k = 0] ([gen_from_qualifiers]).  The families
+   here are, in order: functional unknowns ([gen_fun] and its per-sort
+   generators, an [ite] tree of affine or selected terms), ordinary
+   predicates as a bounded DNF of affine atoms and holes ([gen_dnf]),
+   functional and total predicates built from a function template, the
+   existence demand of an [NE] predicate, admissible and integrable
+   predicates, well-founded relations (and their non-terminating and parity
+   variants) as a piecewise lexicographic ranking function whose
+   uninstantiated certificate is returned beside the template, and
+   quantitative (real-valued) templates for the fixpoint-logic solvers.
+
+   A generator that has no template for an unknown's sort raises
+   [No_function_template] rather than returning a weaker one; the template
+   modules report it as incompleteness, never as a refutation.  Template
+   parameters are drawn from the global fresh-name counter. *)
 open Core
 open Common.Ext
 open Common.Util
@@ -209,6 +234,22 @@ let terms_over_set terms params =
 type hole_qualifiers_map_elem = (Ident.tvar * (sort_env_list * Formula.t)) list
 type hole_qualifiers_map = (Ident.tvar * hole_qualifiers_map_elem) list
 
+(* The map above written out in full: every hole, every qualifier, every
+   parameter with its sort.  Nothing calls it -- it is here because the shape
+   of this structure is otherwise written down nowhere, and a reader holding
+   a value of it has no other way to see one. *)
+let _dump_hole_qualifiers_map (m : hole_qualifiers_map) =
+  List.iter m ~f:(fun (hole, quals) ->
+      print_endline (sprintf "hole: %s" (Ident.name_of_tvar hole));
+      List.iter quals ~f:(fun (param, (senv_list, phi)) ->
+          print_endline
+            (sprintf "  %s: %s" (Ident.name_of_tvar param)
+               (Formula.str_of phi));
+          List.iter senv_list ~f:(fun (tvar, sort) ->
+              print_endline
+                (sprintf "    %s : %s" (Ident.name_of_tvar tvar)
+                   (Term.str_of_sort sort)))))
+
 let mk_pvar_app name params =
   Formula.mk_atom @@ Atom.pvar_app_of_senv (Ident.Pvar name) params
 
@@ -226,7 +267,7 @@ let gen_hole_for_qualifiers ~print ?(qds = None) (params, quals) =
       @@ List.mapi quals ~f:(fun i qual ->
           let (templ_param, sort), _ =
             try Term.let_var qds.(i)
-            with _ -> failwith (sprintf "qds.(%d) not defined" i)
+            with exn_ when not (Common.Timer.is_async exn_) -> failwith (sprintf "qds.(%d) not defined" i)
           in
           print
           @@ lazy
@@ -243,7 +284,7 @@ let qual_env_of_hole_map (hole_qualifiers_map : hole_qualifiers_map) =
   List.map hole_qualifiers_map ~f:(fun (_, quals) ->
       List.fold quals ~init:Map.Poly.empty ~f:(fun acc (var, (_, phi)) ->
           try Map.Poly.add_exn acc ~key:phi ~data:var
-          with _ ->
+          with exn_ when not (Common.Timer.is_async exn_) ->
             failwith
             @@ sprintf "Duplicate qualifier in qual_env_of_hole_map: %s"
                  (Formula.str_of phi)
@@ -261,6 +302,24 @@ let gen_from_qualifiers (params, quals) =
       let pos = Formula.(mk_imply (gt key (T_int.zero ())) qual) in
       let neg = Formula.(mk_imply (lt key (T_int.zero ())) (mk_neg qual)) in
       [ pos; neg ])
+
+(* [drop_zero_key_quals ~value_of quals] keeps the qualifiers whose
+   template parameter is not given the integer literal 0 by [value_of].
+   Why: in [gen_from_qualifiers] a qualifier contributes
+   [(k > 0 => q) /\ (k < 0 => not q)], which is [true] once [k] is 0, so a
+   template instantiated at a model is the same formula with or without those
+   conjuncts.  Building them anyway costs a renaming and a conversion of every
+   qualifier per hole, and on a predicate with thousands of qualifiers, almost
+   all of whose parameters a model sets to 0, that transient allocation is
+   what took a process from 0.6 GB to 3.4 GB in one candidate.
+   Contract: the result is a sub-list of [quals] in the same order; a
+   qualifier whose parameter [value_of] does not map to a literal (no value,
+   a non-literal term) is kept. *)
+let drop_zero_key_quals ~(value_of : Ident.tvar -> Logic.term option) quals =
+  List.filter quals ~f:(fun (templ_param, _) ->
+      match value_of templ_param with
+      | Some (Logic.Con (Logic.IntTerm.Int z, _)) -> not (Z.equal z Z.zero)
+      | _ -> true)
 
 (** Templates for function variables *)
 
@@ -333,7 +392,7 @@ let gen_cond_and_exps_of_fun ~print tf_params tf_sub_params params
     let txs =
       List.map ~f:T_irb.to_int_if_rb
       @@ List.filter ~f:T_irb.is_sirb
-      @@ List.map ~f:(uncurry Term.mk_var) params
+      @@ List.map ~f:(Tuple2.uncurry Term.mk_var) params
       @ terms
     in
     let ec, dc =
@@ -342,7 +401,19 @@ let gen_cond_and_exps_of_fun ~print tf_params tf_sub_params params
           (List.length txs + 1) )
     in
     let r_x i =
-      List.fold_right (List.mapi terms ~f:Pair.make) ~init:(Term.mk_dummy sret)
+      let default =
+        (* the innermost branch is unreachable: [ec.(i)] is constrained below to
+           select one of [terms]. For a universally quantified sort there is no
+           value to put here -- nothing in the term language builds one -- and a
+           fresh free variable of that sort would be worse than unreachable:
+           were a later stage to bind it, the synthesized function could return
+           it, which means inventing an element of a type it knows nothing
+           about. Repeat the last candidate instead. *)
+        match (sret, List.last terms) with
+        | (Sort.SVar _ | T_seq.SSeq _), Some t -> t
+        | _ -> Term.mk_dummy sret
+      in
+      List.fold_right (List.mapi terms ~f:Tuple2.create) ~init:default
         ~f:(fun (j, t) -> T_bool.ifte (Formula.eq ec.(i) (T_int.from_int j)) t)
     in
     let d_x i j =
@@ -450,20 +521,39 @@ let gen_bool_fun ~print tf_params tf_sub_params params (vret_opt, sret) :
 let gen_sel_expr sel_terms sel default =
   T_int.mk_case (List.length sel_terms + 1) sel (default :: sel_terms)
 
-let gen_irb_fun ~print tf_params tf_sub_params params (vret_opt, sret) :
-    templ_func =
+(** [gen_irb_fun] is the template for a function into an integer, real or
+    bit-vector sort: an [ite] chain whose branches are [sel_expr], a choice by
+    the selector [ec.(i)] between the hypothesis-space terms of the result
+    sort and the affine part [r_x i], under guards that are qualifier holes
+    and linear conditions.
+
+    With [linear_own_args_only] the affine part ranges over the function's own
+    numeric arguments only, and the hypothesis-space terms are reached through
+    the selector alone; the guards' linear conditions are unchanged.  What the
+    hypothesis space loses is what an affine combination of terms says and no
+    single term does: [-t], [t1 + t2], and further sums once the coefficient
+    and constant bounds grow; with the initial bounds (coefficients summing to
+    at most 1 in absolute value, constant 0) the affine part over a term [t]
+    can only denote [0], [t] or [-t], and the selector already offers [t].
+    The reason is the size of the synthesis query: one coefficient per term
+    and one bound [sum |c_i| <= ub] per expression, and with thousands of
+    terms Z3 does not decide those bounds within the synthesis budget.  This
+    only restricts which candidates can be proposed, and every candidate is
+    still checked against the constraints, so it cannot bear on soundness. *)
+let gen_irb_fun ?(linear_own_args_only = false) ~print tf_params tf_sub_params
+    params (vret_opt, sret) : templ_func =
   let terms = terms_over tf_params.terms params in
   let quals, sel_terms =
     let quals = quals_over tf_params.quals params in
     print
     @@ lazy
          (sprintf "[%s] quals:\n%s"
-            (Option.str_of "" Ident.name_of_tvar vret_opt)
+            (Option.value_map ~default:"" ~f:Ident.name_of_tvar vret_opt)
             (String.concat_map_list ~sep:"\n" quals ~f:Formula.str_of));
     print
     @@ lazy
          (sprintf "[%s] terms:\n%s"
-            (Option.str_of "" Ident.name_of_tvar vret_opt)
+            (Option.value_map ~default:"" ~f:Ident.name_of_tvar vret_opt)
             (String.concat_map_list ~sep:"\n" terms ~f:Term.str_of));
     let consts =
       List.filter tf_params.consts ~f:(Term.sort_of >> Stdlib.( = ) sret)
@@ -471,10 +561,10 @@ let gen_irb_fun ~print tf_params tf_sub_params params (vret_opt, sret) :
     print
     @@ lazy
          (sprintf "[%s] consts:\n%s"
-            (Option.str_of "" Ident.name_of_tvar vret_opt)
+            (Option.value_map ~default:"" ~f:Ident.name_of_tvar vret_opt)
             (String.concat_map_list ~sep:"\n" consts ~f:Term.str_of));
     let sel_terms =
-      List.unique
+      List.dedup_keep_last
       @@ List.filter terms ~f:(fun t -> Stdlib.(Term.sort_of t = sret))
       @ (if false (*ToDo*) then []
          else
@@ -540,17 +630,24 @@ let gen_irb_fun ~print tf_params tf_sub_params params (vret_opt, sret) :
   else
     let txs =
       List.filter ~f:T_irb.is_sirb
-      @@ List.map ~f:(uncurry Term.mk_var) params
+      @@ List.map ~f:(Tuple2.uncurry Term.mk_var) params
       @ terms
     in
     let num_terms = List.map txs ~f:(fun t -> (t, Term.sort_of t)) in
     let num_sort = T_irb.num_sort_of num_terms in
+    let expr_terms =
+      if linear_own_args_only then
+        List.filter_map params ~f:(fun (x, s) ->
+            let t = Term.mk_var x s in
+            if T_irb.is_sirb t then Some (t, s) else None)
+      else num_terms
+    in
     let rc, dc =
-      ( gen_params_1d sret nd (List.length txs + 1),
+      ( gen_params_1d sret nd (List.length expr_terms + 1),
         gen_params_2d_flex_variant num_sort (nd - 1) tf_params.shp
           (List.length txs + 1) )
     in
-    let r_x i = T_irb.affine_exp_of sret rc.(i) num_terms in
+    let r_x i = T_irb.affine_exp_of sret rc.(i) expr_terms in
     let d_x i j = T_irb.affine_exp_of num_sort dc.(i).(j) num_terms in
     let templ_params_quals, hole_quals_map, func =
       let rest, last = List.rest_last (List.init nd ~f:(fun i -> (i, r_x i))) in
@@ -718,7 +815,7 @@ let gen_prop_fun ~print ~is_integ tf_params tf_sub_params params (vret, sret) :
     let txs =
       List.map ~f:T_irb.to_real_if_int
       @@ List.filter ~f:T_irb.is_sint_sreal
-      @@ List.map ~f:(uncurry Term.mk_var) params
+      @@ List.map ~f:(Tuple2.uncurry Term.mk_var) params
       @ if is_integ then [] else terms
     in
     let rc, dc =
@@ -738,7 +835,7 @@ let gen_prop_fun ~print ~is_integ tf_params tf_sub_params params (vret, sret) :
         (T_irb.mk_int_to_real dc.(i).(j).(0))
         (List.mapi ~f:(fun k ->
              T_real.mk_rmul (T_irb.mk_int_to_real dc.(i).(j).(k + 1)))
-        @@ if is_integ then List.initial txs else txs)
+        @@ if is_integ then List.drop_last_exn txs else txs)
     in
     let templ_params_quals, hole_quals_map, func =
       let rest, last = List.rest_last (List.init nd ~f:(fun i -> (i, r_x i))) in
@@ -844,48 +941,312 @@ let gen_fun_bool_branch ~ignore_bool ~f params : templ_func =
   aux
     (if ignore_bool then [] else List.filter params ~f:(snd >> Term.is_bool_sort))
 
-let rec gen_fun ~print ~ignore_bool tf_params tf_sub_params params ret :
-    templ_func =
+exception No_function_template of string
+(** Raised by the template generators when no template of their family can
+    express the unknown: the result sort is one the family has no form for (a
+    function into a sequence, a string, a regular expression or a tuple; an
+    [NE], admissible or integrable predicate over a sort its template does not
+    take), or it is a universally quantified sort and no candidate term of that
+    sort is a function of the arguments.  The hypothesis space is then empty,
+    which is incompleteness and never a refutation: the template modules turn
+    the exception into the refusal the constraint solver answers [unknown] to.
+    A [failwith] here would end the run with an uncaught exception instead of
+    a verdict. *)
+
+let no_template_for ~what sort =
+  raise
+  @@ No_function_template
+       (sprintf "[%s] no template of this family has result sort %s" what
+          (Term.str_of_sort sort))
+
+(** [svar_sel_terms ~depth sv params] are the terms of the universally
+    quantified sort [sv] reached from the datatype-sorted [params] by a chain
+    of at most [depth] selectors, in the order the arguments, constructors and
+    selectors are declared.  A datatype already on the current chain is not
+    entered again, so a recursive datatype does not multiply the chains.  The
+    chains are taken over every constructor: a selector of a constructor other
+    than the argument's is a term the theory leaves open (see
+    [gen_svar_fun]). *)
+let svar_sel_terms ~depth sv params =
+  let rec from_term depth seen t =
+    match Term.sort_of t with
+    | T_dt.SDT dt
+      when depth > 0
+           && not (List.mem seen (Datatype.name_of dt) ~equal:String.equal) ->
+        let seen = Datatype.name_of dt :: seen in
+        List.concat_map (Datatype.conses_of dt) ~f:(fun cons ->
+            List.concat_map (Datatype.sels_of_cons cons) ~f:(fun sel ->
+                let t' = T_dt.mk_sel dt (Datatype.name_of_sel sel) t in
+                match Datatype.sort_of_sel dt sel with
+                | Sort.SVar sv' when Ident.svar_equal sv sv' -> [ t' ]
+                | T_dt.SDT _ -> from_term (depth - 1) seen t'
+                | _ -> []))
+    | _ -> []
+  in
+  List.concat_map params ~f:(fun (x, s) -> from_term depth [] (Term.mk_var x s))
+
+(** [svar_candidates ~print tf_params sv params] are the candidate results of a
+    function of [params] into the universally quantified sort [sv].
+
+    - If some argument has sort [sv], the candidates are exactly those
+      arguments, in order, and nothing else is computed or printed.
+    - Otherwise (the fallback) they are the values stored inside the
+      datatype-sorted arguments, reached by [svar_sel_terms] with at most
+      [max 1 tf_params.depth] selectors, followed by the hypothesis-space
+      terms of sort [sv] over the arguments, without duplicates.  A selector
+      applied to an argument built by another constructor is a term the
+      theory leaves open: it denotes some value of the sort, fixed in each
+      model and possibly different across models.  It is still a candidate
+      like any other -- a function of the arguments in every model, so the
+      predicate stays total and single-valued -- and whether it solves the
+      problem is decided by validation, which reads such terms per model.
+      The typical need is a witness that exists only under a guard:
+      [exists r. v = Break r /\ ...] is witnessed by the [Break] payload of
+      [v], and where [v] is not a [Break] the guard is false and the choice
+      does not matter.
+    - An empty result means no term of the sort is a function of the
+      arguments within these bounds.
+
+    No fresh name is drawn on either path. *)
+let svar_candidates ~print (tf_params : fun_tfp) sv params =
+  let exact =
+    List.filter_map params ~f:(function
+      | x, (Sort.SVar sv' as s) when Ident.svar_equal sv sv' ->
+          Some (Term.mk_var x s)
+      | _ -> None)
+  in
+  if not (List.is_empty exact) then exact
+  else
+    let stored =
+      List.dedup_keep_last ~equal:Stdlib.( = )
+        (svar_sel_terms ~depth:(max 1 tf_params.depth) sv params
+        @ List.filter (terms_over tf_params.terms params) ~f:(fun t ->
+            match Term.sort_of t with
+            | Sort.SVar sv' -> Ident.svar_equal sv sv'
+            | _ -> false))
+    in
+    print
+    @@ lazy
+         (sprintf
+            "[gen_svar_fun] no argument of sort %s; stored-value candidates: \
+             %s"
+            (Ident.name_of_svar sv)
+            (String.concat_map_list ~sep:", " stored ~f:Term.str_of));
+    stored
+
+(** The bounds of the template for a function into a sequence sort
+    ([gen_seq_fun]).  [seq_concat_depth] is the number of concatenations a
+    candidate may contain (0: none), [seq_max_candidates] the length of the
+    candidate list (at least 1), [seq_selector_depth] the length of the
+    selector chains through single-constructor datatype arguments that reach a
+    sequence or an element, and [seq_prefixes] whether the prefixes
+    [seq.extract s 0 n] at integer arguments [n] are offered. *)
+type seq_fun_tfp = {
+  seq_concat_depth : int;
+  seq_max_candidates : int;
+  seq_selector_depth : int;
+  seq_prefixes : bool;
+}
+
+(** [sel_terms_of_sort ~depth target params] are the terms of sort [target]
+    reached from [params] by a chain of at most [depth] selectors, each of a
+    datatype with exactly one constructor (a tuple, a record, a reference
+    wrapper), in the order the arguments and selectors are declared.  Such a
+    selector is total and fixed by the theory, so every result denotes the
+    same value in every model.  A datatype already on the chain is not entered
+    again. *)
+let sel_terms_of_sort ~depth target params =
+  let rec from_term depth seen t =
+    match Term.sort_of t with
+    | T_dt.SDT dt
+      when depth > 0
+           && List.length (Datatype.conses_of dt) = 1
+           && not (List.mem seen (Datatype.name_of dt) ~equal:String.equal) ->
+        let seen = Datatype.name_of dt :: seen in
+        List.concat_map (Datatype.conses_of dt) ~f:(fun cons ->
+            List.concat_map (Datatype.sels_of_cons cons) ~f:(fun sel ->
+                let t' = T_dt.mk_sel dt (Datatype.name_of_sel sel) t in
+                let s' = Datatype.sort_of_sel dt sel in
+                (if Stdlib.( = ) s' target then [ t' ] else [])
+                @
+                match s' with
+                | T_dt.SDT _ -> from_term (depth - 1) seen t'
+                | _ -> []))
+    | _ -> []
+  in
+  List.concat_map params ~f:(fun (x, s) -> from_term depth [] (Term.mk_var x s))
+
+(** [seq_candidates cfg ~terms se params] are the candidate results of a
+    function of [params] into [Seq se], in this order, without duplicates and
+    cut to the first [cfg.seq_max_candidates]:
+    - the atoms: the arguments of sort [Seq se], the sequences reached from
+      single-constructor datatype arguments ([sel_terms_of_sort]), the
+      hypothesis-space terms of that sort over the arguments, [seq.empty], the
+      units [seq.unit e] of the element terms [e] found the same way (the
+      arguments of sort [se], then selector chains, then hypothesis-space
+      terms), and, with [cfg.seq_prefixes], [seq.extract s 0 n] for each
+      sequence atom [s] and integer argument [n];
+    - for [k] = 1 to [cfg.seq_concat_depth], the concatenations [c ++ a] of a
+      candidate [c] with [k - 1] concatenations and a non-empty atom [a],
+      units before sequences, so that a history extended by one element
+      ([s ++ seq.unit x]) comes first.
+    Every candidate is a well-sorted term of sort [Seq se] whose free
+    variables are among [params] (the hypothesis-space terms are filtered by
+    [terms_over]), and each is total: concatenation, units and extraction are
+    defined everywhere in the theory of sequences, and the selectors used have
+    no wrong constructor.  The list is never empty ([seq.empty] is always an
+    atom).  No fresh name is drawn. *)
+let seq_candidates cfg ~terms se params =
+  let sseq = T_seq.SSeq se in
+  let of_sort sort =
+    List.filter_map params ~f:(fun (x, s) ->
+        if Stdlib.( = ) s sort then Some (Term.mk_var x s) else None)
+    @ sel_terms_of_sort ~depth:cfg.seq_selector_depth sort params
+    @ List.filter (terms_over terms params) ~f:(fun t ->
+        Stdlib.( = ) (Term.sort_of t) sort)
+  in
+  let dedup = List.dedup_keep_last ~equal:Stdlib.( = ) in
+  let seqs = dedup (of_sort sseq) in
+  let units = List.map ~f:(T_seq.mk_unit se) @@ dedup (of_sort se) in
+  let prefixes =
+    if cfg.seq_prefixes then
+      List.concat_map seqs ~f:(fun s ->
+          List.filter_map params ~f:(fun (n, sn) ->
+              if Term.is_int_sort sn then
+                Some (T_seq.mk_extract se s (T_int.zero ()) (Term.mk_var n sn))
+              else None))
+    else []
+  in
+  let nonempty = units @ seqs @ prefixes in
+  let atoms = seqs @ [ T_seq.mk_empty se ] @ units @ prefixes in
+  let cap = max 1 cfg.seq_max_candidates in
+  let rec levels k prev acc =
+    if k > cfg.seq_concat_depth || List.length acc >= cap then acc
+    else
+      let next =
+        List.concat_map prev ~f:(fun c ->
+            List.map nonempty ~f:(fun a -> T_seq.mk_concat se c a))
+      in
+      let next = List.take next cap in
+      levels (k + 1) next (dedup (acc @ next))
+  in
+  List.take
+    (levels 1
+       (List.filter atoms ~f:(fun t -> List.mem nonempty t ~equal:Stdlib.( = )))
+       (dedup atoms))
+    cap
+
+let rec gen_fun ?linear_own_args_only ~print ~ignore_bool ?seq_result tf_params
+    tf_sub_params params ret : templ_func =
   gen_fun_bool_branch ~ignore_bool
     ~f:(fun () ->
-      (match ret with
-      | _, T_bool.SBool -> gen_bool_fun
-      | _, (T_int.SInt | T_real.SReal | T_bv.SBV _) -> gen_irb_fun
-      | _, T_array.SArray _ -> gen_array_fun
-      | _, T_dt.SDT _ -> gen_dt_fun
-      | _, sort ->
-          failwith
-          @@ sprintf "[gen_fun] %s not supported" (Term.str_of_sort sort))
+      (match (ret, seq_result) with
+      | (_, T_bool.SBool), _ -> gen_bool_fun
+      | (_, (T_int.SInt | T_real.SReal | T_bv.SBV _)), _ ->
+          gen_irb_fun ?linear_own_args_only
+      | (_, T_array.SArray _), _ -> gen_array_fun ?linear_own_args_only
+      | (_, T_dt.SDT _), _ -> gen_dt_fun
+      | (_, Sort.SVar _), _ -> gen_svar_fun
+      | (_, T_seq.SSeq _), Some cfg -> gen_seq_fun cfg
+      | (_, sort), _ -> no_template_for ~what:"gen_fun" sort)
         ~print tf_params tf_sub_params params ret)
     params
 
-and gen_array_fun ~print tf_params tf_sub_params params (vret_opt, sret) :
+(** [gen_seq_fun cfg] is the template for a function into a sequence sort
+    [Seq se], built only when the caller passes [seq_result] to [gen_fun]
+    (without it such a result sort has no template and [No_function_template]
+    is raised).  The candidate results are [seq_candidates cfg] -- finitely
+    many well-sorted, total terms over the arguments -- and the shared
+    selection machinery picks one per branch of an [ite] chain whose guards
+    are learned qualifier holes and linear conditions over the integer
+    arguments.  Whatever the template parameters are, the result is therefore
+    an [ite] over total terms of the arguments: it denotes exactly one value at
+    every argument, so the predicate [y = f(x)] read back from a solution is
+    total and single-valued by construction. *)
+and gen_seq_fun cfg ~print tf_params tf_sub_params params (vret_opt, sret) :
     templ_func =
+  match sret with
+  | T_seq.SSeq se ->
+      let terms = seq_candidates cfg ~terms:tf_params.terms se params in
+      print
+      @@ lazy
+           (sprintf "[gen_seq_fun] %d candidate results: %s"
+              (List.length terms)
+              (String.concat_map_list ~sep:", " terms ~f:Term.str_of));
+      gen_cond_and_exps_of_fun ~print
+        { tf_params with terms; quals = quals_over tf_params.quals params }
+        tf_sub_params params (vret_opt, sret)
+  | sort -> no_template_for ~what:"gen_seq_fun" sort
+
+(** [gen_array_fun] supports exactly an array result sort [SArray (sidx, selm)]
+   and builds a constant array whose element is [gen_fun]'s template for
+   [selm] (the index is not read).  It raises [No_function_template] when the
+   element sort has no template, or when the result sort is not an array: an
+   array of values the family cannot express is no more expressible than the
+   values themselves, and replacing it by one fixed dummy array would hide the
+   empty hypothesis space behind a candidate that cannot be refined.  Any other
+   failure while building the element template (a depth bound of zero) still
+   gives that dummy array. *)
+and gen_array_fun ?linear_own_args_only ~print tf_params tf_sub_params params
+    (vret_opt, sret) : templ_func =
   match sret with
   | T_array.SArray (sidx, selm) -> (
       try
         assert (tf_params.depth <> 0);
         let templ_elem =
-          gen_fun ~print ~ignore_bool:true tf_params tf_sub_params params
-            (vret_opt, selm)
+          gen_fun ?linear_own_args_only ~print ~ignore_bool:true tf_params
+            tf_sub_params params (vret_opt, selm)
           (*ToDo:sidx is ignored*)
         in
         {
           templ_elem with
           func = T_array.mk_const_array sidx selm templ_elem.func;
         }
-      with _ ->
-        {
-          templ_params = Map.Poly.empty;
-          hole_quals_map = [];
-          func = Term.mk_dummy sret;
-          expr_selectors_bounds = Formula.mk_true ();
-          expr_coeffs_bounds = Formula.mk_true ();
-          expr_const_bounds = Formula.mk_true ();
-          cond_coeffs_bounds = Formula.mk_true ();
-          cond_const_bounds = Formula.mk_true ();
-        })
-  | _ -> failwith "gen_array_fun"
+      with
+      | No_function_template _ as exn_ -> raise exn_
+      | exn_ when not (Common.Timer.is_async exn_) ->
+          {
+            templ_params = Map.Poly.empty;
+            hole_quals_map = [];
+            func = Term.mk_dummy sret;
+            expr_selectors_bounds = Formula.mk_true ();
+            expr_coeffs_bounds = Formula.mk_true ();
+            expr_const_bounds = Formula.mk_true ();
+            cond_coeffs_bounds = Formula.mk_true ();
+            cond_const_bounds = Formula.mk_true ();
+          })
+  | sort -> no_template_for ~what:"gen_array_fun" sort
+
+and gen_svar_fun ~print tf_params tf_sub_params params (vret_opt, sret) :
+    templ_func =
+  match sret with
+  | Sort.SVar sv ->
+      (* The result sort is a universally quantified sort: the solution has to
+         be right for every non-empty type the sort may stand for, and nothing
+         in the term language builds a value of such a type -- there is no
+         constant, no constructor and no operation to apply. By parametricity a
+         function into it can therefore only hand back one of the values it was
+         given, so the candidate results are terms built from the arguments,
+         chosen by [svar_candidates], and the shared machinery below picks
+         among them under a learned condition.  When there is none the
+         template cannot be built and [No_function_template] is raised, for the
+         caller to turn into an answer. *)
+      let terms = svar_candidates ~print tf_params sv params in
+      if List.is_empty terms then
+        raise
+        @@ No_function_template
+             (sprintf
+                "[gen_fun] no argument of the universally quantified sort %s \
+                 to return, nor one stored in an argument of a datatype sort: \
+                 a witness of that sort does exist, since the sort ranges over \
+                 non-empty types only, but it cannot be a function of these \
+                 arguments, which is what this template would have to produce"
+                (Term.str_of_sort sret))
+      else
+        gen_cond_and_exps_of_fun ~print
+          { tf_params with terms; quals = quals_over tf_params.quals params }
+          tf_sub_params params (vret_opt, sret)
+  | _ -> failwith "gen_svar_fun"
 
 let gen_prop ~print ~ignore_bool ?(is_integ = false) tf_params tf_sub_params
     params ret : templ_func =
@@ -895,9 +1256,7 @@ let gen_prop ~print ~ignore_bool ?(is_integ = false) tf_params tf_sub_params
       | _, T_real.SReal -> gen_prop_fun
       | _, T_tuple.STuple sorts when List.for_all sorts ~f:Term.is_real_sort ->
           gen_prop_fun
-      | _, sort ->
-          failwith
-          @@ sprintf "[gen_prop] %s not supported" (Term.str_of_sort sort))
+      | _, sort -> no_template_for ~what:"gen_prop" sort)
         ~print ~is_integ tf_params tf_sub_params params ret)
     params
 
@@ -927,6 +1286,30 @@ type pred_tfsp = { bec : Z.t option }
 let gen_dnf ~print ?(eq_atom = false) ?(real_coeff = false)
     ?(ignore_hole = false) ~br_bools ~only_bools tf_params tfs_params params :
     templ_pred =
+  (* A qualifier is a statement about the predicate's parameters, so one
+     mentioning anything else is not a statement this template can make: the
+     hole it would go into is a function of [params] alone, and the variable
+     would be left free in the generated predicate.  Dropping it here rather
+     than at each caller is what lets a producer offer a qualifier SCHEMA --
+     one written about columns that only some templates generate -- without
+     having to know which template will receive it. *)
+  let tf_params =
+    let ps = Set.Poly.of_list @@ List.map ~f:fst params in
+    let quals, dropped =
+      List.partition_tf tf_params.quals ~f:(fun q ->
+          Set.is_subset (Formula.tvs_of q) ~of_:ps)
+    in
+    List.iter dropped ~f:(fun q ->
+        print
+        @@ lazy
+             (sprintf
+                "dropping the qualifier %s: it mentions %s, which this \
+                 template's parameters do not include"
+                (Formula.str_of q)
+                (String.concat_map_set ~sep:", " ~f:Ident.name_of_tvar
+                @@ Set.diff (Formula.tvs_of q) ps)));
+    { tf_params with quals }
+  in
   let terms =
     let terms =
       List.map ~f:(fun t -> (t, Term.sort_of t))
@@ -1027,17 +1410,19 @@ type templ_func_pred = {
   cond_const_bounds : Formula.t;
 }
 
-let gen_fn_predicate ~print ~ignore_bool tf_params tf_sub_params params :
-    templ_func_pred =
+let gen_fn_predicate ?linear_own_args_only ~print ~ignore_bool ?seq_result
+    tf_params tf_sub_params params : templ_func_pred =
   let params, (xret, sret) = List.rest_last params in
   (* assert (Fn.non Term.is_bool_sort (snd ret)); *)
   let templ =
-    gen_fun ~print ~ignore_bool tf_params tf_sub_params params (Some xret, sret)
+    gen_fun ?linear_own_args_only ~print ~ignore_bool ?seq_result tf_params
+      tf_sub_params params
+      (Some xret, sret)
   in
   {
     templ_params = templ.templ_params;
     hole_quals_map = templ.hole_quals_map;
-    pred = Formula.eq (uncurry Term.mk_var (xret, sret)) templ.func;
+    pred = Formula.eq (Tuple2.uncurry Term.mk_var (xret, sret)) templ.func;
     expr_selectors_bounds = templ.expr_selectors_bounds;
     expr_coeffs_bounds = templ.expr_coeffs_bounds;
     expr_const_bounds = templ.expr_const_bounds;
@@ -1045,7 +1430,92 @@ let gen_fn_predicate ~print ~ignore_bool tf_params tf_sub_params params :
     cond_const_bounds = templ.cond_const_bounds;
   }
 
-(** Templates for non-empty predicate variables *)
+(** A template for a total predicate built from the functional one:
+    [P(ū, v̄) := (v₁ = f₁(ū) ∧ v₂ = f₂(ū, v₁) ∧ …) ∨ ψ(ū, v̄)], where [ū] are
+    the arguments at the [universal] positions, [v̄] the others in argument
+    order, each [fᵢ] the guarded piecewise term [gen_fun] builds for a
+    functional predicate's result, and [ψ] -- present only when [relation]
+    holds -- a DNF template over all the arguments.
+
+    Every member is total over [ū], whatever the parameters are: [gen_fun]
+    returns a term (an [ite] chain ending in an unguarded branch), so it
+    denotes a value at every argument, and choosing [v₁], [v₂], … in turn by
+    the [fᵢ] satisfies the first disjunct.  [ψ] only adds points, so it
+    cannot remove that witness.  With [universal] all but the last position
+    and no [ψ] the template is exactly the functional one; [ψ] makes it a
+    general total relation containing the graph of a function, which is what
+    a total predicate may be and a functional one may not.
+
+    [ψ] reuses the functional template's condition bounds (its coefficients
+    and constants are reported under the condition labels), and its shape is
+    [shp], the same number of disjuncts and conjuncts as the function's
+    guards. *)
+let gen_tot_fun_predicate ?linear_own_args_only ~print ~ignore_bool ~universal
+    ~relation ?seq_result (tf_params : fun_tfp) (tf_sub_params : fun_tfsp) params : templ_func_pred =
+  let us, vs =
+    List.partition_tf (List.mapi params ~f:(fun i p -> (i, p)))
+      ~f:(fun (i, _) -> List.mem universal i ~equal:Int.equal)
+  in
+  let us = List.map us ~f:snd and vs = List.map vs ~f:snd in
+  let graphs, _ =
+    List.fold vs ~init:([], us) ~f:(fun (acc, args) (xret, sret) ->
+        let templ =
+          gen_fun ?linear_own_args_only ~print ~ignore_bool ?seq_result
+            tf_params tf_sub_params args (Some xret, sret)
+        in
+        ( acc @ [ (Formula.eq (Term.mk_var xret sret) templ.func, templ) ],
+          args @ [ (xret, sret) ] ))
+  in
+  let templs = List.map graphs ~f:snd in
+  let and_of f = Formula.and_of @@ List.map templs ~f in
+  let base : templ_func_pred =
+    {
+      templ_params =
+        Map.force_merge_list
+        @@ List.map templs ~f:(fun (t : templ_func) -> t.templ_params);
+      hole_quals_map =
+        List.concat_map templs ~f:(fun (t : templ_func) -> t.hole_quals_map);
+      pred = Formula.and_of @@ List.map graphs ~f:fst;
+      expr_selectors_bounds = and_of (fun t -> t.expr_selectors_bounds);
+      expr_coeffs_bounds = and_of (fun t -> t.expr_coeffs_bounds);
+      expr_const_bounds = and_of (fun t -> t.expr_const_bounds);
+      cond_coeffs_bounds = and_of (fun t -> t.cond_coeffs_bounds);
+      cond_const_bounds = and_of (fun t -> t.cond_const_bounds);
+    }
+  in
+  if not relation then base
+  else
+    let psi =
+      gen_dnf ~print ~br_bools:false ~only_bools:false
+        ({
+           consts = tf_params.consts;
+           terms = tf_params.terms;
+           quals = tf_params.quals;
+           shp = tf_params.shp;
+           ubc = tf_params.ubcc;
+           ubd = tf_params.ubcd;
+           s = tf_params.cs;
+         }
+          : pred_tfp)
+        ({ bec = tf_sub_params.becc } : pred_tfsp)
+        params
+    in
+    {
+      base with
+      templ_params = Map.force_merge base.templ_params psi.templ_params;
+      hole_quals_map = base.hole_quals_map @ psi.hole_quals_map;
+      pred = Formula.mk_or base.pred psi.pred;
+      cond_coeffs_bounds =
+        Formula.mk_and base.cond_coeffs_bounds psi.coeffs_bounds;
+      cond_const_bounds =
+        Formula.mk_and base.cond_const_bounds psi.consts_bounds;
+    }
+
+(** Templates for total predicate variables.  [universal] lists the
+    universally quantified positions; the template defines a witness for the
+    others, in some order, each from the universal positions and the ones
+    defined before it, so every member is total by construction.  With no
+    universal position it is a non-empty set. *)
 
 type templ_ne_pred = {
   templ_params : Logic.sort_env_map;
@@ -1214,7 +1684,7 @@ let gen_dt_ne_template ~print:_ tfp b_j params (rv, rs) =
     Set.to_list
     @@ Datatype.enum_cons_terms tfp.dep rs
     @@ Set.Poly.of_list @@ affines
-    @ List.map params ~f:(uncurry Term.mk_var)
+    @ List.map params ~f:(Tuple2.uncurry Term.mk_var)
   in
   let pred =
     Formula.and_of
@@ -1260,25 +1730,27 @@ let gen_dt_ne_template ~print:_ tfp b_j params (rv, rs) =
     consts_bounds;
   }
 
-let gen_ne_template ~print tfp params =
-  let param_permutation =
-    List.permutation_of @@ List.map params ~f:List.return
+let gen_ne_template ~print ?(universal = []) tfp params =
+  let us, vs =
+    List.partition_tf (List.mapi params ~f:(fun i p -> (i, p)))
+      ~f:(fun (i, _) -> List.mem universal i ~equal:Int.equal)
   in
-  let bc = gen_params_0d T_int.SInt (List.length params + 1) in
+  let us = List.map us ~f:snd and vs = List.map vs ~f:snd in
+  let param_permutation = List.permutation_of @@ List.map vs ~f:List.return in
+  let bc = gen_params_0d T_int.SInt (List.length vs + 1) in
   let mk_select_i op i =
     Formula.mk_binop op (Formula.eq bc.(0) (T_int.mk_int @@ Z.of_int i))
   in
   let templs =
     List.mapi param_permutation ~f:(fun i params ->
         let templs =
-          List.mapi params ~f:(fun j _ ->
-              let params' = List.take params (j + 1) in
-              let xs, r = (List.take params' j, List.last_exn params') in
+          List.mapi params ~f:(fun j r ->
+              let xs = us @ List.take params j in
               (match snd r with
               | T_dt.SDT _ -> gen_dt_ne_template
               | T_int.SInt -> gen_int_ne_template
               | T_bool.SBool -> gen_bool_ne_template
-              | _ -> failwith "unsupported sort of ne predicate")
+              | sort -> no_template_for ~what:"gen_ne_template" sort)
                 ~print tfp
                 bc.(j + 1)
                 xs r)
@@ -1343,13 +1815,13 @@ let gen_adm_predicate ~print ~with_cond ~ignore_bool ~enable_lhs_param tf_params
   (* assert (Fn.non Term.is_bool_sort (snd ret)); *)
   let xs =
     match ret with
-    | _, T_real.SReal when not with_cond -> [ uncurry Term.mk_var ret ]
+    | _, T_real.SReal when not with_cond -> [ Tuple2.uncurry Term.mk_var ret ]
     | _, T_tuple.STuple sorts
       when List.for_all sorts ~f:Term.is_real_sort
            && ((not with_cond) || List.length sorts = 2) ->
         List.mapi sorts ~f:(fun i _ ->
-            T_tuple.mk_tuple_sel sorts (uncurry Term.mk_var ret) i)
-    | _ -> failwith "unsupported sort"
+            T_tuple.mk_tuple_sel sorts (Tuple2.uncurry Term.mk_var ret) i)
+    | _, sort -> no_template_for ~what:"gen_adm_predicate" sort
   in
   let lhs_params, ps, lhs_bounds, pxs =
     if enable_lhs_param then
@@ -1429,11 +1901,11 @@ let gen_integ_predicate ~print ~ignore_bool ~enable_lhs_param tf_params params :
   (* assert (Fn.non Term.is_bool_sort (snd ret)); *)
   let xs =
     match ret with
-    | _, T_real.SReal -> [ uncurry Term.mk_var ret ]
+    | _, T_real.SReal -> [ Tuple2.uncurry Term.mk_var ret ]
     | _, T_tuple.STuple sorts when List.for_all sorts ~f:Term.is_real_sort ->
         List.mapi sorts ~f:(fun i _ ->
-            T_tuple.mk_tuple_sel sorts (uncurry Term.mk_var ret) i)
-    | _ -> failwith "unsupported sort"
+            T_tuple.mk_tuple_sel sorts (Tuple2.uncurry Term.mk_var ret) i)
+    | _, sort -> no_template_for ~what:"gen_integ_predicate" sort
   in
   let lhs_params, lhs_bounds, pxs =
     if enable_lhs_param then
@@ -1489,10 +1961,32 @@ let gen_integ_predicate ~print ~ignore_bool ~enable_lhs_param tf_params params :
 
 (** Templates for well-founded predicate variables *)
 
+(* the ranking function behind a WF/NWF/Parity template instance,
+   uninstantiated (over template parameters and qualifier holes): per piece
+   its discriminator over the first argument half and its lexicographic
+   ranking tuple.  A checker rebuilds the decrease relation from it. *)
+type cert_pieces = (Formula.t * Term.t list) list
+
+type kind_cert_templ = {
+  cert_params_shared : sort_env_list;
+      (** the shared prefix of a global-WF family's parameters ([[]] otherwise)
+      *)
+  cert_params_x : sort_env_list;
+  cert_params_y : sort_env_list;
+  cert_levels : (cert_pieces * cert_pieces) list;
+      (** per priority level (one for WF/NWF; the truncated priority for
+          Parity), the pieces of the first argument half and of the second:
+          discriminator and ranking tuple, both over all parameters *)
+  cert_accepting : bool;
+      (** a parity template at an accepting priority also admits the non-strict
+          decrease *)
+}
+
 type templ_wf_pred = {
   templ_params : Logic.sort_env_map;
   hole_quals_map : hole_qualifiers_map;
   pred : Formula.t;
+  cert : kind_cert_templ;
   rfun_selectors_bounds : Formula.t;
   rfun_coeffs_bounds : Formula.t;
   rfun_const_bounds : Formula.t;
@@ -1551,7 +2045,7 @@ let gen_wf_predicate ~print ~use_ifte tfp tsfp params : templ_wf_pred =
                 gen_hole_for_qualifiers ~print (params, quals)
               in
               let quals_y =
-                List.map quals_x ~f:(Pair.map_snd (Pair.map_snd x2y))
+                List.map quals_x ~f:(Tuple2.map_snd ~f:(Tuple2.map_snd ~f:x2y))
               in
               let hole_x_name = Ident.name_of_tvar hole ^ "_x" in
               let hole_y_name = Ident.name_of_tvar hole ^ "_y" in
@@ -1754,6 +2248,17 @@ let gen_wf_predicate ~print ~use_ifte tfp tsfp params : templ_wf_pred =
     templ_params;
     hole_quals_map;
     pred;
+    (* this generator does not expose its ranking structure; an empty
+       certificate means "none" to the checker *)
+    cert =
+      (let params_x, params_y = List.split_n params (List.length params / 2) in
+       {
+         cert_params_shared = [];
+         cert_params_x = params_x;
+         cert_params_y = params_y;
+         cert_levels = [];
+         cert_accepting = false;
+       });
     rfun_selectors_bounds = Formula.mk_true ();
     rfun_coeffs_bounds;
     rfun_const_bounds;
@@ -1769,28 +2274,29 @@ let size_fun_apps =
 
 let ts_of_sort_env_list params tfp =
   let consts =
-    if true then [] else List.unique @@ List.filter tfp.consts ~f:T_irb.is_sirb
+    if true then []
+    else List.dedup_keep_last @@ List.filter tfp.consts ~f:T_irb.is_sirb
   in
   consts @ Term.of_sort_env params
 
 let sel_terms_of quals terms =
-  List.unique
+  List.dedup_keep_last
   (* filter out trivial candidates *)
   @@ List.filter_map ~f:(fun t ->
       if
         Term.is_var t
         || T_int.(is_neg t && (Term.is_var @@ fst @@ let_neg t))
         || T_real.(is_rneg t && (Term.is_var @@ fst @@ let_rneg t))
-        || T_bv.(is_bvneg t && (Term.is_var @@ Triple.snd @@ let_bvneg t))
+        || T_bv.(is_bvneg t && (Term.is_var @@ snd3 @@ let_bvneg t))
       then None
       else Some t)
   @@ List.map ~f:(fun t ->
       if
         T_int.(
           is_add t
-          && (is_int @@ Triple.fst @@ let_add t)
-          && Z.Compare.(let_int @@ Triple.fst @@ let_add t <= Z.zero))
-      then Triple.snd @@ T_int.let_add t
+          && (is_int @@ fst3 @@ let_add t)
+          && Z.Compare.(let_int @@ fst3 @@ let_add t <= Z.zero))
+      then snd3 @@ T_int.let_add t
       else t)
   @@ List.map ~f:(Normalizer.normalize_term >> Evaluator.simplify_term)
   @@ List.filter ~f:(Term.fvs_of >> Set.is_empty >> not)
@@ -1804,6 +2310,13 @@ let sel_terms_of quals terms =
             let t2 = T_int.mk_sub lhs rhs in
             let tabs = T_bool.ifte (Formula.geq t1 (T_int.zero ())) t1 t2 in
             let tmod_dist8 =
+              (* the same wrap-around distance as in the bit-vector case below,
+                 for a byte counter modelled over the integers; 256 is the
+                 modulus of the counter the program uses, which nothing in an
+                 [Int] sort can supply. Off here and on for bit-vectors because
+                 that is how the two measured on the C category of the
+                 Termination Competition, not because the sorts differ in
+                 principle -- the same goes for [tabs] just above. *)
               T_bool.ifte
                 (Formula.mk_atom @@ T_int.mk_geq t1 (T_int.zero ()))
                 t1
@@ -1835,6 +2348,19 @@ let sel_terms_of quals terms =
                 t1 t2
             in
             let tmod_dist8 =
+              (* the forward distance around a counter that wraps at 256: the
+                 ranking function a loop like [for (c = ...; c != target; c =
+                 (c + 1) % 256)] needs, since the plain difference jumps
+                 negative at the wrap. The 256 is the modulus of the *counter
+                 the program models* -- a byte held in a wider machine word --
+                 and not the modulus of the sort, which is why it cannot be
+                 derived from [size]: substituting 2^size makes [mk_bvnum] wrap
+                 it to zero, the false branch becomes [-t2 = t1], and the whole
+                 conditional collapses into a copy of [t1] just below. That
+                 collapse is also why the term is only offered above width 8 --
+                 at width 8 or less 256 is already zero, and the copy survives
+                 [dedup_keep_last] because it is a different term syntactically.
+                 Bit extraction makes narrow widths common here. *)
               T_bool.ifte
                 (Formula.mk_atom
                 @@ T_bv.mk_bvgeq ~size ~signed:(Some true) t1
@@ -1843,7 +2369,7 @@ let sel_terms_of quals terms =
                 (T_bv.mk_bvsub ~size (T_bv.mk_bvnum ~size (Z.of_int 256)) t2)
             in
             (t1 :: t2 :: (if true then [ tabs ] else []))
-            @ if true then [ tmod_dist8 ] else []
+            @ if T_bv.bits_of size > 8 then [ tmod_dist8 ] else []
         | T_bv.SBV size, T_bv.(BVLeq _ | BVLt _ | BVGeq _ | BVGt _) ->
             let t1 = T_bv.mk_bvsub ~size rhs lhs in
             let t2 = T_bv.mk_bvsub ~size lhs rhs in
@@ -1862,7 +2388,8 @@ let mk_decrease ~print ?(strict = true) tfp tsfp np params num_sort
           in
           let quals_y =
             List.map quals_x
-              ~f:(Pair.map_snd (Pair.map_snd (Formula.rename ren_x_y)))
+              ~f:
+                (Tuple2.map_snd ~f:(Tuple2.map_snd ~f:(Formula.rename ren_x_y)))
           in
           let hole_x_name = Ident.name_of_tvar hole ^ "_x" in
           let hole_y_name = Ident.name_of_tvar hole ^ "_y" in
@@ -1876,16 +2403,22 @@ let mk_decrease ~print ?(strict = true) tfp tsfp np params num_sort
     in
     (Set.Poly.union_list templ_params_qualss, List.concat hole_quals_maps, holes)
   in
+  let cert_r_x_ref = ref (fun _ _ -> Term.mk_dummy T_int.SInt) in
+  let cert_disc_x_ref = ref (fun _ -> Formula.mk_true ()) in
+  let cert_r_y_ref = ref (fun _ _ -> Term.mk_dummy T_int.SInt) in
+  let cert_disc_y_ref = ref (fun _ -> Formula.mk_true ()) in
   let pred =
     let r_x i j =
       gen_sel_expr sel_terms_x rc.(i).(j).(Array.length rc.(i).(j) - 1)
       @@ T_irb.affine_exp_of num_sort rc.(i).(j) num_txs
     in
+    cert_r_x_ref := r_x;
     let sel_terms_y = List.map sel_terms_x ~f:(Term.rename ren_x_y) in
     let r_y i j =
       gen_sel_expr sel_terms_y rc.(i).(j).(Array.length rc.(i).(j) - 1)
       @@ T_irb.affine_exp_of num_sort rc.(i).(j) num_tys
     in
+    cert_r_y_ref := r_y;
     let d_x i j = T_irb.affine_exp_of num_sort dc.(i).(j) num_txs in
     let d_y i j = T_irb.affine_exp_of num_sort dc.(i).(j) num_tys in
     let disc_x i =
@@ -1904,6 +2437,8 @@ let mk_decrease ~print ?(strict = true) tfp tsfp np params num_sort
           Formula.mk_atom
           @@ T_irb.geq_of num_sort (d_y i j) (T_irb.zero_of num_sort))
     in
+    cert_disc_x_ref := disc_x;
+    cert_disc_y_ref := disc_y;
     let d_y_geq_zero = Formula.or_of @@ List.init np ~f:disc_y in
     let ldec i j =
       let phi =
@@ -1955,6 +2490,8 @@ let mk_decrease ~print ?(strict = true) tfp tsfp np params num_sort
     in
     Formula.and_of [ d_y_geq_zero; pdec ]
   in
+  let cert_r_x = !cert_r_x_ref and cert_disc_x = !cert_disc_x_ref in
+  let cert_r_y = !cert_r_y_ref and cert_disc_y = !cert_disc_y_ref in
   let rfun_selectors_bounds =
     Formula.and_of
     @@ List.init np ~f:(fun i ->
@@ -2031,10 +2568,27 @@ let mk_decrease ~print ?(strict = true) tfp tsfp np params num_sort
            templ_params_quals;
          ]
   in
+  let cert =
+    let params_x, params_y = List.split_n params (List.length params / 2) in
+    {
+      cert_params_x = params_x;
+      cert_params_y = params_y;
+      cert_params_shared = [];
+      cert_levels =
+        [
+          ( List.init np ~f:(fun i ->
+                (cert_disc_x i, List.init tfp.nl ~f:(fun k -> cert_r_x i k))),
+            List.init np ~f:(fun i ->
+                (cert_disc_y i, List.init tfp.nl ~f:(fun k -> cert_r_y i k))) );
+        ];
+      cert_accepting = false;
+    }
+  in
   {
     templ_params;
     hole_quals_map;
     pred;
+    cert;
     rfun_selectors_bounds;
     rfun_coeffs_bounds;
     rfun_const_bounds;
@@ -2119,15 +2673,21 @@ let mk_decrease ~print ?(strict = true) tfp tsfp np params num_sort
     in
     (Set.Poly.union_list templ_params_qualss, List.concat hole_quals_maps, holes)
   in
+  let cert_r_x_ref = ref (fun _ _ -> Term.mk_dummy T_int.SInt) in
+  let cert_disc_x_ref = ref (fun _ -> Formula.mk_true ()) in
+  let cert_r_y_ref = ref (fun _ _ -> Term.mk_dummy T_int.SInt) in
+  let cert_disc_y_ref = ref (fun _ -> Formula.mk_true ()) in
   let pred =
     let r_x i j =
       gen_sel_expr sel_terms_x rc_x.(i).(j).(Array.length rc_x.(i).(j) - 1)
       @@ T_irb.affine_exp_of num_sort rc_x.(i).(j) num_txs
     in
+    cert_r_x_ref := r_x;
     let r_y i j =
       gen_sel_expr sel_terms_y rc_y.(i).(j).(Array.length rc_y.(i).(j) - 1)
       @@ T_irb.affine_exp_of num_sort rc_y.(i).(j) num_tys
     in
+    cert_r_y_ref := r_y;
     let d_x i j = T_irb.affine_exp_of num_sort dc_x.(i).(j) num_txs in
     let d_y i j = T_irb.affine_exp_of num_sort dc_y.(i).(j) num_tys in
     let disc_x i =
@@ -2144,6 +2704,8 @@ let mk_decrease ~print ?(strict = true) tfp tsfp np params num_sort
              Formula.mk_atom
              @@ T_irb.geq_of num_sort (d_y i j) (T_irb.zero_of num_sort))
     in
+    cert_disc_x_ref := disc_x;
+    cert_disc_y_ref := disc_y;
     let d_y_geq_zero = Formula.or_of @@ List.init np ~f:disc_y in
     let ldec i j =
       let phi =
@@ -2195,6 +2757,8 @@ let mk_decrease ~print ?(strict = true) tfp tsfp np params num_sort
     in
     Formula.and_of [ d_y_geq_zero; pdec ]
   in
+  let cert_r_x = !cert_r_x_ref and cert_disc_x = !cert_disc_x_ref in
+  let cert_r_y = !cert_r_y_ref and cert_disc_y = !cert_disc_y_ref in
   let rfun_selectors_bounds =
     Formula.and_of
     @@ List.init np ~f:(fun i ->
@@ -2325,10 +2889,27 @@ let mk_decrease ~print ?(strict = true) tfp tsfp np params num_sort
            templ_params_quals;
          ]
   in
+  let cert =
+    let params_x, params_y = List.split_n params (List.length params / 2) in
+    {
+      cert_params_x = params_x;
+      cert_params_y = params_y;
+      cert_params_shared = [];
+      cert_levels =
+        [
+          ( List.init np ~f:(fun i ->
+                (cert_disc_x i, List.init tfp.nl ~f:(fun k -> cert_r_x i k))),
+            List.init np ~f:(fun i ->
+                (cert_disc_y i, List.init tfp.nl ~f:(fun k -> cert_r_y i k))) );
+        ];
+      cert_accepting = false;
+    }
+  in
   {
     templ_params;
     hole_quals_map;
     pred;
+    cert;
     rfun_selectors_bounds;
     rfun_coeffs_bounds;
     rfun_const_bounds;
@@ -2389,9 +2970,22 @@ let gen_simplified_nwf_predicate ~print (rcs, dcs, qds) tfp tsfp
       find_and_update qds tag_y ~f:(fun _ ->
           gen_params_1d num_sort np (List.length quals_y)) )
   in
-  mk_decrease ~print ~strict:true tfp tsfp np params num_sort
-    (rc_x, dc_x, qd_x, tag_x, quals_x, num_txs, sel_terms_x)
-    (rc_y, dc_y, qd_y, tag_y, quals_y, num_tys, sel_terms_y)
+  let t =
+    mk_decrease ~print ~strict:true tfp tsfp np params num_sort
+      (rc_x, dc_x, qd_x, tag_x, quals_x, num_txs, sel_terms_x)
+      (rc_y, dc_y, qd_y, tag_y, quals_y, num_tys, sel_terms_y)
+  in
+  (* the certificate's parameter split is the family's, not half and half *)
+  {
+    t with
+    cert =
+      {
+        t.cert with
+        cert_params_shared = params_shared;
+        cert_params_x = params_x;
+        cert_params_y = params_y;
+      };
+  }
 
 let merge_list op ts =
   List.fold ~init:(List.hd_exn ts) (List.tl_exn ts) ~f:(fun t1 t2 ->
@@ -2399,6 +2993,9 @@ let merge_list op ts =
         templ_params = Map.force_merge t1.templ_params t2.templ_params;
         hole_quals_map = t1.hole_quals_map @ t2.hole_quals_map;
         pred = op [ t1.pred; t2.pred ];
+        (* a combination of two templates has no single ranking function:
+           an empty certificate means "none" *)
+        cert = { t1.cert with cert_levels = [] };
         rfun_selectors_bounds =
           Formula.and_of [ t1.rfun_selectors_bounds; t2.rfun_selectors_bounds ];
         rfun_coeffs_bounds =
@@ -2465,30 +3062,61 @@ let gen_simplified_parity_predicate ~print (rcs, dcs, qds)
   @@ lazy (Ident.name_of_tvar tag_x ^ ": " ^ Int.to_string (List.length quals_x));
   print
   @@ lazy (Ident.name_of_tvar tag_y ^ ": " ^ Int.to_string (List.length quals_y));
-  let pril = trunc @@ Map.Poly.find_exn sigma tag_x in
+  (* [pri] is the reassigned priority of the left tag and [pril] the number of
+     ranking components it compares, which is [pri] itself or, when the
+     components are packed in pairs, its half rounded up.  Acceptance is a
+     property of [pri] and never of [pril]: packing maps an odd priority and
+     the even one above it to the same component count, so testing [pril]
+     made a least-fixpoint predicate of priority 3 accept a non-strict
+     decrease and a greatest-fixpoint one of priority 2 demand a strict one
+     (Kura and Unno, Def. 7.8: strict when the priority is odd, non-strict
+     when it is even, at component [ceil (pri/2)]) *)
+  let pri = Map.Poly.find_exn sigma tag_x in
+  let pril = trunc pri in
+  (* level [i]: strict decrease at priority [i], non-strict at every lower
+     one; the strict template's certificate carries the level's ranking
+     pieces (the lower ones are generated first, as the original
+     [strict :: lower] did, to keep the fresh names in the same order) *)
+  let levels =
+    List.init pril ~f:(fun i ->
+        let lower =
+          List.init i ~f:(fun j ->
+              mk_decrease ~print ~strict:false tfp tsfp np params num_sort
+                (rc_x.(j), dc_x.(j), qd_x, tag_x, quals_x, num_txs, sel_terms_x)
+                (rc_y.(j), dc_y.(j), qd_y, tag_y, quals_y, num_tys, sel_terms_y))
+        in
+        let strict =
+          mk_decrease ~print ~strict:true tfp tsfp np params num_sort
+            (rc_x.(i), dc_x.(i), qd_x, tag_x, quals_x, num_txs, sel_terms_x)
+            (rc_y.(i), dc_y.(i), qd_y, tag_y, quals_y, num_tys, sel_terms_y)
+        in
+        (merge_list Formula.and_of (strict :: lower), strict.cert))
+  in
+  let templ = merge_list Formula.or_of (List.map levels ~f:fst) in
+  let accepting = Set.mem acc_set pri in
+  let cert =
+    {
+      cert_params_shared = [];
+      cert_params_x = params_x;
+      cert_params_y = params_y;
+      cert_levels = List.map levels ~f:(fun (_, c) -> List.hd_exn c.cert_levels);
+      cert_accepting = accepting;
+    }
+  in
   let templ =
-    merge_list Formula.or_of
-    @@ List.init pril ~f:(fun i ->
-        merge_list Formula.and_of
-        @@ mk_decrease ~print ~strict:true tfp tsfp np params num_sort
-             (rc_x.(i), dc_x.(i), qd_x, tag_x, quals_x, num_txs, sel_terms_x)
-             (rc_y.(i), dc_y.(i), qd_y, tag_y, quals_y, num_tys, sel_terms_y)
-           :: List.init i ~f:(fun j ->
+    if accepting then
+      merge_list Formula.or_of
+      @@ [
+           templ;
+           merge_list Formula.and_of
+           @@ List.init pril ~f:(fun j ->
                mk_decrease ~print ~strict:false tfp tsfp np params num_sort
                  (rc_x.(j), dc_x.(j), qd_x, tag_x, quals_x, num_txs, sel_terms_x)
-                 (rc_y.(j), dc_y.(j), qd_y, tag_y, quals_y, num_tys, sel_terms_y)))
+                 (rc_y.(j), dc_y.(j), qd_y, tag_y, quals_y, num_tys, sel_terms_y));
+         ]
+    else templ
   in
-  if Set.mem acc_set pril then
-    merge_list Formula.or_of
-    @@ [
-         templ;
-         merge_list Formula.and_of
-         @@ List.init pril ~f:(fun j ->
-             mk_decrease ~print ~strict:false tfp tsfp np params num_sort
-               (rc_x.(j), dc_x.(j), qd_x, tag_x, quals_x, num_txs, sel_terms_x)
-               (rc_y.(j), dc_y.(j), qd_y, tag_y, quals_y, num_tys, sel_terms_y));
-       ]
-  else templ
+  { templ with cert }
 
 (** Templates for quantitative predicate variables *)
 
@@ -2499,12 +3127,20 @@ type templ_quant_pred = {
 }
 
 let mk_affine ?(coeffs = None) terms =
+  (* The coefficients are prefixed names, which are not fresh against the
+     variables of [terms]; a program variable spelled like one would be
+     identified with a coefficient, so draw past the terms' variables. *)
+  let taken =
+    lazy (Set.Poly.union_list (List.map terms ~f:Term.tvs_of))
+  in
   let templ_params_list =
     List.init
       (List.length terms + 1)
       ~f:(fun _ ->
         ( (*Ident.mk_fresh_parameter ()*)
-          Ident.mk_fresh_tvar ~prefix:(Some "param") (),
+          Ident.mk_fresh_tvar_avoiding ~prefix:"param"
+            ~taken:(fun v -> Set.mem (Lazy.force taken) v)
+            (),
           T_real.SReal ))
   in
   let cs = Term.of_sort_env templ_params_list in

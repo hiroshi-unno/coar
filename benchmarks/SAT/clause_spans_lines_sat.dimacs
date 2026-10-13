@@ -1,0 +1,12 @@
+c expected: sat
+c
+c One clause {1, 2} whose numbers are split across two lines, which DIMACS allows
+c because the terminator is 0 and not the newline.  z3 reads it and answers
+c s SATISFIABLE.
+c
+c It was rejected outright with "each line must end with 0", so the file crashed
+c the run rather than being solved -- the reverse direction of the same
+c line-for-clause assumption that made the two files beside this one wrong.
+p cnf 2 1
+1
+2 0

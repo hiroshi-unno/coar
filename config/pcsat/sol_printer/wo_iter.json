@@ -1,4 +1,3 @@
 {
-    "output_iteration": false,
-    "sygus_comp": false
+    "output_iteration": false
 }

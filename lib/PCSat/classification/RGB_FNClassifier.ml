@@ -1,8 +1,12 @@
+(* Regression-based classifier for a functional predicate: the last
+   parameter is the result, and the configured regressor fits a term [t] over
+   the other parameters to the labelled examples; the candidate is
+   [ret = t], parametric in whatever template parameters the regressor
+   leaves in [t]. *)
 open Core
 open Common
 open Common.Ext
 open Common.Util
-open Common.Combinator
 open Ast
 open Ast.LogicOld
 open PCSatCommon
@@ -10,9 +14,9 @@ open Regression
 
 module Config = struct
   type t = {
-    verbose : bool;
-    qualifier_generator : Qualifier.Generator.Config.t ext_file;
-    regressor : Regressor.Config.t ext_file;
+    verbose : bool; [@default false]
+    qualifier_generator : Qualifier.Generator.Config.t ext_file; [@default Common.Util.ExtFile.Filename "./config/pcsat/qualifier/polyhedron023.json"]
+    regressor : Regressor.Config.t ext_file; [@default Common.Util.ExtFile.Filename "./config/pcsat/regressor/dt.json"]
   }
   [@@deriving yojson]
 
@@ -74,6 +78,6 @@ struct
       TruthTable.labeled_atoms_of tt labeling
     in
     R.mk_regressor args labeled_atoms >>= fun (ps, t) ->
-    let phi = Formula.eq (uncurry Term.mk_var ret) t in
+    let phi = Formula.eq (Tuple2.uncurry Term.mk_var ret) t in
     Ok [ (ps (* parameters of parametric candidate*), (pvar, (params, phi))) ]
 end

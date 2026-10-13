@@ -1,3 +1,8 @@
+(* Reader of a Buchi automaton in the never-claim format LTL3BA prints, for the
+   C frontend's LTL path.  A state named [accept_*] is accepting and the one
+   named [*_init] is initial; an input with no initial state, or more than
+   one, is refused.  Errors are returned as [Error], never raised. *)
+
 open Core
 open Common.Util
 open Common.Combinator
@@ -52,5 +57,8 @@ let parse_from_lexbuf lexbuf =
            error)
   | Err error -> Error error
 
-let from_file = In_channel.create >> Lexing.from_channel >> parse_from_lexbuf
+let from_file filename =
+  In_channel.with_file filename ~f:(fun channel ->
+      parse_from_lexbuf (Lexing.from_channel channel))
+
 let from_string = Lexing.from_string >> parse_from_lexbuf

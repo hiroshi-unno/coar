@@ -1,3 +1,9 @@
+(* An S-expression printer for a small fragment of [LogicOld] formulas:
+   Boolean connectives, quantifiers, fixpoint predicates, and integer
+   arithmetic terms over [Bool]/[Int]/[Real] variables.  Anything outside that
+   fragment (other sorts and theories, lets, a non-Euclidean division) raises.
+   This is a diagnostic syntax of its own, not SMT-LIB, and no reader parses
+   it back. *)
 open Core
 open Ast
 open Ast.LogicOld
@@ -89,8 +95,15 @@ and sexp_of_fun_sym = function
   | T_int.Add -> Sexp.Atom "add"
   | T_int.Sub -> Sexp.Atom "sub"
   | T_int.Mul -> Sexp.Atom "mult" (*ToDo*)
-  | T_int.Div _ (*ToDo*) -> Sexp.Atom "div"
-  | T_int.Rem _ (*ToDo*) -> Sexp.Atom "mod" (*ToDo*)
+  (* [div]/[mod] are the Euclidean pair; a truncated, flooring or ceiling
+     symbol denotes something else on negative operands and has no operator
+     here.  (Nothing outside this library calls this printer today.) *)
+  | T_int.Div Value.Euclidean -> Sexp.Atom "div"
+  | T_int.Rem Value.Euclidean -> Sexp.Atom "mod"
+  | T_int.Div _ | T_int.Rem _ ->
+      failwith
+        "[SMT printing] only Euclidean integer division/remainder has an \
+         operator here"
   (*| T_int.Power -> Sexp.Atom "pow"*)
   | _ -> failwith "invalid function symbol"
 

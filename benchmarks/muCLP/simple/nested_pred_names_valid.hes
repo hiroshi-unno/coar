@@ -1,0 +1,8 @@
+/* Predicate names that nest (bb1 inside state_bb1).
+   Until 2026-09-05 Ident.is_related_tvar related U_state_bb1_ to bb1 by the substring _bb1_,
+   so the partial-solution exchange between MuVal's primal and dual domains could attribute a
+   candidate to the wrong predicate.  Expected: valid. */
+forall (x: int). x >= 0 => state_bb1 x
+s.t.
+state_bb1 (x: int): bool =nu bb1 x /\ state_bb1 (x + 1);
+bb1 (x: int): bool =mu x >= 0 \/ bb1 (x + 1);

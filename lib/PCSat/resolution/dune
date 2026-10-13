@@ -11,4 +11,4 @@
   CoAR.Z3Smt
   CoAR.PCSat.synthesis
   CoAR.PCSat.common)
- (modules resolver oldResolver graphResolver SMTResolver))
+ (modules loopDepth keepOpenParams resolver oldResolver graphResolver SMTResolver))

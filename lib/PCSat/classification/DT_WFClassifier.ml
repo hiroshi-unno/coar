@@ -1,3 +1,21 @@
+(* Decision-tree learning of a ranking function for a well-founded predicate.
+
+   This implements Satoshi Kura, Hiroshi Unno and Ichiro Hasuo, "Decision
+   Tree Learning in CEGIS-Based Termination Analysis", CAV 2021: the positive
+   examples of a WF predicate are transition pairs (x, y); the learner builds
+   a decision tree whose internal nodes are halfspaces over the source state
+   and whose leaves are lexicographic tuples of [lex_deg + 1] affine
+   templates, solves for the leaves' coefficients, and when that fails finds
+   an implicit cycle in the unsat core and splits the tree by a new halfspace
+   that separates two of its states.  Halfspaces come eagerly from interval
+   or octagon qualifiers over the examples, or lazily from an SVM.
+
+   [mk_classifier] returns one candidate, [lex_x > lex_y] read through the
+   learned piecewise ranking, with no template parameters.  It ranks the
+   integer and Bool coordinates only (a Bool as 0/1): ranking a subset of the
+   coordinates is sound for the whole relation but incomplete, and a
+   predicate with no such coordinate, or examples no halfspace separates,
+   gives an error instead of a candidate. *)
 open Core
 open Common
 open Common.Ext
@@ -17,22 +35,22 @@ module Config = struct
     | `Octagon -> `String "octagon"
 
   type t = {
-    verbose : bool;
-    lex_deg : int;  (** Degree of lexicographic ranking function >= 0 *)
-    qualifier : [ `Interval | `Octagon ];
-        [@of_yojson qualifier_type_of_json] [@to_json qualifier_type_to_json]
+    verbose : bool; [@default false]
+    lex_deg : int; [@default 2]  (** Degree of lexicographic ranking function >= 0 *)
+    qualifier : [ `Interval | `Octagon ]; [@default `Octagon]
+        [@of_yojson qualifier_type_of_json] [@to_yojson qualifier_type_to_json]
         (** Type of qualifiers (for eager halfspace generation) *)
-    approx_level : int;
+    approx_level : int; [@default 0]
         (** Approximation level of hyperplanes obtained from svm. If
             approx_level > 0, then use truncated continued fractions with length
             at most approx_level. If approx_level = 0, then the length of
             truncated continued fractions is chosen automatically. *)
-    csvm : float;  (** c parameter for csvm *)
-    eager_halfspace_gen : bool;  (** Enable eager halfspace generation. *)
-    optimize_sum_coeff : bool;
+    csvm : float; [@default 10.0]  (** c parameter for csvm *)
+    eager_halfspace_gen : bool; [@default true]  (** Enable eager halfspace generation. *)
+    optimize_sum_coeff : bool; [@default true]
         (** Optimize the sum of absolute values of coefficients of a piecewise
             affine ranking function. *)
-    qualifier_reduction : bool;  (** Enable qualifier reduction. *)
+    qualifier_reduction : bool; [@default false]  (** Enable qualifier reduction. *)
   }
   [@@deriving yojson]
 
@@ -92,8 +110,15 @@ end = struct
     Formula.subst map (formula_of h) |> Evaluator.eval
 end
 
+(* every coordinate reaching the classifier is an integer: [mk_classifier]
+   projects the WF predicate onto its integer arguments first *)
 let force_int tm =
-  match Evaluator.eval_term tm with Value.Int n -> n | _ -> assert false
+  match Evaluator.eval_term tm with
+  | Value.Int n -> n
+  | _ ->
+      failwith
+        (sprintf "DT_WFClassifier: non-integer example coordinate %s"
+           (Term.str_of tm))
 
 module StateExample : sig
   type t
@@ -197,6 +222,12 @@ struct
   let _ = Debug.set_id id
 
   type classifier = sort_env_map * (Ident.pvar * (sort_env_list * Formula.t))
+
+  (* raised by the eager halfspace choice when no halfspace splits the
+     remaining transition examples (a self-loop, or examples whose decrease
+     lives in a coordinate the classifier does not see);
+     [mk_classifier] reports it as an error instead of a crash *)
+  exception NoSeparatingHalfspace
 
   let model_postprocess model params =
     let zero_model =
@@ -712,7 +743,9 @@ struct
         |> List.max_elt ~compare:(fun (g0, _, _, _, _) (g1, _, _, _, _) ->
             Stdlib.compare g0 g1)
         (* take a halfspace with maximum information gain *)
-        |> Option.elem_of
+        |> function
+        | Some best -> best
+        | None -> raise NoSeparatingHalfspace
       in
       (best_halfspace, (ex_tt, t_max_sat), (ex_ff, f_max_sat))
 
@@ -1005,6 +1038,13 @@ struct
         [ unsat_keys ] and returns two distinct state examples between which we
         can cut an implicit cycle in [ unsat_keys ] *)
     let find_gap t dt unsat_keys example_map =
+      (* A leaf of [unsat_dt] is a *homogeneous* pair of lists: destinations
+         first, sources second -- [add_unsat_example]'s [add_dst] writes the
+         first component and [add_src] the second, and [collect_nonempty_dt]
+         below is destructured as [(dsts, srcs)] to match.  The order is carried
+         by those names alone, and getting it wrong type-checks: a [snd] where
+         a [fst] belonged, one [dtree_fmap] away from here, turned every learned
+         ranking function into [false] for twenty months. *)
       let unsat_dt = dtree_fmap (fun _ -> (ref [], ref [])) dt in
       List.iter ~f:(fun k -> Debug.print @@ lazy k) unsat_keys;
       List.iter
@@ -1057,7 +1097,7 @@ struct
       let hs_xf_yt = List.map ~f:(fun h -> (count_xf_yt h, h)) hs_xf_yt in
       List.min_elt (hs_xt_yf @ hs_xf_yt) ~compare:(fun (c0, _) (c1, _) ->
           compare c0 c1)
-      |> Option.elem_of |> snd
+      |> Option.value_exn |> snd
 
     let choose_separating_halfspace_lazy ~id t x y transition_example_id_list =
       let fenv = Map.Poly.empty in
@@ -1166,10 +1206,18 @@ struct
     Debug.print @@ lazy "synthesizing linear functions";
     Debug.print
     @@ lazy ("constraint size = " ^ string_of_int (Map.Poly.length constraints));
+    Map.Poly.iteri constraints ~f:(fun ~key ~data ->
+        Debug.print @@ lazy (sprintf "  %s: %s" key (Formula.str_of data)));
     let fenv = Map.Poly.empty in
     (*TODO: generate fenv*)
     match Z3Smt.Z3interface.check_sat_unsat_core ~id fenv constraints with
     | `Sat model ->
+        Debug.print
+        @@ lazy
+             ("  model: "
+             ^ String.concat_map_list ~sep:", " model ~f:(fun ((x, _), v) ->
+                 Ident.name_of_tvar x ^ " = "
+                 ^ Option.value_map v ~default:"?" ~f:Term.str_of));
         let model =
           if config.optimize_sum_coeff then
             let template_params = DecisionTreeTemplate.collect_params dt in
@@ -1186,7 +1234,12 @@ struct
         let model =
           model_postprocess model (DecisionTreeTemplate.collect_params dt)
         in
-        dtree_fmap (snd >> List.map ~f:(Term.subst model)) dt
+        (* the leaves are (template terms, their parameters): the model is
+           substituted into the templates.  Substituting it into the
+           parameter list instead turned every leaf into a list of constants
+           and every learned ranking into [false], for twenty months and
+           without a single error. *)
+        dtree_fmap (fst >> List.map ~f:(Term.subst model)) dt
     | `Unsat unsat_keys ->
         Debug.print @@ lazy "cut implicit cycle";
         let x, y = ImplicitCycle.find_gap t dt unsat_keys example_map in
@@ -1209,7 +1262,72 @@ struct
     let params_src, params_dst = List.split_n params n in
     (params_src, params_dst)
 
-  let init_table pvar params table labeling =
+  (* The classifier is integer-only: the halfspaces, the affine templates and
+     the SVM hyperplanes are all over Z.  A WF predicate with real (or
+     bit-vector, datatype) arguments is therefore ranked on its integer
+     coordinates only; the others are projected away from the parameters and
+     from every example.  This is sound -- a lexicographic ranking function
+     that decreases on a subset of the coordinates is one for the whole
+     relation -- but incomplete when the decrease lives in a non-integer
+     coordinate.  Projecting is what keeps such an input from reaching
+     [force_int]'s [assert false]; real-valued halfspaces and templates,
+     together with real-valued abstract-domain qualifiers, would remove the
+     incompleteness.  [keep.(i)] says whether source coordinate [i] survives. *)
+  let int_coordinates params =
+    let params_src, params_dst = split_sort_env params in
+    (* a Bool coordinate is ranked as the integer 0/1: the parameter is typed
+       Int inside the classifier, example values true/false become 1/0, and
+       [restore_bools] puts [ite b 1 0] back into the learned ranking (the
+       relational benchmarks' WF predicates carry flags) *)
+    let keep =
+      List.map params_src ~f:(fun (_, s) ->
+          Term.is_int_sort s || Term.is_bool_sort s)
+    in
+    let as_int (v, s) =
+      if Term.is_bool_sort s then (v, T_int.SInt) else (v, s)
+    in
+    let project l =
+      List.filter_map (List.zip_exn keep l) ~f:(fun (k, x) ->
+          Option.some_if k x)
+    in
+    let project_terms sorts l =
+      List.map
+        (List.zip_exn sorts (project l))
+        ~f:(fun ((_, s), t) ->
+          if Term.is_bool_sort s then
+            match Evaluator.eval_term t with
+            | Value.Bool true -> T_int.one ()
+            | Value.Bool false -> T_int.zero ()
+            | _ -> t
+            | exception exn_ when not (Common.Timer.is_async exn_) -> t
+          else t)
+    in
+    let src_kept = project params_src and dst_kept = project params_dst in
+    let project_transition l =
+      let x, y = List.split_n l (List.length l / 2) in
+      project_terms src_kept x @ project_terms dst_kept y
+    in
+    let bools =
+      List.filter_map (src_kept @ dst_kept) ~f:(fun (v, s) ->
+          Option.some_if (Term.is_bool_sort s) v)
+    in
+    let restore_bools wf =
+      if List.is_empty bools then wf
+      else
+        Formula.subst
+          (Map.Poly.of_alist_exn
+          @@ List.map bools ~f:(fun v ->
+              ( v,
+                T_bool.mk_if_then_else
+                  (Term.mk_var v T_bool.SBool)
+                  (T_int.one ()) (T_int.zero ()) )))
+          wf
+    in
+    ( project_transition,
+      List.map ~f:as_int src_kept @ List.map ~f:as_int dst_kept,
+      restore_bools )
+
+  let init_table pvar project_transition params table labeling =
     let tt = TruthTable.get_table table pvar in
     Debug.print
     @@ lazy (sprintf "    labeled atoms (%d):" (TruthTable.num_atoms labeling));
@@ -1220,7 +1338,8 @@ struct
     assert (Set.is_empty pneg_ex && Set.is_empty ppos_ex);
     let params_src, _ = split_sort_env params in
     let transition_examples =
-      Set.Poly.map pos_ex ~f:(snd >> TransitionExample.of_term)
+      Set.Poly.map pos_ex
+        ~f:(snd >> project_transition >> TransitionExample.of_term)
     in
     if config.eager_halfspace_gen then
       Table.make_eager params_src (Set.to_list transition_examples)
@@ -1257,16 +1376,52 @@ struct
     lex2wf dtx_term dty_term
 
   let mk_classifier pvar params table labeling _examples =
-    let table = init_table pvar params table labeling in
-    let wf =
-      try decision_tree_main ~id:None (*ToDo*) Lexicographic.gt table params
-      with ImplicitCycle.GapNotFound ->
-        decision_tree_main ~id:None
-          (*ToDo*) Lexicographic.gt_degenerate_negative table params
+    let project_transition, params_int, restore_bools =
+      int_coordinates params
     in
-    Ok
-      [
-        ( Map.Poly.empty (* parameters of parametric candidate*),
-          (pvar, (params, wf)) );
-      ]
+    if List.is_empty params_int then
+      Or_error.error_string
+        (sprintf
+           "DT_WFClassifier: %s has no integer or Bool arguments; the \
+            decision-tree WF classifier ranks those coordinates only, so a WF \
+            predicate over real (or bit-vector, datatype) arguments needs a \
+            template-based configuration"
+           (Ident.name_of_pvar pvar))
+    else (
+      if List.length params_int < List.length params then
+        Debug.print
+        @@ lazy
+             (sprintf
+                "    %s: ranking the %d integer/Bool coordinate(s) of %d only"
+                (Ident.name_of_pvar pvar)
+                (List.length params_int / 2)
+                (List.length params / 2));
+      let table =
+        init_table pvar project_transition params_int table labeling
+      in
+      try
+        let wf =
+          try
+            decision_tree_main ~id:None (*ToDo*) Lexicographic.gt table
+              params_int
+          with ImplicitCycle.GapNotFound ->
+            decision_tree_main ~id:None
+              (*ToDo*) Lexicographic.gt_degenerate_negative table params_int
+        in
+        Ok
+          [
+            ( Map.Poly.empty (* parameters of parametric candidate*),
+              (pvar, (params, restore_bools wf)) );
+          ]
+      with NoSeparatingHalfspace ->
+        Or_error.error_string
+          (sprintf
+             "DT_WFClassifier: no halfspace separates the transition examples \
+              of %s%s"
+             (Ident.name_of_pvar pvar)
+             (if List.length params_int < List.length params then
+                " over its integer coordinates (the decrease may live in a \
+                 non-integer coordinate, which the decision-tree classifier \
+                 does not rank)"
+              else "")))
 end

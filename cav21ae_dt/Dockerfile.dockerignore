@@ -1,0 +1,34 @@
+# Context filter for `docker build -f cav21ae_dt/Dockerfile .`, read by BuildKit
+# in preference to the repository's root `.dockerignore`, which it REPLACES
+# rather than extends -- so this file repeats the root's entries and then adds
+# back exactly what this artifact needs: its own directory, and the runner
+# scripts under `script/`, which the root file excludes.  Without this the image is built
+# without the experiment scripts the README tells the reader to run, and the
+# build succeeds anyway, which is how the same mistake went unnoticed for a year
+# in two other packages.  Requires BuildKit (the default since Docker 23.0).
+
+.git
+_build
+.vscode
+
+cav21ae_rel
+popl24ae
+icfp24ae
+oopsla25ae
+pldi26ae_lower
+pldi26ae_omega
+cav26ae
+script/starexec
+learner
+script
+
+
+# what this artifact runs (the root file excludes all of script/)
+!script/muval_dt_eager_term_comp_20.sh
+!script/muval_dt_lazy_term_comp_20.sh
+!script/muval_dt_eager_term_comp_20_compare.sh
+!script/muval_dt_lazy_term_comp_20_compare.sh
+!script/muval_dt_term_comp_20rc
+!script/para_muval_prove_disprove.sh
+!script/para_aux.sh
+!script/killtree.sh

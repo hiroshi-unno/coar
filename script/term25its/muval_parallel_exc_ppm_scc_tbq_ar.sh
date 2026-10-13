@@ -1,3 +1,7 @@
+#!/bin/bash
+
+set -o pipefail
+
 SCRIPT_DIR=$(
     cd $(dirname $0)/..
     pwd

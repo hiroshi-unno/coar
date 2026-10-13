@@ -1,0 +1,6 @@
+(set-logic ALL)
+(declare-const x Bool)
+(define-fun-rec b ((x Bool)) Bool (not x))
+(assert x)
+(assert (b false))
+(check-sat)

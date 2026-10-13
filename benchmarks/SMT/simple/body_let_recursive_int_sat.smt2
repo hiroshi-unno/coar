@@ -1,0 +1,6 @@
+(set-logic ALL)
+(define-fun-rec f ((n Int)) Int (let ((m (- n 1))) (ite (<= n 0) 0 (+ 1 (f m)))))
+(declare-const x Int)
+(assert (= x 2))
+(assert (= (f x) 2))
+(check-sat)

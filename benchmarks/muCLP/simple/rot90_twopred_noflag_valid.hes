@@ -1,0 +1,9 @@
+/* Isolation probe: two mutually recursive predicates and no extra argument.
+   Answers in about a second, so a second predicate is not what makes the
+   flag-carrying version of this rotation hard -- the extra ARGUMENT is, and
+   only when its value changes.  See `..._deadarg_alt_valid.hes`. */
+Main 0
+s.t.
+Main (z:int): bool =mu forall (a:int). forall (b:int). (a = 0 /\ b = 0) \/ L6 a b;
+L6 (a:int) (b:int): bool =mu a > 0 /\ b >= 0 \/ L7 a b;
+L7 (a:int) (b:int): bool =mu a > 0 /\ b >= 0 \/ L6 (-b) a;

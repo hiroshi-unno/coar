@@ -1,0 +1,5 @@
+(set-logic ALL)
+(define-fun-rec f ((n Int)) Bool (let ((a n)) (forall ((n Int)) (= a n))))
+(declare-const x Int)
+(assert (f x))
+(check-sat)

@@ -1,3 +1,12 @@
+(* The earlier resolution phase, kept as an alternative to the clause-graph
+   resolver.  From the newly decided unit examples it resolves the problem's
+   clauses one step, then repeats: a clause left with one ground atom whose
+   other atoms are all matched by decided examples, and whose pure part is
+   then false, becomes a ground unit example; a clause with one non-ground
+   atom turns undecided atoms it matches into decided ones.  It reports
+   [Unsat] when such a step contradicts a decided example, and otherwise
+   adds the derived examples with no record of the clauses they came from,
+   so a refutation it finds carries no checkable witness. *)
 open Core
 open Common
 open Common.Ext
@@ -6,7 +15,7 @@ open Ast
 open PCSatCommon
 
 module Config = struct
-  type t = { verbose : bool } [@@deriving yojson]
+  type t = { verbose : bool [@default false] } [@@deriving yojson]
 
   module type ConfigType = sig
     val config : t
@@ -14,17 +23,14 @@ module Config = struct
 
   let instantiate_ext_files cfg = Ok cfg
 
-  let load_ext_file = function
-    | ExtFile.Filename filename -> (
-        let open Or_error in
-        try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
-        match of_yojson raw_json with
-        | Ok x -> instantiate_ext_files x >>= fun x -> Ok (ExtFile.Instance x)
-        | Error msg ->
-            error_string
-            @@ sprintf "Invalid DefaultResolver Configuration (%s): %s" filename
-                 msg)
-    | Instance x -> Ok (Instance x)
+  include MakeExtFile (struct
+    type nonrec t = t
+
+    let of_yojson = of_yojson
+    let to_yojson = to_yojson
+    let name = "DefaultResolver"
+    let instantiate = instantiate_ext_files
+  end)
 end
 
 module Make
@@ -63,7 +69,7 @@ end = struct
     match Logic.ExtTerm.eval Map.Poly.empty phi with
     | Logic.ExtTerm.BoolLit b -> not b
     | _ -> false
-    | exception _ -> false
+    | exception exn_ when not (Common.Timer.is_async exn_) -> false
 
   let classify_clauses exi_senv =
     Set.fold ~init:(Set.Poly.empty, Set.Poly.empty, Set.Poly.empty)
@@ -275,21 +281,21 @@ end = struct
     |> Set.Poly.map ~f:fst
     |> resolution_loop (dpos, dneg, undecided) senv
     |> Option.value_map ~default:State.Unsat ~f:(fun (dpos', dneg') ->
-           let dpos' = ExClauseSet.normalize dpos' in
-           let dneg' = ExClauseSet.normalize dneg' in
-           let added = Set.diff (Set.union dpos' dneg') (Set.union dpos dneg) in
-           print @@ lazy "*** Newly obtained example instances:";
-           print
-           @@ lazy (String.concat_map_set ~sep:";\n" ~f:ExClause.str_of added);
-           print @@ lazy "";
-           let new_examples =
-             Set.Poly.union_list [ dpos'; dneg'; undecided ]
-             |> (fun exs -> Set.diff exs (VersionSpace.examples_of vs))
-             |> Set.Poly.map ~f:(fun ex ->
-                    (ex, Set.Poly.singleton (ClauseGraph.Dummy, false)))
-           in
-           (*TODO: add sources for new_undecided *)
-           State.of_examples vs new_examples)
+        let dpos' = ExClauseSet.normalize dpos' in
+        let dneg' = ExClauseSet.normalize dneg' in
+        let added = Set.diff (Set.union dpos' dneg') (Set.union dpos dneg) in
+        print @@ lazy "*** Newly obtained example instances:";
+        print
+        @@ lazy (String.concat_map_set ~sep:";\n" ~f:ExClause.str_of added);
+        print @@ lazy "";
+        let new_examples =
+          Set.Poly.union_list [ dpos'; dneg'; undecided ]
+          |> (fun exs -> Set.diff exs (VersionSpace.examples_of vs))
+          |> Set.Poly.map ~f:(fun ex ->
+              (ex, Set.Poly.singleton (ClauseGraph.Dummy, false)))
+        in
+        (*TODO: add sources for new_undecided *)
+        State.of_examples vs new_examples)
     |> fun e -> Ok e
 
   let run_phase _iters = resolve

@@ -12,9 +12,9 @@ let divide q (t : TruthTable.table) (qlist, alist) =
   let palist, nalist =
     Map.Poly.fold alist ~init:(Map.Poly.empty, Map.Poly.empty)
       ~f:(fun ~key:ai ~data:l (palist, nalist) ->
-        if t.table.{q, ai} = TruthTable.label_pos then
+        if t.cells.{q, ai} = TruthTable.label_pos then
           (Map.Poly.add_exn ~key:ai ~data:l palist, nalist)
-        else if t.table.{q, ai} = TruthTable.label_neg then
+        else if t.cells.{q, ai} = TruthTable.label_neg then
           (palist, Map.Poly.add_exn ~key:ai ~data:l nalist)
         else (palist, nalist))
   in
@@ -78,24 +78,24 @@ let select d (qlist, alist) total_num_visited (coeff, bias) ts =
   if total_num_visited = 0 then
     snd
     @@ List.optimize igs ~f:Fn.id ~ord:(fun (ig1, _) (ig2, _) ->
-           Float.(ig1 > ig2))
+        Float.(ig1 > ig2))
   else
     let tmp = sqrt Float.(coeff * log (float_of_int total_num_visited)) in
     snd
     @@ List.argmax igs ~f:(fun (ig, q) ->
-           let score, num_visited =
-             match
-               List.find_map ts ~f:(function
-                 | score, num_visited, Node (q', _, _) when q = q' ->
-                     Some (score, num_visited)
-                 | _ -> None)
-             with
-             | Some (score, num_visited) -> (score, num_visited)
-             | None -> (0. (*dummy score*), 0)
-           in
-           (* UCT-like but the information gain is used as a weight *)
-           Float.(
-             score + (ig * tmp / sqrt (float_of_int Int.(num_visited + bias)))))
+        let score, num_visited =
+          match
+            List.find_map ts ~f:(function
+              | score, num_visited, Node (q', _, _) when q = q' ->
+                  Some (score, num_visited)
+              | _ -> None)
+          with
+          | Some (score, num_visited) -> (score, num_visited)
+          | None -> (0. (*dummy score*), 0)
+        in
+        (* UCT-like but the information gain is used as a weight *)
+        Float.(
+          score + (ig * tmp / sqrt (float_of_int Int.(num_visited + bias)))))
 
 let rec mcts (d : TruthTable.table) (qlist, alist) total_num_visited
     (coeff, bias (* > 0*)) = function

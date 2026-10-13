@@ -1,0 +1,32 @@
+/* The mirror image: the REFUTER's choice reads the record that the dwf reduction
+   adds to the DUAL, so an unsound implementation answers "invalid" on a valid
+   formula.
+
+   Verdict: VALID.  The prover has no choices to make.  A play either stays in P
+   forever -- the refuter picking z in {0,1} each time -- and P is a greatest
+   fixpoint, so the prover wins; or it enters Q z with z in {0,1}, where Q 0 holds
+   at once and Q 1 steps to Q 0.  As fixpoints: Q y = y <= 0 \/ Q (y - 1) has least
+   fixpoint "true everywhere", so P = true is a post-fixpoint of P's equation.
+
+   The dual (MuCLP.Util.get_dual), which MuStrat solves as the refuter's side:
+     Pd x =mu (exists z. 0 <= z /\ z <= 1 /\ Pd z) \/ Qd x
+     Qd y =nu y > 0 /\ Qd (y - 1)        (greatest fixpoint false)
+   with query Pd 0.  Pd is a mu-predicate there, so it receives the record:
+   Pd'(r, x) with each call Pd z becoming Pd'(z,z) /\ Pd'(r,z) /\ WF_Pd(r,z).
+
+   The unsound refuter strategy: z := (if r = 0 then 1 else 0), with WF_Pd the
+   union of max(a,0) > max(b,0) and max(3-a,0) > max(3-b,0) -- the construction
+   of Example 7.3 of Tsukada, Unno, Padon and Shoham (POPL 2025,
+   arXiv:2501.01512v1), on the dual side.  It makes Pd' = true a post-fixpoint, so
+   the transformed dual is VALID and an implementation that allows it answers
+   "invalid" for this file, which is wrong.  An honest refuter (z a function of x)
+   produces a real play over {0,1} that repeats, and the record-keeping branch
+   needs (v,v) in WF_Pd.
+
+   Why Q.  Without it the primal is a pure nu-problem that wins at the first check
+   and the dual never runs.  Q gives the primal a ranking to find (Q 1 -> Q 0), so
+   the primal's first check fails and the dual gets turns. */
+P 0
+s.t.
+P (x: int): bool =nu (forall (z: int). (0 <= z /\ z <= 1) => P z) /\ Q x;
+Q (y: int): bool =mu y <= 0 \/ Q (y - 1);

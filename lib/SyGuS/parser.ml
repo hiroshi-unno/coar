@@ -1,3 +1,9 @@
+(* Reader for the SyGuS input format (linear integer arithmetic only; any other
+   [set-logic] raises), producing the problem of [Problem.Make] with each
+   [synth-fun] or [synth-inv] and its grammar, the declared variables and the
+   constraints (an [inv-constraint] expanded into its three implications).
+   [solution_from_file] reads a list of [define-fun]s, used to load a candidate
+   solution for a run. *)
 open Core
 open Common.Ext
 open Common.Combinator
@@ -146,9 +152,9 @@ end = struct
       List.fold ~init:Map.Poly.empty ~f:(fun acc (sym, rule) ->
           Map.Poly.add_exn acc ~key:sym ~data:rule)
       @@ List.map grammer_def ~f:(function
-           | Sexp.List [ Sexp.Atom sym; Sexp.Atom sort; Sexp.List rule ] ->
-               (sym, (Term.sort_of_text sort, List.map ~f:parse_gTerm rule))
-           | _ -> failwith "invalid syntax in grammer")
+        | Sexp.List [ Sexp.Atom sym; Sexp.Atom sort; Sexp.List rule ] ->
+            (sym, (Term.sort_of_text sort, List.map ~f:parse_gTerm rule))
+        | _ -> failwith "invalid syntax in grammer")
     in
     CFG.mk_cfg starting_symbol grammer
 
@@ -157,9 +163,27 @@ end = struct
     let cfg =
       match grammer with
       | [] -> None
-      | [ Sexp.List symbol_def; Sexp.List grammer_def ] ->
-          parse_cfg symbol_def grammer_def |> Option.some
-      | _ -> failwith "unknown style of a grammer of synth_fun"
+      | _ ->
+          (* A grammar restricts the terms a solution may be built from, and
+             nothing downstream honours it: the conversion to a constraint
+             problem keeps only the function's sort, so the problem solved is the
+             unrestricted one and its answer is reported as the answer to the
+             stated one -- a grammar admitting exactly [0] for a function that
+             must satisfy [f 0 = 1] came back sat, where cvc5 reports the
+             synthesis as failed.  It is refused here, where it is read, rather
+             than after being parsed, because parsing it first produces the wrong
+             complaint: a production naming a synthesis parameter or another
+             nonterminal is sent to the operator table, and the file was rejected
+             with "[term_of_op] z not supported", which reads as a fault in the
+             user's grammar rather than as a feature this tool does not have.
+             No file in this repository's SyGuS corpus carries a grammar -- 0 of
+             2,661 -- so nothing that used to be answered stops being answered. *)
+          failwith
+          @@ sprintf
+               "%s is declared with a grammar, and synthesis restricted by a \
+                grammar is not implemented: the grammar would be ignored and \
+                the answer would be about the unrestricted problem"
+               (Ident.name_of_tvar name)
     in
     let parse_arg = function
       | Sexp.List [ Sexp.Atom _name; Sexp.Atom sort ] -> Term.sort_of_text sort
@@ -169,6 +193,13 @@ end = struct
       List.fold_right ~init:sort args ~f:(parse_arg >> Sort.mk_arrow)
     in
     Problem.add_synth_fun problem name sort cfg
+
+  (* The reader for a grammar, kept although the declaration above refuses one
+     before reaching it.  It is what a repair starts from, and the first thing it
+     needs is the case it does not have: a production naming a synthesis
+     parameter or another nonterminal goes to [Term.term_of_op], which reads it
+     as an operator or a numeral and fails on "z" or on "Start". *)
+  let _ = parse_cfg
 
   let rec parse_term problem fenv venv = function
     | Sexp.List (Sexp.Atom op :: args) -> (
@@ -193,11 +224,19 @@ end = struct
                 | "or" ->
                     or_of (List.map ~f:(parse_term problem fenv venv) args)
                 | "distinct" ->
-                    and_of @@ Set.to_list
-                    @@ Set.fold_distinct_pairs ~init:Set.Poly.empty
-                         ~f:(fun acc x y -> Set.add acc @@ neq_of SInt x y)
-                    @@ Set.Poly.of_list
-                    @@ List.map args ~f:(parse_term problem fenv venv)
+                    (* pairwise over the POSITIONS of the operand list: two
+                       occurrences of one variable are two operands, and
+                       [distinct] is false as soon as two of its arguments are
+                       equal.  Collecting them into a set first dropped the
+                       repetition and made [(distinct x x)] the empty
+                       conjunction, i.e. true. *)
+                    let ts = List.map args ~f:(parse_term problem fenv venv) in
+                    let rec pairs = function
+                      | [] -> []
+                      | t :: rest ->
+                          List.map rest ~f:(neq_of SInt t) @ pairs rest
+                    in
+                    and_of @@ pairs ts
                 | "let" -> (
                     match args with
                     | [
@@ -215,12 +254,36 @@ end = struct
                         mk_let tvar term_sort def_term
                         @@ parse_term problem fenv venv' body
                     | [ Sexp.List binds; body ] ->
-                        let fenv =
-                          List.fold binds ~init:fenv ~f:(fun acc -> function
-                            | Sexp.List [ Sexp.Atom var; _sort; def ] ->
-                                Map.Poly.set acc ~key:(Ident.Tvar var)
-                                  ~data:(parse_term problem fenv venv def)
+                        let bound =
+                          List.map binds ~f:(function
+                            | Sexp.List [ Sexp.Atom var; _; def ]
+                            | Sexp.List [ Sexp.Atom var; def ] ->
+                                (Ident.Tvar var, def)
                             | _ -> failwith "let")
+                        in
+                        let fenv =
+                          (* bindings are simultaneous: definitions are parsed
+                             in the outer [fenv]; SyGuS v1 writes
+                             [(var sort def)], v2/SMT-LIB [(var def)] *)
+                          List.fold bound ~init:fenv ~f:(fun acc (tvar, def) ->
+                              Map.Poly.set acc ~key:tvar
+                                ~data:(parse_term problem fenv venv def))
+                        in
+                        (* The inner binding is the nearer one and must win over
+                           an outer declared variable of the same name.  These
+                           definitions go into [fenv] while a declared variable
+                           lives in [venv], and the lookup for an atom consults
+                           [venv] first -- so the outer declaration won, and
+                           [(declare-var x Int)] beside [(let ((x 0)) x)] made
+                           the body read as the declared [x].  The two
+                           constraints of the report then became [x = 0] and
+                           [x = x], turning a realizable problem unsat and an
+                           infeasible one sat.  Removing the bound names from
+                           [venv] for the BODY restores the nearest binding
+                           without changing where the definitions are read. *)
+                        let venv =
+                          List.fold bound ~init:venv ~f:(fun acc (tvar, _) ->
+                              Map.Poly.remove acc tvar)
                         in
                         parse_term problem fenv venv body
                     | _ -> failwith "let")
@@ -301,7 +364,7 @@ end = struct
     let p3 = mk_atom trans_f @@ var_list @ var_list' in
     let p4 = mk_atom inv_f var_list' in
     let p5 = mk_atom post_f var_list in
-    ( List.fold ~init:problem ~f:(Problem.add_declared_var >> uncurry)
+    ( List.fold ~init:problem ~f:(Problem.add_declared_var >> Tuple2.uncurry)
       @@ var_list @ var_list',
       [
         mk_apps (mk_imply ()) [ p1; p2 ];
@@ -447,7 +510,7 @@ let parse = function
   | _ ->
       Result.fail
       @@ Error.of_thunk (fun () ->
-             sprintf "sygus problem file should start from 'set-logic'")
+          sprintf "sygus problem file should start from 'set-logic'")
 
 let from_file filename =
   match Many.parse_string @@ In_channel.read_all filename with
@@ -455,9 +518,9 @@ let from_file filename =
   | Error err ->
       Result.fail
       @@ Error.of_thunk (fun () ->
-             let pos = Parse_error.position err in
-             let msg = Parse_error.message err in
-             sprintf "at line %d, col %d: %s" pos.line pos.col msg)
+          let pos = Parse_error.position err in
+          let msg = Parse_error.message err in
+          sprintf "at line %d, col %d: %s" pos.line pos.col msg)
 
 let solution_from_file filename =
   try
@@ -469,9 +532,9 @@ let solution_from_file filename =
     | Error err ->
         Result.fail
         @@ Error.of_thunk (fun () ->
-               let pos = Parse_error.position err in
-               let msg = Parse_error.message err in
-               sprintf "at line %d, col %d: %s" pos.line pos.col msg)
+            let pos = Parse_error.position err in
+            let msg = Parse_error.message err in
+            sprintf "at line %d, col %d: %s" pos.line pos.col msg)
   with Sys_error err -> Result.fail @@ Error.of_thunk (fun () -> err)
 
 (*

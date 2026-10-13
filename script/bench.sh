@@ -18,18 +18,17 @@ if [ "$1" != "--xargs" ]; then
         fi
 
         if [ -z "$options" ]; then
-                echo "e.g., options='--synthesizer tb' ... $0"
+                echo "e.g., options='-c ./config/solver/pcsat_tbq_ar.json -p pcsp' ... $0"
                 exit
         fi
 
+        dune build main.exe || exit 1
         find $@ | xargs -P 8 -n 1 $0 --xargs
         exit
 fi
 
-dune build
-
 start_time=$($date +%s%N)
-output=`timeout $timeout _build/default/bin/main.exe --output-iteration $options $2`
+output=`timeout $timeout _build/default/main.exe $options $2`
 
 if [ $? = 124 ]; then
         echo "$2,timeout,"

@@ -1,0 +1,10 @@
+ASAT s.t.
+X0 (x : real) (y : real) : real =nu
+  if 0.0 <= x and x < 1.0 and 0.0 <= y and y < 1.0 then X x y else Y;
+X1 (x : real) (y : real) : real =mu
+  if x >= 0.0 and y >= 1.0 then X x (y - 1.0) else Y;
+X2 (x : real) (y : real) : real =nu
+  if x >= 1.0 and 0.0 <= y and y < 1.0 then X (x - 1.0) x else Y;
+X (x : real) (y : real) : real =nu
+  if 0.0 <= x and x < 1.0 and 0.0 <= y and y < 1.0 then X0 x y else if x >= 0.0 and y >= 1.0 then X1 x y else if x >= 1.0 and 0.0 <= y and y < 1.0 then X2 x y else Y;
+Y : real =nu Y;

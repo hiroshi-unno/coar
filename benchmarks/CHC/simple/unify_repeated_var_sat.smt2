@@ -1,0 +1,8 @@
+(set-logic HORN)
+(declare-datatypes ((Box 0)) (((box (unbox Int)))))
+(declare-datatypes ((Pair 0)) (((mk (fst Int) (snd Box)))))
+(declare-fun P (Pair) Bool)
+(assert (P (mk 0 (box 2))))
+(assert (forall ((n Int) (t Box)) (=> (and (P (mk n t)) (< n 1)) (P (mk (+ n 1) t)))))
+(assert (forall ((x Int)) (=> (P (mk x (box x))) false)))
+(check-sat)

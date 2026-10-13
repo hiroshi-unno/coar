@@ -1,0 +1,14 @@
+%BEGING
+S -> F a.
+F x -> br x (F x).
+%ENDG
+
+%BEGINR
+br -> 2.
+a -> 0.
+%ENDR
+
+%BEGINATA
+q0 br -> (1,q0) /\ (2,q0).
+q0 a -> true.
+%ENDATA

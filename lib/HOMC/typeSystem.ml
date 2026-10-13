@@ -122,13 +122,13 @@ let f rules =
 
   let tenv =
     List.map ~f:(fun id -> (id, TVar (ref None)))
-    @@ List.unique
+    @@ List.dedup_keep_last
     @@ List.concat_map ~f:(snd >> snd >> EHMTT.terms) rules
   in
   let env = env @ tenv in
   List.iter rules ~f:(fun (id, (ids, t)) ->
       let typs, ret = args_and_ret (assoc_var id env) in
-      let env = List.map2_exn ~f:Pair.make ids typs @ env in
+      let env = List.map2_exn ~f:Tuple2.create ids typs @ env in
       try g env t ret
       with Unify (typ1, typ2) ->
         let _ =

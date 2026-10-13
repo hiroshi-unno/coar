@@ -4,6 +4,51 @@
   open Ast.LogicOld
   open Common.Ext
   open CSyntax
+
+  (* The sort of a term that may contain a call.  [Term.sort_of] is structural
+     and a call carries no sort, so it raised and the file was refused; here a
+     call is int, which is not a guess but the type the frontend goes on to give
+     it -- the pass that rewrites a statement's calls into assignments to a fresh
+     variable binds every one of them to an `int` variable.
+
+     That pass is also why the call is left where it is: it lifts calls out of an
+     expression, out of an `if`'s condition and out of an `assume`'s, placing each
+     immediately before the statement -- which inside a loop means at the top of
+     the body, so every iteration calls again -- and then inlines the declared
+     body.  This is what `__VERIFIER_nondet_int()` compared with something needs,
+     what `__VERIFIER_nondet_char() + 1` needs, and also `#dec &Count` -- `#dec`
+     being the name this frontend gives the decrement operator, a function it
+     declares itself whose body assigns through the address and returns the new
+     value, so `--x` in an expression is a call like any other.
+
+     A call the input does not declare is unaffected: it is still refused, by the
+     lookup the lifting pass does, naming the function it could not find.
+
+     The exception is a `float`/`double` nondeterministic draw, which the lifting
+     pass would bind to an `int` variable just the same.  Calling that an int here
+     would let the file be read with the wrong sort where it used to be refused,
+     so it is refused on purpose and says why. *)
+  let sort_of_c term =
+    match term with
+    | Term.FunApp (FunCall name, _, _) -> (
+        match type_of_nondet term with
+        | Some (T_real.SReal, _, _) ->
+            failwith
+              (sprintf
+                 "%s is supported as the whole right-hand side of an assignment \
+                  but not inside an expression: the pass that lifts a call out of \
+                  an expression binds its result to an int variable"
+                 name)
+        | _ -> T_int.SInt)
+    | _ -> Term.sort_of term
+
+  (* `if ((fd = f()))` -- an assignment used as a condition, whose condition is
+     the assigned variable compared with zero.  The rule needs that variable and
+     its sort, and asking the assignment's right-hand side for a sort is what
+     reached [Term.sort_of] with a call. *)
+  let varname_of_cond_assign stmt =
+    let varname, t = Statement.let_assign stmt in
+    (varname, sort_of_c t)
 %}
 
 %token IF ELSE DO WHILE WHILE_TRUE FOR BREAK RETURN GOTO
@@ -148,7 +193,10 @@ VarDecl:
   | VOID decls=IntVarDecls SEMI
   | Int decls=IntVarDecls SEMI
   | VarDeclIntType decls=IntVarDecls SEMI { fun senv ->
-    let varnames, stmts = decls senv in
+    let varnames, stmts, bares = decls senv in
+    (* an object with static storage duration is zero-initialised, so a global
+       declared without an initialiser really is 0 *)
+    let stmts = List.map bares ~f:(Fn.flip Statement.mk_assign (T_int.zero ())) @ stmts in
     List.map varnames ~f:Declare.mk_int,
     match stmts with
     | [] -> []
@@ -156,7 +204,8 @@ VarDecl:
   }
   | FLOAT decls=RealVarDecls SEMI
   | DOUBLE decls=RealVarDecls SEMI { fun senv ->
-    let varnames, stmts = decls senv in
+    let varnames, stmts, bares = decls senv in
+    let stmts = List.map bares ~f:(Fn.flip Statement.mk_assign (T_real.rzero ())) @ stmts in
     List.map ~f:Declare.mk_real varnames,
     match stmts with
     | [] -> []
@@ -164,7 +213,7 @@ VarDecl:
   }
 
 VarDeclIntType:
-  | UNSIGNED Int
+  | UNSIGNED Int { unsigned_seen := true }
   | CONST Int
   | STATIC Int
   | STATIC CONST Int
@@ -247,9 +296,12 @@ InitOne:
   | data=MultipleAssignInit { fun senv ->
     let varnames, term = data senv in
     match type_of_nondet term with
-    | Some (T_int.SInt, _(*32*), _(*true*)) ->
+    | Some (T_int.SInt, bits, signed) ->
       assert (List.length varnames <= 1);
-      List.map varnames ~f:Init.mk_nondet_int_assign(*ToDo*)
+      (* the initialiser's value is bounded by the width of the C type, like an
+         assignment's (this rule had been left out) *)
+      List.concat_map varnames ~f:(fun v ->
+        [Init.mk_nondet_int_assign v; Init.mk_assume (nondet_range v bits signed)])
     | Some (T_real.SReal, _(*32*), _(*true*)) ->
       assert (List.length varnames <= 1);
       List.map varnames ~f:Init.mk_nondet_real_assign
@@ -280,7 +332,7 @@ Statement:
     senv, Statement.mk_if (cond_fml senv) (snd @@ t_stmt senv) (Statement.mk_nop ()) }
   | IF LPAREN cond_assign_stmt=FormulaAssignOne RPAREN t_stmt=StatementIfT { fun senv ->
     let cond_assign_stmt = cond_assign_stmt senv in
-    let varname, s = Statement.varname_of_assign cond_assign_stmt in
+    let varname, s = varname_of_cond_assign cond_assign_stmt in
     let term = Term.mk_var (Ident.Tvar varname) s ~info:Dummy in
     let cond_fml = Formula.neq term (T_int.zero ()) in
     senv,
@@ -303,7 +355,7 @@ IfElse:
     Statement.mk_if (cond_fml senv) (snd @@ t_stmt senv) (snd @@ f_stmt senv) }
   | IF LPAREN cond_assign_stmt=FormulaAssignOne RPAREN t_stmt=StatementIfT ELSE { fun senv ->
     let cond_assign_stmt = cond_assign_stmt senv in
-    let varname, s = Statement.varname_of_assign cond_assign_stmt in
+    let varname, s = varname_of_cond_assign cond_assign_stmt in
     let term = Term.mk_var (Ident.Tvar varname) s ~info:Dummy in
     let cond_fml = Formula.neq term (T_int.zero ()) in
     fun f_stmt ->
@@ -379,56 +431,59 @@ ForInit:
   | { fun _ -> Statement.mk_nop () }
   | stmts=ForInits { fun senv -> Statement.of_statements (stmts senv) }
 
+/* The third component says the declaration carried NO initialiser, which the two
+   consumers below mean different things by: C gives an object with static storage
+   duration a zero initial value, and leaves an automatic one INDETERMINATE.  This
+   rule used to emit `x = 0` for both, so a local was read as zero and a property
+   that a real execution can violate could be proved. */
 IntVarDeclOne:
-  | varname=ID { fun _ ->
-    varname, Some (Statement.mk_assign varname (*ToDo*)(T_int.zero ()))
-  }
-  | ASTERISK varname=ID { fun _ -> varname, (*ToDo*)None }
+  | varname=ID { fun _ -> varname, None, true }
+  | ASTERISK varname=ID { fun _ -> varname, (*ToDo*)None, false }
   | varname=ID EQUAL term=Term { fun senv ->
     let term = term senv in
     match type_of_nondet term with
-    | Some (T_int.SInt, 1, false) ->
-      let x = Term.mk_var (Ident.Tvar varname) T_int.SInt ~info:Dummy in
-      varname,
-      Some (Statement.mk_assume (Formula.or_of [Formula.eq x (T_int.zero ()); Formula.eq x (T_int.one ())]))
-    | Some (T_int.SInt, _(*32*), _(*true*)) -> varname, None (*ToDo*)
+    | Some (T_int.SInt, bits, signed) ->
+      (* a declaration initialised by a nondet call: the value is bounded by the
+         width of the C type, like an assignment's (this rule used to emit
+         nothing for every type but bool) *)
+      varname, Some (Statement.mk_assume (nondet_range varname bits signed)), false
     | Some (s, _, _) -> failwith (sprintf "%s not supported in int var decl" (Term.str_of_sort s))
-    | None -> varname, Some (Statement.mk_assign varname term)
+    | None -> varname, Some (Statement.mk_assign varname term), false
   }
 
 IntVarDecls:
   | decl=IntVarDeclOne { fun senv ->
-    let varname, stmt = decl senv in
-    [varname], Option.to_list stmt
+    let varname, stmt, bare = decl senv in
+    [varname], Option.to_list stmt, (if bare then [varname] else [])
   }
   | decl=IntVarDeclOne COMMA decls=IntVarDecls { fun senv ->
-    let varname, stmt = decl senv in
-    let varnames, stmts = decls senv in
-    varname :: varnames, Option.to_list stmt @ stmts
+    let varname, stmt, bare = decl senv in
+    let varnames, stmts, bares = decls senv in
+    varname :: varnames, Option.to_list stmt @ stmts,
+    (if bare then varname :: bares else bares)
   }
 
 RealVarDeclOne:
-  | varname=ID { fun _ ->
-    varname, Some (Statement.mk_assign varname (*ToDo*)(T_real.rzero ()))
-  }
-  | ASTERISK varname=ID { fun _ -> varname, (*ToDo*)None }
+  | varname=ID { fun _ -> varname, None, true }
+  | ASTERISK varname=ID { fun _ -> varname, (*ToDo*)None, false }
   | varname=ID EQUAL term=Term { fun senv ->
     let term = term senv in
     match type_of_nondet term with
-    | Some (T_real.SReal, _(*32*), _(*true*)) -> varname, None (*ToDo*)
+    | Some (T_real.SReal, _(*32*), _(*true*)) -> varname, None (*ToDo*), false
     | Some (s, _, _) -> failwith (sprintf "%s not supported in real var decl" (Term.str_of_sort s))
-    | None -> varname, Some (Statement.mk_assign varname term)
+    | None -> varname, Some (Statement.mk_assign varname term), false
   }
 
 RealVarDecls:
   | decl=RealVarDeclOne { fun senv ->
-    let varname, stmt = decl senv in
-    [varname], Option.to_list stmt
+    let varname, stmt, bare = decl senv in
+    [varname], Option.to_list stmt, (if bare then [varname] else [])
   }
   | decl=RealVarDeclOne COMMA decls=RealVarDecls { fun senv ->
-    let varname, stmt = decl senv in
-    let varnames, stmts = decls senv in
-    varname :: varnames, Option.to_list stmt @ stmts
+    let varname, stmt, bare = decl senv in
+    let varnames, stmts, bares = decls senv in
+    varname :: varnames, Option.to_list stmt @ stmts,
+    (if bare then varname :: bares else bares)
   }
 
 StatementGeneral:
@@ -436,19 +491,11 @@ StatementGeneral:
     let term = term senv in
     senv,
     match type_of_nondet term with
-    | Some (T_int.SInt, 1, false) ->
-      let x = Term.mk_var (Ident.Tvar varname) T_int.SInt ~info:Dummy in
+    | Some (T_int.SInt, bits, signed) ->
+      (* the value is bounded by the width of the C type *)
       Statement.mk_compound
         (Statement.mk_nondet_int_assign varname)
-        (Statement.mk_assume (Formula.or_of [Formula.eq x (T_int.zero ());
-                                             Formula.eq x (T_int.one ())]))
-    | Some (T_int.SInt, _(*32*), false) ->
-      let x = Term.mk_var (Ident.Tvar varname) T_int.SInt ~info:Dummy in
-      Statement.mk_compound
-        (Statement.mk_nondet_int_assign varname)
-        (Statement.mk_assume (Formula.geq x (T_int.zero ()))) (*ToDo*)
-    | Some (T_int.SInt, _(*32*), true) ->
-      Statement.mk_nondet_int_assign varname (*ToDo*)
+        (Statement.mk_assume (nondet_range varname bits signed))
     | Some (T_real.SReal, _(*32*), _(*true*)) ->
       Statement.mk_nondet_real_assign varname (*ToDo*)
     | Some (s, _, _) -> failwith (sprintf "%s not supported in assign" (Term.str_of_sort s))
@@ -471,12 +518,18 @@ StatementGeneral:
   /* int a = 3, b = 2; */
   | Int decls=IntVarDecls SEMI | CONST Int decls=IntVarDecls SEMI
   | VOID decls=IntVarDecls SEMI | CONST VOID decls=IntVarDecls SEMI { fun senv ->
-    let varnames, stmts = decls senv in
+    let varnames, stmts, bares = decls senv in
+    (* an automatic variable declared without an initialiser has an INDETERMINATE
+       value, so it is drawn rather than set to zero: reading it as 0 is an
+       assumption the program does not license, and it lets a property be proved
+       that a real execution can violate *)
+    let stmts = List.map bares ~f:Statement.mk_nondet_int_assign @ stmts in
     Map.force_merge senv (Map.Poly.of_alist_exn @@ List.map varnames ~f:(fun s -> s, T_int.SInt)),
     Statement.of_statements @@
     List.map varnames ~f:(Fn.flip Statement.mk_vardecl T_int.SInt) @ stmts }
   | FLOAT decls=RealVarDecls SEMI | DOUBLE decls=RealVarDecls SEMI { fun senv ->
-    let varnames, stmts = decls senv in
+    let varnames, stmts, bares = decls senv in
+    let stmts = List.map bares ~f:Statement.mk_nondet_real_assign @ stmts in
     Map.force_merge senv (Map.Poly.of_alist_exn @@ List.map varnames ~f:(fun s -> s, T_real.SReal)),
     Statement.of_statements @@
     List.map varnames ~f:(Fn.flip Statement.mk_vardecl T_real.SReal) @ stmts }
@@ -562,14 +615,14 @@ T_intAddSub:
   | t1=T_intAddSub ADD t2=T_intMulDivMod { fun senv ->
     let t1 = t1 senv in
     let t2 = t2 senv in
-    match Term.sort_of t1, Term.sort_of t2 with
+    match sort_of_c t1, sort_of_c t2 with
     | (T_int.SInt, _) | (_, T_int.SInt) -> T_int.mk_add t1 t2 ~info:Dummy
     | (T_real.SReal, _) | (_, T_real.SReal) -> T_real.mk_radd t1 t2 ~info:Dummy
     | _ -> T_num.mk_nadd t1 t2 ~info:Dummy }
   | t1=T_intAddSub MINUS t2=T_intMulDivMod { fun senv ->
     let t1 = t1 senv in
     let t2 = t2 senv in
-    match Term.sort_of t1, Term.sort_of t2 with
+    match sort_of_c t1, sort_of_c t2 with
     | (T_int.SInt, _) | (_, T_int.SInt) -> T_int.mk_sub t1 t2 ~info:Dummy
     | (T_real.SReal, _) | (_, T_real.SReal) -> T_real.mk_rsub t1 t2 ~info:Dummy
     | _ -> T_num.mk_nsub t1 t2 ~info:Dummy }
@@ -579,21 +632,21 @@ T_intMulDivMod:
   | t1=T_intMulDivMod ASTERISK t2=T_intUnary { fun senv ->
     let t1 = t1 senv in
     let t2 = t2 senv in
-    match Term.sort_of t1, Term.sort_of t2 with
+    match sort_of_c t1, sort_of_c t2 with
     | (T_int.SInt, _) | (_, T_int.SInt) -> T_int.mk_mul t1 t2 ~info:Dummy
     | (T_real.SReal, _) | (_, T_real.SReal) -> T_real.mk_rmul t1 t2 ~info:Dummy
     | _ -> T_num.mk_nmul t1 t2 ~info:Dummy }
   | t1=T_intMulDivMod DIV t2=T_intUnary { fun senv ->
     let t1 = t1 senv in
     let t2 = t2 senv in
-    match Term.sort_of t1, Term.sort_of t2 with
+    match sort_of_c t1, sort_of_c t2 with
     | (T_int.SInt, _) | (_, T_int.SInt) -> T_int.mk_div Value.Truncated t1 t2 ~info:Dummy
     | (T_real.SReal, _) | (_, T_real.SReal) -> T_real.mk_rdiv t1 t2 ~info:Dummy
     | _ -> T_num.mk_ndiv Value.Truncated t1 t2 ~info:Dummy }
   | t1=T_intMulDivMod MOD t2=T_intUnary { fun senv ->
     let t1 = t1 senv in
     let t2 = t2 senv in
-    match Term.sort_of t1, Term.sort_of t2 with
+    match sort_of_c t1, sort_of_c t2 with
     | (T_int.SInt, _) | (_, T_int.SInt) -> T_int.mk_rem Value.Truncated  t1 t2 ~info:Dummy
     | (T_real.SReal, _) | (_, T_real.SReal) -> assert false
     | _ -> T_num.mk_nrem Value.Truncated t1 t2 ~info:Dummy }
@@ -603,7 +656,7 @@ T_intUnary:
   | Cast t=T_intUnary { t }
   | MINUS t=T_intUnary { fun senv ->
     let t = t senv in
-    match Term.sort_of t with
+    match sort_of_c t with
     | T_int.SInt -> T_int.mk_neg t ~info:Dummy
     | T_real.SReal -> T_real.mk_rneg t ~info:Dummy
     | _ -> T_num.mk_nneg t ~info:Dummy }
@@ -627,7 +680,7 @@ T_intAtom:
   | funname=ID LPAREN t1=T_int op=PREDSYM t2=T_int RPAREN { fun senv -> (* ToDo *)
     let t1 = t1 senv in
     let t2 = t2 senv in
-    let cond = Formula.mk_atom @@ Atom.mk_psym_app (op (Term.sort_of t1)) [t1; t2] ~info:Dummy in
+    let cond = Formula.mk_atom @@ Atom.mk_psym_app (op (sort_of_c t1)) [t1; t2] ~info:Dummy in
     Term.mk_fsym_app (FunCall funname) [T_bool.ifte cond (T_int.one ()) (T_int.zero ()) ~info:Dummy] ~info:Dummy
   }
   | ADDR varname=ID { fun _ ->
@@ -676,8 +729,8 @@ T_intAtom:
   | NONDET_DOUBLE LPAREN RPAREN { fun _ -> Term.mk_fsym_app (FunCall funname_nondet_double) [] ~info:Dummy }
 
 Cast:
+  | LPAREN UNSIGNED Int RPAREN { unsigned_seen := true }
   | LPAREN Int RPAREN
-  | LPAREN UNSIGNED Int RPAREN
   | LPAREN VOID RPAREN { () }
 
 /* Ast.LogicOld.T_bool */
@@ -685,4 +738,4 @@ T_bool:
   | t1=T_int op=PREDSYM t2=T_int { fun senv ->
     let t1 = t1 senv in
     let t2 = t2 senv in
-    Atom.mk_psym_app (op (Term.sort_of t1)) [t1; t2] ~info:Dummy }
+    Atom.mk_psym_app (op (sort_of_c t1)) [t1; t2] ~info:Dummy }

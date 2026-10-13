@@ -1,0 +1,5 @@
+(set-logic HORN)
+(define-funs-rec ((g ((b Bool)) Bool) (f ((x Int)) Int))
+ ((ite b (not (g true)) false) (f 0)))
+(assert true)
+(check-sat)

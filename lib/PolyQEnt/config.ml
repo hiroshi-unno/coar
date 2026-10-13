@@ -1,11 +1,14 @@
+(* Configuration of the PolyQEnt wrapper: the path of the external PolyQEnt
+   executable and of its own configuration file (empty for none), and a
+   timeout in milliseconds enforced by running it under [timeout]. *)
 open Core
 open Common.Util
 
 type t = {
-  path : string;
-  config_path : string;
-  timeout : int option;
-  verbose : bool;
+  path : string; [@default "./polyqent/PolyQEnt"]
+  config_path : string; [@default ""]
+  timeout : int option; [@default None]
+  verbose : bool; [@default false]
 }
 [@@deriving yojson]
 
@@ -15,13 +18,11 @@ end
 
 let instantiate_ext_files cfg = Ok cfg
 
-let load_ext_file = function
-  | ExtFile.Instance x -> Ok (ExtFile.Instance x)
-  | Filename filename -> (
-      let open Or_error in
-      try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
-      match of_yojson raw_json with
-      | Ok x -> instantiate_ext_files x >>= fun x -> Ok (ExtFile.Instance x)
-      | Error msg ->
-          error_string
-          @@ sprintf "Invalid PolyQEnt Configuration (%s): %s" filename msg)
+include MakeExtFile (struct
+  type nonrec t = t
+
+  let of_yojson = of_yojson
+  let to_yojson = to_yojson
+  let name = "PolyQEnt"
+  let instantiate = instantiate_ext_files
+end)

@@ -14,11 +14,11 @@ module Config = struct
   [@@deriving yojson]
 
   type t = {
-    verbose : bool;
-    strategy : strategy;
-    check_candidates : bool;
+    verbose : bool; [@default false]
+    strategy : strategy; [@default Common.Util.config_default strategy_of_yojson {|["Template", {}]|}]
+    check_candidates : bool; [@default false]
         (** check whether candidates satisfy the examples *)
-    refine_candidates : bool;
+    refine_candidates : bool; [@default false]
         (** refine candidates until they satisfy the examples *)
   }
   [@@deriving yojson]
@@ -38,17 +38,14 @@ module Config = struct
         >>= fun strategy_cfg ->
         Ok { cfg with strategy = PredicateAbstraction strategy_cfg }
 
-  let load_ext_file = function
-    | ExtFile.Instance x -> Ok (ExtFile.Instance x)
-    | Filename filename -> (
-        let open Or_error in
-        try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
-        match of_yojson raw_json with
-        | Ok x -> instantiate_ext_files x >>= fun x -> Ok (ExtFile.Instance x)
-        | Error msg ->
-            error_string
-            @@ sprintf "Invalid Synthesizer Configuration (%s): %s" filename msg
-        )
+  include MakeExtFile (struct
+    type nonrec t = t
+
+    let of_yojson = of_yojson
+    let to_yojson = to_yojson
+    let name = "Synthesizer"
+    let instantiate = instantiate_ext_files
+  end)
 
   module type ConfigType = sig
     val config : t
@@ -126,7 +123,8 @@ module Make
                   let sub =
                     Map.Poly.of_alist_exn
                     @@ List.map bounds ~f:(fun (x, s) ->
-                        (x, LogicOld.Term.mk_dummy s))
+                        (* distinct per bound variable *)
+                        (x, LogicOld.T_dt.mk_dummy_for x s))
                   in
                   (*LogicOld.Formula.subst_preds
                     (LogicOld.Formula.psub_of_sub sub)
@@ -160,11 +158,33 @@ module Make
       with
       | None -> Ok e
       | Some (cand, clause) ->
-          Debug.print @@ lazy "The candidate\n";
+          let is_partial =
+            List.exists cands ~f:(function
+              | c, Ast.CandSol.Partial _ -> phys_equal c cand
+              | _ -> false)
+          in
+          Debug.print
+          @@ lazy
+               (if is_partial then "The partial candidate\n"
+                else "The candidate\n");
           Debug.print @@ lazy (Ast.CandSol.str_of cand);
           Debug.print @@ lazy "\nviolates the following example\n";
           Debug.print @@ lazy (ExClause.str_of clause);
-          Debug.print @@ lazy "\nThis may be a bug of the synthesizer.";
+          Debug.print
+          @@ lazy
+               (if is_partial then
+                  "\n\
+                   (expected: a partial candidate is only synthesized against \
+                   the examples its target depends on)"
+                else
+                  "\n\
+                   This may be a bug of the synthesizer.  It is more often one \
+                   of two other things, so check them first: the qualifiers of \
+                   this unknown cannot express any solution (look at the \
+                   qualifier list printed for it -- an atom the clause only \
+                   states under a quantifier contributes none), or the example \
+                   is parametric and was checked at one instantiation of its \
+                   parameters while the constraint was generated at another.");
           (* Or_error.error_string "Error in Synthesizer.check_candidates" *)
           Ok e)
     else Ok e
@@ -198,6 +218,11 @@ module Make
     | State.Continue (vs, cands) -> (
         match CandidateChecker.check_candidates vs (List.map ~f:fst cands) with
         | `Unsat -> Ok State.Unsat
+        | `NoCandidate ->
+            (* the synthesis phase returned without proposing anything; hand the
+               round on so that the later phases run on what is already known *)
+            Debug.print @@ lazy " No candidate was proposed.";
+            Ok (State.Continue (vs, cands))
         | `Valid ->
             Debug.print @@ lazy " The new candidate is valid.";
             Ok (State.Continue (vs, cands))

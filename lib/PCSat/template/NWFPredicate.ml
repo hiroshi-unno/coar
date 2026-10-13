@@ -1,3 +1,12 @@
+(* Template for a tagged family of well-founded relations ([Kind.NWF]): one
+   unknown per pair of tags [(l, r)] relates a state of tag [l] to a state of
+   tag [r] (with shared arguments in front), and all of the family's unknowns
+   share one ranking function per tag and one set of shape parameters,
+   registered per problem in [shared_info] so that growing one grows them
+   all.  An instance says the ranking function of [r] at the destination is
+   lexicographically below that of [l] at the source and bounded below, so
+   every chain through the family is finite.  Uses the well-founded
+   template's configuration. *)
 open Core
 open Common
 open Common.Ext
@@ -44,6 +53,9 @@ let state_of param labels : state =
     param.ndc,
     param.nl,
     param.depth,
+    (* [Z.to_int] is safe: the bounds are the template's configured
+       coefficient and constant bounds, grown by one step at a time, never a
+       model integer *)
     Option.map ~f:Z.to_int param.ubrc,
     Option.map ~f:Z.to_int param.ubrd,
     Option.map ~f:Z.to_int param.ubdc,
@@ -126,6 +138,8 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
 
   let name_of () = Arg.name
   let kind_of () = Kind.str_of (Kind.NWF (nwf, (tag_l, tag_r)))
+  let kind = Kind.NWF (nwf, (tag_l, tag_r))
+  let flexible = false
   let sorts_of = Hashtbl.Poly.find_exn sorts_map
   let sorts_l = sorts_of tag_l
   let sorts_r = sorts_of tag_r
@@ -184,6 +198,9 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
   let update_hspace hspace =
     HypSpace.qualifiers_of ~fenv:Arg.fenv !param.depth hspace
 
+  let last_cert : Templ.kind_cert_templ option ref = ref None
+  let kind_cert_template () = !last_cert
+
   let gen_template ~ucore:_ (hspace : HypSpace.hspace) =
     let template =
       let quals_x, terms_x = Hashtbl.find_exn qual_term_map tag_l in
@@ -229,6 +246,7 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
         (params_shared, tag_l, params_left, tag_r, params_right)
         (quals_x, terms_x) (quals_y, terms_y)
     in
+    last_cert := Some template.Templ.cert;
     Debug.print
     @@ lazy
          (sprintf "[%s] predicate template:\n  %s"

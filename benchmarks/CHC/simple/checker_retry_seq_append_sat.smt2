@@ -1,0 +1,8 @@
+(set-logic HORN)
+(declare-fun P ((Seq Int) Int) Bool)
+(assert (forall ((s (Seq Int)) (n Int))
+  (=> (forall ((k Int)) (=> (and (<= 0 k) (< k (seq.len s))) (> (seq.nth s k) n)))
+      (P s n))))
+(assert (forall ((s (Seq Int)) (t (Seq Int)) (n Int) (k Int))
+  (=> (and (P s n) (= t (seq.++ s (seq.unit (+ n 1)))) (<= 0 k) (< k (seq.len t)))
+      (> (seq.nth t k) n))))

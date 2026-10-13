@@ -2,7 +2,14 @@ open Core
 open Common.Ext
 open Ast
 
-type info = { num_cegis_iters : int }
+type info = {
+  num_cegis_iters : int;
+  unsat_witness : UnsatWitness.t option;
+      (* the evidence behind an [Unsat] answer, if a component recorded it *)
+  kind_certificates : (Ident.tvar, KindCert.t) Map.Poly.t;
+      (* for a [Sat] answer: the kind certificates of the accepted candidate *)
+}
+
 type output = PCSP.Problem.solution * info
 
 let merge_infos infos =
@@ -10,6 +17,12 @@ let merge_infos infos =
     num_cegis_iters =
       List.fold ~init:0 ~f:( + )
         (List.map infos ~f:(fun info -> info.num_cegis_iters));
+    unsat_witness = List.find_map infos ~f:(fun info -> info.unsat_witness);
+    kind_certificates =
+      List.fold infos ~init:Map.Poly.empty ~f:(fun acc info ->
+          Map.Poly.merge acc info.kind_certificates ~f:(fun ~key:_ -> function
+            | `Left v | `Right v -> Some v
+            | `Both (v, _) -> Some v));
   }
 
 type _ t =
@@ -17,6 +30,15 @@ type _ t =
   | Unsat
   | Timeout
   | OutSpace of Ident.tvar list
+  (* The solver could not decide whether a candidate violates a clause, so the
+     candidate is neither confirmed nor refuted and the round learnt nothing.
+     Before this existed the validator returned a VACUOUS counterexample
+     instead -- non-empty, so the caller rejected the candidate, and saying
+     nothing, so the example set did not grow -- and the next round proposed the
+     same candidate, forever: a correct invariant was rejected on 45 consecutive
+     iterations that way.  Reported as [unknown], which is an ordinary answer
+     here, rather than as a loop that cannot end. *)
+  | Undecided
   | Continue : VersionSpace.t * 'a -> (VersionSpace.t * 'a) t
 
 (* with solution *)
@@ -31,6 +53,7 @@ let lift : u -> s = function
   | Unsat -> Unsat
   | OutSpace ps -> OutSpace ps
   | Timeout -> Timeout
+  | Undecided -> Undecided
 
 let discard : s -> u = function
   | Continue (vs, _) -> Continue (vs, ())
@@ -38,6 +61,7 @@ let discard : s -> u = function
   | Unsat -> Unsat
   | OutSpace ps -> OutSpace ps
   | Timeout -> Timeout
+  | Undecided -> Undecided
 
 let is_end = function Continue _ -> false | _ -> true
 
@@ -47,6 +71,7 @@ let map ~f = function
   | Unsat -> Unsat
   | OutSpace ps -> OutSpace ps
   | Timeout -> Timeout
+  | Undecided -> Undecided
 
 let bind x f =
   match x with
@@ -55,6 +80,7 @@ let bind x f =
   | Unsat -> Unsat
   | OutSpace ps -> OutSpace ps
   | Timeout -> Timeout
+  | Undecided -> Undecided
 
 let bind_may_err x f =
   let open Or_error in
@@ -64,6 +90,7 @@ let bind_may_err x f =
   | Unsat -> Ok Unsat
   | OutSpace ps -> Ok (OutSpace ps)
   | Timeout -> Ok Timeout
+  | Undecided -> Ok Undecided
 
 module Monad_infix = struct
   let ( >>= ) = bind
@@ -73,23 +100,23 @@ end
 (*let init ?(oracle = None) = Continue (VersionSpace.init oracle, ())*)
 
 let examples_of = function
-  | Sat _ | Unsat | Timeout | OutSpace _ -> assert false
+  | Sat _ | Unsat | Timeout | OutSpace _ | Undecided -> assert false
   | Continue (vs, _) -> VersionSpace.examples_of vs
 
 let pos_neg_und_examples_of = function
-  | Sat _ | Unsat | Timeout | OutSpace _ -> assert false
+  | Sat _ | Unsat | Timeout | OutSpace _ | Undecided -> assert false
   | Continue (vs, _) -> VersionSpace.pos_neg_und_examples_of vs
 
 let labelings_of = function
-  | Sat _ | Unsat | Timeout | OutSpace _ -> assert false
+  | Sat _ | Unsat | Timeout | OutSpace _ | Undecided -> assert false
   | Continue (vs, _) -> vs.labelings
 
 let candidates_of = function
-  | Sat _ | Unsat | Timeout | OutSpace _ -> assert false
+  | Sat _ | Unsat | Timeout | OutSpace _ | Undecided -> assert false
   | Continue (_, cs) -> cs
 
 let version_space_of = function
-  | Sat _ | Unsat | Timeout | OutSpace _ -> assert false
+  | Sat _ | Unsat | Timeout | OutSpace _ | Undecided -> assert false
   | Continue (vs, _) -> vs
 
 let of_version_space vs = Continue (vs, ())

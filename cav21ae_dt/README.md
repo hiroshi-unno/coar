@@ -9,20 +9,36 @@ Satoshi Kura, Hiroshi Unno, and Ichiro Hasuo. Decision Tree Learning in CEGIS-Ba
 
 ### Using Dockerfile
 
-1. Download `cav21ae_dt/Dockerfile` from [the repository](https://github.com/hiroshi-unno/coar)
-
-2. Build a docker image (about 50 min)
+1. Clone this repository (the image is built from the current source; the
+   permanent version of this artifact is on Zenodo)
 
     ```bash
-    cd /path/to/Dockerfile
-    sudo docker build -t cav21ae .
+    git clone <this repository> coar
+    cd coar
     ```
+
+2. Build a docker image (about 50 min; most of it is LLVM 3.6.2, which
+   `llvm2kittel` needs and which is built in a separate stage)
+
+    ```bash
+    sudo docker build -f cav21ae_dt/Dockerfile -t cav21ae .
+    ```
+    The build context is the repository root, not this directory, and BuildKit
+    (the default since Docker 23.0) is required: `cav21ae_dt/Dockerfile.dockerignore`
+    beside the Dockerfile is what keeps this directory and the runner scripts
+    under `script/` in the context.
     This will make a docker image tagged with `cav21ae:latest`.
 
 3. Run the image
     ```bash
-    sudo docker run -it cav21ae:latest /bin/bash --login
+    sudo docker run --rm -it cav21ae:latest /bin/bash --login
     ```
+    The artifact is at `/home/opam/coar`, and TPDB's `C_Integer` category — the
+    335 benchmarks this experiment uses — is at
+    `/home/opam/coar/benchmarks/term-comp/C_Integer`, fetched during the build.
+    The image is built from the current source rather than from the 2021
+    revision the paper used, so the numbers may differ from
+    `cav21ae_dt/term-comp20.csv`; that is intended.
     Now, you are ready to conduct experiments.
 
 ## Verifying Experimental Results on the Paper
@@ -57,7 +73,7 @@ Before proceeding, make sure that the following files and directories are in the
 
     Edit the configuration file `script/muval_dt_term_comp_20rc` and comment out some of benchmarks if you want to exclude them. To comment out a line, add # at the beginning.
     ```bash
-    cd ~/coar
+    cd /home/opam/coar
     vim script/muval_dt_term_comp_20rc
     ```
 
@@ -143,7 +159,7 @@ Assume that we want to solve the termination (or non-termination) problem for `I
 
 2. Solve the problem by MuVal
     ```bash
-    cd ~/coar
+    cd /home/opam/coar
     dune exec main -- -c CONFIG.json -p ltsterm INPUT.t2
     ```
     Possible choices for `CONFIG.json` are as follows.

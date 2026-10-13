@@ -1,0 +1,74 @@
+{
+  "strategy": [
+    "Template",
+    {
+      "solution_template": {
+        "update_strategy": [
+          "UnsatCore"
+        ],
+        "compute_ucores": true,
+        "learn_quals_from_ucores": false,
+        "qualifier_generator": [
+          "Filename",
+          "./config/pcsat/qualifier/tb_fixpoint.json"
+        ],
+        "pex_strategy": [
+          "InstDefault"
+        ],
+        "restart_threshold": null,
+        "predicate_template": [
+          "DNF",
+          [
+            "Filename",
+            "./config/pcsat/template/predicate_dnf_template_thr.json"
+          ]
+        ],
+        "wf_predicate_template": [
+          "WF",
+          [
+            "Filename",
+            "./config/pcsat/template/wf_predicate_template.json"
+          ]
+        ],
+        "fn_predicate_template": [
+          "FN",
+          [
+            "Filename",
+            "./config/pcsat/template/fn_predicate_template_thr.json"
+          ]
+        ],
+        "ne_predicate_template": [
+          "Filename",
+          "./config/pcsat/template/ne_predicate_template.json"
+        ],
+        "adm_predicate_template": [
+          "Filename",
+          "./config/pcsat/template/adm_predicate_template.json"
+        ],
+        "integ_predicate_template": [
+          "Filename",
+          "./config/pcsat/template/integ_predicate_template.json"
+        ],
+        "int_function_template": [
+          "IntFun",
+          [
+            "Filename",
+            "./config/pcsat/template/int_function_template_thr.json"
+          ]
+        ],
+        "regex_template": [
+          "RegEx",
+          [
+            "Filename",
+            "./config/pcsat/template/regex_template.json"
+          ]
+        ],
+        "candidate_select_constant_cases": false,
+        "false_probe_on_negative_examples": false,
+        "keep_timeout_budget_across_rebuild": true,
+        "max_synthesis_timeout": 1000000000,
+        "synthesis_arith_solver": null
+      }
+    }
+  ]
+}

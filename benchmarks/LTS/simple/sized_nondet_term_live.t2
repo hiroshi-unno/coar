@@ -1,0 +1,6 @@
+// The same program as sized_nondet_term_eliminated.t2 with x kept live,
+// which always honoured the range. expected: -p ltsterm YES, -p ltsnterm NO
+START: 0;
+FROM: 0; x := nondet_uint(); TO: 1;
+FROM: 1; assume(x < 0); TO: 1;
+FROM: 1; assume(x >= 0); TO: 2;

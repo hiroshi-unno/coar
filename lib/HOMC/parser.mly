@@ -22,6 +22,18 @@ let coerce_idx = ref 1
 %token LPAREN RPAREN
 %token EOF
 
+/* `->` is right-associative: `a -> b -> c` parses as `a -> (b -> c)`.
+   Without this, `typ -> typ MINUS_RANGLE typ` is ambiguous and menhir resolves
+   it arbitrarily; only the `typ` rule takes its precedence from this token. */
+/* `case ... of` has no terminator, so anything following a branch body is
+   ambiguous between continuing the branch and continuing the enclosing term.
+   As with dangling-else, the innermost/greedy reading wins: a branch body
+   extends as far as possible, and `|` attaches to the nearest `case`.
+   LOWEST_CASE exists only to give the two reducing rules a precedence below
+   the tokens that may continue a branch. */
+%nonassoc LOWEST_CASE
+%nonassoc BAR UIDENT LIDENT INT LPAREN
+%right MINUS_RANGLE
 %left OR
 %left AND
 
@@ -92,13 +104,13 @@ term:
     { EHMTT.Tree(Ident.Tvar $2) }
 
 pats:
-  pat
+  pat %prec LOWEST_CASE
     { [$1] }
 | pat BAR pats
     { $1::$3 }
 
 pat:
-  LIDENT lidents EQUAL_RANGLE term
+  LIDENT lidents EQUAL_RANGLE term %prec LOWEST_CASE
     { Ident.Tvar $1, ($2, $4) }
 
 lidents:

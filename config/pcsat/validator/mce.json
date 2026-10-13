@@ -1,9 +1,4 @@
 {
-    "verbose": false,
-    "strategy_synthesis": false,
-    "parametric_candidates": true,
-    "parametric_examples": true,
-    "smt_timeout": null,
     "cex_strategy": [
         "ExamplesUpTo",
         3

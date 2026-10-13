@@ -1,0 +1,10 @@
+; Parametric mutually recursive datatypes: concrete specialization inferred through constructor arguments.
+(set-logic ALL)
+(declare-datatypes ((A 1) (B 1))
+ ((par (T) ((anil) (acons (value T) (ab (B Bool)))))
+  (par (U) ((bbase (bv U)) (bcons (ba (A U)))))))
+(declare-const a0 (A Bool))
+(declare-const a1 (A Bool))
+(assert (distinct a0 a1))
+(assert (= a1 (acons true (bbase false))))
+(check-sat)

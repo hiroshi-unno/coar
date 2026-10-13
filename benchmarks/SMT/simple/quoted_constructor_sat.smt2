@@ -1,0 +1,5 @@
+(set-logic ALL)
+(declare-datatype D ((|3|)))
+(declare-const x D)
+(assert (= x |3|))
+(check-sat)

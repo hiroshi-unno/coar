@@ -1,3 +1,28 @@
+(* The higher-order term language: simply typed lambda terms with
+   polymorphism ([TyApp], [TyLam]) and effect-annotated arrow sorts, in which
+   constants, formulas, predicates and candidate solutions are all terms.
+   The constraint solver's clauses, templates and candidate solutions live
+   here; the parsers, the frontends and the solver interface use the
+   first-order language [LogicOld].  The two are both load-bearing and are
+   converted with [ExtTerm.of_old_*] and [ExtTerm.to_old_*]; the latter take
+   two sort environments, the unknowns' and then the ordinary variables',
+   and exchanging them is not a type error.
+
+   Symbols ([sym]), sorts and literals are extensible variants: each theory
+   module ([BoolTerm], [IntTerm], ..., [RegexTerm]) adds its constructors and
+   [ExtTerm] includes them all, so a match on them can never be exhaustive
+   and a new symbol fails at run time in every consumer that does not know
+   it.
+
+   Binding forms are [Bin] (lambda, the quantifiers and the fixpoint
+   binders) and [Let].  [Term.subst] is capture-avoiding -- it renames every
+   binder it passes, drawing fresh names from the global counter -- and
+   simultaneous, and beta-reduces the redexes the substitution creates;
+   [rename] is not capture-avoiding.  The faster forms beside it
+   ([subst_sharing], [subst_up_to_bound_names], [subst_rename_on_capture])
+   state, each in its own comment, how their result relates to [subst]'s.
+   [fvs_of] counts neither a name of the process-global function
+   environment nor a registered dummy term as free. *)
 open Core
 open Common.Ext
 open Common.Util
@@ -68,6 +93,13 @@ type sort_env_set = sort_bind Set.Poly.t
 type sort_env_list = sort_bind list
 type sort_env_map = (Ident.tvar, Sort.t) Map.Poly.t
 
+(* Whether a failed variable lookup in [ExtTerm.to_old_*] prints the
+   environments it searched (to stderr) before raising.  Off by default: some
+   callers catch that failure as an ordinary outcome and retry, so the dump
+   would flood a normal run's stderr; solvers turn it on when their
+   configuration is verbose. *)
+let print_unbound_envs = Atomic.make false
+
 let mk_fresh_sort_env_list : Sort.t list -> sort_env_list =
   List.map ~f:(fun sort -> (Ident.mk_fresh_tvar (), sort))
 
@@ -122,6 +154,20 @@ type cand_list = (Ident.tvar * (Sort.t * term)) list
 type model_elem = sort_bind * term option
 type model = model_elem list
 
+(* [first_binding_table model] maps each variable bound in [model] to the
+   first element of [model] that binds it.  Contract: for every [x],
+   [Hashtbl.find (first_binding_table model) x] equals
+   [List.find model ~f:(fun ((y, _), _) -> Stdlib.( = ) y x)] -- [Hashtbl.add]
+   never replaces an existing key, so a later duplicate binding is ignored as
+   [List.find] ignores it, and the table's polymorphic equality on a variable
+   (a string under one constructor) is [Stdlib.( = )].  Built in one pass, so
+   a lookup per variable costs a hash rather than a scan of the model. *)
+let first_binding_table (model : model) : (Ident.tvar, model_elem) Hashtbl.t =
+  let tbl = Hashtbl.Poly.create ~size:(List.length model) () in
+  List.iter model ~f:(fun (((x, _), _) as elem) ->
+      ignore (Hashtbl.add tbl ~key:x ~data:elem : [ `Ok | `Duplicate ]));
+  tbl
+
 module type TermType = sig
   (** Sorts *)
 
@@ -134,6 +180,17 @@ module type TermType = sig
     term ->
     Sort.t
 
+  val open_head_sort_of :
+    (sym -> Sort.t) ->
+    (Ident.svar * Sort.t -> Sort.t -> Sort.t) ->
+    sort_env_map ->
+    term ->
+    Sort.t
+  (** [open_head_sort_of] returns what [open_sort_of] returns on every term it
+      returns a sort for, reading only the spine: an application's argument and
+      a [let]'s definition are not visited, since neither decides the result.
+      Where [open_sort_of] raises because of such a subterm, this returns. *)
+
   val sym_sort_map : (sym, Sort.t) Map.Poly.t
   val arity_of_sym : sym -> int
   val sort_of_sym : sym -> Sort.t
@@ -141,6 +198,10 @@ module type TermType = sig
   (** Printing *)
 
   val open_str_of_sort : (Sort.t -> string) -> Sort.t -> string
+  val open_is_acompound : (Sort.t -> bool) -> Sort.t -> bool
+
+  val open_str_of_sort_acompound :
+    (Sort.t -> bool) -> (Sort.t -> string) -> Sort.t -> string
   val open_str_of : (Sort.t -> string) -> (sym -> string) -> term -> string
   val str_of_sym : sym -> string
   val str_of_termlit : termlit -> string
@@ -157,6 +218,9 @@ module type TermType = sig
   val mk_var_app : Ident.tvar -> term list -> term
   val mk_bind : binder -> Ident.tvar -> Sort.t -> term -> term
   val mk_binds : binder -> sort_env_list -> term -> term
+  val mk_mixed_binds : (binder * Ident.tvar * Sort.t) list -> term -> term
+  val let_quants : term -> (binder * Ident.tvar * Sort.t) list * term
+  val num_binds : term -> int
   val mk_let : Ident.tvar -> Sort.t -> term -> term -> term
   val mk_tyapp : term -> Sort.t -> term
   val mk_tylam : Ident.svar -> term -> term
@@ -223,10 +287,21 @@ module type TermType = sig
     term ->
     Ident.svar_set
 
+  val occurs_free : Ident.tvar -> term -> bool
+  val subst_sharing : (Ident.tvar, term) Map.Poly.t -> term -> term
+  val subst_up_to_bound_names : term_subst_map -> term -> term
+  val subst_rename_on_capture : term_subst_map -> term -> term
+  val subst_up_to_bound_names_linear : term_subst_map -> term -> term
   val fvs_of : term -> Ident.tvar_set
+
+  val fvs_of_shared : unit -> term -> Ident.tvar_set
+  (** [fvs_of_shared ()] is [fvs_of] remembering each node's set by physical
+      identity while the returned function lives *)
+
   val find : f:(term -> bool) -> term -> term option
   val pvar_of_atom : term -> Ident.tvar
   val ast_size : term -> int
+  val ast_size_up_to : int -> term -> int
 
   val let_sort_env_of :
     term ->
@@ -247,7 +322,8 @@ module Term : TermType = struct
   let rec open_sort_of sort_of_sym subst_sort var_env = function
     | Var (v, _) -> (
         try Map.Poly.find_exn var_env v
-        with _ -> failwith @@ Ident.name_of_tvar v ^ " not found")
+        with exn_ when not (Common.Timer.is_async exn_) ->
+          failwith @@ Ident.name_of_tvar v ^ " not found")
     | Con (sym, _) -> sort_of_sym sym
     | App (t1, t2, _) -> (
         match
@@ -279,6 +355,26 @@ module Term : TermType = struct
         | TyLam _ -> failwith "it is not implemented yet"
         | _ -> failwith "The sort of term cannot apply another sort")
     | TyLam _ -> failwith "it is not implemented yet"
+
+  (* The sort of an application is the result sort of its function's sort,
+     whatever the argument's sort is ([open_sort_of] computes the argument's
+     sort and then returns [c.val_type] on both branches of its comparison),
+     and a [let]'s sort is its body's.  So the spine decides the sort, and a
+     caller that only needs the sort of a large term -- the conversion asks it
+     at every [ite] and [case] node, of a whole branch -- need not walk the
+     arguments, nor compare their sorts structurally at each application. *)
+  let rec open_head_sort_of sort_of_sym subst_sort var_env = function
+    | App (t1, _, _) -> (
+        match open_head_sort_of sort_of_sym subst_sort var_env t1 with
+        | Sort.SArrow (_, c) when Sort.is_pure_triple c -> c.val_type
+        | _ -> failwith "The sort of App is unmached")
+    | Bin (Lambda, tvar, sort, term, _) ->
+        let new_var_env = Map.Poly.add_exn var_env ~key:tvar ~data:sort in
+        open_head_sort_of sort_of_sym subst_sort new_var_env term
+    | Let (v, sort, _, t2, _) ->
+        let new_var_env = Map.Poly.add_exn var_env ~key:v ~data:sort in
+        open_head_sort_of sort_of_sym subst_sort new_var_env t2
+    | term -> open_sort_of sort_of_sym subst_sort var_env term
 
   let sym_sort_map = Map.Poly.empty
   let sort_of_sym = Map.Poly.find_exn sym_sort_map
@@ -330,6 +426,38 @@ module Term : TermType = struct
         @@ sprintf "forall %s. %s" v (open_str_of_sort str_of_sort s)
     | sort -> str_of_sort sort
 
+  (* The parameterised form of the printer above: [is_acompound] says which
+     sorts have to be parenthesised when they appear inside a compound one, so a
+     theory can decide that -- an array, say -- without this function knowing
+     about it.  Preserved beside the printer rather than replacing it, since
+     every caller of that one passes no predicate. *)
+  let open_is_acompound is_acompound = function
+    | Sort.SVar _ -> false
+    | Sort.SArrow (_, _) | Sort.SForAll (_, _) -> true
+    | sort -> is_acompound sort
+
+  (* Sort printing parameterised by which sorts need parentheses as an
+     argument. Added for the array work; the existing printers are untouched
+     and nothing uses this yet. *)
+  let rec open_str_of_sort_acompound is_acompound str_of_sort sort =
+    let paren s =
+      if open_is_acompound is_acompound sort then String.paren s else s
+    in
+    match sort with
+    | Sort.SVar (Ident.Svar s) -> s
+    | Sort.SArrow (s, c) ->
+        paren
+        @@ sprintf "(%s) -> %s%s%s"
+             (open_str_of_sort_acompound is_acompound str_of_sort s)
+             (if Sort.is_empty_opsig c.op_sig then "" else "_ |> ")
+             (open_str_of_sort_acompound is_acompound str_of_sort c.val_type)
+             (if Sort.is_pure c.cont_eff then "" else " / _")
+    | Sort.SForAll (Ident.Svar v, s) ->
+        String.paren
+        @@ sprintf "forall %s. %s" v
+             (open_str_of_sort_acompound is_acompound str_of_sort s)
+    | sort -> paren (str_of_sort sort)
+
   let str_of_sym _ = failwith "Term.str_of_sym"
   let str_of_termlit _ = failwith "Term.str_of_termlit"
   let str_of_sort _ = failwith "Term.str_of_sort"
@@ -373,7 +501,7 @@ module Term : TermType = struct
     TyLam (svar, term, Dummy (*ID (get_info_id ())*))
 
   let mk_lambda args term =
-    List.fold_right args ~init:term ~f:(uncurry @@ mk_bind Lambda)
+    List.fold_right args ~init:term ~f:(Tuple2.uncurry @@ mk_bind Lambda)
 
   (** Destruction *)
 
@@ -421,6 +549,20 @@ module Term : TermType = struct
     in
     aux []
 
+  (* The quantifier prefix, outermost first, and the body under it -- the
+     analogue of [let_lam] for [Forall] and [Exists].  A term that is a lambda
+     abstraction over a quantified body is taken apart by the two in turn. *)
+  let let_quants =
+    let rec aux args = function
+      | Bin (((Forall | Exists) as b), tvar, sort, term, _) ->
+          aux ((b, tvar, sort) :: args) term
+      | term -> (List.rev args, term)
+    in
+    aux []
+
+  (* How many binders of any kind a term begins with. *)
+  let rec num_binds = function Bin (_, _, _, t, _) -> 1 + num_binds t | _ -> 0
+
   (** Observation *)
 
   let is_var = function Var (_, _) -> true | _ -> false
@@ -455,6 +597,22 @@ module Term : TermType = struct
     in
     aux term ~next:Fn.id
 
+  (* Does [x] occur free in [term]?  [Set.mem (fvs_of t) x] answers the same
+     question by building the whole set first; this stops at the first
+     occurrence and allocates nothing, which matters where the question is
+     asked once per term per elimination round. *)
+  let rec occurs_free x = function
+    | Var (var, _) ->
+        Stdlib.(var = x)
+        && (not (LogicOld.is_dummy_term var None))
+        && (not @@ Map.Poly.mem (LogicOld.get_fenv ()) var)
+    | Con (_, _) -> false
+    | App (t1, t2, _) -> occurs_free x t1 || occurs_free x t2
+    | Bin (_, var, _, t, _) -> Stdlib.(var <> x) && occurs_free x t
+    | Let (var, _, t1, t2, _) ->
+        occurs_free x t1 || (Stdlib.(var <> x) && occurs_free x t2)
+    | TyApp (t, _, _) | TyLam (_, t, _) -> occurs_free x t
+
   let fvs_of term =
     let rec aux ~next = function
       | Var (var, _) ->
@@ -477,6 +635,54 @@ module Term : TermType = struct
     in
     aux term ~next:Fn.id
 
+  (* [fvs_of_shared ()] is a function [fv] with [Set.mem (fv t) x] iff
+     [Set.mem (fvs_of t) x] for every [t] and [x] (the same sets, as sets:
+     built by the same unions and removals in the same order), which
+     remembers the set of every application, binder and [let] node it reads by
+     physical identity for as long as [fv] lives, so a term that shares
+     subterms is read once per physical node rather than once per path.  It
+     reads the function environment and the dummy terms as [fvs_of] does,
+     and assumes neither changes while [fv] is in use. *)
+  let fvs_of_shared () =
+    let module Tbl = Stdlib.Hashtbl.Make (struct
+      type t = term
+
+      let equal = phys_equal
+      let hash = Common.Ext.Hashtbl.phys_hash
+    end) in
+    let tbl = Tbl.create 1024 in
+    let rec aux ~next t =
+      match t with
+      | Var (var, _) ->
+          if
+            LogicOld.is_dummy_term var None
+            || Map.Poly.mem (LogicOld.get_fenv ()) var
+          then next Set.Poly.empty
+          else next @@ Set.Poly.singleton var
+      | Con (_, _) -> next Set.Poly.empty
+      | TyApp (term, _, _) | TyLam (_, term, _) -> aux term ~next
+      | App _ | Bin _ | Let _ -> (
+          match Tbl.find_opt tbl t with
+          | Some s -> next s
+          | None ->
+              let next s =
+                Tbl.replace tbl t s;
+                next s
+              in
+              match t with
+              | App (t1, t2, _) ->
+                  aux t1 ~next:(fun fvs1 ->
+                      aux t2 ~next:(fun fvs2 -> next @@ Set.union fvs1 fvs2))
+              | Bin (_, var, _, t1, _) ->
+                  aux t1 ~next:(fun fvs -> next @@ Set.remove fvs var)
+              | Let (var, _, t1, t2, _) ->
+                  aux t1 ~next:(fun fvs1 ->
+                      aux t2 ~next:(fun fvs2 ->
+                          next @@ Set.remove (Set.union fvs1 fvs2) var))
+              | _ -> assert false)
+    in
+    fun t -> aux t ~next:Fn.id
+
   let rec find ~f t =
     if f t then Some t
     else
@@ -497,12 +703,45 @@ module Term : TermType = struct
     | Bin (_, _, _, term, _) | TyApp (term, _, _) | TyLam (_, term, _) ->
         1 + ast_size term
 
+  (* [ast_size_up_to cap t] is [min (ast_size t) (cap + 1)], computed in time
+     proportional to its result rather than to [t]'s size.  [ast_size] counts
+     the term as a tree, and a term built by substituting a definition into
+     another one shares the substituted subterm physically wherever the
+     variable occurred, so a chain of such definitions is small in memory
+     while its tree -- which every traversal here walks, conversion and
+     substitution included -- doubles with each link; asking [ast_size] of
+     such a term costs what the traversal it is meant to guard would. *)
+  let ast_size_up_to cap t =
+    let exception Over in
+    let n = ref 0 in
+    let rec go t =
+      incr n;
+      if !n > cap then raise Over;
+      match t with
+      | Var _ | Con _ -> ()
+      | App (t1, t2, _) | Let (_, _, t1, t2, _) ->
+          go t1;
+          go t2
+      | Bin (_, _, _, t1, _) | TyApp (t1, _, _) | TyLam (_, t1, _) -> go t1
+    in
+    try
+      go t;
+      !n
+    with Over -> cap + 1
+
   (** Construction *)
+
+  (* [mk_binds] with the binder chosen per variable, and WITHOUT dropping the
+     ones the body does not mention: a caller rebuilding a prefix it has just
+     taken apart wants the binders it took, not the used ones. *)
+  let mk_mixed_binds bounds body =
+    List.fold_right bounds ~init:body ~f:(fun (binder, tvar, sort) acc ->
+        mk_bind binder tvar sort acc)
 
   let mk_binds binder bounds body =
     let ftv = fvs_of body in
     List.filter bounds ~f:(fst >> Set.mem ftv)
-    |> List.fold_right ~init:body ~f:(uncurry (mk_bind binder))
+    |> List.fold_right ~init:body ~f:(Tuple2.uncurry (mk_bind binder))
 
   (** Substitution *)
 
@@ -556,6 +795,232 @@ module Term : TermType = struct
               subst (Map.Poly.singleton var arg) term' ~next
           | t -> next @@ App (t, arg, info))
     | t -> next t
+
+  (* [subst] rebuilds every node it passes and renames every binder, which costs
+     a traversal and a fresh name even where the substitution cannot apply.  This
+     one returns the subtree it was given, physically, wherever the substituted
+     variables do not occur free in it; the subtrees it does enter are handed to
+     [subst] itself, so the capture-avoidance and the beta-reduction there are
+     unchanged.  Skipping a subtree also skips the beta-reduction [subst] would
+     have performed inside it -- a substitution that applies nowhere still reduces
+     redexes today -- so this is not a drop-in for every caller, and the one it
+     was written for holds the result for its next round, where the preserved
+     sharing is what pays. *)
+  let rec subst_sharing env t =
+    match t with
+    | Var (var, _) -> (
+        match Map.Poly.find env var with Some u -> u | None -> t)
+    | Con _ -> t
+    | App (t1, t2, info) ->
+        let t1' = subst_sharing env t1 in
+        let t2' = subst_sharing env t2 in
+        if phys_equal t1 t1' && phys_equal t2 t2' then t
+        else beta_reduction @@ App (t1', t2', info)
+    | Bin _ | Let _ | TyApp _ | TyLam _ ->
+        (* a binder is handed to [subst], which renames it and avoids capture;
+           the test that decides whether to is the only place a free-variable set
+           is built, and it is built once for the whole subtree rather than at
+           every node of it *)
+        if Set.are_disjoint (Map.key_set env) (fvs_of t) then t else subst env t
+
+  (* [subst env t] up to the names of bound variables, for an [env] of
+     lambda terms substituted into a beta-normal [t] -- the shape a template
+     hole map has.
+
+     Contract: where [t] is beta-normal and no variable of [env] occurs in the
+     function position of an application whose result is applied again, the
+     result is alpha-equivalent to [subst env t], and it is the same term
+     wherever neither [t] nor any substituted lambda body has a binder.
+
+     [subst] reduces [(\x1 .. \xn. b) a1 .. an] one argument at a time, and
+     each step renames every binder still ahead of it with a traversal of
+     [b], so one full application costs about n^2/2 traversals of [b].  Here
+     an application of a lambda whose body mentions none of its parameters,
+     to exactly as many arguments as it has parameters, is replaced by that
+     body in one step, which is what the reduction would arrive at.  Every
+     other occurrence -- of a lambda whose body reads a parameter, or a
+     partial application of any -- is left to [subst], as are the binders of
+     [t] when such occurrences remain.  The variables of [env] must not be
+     rebound inside [t] (fresh names, as template holes are). *)
+  let subst_up_to_bound_names env term =
+    let closed, rest =
+      Map.Poly.partition_map env ~f:(fun lam ->
+          let params, body = let_lam lam in
+          if
+            Set.for_all (fvs_of body) ~f:(fun x ->
+                not (List.Assoc.mem params ~equal:Ident.tvar_equal x))
+          then First (List.length params, body)
+          else Second lam)
+    in
+    (* an occurrence of a closed entry that [go] could not replace, a partial
+       application; [subst] below then takes the whole of [env] *)
+    let leftover = ref false in
+    let term =
+      if Map.Poly.is_empty closed then term
+      else
+        let rec go t =
+          match t with
+          | App (t1, t2, info) -> (
+              match let_apps t with
+              | Var (x, _), args -> (
+                  match Map.Poly.find closed x with
+                  | Some (n, body) when n = List.length args -> body
+                  | _ -> App (go t1, go t2, info))
+              | _ -> App (go t1, go t2, info))
+          | Var (x, _) -> (
+              match Map.Poly.find closed x with
+              | Some (0, body) -> body
+              | Some _ ->
+                  leftover := true;
+                  t
+              | None -> t)
+          | Con _ -> t
+          | Bin (b, v, srt, body, info) -> Bin (b, v, srt, go body, info)
+          | Let (v, srt, t1, t2, info) -> Let (v, srt, go t1, go t2, info)
+          | TyApp (t1, srt, info) -> TyApp (go t1, srt, info)
+          | TyLam (sv, t1, info) -> TyLam (sv, go t1, info)
+        in
+        go term
+    in
+    if !leftover then subst env term
+    else if Map.Poly.is_empty rest then term
+    else subst rest term
+
+  (* [subst env t] up to the names of bound variables, in time linear in the
+     size of what is built.
+
+     Contract: where [t] and every term in [env]'s range are beta-normal, the
+     result is alpha-equivalent to [subst env t]: every variable of [env] free
+     in [t] is replaced, capture-avoidingly, and every redex the replacement
+     creates -- a lambda of [env] applied to arguments, and whatever redex
+     that reduction creates in turn -- is reduced.  A redex already present
+     in [t] or in [env]'s range is not guaranteed to be reduced.
+
+     [subst] renames every binder it passes, with a traversal of the binder's
+     body, and reduces [(\x1 .. \xn. b) a1 .. an] one argument at a time, each
+     step a further such traversal of [b]; a lambda whose body nests binders d
+     deep therefore costs about n times d traversals of its body per
+     application.  A solution recovered by predicate elimination can be a
+     body of 190,000 nodes with binders nested 467 deep, and substituting it
+     into one constraint took a minute.  Here all of an application's
+     arguments are substituted into the body in one traversal, and a binder
+     is renamed only when its name is free in a term that may be substituted
+     under it, which is the only case where keeping it could capture. *)
+  let subst_rename_on_capture env =
+    let fvs_of_terms ts =
+      List.fold ts ~init:Set.Poly.empty ~f:(fun acc t ->
+          Set.union acc (fvs_of t))
+    in
+    (* [avoid] holds every variable free in [env]'s range *)
+    let rec go env avoid t =
+      if Map.Poly.is_empty env then t
+      else
+        match t with
+        | Var (x, _) -> (
+            match Map.Poly.find env x with Some u -> u | None -> t)
+        | Con _ -> t
+        | App _ ->
+            let head, args = let_apps t in
+            apply (go env avoid head) (List.map args ~f:(go env avoid))
+        | Bin (b, v, srt, body, info) ->
+            let env = Map.Poly.remove env v in
+            if Set.mem avoid v then
+              let v' = Ident.mk_fresh_tvar () in
+              Bin
+                ( b,
+                  v',
+                  srt,
+                  go (Map.Poly.set env ~key:v ~data:(mk_var v')) avoid body,
+                  info )
+            else Bin (b, v, srt, go env avoid body, info)
+        | Let (v, srt, t1, t2, info) ->
+            let t1 = go env avoid t1 in
+            let env2 = Map.Poly.remove env v in
+            if Set.mem avoid v then
+              let v' = Ident.mk_fresh_tvar () in
+              Let
+                ( v',
+                  srt,
+                  t1,
+                  go (Map.Poly.set env2 ~key:v ~data:(mk_var v')) avoid t2,
+                  info )
+            else Let (v, srt, t1, go env2 avoid t2, info)
+        | TyApp (t1, srt, info) -> TyApp (go env avoid t1, srt, info)
+        | TyLam (sv, t1, info) -> TyLam (sv, go env avoid t1, info)
+    (* [head args] with [head] and [args] already substituted, reducing a
+       lambda head by all the arguments it takes at once *)
+    and apply head args =
+      match (head, args) with
+      | Bin (Lambda, _, _, _, _), _ :: _ ->
+          let params, body = let_lam head in
+          let k = Int.min (List.length params) (List.length args) in
+          let now_params, later_params = List.split_n params k in
+          let now, later = List.split_n args k in
+          (* a later parameter of the same name shadows an earlier one, so
+             the binding made last wins, as reducing one at a time gives *)
+          let env =
+            List.fold2_exn now_params now ~init:Map.Poly.empty
+              ~f:(fun env (x, _) a -> Map.Poly.set env ~key:x ~data:a)
+          in
+          apply
+            (go env (fvs_of_terms now) (mk_lambda later_params body))
+            later
+      | _ -> mk_apps head args
+    in
+    let avoid =
+      Map.Poly.fold env ~init:Set.Poly.empty ~f:(fun ~key:_ ~data acc ->
+          Set.union acc (fvs_of data))
+    in
+    fun term -> go env avoid term
+
+  (* [subst_up_to_bound_names] with every substitution it would hand to
+     [subst] -- the entries whose body reads their parameters, and the whole
+     map where a closed entry is partially applied -- done by
+     [subst_rename_on_capture] instead.  Same contract: where [term] and
+     [env]'s range are beta-normal, the result is alpha-equivalent to
+     [subst env term]; in time linear in what is built, and it draws a fresh
+     name only for a binder that could capture. *)
+  let subst_up_to_bound_names_linear env term =
+    let closed, rest =
+      Map.Poly.partition_map env ~f:(fun lam ->
+          let params, body = let_lam lam in
+          if
+            Set.for_all (fvs_of body) ~f:(fun x ->
+                not (List.Assoc.mem params ~equal:Ident.tvar_equal x))
+          then First (List.length params, body)
+          else Second lam)
+    in
+    let leftover = ref false in
+    let term' =
+      if Map.Poly.is_empty closed then term
+      else
+        let rec go t =
+          match t with
+          | App (t1, t2, info) -> (
+              match let_apps t with
+              | Var (x, _), args -> (
+                  match Map.Poly.find closed x with
+                  | Some (n, body) when n = List.length args -> body
+                  | _ -> App (go t1, go t2, info))
+              | _ -> App (go t1, go t2, info))
+          | Var (x, _) -> (
+              match Map.Poly.find closed x with
+              | Some (0, body) -> body
+              | Some _ ->
+                  leftover := true;
+                  t
+              | None -> t)
+          | Con _ -> t
+          | Bin (b, v, srt, body, info) -> Bin (b, v, srt, go body, info)
+          | Let (v, srt, t1, t2, info) -> Let (v, srt, go t1, go t2, info)
+          | TyApp (t1, srt, info) -> TyApp (go t1, srt, info)
+          | TyLam (sv, t1, info) -> TyLam (sv, go t1, info)
+        in
+        go term
+    in
+    if !leftover then subst_rename_on_capture env term
+    else if Map.Poly.is_empty rest then term'
+    else subst_rename_on_capture rest term'
 
   let refresh (senv, t) =
     let map = Map.Poly.map senv ~f:(fun _ -> Ident.mk_fresh_tvar ()) in
@@ -673,6 +1138,10 @@ module type BoolTermType = sig
   val mk_bool_neq : unit -> term
   val and_of : term list -> term
   val or_of : term list -> term
+  val or_of_parts : (term * term) list -> term
+
+  val fold_or_of_parts :
+    bool:(bool -> 'a) -> or_:('a -> 'a -> 'a) -> (term * 'a) list -> 'a
   val neg_of : term -> term
   val imply_of : term -> term -> term
   val eq_of : Sort.t -> term -> term -> term
@@ -706,8 +1175,21 @@ module type BoolTermType = sig
     term ->
     (term Set.Poly.t * term Set.Poly.t * term) Set.Poly.t
 
+  val cnf_of_guarded :
+    sort_env_map ->
+    sort_env_map ->
+    term ->
+    (term Set.Poly.t * term Set.Poly.t * term) Set.Poly.t
+
   val nnf_of : term -> term
   val elim_imp : term -> term
+
+  val with_shared_nnf_cnf : (unit -> 'a) -> 'a
+  (** [with_shared_nnf_cnf f] runs [f] with tables, local to this domain and
+      dropped when [f] returns or raises, in which [nnf_of] remembers the
+      image of every node it meets and [cnf_of] whether a subterm mentions an
+      unknown, both by physical identity: the same results as outside, the
+      images shared wherever their arguments were *)
 end
 
 module BoolTerm : BoolTermType = struct
@@ -838,6 +1320,50 @@ module BoolTerm : BoolTermType = struct
     in
     aux None phis
 
+  (* [or_of_parts parts], for [parts] a list of pairs [(phi, phi')]: the
+     disjunction [or_of] builds from the [phi]s -- the same constants dropped,
+     the same stop at a [true], the same left-nested shape -- with each [phi]
+     replaced by its [phi'].
+
+     Contract: for a map [f] that sends every constant to itself and
+     distributes over an application of [Or] to two arguments,
+     [or_of_parts (List.map phis ~f:(fun p -> (p, f p)))] is [f (or_of phis)].
+     A caller substituting into many disjunctions that share most of their
+     disjuncts substitutes the shared ones once and assembles each
+     disjunction with this. *)
+  let or_of_parts parts =
+    let rec aux acc = function
+      | [] -> ( match acc with None -> mk_bool false | Some phi -> phi)
+      | (Con (False, _), _) :: parts' -> aux acc parts'
+      | (Con (True, _), _) :: _ -> mk_bool true
+      | (_, phi) :: parts' -> (
+          match acc with
+          | None -> aux (Some phi) parts'
+          | Some phi' -> aux (Some (mk_apps (mk_or ()) [ phi'; phi ])) parts')
+    in
+    aux None parts
+
+  (* [or_of_parts] with the result built in another representation: [bool b]
+     stands for the constant [b] and [or_ a b] for the disjunction of two
+     parts already built.  The constants are recognised on each pair's first
+     component, as [or_of_parts] recognises them.
+
+     Contract: for a map [g] with [g (mk_bool b) = bool b] and
+     [g (Or t1 t2) = or_ (g t1) (g t2)],
+     [fold_or_of_parts ~bool ~or_ (List.map parts ~f:(fun (p, p') -> (p, g p')))]
+     is [g (or_of_parts parts)]. *)
+  let fold_or_of_parts ~bool ~or_ parts =
+    let rec aux acc = function
+      | [] -> ( match acc with None -> bool false | Some phi -> phi)
+      | (Con (False, _), _) :: parts' -> aux acc parts'
+      | (Con (True, _), _) :: _ -> bool true
+      | (_, phi) :: parts' -> (
+          match acc with
+          | None -> aux (Some phi) parts'
+          | Some phi' -> aux (Some (or_ phi' phi)) parts')
+    in
+    aux None parts
+
   let rec neg_of = function
     | Let (v, s, d, b, i) -> Let (v, s, d, neg_of b, i)
     | term -> mk_app (mk_not ()) term
@@ -848,10 +1374,10 @@ module BoolTerm : BoolTermType = struct
   let ite_of ty t1 t2 t3 = mk_apps (mk_ite ty) [ t1; t2; t3 ]
 
   let mk_forall args term =
-    List.fold_right args ~init:term ~f:(uncurry (mk_bind Forall))
+    List.fold_right args ~init:term ~f:(Tuple2.uncurry (mk_bind Forall))
 
   let mk_exists args term =
-    List.fold_right args ~init:term ~f:(uncurry (mk_bind Exists))
+    List.fold_right args ~init:term ~f:(Tuple2.uncurry (mk_bind Exists))
 
   let forall = mk_binds Forall
   let exists = mk_binds Exists
@@ -1007,19 +1533,26 @@ module BoolTerm : BoolTermType = struct
     | App (t, _, _) -> is_fvar_app fenv t
     | _ -> false
 
-  let rec conjuncts_of = function
-    | App (_, _, _) as t -> (
-        match let_apps t with
-        | Con (And, _), args -> List.concat_map args ~f:conjuncts_of
-        | _, _ -> [ t ])
-    | t -> [ t ]
+  (* The operands of a nest of applications of a symbol [is_op] accepts, left
+     to right.  The list is built onto an accumulator: [and_of] and [or_of]
+     nest to the left, and appending the left operand's list at every level,
+     as a [concat_map] does, made this quadratic in the number of operands,
+     which on a resolvent of tens of thousands of disjuncts was most of the
+     time of the passes that start by listing them. *)
+  let operands_of is_op t =
+    let rec go t acc =
+      match t with
+      | App (_, _, _) -> (
+          match let_apps t with
+          | Con (op, _), args when is_op op ->
+              List.fold_right args ~init:acc ~f:go
+          | _, _ -> t :: acc)
+      | t -> t :: acc
+    in
+    go t []
 
-  let rec disjuncts_of = function
-    | App (_, _, _) as t -> (
-        match let_apps t with
-        | Con (Or, _), args -> List.concat_map args ~f:disjuncts_of
-        | _, _ -> [ t ])
-    | t -> [ t ]
+  let conjuncts_of = operands_of (function And -> true | _ -> false)
+  let disjuncts_of = operands_of (function Or -> true | _ -> false)
 
   (** Transformation *)
 
@@ -1033,7 +1566,53 @@ module BoolTerm : BoolTermType = struct
     let x, ts = let_var_app atom in
     mk_var_app x @@ List.map ts ~f:(insert_let var sort def info)
 
-  let rec nnf_of = function
+  (* Physical tables for [nnf_of] and for the unknown test of [cnf_of]: on a
+     set of clauses whose pure parts are disjunctions of the same physical
+     subformulas, both walked every shared subformula once per clause, and
+     [nnf_of] rebuilt it once per clause, so a set that shares its parts
+     came out of one pass with every part copied.  Keys are compared by
+     physical identity, and hashed by address
+     ([Common.Ext.Hashtbl.phys_hash]), which only spreads the buckets.  The unknown test is remembered with the set of unknowns it
+     was asked for, and reused for an equal set. *)
+  module NnfPhysTbl = Stdlib.Hashtbl.Make (struct
+    type t = term
+
+    let equal = phys_equal
+    let hash = Common.Ext.Hashtbl.phys_hash
+  end)
+
+  type nnf_cnf_tables = {
+    nnf_tbl : term NnfPhysTbl.t;
+    none_tbl : (Ident.tvar Set.Poly.t * bool) NnfPhysTbl.t;
+  }
+
+  let nnf_cnf_scope : nnf_cnf_tables option Domain.DLS.key =
+    Domain.DLS.new_key (fun () -> None)
+
+  let with_shared_nnf_cnf f =
+    match Domain.DLS.get nnf_cnf_scope with
+    | Some _ -> f ()
+    | None ->
+        Domain.DLS.set nnf_cnf_scope
+          (Some
+             {
+               nnf_tbl = NnfPhysTbl.create 1024;
+               none_tbl = NnfPhysTbl.create 1024;
+             });
+        Exn.protect ~f ~finally:(fun () -> Domain.DLS.set nnf_cnf_scope None)
+
+  let rec nnf_of t =
+    match Domain.DLS.get nnf_cnf_scope with
+    | None -> nnf_of_node t
+    | Some tbls -> (
+        match NnfPhysTbl.find_opt tbls.nnf_tbl t with
+        | Some t' -> t'
+        | None ->
+            let t' = nnf_of_node t in
+            NnfPhysTbl.add tbls.nnf_tbl t t';
+            t')
+
+  and nnf_of_node = function
     | App (Con (Not, _), Con (True, _), _) ->
         (* not true -> false *)
         mk_bool false
@@ -1105,12 +1684,58 @@ module BoolTerm : BoolTermType = struct
                              mk_apps (mk_or ()) [nnf_of @@ neg_of t1; nnf_of @@ neg_of t2]]*)
         | _ -> term)
 
-  let rec aux exi_senv senv t k =
+  (* Does [t] mention one of [unknowns] freely?  [fvs_of] answers that by
+     building the whole free-variable set of [t] and handing it to a
+     disjointness test against the key set of the signature, rebuilt from the
+     map at every call -- two full walks and two sets thrown away at every node
+     of the recursion below, where on the great majority of nodes the subterm
+     mentions no unknown at all.  Asked directly, the question stops at the
+     first unknown met and allocates nothing on the way.  The exclusions are
+     [fvs_of]'s: a variable bound inside [t] (a [Let] binds its variable in the
+     definition as well as in the body there), a dummy variable, and a name of
+     the process-global function environment; the cheap membership test comes
+     first so that the two lookups are paid only for a variable that is an
+     unknown. *)
+  let rec mentions_none_of unknowns bound = function
+    | Var (var, _) ->
+        (not (Set.mem unknowns var))
+        || Set.mem bound var
+        || LogicOld.is_dummy_term var None
+        || Map.Poly.mem (LogicOld.get_fenv ()) var
+    | Con (_, _) -> true
+    | App (t1, t2, _) ->
+        mentions_none_of unknowns bound t1 && mentions_none_of unknowns bound t2
+    | Bin (_, var, _, t1, _) -> mentions_none_of unknowns (Set.add bound var) t1
+    | Let (var, _, t1, t2, _) ->
+        let bound = Set.add bound var in
+        mentions_none_of unknowns bound t1 && mentions_none_of unknowns bound t2
+    | TyApp (t, _, _) | TyLam (_, t, _) -> mentions_none_of unknowns bound t
+
+  (* [mentions_none_of unknowns Set.Poly.empty t], remembered in a scope of
+     [with_shared_nnf_cnf] at application nodes, whose answer is the
+     conjunction of their two sides' (an application binds nothing); a
+     binder is asked as before *)
+  let rec mentions_none_of_closed unknowns t =
+    match (t, Domain.DLS.get nnf_cnf_scope) with
+    | App (t1, t2, _), Some tbls -> (
+        match NnfPhysTbl.find_opt tbls.none_tbl t with
+        | Some (us, b) when phys_equal us unknowns || Set.equal us unknowns ->
+            b
+        | _ ->
+            let b =
+              mentions_none_of_closed unknowns t1
+              && mentions_none_of_closed unknowns t2
+            in
+            NnfPhysTbl.replace tbls.none_tbl t (unknowns, b);
+            b)
+    | _ -> mentions_none_of unknowns Set.Poly.empty t
+
+  let rec aux ~guarded exi_senv unknowns senv t k =
     match t with
     | Con (True, _) | App (Con (Not, _), Con (False, _), _) -> k Set.Poly.empty
     | Con (False, _) | App (Con (Not, _), Con (True, _), _) ->
         k @@ Set.Poly.singleton (Set.Poly.empty, Set.Poly.empty, Set.Poly.empty)
-    | t when Set.disjoint (fvs_of t) (Map.key_set exi_senv) ->
+    | t when mentions_none_of_closed unknowns t ->
         k
         @@ Set.Poly.singleton
              (Set.Poly.empty, Set.Poly.empty, Set.Poly.singleton t)
@@ -1125,26 +1750,32 @@ module BoolTerm : BoolTermType = struct
           @@ Set.Poly.singleton
                (Set.Poly.empty, Set.Poly.empty, Set.Poly.singleton (neg_of t))
     | App (App (Con (And, _), t1, _), t2, _) ->
-        aux exi_senv senv t1 (fun res1 ->
-            aux exi_senv senv t2 (fun res2 ->
+        aux ~guarded exi_senv unknowns senv t1 (fun res1 ->
+            aux ~guarded exi_senv unknowns senv t2 (fun res2 ->
                 let phis, cls =
                   Set.union res1 res2
                   |> Set.partition_tf ~f:(fun (ps, ns, _) ->
                       Set.is_empty ps && Set.is_empty ns)
-                  |> Pair.map
-                       (Set.Poly.map ~f:(Triple.trd >> Set.to_list >> or_of))
-                       Fn.id
+                  |> Tuple2.map_both
+                       ~f1:(Set.Poly.map ~f:(trd3 >> Set.to_list >> or_of))
+                       ~f2:Fn.id
                 in
                 if Set.is_empty phis then k cls
                 else
+                  let pure = and_of @@ Set.to_list phis in
+                  let cls =
+                    if guarded && not (Set.is_empty cls) then
+                      let guard = nnf_of @@ neg_of pure in
+                      Set.Poly.map cls ~f:(fun (ps, ns, phis') ->
+                          (ps, ns, Set.add phis' guard))
+                    else cls
+                  in
                   k
                   @@ Set.add cls
-                       ( Set.Poly.empty,
-                         Set.Poly.empty,
-                         Set.Poly.singleton @@ and_of @@ Set.to_list phis )))
+                       (Set.Poly.empty, Set.Poly.empty, Set.Poly.singleton pure)))
     | App (App (Con (Or, _), t1, _), t2, _) ->
-        aux exi_senv senv t1 (fun res1 ->
-            aux exi_senv senv t2 (fun res2 ->
+        aux ~guarded exi_senv unknowns senv t1 (fun res1 ->
+            aux ~guarded exi_senv unknowns senv t2 (fun res2 ->
                 k
                 @@ Set.cartesian_map res1 res2
                      ~f:(fun (ps1, ns1, phis1) (ps2, ns2, phis2) ->
@@ -1152,7 +1783,8 @@ module BoolTerm : BoolTermType = struct
                          Set.union ns1 ns2,
                          Set.union phis1 phis2 ))))
     | Let (var, sort, def, body, info) ->
-        aux exi_senv (Map.Poly.set senv ~key:var ~data:sort) body (fun res ->
+        aux ~guarded exi_senv unknowns (Map.Poly.set senv ~key:var ~data:sort) body
+          (fun res ->
             k
             @@ Set.Poly.map res ~f:(fun (ps, ns, phis) ->
                 ( Set.Poly.map ~f:(insert_let_var_app var sort def info) ps,
@@ -1165,7 +1797,7 @@ module BoolTerm : BoolTermType = struct
           k
           @@ Set.Poly.singleton
                (Set.Poly.singleton t, Set.Poly.empty, Set.Poly.empty)
-        else if Set.disjoint (fvs_of t) (Map.key_set exi_senv) then
+        else if mentions_none_of_closed unknowns t then
           k
           @@ Set.Poly.singleton
                (Set.Poly.empty, Set.Poly.empty, Set.Poly.singleton t)
@@ -1175,7 +1807,7 @@ module BoolTerm : BoolTermType = struct
           | TyApp (Con (Eq, _), SBool, _), [ t1; t2 ]
             when (not (is_fvar_app fenv t1)) && not (is_fvar_app fenv t2) ->
               (* t1 = t2 -> (not t1 or t2) and (t1 or not t2) *)
-              aux exi_senv senv
+              aux ~guarded exi_senv unknowns senv
                 (mk_apps (mk_and ())
                    [
                      mk_apps (mk_or ()) [ nnf_of @@ neg_of t1; nnf_of t2 ];
@@ -1185,7 +1817,7 @@ module BoolTerm : BoolTermType = struct
           | TyApp (Con (Neq, _), SBool, _), [ t1; t2 ]
             when (not (is_fvar_app fenv t1)) && not (is_fvar_app fenv t2) ->
               (* t1 <> t2 -> (t1 or t2) and (not t1 or not t2) *)
-              aux exi_senv senv
+              aux ~guarded exi_senv unknowns senv
                 (mk_apps (mk_and ())
                    [
                      mk_apps (mk_or ()) [ nnf_of t1; nnf_of t2 ];
@@ -1199,11 +1831,35 @@ module BoolTerm : BoolTermType = struct
               @@ Set.Poly.singleton
                    (Set.Poly.empty, Set.Poly.empty, Set.Poly.singleton t))
 
-  (* assume that [term] is in NNF *)
-  let cnf_of exi_senv uni_senv t =
+  let cnf_with ~guarded exi_senv uni_senv t =
     Set.Poly.map ~f:(fun (pos, neg, phis) ->
         (pos, neg, or_of @@ Set.to_list phis))
-    @@ aux exi_senv uni_senv t Fn.id
+    @@ aux ~guarded exi_senv (Map.key_set exi_senv) uni_senv t Fn.id
+
+  (* assume that [term] is in NNF *)
+  let cnf_of exi_senv uni_senv t = cnf_with ~guarded:false exi_senv uni_senv t
+
+  (* [cnf_of] with every clause that comes from a conjunct mentioning an
+     unknown guarded by the negation of the conjunction's predicate-free part.
+     Assumes [t] is in NNF.
+
+     Contract: the result is a clause set equivalent to [t] (as is
+     [cnf_of]'s).  At a conjunction [P /\ Y] with [P] predicate-free,
+     [P /\ Y] is equivalent to [P /\ (not P \/ Y)]: where [P] holds the
+     second conjunct is [Y], and where it fails both sides are false.  So a
+     clause [C] of [Y] may be replaced by [not P \/ C]; under a disjunction
+     [U \/ (P /\ Y)] the clauses become [U \/ P] and [U \/ not P \/ C].
+
+     Why: a Horn engine's derivation uses one clause per step.  From the
+     unguarded form [U(s) \/ (G(s) /\ not U(s'))], whose clauses are
+     [U(s) \/ G(s)] and [U(s) \/ not U(s')], a derivation may step from [s]
+     to [s'] where [G(s)] is false, i.e. continue a play past its end.  A
+     reader that takes every derivation step as a move of the game (and asks
+     a ranking to decrease along it) then asks for steps the game does not
+     contain.  With the guard on the step clause, every step a derivation
+     takes is one the formula allows at that state. *)
+  let cnf_of_guarded exi_senv uni_senv t =
+    cnf_with ~guarded:true exi_senv uni_senv t
 
   let rec elim_imp = function
     | App (App (Con (Imply, _), t1, _), t2, _) ->
@@ -1241,6 +1897,7 @@ module type IntTermType = sig
   val one : unit -> term
   val mk_int : Z.t -> term
   val mk_from_int : int -> term
+  val int_consts_of : term -> Z.t Set.Poly.t
   val mk_neg : unit -> term
   val mk_abs : unit -> term
   val mk_add : unit -> term
@@ -1342,6 +1999,23 @@ module IntTerm : IntTermType = struct
   let one () = mk_con (Int Z.one)
   let mk_int n = mk_con (Int n)
   let mk_from_int n = mk_con (Int (Z.of_int n))
+
+  (* The integer literals a term mentions, by walking it.  A caller wanting
+     the indices a lambda body could be sampled at wants exactly this; reading
+     them out of the term's PRINTED form instead also collects any digit
+     inside a sort or a generated name. *)
+  let int_consts_of t =
+    let rec inner acc (t : term) =
+      match t with
+      | Con (Int z, _) -> Set.add acc z
+      | Con _ | Var _ -> acc
+      | App (t1, t2, _) -> inner (inner acc t1) t2
+      | Bin (_, _, _, t1, _) -> inner acc t1
+      | Let (_, _, t1, t2, _) -> inner (inner acc t1) t2
+      | TyApp (t1, _, _) -> inner acc t1
+      | TyLam (_, t1, _) -> inner acc t1
+    in
+    inner Set.Poly.empty t
   let mk_neg () = mk_con Neg
   let mk_abs () = mk_con Abs
   let mk_add () = mk_con Add
@@ -1853,13 +2527,14 @@ module IRBTerm : IRBTermType = struct
     | BVToInt (size, _) -> Sort.mk_arrow (SBV size) SInt
     | sym -> (
         try Map.Poly.find_exn sym_sort_map sym
-        with _ -> (
+        with exn_ when not (Common.Timer.is_async exn_) -> (
           try IntTerm.sort_of_sym sym
-          with _ -> (
+          with exn_ when not (Common.Timer.is_async exn_) -> (
             try RealTerm.sort_of_sym sym
-            with _ -> (
+            with exn_ when not (Common.Timer.is_async exn_) -> (
               try BVTerm.sort_of_sym sym
-              with _ -> failwith "IRBTerm.sort_of_sym"))))
+              with exn_ when not (Common.Timer.is_async exn_) ->
+                failwith "IRBTerm.sort_of_sym"))))
 
   (** Printing *)
 
@@ -1870,10 +2545,12 @@ module IRBTerm : IRBTermType = struct
     | BVToInt _ -> "BVToInt"
     | sym -> (
         try IntTerm.str_of_sym sym
-        with _ -> (
+        with exn_ when not (Common.Timer.is_async exn_) -> (
           try RealTerm.str_of_sym sym
-          with _ -> (
-            try BVTerm.str_of_sym sym with _ -> failwith "IRBTerm.str_of_sym")))
+          with exn_ when not (Common.Timer.is_async exn_) -> (
+            try BVTerm.str_of_sym sym
+            with exn_ when not (Common.Timer.is_async exn_) ->
+              failwith "IRBTerm.str_of_sym")))
 
   let str_of_termlit = function
     | IntLit n -> Z.to_string n
@@ -1916,7 +2593,9 @@ module IRBTerm : IRBTermType = struct
   let eval_sym = function
     | RealToInt ->
         FunLit
-          (function RealLit x -> IntLit (Q.to_bigint x) | _ -> assert false)
+          (function
+          | RealLit x -> IntLit (Z.fdiv (Q.num x) (Q.den x)) (* floor *)
+          | _ -> assert false)
     | IntToReal ->
         FunLit
           (function IntLit x -> RealLit (Q.of_bigint x) | _ -> assert false)
@@ -2326,7 +3005,8 @@ module rec Datatype : DatatypeType = struct
       { dt with params; conses = conses' } )
 
   and update_params t params =
-    uncurry update_dt @@ update_dt_params t (dt_of t) params [ name_of t ]
+    Tuple2.uncurry update_dt
+    @@ update_dt_params t (dt_of t) params [ name_of t ]
 
   let update_conses t conses = update_dt t { (dt_of t) with conses }
 
@@ -2585,6 +3265,89 @@ and DatatypeTerm :
     | _ -> assert false
 end
 
+module type SeqTermType = sig
+  include TermType
+
+  (* SMT-LIB's parametric sequences, the counterpart of
+     [LogicOld.T_seq]; not [LogicOld.T_trace], which is a word algebra
+     over abstract symbols with no element sort. *)
+  type sym +=
+    | SqEmpty of Sort.t
+    | SqUnit of Sort.t
+    | SqConcat of Sort.t
+    | SqLen of Sort.t
+    | SqNth of Sort.t
+    | SqExtract of Sort.t
+    | SqStore of Sort.t
+
+  type Sort.t += SSeq of Sort.t
+
+  val elem_sort_of : Sort.t -> Sort.t
+  val is_seq_sort : Sort.t -> bool
+  val mk_seq_sort : Sort.t -> Sort.t
+  val mk_empty : Sort.t -> term
+  val mk_unit : Sort.t -> term
+  val mk_concat : Sort.t -> term
+  val mk_len : Sort.t -> term
+  val mk_nth : Sort.t -> term
+  val mk_extract : Sort.t -> term
+  val mk_sq_store : Sort.t -> term
+end
+
+module SeqTerm : SeqTermType = struct
+  include Term
+
+  type sym +=
+    | SqEmpty of Sort.t
+    | SqUnit of Sort.t
+    | SqConcat of Sort.t
+    | SqLen of Sort.t
+    | SqNth of Sort.t
+    | SqExtract of Sort.t
+    | SqStore of Sort.t
+
+  type Sort.t += SSeq of Sort.t
+
+  (** Sorts *)
+
+  let sort_of_sym = function
+    | SqEmpty se -> SSeq se
+    | SqUnit se -> Sort.mk_fun [ se; SSeq se ]
+    | SqConcat se -> Sort.mk_fun [ SSeq se; SSeq se; SSeq se ]
+    | SqLen se -> Sort.mk_fun [ SSeq se; IntTerm.SInt ]
+    | SqNth se -> Sort.mk_fun [ SSeq se; IntTerm.SInt; se ]
+    | SqExtract se ->
+        Sort.mk_fun [ SSeq se; IntTerm.SInt; IntTerm.SInt; SSeq se ]
+    | SqStore se -> Sort.mk_fun [ SSeq se; IntTerm.SInt; se; SSeq se ]
+    | _ -> failwith "SeqTerm.sort_of_sym"
+
+  let elem_sort_of = function SSeq se -> se | _ -> failwith "not a seq sort"
+  let is_seq_sort = function SSeq _ -> true | _ -> false
+
+  (** Printing *)
+
+  let str_of_sym = function
+    | SqEmpty _ -> "seq.empty"
+    | SqUnit _ -> "seq.unit"
+    | SqConcat _ -> "seq.++"
+    | SqLen _ -> "seq.len"
+    | SqNth _ -> "seq.nth"
+    | SqExtract _ -> "seq.extract"
+    | SqStore _ -> "seq.store"
+    | _ -> failwith "SeqTerm.str_of_sym"
+
+  (** Construction *)
+
+  let mk_seq_sort se = SSeq se
+  let mk_empty se = Term.mk_con (SqEmpty se)
+  let mk_unit se = Term.mk_con (SqUnit se)
+  let mk_concat se = Term.mk_con (SqConcat se)
+  let mk_len se = Term.mk_con (SqLen se)
+  let mk_nth se = Term.mk_con (SqNth se)
+  let mk_extract se = Term.mk_con (SqExtract se)
+  let mk_sq_store se = Term.mk_con (SqStore se)
+end
+
 module type ArrayTermType = sig
   include TermType
 
@@ -2592,6 +3355,7 @@ module type ArrayTermType = sig
     | AConst of Sort.t * Sort.t
     | AStore of Sort.t * Sort.t
     | ASelect of Sort.t * Sort.t
+    | ALambda of Sort.t * Sort.t
 
   type Sort.t += SArray of Sort.t * Sort.t
 
@@ -2600,6 +3364,9 @@ module type ArrayTermType = sig
   val index_sort_of : Sort.t -> Sort.t
   val elem_sort_of : Sort.t -> Sort.t
   val is_array_sort : Sort.t -> bool
+  val count_array_args : Sort.t -> int
+  val count_array_params : term -> int
+  val occurs_array_literal : term -> bool
 
   (** Construction *)
 
@@ -2607,15 +3374,19 @@ module type ArrayTermType = sig
   val mk_select : Sort.t -> Sort.t -> term
   val mk_store : Sort.t -> Sort.t -> term
   val mk_const_array : Sort.t -> Sort.t -> term
+  val mk_array_lambda : Sort.t -> Sort.t -> term
 end
 
 module ArrayTerm : ArrayTermType = struct
   include Term
 
+  (* [ALambda (si, se)] turns a function into the array it denotes: applied to
+     a [Bin (Lambda, x, si, body)] it is [LogicOld.T_array.ALambda]. *)
   type sym +=
     | AConst of Sort.t * Sort.t
     | AStore of Sort.t * Sort.t
     | ASelect of Sort.t * Sort.t
+    | ALambda of Sort.t * Sort.t
 
   type Sort.t += SArray of Sort.t * Sort.t
 
@@ -2626,6 +3397,8 @@ module ArrayTerm : ArrayTermType = struct
     | AStore (s1, s2) ->
         Sort.mk_fun [ SArray (s1, s2); s1; s2; SArray (s1, s2) ]
     | ASelect (s1, s2) -> Sort.mk_fun [ SArray (s1, s2); s1; s2 ]
+    | ALambda (s1, s2) ->
+        Sort.mk_fun [ Sort.mk_fun [ s1; s2 ]; SArray (s1, s2) ]
     | _ -> failwith "ArrayTerm.sort_of_sym"
 
   let index_sort_of = function
@@ -2638,12 +3411,41 @@ module ArrayTerm : ArrayTermType = struct
 
   let is_array_sort = function SArray _ -> true | _ -> false
 
+  (* How many of a function sort's argument positions are arrays. *)
+  let count_array_args s =
+    let rec inner = function
+      | Sort.SArrow (SArray _, c) -> 1 + inner c.val_type
+      | Sort.SArrow (_, c) -> inner c.val_type
+      | _ -> 0
+    in
+    inner s
+
+  (* The same question of a lambda term, which is what a caller holding a
+     template has rather than its sort. *)
+  let count_array_params t =
+    List.count (fst @@ Term.let_lam t) ~f:(snd >> is_array_sort)
+
+  (* Does a constant array occur anywhere in this term?  An array built as a
+     literal rather than read is the shape that takes a goal out of the
+     fragment a first-order solver decides, so a caller may need to know
+     before asking one. *)
+  let occurs_array_literal t =
+    let rec inner (t : term) =
+      match t with
+      | Con (AConst _, _) -> true
+      | Con _ -> false
+      | App (f, a, _) -> inner f || inner a
+      | _ -> false
+    in
+    inner t
+
   (** Printing *)
 
   let str_of_sym = function
     | AConst _ -> "array_const"
     | AStore _ -> "store"
     | ASelect _ -> "select"
+    | ALambda _ -> "array_lambda"
     | _ -> failwith "ArrayTerm.str_of_sym"
 
   (** Construction *)
@@ -2652,6 +3454,7 @@ module ArrayTerm : ArrayTermType = struct
   let mk_const_array s1 s2 = Term.mk_con (AConst (s1, s2))
   let mk_store s1 s2 = Term.mk_con (AStore (s1, s2))
   let mk_select s1 s2 = Term.mk_con (ASelect (s1, s2))
+  let mk_array_lambda s1 s2 = Term.mk_con (ALambda (s1, s2))
 end
 
 module type StringTermType = sig
@@ -2698,50 +3501,50 @@ module StringTerm : StringTermType = struct
     | _ -> assert false
 end
 
-module type SequenceTermType = sig
+module type TraceTermType = sig
   include TermType
 
-  type Sort.t += SSequence of bool
+  type Sort.t += STrace of bool
 
   type sym +=
-    | SeqEpsilon
-    | SeqSymbol of string
-    | SeqConcat of bool
-    | SeqLeftQuotient of bool
-    | SeqRightQuotient of bool
+    | TrEpsilon
+    | TrSymbol of string
+    | TrConcat of bool
+    | TrLeftQuotient of bool
+    | TrRightQuotient of bool
 end
 
-module SequenceTerm : SequenceTermType = struct
+module TraceTerm : TraceTermType = struct
   include Term
 
-  type Sort.t += SSequence of bool (* true: finite, false: infinite *)
+  type Sort.t += STrace of bool (* true: finite, false: infinite *)
 
   type sym +=
-    | SeqEpsilon
-    | SeqSymbol of string
-    | SeqConcat of bool (* the first argument must be finite *)
-    | SeqLeftQuotient of bool (* the first argument must be finite *)
-    | SeqRightQuotient of bool (* the first argument must be finite *)
+    | TrEpsilon
+    | TrSymbol of string
+    | TrConcat of bool (* the first argument must be finite *)
+    | TrLeftQuotient of bool (* the first argument must be finite *)
+    | TrRightQuotient of bool (* the first argument must be finite *)
 
   (** Sorts *)
 
   let sort_of_sym = function
-    | SeqEpsilon -> SSequence true
-    | SeqSymbol _ev -> SSequence true
-    | SeqConcat fin -> SSequence fin
-    | SeqLeftQuotient fin -> SSequence fin
-    | SeqRightQuotient fin -> SSequence fin
-    | _ -> failwith "SequenceTerm.sort_of_sym"
+    | TrEpsilon -> STrace true
+    | TrSymbol _ev -> STrace true
+    | TrConcat fin -> STrace fin
+    | TrLeftQuotient fin -> STrace fin
+    | TrRightQuotient fin -> STrace fin
+    | _ -> failwith "TraceTerm.sort_of_sym"
 
   (** Printing *)
 
   let str_of_sym = function
-    | SeqEpsilon -> "eps"
-    | SeqSymbol ev -> ev
-    | SeqConcat fin -> "concat" ^ if fin then "_fin" else "_inf"
-    | SeqLeftQuotient _ -> "left_quot"
-    | SeqRightQuotient _ -> "right_quot"
-    | _ -> failwith "SequenceTerm.str_of_sym"
+    | TrEpsilon -> "eps"
+    | TrSymbol ev -> ev
+    | TrConcat fin -> "concat" ^ if fin then "_fin" else "_inf"
+    | TrLeftQuotient _ -> "left_quot"
+    | TrRightQuotient _ -> "right_quot"
+    | _ -> failwith "TraceTerm.str_of_sym"
 end
 
 module type RegexTermType = sig
@@ -2752,6 +3555,7 @@ module type RegexTermType = sig
   type sym +=
     | RegEmpty
     | RegFull
+    | RegAllChar
     | RegEpsilon
     | RegStr
     | RegComplement
@@ -2775,6 +3579,7 @@ module RegexTerm : RegexTermType = struct
   type sym +=
     | RegEmpty
     | RegFull
+    | RegAllChar
     | RegEpsilon
     | RegStr
     | RegComplement
@@ -2790,6 +3595,7 @@ module RegexTerm : RegexTermType = struct
   let str_of_sym = function
     | RegEmpty -> "empty"
     | RegFull -> "full"
+    | RegAllChar -> "allchar"
     | RegEpsilon -> "eps"
     | RegStr -> "str"
     | RegComplement -> "complement"
@@ -2813,8 +3619,9 @@ module type ExtTermType = sig
   include RefTermType
   include DatatypeTermType
   include ArrayTermType
+  include SeqTermType
   include StringTermType
-  include SequenceTermType
+  include TraceTermType
   include RegexTermType
 
   type sym +=
@@ -2835,8 +3642,8 @@ module type ExtTermType = sig
     | NotIsCons of string * Datatype.t
     | IsPrefix of bool
     | NotIsPrefix of bool
-    | SeqInRegExp of bool * string Grammar.RegWordExp.t
-    | NotSeqInRegExp of bool * string Grammar.RegWordExp.t
+    | TrInRegExp of bool * string Grammar.RegWordExp.t
+    | NotTrInRegExp of bool * string Grammar.RegWordExp.t
     | StrInRegExp
     | NotStrInRegExp
 
@@ -2848,6 +3655,8 @@ module type ExtTermType = sig
   val mk_geq : unit -> term
   val mk_lt : unit -> term
   val mk_gt : unit -> term
+  val mk_rleq : unit -> term
+  val mk_rlt : unit -> term
   val mk_pdiv : unit -> term
   val mk_isint : unit -> term
   val mk_int_ite : unit -> term
@@ -2869,10 +3678,25 @@ module type ExtTermType = sig
   val remove_dontcare : model -> term_bind list
   val svs_of_sym : sym -> Ident.svar_set
 
+  val sort_reaches_svar : (Ident.svar -> bool) -> Sort.t -> bool
+
+  val sym_may_reach_svar : sort_reaches:(Sort.t -> bool) -> sym -> bool
+
+  val term_may_reach_svar :
+    sort_reaches:(Sort.t -> bool) ->
+    sym_reaches:(sym -> bool) ->
+    free_var_reaches:(Ident.tvar -> bool) ->
+    term ->
+    bool
+
   (** Observation*)
 
   val svs_of_sort : Sort.t -> Ident.svar_set
   val sort_of : sort_env_map -> term -> Sort.t
+
+  val head_sort_of : sort_env_map -> term -> Sort.t
+  (** [head_sort_of] is [sort_of] read off the spine
+      ([Term.open_head_sort_of]): the same sort wherever [sort_of] gives one. *)
   val of_old_sort : LogicOld.Sort.t -> Sort.t
   val of_old_sort_list : LogicOld.Sort.t list -> Sort.t list
 
@@ -2881,6 +3705,33 @@ module type ExtTermType = sig
   val of_old_sort_bind : Ident.tvar * LogicOld.Sort.t -> sort_bind
   val of_old_sort_env : LogicOld.sort_env_list -> sort_env_list
   val to_old_sort : Sort.t -> LogicOld.Sort.t
+
+  val with_shared_datatype_conversion : (unit -> 'a) -> 'a
+
+  val share_term_conversion : bool Atomic.t
+  (** when set, [with_shared_term_conversion] opens a scope; otherwise it only
+      runs its argument *)
+
+  val share_term_conversion_terms : bool Atomic.t
+  (** when set too, a scope also remembers term images, in both directions,
+      and [to_old] remembers an image only when computing it drew no fresh
+      name: the conversions then give, inside a scope, the values and the
+      fresh-name draws they give outside one *)
+
+  val with_shared_term_conversion : (unit -> 'a) -> 'a
+  (** [with_shared_term_conversion f] runs [f] with tables, local to this
+      domain and dropped when [f] returns or raises, in which [of_old_formula]
+      remembers the image of every formula node it converts and [to_old_fml]
+      the image of every formula-position subterm, both by physical identity;
+      a node met again (physically the same value) gets the image computed the
+      first time, so a set of formulas that share subformulas converts to a
+      set that shares their images, at the cost of the shared part once.  The
+      image is the one a conversion outside the scope gives (equal values,
+      possibly more shared).  Opens a datatype scope as well. *)
+  (** [with_shared_datatype_conversion f] runs [f] with the datatype tables of
+      [of_old_sort] and [to_old_sort] shared across every conversion [f]
+      makes in this domain, so a datatype value met again is not converted
+      again; the tables are dropped when [f] returns or raises. *)
   val to_old_sort_bind : sort_bind -> Ident.tvar * LogicOld.Sort.t
   val of_old_term : LogicOld.Term.t -> term
   val of_old_atom : LogicOld.Atom.t -> term
@@ -2901,6 +3752,15 @@ module type ExtTermType = sig
     sort_env_map -> sort_env_map -> term -> term list -> LogicOld.Formula.t
 
   val to_old_fml : sort_env_map -> sort_env_map -> term -> LogicOld.Formula.t
+
+  val sort_senv_of : sort_env_map -> sort_env_map -> sort_env_map
+  (** the environment the conversion reads a subterm's sort in: the unknowns'
+      and the ordinary variables' environments merged, which fails with
+      [Failure "force_merge"] on a name bound at two sorts, and the defined
+      functions' sorts that neither shadows; equal to [sort_senv_of_rebuilt]
+      binding for binding, from caches kept per domain *)
+
+  val sort_senv_of_rebuilt : sort_env_map -> sort_env_map -> sort_env_map
 
   val to_old_subst :
     sort_env_map -> sort_env_map -> term_subst_map -> LogicOld.TermSubst.t
@@ -2929,8 +3789,9 @@ module ExtTerm :
   include RefTerm
   include DatatypeTerm
   include ArrayTerm
+  include SeqTerm
   include StringTerm
-  include SequenceTerm
+  include TraceTerm
   include RegexTerm
 
   type sym +=
@@ -2955,8 +3816,8 @@ module ExtTerm :
     | NotIsCons of string * Datatype.t
     | IsPrefix of bool
     | NotIsPrefix of bool
-    | SeqInRegExp of bool * string Grammar.RegWordExp.t
-    | NotSeqInRegExp of bool * string Grammar.RegWordExp.t
+    | TrInRegExp of bool * string Grammar.RegWordExp.t
+    | NotTrInRegExp of bool * string Grammar.RegWordExp.t
     | StrInRegExp
     | NotStrInRegExp
 
@@ -2995,41 +3856,41 @@ module ExtTerm :
         Sort.mk_arrow (DatatypeTerm.SDT dt) BoolTerm.SBool
     | IsPrefix fin | NotIsPrefix fin ->
         Sort.mk_fun
-          [
-            SequenceTerm.SSequence true;
-            SequenceTerm.SSequence fin;
-            BoolTerm.SBool;
-          ]
-    | SeqInRegExp (fin, _regexp) | NotSeqInRegExp (fin, _regexp) ->
-        Sort.mk_arrow (SequenceTerm.SSequence fin) BoolTerm.SBool
+          [ TraceTerm.STrace true; TraceTerm.STrace fin; BoolTerm.SBool ]
+    | TrInRegExp (fin, _regexp) | NotTrInRegExp (fin, _regexp) ->
+        Sort.mk_arrow (TraceTerm.STrace fin) BoolTerm.SBool
     | sym -> (
         try Map.Poly.find_exn sym_sort_map sym
-        with _ -> (
+        with exn_ when not (Common.Timer.is_async exn_) -> (
           try BoolTerm.sort_of_sym sym
-          with _ -> (
+          with exn_ when not (Common.Timer.is_async exn_) -> (
             try IRBTerm.sort_of_sym sym
-            with _ -> (
+            with exn_ when not (Common.Timer.is_async exn_) -> (
               try TupleTerm.sort_of_sym sym
-              with _ -> (
+              with exn_ when not (Common.Timer.is_async exn_) -> (
                 try DatatypeTerm.sort_of_sym sym
-                with _ -> (
+                with exn_ when not (Common.Timer.is_async exn_) -> (
                   try ArrayTerm.sort_of_sym sym
-                  with _ -> (
-                    try StringTerm.sort_of_sym sym
-                    with _ -> (
-                      try SequenceTerm.sort_of_sym sym
-                      with _ -> (
-                        try RegexTerm.sort_of_sym sym
-                        with _ -> failwith "ExtTerm.sort_of_sym")))))))))
+                  with exn_ when not (Common.Timer.is_async exn_) -> (
+                    try SeqTerm.sort_of_sym sym
+                    with exn_ when not (Common.Timer.is_async exn_) -> (
+                      try StringTerm.sort_of_sym sym
+                      with exn_ when not (Common.Timer.is_async exn_) -> (
+                        try TraceTerm.sort_of_sym sym
+                        with exn_ when not (Common.Timer.is_async exn_) -> (
+                          try RegexTerm.sort_of_sym sym
+                          with exn_ when not (Common.Timer.is_async exn_) ->
+                            failwith "ExtTerm.sort_of_sym"))))))))))
 
   let rec svs_of_sort = function
     | Sort.SVar svar -> Set.Poly.singleton svar
     | Sort.SArrow (s, c) -> Set.union (svs_of_sort s) (svs_of_triple c)
     | Sort.SForAll (svar, s1) -> Set.remove (svs_of_sort s1) svar
-    | SBool | SInt | SReal | SBV _ | SString | SSequence _ | SRegEx ->
+    | SBool | SInt | SReal | SBV _ | SString | STrace _ | SRegEx ->
         Set.Poly.empty
     | SArray (s1, s2) ->
         Set.Poly.union_list @@ List.map [ s1; s2 ] ~f:svs_of_sort
+    | SSeq se -> svs_of_sort se
     | STuple sorts -> Set.Poly.union_list @@ List.map sorts ~f:svs_of_sort
     | SDT dt ->
         Set.Poly.union_list @@ List.map (Datatype.params_of dt) ~f:svs_of_sort
@@ -3067,7 +3928,7 @@ module ExtTerm :
     | Sort.SForAll (svar', s1) ->
         if Stdlib.(svar' = svar) then Sort.SForAll (svar', s1)
         else Sort.SForAll (svar', subst_sorts_sort (svar, sort) s1)
-    | (SBool | SInt | SReal | SBV _ | SString | SSequence _ | SRegEx) as sort ->
+    | (SBool | SInt | SReal | SBV _ | SString | STrace _ | SRegEx) as sort ->
         sort
     | SArray (s1, s2) ->
         SArray
@@ -3098,6 +3959,7 @@ module ExtTerm :
   let svs_of_sym sym = svs_of_sort @@ sort_of_sym sym
   let arity_of_sym = Term.open_arity_of_sym sort_of_sym
   let sort_of = Term.open_sort_of sort_of_sym subst_sorts_sort
+  let head_sort_of = Term.open_head_sort_of sort_of_sym subst_sorts_sort
 
   (** Printing *)
 
@@ -3127,29 +3989,32 @@ module ExtTerm :
     | NotIsCons (name, _) -> sprintf "is_not_%s" name
     | IsPrefix _fin -> "is_prefix"
     | NotIsPrefix _fin -> "not is_prefix"
-    | SeqInRegExp (_fin, regexp) ->
+    | TrInRegExp (_fin, regexp) ->
         sprintf "in [%s]" @@ Grammar.RegWordExp.str_of Fn.id regexp
-    | NotSeqInRegExp (_fin, regexp) ->
+    | NotTrInRegExp (_fin, regexp) ->
         sprintf "not in [%s]" @@ Grammar.RegWordExp.str_of Fn.id regexp
     | StrInRegExp -> sprintf "str_in_regex"
     | NotStrInRegExp -> sprintf "not str_in_regex"
     | sym -> (
         try BoolTerm.str_of_sym sym
-        with _ -> (
+        with exn_ when not (Common.Timer.is_async exn_) -> (
           try IRBTerm.str_of_sym sym
-          with _ -> (
+          with exn_ when not (Common.Timer.is_async exn_) -> (
             try TupleTerm.str_of_sym sym
-            with _ -> (
+            with exn_ when not (Common.Timer.is_async exn_) -> (
               try DatatypeTerm.str_of_sym sym
-              with _ -> (
+              with exn_ when not (Common.Timer.is_async exn_) -> (
                 try ArrayTerm.str_of_sym sym
-                with _ -> (
-                  try StringTerm.str_of_sym sym
-                  with _ -> (
-                    try SequenceTerm.str_of_sym sym
-                    with _ -> (
-                      try RegexTerm.str_of_sym sym
-                      with _ -> failwith "[ExtTerm.str_of_sym]"))))))))
+                with exn_ when not (Common.Timer.is_async exn_) -> (
+                  try SeqTerm.str_of_sym sym
+                  with exn_ when not (Common.Timer.is_async exn_) -> (
+                    try StringTerm.str_of_sym sym
+                    with exn_ when not (Common.Timer.is_async exn_) -> (
+                      try TraceTerm.str_of_sym sym
+                      with exn_ when not (Common.Timer.is_async exn_) -> (
+                        try RegexTerm.str_of_sym sym
+                        with exn_ when not (Common.Timer.is_async exn_) ->
+                          failwith "[ExtTerm.str_of_sym]")))))))))
 
   let str_of_termlit = function
     | BoolLit true -> "true"
@@ -3175,9 +4040,10 @@ module ExtTerm :
     | SReal -> "real"
     | SBV size -> sprintf "bv%s" (BVTerm.str_of_size size)
     | SString -> "string"
-    | SSequence true -> "fin_sequence"
-    | SSequence false -> "inf_sequence"
+    | STrace true -> "fin_trace"
+    | STrace false -> "inf_trace"
     | SRegEx -> "regex"
+    | SSeq se -> sprintf "seq(%s)" (str_of_sort_theory se)
     | SArray (s1, s2) ->
         sprintf "%s ->> %s"
           ((if Sort.is_arrow s1 || ArrayTerm.is_array_sort s1 then String.paren
@@ -3351,42 +4217,363 @@ module ExtTerm :
 
   (** Conversion *)
 
-  let rec of_old_cont = function
+  (* Old datatype values compared by physical identity (the name is only the
+     hash, since two values of one name may differ after a substitution). *)
+  (* Keyed by structure, not by physical identity: type inference instantiates
+     a parametric datatype afresh at every occurrence, so an input's formulas
+     hold many physically distinct but equal copies of one instance, and a
+     table that tells them apart converts each copy again and keeps them all
+     in one bucket of their common name, which a shared scope then walks at
+     every lookup.  [Stdlib.compare] skips the physically shared parts of two
+     copies, which is most of them; the hash reads a bounded prefix of the
+     value, so equal values hash alike and a lookup costs no walk of the whole
+     datatype. *)
+  module OldDtPhysTbl = Stdlib.Hashtbl.Make (struct
+    type t = LogicOld.Datatype.t
+
+    let equal dt1 dt2 = phys_equal dt1 dt2 || Stdlib.compare dt1 dt2 = 0
+    let hash (t : LogicOld.Datatype.t) = Stdlib.Hashtbl.hash t
+  end)
+
+  (* The sort conversion carries a table from each datatype value already
+     converted to its image, created at the first datatype met and local to
+     one top-level call.  A datatype value holds every selector's sort, and
+     such a sort holds the datatype it returns, so the datatypes of an input
+     form a graph whose values are shared; converting each occurrence afresh
+     unfolds that graph into a tree, exponential in its depth when datatypes
+     refer to each other with fan-out (a front end's monomorphised wrappers
+     nested a few levels deep), and on an input with a few hundred such
+     datatypes the unfolded copies exhausted memory.  With the table each
+     shared value is converted once per call and its image is shared the
+     same way.  The result is the same value either way: the conversion is a
+     function of its argument, so a remembered image equals a recomputed
+     one. *)
+  (* New datatype values keyed by structure, the reverse of the table
+     [of_old_sort_in] keeps and for the same reasons: a sort computed from a
+     selector or a constructor builds a fresh copy of its datatype, so one
+     formula holds many physically distinct copies of one instance, and a
+     physical table shared across a whole problem kept them all in the bucket
+     of their common name. *)
+  module NewDtPhysTbl = Stdlib.Hashtbl.Make (struct
+    type t = Datatype.t
+
+    let equal dt1 dt2 = phys_equal dt1 dt2 || Stdlib.compare dt1 dt2 = 0
+    let hash (t : Datatype.t) = Stdlib.Hashtbl.hash t
+  end)
+
+  (* [sort_reaches_svar keys s] is [true] when a sort variable satisfying
+     [keys] occurs in [s], datatype declarations included: every member of a
+     datatype's group, its parameters, every selector's sort, an alias's sort,
+     and the datatypes those contain, each datatype value visited once (by
+     physical identity).  It over-approximates: a variable bound by [SForAll]
+     counts, and a sort constructor this walk does not know answers [true].
+     So [false] licenses reading a substitution of those variables as the
+     identity on [s]. *)
+  let sort_reaches_svar keys root =
+    let visited = NewDtPhysTbl.create 16 in
+    let exception Found in
+    let rec sort = function
+      | Sort.SVar svar -> if keys svar then raise Found
+      | Sort.SArrow (s, c) ->
+          sort s;
+          triple c
+      | Sort.SForAll (_, s) -> sort s
+      | SBool | SInt | SReal | SBV _ | SString | STrace _ | SRegEx -> ()
+      | SArray (s1, s2) ->
+          sort s1;
+          sort s2
+      | SSeq se -> sort se
+      | STuple sorts -> List.iter sorts ~f:sort
+      | SDT dt -> datatype dt
+      | SUS (_, args) -> List.iter args ~f:sort
+      | SRef s -> sort s
+      | _ -> raise Found
+    and triple (c : Sort.c) =
+      (match c.op_sig with
+      | Sort.OpSig (opmap, _) -> List.iter opmap ~f:(fun (_, s) -> sort s)
+      | _ -> raise Found);
+      sort c.val_type;
+      match c.cont_eff with
+      | Sort.Eff (c1, c2) ->
+          triple c1;
+          triple c2
+      | Sort.(EVar _ | Pure) -> ()
+      | _ -> raise Found
+    and datatype (t : Datatype.t) =
+      if not (NewDtPhysTbl.mem visited t) then (
+        NewDtPhysTbl.add visited t ();
+        (match t.flag with Datatype.Alias s -> sort s | _ -> ());
+        List.iter t.dts ~f:(fun (d : Datatype.dt) ->
+            List.iter d.params ~f:sort;
+            List.iter d.conses ~f:(fun (cons : Datatype.cons) ->
+                List.iter cons.sels ~f:(function
+                  | Datatype.Sel (_, s) -> sort s
+                  | Datatype.InSel (_, _, args) -> List.iter args ~f:sort))))
+    in
+    try
+      sort root;
+      false
+    with Found -> true
+
+  (* [sym_may_reach_svar ~sort_reaches sym]: [sort_reaches] of the symbol's
+     sort as [sort_of_sym] gives it, and [true] for a symbol it cannot type *)
+  let sym_may_reach_svar ~sort_reaches sym =
+    match sort_of_sym sym with
+    | s -> sort_reaches s
+    | exception exn_ when not (Common.Timer.is_async exn_) -> true
+
+  (* [term_may_reach_svar ~sort_reaches ~sym_reaches ~free_var_reaches t]
+     over-approximates whether a sort that [sort_reaches] holds of occurs in
+     [t]: in a binder's or a [let]'s sort, a type application's sort, a symbol
+     ([sym_reaches], which is to be [sym_may_reach_svar] or a memo of it), or,
+     for a variable not bound inside [t], whatever [free_var_reaches] says of
+     it.  A type abstraction counts as reaching.  So [false] means no sort the
+     term mentions, nor any free variable's, reaches one. *)
+  let term_may_reach_svar ~sort_reaches ~sym_reaches ~free_var_reaches term =
+    let rec aux bound = function
+      | Var (x, _) -> (not (Set.mem bound x)) && free_var_reaches x
+      | Con (sym, _) -> sym_reaches sym
+      | App (t1, t2, _) -> aux bound t1 || aux bound t2
+      | Bin (_, x, s, t, _) -> sort_reaches s || aux (Set.add bound x) t
+      | Let (x, s, d, b, _) ->
+          sort_reaches s || aux bound d || aux (Set.add bound x) b
+      | TyApp (t, s, _) -> sort_reaches s || aux bound t
+      | TyLam _ -> true
+    in
+    aux Set.Poly.empty term
+
+  (* A scope in which the sort conversions in both directions share their
+     datatype tables across calls: a formula mentions the same datatype sort
+     at every variable and every constructor it holds, and without a shared
+     table each occurrence converted the whole graph of datatypes it reaches
+     again.  The tables live in domain-local storage for the dynamic extent of
+     one [with_shared_datatype_conversion] and are dropped when it returns or
+     raises, so nothing outlives the call that asked for it and two domains
+     never share one; a nested scope reuses the enclosing tables.  Sharing
+     changes no result, since each conversion is a function of its argument
+     and datatype values are immutable. *)
+  type dt_conversion_tables = {
+    of_old_tbl : Datatype.t OldDtPhysTbl.t;
+    to_old_tbl : LogicOld.Datatype.t NewDtPhysTbl.t;
+  }
+
+  let dt_conversion_scope : dt_conversion_tables option Domain.DLS.key =
+    Domain.DLS.new_key (fun () -> None)
+
+  let with_shared_datatype_conversion f =
+    match Domain.DLS.get dt_conversion_scope with
+    | Some _ -> f ()
+    | None ->
+        Domain.DLS.set dt_conversion_scope
+          (Some
+             {
+               of_old_tbl = OldDtPhysTbl.create 64;
+               to_old_tbl = NewDtPhysTbl.create 64;
+             });
+        Exn.protect ~f ~finally:(fun () ->
+            Domain.DLS.set dt_conversion_scope None)
+
+  (* Physical tables for the term conversions.  A clausal form that
+     multiplies alternatives builds thousands of clauses whose pure parts are
+     disjunctions of the same physical subformulas; converting each clause
+     separately copied every shared subformula once per clause, so a set that
+     took a few megabytes as built took gigabytes after one round trip
+     between the two representations, and every later pass walked and copied
+     the gigabytes.  Keys are compared by physical identity only: equal but
+     distinct values are converted separately (structural comparison would
+     walk them, and datatype values inside sorts make that walk costly).  The
+     hash is the address ([Common.Ext.Hashtbl.phys_hash]): a structural hash
+     spends its budget inside the sorts, so the nodes of a multiplied clausal
+     form fell into a few buckets and the conversion spent minutes walking
+     them. *)
+  module OldFmlPhysTbl = Stdlib.Hashtbl.Make (struct
+    type t = LogicOld.Formula.t
+
+    let equal = phys_equal
+    let hash = Common.Ext.Hashtbl.phys_hash
+  end)
+
+  module TermPhysTbl = Stdlib.Hashtbl.Make (struct
+    type t = term
+
+    let equal = phys_equal
+    let hash = Common.Ext.Hashtbl.phys_hash
+  end)
+
+  (* [to_old] reads, besides the term, the two sort environments (and the
+     process-global dummy and function environments, which no conversion
+     changes): an image is reused under another environment only when the
+     existential environment is the same value and every variable occurring
+     in the term, bound or free, has the same sort, or none, in both universal
+     environments.  Comparing the bound ones too is a superset of what the
+     conversion reads, so it costs only reuse, never correctness. *)
+  type to_old_entry = {
+    entry_exi : sort_env_map;
+    entry_uni : sort_env_map;
+    entry_img : LogicOld.Formula.t;
+  }
+
+  (* With this set as well, a scope of [with_shared_term_conversion] also
+     remembers the image of every term: [of_old_term] by the old term's
+     physical identity, and [to_old_trm] (the conversion of a term in term
+     position) by the term's physical identity under the same reuse test as
+     the formula entries.  And every image of [to_old] -- formula or term --
+     is remembered only when its conversion drew no fresh name (the
+     conversion of a beta-redex substitutes, and the substitution renames
+     binders), so that a hit skips no draw the conversion outside a scope
+     would make.  With it, a conversion inside a scope gives the value one
+     outside gives, with the same fresh-name draws; only the sharing differs.
+     Why: a clausal product repeats large terms (an argument tuple, a
+     datatype value) in many atoms, and the formula entries alone converted
+     each repetition again -- 2.3 million old nodes became 50 million. *)
+  let share_term_conversion_terms : bool Atomic.t = Atomic.make false
+
+  module OldTermPhysTbl = Stdlib.Hashtbl.Make (struct
+    type t = LogicOld.Term.t
+
+    let equal = phys_equal
+    let hash = Common.Ext.Hashtbl.phys_hash
+  end)
+
+  type to_old_term_entry = {
+    tentry_exi : sort_env_map;
+    tentry_uni : sort_env_map;
+    tentry_img : LogicOld.Term.t;
+  }
+
+  type term_conversion_tables = {
+    of_old_fml_tbl : term OldFmlPhysTbl.t;
+    to_old_fml_tbl : to_old_entry list TermPhysTbl.t;
+    vars_tbl : Ident.tvar Set.Poly.t TermPhysTbl.t;
+    of_old_term_tbl : term OldTermPhysTbl.t;
+    to_old_term_tbl : to_old_term_entry list TermPhysTbl.t;
+  }
+
+  let share_term_conversion : bool Atomic.t = Atomic.make false
+
+
+  let term_conversion_scope : term_conversion_tables option Domain.DLS.key =
+    Domain.DLS.new_key (fun () -> None)
+
+  let with_shared_term_conversion f =
+    if not (Atomic.get share_term_conversion) then f ()
+    else
+      match Domain.DLS.get term_conversion_scope with
+      | Some _ -> f ()
+      | None ->
+          Domain.DLS.set term_conversion_scope
+            (Some
+               {
+                 of_old_fml_tbl = OldFmlPhysTbl.create 1024;
+                 to_old_fml_tbl = TermPhysTbl.create 1024;
+                 vars_tbl = TermPhysTbl.create 1024;
+                 of_old_term_tbl = OldTermPhysTbl.create 1024;
+                 to_old_term_tbl = TermPhysTbl.create 1024;
+               });
+          Exn.protect
+            ~f:(fun () -> with_shared_datatype_conversion f)
+            ~finally:(fun () -> Domain.DLS.set term_conversion_scope None)
+
+  (* every variable name occurring in [t], bound or free, remembered by
+     physical identity at application nodes so that a shared subterm is read
+     once *)
+  let rec vars_occurring tbls t =
+    match t with
+    | Var (x, _) -> Set.Poly.singleton x
+    | Con _ -> Set.Poly.empty
+    | App (t1, t2, _) -> (
+        match TermPhysTbl.find_opt tbls.vars_tbl t with
+        | Some vs -> vs
+        | None ->
+            let vs =
+              Set.union (vars_occurring tbls t1) (vars_occurring tbls t2)
+            in
+            TermPhysTbl.add tbls.vars_tbl t vs;
+            vs)
+    | Bin (_, x, _, t1, _) -> Set.add (vars_occurring tbls t1) x
+    | Let (x, _, t1, t2, _) ->
+        Set.add
+          (Set.union (vars_occurring tbls t1) (vars_occurring tbls t2))
+          x
+    | TyApp (t1, _, _) | TyLam (_, t1, _) -> vars_occurring tbls t1
+
+  let sort_opt_equal s1 s2 =
+    match (s1, s2) with
+    | None, None -> true
+    | Some s1, Some s2 -> phys_equal s1 s2 || Stdlib.compare s1 s2 = 0
+    | _ -> false
+
+  let to_old_reusable_in tbls exi_senv uni_senv term entry_exi entry_uni =
+    phys_equal entry_exi exi_senv
+    && (phys_equal entry_uni uni_senv
+       || Set.for_all (vars_occurring tbls term) ~f:(fun x ->
+           sort_opt_equal
+             (Map.Poly.find uni_senv x)
+             (Map.Poly.find entry_uni x)))
+
+  let to_old_reusable tbls exi_senv uni_senv term entry =
+    to_old_reusable_in tbls exi_senv uni_senv term entry.entry_exi
+      entry.entry_uni
+
+  (* at most this many environments are kept per term: the entries of one
+     key are tried in turn, so the list bounds the cost of a miss *)
+  let to_old_entries_per_term = 4
+
+  let rec of_old_cont_in tbl = function
     | LogicOld.Sort.EVar x -> Sort.EVar x
     | LogicOld.Sort.Pure -> Sort.Pure
     | LogicOld.Sort.Eff (c1, c2) ->
-        Sort.mk_cont_eff (of_old_triple c1) (of_old_triple c2)
+        Sort.mk_cont_eff (of_old_triple_in tbl c1) (of_old_triple_in tbl c2)
     | _ -> failwith "[of_old_cont]"
 
-  and of_old_sort = function
+  and of_old_sort_in tbl = function
     | LogicOld.Sort.SVar svar -> Sort.SVar svar
-    | LogicOld.Sort.SArrow (s, c) -> Sort.SArrow (of_old_sort s, of_old_triple c)
+    | LogicOld.Sort.SArrow (s, c) ->
+        Sort.SArrow (of_old_sort_in tbl s, of_old_triple_in tbl c)
     | LogicOld.T_bool.SBool -> SBool
     | LogicOld.T_int.SInt -> SInt
     | LogicOld.T_real.SReal -> SReal
     | LogicOld.T_bv.SBV size -> SBV size
     | LogicOld.T_string.SString -> SString
-    | LogicOld.T_sequence.SSequence fin -> SSequence fin
+    | LogicOld.T_trace.STrace fin -> STrace fin
     | LogicOld.T_regex.SRegEx -> SRegEx
-    | LogicOld.T_array.SArray (s1, s2) -> SArray (of_old_sort s1, of_old_sort s2)
-    | LogicOld.T_tuple.STuple sorts -> STuple (List.map sorts ~f:of_old_sort)
-    | LogicOld.T_dt.SDT dt -> SDT (Datatype.of_old of_old_sort dt)
-    | LogicOld.T_dt.SUS (name, args) -> SUS (name, List.map args ~f:of_old_sort)
-    | LogicOld.T_ref.SRef sort -> SRef (of_old_sort sort)
+    | LogicOld.T_array.SArray (s1, s2) ->
+        SArray (of_old_sort_in tbl s1, of_old_sort_in tbl s2)
+    | LogicOld.T_seq.SSeq se -> SSeq (of_old_sort_in tbl se)
+    | LogicOld.T_tuple.STuple sorts ->
+        STuple (List.map sorts ~f:(of_old_sort_in tbl))
+    | LogicOld.T_dt.SDT dt -> (
+        let tbl =
+          match (tbl, Domain.DLS.get dt_conversion_scope) with
+          | Some tbl, _ -> tbl
+          | None, Some scope -> scope.of_old_tbl
+          | None, None -> OldDtPhysTbl.create 16
+        in
+        match OldDtPhysTbl.find_opt tbl dt with
+        | Some dt' -> SDT dt'
+        | None ->
+            let dt' = Datatype.of_old (of_old_sort_in (Some tbl)) dt in
+            OldDtPhysTbl.add tbl dt dt';
+            SDT dt')
+    | LogicOld.T_dt.SUS (name, args) ->
+        SUS (name, List.map args ~f:(of_old_sort_in tbl))
+    | LogicOld.T_ref.SRef sort -> SRef (of_old_sort_in tbl sort)
     | sort ->
         failwith @@ "unsupported old sort: " ^ LogicOld.Term.str_of_sort sort
 
-  and of_old_opsig = function
+  and of_old_opsig_in tbl = function
     | LogicOld.Sort.OpSig (opmap, rv) ->
-        Sort.OpSig (ALMap.map opmap ~f:of_old_sort, rv)
+        Sort.OpSig (ALMap.map opmap ~f:(of_old_sort_in tbl), rv)
     | _ -> failwith "[of_old_opsig]"
 
-  and of_old_triple c =
+  and of_old_triple_in tbl (c : LogicOld.Sort.c) : Sort.c =
     {
-      op_sig = of_old_opsig c.op_sig;
-      val_type = of_old_sort c.val_type;
-      cont_eff = of_old_cont c.cont_eff;
+      op_sig = of_old_opsig_in tbl c.op_sig;
+      val_type = of_old_sort_in tbl c.val_type;
+      cont_eff = of_old_cont_in tbl c.cont_eff;
     }
+
+  let of_old_sort = of_old_sort_in None
 
   let of_old_sort_list = List.map ~f:of_old_sort
   let of_old_sort_bind (x, s) = (x, of_old_sort s)
@@ -3460,15 +4647,14 @@ module ExtTerm :
       | LogicOld.T_num.NPower svar, [_; _] -> failwith "of_old_fun_sym"
     *)
     | LogicOld.T_string.StrConst str, _ -> mk_con @@ StrConst str
-    | LogicOld.T_sequence.SeqEpsilon, _ -> mk_con SeqEpsilon
-    | LogicOld.T_sequence.SeqSymbol ev, _ -> mk_con @@ SeqSymbol ev
-    | LogicOld.T_sequence.SeqConcat fin, _ -> mk_con @@ SeqConcat fin
-    | LogicOld.T_sequence.SeqLeftQuotient fin, _ ->
-        mk_con @@ SeqLeftQuotient fin
-    | LogicOld.T_sequence.SeqRightQuotient fin, _ ->
-        mk_con @@ SeqRightQuotient fin
+    | LogicOld.T_trace.TrEpsilon, _ -> mk_con TrEpsilon
+    | LogicOld.T_trace.TrSymbol ev, _ -> mk_con @@ TrSymbol ev
+    | LogicOld.T_trace.TrConcat fin, _ -> mk_con @@ TrConcat fin
+    | LogicOld.T_trace.TrLeftQuotient fin, _ -> mk_con @@ TrLeftQuotient fin
+    | LogicOld.T_trace.TrRightQuotient fin, _ -> mk_con @@ TrRightQuotient fin
     | LogicOld.T_regex.RegEmpty, _ -> mk_con RegEmpty
     | LogicOld.T_regex.RegFull, _ -> mk_con RegFull
+    | LogicOld.T_regex.RegAllChar, _ -> mk_con RegAllChar
     | LogicOld.T_regex.RegEpsilon, _ -> mk_con RegEpsilon
     | LogicOld.T_regex.RegStr, _ -> mk_con @@ RegStr
     | LogicOld.T_regex.RegComplement, _ -> mk_con RegComplement
@@ -3484,6 +4670,13 @@ module ExtTerm :
         mk_store (of_old_sort s1) (of_old_sort s2)
     | LogicOld.T_array.ASelect (s1, s2), _ ->
         mk_select (of_old_sort s1) (of_old_sort s2)
+    | LogicOld.T_seq.SqEmpty se, _ -> mk_empty (of_old_sort se)
+    | LogicOld.T_seq.SqUnit se, _ -> mk_unit (of_old_sort se)
+    | LogicOld.T_seq.SqConcat se, _ -> mk_concat (of_old_sort se)
+    | LogicOld.T_seq.SqLen se, _ -> mk_len (of_old_sort se)
+    | LogicOld.T_seq.SqNth se, _ -> mk_nth (of_old_sort se)
+    | LogicOld.T_seq.SqExtract se, _ -> mk_extract (of_old_sort se)
+    | LogicOld.T_seq.SqStore se, _ -> mk_sq_store (of_old_sort se)
     | LogicOld.T_tuple.TupleCons sorts, _ ->
         mk_tuple_cons (of_old_sort_list sorts)
     | LogicOld.T_tuple.TupleSel (sorts, i), _ ->
@@ -3525,15 +4718,18 @@ module ExtTerm :
         mk_tyapp (mk_con Geq) (Sort.SVar svar)
     | LogicOld.T_num.NLt svar, [ _; _ ] -> mk_tyapp (mk_con Lt) (Sort.SVar svar)
     | LogicOld.T_num.NGt svar, [ _; _ ] -> mk_tyapp (mk_con Gt) (Sort.SVar svar)
-    | LogicOld.T_sequence.IsPrefix fin, [ _; _ ] -> Term.mk_con @@ IsPrefix fin
-    | LogicOld.T_sequence.NotIsPrefix fin, [ _; _ ] ->
+    | LogicOld.T_trace.IsPrefix fin, [ _; _ ] -> Term.mk_con @@ IsPrefix fin
+    | LogicOld.T_trace.NotIsPrefix fin, [ _; _ ] ->
         Term.mk_con @@ NotIsPrefix fin
-    | LogicOld.T_sequence.SeqInRegExp (fin, regexp), [ _ ] ->
-        Term.mk_con @@ SeqInRegExp (fin, regexp)
-    | LogicOld.T_sequence.NotSeqInRegExp (fin, regexp), [ _ ] ->
-        Term.mk_con @@ NotSeqInRegExp (fin, regexp)
-    | LogicOld.T_regex.StrInRegExp, [ _ ] -> Term.mk_con StrInRegExp
-    | LogicOld.T_regex.NotStrInRegExp, [ _ ] -> Term.mk_con NotStrInRegExp
+    | LogicOld.T_trace.TrInRegExp (fin, regexp), [ _ ] ->
+        Term.mk_con @@ TrInRegExp (fin, regexp)
+    | LogicOld.T_trace.NotTrInRegExp (fin, regexp), [ _ ] ->
+        Term.mk_con @@ NotTrInRegExp (fin, regexp)
+    (* [str.in.re s R] is binary (the string and the regex term); with [[ _ ]]
+       these arms never matched and every string-regex atom fell to the
+       catch-all "not supported" *)
+    | LogicOld.T_regex.StrInRegExp, [ _; _ ] -> Term.mk_con StrInRegExp
+    | LogicOld.T_regex.NotStrInRegExp, [ _; _ ] -> Term.mk_con NotStrInRegExp
     | LogicOld.T_tuple.IsTuple sorts, _ -> mk_is_tuple (of_old_sort_list sorts)
     | LogicOld.T_tuple.NotIsTuple sorts, _ ->
         mk_is_not_tuple (of_old_sort_list sorts)
@@ -3546,8 +4742,24 @@ module ExtTerm :
         @@ sprintf "[Logic.of_old_pred_sym] %s not supported"
         @@ LogicOld.Predicate.str_of_psym sym
 
-  and of_old_term = function
+  and of_old_term t =
+    match Domain.DLS.get term_conversion_scope with
+    | Some tbls when Atomic.get share_term_conversion_terms -> (
+        match OldTermPhysTbl.find_opt tbls.of_old_term_tbl t with
+        | Some t' -> t'
+        | None ->
+            let t' = of_old_term_node t in
+            OldTermPhysTbl.add tbls.of_old_term_tbl t t';
+            t')
+    | _ -> of_old_term_node t
+
+  and of_old_term_node = function
     | LogicOld.Term.Var (tvar, _sort, _) -> mk_var tvar
+    | LogicOld.Term.FunApp (LogicOld.T_array.ALambda ((x, si), se), [ body ], _)
+      ->
+        let si = of_old_sort si in
+        mk_app (mk_array_lambda si (of_old_sort se))
+        @@ mk_bind Lambda x si (of_old_term body)
     | LogicOld.Term.FunApp (sym, args, _) ->
         let sargs = List.map args ~f:(LogicOld.Term.sort_of >> of_old_sort) in
         mk_apps (of_old_fun_sym sym sargs) (List.map ~f:of_old_term args)
@@ -3566,7 +4778,18 @@ module ExtTerm :
     | LogicOld.Atom.App (LogicOld.Predicate.Fixpoint _, _, _) ->
         failwith "conversion of fixpoint is not implemented yet"
 
-  and of_old_formula = function
+  and of_old_formula phi =
+    match Domain.DLS.get term_conversion_scope with
+    | None -> of_old_formula_node phi
+    | Some tbls -> (
+        match OldFmlPhysTbl.find_opt tbls.of_old_fml_tbl phi with
+        | Some t -> t
+        | None ->
+            let t = of_old_formula_node phi in
+            OldFmlPhysTbl.add tbls.of_old_fml_tbl phi t;
+            t)
+
+  and of_old_formula_node = function
     | LogicOld.Formula.Atom (atom, _) -> of_old_atom atom
     | LogicOld.Formula.UnaryOp (unop, phi, _) ->
         mk_app (of_unop unop) (of_old_formula phi)
@@ -3587,43 +4810,66 @@ module ExtTerm :
         mk_let var (of_old_sort sort) (of_old_term def) (of_old_formula body)
 
   let of_old (uni_senv, phi) =
-    (Map.Poly.map ~f:of_old_sort uni_senv, of_old_formula phi)
+    with_shared_datatype_conversion (fun () ->
+        (Map.Poly.map ~f:of_old_sort uni_senv, of_old_formula phi))
 
-  let rec to_old_cont = function
+  (* The same per-call table as in [of_old_sort_in], in the other direction:
+     each shared datatype value is converted once per top-level call. *)
+  let rec to_old_cont_in tbl = function
     | Sort.EVar x -> LogicOld.Sort.EVar x
     | Sort.Pure -> LogicOld.Sort.Pure
     | Sort.Eff (c1, c2) ->
-        LogicOld.Sort.mk_cont_eff (to_old_triple c1) (to_old_triple c2)
+        LogicOld.Sort.mk_cont_eff (to_old_triple_in tbl c1)
+          (to_old_triple_in tbl c2)
     | _ -> failwith "to_old_cont"
 
-  and to_old_sort = function
+  and to_old_sort_in tbl = function
     | Sort.SVar svar -> LogicOld.Sort.SVar svar
-    | Sort.SArrow (s, c) -> LogicOld.Sort.SArrow (to_old_sort s, to_old_triple c)
+    | Sort.SArrow (s, c) ->
+        LogicOld.Sort.SArrow (to_old_sort_in tbl s, to_old_triple_in tbl c)
     | SBool -> LogicOld.T_bool.SBool
     | SInt -> LogicOld.T_int.SInt
     | SReal -> LogicOld.T_real.SReal
     | SBV size -> LogicOld.T_bv.SBV size
     | SString -> LogicOld.T_string.SString
-    | SSequence fin -> LogicOld.T_sequence.SSequence fin
+    | STrace fin -> LogicOld.T_trace.STrace fin
     | SRegEx -> LogicOld.T_regex.SRegEx
-    | SArray (s1, s2) -> LogicOld.T_array.SArray (to_old_sort s1, to_old_sort s2)
-    | STuple sorts -> LogicOld.T_tuple.STuple (List.map sorts ~f:to_old_sort)
-    | SDT dt -> LogicOld.T_dt.SDT (Datatype.to_old to_old_sort dt)
-    | SUS (name, args) -> LogicOld.T_dt.SUS (name, List.map args ~f:to_old_sort)
-    | SRef sort -> LogicOld.T_ref.SRef (to_old_sort sort)
+    | SArray (s1, s2) ->
+        LogicOld.T_array.SArray (to_old_sort_in tbl s1, to_old_sort_in tbl s2)
+    | SSeq se -> LogicOld.T_seq.SSeq (to_old_sort_in tbl se)
+    | STuple sorts ->
+        LogicOld.T_tuple.STuple (List.map sorts ~f:(to_old_sort_in tbl))
+    | SDT dt -> (
+        let tbl =
+          match (tbl, Domain.DLS.get dt_conversion_scope) with
+          | Some tbl, _ -> tbl
+          | None, Some scope -> scope.to_old_tbl
+          | None, None -> NewDtPhysTbl.create 16
+        in
+        match NewDtPhysTbl.find_opt tbl dt with
+        | Some dt' -> LogicOld.T_dt.SDT dt'
+        | None ->
+            let dt' = Datatype.to_old (to_old_sort_in (Some tbl)) dt in
+            NewDtPhysTbl.add tbl dt dt';
+            LogicOld.T_dt.SDT dt')
+    | SUS (name, args) ->
+        LogicOld.T_dt.SUS (name, List.map args ~f:(to_old_sort_in tbl))
+    | SRef sort -> LogicOld.T_ref.SRef (to_old_sort_in tbl sort)
     | _ -> failwith "unknown sort"
 
-  and to_old_opsig = function
+  and to_old_opsig_in tbl = function
     | Sort.OpSig (opmap, rv) ->
-        LogicOld.Sort.OpSig (ALMap.map opmap ~f:to_old_sort, rv)
+        LogicOld.Sort.OpSig (ALMap.map opmap ~f:(to_old_sort_in tbl), rv)
     | _ -> failwith "of_old_opsig"
 
-  and to_old_triple c =
+  and to_old_triple_in tbl (c : Sort.c) : LogicOld.Sort.c =
     {
-      op_sig = to_old_opsig c.op_sig;
-      val_type = to_old_sort c.val_type;
-      cont_eff = to_old_cont c.cont_eff;
+      op_sig = to_old_opsig_in tbl c.op_sig;
+      val_type = to_old_sort_in tbl c.val_type;
+      cont_eff = to_old_cont_in tbl c.cont_eff;
     }
+
+  let to_old_sort = to_old_sort_in None
 
   let to_old_sort_bind (x, s) = (x, to_old_sort s)
 
@@ -3689,15 +4935,14 @@ module ExtTerm :
     | BVToInt (size, signed) ->
         LogicOld.T_irb.BVToInt (size, signed) |> Option.some
     | StrConst str -> LogicOld.T_string.StrConst str |> Option.some
-    | SeqEpsilon -> LogicOld.T_sequence.SeqEpsilon |> Option.some
-    | SeqSymbol ev -> LogicOld.T_sequence.SeqSymbol ev |> Option.some
-    | SeqConcat fin -> LogicOld.T_sequence.SeqConcat fin |> Option.some
-    | SeqLeftQuotient fin ->
-        LogicOld.T_sequence.SeqLeftQuotient fin |> Option.some
-    | SeqRightQuotient fin ->
-        LogicOld.T_sequence.SeqRightQuotient fin |> Option.some
+    | TrEpsilon -> LogicOld.T_trace.TrEpsilon |> Option.some
+    | TrSymbol ev -> LogicOld.T_trace.TrSymbol ev |> Option.some
+    | TrConcat fin -> LogicOld.T_trace.TrConcat fin |> Option.some
+    | TrLeftQuotient fin -> LogicOld.T_trace.TrLeftQuotient fin |> Option.some
+    | TrRightQuotient fin -> LogicOld.T_trace.TrRightQuotient fin |> Option.some
     | RegEmpty -> LogicOld.T_regex.RegEmpty |> Option.some
     | RegFull -> LogicOld.T_regex.RegFull |> Option.some
+    | RegAllChar -> LogicOld.T_regex.RegAllChar |> Option.some
     | RegEpsilon -> LogicOld.T_regex.RegEpsilon |> Option.some
     | RegStr -> LogicOld.T_regex.RegStr |> Option.some
     | RegComplement -> LogicOld.T_regex.RegComplement |> Option.some
@@ -3713,6 +4958,13 @@ module ExtTerm :
         LogicOld.T_array.AStore (to_old_sort s1, to_old_sort s2) |> Option.some
     | ASelect (s1, s2) ->
         LogicOld.T_array.ASelect (to_old_sort s1, to_old_sort s2) |> Option.some
+    | SqEmpty se -> LogicOld.T_seq.SqEmpty (to_old_sort se) |> Option.some
+    | SqUnit se -> LogicOld.T_seq.SqUnit (to_old_sort se) |> Option.some
+    | SqConcat se -> LogicOld.T_seq.SqConcat (to_old_sort se) |> Option.some
+    | SqLen se -> LogicOld.T_seq.SqLen (to_old_sort se) |> Option.some
+    | SqNth se -> LogicOld.T_seq.SqNth (to_old_sort se) |> Option.some
+    | SqExtract se -> LogicOld.T_seq.SqExtract (to_old_sort se) |> Option.some
+    | SqStore se -> LogicOld.T_seq.SqStore (to_old_sort se) |> Option.some
     | TupleCons sorts ->
         LogicOld.T_tuple.TupleCons (List.map sorts ~f:to_old_sort)
         |> Option.some
@@ -3750,12 +5002,12 @@ module ExtTerm :
     | BVLt (size, signed) -> LogicOld.T_bv.BVLt (size, signed) |> Option.some
     | BVGt (size, signed) -> LogicOld.T_bv.BVGt (size, signed) |> Option.some
     | IsInt -> LogicOld.T_irb.IsInt |> Option.some
-    | IsPrefix fin -> LogicOld.T_sequence.IsPrefix fin |> Option.some
-    | NotIsPrefix fin -> LogicOld.T_sequence.NotIsPrefix fin |> Option.some
-    | SeqInRegExp (fin, regexp) ->
-        LogicOld.T_sequence.SeqInRegExp (fin, regexp) |> Option.some
-    | NotSeqInRegExp (fin, regexp) ->
-        LogicOld.T_sequence.NotSeqInRegExp (fin, regexp) |> Option.some
+    | IsPrefix fin -> LogicOld.T_trace.IsPrefix fin |> Option.some
+    | NotIsPrefix fin -> LogicOld.T_trace.NotIsPrefix fin |> Option.some
+    | TrInRegExp (fin, regexp) ->
+        LogicOld.T_trace.TrInRegExp (fin, regexp) |> Option.some
+    | NotTrInRegExp (fin, regexp) ->
+        LogicOld.T_trace.NotTrInRegExp (fin, regexp) |> Option.some
     | StrInRegExp -> LogicOld.T_regex.StrInRegExp |> Option.some
     | NotStrInRegExp -> LogicOld.T_regex.NotStrInRegExp |> Option.some
     | IsTuple sorts ->
@@ -3770,6 +5022,121 @@ module ExtTerm :
         LogicOld.T_dt.NotIsCons (name, Datatype.to_old to_old_sort dt)
         |> Option.some
     | _ -> None
+
+  let fenv_sorts_of fenv =
+    Map.Poly.map fenv ~f:(fun (params, sret, _, _, _) ->
+        of_old_sort (LogicOld.Sort.mk_fun (List.map params ~f:snd @ [ sret ])))
+
+  (* The sort environment the conversion asks [sort_of] in when it must
+     know a subterm's sort to choose an encoding (an [ite] or an equality at
+     [Bool]).  Besides the two environments the caller passes, it holds the
+     functions defined by [define-fun-rec] (the process-global function
+     environment), which a term applies as variables: without them [sort_of]
+     fails with "<f> not found" on any [ite] whose branch applies such a
+     function, although the variable lookup of [to_old_term] itself already
+     falls back to that environment.  A name bound by the caller shadows a
+     defined function.  This is the definition; [sort_senv_of] below gives
+     the same map, binding for binding, and raises where this raises. *)
+  let sort_senv_of_rebuilt exi_senv uni_senv =
+    Map.Poly.fold (LogicOld.get_fenv ())
+      ~init:(Map.force_merge exi_senv uni_senv)
+      ~f:(fun ~key ~data:(params, sret, _, _, _) senv ->
+        if Map.Poly.mem senv key then senv
+        else
+          Map.Poly.set senv ~key
+            ~data:
+              (of_old_sort
+                 (LogicOld.Sort.mk_fun (List.map params ~f:snd @ [ sret ]))))
+
+  (* [exi_senv] with the defined functions' sorts it does not shadow, for the
+     unknowns' environment and the function environment last seen on this
+     domain, both compared physically (immutable maps, replaced as a whole when
+     they change).  [None] when some defined function's sort does not convert,
+     in which case [sort_senv_of] falls back to the definition and raises
+     where it raises. *)
+  let base_senv_cache :
+      (sort_env_map * LogicOld.FunEnv.t * sort_env_map option) option
+      Domain.DLS.key =
+    Domain.DLS.new_key (fun () -> None)
+
+  (* the defined functions' sorts alone, for the function environment last
+     seen on this domain: a caller that passes a new unknowns' environment
+     each time still converts them once *)
+  let fenv_sorts_cache :
+      (LogicOld.FunEnv.t * sort_env_map option) option Domain.DLS.key =
+    Domain.DLS.new_key (fun () -> None)
+
+  let fenv_sorts fenv =
+    match Domain.DLS.get fenv_sorts_cache with
+    | Some (fenv', sorts) when phys_equal fenv fenv' -> sorts
+    | _ ->
+        let sorts =
+          try Some (fenv_sorts_of fenv)
+          with exn_ when not (Common.Timer.is_async exn_) -> None
+        in
+        Domain.DLS.set fenv_sorts_cache (Some (fenv, sorts));
+        sorts
+
+  let base_senv exi_senv fenv =
+    match Domain.DLS.get base_senv_cache with
+    | Some (exi', fenv', base)
+      when phys_equal exi_senv exi' && phys_equal fenv fenv' ->
+        base
+    | _ ->
+        let base =
+          Option.map (fenv_sorts fenv) ~f:(fun sorts ->
+              Map.Poly.merge_skewed exi_senv sorts
+                ~combine:(fun ~key:_ bound _ -> bound))
+        in
+        Domain.DLS.set base_senv_cache (Some (exi_senv, fenv, base));
+        base
+
+  (* [sort_senv_of_rebuilt] without rebuilding: the environment is asked for at
+     each [ite] and each [Bool] equality, and converting every defined
+     function's sort and merging the unknowns' environment on each request was
+     most of the conversion's time on an input with hundreds of definitions
+     and unknowns.  The ordinary variables are laid over the cached base one by
+     one: a variable bound by both environments with different sorts raises
+     [Failure "force_merge"] as [Map.force_merge] does, one bound by the
+     unknowns' environment with the same sort changes nothing, and any other
+     shadows a defined function as in the definition. *)
+  let sort_senv_of_uncached exi_senv uni_senv =
+    let fenv = LogicOld.get_fenv () in
+    match base_senv exi_senv fenv with
+    | None -> sort_senv_of_rebuilt exi_senv uni_senv
+    | Some base ->
+        Map.Poly.fold uni_senv ~init:base ~f:(fun ~key ~data senv ->
+            match Map.Poly.find exi_senv key with
+            | Some data' when Stdlib.(data' = data) -> senv
+            | Some _ -> failwith "force_merge"
+            | None -> Map.Poly.set senv ~key ~data)
+
+  (* The last answer of [sort_senv_of_uncached], kept per domain with the three
+     maps it was computed from, physically.  The conversion asks the
+     environment at every [ite] and every [Bool] equality of a clause, and
+     passes the same ordinary variables' map down to every node outside a
+     [let] or an array [lambda], so laying those variables over the base again
+     at each node was most of the conversion's time on a clause with hundreds
+     of variables; with the last answer kept it is laid once per clause and
+     per binder.  The answer is a function of the three maps, so a physically
+     equal triple has the same answer.  A call that raises leaves the record
+     as it was. *)
+  let sort_senv_last :
+      (sort_env_map * sort_env_map * LogicOld.FunEnv.t * sort_env_map) option
+      Domain.DLS.key =
+    Domain.DLS.new_key (fun () -> None)
+
+  let sort_senv_of exi_senv uni_senv =
+    let fenv = LogicOld.get_fenv () in
+    match Domain.DLS.get sort_senv_last with
+    | Some (exi', uni', fenv', senv)
+      when phys_equal exi_senv exi' && phys_equal uni_senv uni'
+           && phys_equal fenv fenv' ->
+        senv
+    | _ ->
+        let senv = sort_senv_of_uncached exi_senv uni_senv in
+        Domain.DLS.set sort_senv_last (Some (exi_senv, uni_senv, fenv, senv));
+        senv
 
   let rec to_old_term exi_senv uni_senv term args =
     match (term, args) with
@@ -3791,15 +5158,20 @@ module ExtTerm :
                           LogicOld.Sort.mk_fun
                             (List.map params ~f:snd @ [ sret ])
                       | None ->
-                          print_endline @@ sprintf "exi_senv: %s"
+                          (* the four environments this lookup searched, so that the
+                             failure below can be diagnosed -- on STDERR, because
+                             stdout carries the verdict and a caller reading it
+                             for one used to get these four lines instead *)
+                          if Atomic.get print_unbound_envs then (
+                          prerr_endline @@ sprintf "exi_senv: %s"
                           @@ str_of_sort_env_map str_of_sort exi_senv;
-                          print_endline @@ sprintf "uni_senv: %s"
+                          prerr_endline @@ sprintf "uni_senv: %s"
                           @@ str_of_sort_env_map str_of_sort uni_senv;
-                          print_endline @@ sprintf "dum_senv: %s"
+                          prerr_endline @@ sprintf "dum_senv: %s"
                           @@ LogicOld.str_of_sort_env_list
                                LogicOld.Term.str_of_sort dum_senv;
-                          print_endline @@ sprintf "fenv: %s"
-                          @@ LogicOld.FunEnv.str_of fenv;
+                          prerr_endline @@ sprintf "fenv: %s"
+                          @@ LogicOld.FunEnv.str_of fenv);
                           failwith
                           @@ sprintf "[to_old_term] %s is not bound"
                           @@ Ident.name_of_tvar tvar)))
@@ -3812,6 +5184,11 @@ module ExtTerm :
             LogicOld.T_bool.of_atom
             @@ LogicOld.Atom.mk_pvar_app (Ident.tvar_to_pvar tvar) sargs args'
           else LogicOld.Term.mk_fvar_app tvar sargs sret args'
+    | Con (ALambda (si, se), _), [ Bin (Lambda, x, _, body, _) ] ->
+        LogicOld.T_array.mk_lambda
+          (x, to_old_sort si)
+          (to_old_sort se)
+          (to_old_trm exi_senv (Map.Poly.set uni_senv ~key:x ~data:si) body)
     | Con (sym, _), args -> (
         match to_old_fun_sym sym with
         | Some old_sym ->
@@ -3843,7 +5220,7 @@ module ExtTerm :
     | ( TyApp (Con (IfThenElse, _), (SBool | Sort.SVar _), _),
         t1 :: t2 :: t3 :: args )
       when BoolTerm.is_bool_sort
-             (sort_of (Map.force_merge exi_senv uni_senv) t2) ->
+             (head_sort_of (sort_senv_of exi_senv uni_senv) t2) ->
         LogicOld.T_bool.(
           mk_if_then_else
             (of_formula (to_old_fml exi_senv uni_senv t1))
@@ -3878,7 +5255,7 @@ module ExtTerm :
     | TyApp (Con (Case n, _), (SBool | Sort.SVar _), _), t1 :: args
       when List.length args >= 1
            && BoolTerm.is_bool_sort
-                (sort_of (Map.force_merge exi_senv uni_senv) (List.hd_exn args))
+                (head_sort_of (sort_senv_of exi_senv uni_senv) (List.hd_exn args))
       ->
         let args1, args2 = List.split_n args n in
         LogicOld.(
@@ -3898,7 +5275,28 @@ module ExtTerm :
         @@ sprintf "[to_old_term] unknown term: %s(%s)" (str_of term)
              (String.concat_map_list ~sep:"," args ~f:str_of)
 
-  and to_old_trm exi_senv uni_senv term = to_old_term exi_senv uni_senv term []
+  and to_old_trm exi_senv uni_senv term =
+    match (term, Domain.DLS.get term_conversion_scope) with
+    | App _, Some tbls when Atomic.get share_term_conversion_terms -> (
+        let entries =
+          Option.value ~default:[]
+            (TermPhysTbl.find_opt tbls.to_old_term_tbl term)
+        in
+        match
+          List.find entries ~f:(fun e ->
+              to_old_reusable_in tbls exi_senv uni_senv term e.tentry_exi
+                e.tentry_uni)
+        with
+        | Some e -> e.tentry_img
+        | None ->
+            let stamp = Ident.fresh_stamp () in
+            let img = to_old_term exi_senv uni_senv term [] in
+            if Ident.fresh_stamp () = stamp then
+              TermPhysTbl.replace tbls.to_old_term_tbl term
+                ({ tentry_exi = exi_senv; tentry_uni = uni_senv; tentry_img = img }
+                :: List.take entries (to_old_entries_per_term - 1));
+            img)
+    | _ -> to_old_term exi_senv uni_senv term []
 
   and to_old_atom exi_senv uni_senv term args =
     match (term, args) with
@@ -3944,20 +5342,33 @@ module ExtTerm :
                           Atom.of_bool_term
                           @@ Term.mk_fvar_app tvar sargs sret args')
                     | None ->
-                        print_endline @@ sprintf "exi_senv: %s"
+                        (* on STDERR: stdout carries the verdict, and a caller
+                           reading it for one used to get these four lines *)
+                        if Atomic.get print_unbound_envs then (
+                        prerr_endline @@ sprintf "exi_senv: %s"
                         @@ str_of_sort_env_map str_of_sort exi_senv;
-                        print_endline @@ sprintf "uni_senv: %s"
+                        prerr_endline @@ sprintf "uni_senv: %s"
                         @@ str_of_sort_env_map str_of_sort uni_senv;
-                        print_endline @@ sprintf "dum_senv: %s"
+                        prerr_endline @@ sprintf "dum_senv: %s"
                         @@ LogicOld.str_of_sort_env_list
                              LogicOld.Term.str_of_sort dum_senv;
-                        print_endline @@ sprintf "fenv: %s"
-                        @@ LogicOld.FunEnv.str_of fenv;
+                        prerr_endline @@ sprintf "fenv: %s"
+                        @@ LogicOld.FunEnv.str_of fenv);
                         failwith (sprintf "[to_old_atom] %s is not bound" name))
                 )))
     | Con (True, _), [] -> LogicOld.Atom.mk_true ()
     | Con (False, _), [] -> LogicOld.Atom.mk_false ()
     | Con (ASelect _, _), args ->
+        LogicOld.Atom.of_bool_term @@ to_old_term exi_senv uni_senv term args
+    | Con ((SqNth _ | TupleSel _ | Deref _), _), args ->
+        (* a read of a sequence, tuple or reference whose element is Bool, standing
+           as an atom: a Bool-valued function application like [ASelect] above, not
+           a predicate symbol *)
+        LogicOld.Atom.of_bool_term @@ to_old_term exi_senv uni_senv term args
+    | Con (ALambda _, _), args ->
+        (* delegate to [to_old_term], which binds the lambda variable before
+           descending; reaching the body any other way would visit the [Bin
+           (Lambda, ...)] unapplied *)
         LogicOld.Atom.of_bool_term @@ to_old_term exi_senv uni_senv term args
     | Con (DTSel (name, dt, _), _), [ arg ] ->
         LogicOld.Atom.of_bool_term
@@ -3995,7 +5406,7 @@ module ExtTerm :
     | ( TyApp (Con (IfThenElse, _), (SBool | Sort.SVar _), _),
         t1 :: t2 :: t3 :: args )
       when BoolTerm.is_bool_sort
-             (sort_of (Map.force_merge exi_senv uni_senv) t2) ->
+             (head_sort_of (sort_senv_of exi_senv uni_senv) t2) ->
         LogicOld.Atom.of_bool_term
         @@ LogicOld.T_bool.(
              mk_if_then_else
@@ -4008,7 +5419,7 @@ module ExtTerm :
     | TyApp (Con (Case n, _), (SBool | Sort.SVar _), _), t1 :: args
       when List.length args >= 1
            && BoolTerm.is_bool_sort
-                (sort_of (Map.force_merge exi_senv uni_senv) (List.hd_exn args))
+                (head_sort_of (sort_senv_of exi_senv uni_senv) (List.hd_exn args))
       ->
         let args1, args2 = List.split_n args n in
         LogicOld.(
@@ -4016,6 +5427,24 @@ module ExtTerm :
           @@ T_int.mk_case n (to_old_trm exi_senv uni_senv t1)
           @@ List.map args1 ~f:(fun t ->
               T_bool.of_formula (to_old_formula exi_senv uni_senv t args2)))
+    (* a numeric comparison whose sort is still a variable (type inference
+       did not pin it) goes back as the polymorphic [T_num] symbol, as the
+       term direction ([to_old_term]) already does; the generic arm below
+       drops the sort and [to_old_pred_sym] then makes it [T_int.Leq], a
+       silent default to Int.  Both entry points, [to_old_atm] and
+       [to_old_fml], reach this arm, so they agree.  No input reaches it
+       today: the frontends declare every sort. *)
+    | TyApp (Con (((Leq | Geq | Lt | Gt) as cmp), _), Sort.SVar svar, _), args
+      when List.length args = 2 ->
+        let psym =
+          match cmp with
+          | Leq -> LogicOld.T_num.NLeq svar
+          | Geq -> LogicOld.T_num.NGeq svar
+          | Lt -> LogicOld.T_num.NLt svar
+          | _ -> LogicOld.T_num.NGt svar
+        in
+        LogicOld.Atom.mk_psym_app psym
+          (List.map args ~f:(to_old_trm exi_senv uni_senv))
     | TyApp (t, _sort, _), args (* ToDo: use [sort] *) ->
         to_old_atom exi_senv uni_senv t args
     | _ ->
@@ -4027,6 +5456,32 @@ module ExtTerm :
 
   and to_old_formula exi_senv uni_senv term args =
     let rec aux uni_senv term args ~next =
+      match (args, term, Domain.DLS.get term_conversion_scope) with
+      | [], App _, Some tbls ->
+          let entries =
+            Option.value ~default:[]
+              (TermPhysTbl.find_opt tbls.to_old_fml_tbl term)
+          in
+          let img =
+            match
+              List.find entries ~f:(to_old_reusable tbls exi_senv uni_senv term)
+            with
+            | Some e -> e.entry_img
+            | None ->
+                let stamp = Ident.fresh_stamp () in
+                let img = aux_node uni_senv term [] ~next:Fn.id in
+                if
+                  (not (Atomic.get share_term_conversion_terms))
+                  || Ident.fresh_stamp () = stamp
+                then
+                  TermPhysTbl.replace tbls.to_old_fml_tbl term
+                    ({ entry_exi = exi_senv; entry_uni = uni_senv; entry_img = img }
+                    :: List.take entries (to_old_entries_per_term - 1));
+                img
+          in
+          next img
+      | _ -> aux_node uni_senv term args ~next
+    and aux_node uni_senv term args ~next =
       match term with
       | Var _ ->
           next @@ LogicOld.Formula.mk_atom
@@ -4085,6 +5540,12 @@ module ExtTerm :
           @@ to_old_atom exi_senv uni_senv term args
       | TyApp (Con (IfThenElse, _), sort, _) -> failwith @@ str_of_sort sort
       | TyApp (Con (Case _, _), sort, _) -> failwith @@ str_of_sort sort
+      (* a numeric comparison over a sort variable is an atom; [to_old_atom]
+         keeps its sort, which the generic arm below would drop *)
+      | TyApp (Con ((Leq | Geq | Lt | Gt), _), Sort.SVar _, _)
+        when List.length args = 2 ->
+          next @@ LogicOld.Formula.mk_atom
+          @@ to_old_atom exi_senv uni_senv term args
       | TyApp (term, _sort, _) (* ToDo: use [sort] *) ->
           aux uni_senv term args ~next
       | Let (var, sort, def, body, _) ->
@@ -4103,7 +5564,8 @@ module ExtTerm :
     aux uni_senv term args ~next:Fn.id
 
   and to_old_fml exi_senv uni_senv term =
-    to_old_formula exi_senv uni_senv term []
+    with_shared_datatype_conversion (fun () ->
+        to_old_formula exi_senv uni_senv term [])
 
   let to_old_subst exi_senv uni_senv =
     Map.Poly.map ~f:(to_old_trm exi_senv uni_senv)
@@ -4130,10 +5592,11 @@ module ExtTerm :
     | SReal -> RealTerm.rzero ()
     | SBV size -> BVTerm.mk_bvnum ~size Z.zero
     | SString -> mk_con @@ StrConst ""
-    | SSequence true -> mk_con SeqEpsilon
-    | SSequence false -> failwith "SSequence false"
+    | STrace true -> mk_con TrEpsilon
+    | STrace false -> failwith "STrace false"
     | SRegEx -> mk_con RegEmpty
     | SArray (s1, s2) -> mk_app (mk_const_array s1 s2) (mk_dummy s2)
+    | SSeq se -> mk_empty se
     | STuple sorts ->
         mk_apps (mk_tuple_cons sorts) @@ List.map sorts ~f:mk_dummy
     | (SDT _ | SUS _) as sort -> DatatypeTerm.mk_dummy mk_dummy to_old_sort sort
@@ -4175,8 +5638,11 @@ module ExtTerm :
       in
       to_old_fml exi_senv uni_senv phi
       |> Evaluator.simplify |> of_old_formula |> mk_lambda param_senv
-    with _ ->
-      to_old_fml exi_senv uni_senv t |> Evaluator.simplify |> of_old_formula
+    with e when not (Common.Timer.is_async e) -> (
+      (* [let_lam] peeling is a heuristic; if the plain conversion fails as
+         well, report the first failure, not the retry's *)
+      try to_old_fml exi_senv uni_senv t |> Evaluator.simplify |> of_old_formula
+      with exn_ when not (Common.Timer.is_async exn_) -> raise e)
 
   let simplify_term exi_senv uni_senv t =
     try
@@ -4186,8 +5652,10 @@ module ExtTerm :
       in
       to_old_trm exi_senv uni_senv phi
       |> Evaluator.simplify_term |> of_old_term |> mk_lambda param_senv
-    with _ ->
-      to_old_trm exi_senv uni_senv t |> Evaluator.simplify_term |> of_old_term
+    with e when not (Common.Timer.is_async e) -> (
+      try
+        to_old_trm exi_senv uni_senv t |> Evaluator.simplify_term |> of_old_term
+      with exn_ when not (Common.Timer.is_async exn_) -> raise e)
 end
 
 let of_old_sort_env_list = List.map ~f:ExtTerm.of_old_sort_bind
@@ -4197,3 +5665,61 @@ let to_old_sort_env_list = List.map ~f:ExtTerm.to_old_sort_bind
 let to_old_sort_env_map = Map.Poly.map ~f:ExtTerm.to_old_sort
 let mk_old_dummy = ExtTerm.to_old_sort >> LogicOld.Term.mk_dummy
 let to_old_dummies = Map.Poly.map ~f:mk_old_dummy
+
+(* [select_constant_cases t] is [t] with every application
+   [case_n k b_0 .. b_(n-1)] whose selector [k] is an integer literal with
+   [0 <= k < n] replaced by its branch [b_k] (after the same replacement inside
+   it).  This is the rule the simplifier applies to such a case
+   ([Evaluator.simplify_case_parts]), so the result denotes the same value as
+   [t] in every model.
+
+   Contract: the result is equal to [t] in every model; no binder is renamed
+   or crossed by a substitution (a branch is a subterm already in scope), so
+   nothing can be captured; a case whose selector is not an in-range literal,
+   or that is applied to more arguments than its branches, is kept (its
+   branches still reduced); and every subterm in which no reducible case
+   occurs is returned physically, so a term without one is returned as it
+   is.
+
+   Why: a function template whose result is chosen among the hypothesis
+   space's terms by a selector parameter is [case_(m+1) sel default t_1 ..
+   t_m], and a candidate instantiates [sel] with a literal but keeps all [m]
+   branches; with thousands of terms every application of the candidate in a
+   clause carries them all through substitution, conversion and
+   simplification, which reduce them to one. *)
+let select_constant_cases =
+  let rec go t =
+    match t with
+    | Var _ | Con _ -> t
+    | App _ -> (
+        let h, args = Term.let_apps t in
+        match (h, args) with
+        | TyApp (Con (IntTerm.Case n, _), _, _), sel :: branches
+          when List.length branches = n -> (
+            let sel' = go sel in
+            match sel' with
+            | Con (IntTerm.Int k, _) when Z.(leq zero k && lt k (of_int n)) ->
+                go (List.nth_exn branches (Z.to_int k))
+            | _ -> rebuild t h (sel :: branches) (h :: sel' :: List.map branches ~f:go))
+        | _ -> rebuild t h args (go h :: List.map args ~f:go))
+    | Bin (b, x, s, body, info) ->
+        let body' = go body in
+        if phys_equal body body' then t else Bin (b, x, s, body', info)
+    | Let (x, s, t1, t2, info) ->
+        let t1' = go t1 and t2' = go t2 in
+        if phys_equal t1 t1' && phys_equal t2 t2' then t
+        else Let (x, s, t1', t2', info)
+    | TyApp (t1, s, info) ->
+        let t1' = go t1 in
+        if phys_equal t1 t1' then t else TyApp (t1', s, info)
+    | TyLam (sv, t1, info) ->
+        let t1' = go t1 in
+        if phys_equal t1 t1' then t else TyLam (sv, t1', info)
+  (* [t] = [h args]; [h' :: args'] are the reduced parts *)
+  and rebuild t h args = function
+    | h' :: args' ->
+        if phys_equal h h' && List.for_all2_exn args args' ~f:phys_equal then t
+        else Term.mk_apps h' args'
+    | [] -> assert false
+  in
+  go

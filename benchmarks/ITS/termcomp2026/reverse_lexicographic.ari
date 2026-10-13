@@ -1,0 +1,194 @@
+(format LCTRS)
+(theory Ints)
+
+(fun l0 (-> Int Int Int Int Int Int Int))
+(fun l1 (-> Int Int Int Int Int Int Int))
+(fun l2 (-> Int Int Int Int Int Int Int))
+(fun l3 (-> Int Int Int Int Int Int Int))
+(fun l4 (-> Int Int Int Int Int Int Int))
+(fun l5 (-> Int Int Int Int Int Int Int))
+(fun l6 (-> Int Int Int Int Int Int Int))
+(fun l7 (-> Int Int Int Int Int Int Int))
+
+(entrypoint l0)
+
+(rule
+  (l0 m x y s t p)
+  (l1 m_post x_post y_post s_post t_post p_post)
+  :guard
+  (and
+    (= m_post m)
+    (= x_post m)
+    (= y_post 0)
+    (= s_post 0)
+    (= t_post m)
+    (= p_post 0)))
+
+(rule
+  (l1 m x y s t p)
+  (l7 m_post x_post y_post s_post t_post p_post)
+  :guard
+  (and
+    (or (< x 0) (< y 0) (< s 0) (< t 0))
+    (= m_post m)
+    (= x_post x)
+    (= y_post y)
+    (= s_post s)
+    (= t_post t)
+    (= p_post p)))
+
+(rule
+  (l1 m x y s t p)
+  (l2 m_post x_post y_post s_post t_post p_post)
+  :guard
+  (and
+    (>= x 0)
+    (>= y 0)
+    (>= s 0)
+    (>= t 0)
+    (= p 0)
+    (= m_post m)
+    (= x_post x)
+    (= y_post y)
+    (= s_post s)
+    (= t_post t)
+    (= p_post p)))
+
+(rule
+  (l1 m x y s t p)
+  (l5 m_post x_post y_post s_post t_post p_post)
+  :guard
+  (and
+    (>= x 0)
+    (>= y 0)
+    (>= s 0)
+    (>= t 0)
+    (or (> p 0) (< p 0))
+    (= m_post m)
+    (= x_post x)
+    (= y_post y)
+    (= s_post s)
+    (= t_post t)
+    (= p_post p)))
+
+(rule
+  (l2 m x y s t p)
+  (l4 m_post x_post y_post s_post t_post p_post)
+  :guard
+  (and
+    (= m_post m)
+    (= x_post x)
+    (= y_post y)
+    (= s_post s)
+    (= t_post t)
+    (= p_post p)))
+
+(rule
+  (l2 m x y s t p)
+  (l3 m_post x_post y_post s_post t_post p_post)
+  :guard
+  (and
+    (= m_post m)
+    (= x_post x)
+    (= y_post y)
+    (= s_post s)
+    (= t_post t)
+    (= p_post p)))
+
+(rule
+  (l3 m x y s t p)
+  (l3 m_post x_post y_post s_post t_post p_post)
+  :guard
+  (and
+    (<= y m)
+    (= m_post m)
+    (= x_post x)
+    (= y_post (+ y 1))
+    (= s_post s)
+    (= t_post (- t 1))
+    (= p_post p)))
+
+(rule
+  (l3 m x y s t p)
+  (l4 m_post x_post y_post s_post t_post p_post)
+  :guard
+  (and
+    (= m_post m)
+    (= x_post (- x 1))
+    (= y_post y)
+    (= s_post (+ s 1))
+    (= t_post t)
+    (= p_post p)))
+
+(rule
+  (l4 m x y s t p)
+  (l1 m_post x_post y_post s_post t_post p_post)
+  :guard
+  (and
+    (= m_post m)
+    (= x_post x)
+    (= y_post (- y 1))
+    (= s_post s)
+    (= t_post (+ t 1))
+    (= p_post p)))
+
+(rule
+  (l4 m x y s t p)
+  (l1 m_post x_post y_post s_post t_post p_post)
+  :guard
+  (and
+    (= m_post m)
+    (= x_post x)
+    (= y_post (- y 1))
+    (= s_post s)
+    (= t_post (+ t 1))
+    (= p_post 1)))
+
+(rule
+  (l5 m x y s t p)
+  (l1 m_post x_post y_post s_post t_post p_post)
+  :guard
+  (and
+    (= m_post m)
+    (= x_post x)
+    (= y_post (+ y 1))
+    (= s_post s)
+    (= t_post (- t 1))
+    (= p_post p)))
+
+(rule
+  (l5 m x y s t p)
+  (l6 m_post x_post y_post s_post t_post p_post)
+  :guard
+  (and
+    (= m_post m)
+    (= x_post x)
+    (= y_post y)
+    (= s_post s)
+    (= t_post t)
+    (= p_post p)))
+
+(rule
+  (l6 m x y s t p)
+  (l6 m_post x_post y_post s_post t_post p_post)
+  :guard
+  (and
+    (<= t m)
+    (= m_post m)
+    (= x_post x)
+    (= y_post (- y 1))
+    (= s_post s)
+    (= t_post (+ t 1))
+    (= p_post p)))
+
+(rule
+  (l6 m x y s t p)
+  (l1 m_post x_post y_post s_post t_post p_post)
+  :guard
+  (and
+    (= m_post m)
+    (= x_post (+ x 1))
+    (= y_post (+ y 1))
+    (= s_post (- s 1))
+    (= t_post (- t 1))
+    (= p_post p)))

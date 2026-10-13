@@ -1,7 +1,6 @@
 [
     "RGB",
     {
-        "verbose": false,
         "qualifier_generator": [
             "Filename",
             "./config/pcsat/qualifier/polyhedron023.json"

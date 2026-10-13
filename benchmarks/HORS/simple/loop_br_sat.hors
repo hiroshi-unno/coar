@@ -1,0 +1,9 @@
+%BEGING
+S -> F a.
+F x -> br x (F x).
+%ENDG
+
+%BEGINA
+q0 br -> q0 q0.
+q0 a -> .
+%ENDA

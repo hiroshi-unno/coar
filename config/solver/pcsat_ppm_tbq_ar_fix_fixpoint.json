@@ -1,0 +1,28 @@
+[
+    "PCSat",
+    {
+        "preprocessor": [
+            "Filename",
+            "./config/pcsat/preprocessor/enable_fixpoint.json"
+        ],
+        "coordinator": [
+            "Filename",
+            "./config/pcsat/coordinator/ppm_tbq_ar_fix_fixpoint.json"
+        ],
+        "sol_printer": [
+            "Filename",
+            "./config/pcsat/sol_printer/enable.json"
+        ],
+        "load_oracle_sol": false,
+        "witness_seed_probe": false,
+        "witness": {
+            "sat": false,
+            "unsat": false,
+            "unsat_substitutions": false
+        },
+        "true_precondition_probe_parallel": false,
+        "least_definition_probe_parallel": false,
+        "rec_fun_graph_after_preprocessing": false,
+        "rec_fun_graph_after_elimination": false
+    }
+]

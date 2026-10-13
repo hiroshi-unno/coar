@@ -1,3 +1,21 @@
+(* OptPCSat's optimization loop, after Yu Gu, Takeshi Tsukada and Hiroshi
+   Unno, "Optimal CHC Solving via Termination Proofs", POPL 2023.
+
+   [optimize] preprocesses the problem (tuples flattened, optional
+   side conditions added), finds an initial solution with the improvement
+   solver (or checks a seed solution read beside the input, falling back to
+   solving when the seed violates a constraint), and then repeats rounds
+   until a round finds no better solution.  A round runs an optimality check
+   of the current solution for the next predicate, by the maximality or
+   minimality checker, which reduces it to a termination problem, and an
+   improvement step, which asks the constraint solver for a strictly better
+   solution.  The two run in parallel domains each round, and the first
+   decisive answer ends it.  [OptSat] comes from the improver's [unsat] for
+   the improvement constraint or from the checker's certificate.  A
+   certificate that is not known to be exact (it may have fixed the other
+   predicates too strongly) is offered to the improver for a bounded wait,
+   and is accepted when the improver finds no better solution in that
+   time, so such an answer rests on the checker alone. *)
 open Core
 open Ast
 open Ast.Ident
@@ -39,6 +57,8 @@ module Make
   let unlock () = Caml_threads.Mutex.unlock mutex
 
   module Preprocessor = Preprocessor.Make (struct
+    (* every preprocessing field not given here takes its default, as on the
+       constraint solver's own entry point *)
     let config = Preprocessor.Config.make true config.verbose 4 0 true
   end)
 
@@ -62,7 +82,7 @@ module Make
               pcsp' := pcsp;
               Or_error.unimplemented "")
             pcsp
-     with _ -> ());
+     with exn_ when not (Common.Timer.is_async exn_) -> ());
     Debug.print_log
     @@ lazy
          (sprintf
@@ -129,6 +149,8 @@ module Make
       {
         (PCSP.Problem.params_of pcsp) with
         PCSP.Params.sol_for_eliminated = Map.Poly.empty;
+        sol_for_resolved = Map.Poly.empty;
+        erasure_trail = Map.Poly.empty;
         PCSP.Params.args_record = Map.Poly.empty;
       }
 
@@ -159,7 +181,7 @@ module Make
     let params =
       let params = PCSP.Problem.params_of pcsp in
       let kind_map =
-        params.kind_map |> Kind.add_kinds (Map.Poly.key_set nepvs) Kind.NE
+        params.kind_map |> Kind.add_kinds (Map.Poly.key_set nepvs) (Kind.Tot [])
       in
       PCSP.Params.make ~dtenv:params.dtenv ~kind_map ~fenv:params.fenv
         ~sol_space:params.sol_space ~id
@@ -168,16 +190,51 @@ module Make
     c |> ExtTerm.nnf_of
     |> ExtTerm.cnf_of delta Map.Poly.empty
     |> Set.Poly.map ~f:(fun (_, _, phi) ->
-           let uni_senv, _, phi =
-             LogicOld.Formula.skolemize ~use_fn_pred:false ~only_impure:true
-             @@ ExtTerm.to_old_fml delta Map.Poly.empty phi
-           in
-           ExtTerm.of_old (uni_senv, phi))
+        let uni_senv, _, phi =
+          LogicOld.Formula.skolemize ~uni_senv:Map.Poly.empty ~use_fn_pred:false
+            ~only_impure:true
+          @@ ExtTerm.to_old_fml delta Map.Poly.empty phi
+        in
+        ExtTerm.of_old (uni_senv, phi))
     |> Set.union @@ PCSP.Problem.formulas_of pcsp
     |> PCSP.Problem.of_formulas ~params
 
-  let check_optimality ?(only_simple = false) (messenger, id) pcsp delta theta
-      priority pvar =
+  (* The predicates whose interpretation may have to grow when [pvar] grows:
+     those reachable from [pvar] through clause bodies to heads.  A predicate
+     [R] with [theta R = false] and a clause [R => false] cannot grow (any
+     growth is already a violation), so it is not counted; this is the
+     [fail]/[query] predicate of Datalog-style inputs. *)
+  let growable_from pvar pcsp theta improved =
+    let cls = Set.to_list @@ PCSP.Problem.clauses_of pcsp in
+    let pvs_of = Set.Poly.map ~f:(ExtTerm.let_var_app >> fst) in
+    let cannot_grow r =
+      (* a predicate already certified optimal cannot grow in any monotone
+         extension either, so fixing it is exact *)
+      Set.mem improved r
+      ||
+      let is_false_in_theta =
+        match Map.Poly.find theta r with
+        | Some t -> ExtTerm.is_false @@ snd @@ ExtTerm.let_lam t
+        | None -> false
+      in
+      is_false_in_theta
+      && List.exists cls ~f:(fun (_, ps, ns, phi) ->
+          Set.is_empty ps
+          && Set.equal (pvs_of ns) (Set.Poly.singleton r)
+          && ExtTerm.is_false phi)
+    in
+    let rec go reach =
+      let reach' =
+        List.fold cls ~init:reach ~f:(fun acc (_, ps, ns, _) ->
+            if Set.is_empty (Set.inter (pvs_of ns) acc) then acc
+            else Set.union acc (Set.filter (pvs_of ps) ~f:(Fn.non cannot_grow)))
+      in
+      if Set.equal reach reach' then reach else go reach'
+    in
+    go (Set.Poly.singleton pvar)
+
+  let check_optimality ?(only_simple = false) (messenger, id) improved pcsp
+      delta theta priority pvar =
     Debug.print_log
     @@ lazy
          (sprintf
@@ -188,6 +245,19 @@ module Make
     let pcsp =
       PCSP.Problem.map_params pcsp ~f:(fun params ->
           { params with PCSP.Params.id })
+    in
+    (* Substituting [theta] for the other predicates keeps the termination
+       problem small, and the certificate it yields — no solution with a larger
+       [pvar] leaves the other predicates as they are — is the paper's IsOpt
+       (others not worse than [theta]) exactly when growing [pvar] cannot force
+       a not-yet-optimized predicate to grow.  Otherwise the substitution turns
+       forced growth into a violation and may certify a non-optimal solution;
+       the caller then confirms the certificate
+       with the improver before accepting it. *)
+    let exact =
+      only_simple
+      || (not config.exact_opt_check)
+      || Set.is_singleton (growable_from pvar pcsp theta improved)
     in
     let pcsp =
       if not only_simple then
@@ -215,7 +285,7 @@ module Make
     | _ ->
         failwith
           "maximality and minimality checkers only return OptSat or Unknown");
-    res
+    (res, exact)
 
   let clean () =
     Debug.print_log @@ lazy "clean evaluator cache";
@@ -302,10 +372,10 @@ module Make
 
   let parallel_check_opt improved full_priority priority pcsp delta theta =
     match
-      check_optimality ~only_simple:true (None, Some 0) pcsp delta theta
-        priority (List.hd_exn priority)
+      check_optimality ~only_simple:true (None, Some 0) improved pcsp delta
+        theta priority (List.hd_exn priority)
     with
-    | OptSat _ as sol -> sol
+    | (OptSat _ as sol), _ -> sol
     | _ ->
         let messenger = Common.Messenger.create 2 in
         let send_terminate src dst =
@@ -319,18 +389,26 @@ module Make
               match
                 check_optimality
                   (Some messenger, optimality_check_id)
-                  pcsp delta theta priority (List.hd_exn priority)
+                  improved pcsp delta theta priority (List.hd_exn priority)
               with
-              | CHCOpt.Problem.Unknown ->
-                  (CHCOpt.Problem.Skip, optimality_check_id)
-              | CHCOpt.Problem.OptSat sol ->
-                  send_terminate optimality_check_id improve_task_id;
-                  (CHCOpt.Problem.OptSat sol, optimality_check_id)
+              | CHCOpt.Problem.Unknown, _ ->
+                  (CHCOpt.Problem.Skip, false, optimality_check_id)
+              | CHCOpt.Problem.OptSat sol, exact ->
+                  (* an exact certificate settles the round; an inexact one is
+                     only accepted once the improver has failed to improve the
+                     same solution *)
+                  if exact then
+                    send_terminate optimality_check_id improve_task_id
+                  else
+                    Debug.print_log
+                    @@ lazy
+                         "[parallel_check_opt] inexact optimality certificate; \
+                          waiting for the improver";
+                  (CHCOpt.Problem.OptSat sol, exact, optimality_check_id)
               | _ -> failwith "only OptSat and Unknown are reachable"
               | exception Common.Messenger.Terminated ->
                   Debug.print_log @@ lazy "optimality_check_task terminated";
-                  (* receive_request_for_terminated optimality_check_id; *)
-                  (CHCOpt.Problem.Skip, optimality_check_id)
+                  (CHCOpt.Problem.Skip, false, optimality_check_id)
               | exception e ->
                   Printexc.print_backtrace Out_channel.stderr;
                   raise e)
@@ -342,14 +420,14 @@ module Make
                   (Some messenger, improve_task_id)
                   improved full_priority priority pcsp delta theta
               with
-              | CHCOpt.Problem.Unknown -> (CHCOpt.Problem.Skip, improve_task_id)
+              | CHCOpt.Problem.Unknown ->
+                  (CHCOpt.Problem.Skip, true, improve_task_id)
               | sol (* only OptSat, OptSatInSpace, and Sat are reachable *) ->
                   send_terminate improve_task_id optimality_check_id;
-                  (sol, improve_task_id)
+                  (sol, true, improve_task_id)
               | exception Common.Messenger.Terminated ->
                   Debug.print_log @@ lazy "improve_task terminated";
-                  (* receive_request_for_terminated improve_task_id; *)
-                  (CHCOpt.Problem.Skip, improve_task_id)
+                  (CHCOpt.Problem.Skip, true, improve_task_id)
               | exception e ->
                   Printexc.print_backtrace Out_channel.stderr;
                   raise e)
@@ -371,13 +449,37 @@ module Make
             Task.await_any_promise task_pool
               [ improve_task; optimality_check_task ]
           with
-          | Skip, id ->
+          | Skip, _, id ->
               Debug.print_log
               @@ lazy
                    "One task finished with a useless result. Wait for the \
                     other task to complete.";
-              fst @@ wait_other_task id
-          | sol, id ->
+              let sol, _, _ = wait_other_task id in
+              sol
+          | (OptSat _ as sol), false, id when Stdlib.(id = optimality_check_id)
+            -> (
+              (* inexact certificate: the improver gets
+                 [config.inexact_certificate_wait] seconds to refute it (it
+                 cannot be expected to prove Unsat quickly) *)
+              ignore
+              @@ Task.async task_pool (fun () ->
+                  ignore @@ Core_unix.nanosleep config.inexact_certificate_wait;
+                  send_terminate optimality_check_id improve_task_id);
+              match wait_other_task id with
+              | (Sat _ as sol'), _, _ ->
+                  Debug.print_log
+                  @@ lazy
+                       "[parallel_check_opt] the improver refuted an inexact \
+                        optimality certificate";
+                  sol'
+              | (OptSat _ | OptSatInSpace _), _, _ -> sol
+              | _ ->
+                  Debug.print_log
+                  @@ lazy
+                       "[parallel_check_opt] accepting an inexact optimality \
+                        certificate: the improver could not decide";
+                  sol)
+          | sol, _, id ->
               Debug.print_log
               @@ lazy
                    "One task finished. Wait for the other task to be \
@@ -393,9 +495,9 @@ module Make
     match
       check_optimality ~only_simple:true
         (None, PCSP.Params.new_id ())
-        pcsp delta theta priority (List.hd_exn priority)
+        improved pcsp delta theta priority (List.hd_exn priority)
     with
-    | CHCOpt.Problem.OptSat sol -> CHCOpt.Problem.OptSat sol
+    | CHCOpt.Problem.OptSat sol, _ -> CHCOpt.Problem.OptSat sol
     | _ -> (
         if !num_improved < improve_until then
           improve (None, Some 0) improved full_priority priority pcsp delta
@@ -404,9 +506,17 @@ module Make
           match
             check_optimality
               (None, PCSP.Params.new_id ())
-              pcsp delta theta priority (List.hd_exn priority)
+              improved pcsp delta theta priority (List.hd_exn priority)
           with
-          | OptSat sol -> OptSat sol
+          | OptSat sol, true -> OptSat sol
+          | (OptSat _ as sol), false -> (
+              match
+                improve (None, Some 0) improved full_priority priority pcsp
+                  delta theta
+              with
+              | Sat _ as sol' -> sol'
+              | (OptSat _ | OptSatInSpace _) as sol' -> sol'
+              | _ -> sol)
           | _ ->
               improve (None, Some 0) improved full_priority priority pcsp delta
                 theta)
@@ -454,7 +564,7 @@ module Make
               ExtTerm.imply_of body head |> ExtTerm.nnf_of
               |> ExtTerm.cnf_of senv param_senv
               |> Set.Poly.map ~f:(fun (ps, ns, phi) ->
-                     (param_senv, ps, ns, phi)) ))
+                  (param_senv, ps, ns, phi)) ))
         |> List.unzip
         |> fun (nesenv, cls) -> (nesenv, Set.Poly.union_list cls)
       in
@@ -463,54 +573,59 @@ module Make
         else
           PCSP.Problem.clauses_of @@ pcsp
           |> Set.filter ~f:(fun (_, ps, ns, _) ->
-                 Fn.non Set.is_empty ps && Fn.non Set.is_empty ns)
+              Fn.non Set.is_empty ps && Fn.non Set.is_empty ns)
           |> Set.to_list
           |> List.filter_mapi ~f:(fun i (param_senv, _, ns, phi) ->
-                 let pvs =
-                   Set.to_list @@ Set.Poly.map ns ~f:ExtTerm.let_var_app
-                 in
-                 if
-                   (not
-                      (List.for_all pvs ~f:(fun (v, _) ->
-                           List.exists priority ~f:(Stdlib.( = ) v))))
-                   || (Set.length ns <= 1 && ExtTerm.is_bool phi)
-                 then None
-                 else
-                   let pne =
-                     OptimalityChecker.pn (mk_ne_tvar (Tvar "non_vac")) i
-                   in
-                   let tvs =
-                     phi :: Set.to_list ns |> ExtTerm.and_of |> ExtTerm.fvs_of
-                     |> Set.filter ~f:(Map.Poly.mem param_senv)
-                     |> Set.Poly.map ~f:ExtTerm.mk_var
-                     |> Set.to_list
-                     |> List.sort ~compare:Stdlib.compare
-                   in
-                   let sargs =
-                     List.map tvs
-                       ~f:
-                         (ExtTerm.let_var >> fst >> Map.Poly.find_exn param_senv)
-                   in
-                   let body = ExtTerm.mk_var_app pne tvs in
-                   let head =
-                     ExtTerm.and_of (ExtTerm.neg_of phi :: Set.to_list ns)
-                   in
-                   let clause =
-                     ExtTerm.imply_of body head |> ExtTerm.nnf_of
-                     |> ExtTerm.cnf_of senv param_senv
-                     |> Set.Poly.map ~f:(fun (ps, ns, phi) ->
-                            (param_senv, ps, ns, phi))
-                   in
-                   Some ((pne, Sort.mk_fun (sargs @ [ ExtTerm.SBool ])), clause))
+              let pvs = Set.to_list @@ Set.Poly.map ns ~f:ExtTerm.let_var_app in
+              if
+                (not
+                   (List.for_all pvs ~f:(fun (v, _) ->
+                        List.exists priority ~f:(Stdlib.( = ) v))))
+                || (Set.length ns <= 1 && ExtTerm.is_bool phi)
+              then None
+              else
+                let pne =
+                  OptimalityChecker.pn (mk_ne_tvar (Tvar "non_vac")) i
+                in
+                let tvs =
+                  phi :: Set.to_list ns |> ExtTerm.and_of |> ExtTerm.fvs_of
+                  |> Set.filter ~f:(Map.Poly.mem param_senv)
+                  |> Set.Poly.map ~f:ExtTerm.mk_var
+                  |> Set.to_list
+                  |> List.sort ~compare:Stdlib.compare
+                in
+                let sargs =
+                  List.map tvs
+                    ~f:(ExtTerm.let_var >> fst >> Map.Poly.find_exn param_senv)
+                in
+                let body = ExtTerm.mk_var_app pne tvs in
+                let head =
+                  ExtTerm.and_of (ExtTerm.neg_of phi :: Set.to_list ns)
+                in
+                let clause =
+                  ExtTerm.imply_of body head |> ExtTerm.nnf_of
+                  |> ExtTerm.cnf_of senv param_senv
+                  |> Set.Poly.map ~f:(fun (ps, ns, phi) ->
+                      (param_senv, ps, ns, phi))
+                in
+                Some ((pne, Sort.mk_fun (sargs @ [ ExtTerm.SBool ])), clause))
           |> List.unzip
           |> fun (nesenv, cls) -> (nesenv, Set.Poly.union_list cls)
       in
       let nesenv = Map.Poly.of_alist_exn (nesenv1 @ nesenv2) in
-      let kind_map = Map.Poly.map nesenv ~f:(fun _ -> Kind.NE) in
+      let kind_map = Map.Poly.map nesenv ~f:(fun _ -> Kind.Tot []) in
       let params = PCSP.Problem.params_of pcsp in
       let params =
         {
           params with
+          (* [force_merge] compares colliding values with [Stdlib.( = )], and a
+             [Kind.t] can be [NWF]/[Parity], which carry a closure and a
+             [Hashtbl]: a collision on such a key raises [Invalid_argument] from
+             the comparison rather than the intended [failwith "force_merge"]
+             (polymorphic comparison cannot handle either).  The keys added
+             here are the freshly made
+             non-empty predicates, so a collision is not expected; if one happens the
+             message will be misleading. *)
           kind_map = Map.force_merge params.kind_map kind_map;
           senv = Map.force_merge params.senv nesenv;
         }
@@ -549,12 +664,51 @@ module Make
             let filename = "./" ^ basename ^ ".sol" in
             match SyGuS.Parser.solution_from_file filename with
             | Ok defs -> Some (Map.Poly.of_alist_exn defs)
-            | Error _ -> failwith @@ sprintf "failed to load %s" filename)
+            | Error err ->
+                (* the configuration asks for a seed solution beside the
+                   input, read from the working directory; without it there is
+                   nothing to start from, which is a refusal of the run, not
+                   an internal error *)
+                Common.Refusal.refuse
+                  "load_init_sol is set, so the initial solution is read from \
+                   %s, which cannot be read: %s"
+                  filename (Error.to_string_hum err))
         else None
       in
       match sol_opt with
       | None -> Solver.solve ~bpvs:(Set.Poly.of_list full_priority) src_pcsp
-      | Some sol -> Ok (PCSP.Problem.Sat sol, 0 (*dummy*))
+      | Some sol ->
+          (* A loaded seed is a CANDIDATE, not an answer: it was taken as [Sat]
+             without being checked against the constraints, and everything after
+             this reasons about improving a solution it assumes is feasible.  The
+             all-true predicate is the case that makes that fatal -- nothing can
+             enlarge it, so it passes the optimality reasoning unchanged and is
+             reported as the maximum, while violating the problem.  A stale .sol
+             file from another run is enough: the file is looked up by the input's
+             basename in the working directory.
+             So the seed is checked here, the same way the answer would be: every
+             constraint with the solution substituted must be valid.  A seed that
+             fails is not an error in the problem, so the run continues by solving
+             for an initial solution as it would have without one. *)
+          let feasible =
+            let senv = PCSP.Problem.senv_of src_pcsp in
+            Set.for_all (PCSP.Problem.formulas_of src_pcsp)
+              ~f:(fun (uni_senv, phi) ->
+                let phi' = Term.subst sol phi in
+                (not (Set.exists (ExtTerm.fvs_of phi') ~f:(Map.Poly.mem senv)))
+                &&
+                  try
+                    Z3Smt.Z3interface.is_valid ~id:None (LogicOld.get_fenv ())
+                    @@ ExtTerm.to_old_fml Map.Poly.empty uni_senv phi'
+                  with exn_ when not (Common.Timer.is_async exn_) -> false)
+          in
+          if feasible then Ok (PCSP.Problem.Sat sol, 0 (*dummy*))
+          else (
+            Debug.print_log
+            @@ lazy
+                 "the loaded initial solution does not satisfy the \
+                  constraints; solving for one instead";
+            Solver.solve ~bpvs:(Set.Poly.of_list full_priority) src_pcsp)
     in
     match init_sol with
     | Ok (PCSP.Problem.Unsat _, _) -> (CHCOpt.Problem.Unsat, 0)

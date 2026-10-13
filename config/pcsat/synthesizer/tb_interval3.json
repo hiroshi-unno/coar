@@ -2,18 +2,11 @@
   "strategy": [
     "Template",
     {
-      "verbose": false,
-      "generalize": false,
       "solution_template": {
         "update_strategy": [
           "UnsatCore"
         ],
-        "smt_timeout": null,
         "compute_ucores": true,
-        "extract_qualifiers": true,
-        "extract_terms": false,
-        "extract_constants": true,
-        "reduce_quals_terms": false,
         "learn_quals_from_ucores": false,
         "qualifier_generator": [
           "Filename",
@@ -22,13 +15,12 @@
         "pex_strategy": [
           "InstDefault"
         ],
-        "sync_threshold": null,
         "restart_threshold": null,
         "predicate_template": [
           "DNF",
           [
             "Filename",
-            "./config/pcsat/template/predicate_dnf_template_thr.json"
+            "./config/pcsat/template/predicate_dnf_template_interval3.json"
           ]
         ],
         "wf_predicate_template": [
@@ -70,12 +62,8 @@
             "Filename",
             "./config/pcsat/template/regex_template.json"
           ]
-        ],
-        "verbose": false
+        ]
       }
     }
-  ],
-  "check_candidates": false,
-  "refine_candidates": false,
-  "verbose": false
+  ]
 }

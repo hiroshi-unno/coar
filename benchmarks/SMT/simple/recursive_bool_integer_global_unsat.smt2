@@ -1,0 +1,5 @@
+(set-logic ALL)
+(declare-const n Int)
+(define-fun-rec b ((x Bool)) Bool (xor (b x) (= n 0)))
+(assert (= n 0))
+(check-sat)

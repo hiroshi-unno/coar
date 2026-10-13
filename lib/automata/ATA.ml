@@ -16,7 +16,7 @@ let pr_dest ppf (dest : dest) =
         else
           String.concat_map_list ~sep:" /\\ " conj ~f:(fun (i, s) ->
               "(" ^ string_of_int i ^ "," ^ s ^ ")"))
-(*List.pr (List.pr (Pair.pr Integer.pr pr_id) " /\\ ") " \\/ "*)
+(*List.pr (List.pr (Pair.pr Int.pp pr_id) " /\\ ") " \\/ "*)
 
 type arity = (string, int) List.Assoc.t
 
@@ -32,7 +32,7 @@ let pr_pre ppf (trs : pre_trs) =
       Format.fprintf ppf "%s %s -> %a.@\n" q a pr_dest qss)
 
 let states (trs : pre_trs) =
-  List.unique
+  List.dedup_keep_last
   @@ List.concat_map trs ~f:(fun (q, (_a, qss)) ->
          q :: List.concat_map qss ~f:(List.map ~f:snd))
 

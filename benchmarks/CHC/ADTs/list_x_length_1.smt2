@@ -1,7 +1,7 @@
 (set-logic HORN)
 
 (declare-sort X 0)
-(declare-datatypes (T) ((List nil (cons (hd T) (tl (List))))))
+(declare-datatypes ((List 1)) ((par (T) ((nil) (cons (hd T) (tl (List T)))))))
 (define-fun-rec defined_length ((x (List X))) Int (
      ite ((_ is nil) x) 0 (+ (defined_length (tl x)) 1)
 ))

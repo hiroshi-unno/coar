@@ -1,34 +1,55 @@
-FROM ubuntu:18.04
+# CAV 2021 artifact (PCSat, relational verification) built from the CURRENT tree.
+#
+# Until 2026-09-13 this file cloned github.com/hiroshi-unno/coar at the tag
+# CAV21AE, so the image contained the 2021 snapshot and none of the maintained
+# copies of this artifact's own files -- `exp.sh` beside this Dockerfile names
+# configs (config/solver/pcsat_tb*.json) that exist here and not in that tag.
+# The decision of 2026-09-13 is that the permanent version of each artifact lives
+# on Zenodo, and that the copy in this repository builds the latest source even
+# if the numbers then differ from the paper's.
+#
+# Build (context is the repository root):
+#   sudo docker build -f cav21ae_rel/Dockerfile -t cav21ae_pcsat .
+#   sudo docker run --rm -it cav21ae_pcsat:latest /bin/bash --login
+#
+# `Dockerfile.dockerignore` beside this file is what keeps `cav21ae_rel/` in the
+# build context; the repository's root `.dockerignore` excludes it, for the
+# released image's benefit.
 
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y tzdata
-RUN apt-get install -y build-essential gcc-4.8 g++-4.8 python cmake wget git software-properties-common groff sudo
-RUN add-apt-repository ppa:avsm/ppa
-RUN apt-get update
-RUN apt-get install -y opam libffi-dev libgmp-dev libblas-dev liblapack-dev pkg-config
-# dpkg-reconfigure tzdata
+FROM ocaml/opam:ubuntu-25.10-ocaml-5.4
 
-# Add user and allow sudo without password
-RUN useradd -m pcsat
-#RUN chsh pcsat -s /bin/bash
-RUN echo "pcsat ALL=NOPASSWD: ALL" > /etc/sudoers.d/pcsat
-RUN chmod 0440 /etc/sudoers.d/pcsat
+WORKDIR /home/opam/coar
+USER opam:opam
 
-USER pcsat
+RUN sudo apt update \
+	&& sudo apt install -y \
+	libblas-dev \
+	libffi-dev \
+	libglpk-dev \
+	libgmp-dev \
+	liblapack-dev \
+	libmpfr-dev \
+	pkg-config \
+	python3 \
+	wget
 
-RUN opam init --shell=bash --shell-setup --disable-sandboxing
+RUN sudo ln -f /usr/bin/opam-2.5 /usr/bin/opam
 
-# Download paper, artifact, llvm, and llvm2kittel
-WORKDIR /home/pcsat
-RUN git clone https://github.com/hiroshi-unno/coar.git -b CAV21AE
-#RUN git clone https://<USER>:<PASSWORD>@bitbucket.org/uhiro/fptprove.git -b cav21ae coar
-RUN wget --user-agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.85 Safari/537.36" https://www.riec.tohoku.ac.jp/~unno/papers/cav2021rel.pdf
+COPY --chown=opam:opam . /home/opam/coar/
 
-# Build artifact
-WORKDIR /home/pcsat/coar
-RUN eval $(opam env) && opam install . --deps-only -y && dune build main.exe
+RUN sudo chown -R opam:opam /home/opam/coar && \
+	rm -rf /home/opam/coar/_build && \
+	opam update \
+	&& opam install . --deps-only -j 4 \
+	&& opam install dune \
+	&& eval $(opam env) \
+	&& dune build main.exe
 
-WORKDIR /home/pcsat
+# the paper, for the reader's convenience
+RUN wget -q -P /home/opam https://www.riec.tohoku.ac.jp/~unno/papers/cav2021rel.pdf || \
+	echo "could not download the paper; see https://www.riec.tohoku.ac.jp/~unno/papers/cav2021rel.pdf"
 
-# Build & run the image
-# sudo docker build -t cav21ae_pcsat .
-# sudo docker run --rm -it cav21ae_pcsat:latest /bin/bash --login
+# Reproduce Table 1 (inside the container)
+#
+# cd /home/opam/coar/cav21ae_rel
+# ./exp.sh

@@ -1,3 +1,20 @@
+(* The C frontend's abstract syntax: the temporal specifications (CTL, LTL),
+   Buchi automata and the modal fixpoint-equation systems ([HMES]) they are
+   translated into, and the program side -- declarations, structured
+   statements, the initial assignments split off a program's start ([Init]),
+   function declarations, and the symbolic [State] the translation threads
+   through a program.
+
+   It also fixes the meaning of the SV-COMP [__VERIFIER_nondet_*] functions:
+   a result is confined to its type's range for types of at most 16 bits, and
+   for 32- and 64-bit types only when [bound_wide_nondets] is set (otherwise an
+   unsigned one is only at least zero and a signed one is unconstrained).
+
+   [State.t] is a list of references: [State.update] assigns through the
+   reference and returns the same list, so despite its type it is destructive,
+   and a caller that needs to keep the old state must take a copy.  An update
+   of a variable the state does not hold is ignored. *)
+
 open Core
 open Common.Ext
 open Ast
@@ -21,6 +38,40 @@ let formula_of_term term = Formula.neq term (T_int.zero ())
 
 let term_of_string str =
   Term.mk_var (Ident.Tvar (sprintf "\"%s\"" str)) T_int.SRefInt ~info:Dummy
+
+(* set by the parsers when a declaration or cast says [unsigned]; the frontend
+   models C integers as mathematical integers, so wrap-around modulo 2^w is
+   not represented *)
+let unsigned_seen = ref false
+
+(* The constraint a [__VERIFIER_nondet_*] result satisfies.  Types of at most 16
+   bits (bool, char, short and their unsigned versions) get their full
+   [min <= x /\ x <= max] range: those bounds are what programs rely on and the
+   constants are small.  32- and 64-bit types keep the historical treatment —
+   [x >= 0] for the unsigned ones, nothing for the signed ones — because bounds
+   like 2^31 rarely matter for the property and make the constraint solvers
+   much slower (three cav2015ltl files stopped being disproved within 150 s
+   when they were added). *)
+(* [--c-bound-wide-nondets]: bound the 32- and 64-bit nondets by their width
+   as well, as the LTS frontend does for [nondet_int()]/[nondet_uint()] read
+   from a T2 file.  Off by default for the
+   performance reason above; a property that depends on the upper bound of an
+   [int]/[uint] result needs it. *)
+let bound_wide_nondets = ref false
+
+let nondet_range varname bits signed =
+  let x = Term.mk_var (Ident.Tvar varname) T_int.SInt ~info:Dummy in
+  if bits <= 16 || !bound_wide_nondets then
+    let lo, hi =
+      if signed then
+        ( Z.neg (Z.shift_left Z.one (bits - 1)),
+          Z.pred (Z.shift_left Z.one (bits - 1)) )
+      else (Z.zero, Z.pred (Z.shift_left Z.one bits))
+    in
+    Formula.and_of
+      [ Formula.geq x (T_int.mk_int lo); Formula.leq x (T_int.mk_int hi) ]
+  else if not signed then Formula.geq x (T_int.zero ())
+  else Formula.mk_true ()
 
 let type_of_nondet term =
   if Term.is_funcall term then
@@ -1052,11 +1103,13 @@ end = struct
     | LABEL lab ->
         LABEL
           (try Map.Poly.find_exn ren lab
-           with _ -> failwith ("undefined label: " ^ lab))
+           with exn_ when not (Common.Timer.is_async exn_) ->
+             failwith ("undefined label: " ^ lab))
     | GOTO lab ->
         GOTO
           (try Map.Poly.find_exn ren lab
-           with _ -> failwith ("undefined label: " ^ lab))
+           with exn_ when not (Common.Timer.is_async exn_) ->
+             failwith ("undefined label: " ^ lab))
     | _ -> stmt
 
   let get_inner_statements = function

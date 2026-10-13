@@ -1,0 +1,46 @@
+{
+    "phase_list": [
+        [
+            "S",
+            [
+                "Filename",
+                "./config/pcsat/synthesizer/tbq_ar_fixpoint.json"
+            ]
+        ],
+        [
+            "V",
+            [
+                "Filename",
+                "./config/pcsat/validator/nce_fixpoint.json"
+            ]
+        ],
+        [
+            "L",
+            [
+                "Filename",
+                "./config/pcsat/labeler/sat1_fixpoint.json"
+            ]
+        ],
+        [
+            "R",
+            [
+                "Filename",
+                "./config/pcsat/resolver/smt_fixpoint.json"
+            ]
+        ],
+        [
+            "L",
+            [
+                "Filename",
+                "./config/pcsat/labeler/sat1_fixpoint.json"
+            ]
+        ]
+    ],
+    "rl_config": [
+        "Filename",
+        "./config/pcsat/rl/disable.json"
+    ],
+    "prove_unknown_free_clauses_first": false,
+    "dedup_normalized_examples": false,
+    "early_point_pin_first_no_unknown_query": false
+}

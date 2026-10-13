@@ -1,0 +1,7 @@
+; the state is constantly 1, and bad refers to its negation
+1 sort bitvec 1
+2 one 1
+3 state 1 s
+4 init 1 3 2
+5 next 1 3 3
+6 bad -3

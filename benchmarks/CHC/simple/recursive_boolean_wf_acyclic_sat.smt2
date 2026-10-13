@@ -1,0 +1,5 @@
+(set-logic HORN)
+(declare-wfp P (Bool Bool) Bool)
+(define-fun-rec f ((x Bool) (y Bool)) Bool (P x y))
+(assert (not (f false false)))
+(check-sat)

@@ -1,0 +1,5 @@
+/* an alternation: infinitely often the inner loop terminates */
+forall (x: int). x >= 0 => G x
+s.t.
+G (x: int): bool =nu F x;
+F (x: int): bool =mu (x <= 0 => G (x + 3)) /\ (x > 0 => F (x - 1));

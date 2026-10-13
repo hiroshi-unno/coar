@@ -1,0 +1,7 @@
+/* exists a. P(|a|) over the reals with P(x) the singleton x = -1: invalid, since |a| is never
+   negative.  The optimizer's quantifier erasure once took |a| to be onto and answered valid.  (The
+   .hes grammar has only the real absolute value, abs.; the integer one reaches the optimizer from
+   other frontends.) */
+exists (a: real). P (abs. a)
+s.t.
+P (x: real): bool =mu x = -1.0;

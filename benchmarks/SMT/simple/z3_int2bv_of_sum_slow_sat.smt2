@@ -1,0 +1,16 @@
+; sat.  Z3 5.1.0 does not answer within 30 s; with (_ int_to_bv 64) (+ 1 x1)
+; written (bvadd #x...01 ((_ int_to_bv 64) x1)), which is the same term modulo 2^64,
+; it answers in about 0.4 s.  A validation question of a popcount loop.
+(set-logic ALL)
+(declare-fun x4 () Int)
+(declare-fun x1 () Int)
+(assert (let ((a!1 (= (bvand (bvlshr ((_ int_to_bv 64) x1) ((_ int_to_bv 64) x4))
+                     #x0000000000000001)
+              #x0000000000000000))
+      (a!2 (bvand (bvlshr ((_ int_to_bv 64) (+ 1 x1)) ((_ int_to_bv 64) x4))
+                  #x0000000000000001)))
+(let ((a!3 (or (not (= a!2 #x0000000000000000))
+               (<= 0 (+ (- 64) (+ 1 x1)))
+               (= x4 0))))
+  (and a!1 (> 0 (+ (- 64) x1)) (not (= x4 0)) a!3))))
+(check-sat)

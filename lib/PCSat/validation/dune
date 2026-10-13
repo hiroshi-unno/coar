@@ -10,5 +10,7 @@
   CoAR.common
   CoAR.pCSP
   CoAR.Z3Smt
-  CoAR.PCSat.common)
+  CoAR.PCSat.common
+  CoAR.PCSat.qualifier
+  CoAR.PCSat.template)
  (modules validator))

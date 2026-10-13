@@ -2,6 +2,17 @@
   open Core
   open Ast
   open Ast.LogicOld
+
+(* the sort of a sized nondet (these were T_int.SInt
+   regardless of the mode, so under -p ltstermbv a nondet_int() assigned to a
+   bv(32) variable failed with "unification failure: bv32 = int") *)
+let nondet_sort _bits =
+  (* in BV mode the sort is a fresh variable, as for the unsized [nondet ()]:
+     it unifies with the width of the variable the value is assigned to
+     (a [nondet_char ()] stored in a [bv(32)] is a 32-bit value in
+     [-128, 127]); the width range itself is added by
+     [LTS.Problem.range_of_nondet] in bit-vector terms *)
+  if !Problem.bv_mode then Sort.mk_fresh_svar () else T_int.SInt
 %}
 
 %token START TYPE ERROR CUTPOINT FROM TO AT SHADOW
@@ -288,21 +299,21 @@ expr:
   | NONDET LPAREN RPAREN { fun _senv ->
     Term.mk_var (Problem.mk_nondet None) ((*ToDo*)Sort.mk_fresh_svar ()) }
   | NONDET_CHAR LPAREN RPAREN { fun _senv ->
-    Term.mk_var (Problem.mk_nondet (Some (8, true))) T_int.SInt }
+    Term.mk_var (Problem.mk_nondet (Some (8, true))) (nondet_sort 8) }
   | NONDET_UCHAR LPAREN RPAREN { fun _senv ->
-    Term.mk_var (Problem.mk_nondet (Some (8, false))) T_int.SInt }
+    Term.mk_var (Problem.mk_nondet (Some (8, false))) (nondet_sort 8) }
   | NONDET_SHORT LPAREN RPAREN { fun _senv ->
-    Term.mk_var (Problem.mk_nondet (Some (16, true))) T_int.SInt }
+    Term.mk_var (Problem.mk_nondet (Some (16, true))) (nondet_sort 16) }
   | NONDET_USHORT LPAREN RPAREN { fun _senv ->
-    Term.mk_var (Problem.mk_nondet (Some (16, false))) T_int.SInt }
+    Term.mk_var (Problem.mk_nondet (Some (16, false))) (nondet_sort 16) }
   | NONDET_INT LPAREN RPAREN { fun _senv ->
-    Term.mk_var (Problem.mk_nondet (Some (32, true))) T_int.SInt }
+    Term.mk_var (Problem.mk_nondet (Some (32, true))) (nondet_sort 32) }
   | NONDET_UINT LPAREN RPAREN { fun _senv ->
-    Term.mk_var (Problem.mk_nondet (Some (32, false))) T_int.SInt }
+    Term.mk_var (Problem.mk_nondet (Some (32, false))) (nondet_sort 32) }
   | NONDET_LONG LPAREN RPAREN { fun _senv ->
-    Term.mk_var (Problem.mk_nondet (Some (64, true))) T_int.SInt }
+    Term.mk_var (Problem.mk_nondet (Some (64, true))) (nondet_sort 64) }
   | NONDET_ULONG LPAREN RPAREN { fun _senv ->
-    Term.mk_var (Problem.mk_nondet (Some (64, false))) T_int.SInt }
+    Term.mk_var (Problem.mk_nondet (Some (64, false))) (nondet_sort 64) }
 
 exprs:
   | expr { [ $1 ] }

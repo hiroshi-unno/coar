@@ -19,7 +19,6 @@ COPY --chown=opam:opam ./CoAR.opam /home/opam/coar/CoAR.opam
 WORKDIR /home/opam/coar
 # build libraries
 RUN opam update \
- && opam install dune \
  && opam install . --deps-only
 # build coar
 COPY --chown=opam:opam . /home/opam/coar/
@@ -53,5 +52,23 @@ COPY --from=builder /home/opam/.opam/5.4/lib/ocaml /home/opam/.opam/5.4/lib/ocam
 # Prepare another copies for redistribution with self-contained zip file
 COPY --from=builder /home/opam/.opam/5.4/share/apron/lib/*.so /opt/apron/lib/
 
+# Optional cvc5 (off by default): some solver paths call `cvc5` from PATH or as `./cvc5` from the
+# working directory, so the static release binary is placed in /root/coar, which is on PATH.
+#   docker build --build-arg WITH_CVC5=1 [--build-arg CVC5_VERSION=1.4.1] .
+ARG WITH_CVC5=0
+ARG CVC5_VERSION=1.4.1
+ARG TARGETARCH
+RUN if [ "$WITH_CVC5" = "1" ]; then \
+      case "${TARGETARCH:-amd64}" in amd64) a=x86_64 ;; arm64) a=arm64 ;; *) echo "no cvc5 build for ${TARGETARCH}" >&2; exit 1 ;; esac \
+   && apt update && apt install -y curl unzip ca-certificates \
+   && curl -fsSL -o /tmp/cvc5.zip "https://github.com/cvc5/cvc5/releases/download/cvc5-${CVC5_VERSION}/cvc5-Linux-${a}-static.zip" \
+   && unzip -q /tmp/cvc5.zip -d /tmp/cvc5 \
+   && install -m 755 "$(find /tmp/cvc5 -type f -path '*/bin/cvc5' | head -1)" /root/coar/cvc5 \
+   && rm -rf /tmp/cvc5 /tmp/cvc5.zip \
+   && apt purge -y curl unzip && apt autoremove -y && apt clean && rm -rf /var/lib/apt/lists/* \
+   && /root/coar/cvc5 --version ; \
+    fi
+
 ENV PATH="${PATH}:/root/coar"
+WORKDIR /root/coar
 CMD ["/bin/bash"]

@@ -20,7 +20,7 @@ let canonize t =
         [ t ]
     | Alter (t1, t2) ->
         let x = aux t1 @ aux t2 in
-        let x' = List.unique x in
+        let x' = List.dedup_keep_last x in
         (*let _ = assert (x = x') in*)
         x'
   in
@@ -31,8 +31,8 @@ let canonize t =
 
 let rec pr ppf = function
   | Nil -> Format.fprintf ppf "()"
-  | Symbol id -> String.pr ppf id
-  | Label (id, t) -> Format.fprintf ppf "%a[%a]" String.pr id pr t
+  | Symbol id -> Format.pp_print_string ppf id
+  | Label (id, t) -> Format.fprintf ppf "%a[%a]" Format.pp_print_string id pr t
   | Concat (t1, t2) -> Format.fprintf ppf "(%a, %a)" pr t1 pr t2
   | Alter (t1, t2) -> Format.fprintf ppf "(%a | %a)" pr t1 pr t2
   | Kleene t -> Format.fprintf ppf "%a*" pr t
@@ -152,19 +152,24 @@ let rec to_ta env t wl wl' rho =
       let u1, wl, wl' = to_ta env (Concat (t1, t3)) wl wl' rho in
       let u2, wl, wl' = to_ta env (Concat (t2, t3)) wl wl' rho in
       (RTA.Alter (u1, u2), wl, wl')
-  | Concat (Kleene _, _) -> failwith ""
-  | Concat (Option _, _) -> failwith ""
-  | Option _ -> failwith ""
+  (* [tta_of] runs [elim_kleene_env] and [elim_option_env] before this, so a
+     [Kleene] or an [Option] left here means the elimination missed a position
+     -- these arms used to raise with an empty message, which said nothing *)
+  | Concat (Kleene _, _) ->
+      failwith "[to_ta] a Kleene star survived elim_kleene_env, under a Concat"
+  | Concat (Option _, _) ->
+      failwith "[to_ta] an Option survived elim_option_env, under a Concat"
+  | Option _ -> failwith "[to_ta] an Option survived elim_option_env"
   | Alter (t1, t2) ->
       let u1, wl, wl' = to_ta env t1 wl wl' rho in
       let u2, wl, wl' = to_ta env t2 wl wl' rho in
       (RTA.Alter (u1, u2), wl, wl')
-  | Kleene _t -> failwith ""
+  | Kleene _t -> failwith "[to_ta] a Kleene star survived elim_kleene_env"
 
 let rec to_ta_env env wl wl' rs =
   if false then (
     List.iter rs ~f:(fun (id, u) ->
-        Format.printf "%s -> %a@," id (RTA.pr_body String.pr) u);
+        Format.printf "%s -> %a@," id (RTA.pr_body Format.pp_print_string) u);
     List.iter wl ~f:(fun (id, t) -> Format.printf "%s -> %a@," id pr t);
     Format.printf "@,");
   match wl with
@@ -186,14 +191,14 @@ let tta_of env =
       [ fst @@ List.hd_exn trs ]
       trs
   in
-  if false then RTA.pr String.pr Format.std_formatter trs;
+  if false then RTA.pr Format.pp_print_string Format.std_formatter trs;
   let trs = RTA.minimize trs in
   let rn = List.mapi trs ~f:(fun i (id, _) -> (id, "q" ^ string_of_int i)) in
   let trs =
     List.map trs ~f:(fun (id, u) ->
         (List.Assoc.find_exn ~equal:Stdlib.( = ) rn id, RTA.rename_body rn u))
   in
-  if false then RTA.pr String.pr Format.std_formatter trs;
+  if false then RTA.pr Format.pp_print_string Format.std_formatter trs;
   RTA.tta_of trs
 
 (*
@@ -227,7 +232,7 @@ let main filename =
   Format.printf "@[<v>";
   let trs = tta_of env in
   Format.printf "%%BEGINA@,";
-  TTA.pr_map String.pr Format.std_formatter trs;
+  TTA.pr_map Format.pp_print_string Format.std_formatter trs;
   Format.printf "%%ENDA@,";
   Format.printf "@]"
 *)

@@ -59,6 +59,54 @@ let formula_of_query = function
       else Formula.forall query.params body
   | DistCheck _ -> failwith "DistCheck not implemented"
 
+let simplify_formula phi = Evaluator.simplify @@ Normalizer.normalize phi
+
+let imply_antecedents antecedents concl =
+  match antecedents with
+  | [] -> [ concl ]
+  | _ ->
+      let antecedent = simplify_formula @@ Formula.and_of @@ List.rev antecedents in
+      if Formula.is_false antecedent then []
+      else if Formula.is_true antecedent then [ concl ]
+      else [ Formula.mk_imply antecedent concl ]
+
+let rec nonnegative_formulas_of_term ?(antecedents = []) term =
+  match term with
+  | Term.FunApp (T_bool.IfThenElse, [ cond; then_; else_ ], _) ->
+      let cond = Formula.of_bool_term cond in
+      nonnegative_formulas_of_term ~antecedents:(cond :: antecedents) then_
+      @ nonnegative_formulas_of_term
+          ~antecedents:(Formula.mk_neg cond :: antecedents)
+          else_
+  | term -> imply_antecedents antecedents (Formula.geq term (T_real.rzero ()))
+
+let nonnegative_formulas_of_fsub fsub pred_sub =
+  Map.Poly.to_alist fsub
+  |> List.concat_map ~f:(fun (_, (_, body)) ->
+         nonnegative_formulas_of_term @@ Term.subst_funcs pred_sub body)
+
+(* [min]/[max] in a body are applications of a *function variable* of sort
+   real -> real -> real, which SMT-LIB cannot declare, so every constraint
+   builder eliminates them from the raw body before substituting templates
+   into it -- [Term.elim_min_max_list] returns one body per branch and the
+   caller conjoins them, which is what [min b1 b2 >= 0] means.  Omitting that
+   here let a [min] reach the generated entailment as a universally quantified
+   arrow-sorted variable, and the run died in the SMT-LIB printer with
+   "[str_of_sort] unsupported sort: real -> real -> real" instead of answering
+   (two of the benchmarks a paper's artifact script runs). *)
+let nonnegative_formulas_of_fsub_with_preds preds fsub pred_sub =
+  Map.Poly.to_alist fsub
+  |> List.concat_map ~f:(fun (name, (_, body)) ->
+         let arg_constrs =
+           match List.find preds ~f:(fun pred -> Ident.tvar_equal pred.Pred.name name) with
+           | Some pred -> pred.arg_constrs
+           | None -> []
+         in
+         Term.elim_min_max_list body
+         |> List.concat_map ~f:(fun body ->
+                nonnegative_formulas_of_term ~antecedents:arg_constrs
+                @@ Term.subst_funcs pred_sub body))
+
 let str_of_solution = function
   | Valid -> "valid"
   | Invalid -> "invalid"
@@ -195,7 +243,7 @@ let nth i qfl =
       }
     in
     if !found then Some res else None
-  with _ -> None
+  with exn_ when not (Common.Timer.is_async exn_) -> None
 
 let unroll qfl n =
   let get_unroll_func_and_base qfl =

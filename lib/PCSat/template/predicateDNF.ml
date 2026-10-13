@@ -1,3 +1,11 @@
+(* Template for an ordinary predicate: a disjunctive normal form of
+   [number_of_disj] disjuncts of [number_of_conj] conjuncts, each conjunct a
+   hole choosing among the qualifiers or an affine inequality with bounded
+   coefficients and constant.  On a shape label the template grows the
+   disjuncts or the conjuncts -- the one [disj_first] prefers, and the other
+   every [incr_interval]-th step -- and over datatype or array arguments moves
+   to a deeper qualifier set once the shape is large for its depth; bound
+   labels raise the coefficient and constant bounds. *)
 open Core
 open Common
 open Common.Ext
@@ -8,21 +16,21 @@ open Function
 
 module Config = struct
   type t = {
-    verbose : bool;
-    number_of_disj : int;
-    number_of_conj : int;
-    incr_interval : int;
-    depth : int;
-    upper_bound_coeff : int option;
-    upper_bound_const : int option;
-    seeds : int list option;
-    bound_each_coeff : int option;
-    threshold_coeff : int option;
-    threshold_const : int option;
-    disj_first : bool;
-    fix_shape : bool;
-    eq_atom : bool;
-    add_mod2_quals : bool;
+    verbose : bool; [@default false]
+    number_of_disj : int; [@default 1]
+    number_of_conj : int; [@default 1]
+    incr_interval : int; [@default 2]
+    depth : int; [@default 0]
+    upper_bound_coeff : int option; [@default Some 1]
+    upper_bound_const : int option; [@default Some 0]
+    seeds : int list option; [@default None]
+    bound_each_coeff : int option; [@default None]
+    threshold_coeff : int option; [@default None]
+    threshold_const : int option; [@default None]
+    disj_first : bool; [@default true]
+    fix_shape : bool; [@default false]
+    eq_atom : bool; [@default false]
+    add_mod2_quals : bool; [@default true]
   }
   [@@deriving yojson]
 
@@ -32,17 +40,14 @@ module Config = struct
 
   let instantiate_ext_files cfg = Ok cfg
 
-  let load_ext_file = function
-    | ExtFile.Instance x -> Ok (ExtFile.Instance x)
-    | Filename filename -> (
-        let open Or_error in
-        try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
-        match of_yojson raw_json with
-        | Ok x -> instantiate_ext_files x >>= fun x -> Ok (ExtFile.Instance x)
-        | Error msg ->
-            error_string
-            @@ sprintf "Invalid PredicateDNF Configuration (%s): %s" filename
-                 msg)
+  include MakeExtFile (struct
+    type nonrec t = t
+
+    let of_yojson = of_yojson
+    let to_yojson = to_yojson
+    let name = "PredicateDNF"
+    let instantiate = instantiate_ext_files
+  end)
 end
 
 module type ArgType = sig
@@ -72,6 +77,9 @@ let state_of param labels : state =
   ( param.nd,
     param.nc,
     param.depth,
+    (* [Z.to_int] is safe: the bounds are the template's configured
+       coefficient and constant bounds, grown by one step at a time, never a
+       model integer *)
     Option.map ~f:Z.to_int param.ubc,
     Option.map ~f:Z.to_int param.ubd,
     Set.mem labels DepthDisjConj (* ToDo: this is always true *),
@@ -115,6 +123,8 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
 
   let name_of () = Arg.name
   let kind_of () = Kind.str_of Kind.Ord
+  let kind = Kind.Ord
+  let flexible = false
   let sort_of () = Sort.mk_fun @@ Arg.sorts @ [ T_bool.SBool ]
   let params_of () = sort_env_list_of_sorts Arg.sorts
 
@@ -152,6 +162,8 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
   let update_hspace hspace =
     HypSpace.qualifiers_of ~fenv:Arg.fenv ~add_mod2_quals:config.add_mod2_quals
       !param.depth hspace
+
+  let kind_cert_template () = None
 
   let gen_template ~ucore:_ (hspace : HypSpace.hspace) =
     let template =
@@ -404,7 +416,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     if
       List.exists Arg.sorts ~f:(fun s ->
           Term.is_dt_sort s || Term.is_array_sort s)
-      && param0.nd * param0.nc > Integer.pow (param0.depth + 1) 3
+      && param0.nd * param0.nc > Int.pow (param0.depth + 1) 3
     then
       (*ToDo: try_then*)
       increase_depth @@ init_conj @@ init_disj (param0, actions)

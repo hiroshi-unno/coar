@@ -48,10 +48,12 @@ let solve cnf =
   let solver = Z3.Solver.mk_solver ctx None in
   let _ = Z3.Solver.add solver (of_cnf ctx cnf) in
   match Z3.Solver.check solver [] with
-  | Z3.Solver.SATISFIABLE ->
-      let open Option.Monad_infix in
-      Z3.Solver.get_model solver >>= fun model -> Some (solution_of_model model)
-  | _ -> None
+  | Z3.Solver.SATISFIABLE -> (
+      match Z3.Solver.get_model solver with
+      | Some model -> `Sat (solution_of_model model)
+      | None -> `Unknown)
+  | Z3.Solver.UNSATISFIABLE -> `Unsat
+  | Z3.Solver.UNKNOWN -> `Unknown
 
 let opt_solve (soft : SAT.Problem.soft) hard =
   let cfg = [ ("MODEL", "true") (* ("well_sorted_check", "true"); *) ] in
@@ -65,23 +67,25 @@ let opt_solve (soft : SAT.Problem.soft) hard =
            (string_of_int weight)
            (Z3.Symbol.mk_string ctx "hoge"));
   match Z3.Optimize.check optimizer with
-  | SATISFIABLE ->
-      let open Option.Monad_infix in
-      Z3.Optimize.get_model optimizer >>= fun model ->
-      let score =
-        List.fold soft ~init:0 ~f:(fun score (expr, weight) ->
-            score
-            +
-            match
-              Z3.Model.eval model
-                (Z3.Boolean.mk_and ctx @@ of_cnf ctx expr)
-                true
-            with
-            | None -> 0
-            | Some e -> if Z3.Boolean.is_true e then weight else 0)
-      in
-      Some (score, solution_of_model @@ model)
-  | _ -> None
+  | UNSATISFIABLE -> `Unsat
+  | UNKNOWN -> `Unknown
+  | SATISFIABLE -> (
+      match Z3.Optimize.get_model optimizer with
+      | None -> `Unknown
+      | Some model ->
+          let score =
+            List.fold soft ~init:0 ~f:(fun score (expr, weight) ->
+                score
+                +
+                match
+                  Z3.Model.eval model
+                    (Z3.Boolean.mk_and ctx @@ of_cnf ctx expr)
+                    true
+                with
+                | None -> 0
+                | Some e -> if Z3.Boolean.is_true e then weight else 0)
+          in
+          `Sat (score, solution_of_model @@ model))
 
 let rec of_formula ctx = function
   | PropLogic.Formula.True _ -> Z3.Boolean.mk_true ctx

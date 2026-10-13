@@ -2,7 +2,6 @@
   "strategy": [
     "Classification",
     {
-      "verbose": false,
       "classifier": [
         "Filename",
         "./config/pcsat/classifier/bfsb_poly01234_all.json"
@@ -16,8 +15,5 @@
         "./config/pcsat/classifier/fn_tb.json"
       ]
     }
-  ],
-  "check_candidates": false,
-  "refine_candidates": false,
-  "verbose": false
+  ]
 }

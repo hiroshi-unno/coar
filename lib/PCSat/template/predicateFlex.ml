@@ -1,3 +1,8 @@
+(* The flexible variant of the ordinary predicate template: a disjunctive
+   normal form whose number of conjuncts is kept per disjunct ([shape]).  On
+   a shape label it adds a disjunct or a conjunct to a disjunct chosen at
+   random, and over datatype or array arguments moves to a deeper qualifier
+   set once the shape is large for its depth. *)
 open Core
 open Common
 open Common.Ext
@@ -8,18 +13,18 @@ open Function
 
 module Config = struct
   type t = {
-    verbose : bool;
-    shape : int list;
-    depth : int;
-    upper_bound_coeff : int option;
-    upper_bound_const : int option;
-    seeds : int list option;
-    bound_each_coeff : int option;
-    threshold_coeff : int option;
-    threshold_const : int option;
-    disj_first : bool;
-    fix_shape : bool;
-    eq_atom : bool;
+    verbose : bool; [@default false]
+    shape : int list; [@default [ 1 ]]
+    depth : int; [@default 0]
+    upper_bound_coeff : int option; [@default Some 1]
+    upper_bound_const : int option; [@default Some 0]
+    seeds : int list option; [@default None]
+    bound_each_coeff : int option; [@default None]
+    threshold_coeff : int option; [@default None]
+    threshold_const : int option; [@default Some 3]
+    disj_first : bool; [@default true]
+    fix_shape : bool; [@default false]
+    eq_atom : bool; [@default false]
   }
   [@@deriving yojson]
 
@@ -29,17 +34,14 @@ module Config = struct
 
   let instantiate_ext_files cfg = Ok cfg
 
-  let load_ext_file = function
-    | ExtFile.Instance x -> Ok (ExtFile.Instance x)
-    | Filename filename -> (
-        let open Or_error in
-        try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
-        match of_yojson raw_json with
-        | Ok x -> instantiate_ext_files x >>= fun x -> Ok (ExtFile.Instance x)
-        | Error msg ->
-            error_string
-            @@ sprintf "Invalid PredicateFlex Configuration (%s): %s" filename
-                 msg)
+  include MakeExtFile (struct
+    type nonrec t = t
+
+    let of_yojson = of_yojson
+    let to_yojson = to_yojson
+    let name = "PredicateFlex"
+    let instantiate = instantiate_ext_files
+  end)
 end
 
 module type ArgType = sig
@@ -66,6 +68,9 @@ type state =
 let state_of param labels : state =
   ( param.shp,
     param.depth,
+    (* [Z.to_int] is safe: the bounds are the template's configured
+       coefficient and constant bounds, grown by one step at a time, never a
+       model integer *)
     Option.map ~f:Z.to_int param.ubc,
     Option.map ~f:Z.to_int param.ubd,
     Set.mem labels DepthDisjConj (* ToDo: this is always true *),
@@ -107,6 +112,8 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
 
   let name_of () = Arg.name
   let kind_of () = sprintf "flexible %s" (Kind.str_of Kind.Ord)
+  let kind = Kind.Ord
+  let flexible = true
   let sort_of () = Sort.mk_fun @@ Arg.sorts @ [ T_bool.SBool ]
   let params_of () = sort_env_list_of_sorts Arg.sorts
 
@@ -135,6 +142,8 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
   let update_hspace hspace =
     HypSpace.qualifiers_of ~fenv:Arg.fenv ~add_mod2_quals:true !param.depth
       hspace
+
+  let kind_cert_template () = None
 
   let gen_template ~ucore:_ (hspace : HypSpace.hspace) =
     let template =
@@ -379,7 +388,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     if
       List.exists Arg.sorts ~f:(fun s ->
           Term.is_dt_sort s || Term.is_array_sort s)
-      && List.fold param.shp ~init:0 ~f:( + ) > Integer.pow (param.depth + 1) 3
+      && List.fold param.shp ~init:0 ~f:( + ) > Int.pow (param.depth + 1) 3
     then increase_depth @@ init_shape (param, actions)
     else if config.disj_first then
       if Random.bool () (*ToDo*) then increase_disj (param, actions)

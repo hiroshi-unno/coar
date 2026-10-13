@@ -1,0 +1,71 @@
+(format LCTRS)
+(theory Ints)
+
+(fun l0 (-> Int Int Int Int Int))
+(fun l1 (-> Int Int Int Int Int))
+
+(entrypoint l0)
+
+(rule
+  (l0 x y z count)
+  (l1 x_post y_post z_post count_post)
+  :guard
+  (and
+    (or (<= count 0) (<= z 0))
+    (= x_post x)
+    (= y_post y)
+    (= z_post z)
+    (= count_post count)))
+  
+
+(rule
+  (l0 x y z count)
+  (l0 x_post y_post z_post count_post)
+  :guard
+  (and
+    (> count 0)
+    (> z 0)
+    (> x 0)
+    (= x_post (- x 1))
+    (= y_post (+ y 1))
+    (= z_post (+ z 1))
+    (= count_post count)))
+
+(rule
+  (l0 x y z count)
+  (l0 x_post y_post z_post count_post)
+  :guard
+  (and
+    (> count 0)
+    (> z 0)
+    (<= x 0)
+    (> y 0)
+    (= x_post x)
+    (= y_post (- y 1))
+    (= z_post (+ z 1))
+    (= count_post count)))
+
+(rule
+  (l0 x y z count)
+  (l0 x_post y_post z_post count_post)
+  :guard
+  (and
+    (> count 0)
+    (> z 0)
+    (<= x 0)
+    (<= y 0)
+    (= x_post x)
+    (= y_post y)
+    (= z_post (- z 1))
+    (= count_post count)))
+
+(rule
+  (l0 x y z count)
+  (l0 x_post y_post z_post count_post)
+  :guard
+  (and
+    (> count 0)
+    (> z 0)
+    (<= x 0)
+    (<= y 0)
+    (= count_post (- count 1))))

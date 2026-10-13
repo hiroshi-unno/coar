@@ -60,7 +60,8 @@ rule main = parse
 | "[" { Parser.LBRACKET }
 | "]" { Parser.RBRACKET }
 
-| ['a'-'z''A'-'Z''#''!''_']['a'-'z''A'-'Z''0'-'9'''''_''#''!']*
+(* see lib/muCLP/lexer.mll: '!' must not be an identifier character *)
+| ['a'-'z''A'-'Z''#''_']['a'-'z''A'-'Z''0'-'9'''''_''#']*
     {
       let str = Lexing.lexeme lexbuf in
       Parser.ID str

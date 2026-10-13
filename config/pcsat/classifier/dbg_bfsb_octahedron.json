@@ -6,9 +6,6 @@
             "Filename",
             "./config/pcsat/qualifier/octahedron.json"
         ],
-        "qual_order": [
-            "Rank"
-        ],
         "strategy": [
             "First"
         ],

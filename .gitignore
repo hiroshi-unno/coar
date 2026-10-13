@@ -28,3 +28,26 @@ hoice
 *.svg
 *.onnx
 *.pkl.gz
+
+# The SMT-LIB logics were nine submodules of clc-gitlab.cs.uiowa.edu:2443 until 2026-09-14.
+# None was ever checked out, that port stopped answering, and SMT-LIB moved to per-logic Zenodo
+# archives, which a submodule cannot point at; a copy downloaded from there goes in these paths.
+# QF_CDT is NOT here: it is tracked, and that logic no longer exists in SMT-LIB.
+benchmarks/SMT/QF_ALIA/
+benchmarks/SMT/QF_DT/
+benchmarks/SMT/QF_LIA/
+benchmarks/SMT/QF_LIRA/
+benchmarks/SMT/QF_LRA/
+benchmarks/SMT/QF_NIA/
+benchmarks/SMT/QF_NIRA/
+benchmarks/SMT/QF_NRA/
+benchmarks/SMT/QF_UF/
+benchmarks/CHC/ADTs/ADTRem-JLC-benchmarks/
+
+# The HSF/QARMC archive beside the two hand-written E-CHC probes.  It is the
+# provenance evidence for that corpus and is kept in the working tree on
+# purpose, untracked: this repository is against a size limit and the archive
+# is 12.7 MB of .qarmc files no tool here reads.  It was added by accident on
+# 2026-09-22 by a `git add -A <dir>` and removed again; the entry is here so
+# the next one cannot.
+benchmarks/ECHC/hsf-Benchmarks.zip

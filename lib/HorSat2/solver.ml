@@ -1,3 +1,11 @@
+(* Backend that decides a higher-order model checking problem with the external
+   HorSat2 model checker, run as a separate process on a per-process input
+   file.  It reads alternating tree automata only; a trivial-automaton input
+   is refused with an [Error] naming TRecS.  The verdict is read positionally
+   from HorSat2's output (satisfied, or not satisfied with a counterexample
+   unless [-noce] is set).  An EHMTT problem is reduced to HORS problems and
+   is satisfied when every one of them is.  A parse error or output in an
+   unexpected shape becomes an [Error], never a verdict. *)
 open Core
 open Common
 open Automata
@@ -15,8 +23,19 @@ module Make (Config : Config.ConfigType) : SolverType = struct
 
   let rec solve ?(print_sol = false) homc =
     match homc with
+    | HOMC.Problem.RSFD _ when not (HOMC.Problem.reads_alternating homc) ->
+        Or_error.error_string
+        @@ sprintf
+             "HorSat2 cannot read this input: it specifies %s, and HorSat2's \
+              converter requires an alternating one. Run it with TRecS instead \
+              (-c config/solver/trecs.json)."
+             (HOMC.Problem.dialect_str_of homc)
     | HOMC.Problem.RSFD (trs_in, rules, trs_out) ->
-        let filename = "temp_horsat2.hors" in
+        let filename =
+          (* the process id keeps two concurrent runs in one directory from
+             writing, reading and overwriting the same file *)
+          sprintf "temp_horsat2_p%d.hors" (Pid.to_int @@ Core_unix.getpid ())
+        in
         Debug.print
         @@ lazy
              (sprintf "Size of HORS: %d (%d rules)" (HOMC.RSFD.sizeof rules)
@@ -30,35 +49,35 @@ module Make (Config : Config.ConfigType) : SolverType = struct
              (sprintf "Number of states of output automaton: %d"
              @@ TreeAutomaton.number_of_states trs_out);
         (* output generated RSFD *)
-        let ppf =
-          Format.formatter_of_out_channel
-          @@ if true then Stdlib.open_out filename else Out_channel.stdout
-        in
-        HOMC.Problem.pr ppf homc;
+        Out_channel.with_file filename ~f:(fun channel ->
+            HOMC.Problem.pr (Format.formatter_of_out_channel channel) homc);
         let res =
           (* HorSat2 0.9.5 *)
           let cmd = "./horsat2 " in
           let cmd = if config.noce then cmd ^ "-noce " else cmd in
           let cmd = if config.merge then cmd ^ "-merge " else cmd in
           let cmd = if config.gfp then cmd ^ "-gfp " else cmd in
-          let cin = Core_unix.open_process_in (cmd ^ filename) in
-          let s0 =
-            ignore (In_channel.input_line cin);
-            ignore (In_channel.input_line cin);
-            In_channel.input_line cin
+          let cmd = cmd ^ filename in
+          let (s0, s1, s2), status =
+            Common.Util.Command.read_process cmd ~f:(fun cin ->
+              let s0 =
+                ignore (In_channel.input_line cin);
+                ignore (In_channel.input_line cin);
+                In_channel.input_line cin
+              in
+              let s1 =
+                ignore (In_channel.input_line cin);
+                ignore (In_channel.input_line cin);
+                ignore (In_channel.input_line cin);
+                In_channel.input_line cin
+              in
+              let s2 =
+                ignore (In_channel.input_line cin);
+                In_channel.input_line cin
+              in
+              (s0, s1, s2))
           in
-          let s1 =
-            ignore (In_channel.input_line cin);
-            ignore (In_channel.input_line cin);
-            ignore (In_channel.input_line cin);
-            In_channel.input_line cin
-          in
-          let s2 =
-            ignore (In_channel.input_line cin);
-            In_channel.input_line cin
-          in
-          In_channel.close cin;
-          match (Core_unix.close_process_in cin, s0, s1, s2) with
+          match (status, s0, s1, s2) with
           | Error err, Some "Parse error", _, _ ->
               Debug.print
               @@ lazy (Core_unix.Exit_or_signal.to_string_hum (Error err));
@@ -92,7 +111,7 @@ module Make (Config : Config.ConfigType) : SolverType = struct
         Ok sol
     | HOMC.Problem.EHMTT (ehmtt, trs, (main, typ)) -> (
         try
-          let start_t = Core_unix.time () in
+          let start_t = Common.Clock.time_s () in
           let rsfds =
             HOMC.Reducer.rsfds_of_ehmtt ~print:Debug.print ehmtt trs (main, typ)
           in
@@ -105,10 +124,11 @@ module Make (Config : Config.ConfigType) : SolverType = struct
                 | Ok HOMC.Problem.Unsat -> false
                 | _ -> failwith "failed")
           in
-          let elapsed_t = Core_unix.time () -. start_t in
+          let elapsed_t = Common.Clock.time_s () -. start_t in
           Debug.print @@ lazy (sprintf "\nElapsed Time: %f sec" elapsed_t);
           let sol = if res then HOMC.Problem.Sat else HOMC.Problem.Unsat in
           if print_sol then print_endline (HOMC.Problem.str_of_solution sol);
           Ok sol
-        with _ -> Or_error.error_string "EHMTT verification failed")
+        with exn_ when not (Common.Timer.is_async exn_) ->
+          Or_error.error_string "EHMTT verification failed")
 end

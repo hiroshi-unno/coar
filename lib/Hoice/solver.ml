@@ -1,3 +1,13 @@
+(* Backend that hands a CHC problem to the external HoIce solver.  The clauses
+   are registered as rules of a Z3 fixedpoint object (in-process, through the
+   Z3 library) only so that Z3 prints them as SMT-LIB Horn clauses; that text,
+   with each assertion universally closed and headless clauses routed through
+   a fresh nullary query predicate, is piped to the [hoice] process, and the
+   first verdict line of its output is read back.  Only the verdict is read:
+   [sat] carries an empty solution and [unsat] no refutation.  A problem with
+   any predicate kind but the ordinary one is refused before translation, and
+   an error report or unparsable output from HoIce raises rather than becoming
+   a verdict; a failure to run the process becomes an [Error]. *)
 open Core
 open Common
 open Common.Ext
@@ -24,7 +34,17 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
     in
     Z3.mk_context options
 
-  let solver = Z3.Fixedpoint.mk_fixedpoint ctx
+  (* A NEW fixedpoint for every call, and that is the whole of it.  This one used
+     to be created once with the module: each call registered its relations and
+     appended its rules to the same object, and the export is built by printing
+     that object, so the second problem's file carried the first problem's rules
+     as well.  Two problems each satisfiable on their own -- one asserting P(0),
+     the other its negation -- came back sat and then unsat, the second having
+     been handed both.  This is not an incremental API: `solve` takes a whole
+     problem, and a fresh module answers the second one correctly, which is what
+     says the state is the bug rather than the use.  The context is still shared,
+     since what accumulates is the fixedpoint's rules. *)
+  let fresh_solver () = Z3.Fixedpoint.mk_fixedpoint ctx
 
   let rec get_status_from_hoice_output = function
     | [] -> failwith "no result"
@@ -61,27 +81,44 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
         else failwith @@ sprintf "unknown result: %s" msg
 
   let solve ?(print_sol = false) pcsp =
-    assert (
-      (Set.is_empty @@ PCSP.Problem.wfpvs_of pcsp)
-      && (Set.is_empty @@ PCSP.Problem.fnpvs_of pcsp)
-         (* ToDo: check if pcsp is of CHC *));
+    (* This backend solves CHC only, and `-p chc`, `-p pfwcsp`, `-p dqchc` … are
+       all the *same* problem constructor (the name documents the input, nothing
+       checks it), so the compatibility table cannot refuse the pairing: the
+       check has to happen here.  It used to be a bare [assert], which told the
+       operator nothing but a file and a line. *)
+    (* Every kind but [Ord] states an obligation the clauses do not: a
+       non-empty predicate may not be false everywhere, a disjunctively
+       well-founded one may not contain a self loop, and so on.  This engine
+       reads the clauses and nothing else, so it can only honour [Ord].
+       Listing the kinds to REFUSE, which is what this used to do, left the
+       ones nobody thought of accepted: only well-founded and functional were
+       named, so a disjunctively well-founded or non-empty predicate was
+       converted to an ordinary Horn relation with its obligation dropped, and
+       both fixtures that violate it came back sat.  Naming the one kind that
+       IS supported cannot go stale that way. *)
+    PCSP.Problem.refuse_non_ord_kinds ~backend:"Hoice" pcsp;
+    let solver = fresh_solver () in
     let pcsp = PCSP.Problem.to_cnf @@ PCSP.Problem.to_nnf pcsp in
     let dtenv =
       Z3Smt.Z3interface.z3_dtenv_of_dtenv ctx @@ PCSP.Problem.dtenv_of pcsp
     in
     let query_name, exi_senv =
-      try
-        let query_name = "__query__" in
-        ( query_name,
-          Map.Poly.add_exn
-            (PCSP.Problem.senv_of pcsp)
-            ~key:(Ident.Tvar query_name) ~data:Logic.BoolTerm.SBool )
-      with _ ->
-        let query_name = "__query__hmm__" (*ToDo*) in
-        ( query_name,
-          Map.Poly.add_exn
-            (PCSP.Problem.senv_of pcsp)
-            ~key:(Ident.Tvar query_name) ~data:Logic.BoolTerm.SBool )
+      (* A helper the export needs, which must not be a name the input already
+         uses.  Two fixed spellings were tried in turn, the second inside the
+         handler of the first, so an input declaring both -- and both are legal
+         SMT-LIB identifiers -- raised "[Map.add_exn] got key already present"
+         and was refused, although its two predicates are independent and every
+         other engine answers sat.  Two candidates are not freshness: the name is
+         now lengthened until it is one the problem does not hold, which
+         terminates because each step is longer than every name it has seen. *)
+      let senv = PCSP.Problem.senv_of pcsp in
+      let rec fresh name =
+        if Map.Poly.mem senv (Ident.Tvar name) then fresh (name ^ "_") else name
+      in
+      let query_name = fresh "__query__" in
+      ( query_name,
+        Map.Poly.add_exn senv ~key:(Ident.Tvar query_name)
+          ~data:Logic.BoolTerm.SBool )
     in
     let fenv = PCSP.Problem.fenv_of pcsp in
     let penv =
@@ -99,6 +136,11 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
     in
     let exists_query = ref false in
     List.iter ~f:(snd >> Z3.Fixedpoint.register_relation solver) penv;
+    (* one converter for every clause: the recursive functions of [fenv] are
+       declared in [ctx] once, which Z3 5.x requires *)
+    let of_formula =
+      Z3Smt.Z3interface.formula_converter ~id:None (*ToDo*) ctx penv fenv dtenv
+    in
     Set.iter (PCSP.Problem.clauses_of pcsp) ~f:(fun (uni_senv, ps, ns, phi) ->
         let senv, phi =
           (* assume that [phi] is alpha-renamed *)
@@ -133,8 +175,7 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
           @@ Map.force_merge (Logic.to_old_sort_env_map uni_senv) senv
         in
         let c =
-          Z3Smt.Z3interface.of_formula ~id:None (*ToDo*) ctx senv penv fenv
-            dtenv phi'
+          of_formula senv phi'
         in
         Z3.Fixedpoint.add_rule solver c None);
     (* set params *)
@@ -164,9 +205,10 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
                  line)
              else line)
     in
-    let reg_anno = Str.regexp "(! \\| :weight.*[0-9])" in
-    let inputs = List.map inputs ~f:(Str.global_replace reg_anno "") in
-    let inputs = inputs @ [ !prefix ] in
+    let inputs =
+      String.split_lines @@ Common.Smtlib.strip_annotations
+      @@ String.concat ~sep:"\n" (inputs @ [ !prefix ])
+    in
     let inputs =
       inputs
       @
@@ -188,7 +230,7 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
       | Some timeout -> [ "--timeout"; string_of_int timeout ]
     in
     try
-      Util.Command.sync_command "hoice" args inputs
+      Util.Command.sync_command (Util.Command.resolve_tool "hoice") args inputs
       |> get_status_from_hoice_output
       |> fun res ->
       if print_sol then print_endline (PCSP.Problem.str_of_solution res);

@@ -1,0 +1,8 @@
+(library
+ (name BTOR2)
+ (public_name CoAR.BTOR2)
+ (preprocess
+  (pps ppx_deriving.std))
+ (libraries core zarith CoAR.ast CoAR.SMT CoAR.pCSP CoAR.Z3Smt)
+ (modules problem parser chc witness)
+ (synopsis "Word-level hardware models in BTOR2"))

@@ -1,3 +1,17 @@
+(* A solver for the effect constraints [MBcgen] generates: subeffecting
+   between control effects (continuation effects, answer types) and inclusion
+   between operation signatures, over effect, sort and row (operation
+   signature) variables.
+
+   [Make(..).solve ?templates eff_constrs opsig_constrs] returns a
+   substitution for the variables occurring in the constraints.  It works in
+   stages: simplification of the subeffect, subsort and operation-signature
+   constraints to a fixpoint ([fully_simplify_subs]), unification of the
+   equalities that leaves ([fully_unify_eqls]), preprocessing, a search over
+   the remaining effect compositions ([solve_main], which may branch), and a
+   postprocessing that resolves, eliminates and squashes the variables of the
+   result.  A constraint that cannot be unified raises [Solve_failure]. *)
+
 open Core
 open Common
 open Common.Ext
@@ -7,22 +21,22 @@ open Ast.Ident
 open Ast.LogicOld
 
 module Config = struct
-  type t = { verbose : bool } [@@deriving yojson]
+  type t = { verbose : bool [@default false] } [@@deriving yojson]
 
   module type ConfigType = sig
     val config : t
   end
 
-  let load_ext_file = function
-    | ExtFile.Instance x -> Ok (ExtFile.Instance x)
-    | Filename filename -> (
-        let open Or_error in
-        try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
-        match of_yojson raw_json with
-        | Ok x -> Ok (ExtFile.Instance x)
-        | Error msg ->
-            error_string
-            @@ sprintf "Invalid MBcsol Configuration (%s): %s" filename msg)
+  include MakeExtFile (struct
+    type nonrec t = t
+
+    let of_yojson = of_yojson
+    let to_yojson = to_yojson
+    let name = "MBcsol"
+
+    (* a leaf: no nested config to load *)
+    let instantiate = Or_error.return
+  end)
 end
 
 module Make (Config : Config.ConfigType) = struct
@@ -145,7 +159,7 @@ module Make (Config : Config.ConfigType) = struct
           Set.concat_map c.ecomps ~f:(fun (effs, (c1, c2)) ->
               Set.Poly.union_list
               @@ List.map ((c1, c2) :: effs)
-                   ~f:(uncurry2 Sort.mk_cont_eff >> Term.rvs_of_cont));
+                   ~f:(Tuple2.uncurry Sort.mk_cont_eff >> Term.rvs_of_cont));
           Set.concat_map c.sub_ov_ov ~f:(fun (ovar1, ovar2) ->
               Set.Poly.of_list [ ovar1; ovar2 ]);
           Set.concat_map c.sub_ov_opsig ~f:(fun (ovar, (map, opt)) ->
@@ -168,7 +182,7 @@ module Make (Config : Config.ConfigType) = struct
               @@ Term.polar_rvs_of_cont ~pos:false (Sort.mk_cont_eff c1 c2)
                  :: List.map effs
                       ~f:
-                        (uncurry2 Sort.mk_cont_eff
+                        (Tuple2.uncurry Sort.mk_cont_eff
                         >> Term.polar_rvs_of_cont ~pos:true));
           Set.concat_map c.sub_ov_ov ~f:(fst >> Set.Poly.singleton);
           Set.concat_map c.sub_ov_opsig ~f:(fun (ovar, (map, opt)) ->
@@ -192,7 +206,7 @@ module Make (Config : Config.ConfigType) = struct
           Set.concat_map c.ecomps ~f:(fun (effs, (c1, c2)) ->
               Set.Poly.union_list
               @@ List.map ((c1, c2) :: effs)
-                   ~f:(uncurry2 Sort.mk_cont_eff >> Term.evs_of_cont));
+                   ~f:(Tuple2.uncurry Sort.mk_cont_eff >> Term.evs_of_cont));
           Set.concat_map c.sub_ov_opsig ~f:(fun (_, (map, opt)) ->
               Term.evs_of_opsig (Sort.OpSig (map, opt)));
           Set.concat_map c.sub_opsig_ov ~f:(fun ((map, opt), _) ->
@@ -214,7 +228,7 @@ module Make (Config : Config.ConfigType) = struct
               @@ Term.polar_evs_of_cont ~pos:true (Sort.mk_cont_eff c1 c2)
                  :: List.map effs
                       ~f:
-                        (uncurry2 Sort.mk_cont_eff
+                        (Tuple2.uncurry Sort.mk_cont_eff
                         >> Term.polar_evs_of_cont ~pos:false));
           Set.concat_map c.sub_ov_opsig ~f:(fun (_, (map, opt)) ->
               Term.polar_evs_of_opsig ~pos:true (Sort.OpSig (map, opt)));
@@ -498,8 +512,8 @@ module Make (Config : Config.ConfigType) = struct
           | T_real.SReal, _
           | _, T_string.SString
           | T_string.SString, _
-          | _, T_sequence.SSequence _
-          | T_sequence.SSequence _, _
+          | _, T_trace.STrace _
+          | T_trace.STrace _, _
           | _, T_regex.SRegEx
           | T_regex.SRegEx, _ ->
               state
@@ -1227,24 +1241,24 @@ module Make (Config : Config.ConfigType) = struct
             | None, Some opsig2 -> First (Sort.OpSig ([], Some ovar1), opsig2)
             | None, None -> Second (ovar1, ovar2))
       in
-      let sub_ov_ov = Set.filter sub_ov_ov ~f:(uncurry2 Stdlib.( <> )) in
+      let sub_ov_ov = Set.filter sub_ov_ov ~f:(Tuple2.uncurry Stdlib.( <> )) in
       let sub_ov_opsig =
         constr.sub_ov_opsig |> Set.to_list
         |> List.classify (fun (ovar, _) (ovar', _) -> Stdlib.(ovar = ovar'))
         |> List.concat_map ~f:(fun sub_ov_opsig ->
-               let sub_ov_opsig1, sub_ov_opsig2 =
-                 List.partition_tf sub_ov_opsig ~f:(snd >> snd >> Option.is_none)
-               in
-               match sub_ov_opsig1 with
-               | [] -> sub_ov_opsig2
-               | (ovar, _) :: _ -> (
-                   try
-                     ( ovar,
-                       ( ALMap.force_merge_list
-                         @@ List.map ~f:(snd >> fst) sub_ov_opsig1,
-                         None ) )
-                     :: sub_ov_opsig2
-                   with _ -> sub_ov_opsig))
+            let sub_ov_opsig1, sub_ov_opsig2 =
+              List.partition_tf sub_ov_opsig ~f:(snd >> snd >> Option.is_none)
+            in
+            match sub_ov_opsig1 with
+            | [] -> sub_ov_opsig2
+            | (ovar, _) :: _ -> (
+                try
+                  ( ovar,
+                    ( ALMap.force_merge_list
+                      @@ List.map ~f:(snd >> fst) sub_ov_opsig1,
+                      None ) )
+                  :: sub_ov_opsig2
+                with exn_ when not (Common.Timer.is_async exn_) -> sub_ov_opsig))
         |> Set.Poly.of_list
       in
       let osubs_from_ov_opsig, sub_ov_opsig =
@@ -1614,7 +1628,8 @@ module Make (Config : Config.ConfigType) = struct
         (* ToDo: construction of transitive closure is not required? *)
         let tc = PartOrd.transitive_closure_of state.constr.sub_ov_ov in
         let nodes =
-          Set.to_list (uncurry2 Set.union (Set.unzip state.constr.sub_ov_ov))
+          Set.to_list
+            (Tuple2.uncurry Set.union (Set.unzip state.constr.sub_ov_ov))
         in
         let dict =
           Map.Poly.of_alist_exn @@ List.mapi nodes ~f:(fun i n -> (n, i))
@@ -1629,11 +1644,10 @@ module Make (Config : Config.ConfigType) = struct
         let groups = UnionFind.get_groups uf in
         Set.Poly.of_list
         @@ List.concat_map groups ~f:(fun ids ->
-               let id, ids = List.hd_tl ids in
-               List.map ids ~f:(fun id' ->
-                   ( List.nth_exn nodes id',
-                     Sort.mk_empty_open_opsig_from_rvar @@ List.nth_exn nodes id
-                   )))
+            let id, ids = List.hd_tl ids in
+            List.map ids ~f:(fun id' ->
+                ( List.nth_exn nodes id',
+                  Sort.mk_empty_open_opsig_from_rvar @@ List.nth_exn nodes id )))
       in
       if Fn.non Set.is_empty oeqs then (
         Debug.print @@ lazy "@ remove ovar cycles";
@@ -1703,15 +1717,15 @@ module Make (Config : Config.ConfigType) = struct
               in
               Set.Poly.of_list
               @@ List.filter_map ~f:(function
-                   | [ (ov, ov') ] ->
-                       let opsig = Sort.OpSig (ALMap.empty, Some ov') in
-                       if print_log then
-                         Debug.print
-                         @@ lazy ("introducing " ^ Term.str_of_opsig opsig);
-                       Some (ov, opsig)
-                   | _ -> None)
+                | [ (ov, ov') ] ->
+                    let opsig = Sort.OpSig (ALMap.empty, Some ov') in
+                    if print_log then
+                      Debug.print
+                      @@ lazy ("introducing " ^ Term.str_of_opsig opsig);
+                    Some (ov, opsig)
+                | _ -> None)
               @@ List.classify (fun (ov1, _) (ov2, _) ->
-                     Ast.Ident.rvar_equal ov1 ov2)
+                  Ast.Ident.rvar_equal ov1 ov2)
               @@ Set.to_list
               @@ Set.filter state.constr.sub_ov_ov
                    ~f:(fst >> Set.mem covars >> not)
@@ -1747,26 +1761,26 @@ module Make (Config : Config.ConfigType) = struct
                 in
                 Set.Poly.of_list
                 @@ List.map ~f:(fun ov_opsigs ->
-                       let ov_opsigs = List.unique ov_opsigs in
-                       let ov = fst @@ List.hd_exn ov_opsigs in
-                       let ops =
-                         List.unique
-                         @@ List.concat_map ov_opsigs
-                              ~f:(snd >> fst >> List.map ~f:fst)
-                       in
-                       let opsig =
-                         Sort.OpSig
-                           ( ALMap.of_alist_exn
-                             @@ List.map ops ~f:(fun op ->
-                                    (op, Sort.mk_fresh_svar ())),
-                             None )
-                       in
-                       if print_log then
-                         Debug.print
-                         @@ lazy ("introducing " ^ Term.str_of_opsig opsig);
-                       (ov, opsig))
+                    let ov_opsigs = List.dedup_keep_last ov_opsigs in
+                    let ov = fst @@ List.hd_exn ov_opsigs in
+                    let ops =
+                      List.dedup_keep_last
+                      @@ List.concat_map ov_opsigs
+                           ~f:(snd >> fst >> List.map ~f:fst)
+                    in
+                    let opsig =
+                      Sort.OpSig
+                        ( ALMap.of_alist_exn
+                          @@ List.map ops ~f:(fun op ->
+                              (op, Sort.mk_fresh_svar ())),
+                          None )
+                    in
+                    if print_log then
+                      Debug.print
+                      @@ lazy ("introducing " ^ Term.str_of_opsig opsig);
+                    (ov, opsig))
                 @@ List.classify (fun (ov1, _) (ov2, _) ->
-                       Ast.Ident.rvar_equal ov1 ov2)
+                    Ast.Ident.rvar_equal ov1 ov2)
                 @@ Set.to_list
                 @@ Set.filter state.constr.sub_ov_opsig
                      ~f:(fst >> Set.mem covars >> not)
@@ -1829,8 +1843,8 @@ module Make (Config : Config.ConfigType) = struct
                   in
                   Set.Poly.of_list
                   @@ List.filter_map ~f:(function
-                       | [ (ev, eff) ] -> Some (ev, eff)
-                       | _ -> None)
+                    | [ (ev, eff) ] -> Some (ev, eff)
+                    | _ -> None)
                   @@ List.classify (fun (ev1, _) (ev2, _) -> Stdlib.(ev1 = ev2))
                   @@ Set.to_list
                   @@ Set.filter ~f:(fst >> Set.mem cevars >> not)
@@ -1857,7 +1871,8 @@ module Make (Config : Config.ConfigType) = struct
                     in
                     let tc = PartOrd.transitive_closure_of sub_ev_ev in
                     let nodes =
-                      Set.to_list @@ uncurry2 Set.union (Set.unzip sub_ev_ev)
+                      Set.to_list
+                      @@ Tuple2.uncurry Set.union (Set.unzip sub_ev_ev)
                     in
                     let dict =
                       Map.Poly.of_alist_exn
@@ -1875,10 +1890,10 @@ module Make (Config : Config.ConfigType) = struct
                     ( sub_ev_ev,
                       Set.Poly.of_list
                       @@ List.concat_map groups ~f:(fun ids ->
-                             let id, ids = List.hd_tl ids in
-                             List.map ids ~f:(fun id' ->
-                                 ( List.nth_exn nodes id',
-                                   Sort.EVar (List.nth_exn nodes id) ))) )
+                          let id, ids = List.hd_tl ids in
+                          List.map ids ~f:(fun id' ->
+                              ( List.nth_exn nodes id',
+                                Sort.EVar (List.nth_exn nodes id) ))) )
                   in
                   if Fn.non Set.is_empty eeqs then (
                     Debug.print @@ lazy "@ remove evar cycles";
@@ -2015,28 +2030,29 @@ module Make (Config : Config.ConfigType) = struct
                           let oeqs =
                             Set.Poly.of_list
                             @@ List.map ~f:(fun ov_opsigs ->
-                                   let ov_opsigs = List.unique ov_opsigs in
-                                   let ov = fst @@ List.hd_exn ov_opsigs in
-                                   let ops =
-                                     List.unique
-                                     @@ List.concat_map ov_opsigs
-                                          ~f:(snd >> fst >> List.map ~f:fst)
-                                   in
-                                   let opsig =
-                                     Sort.OpSig
-                                       ( ALMap.of_alist_exn
-                                         @@ List.map ops ~f:(fun op ->
-                                                (op, Sort.mk_fresh_svar ())),
-                                         None )
-                                   in
-                                   if print_log then
-                                     Debug.print
-                                     @@ lazy
-                                          ("introducing "
-                                         ^ Term.str_of_opsig opsig);
-                                   (ov, opsig))
+                                let ov_opsigs =
+                                  List.dedup_keep_last ov_opsigs
+                                in
+                                let ov = fst @@ List.hd_exn ov_opsigs in
+                                let ops =
+                                  List.dedup_keep_last
+                                  @@ List.concat_map ov_opsigs
+                                       ~f:(snd >> fst >> List.map ~f:fst)
+                                in
+                                let opsig =
+                                  Sort.OpSig
+                                    ( ALMap.of_alist_exn
+                                      @@ List.map ops ~f:(fun op ->
+                                          (op, Sort.mk_fresh_svar ())),
+                                      None )
+                                in
+                                if print_log then
+                                  Debug.print
+                                  @@ lazy
+                                       ("introducing " ^ Term.str_of_opsig opsig);
+                                (ov, opsig))
                             @@ List.classify (fun (ov1, _) (ov2, _) ->
-                                   Ast.Ident.rvar_equal ov1 ov2)
+                                Ast.Ident.rvar_equal ov1 ov2)
                             @@ Set.to_list state.constr.sub_ov_opsig
                           in
                           if Fn.non Set.is_empty oeqs then (
@@ -2091,10 +2107,10 @@ module Make (Config : Config.ConfigType) = struct
                           let oeqs =
                             Set.Poly.of_list
                             @@ List.filter_map ~f:(function
-                                 | [ (ov, opsig) ] -> Some (ov, opsig)
-                                 | _ -> None)
+                              | [ (ov, opsig) ] -> Some (ov, opsig)
+                              | _ -> None)
                             @@ List.classify (fun (ov1, _) (ov2, _) ->
-                                   Stdlib.(ov1 = ov2))
+                                Stdlib.(ov1 = ov2))
                             @@ Set.to_list
                             @@ Set.filter ~f:(fst >> Set.mem covars >> not)
                             @@ Set.union
@@ -2154,7 +2170,7 @@ module Make (Config : Config.ConfigType) = struct
     assert (
       Set.for_all constr.sub_evs_eff ~f:(snd >> Sort.is_evar)
       && Set.for_all constr.sub_effs_eff ~f:(fun (effs, eff) ->
-             List.for_all (eff :: effs) ~f:Sort.is_evar));
+          List.for_all (eff :: effs) ~f:Sort.is_evar));
     Set.Poly.union_list
       [
         Set.concat_map constr.sub_evs_eff ~f:(fun (evs, eff) ->
@@ -2238,8 +2254,7 @@ module Make (Config : Config.ConfigType) = struct
       resolve_svs ~init_svs state.constr
       |> List.classify (fun (sv1, _) (sv2, _) -> Stdlib.(sv1 = sv2))
       |> List.map ~f:(fun svsvs ->
-             ( fst @@ List.hd_exn svsvs,
-               Set.Poly.of_list @@ List.map ~f:snd svsvs ))
+          (fst @@ List.hd_exn svsvs, Set.Poly.of_list @@ List.map ~f:snd svsvs))
       |> Map.Poly.of_alist_exn
     in
     let subst_sv_sv =
@@ -2264,13 +2279,26 @@ module Make (Config : Config.ConfigType) = struct
       let r = ref Map.Poly.empty in
       let fp2 =
         Map.Poly.map fp2 ~f:(fun svs ->
+            (* The assertion below is [true || ...]: it is *disabled*, and the
+               note it carries says the code is unsound when it would fail --
+               i.e. when a sort variable is unified with more than one
+               representative and one of them has to be chosen arbitrarily.
+               Left as the developer left it, with the consequence stated:
+               everything downstream sees one representative [d], so a
+               constraint that distinguished the others is lost.  Whether that
+               can change an answer has not been established. *)
             assert (
               true
               (*ToDo: unsound if Set.Poly.length svs <> 1 *)
               || Set.length svs = 1);
             let d =
-              try Set.min_elt_exn (Set.inter svs ran) (*ToDo*)
-              with _ -> Set.choose_exn svs
+              (* prefer a representative that already has a sort assigned;
+                 [min_elt_exn] raises on an empty intersection, and only that
+                 failure is caught here -- an asynchronous exception must
+                 pass *)
+              try Set.min_elt_exn (Set.inter svs ran)
+              with exn_ when not (Common.Timer.is_async exn_) ->
+                Set.choose_exn svs
             in
             r :=
               Set.fold (Set.diff svs ran) ~init:!r ~f:(fun m x ->
@@ -2290,24 +2318,24 @@ module Make (Config : Config.ConfigType) = struct
         (Map.of_set_exn
         @@ Set.Poly.map subst_ev_pure ~f:(fun ev -> (ev, Sort.Pure)))
       @@ Map.Poly.map state.subst.etheta ~f:(fun e ->
-             let e =
-               Set.fold subst_ev_pure ~init:e ~f:(fun e ev ->
-                   subst_cont_cont (ev, Sort.Pure) e)
-             in
-             List.fold subst_sv_sv ~init:e ~f:(fun e (sv1, sv2) ->
-                 subst_sort_cont (sv1, Sort.SVar sv2) e))
+          let e =
+            Set.fold subst_ev_pure ~init:e ~f:(fun e ev ->
+                subst_cont_cont (ev, Sort.Pure) e)
+          in
+          List.fold subst_sv_sv ~init:e ~f:(fun e (sv1, sv2) ->
+              subst_sort_cont (sv1, Sort.SVar sv2) e))
     in
     let stheta =
       Map.force_merge
         (Map.Poly.of_alist_exn
         @@ List.map subst_sv_sv ~f:(fun (sv1, sv2) -> (sv1, Sort.SVar sv2)))
       @@ Map.Poly.map state.subst.stheta ~f:(fun s ->
-             let s =
-               Set.fold subst_ev_pure ~init:s ~f:(fun s ev ->
-                   subst_cont_sort (ev, Sort.Pure) s)
-             in
-             List.fold subst_sv_sv ~init:s ~f:(fun s (sv1, sv2) ->
-                 subst_sort_sort (sv1, Sort.SVar sv2) s))
+          let s =
+            Set.fold subst_ev_pure ~init:s ~f:(fun s ev ->
+                subst_cont_sort (ev, Sort.Pure) s)
+          in
+          List.fold subst_sv_sv ~init:s ~f:(fun s (sv1, sv2) ->
+              subst_sort_sort (sv1, Sort.SVar sv2) s))
     in
     let otheta =
       Map.Poly.map state.subst.otheta ~f:(fun o ->
@@ -2358,12 +2386,13 @@ module Make (Config : Config.ConfigType) = struct
     >> eliminate ~init_evs ~init_svs ~init_rvs
     >> squash ~init_evs ~init_rvs
 
-  let solve eff_constrs opsig_constrs =
+  let solve ?(templates = []) eff_constrs opsig_constrs =
     let ecompsubs = eff_constrs in
     let osubs = opsig_constrs in
     let init_evs =
       Set.Poly.union_list
         [
+          Set.Poly.union_list (List.map templates ~f:Term.evs_of_triple);
           Set.concat_map ecompsubs ~f:(fun (effs, eff) ->
               Set.Poly.union_list (List.map (eff :: effs) ~f:Term.evs_of_cont));
           Set.concat_map osubs ~f:(fun (o1, o2) ->
@@ -2382,6 +2411,7 @@ module Make (Config : Config.ConfigType) = struct
     let init_rvs =
       Set.Poly.union_list
         [
+          Set.Poly.union_list (List.map templates ~f:Term.rvs_of_triple);
           Set.concat_map ecompsubs ~f:(fun (effs, eff) ->
               Set.Poly.union_list (List.map (eff :: effs) ~f:Term.rvs_of_cont));
           Set.concat_map osubs ~f:(fun (o1, o2) ->

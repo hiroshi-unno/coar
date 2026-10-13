@@ -9,5 +9,5 @@
   CoAR.PCSat.template
   CoAR.PCSat.coordination
   CoAR.PCSat.preprocessing)
- (modules config solPrinter solver)
+ (modules config solPrinter witnessChecker solver)
  (synopsis "A CHC/pfwnCSP/SyGuS solver based on CEGIS"))

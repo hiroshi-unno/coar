@@ -1,0 +1,25 @@
+(format LCTRS)
+(theory Ints)
+
+(fun l0 (-> Int Int))
+(fun l1 (-> Int Int))
+
+(entrypoint l0)
+
+(rule
+  (l0 x)
+  (l0 xp)
+  :guard
+  (and (> x 0) (= xp (- 1 x))))
+
+(rule
+  (l0 x)
+  (l0 xp)
+  :guard
+  (and (< x 0) (= xp (- 0 (+ x 1)))))
+
+(rule
+  (l0 x)
+  (l1 x)
+  :guard
+  (= x 0))

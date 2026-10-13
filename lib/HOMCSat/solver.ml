@@ -1,3 +1,17 @@
+(* HOMCSat: decides higher-order Boolean satisfiability (and, through it,
+   SAT and DQSAT) by higher-order model checking, after Hiroshi Unno, Takeshi
+   Tsukada and Jie-Hong Roland Jiang, "Solving Higher-Order Quantified Boolean
+   Satisfiability via Higher-Order Model Checking", AAAI 2025.
+
+   [homc_of_hosat] translates the formula into a recursion scheme whose tree
+   is the formula's Boolean evaluation tree: a quantifier over [Bool] becomes a
+   conjunction or disjunction of its two instances, and a quantifier over a
+   function sort enumerates every function of that finite sort with
+   generated [Zero]/[Succ]/[IsMax] rules.  The specification is a fixed
+   alternating tree automaton whose state [qT] accepts exactly the trees that
+   evaluate to true, so the HORS satisfies it iff the formula is true.  The
+   answer of the configured model checker is mapped back verbatim; a [Sat]
+   SAT answer carries no model, and [incremental_solve] is not implemented. *)
 open Core
 open Common
 open Common.Ext
@@ -256,7 +270,17 @@ module Make (Config : Config.ConfigType) : SolverType = struct
                   BoolTerm.or_of [ t1; t3 ];
                 ] )
         | TyApp (term, _sort, _), args ->
-            if true then assert false
+            (* The [else] branch -- ignore the type argument and recurse -- is
+               written but switched off, with a note that [sort] ought to be
+               used.  Reaching this arm therefore aborts the run, and an
+               [assert false] says nothing about why; this names the term, as
+               the catch-all arm below does.  Switching the branch on would be a
+               semantic decision (is dropping the type argument sound here?),
+               so it is left as the developer left it. *)
+            if true then
+              failwith
+              @@ sprintf "[aux] type application is not supported: %s"
+                   (Term.str_of term)
             else aux senv (term, args) (* ToDo: use [sort] *)
         | Let (tvar, _sort, def, body, _), args ->
             (* ToDo *)

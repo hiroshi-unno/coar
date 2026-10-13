@@ -12,7 +12,7 @@ type t = {
   dtenv : (string, Datatype.t) Map.Poly.t;
 }
 
-type solver = t -> MuCLP.Problem.solution * ProofTree.t list
+type solver = t -> Common.Verdict.t * ProofTree.t list
 
 (** {6 Constructors} *)
 

@@ -1,3 +1,10 @@
+(* The MiniSat backend for CNF satisfiability, one-shot and incremental.
+
+   [incremental_solve] returns, with a model, a continuation that adds more
+   clauses to the same MiniSat instance; variable names are mapped to MiniSat
+   literals by a table the continuation keeps, so a name means the same
+   variable across every call of one chain.  [solve] is the first call of such
+   a chain with the continuation dropped. *)
 open Core
 open Minisat
 open Common
@@ -19,7 +26,15 @@ module Make (Config : Config.ConfigType) : SolverType = struct
   let rec check_sat ?(print_sol = false) ?(solver = create ())
       ?(lits = Hashtbl.Poly.create ~size:0 ~growth_allowed:true ()) cnf =
     Minisat.set_verbose solver 0;
-    let cnt = ref 1 in
+    (* The next unused literal number, and it must continue where the previous
+       call stopped: the continuation this function returns keeps both the
+       solver and [lits], so a later call that mentions a variable for the first
+       time needs a number nobody holds.  Restarting at 1 gave that variable the
+       number an earlier call had already given to another one, silently making
+       two variables one -- adding [not b] to [a] then came back unsat although
+       [a and not b] is satisfiable.  [lits] only grows and hands out 1, 2, ...
+       in order, so its size is exactly how far the numbering has got. *)
+    let cnt = ref (Hashtbl.Poly.length lits + 1) in
     List.iter (SAT.Problem.clauses_of cnf) ~f:(fun (negatives, positives) ->
         let mk_lit_sub =
           List.iter ~f:(fun var ->

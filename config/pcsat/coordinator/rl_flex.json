@@ -11,7 +11,7 @@
                      "V",
                      [
                             "Filename",
-                            "./config/pcsat/validator/rl.json"
+                            "./config/pcsat/validator/nce.json"
                      ]
               ],
               [
@@ -36,7 +36,6 @@
                      ]
               ]
        ],
-       "verbose": false,
        "rl_config": [
               "Filename",
               "./config/pcsat/rl/enable.json"

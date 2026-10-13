@@ -1,6 +1,4 @@
 [
     "Z3Smt",
-    {
-        "verbose": false
-    }
+    {}
 ]

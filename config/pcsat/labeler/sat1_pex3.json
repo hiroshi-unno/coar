@@ -1,0 +1,8 @@
+{
+    "num_labelings": 1,
+    "sat_solver": [
+        "Filename",
+        "./config/solver/minisat.json"
+    ],
+    "pex_instances": 3
+}

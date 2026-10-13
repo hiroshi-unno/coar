@@ -1,0 +1,10 @@
+/* The third rung with the flag itself made a real, so that every argument has
+   one sort and nothing is cast.  It does not answer at 240 s either, which is
+   the other half of ruling out the sort join: neither making everything real
+   nor making everything an integer helps, so what costs is the alternating
+   argument and not the sorts it mixes. */
+Main 0
+s.t.
+Main (z:int): bool =mu forall (a:real). forall (b:real). (a = real(0) /\ b = real(0)) \/ L6 a b real(0);
+L6 (a:real) (b:real) (tick:real): bool =mu tick = real(1) /\ a >. real(0) /\ b >=. real(0) \/ L7 a b real(0);
+L7 (a:real) (b:real) (tick:real): bool =mu tick = real(1) /\ a >. real(0) /\ b >=. real(0) \/ L6 (-.b) a real(1);

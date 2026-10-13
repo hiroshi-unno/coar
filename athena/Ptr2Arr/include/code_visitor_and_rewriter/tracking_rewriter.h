@@ -4,6 +4,18 @@
 #include "clang/Rewrite/Core/Rewriter.h"
 #include <vector>
 
+// Wraps clang::Rewriter and records which ranges have been replaced, so that a
+// later pass does not rewrite the same text twice.
+//
+// NOTE on the return values.  Every method below faithfully returns what
+// clang::Rewriter returns, and Clang's contract is that these return **true on
+// failure** -- the location is inside a macro expansion, or otherwise not
+// rewritable.  As of 2026-09-07 *none* of the 129 call sites across Ptr2Arr,
+// SemanticAugmentor and TypeAnnotator inspects that value, so a rewrite that
+// does not happen is indistinguishable from one that does: the emitted C is
+// then the *original* text at that position, and everything downstream (the
+// LTS translation and the termination analysis) reasons about a program that
+// was never produced.  If you add a call, check the result.
 class TrackingRewriter {
 public:
     explicit TrackingRewriter(clang::Rewriter &rewriter) : rewriter_(rewriter) {}

@@ -18,6 +18,5 @@
     }
   ],
   "check_candidates": true,
-  "refine_candidates": false,
   "verbose": true
 }

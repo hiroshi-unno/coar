@@ -1,0 +1,24 @@
+/* The Cinderella-Stepmother game with bucket capacity 2 - eps for EVERY eps > 0,
+   eps a universally quantified parameter rather than a constant (the parametric
+   instance Chatterjee et al., IJCAI 2026, solve by a polynomial ranking certificate).
+   Five buckets on a circle, all empty.  Stepmother pours at most one litre in total,
+   split as she likes; she wins as soon as some bucket exceeds 2 - eps.  Cinderella
+   then empties two neighbouring buckets.  This is Stepmother's side, a least
+   fixpoint (reachability), so the query is valid exactly when Stepmother wins for
+   every positive eps -- which she does, the game being won by Stepmother below
+   capacity 2 (Bodlaender et al.).  The fixed-capacity instances are
+   benchmarks/muCLP/popl2024/cinderella-*.hes, written from Cinderella's side.
+   What makes this instance hard: the number of rounds Stepmother needs grows like
+   1/eps, so no ranking that is linear in the buckets and eps can bound it. */
+forall (eps: real). eps > 0.0 => SM 0.0 0.0 0.0 0.0 0.0 eps
+s.t.
+SM (b1: real) (b2: real) (b3: real) (b4: real) (b5: real) (eps: real): bool =mu
+  exists (d1: real) (d2: real) (d3: real) (d4: real) (d5: real).
+    d1 >= 0.0 /\ d2 >= 0.0 /\ d3 >= 0.0 /\ d4 >= 0.0 /\ d5 >= 0.0 /\
+    d1 + d2 + d3 + d4 + d5 <= 1.0 /\
+    (b1 + d1 > 2.0 - eps \/ b2 + d2 > 2.0 - eps \/ b3 + d3 > 2.0 - eps \/
+     b4 + d4 > 2.0 - eps \/ b5 + d5 > 2.0 - eps \/
+     C (b1 + d1) (b2 + d2) (b3 + d3) (b4 + d4) (b5 + d5) eps);
+C (b1: real) (b2: real) (b3: real) (b4: real) (b5: real) (eps: real): bool =mu
+  SM 0.0 0.0 b3 b4 b5 eps /\ SM b1 0.0 0.0 b4 b5 eps /\ SM b1 b2 0.0 0.0 b5 eps /\
+  SM b1 b2 b3 0.0 0.0 eps /\ SM 0.0 b2 b3 b4 0.0 eps;

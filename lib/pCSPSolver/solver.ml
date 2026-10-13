@@ -1,3 +1,13 @@
+(* The constraint-solver interface that mid-level solvers (the fixpoint-logic
+   solvers, OptPCSat, RCaml) call, so that they need not depend on the
+   top-level dispatcher.  [solve] forwards a pfwCSP
+   problem to the configured backend and returns its answer with the number of
+   CEGIS iterations (-1 for a backend that has none), under an optional
+   timeout that becomes the [Timeout] verdict.  A backend's refusal of an
+   unsupported problem becomes [Unknown] here.  Problems carrying inductive or
+   coinductive predicate definitions are not solved: they are printed and
+   answered [Unknown].  [preprocess], [reset], [push] and [pop] act on PCSat
+   only. *)
 open Core
 open Common
 open Common.Ext
@@ -13,6 +23,20 @@ module type SolverType = sig
     ?copreds:(Ident.pvar, sort_env_list * Formula.t) Map.Poly.t ->
     PCSP.Problem.t ->
     (PCSP.Problem.solution * int) Or_error.t
+
+  (* [solve] that also returns the kind certificates PCSat's template recorded
+     for a [Sat] answer (the ranking behind each WF/DWF solution), so that a
+     caller can have them re-checked.  Contract: the answer and the iteration
+     count are exactly those [solve] returns on the same problem; the map is
+     empty for a backend other than PCSat and for any answer but [Sat]. *)
+  val solve_with_kind_certificates :
+    ?timeout:int option ->
+    ?bpvs:Ast.Ident.tvar_set ->
+    PCSP.Problem.t ->
+    (PCSP.Problem.solution
+    * int
+    * (Ident.tvar, PCSatCommon.KindCert.t) Map.Poly.t)
+    Or_error.t
 
   val preprocess :
     ?bpvs:Ast.Ident.tvar_set -> PCSP.Problem.t -> PCSP.Problem.t Or_error.t
@@ -43,7 +67,35 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
     | Config.Forward -> SForward
     | Config.Printer cfg -> SPrinter (Printer.Solver.make cfg)
 
-  let solve ?(timeout = None) ~preds ~copreds =
+  (* A backend reached through here refuses a problem whose predicate kinds it
+     cannot carry, and this path bypasses the top-level dispatcher that turns
+     such a refusal into a verdict -- a mid-level solver calls these backends
+     directly, which is what this module exists for.  So the refusal is given
+     the same treatment here: an ordinary [Unknown], which is what an undecided
+     sub-query is, with the reason on the diagnostic stream.  Left to escape it
+     would reach the user as a backtrace from inside another solver's run.
+
+     [Unknown] is safe for every caller: all six that consume this answer match
+     it explicitly and none reads it as a refutation -- the distinction that
+     matters, since reading "could not decide" as "no counterexample" would turn
+     an undecided sub-query into a proof.  It is checked rather than assumed,
+     because the shape has produced a defect here before.
+
+     Whether a kinded problem can actually reach this path is NOT established:
+     eight shipped configurations put one of these backends under a
+     kind-producing one, so it is configured, and on the inputs tried the
+     refusal did not fire -- consistent with that backend's refinement being
+     unfinished. This is therefore insurance at a boundary, not a cure for an
+     observed failure. *)
+  let rec solve ?(timeout = None) ~preds ~copreds =
+    let dispatch = solve_aux ~timeout ~preds ~copreds in
+    fun ?bpvs ?print_sol pcsp ->
+      try dispatch ?bpvs ?print_sol pcsp
+      with PCSP.Problem.NoTemplate reason ->
+        prerr_endline ("unsupported input: " ^ reason);
+        Ok (PCSP.Problem.Unknown, -1)
+
+  and solve_aux ?(timeout = None) ~preds ~copreds =
     if Map.Poly.is_empty preds && Map.Poly.is_empty copreds then (
       let open Or_error in
       match solver with
@@ -133,6 +185,36 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
           (fun _ -> function
             | Timer.Timeout -> Ok (PCSP.Problem.Timeout, -1) | e -> raise e)
     | _ -> solve ~bpvs ~print_sol ~preds ~copreds pcsp
+
+  let solve_with_kind_certificates ?(timeout = None) ?(bpvs = Set.Poly.empty)
+      pcsp =
+    match solver with
+    | SPCSat (module PCSat) -> (
+        (* the same call, refusal handling and budget as [solve]'s PCSat arm,
+           keeping the [info] that arm discards *)
+        let run () =
+          try
+            PCSat.solve ~bpvs ~print_sol:false pcsp
+            |> Or_error.map ~f:(fun (sol, info) ->
+                ( sol,
+                  info.PCSatCommon.State.num_cegis_iters,
+                  info.PCSatCommon.State.kind_certificates ))
+          with PCSP.Problem.NoTemplate reason ->
+            prerr_endline ("unsupported input: " ^ reason);
+            Ok (PCSP.Problem.Unknown, -1, Map.Poly.empty)
+        in
+        match timeout with
+        | Some tm when tm > 0 ->
+            Timer.enable_timeout tm Fn.id ignore run
+              (fun _ res -> res)
+              (fun _ -> function
+                | Timer.Timeout ->
+                    Ok (PCSP.Problem.Timeout, -1, Map.Poly.empty)
+                | e -> raise e)
+        | _ -> run ())
+    | _ ->
+        solve ~timeout ~bpvs pcsp
+        |> Or_error.map ~f:(fun (sol, n) -> (sol, n, Map.Poly.empty))
 
   let preprocess =
     match solver with

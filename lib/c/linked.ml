@@ -1,3 +1,21 @@
+(* The C frontend's statement graph: a program as linked statements, the form
+   the optimiser and the fixpoint-logic translation work on.
+
+   [LinkedStatement.of_statement] turns the structured statements of
+   [CSyntax.Statement] into a control-flow graph whose loops are cycles: each
+   statement holds its successors as [t ref] fields, and the optimiser assigns
+   to those references in place while maps built from the graph are still
+   being read.  So a statement must never be hashed or compared on its
+   contents -- the hash of a live key would change under the table, and a
+   missed lookup reads as the lattice bottom.  Key statements by physical
+   equality or by the identity every statement carries
+   ([LinkedStatementHashtbl]).
+
+   [mk_exit] returns one shared exit statement on purpose: code that
+   deduplicates statements by physical equality treats all exits as one node,
+   and allocating a fresh exit per call silently changes what the optimiser
+   produces. *)
+
 open Core
 open Ast
 open Ast.LogicOld
@@ -6,7 +24,7 @@ open CSyntax
 exception Error of string
 
 module LinkedStatement : sig
-  type t =
+  type node =
     | IF of Formula.t * t ref * t ref
     | ASSIGN of string * Term.t * t ref
     | NONDET_INT_ASSIGN of string * t ref
@@ -16,6 +34,17 @@ module LinkedStatement : sig
     | NOP of t ref
     | EXIT
 
+  and t = { id : int; node : node }
+  (** Every statement carries an identity that does not change when the graph
+      around it does. Without one a statement can only be recognised by physical
+      equality, so every map over statements has to be an association list
+      scanned linearly -- and hashing the statement instead is not an
+      alternative, because a statement holds mutable references to its
+      successors and the optimiser assigns to them, so [Hashtbl.hash], which
+      walks the structure, gives a different answer for the same key before and
+      after. The identity makes a hashed lookup stable. *)
+
+  val id_of : t -> int
   val is_if : t -> bool
   val is_assign : t -> bool
   val is_nondet_int_assign : t -> bool
@@ -54,7 +83,7 @@ module LinkedStatement : sig
   val sub : Ident.tvar -> Term.t -> t -> t
   (** this returns fresh stmt but this doesn't fix the other links *)
 end = struct
-  type t =
+  type node =
     | IF of Formula.t * t ref * t ref
     | ASSIGN of string * Term.t * t ref
     | NONDET_INT_ASSIGN of string * t ref
@@ -64,59 +93,92 @@ end = struct
     | NOP of t ref
     | EXIT
 
-  let is_if = function IF _ -> true | _ -> false
-  let is_assign = function ASSIGN _ -> true | _ -> false
-  let is_nondet_int_assign = function NONDET_INT_ASSIGN _ -> true | _ -> false
+  and t = { id : int; node : node }
+  (** Every statement carries an identity that does not change when the graph
+      around it does. Without one a statement can only be recognised by physical
+      equality, so every map over statements has to be an association list
+      scanned linearly -- and hashing the statement instead is not an
+      alternative, because a statement holds mutable references to its
+      successors and the optimiser assigns to them, so [Hashtbl.hash], which
+      walks the structure, gives a different answer for the same key before and
+      after. The identity makes a hashed lookup stable. *)
 
-  let is_nondet_real_assign = function
-    | NONDET_REAL_ASSIGN _ -> true
-    | _ -> false
+  let __next_id = ref 0
 
-  let is_nondet = function NONDET _ -> true | _ -> false
-  let is_assume = function ASSUME _ -> true | _ -> false
-  let is_nop = function NOP _ -> true | _ -> false
-  let is_exit = function EXIT -> true | _ -> false
-  let mk_if cond_fml t_stmt f_stmt = IF (cond_fml, t_stmt, f_stmt)
-  let mk_assign varname term nxt_stmt = ASSIGN (varname, term, nxt_stmt)
+  let mk node =
+    Stdlib.incr __next_id;
+    { id = !__next_id; node }
+
+  let id_of stmt = stmt.id
+  let is_if stmt = match stmt.node with IF _ -> true | _ -> false
+  let is_assign stmt = match stmt.node with ASSIGN _ -> true | _ -> false
+
+  let is_nondet_int_assign stmt =
+    match stmt.node with NONDET_INT_ASSIGN _ -> true | _ -> false
+
+  let is_nondet_real_assign stmt =
+    match stmt.node with NONDET_REAL_ASSIGN _ -> true | _ -> false
+
+  let is_nondet stmt = match stmt.node with NONDET _ -> true | _ -> false
+  let is_assume stmt = match stmt.node with ASSUME _ -> true | _ -> false
+  let is_nop stmt = match stmt.node with NOP _ -> true | _ -> false
+  let is_exit stmt = match stmt.node with EXIT -> true | _ -> false
+  let mk_if cond_fml t_stmt f_stmt = mk (IF (cond_fml, t_stmt, f_stmt))
+  let mk_assign varname term nxt_stmt = mk (ASSIGN (varname, term, nxt_stmt))
 
   let mk_nondet_int_assign varname nxt_stmt =
-    NONDET_INT_ASSIGN (varname, nxt_stmt)
+    mk (NONDET_INT_ASSIGN (varname, nxt_stmt))
 
   let mk_nondet_real_assign varname nxt_stmt =
-    NONDET_REAL_ASSIGN (varname, nxt_stmt)
+    mk (NONDET_REAL_ASSIGN (varname, nxt_stmt))
 
-  let mk_nondet stmt1 stmt2 = NONDET (stmt1, stmt2)
-  let mk_assume fml nxt_stmt = ASSUME (fml, nxt_stmt)
-  let mk_nop stmt = NOP stmt
-  let mk_exit () = EXIT
+  let mk_nondet stmt1 stmt2 = mk (NONDET (stmt1, stmt2))
+  let mk_assume fml nxt_stmt = mk (ASSUME (fml, nxt_stmt))
+  let mk_nop stmt = mk (NOP stmt)
 
-  let let_if = function
+  (* One shared exit, deliberately. Before statements carried an identity,
+     [EXIT] was a constant constructor, so every exit in a graph was physically
+     the same value and everything that deduplicates statements by physical
+     equality -- [get_all_statements], the statement maps -- treated them as one
+     node. Allocating a fresh record per exit silently separates them and
+     changes what the optimiser produces. *)
+  let the_exit = mk EXIT
+  let mk_exit () = the_exit
+
+  let let_if stmt =
+    match stmt.node with
     | IF (cond_fml, t_stmt, f_stmt) -> (cond_fml, t_stmt, f_stmt)
     | _ -> assert false
 
-  let let_assign = function
+  let let_assign stmt =
+    match stmt.node with
     | ASSIGN (varname, term, nxt_stmt) -> (varname, term, nxt_stmt)
     | _ -> assert false
 
-  let let_nondet_int_assign = function
+  let let_nondet_int_assign stmt =
+    match stmt.node with
     | NONDET_INT_ASSIGN (varname, nxt_stmt) -> (varname, nxt_stmt)
     | _ -> assert false
 
-  let let_nondet_real_assign = function
+  let let_nondet_real_assign stmt =
+    match stmt.node with
     | NONDET_REAL_ASSIGN (varname, nxt_stmt) -> (varname, nxt_stmt)
     | _ -> assert false
 
-  let let_assume = function
+  let let_assume stmt =
+    match stmt.node with
     | ASSUME (fml, nxt_stmt) -> (fml, nxt_stmt)
     | _ -> assert false
 
-  let let_nondet = function
+  let let_nondet stmt =
+    match stmt.node with
     | NONDET (stmt1, stmt2) -> (stmt1, stmt2)
     | _ -> assert false
 
-  let let_nop = function NOP stmt -> stmt | _ -> assert false
+  let let_nop stmt = match stmt.node with NOP s -> s | _ -> assert false
 
-  let get_next_statements_ref = function
+  let get_next_statements_ref stmt =
+    match stmt.node with
     | ASSIGN (_, _, nxt_stmt) -> [ nxt_stmt ]
     | NONDET_INT_ASSIGN (_, nxt_stmt) -> [ nxt_stmt ]
     | NONDET_REAL_ASSIGN (_, nxt_stmt) -> [ nxt_stmt ]
@@ -237,14 +299,16 @@ end = struct
              get_vars_rep get_vars_one nxt_stmt (used_stmts, vars))
            ~init:(used_stmts, vars)
 
-  let get_read_vars = function
+  let get_read_vars stmt =
+    match stmt.node with
     | IF (fml, _, _) -> Formula.term_sort_env_of fml |> Variables.of_tvarset
     | ASSIGN (_, term, _) -> Term.term_sort_env_of term |> Variables.of_tvarset
     | ASSUME (fml, _) -> Formula.term_sort_env_of fml |> Variables.of_tvarset
     | NONDET_INT_ASSIGN _ | NONDET_REAL_ASSIGN _ | NONDET _ | NOP _ | EXIT ->
         Variables.empty
 
-  let get_written_vars = function
+  let get_written_vars stmt =
+    match stmt.node with
     | NONDET_INT_ASSIGN (varname, _) ->
         Variables.of_varname (varname, T_int.SInt)
     | NONDET_REAL_ASSIGN (varname, _) ->
@@ -290,7 +354,7 @@ end = struct
                 (string_of_indent indent)
         in
         let used, bodystr =
-          match stmt with
+          match stmt.node with
           | IF (cond_fml, t_stmt, f_stmt) ->
               let used, t_stmt_str =
                 string_of_stmt_rep ?info used (indent + 2) !t_stmt
@@ -351,7 +415,7 @@ end = struct
 
   let sub tvar term stmt =
     let subst = [ (tvar, term) ] |> Map.Poly.of_alist_exn in
-    match stmt with
+    match stmt.node with
     | IF (cond_fml, t_stmt, f_stmt) ->
         mk_if (Formula.subst subst cond_fml) t_stmt f_stmt
     | ASSIGN (varname, term, nxt_stmt) ->
@@ -370,5 +434,10 @@ module LinkedStatementHashtbl = Stdlib.Hashtbl.Make (struct
   type t = LinkedStatement.t
 
   let equal = phys_equal
-  let hash = Hashtbl.hash
+
+  (* Hash the identity, never the statement. [Hashtbl.hash] walks the structure,
+     and a statement's successor references are assigned to while tables keyed
+     by it are alive, so hashing the structure gives a different answer for the
+     same key before and after and the lookup silently misses. *)
+  let hash stmt = LinkedStatement.id_of stmt
 end)

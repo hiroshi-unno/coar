@@ -1,0 +1,11 @@
+/* three alternating fixpoints in one strongly connected component, so the
+   innermost least fixpoint Z is reassigned the odd priority 3.  At x = 0 the
+   only move from Z is back to Z, a least-fixpoint loop that never ends, so
+   the query is false.  Packing the ranking components in pairs compares
+   priority 3 at component 2; a template that asked the accepting set about 2
+   instead of 3 allowed Z a non-strict decrease and could accept the loop. */
+X 0
+s.t.
+X (x: int): bool =mu Y x;
+Y (x: int): bool =nu Z x;
+Z (x: int): bool =mu Z x \/ (x < 0 /\ Y x) \/ (x < 0 /\ X x);

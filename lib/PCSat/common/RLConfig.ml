@@ -1,24 +1,31 @@
+(* Configuration of PCSat's reinforcement-learning channel, off by default
+   ([disabled]).  When [enable] is set, the solver prints machine-readable
+   lines on stdout -- the problem's statistics, each loop event, candidates,
+   examples, unsat cores, as the [show_*] fields select -- for an external
+   agent that drives PCSat's choices, and may ask that agent for an SMT
+   timeout.  [lock]/[unlock] serialise the writers when several solver
+   domains share stdout. *)
 open Core
 open Common.Util
 
 type t = {
-  enable : bool;
-  show_constraints : bool;
-  show_num_constrs : bool;
-  show_num_pvars : bool;
-  show_dep_graph : bool;
-  show_num_iters : bool;
-  show_user_time : bool;
-  show_kind : bool;
-  show_sort : bool;
-  show_relevance : bool;
-  show_num_args : bool;
-  show_pcsat_actions : bool;
-  show_elapsed_time : bool;
-  show_candidates : bool;
-  show_examples : bool;
-  show_unsat_core : bool;
-  ask_smt_timeout : bool;
+  enable : bool; [@default false]
+  show_constraints : bool; [@default false]
+  show_num_constrs : bool; [@default false]
+  show_num_pvars : bool; [@default false]
+  show_dep_graph : bool; [@default false]
+  show_num_iters : bool; [@default false]
+  show_user_time : bool; [@default false]
+  show_kind : bool; [@default false]
+  show_sort : bool; [@default false]
+  show_relevance : bool; [@default false]
+  show_num_args : bool; [@default false]
+  show_pcsat_actions : bool; [@default false]
+  show_elapsed_time : bool; [@default false]
+  show_candidates : bool; [@default false]
+  show_examples : bool; [@default false]
+  show_unsat_core : bool; [@default false]
+  ask_smt_timeout : bool; [@default false]
 }
 [@@deriving yojson]
 
@@ -28,16 +35,14 @@ end
 
 let instantiate_ext_files cfg = Ok cfg
 
-let load_ext_file = function
-  | ExtFile.Instance x -> Ok (ExtFile.Instance x)
-  | Filename filename -> (
-      let open Or_error in
-      try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
-      match of_yojson raw_json with
-      | Ok x -> instantiate_ext_files x >>= fun x -> Ok (ExtFile.Instance x)
-      | Error msg ->
-          error_string
-          @@ sprintf "Invalid RL Configuration (%s): %s" filename msg)
+include MakeExtFile (struct
+  type nonrec t = t
+
+  let of_yojson = of_yojson
+  let to_yojson = to_yojson
+  let name = "RL"
+  let instantiate = instantiate_ext_files
+end)
 
 let disabled : t =
   {

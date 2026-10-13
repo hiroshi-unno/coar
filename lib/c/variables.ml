@@ -1,3 +1,6 @@
+(* A set of C program variables, each with its sort, as the C frontend's
+   dataflow analyses and statement graphs use them. *)
+
 open Core
 open Common.Ext
 

@@ -1,0 +1,26 @@
+/* Control: the prover's disjunct choice MUST depend on the real argument, so a
+   repair of the record-dependence unsoundness may forbid dependence on the
+   parameters the dwf reduction adds, but not on the predicate's own ones, and may
+   not collapse a choice into a fixed one.
+
+   Verdict: VALID.  P x holds for every x by induction on |x|: at x = 0 the first
+   disjunct holds; for x > 0 take P (x - 1), for x < 0 take P (x + 1).
+
+   Any strategy that ignores x loses: "always P (x - 1)" never reaches 0 from
+   x = -1, and "always P (x + 1)" never reaches it from x = 1.  The honest strategy
+   reads the sign of x only (never the record r of the reduction), and wins the
+   transformed problem with WF_P the union of max(a,0) > max(b,0) and
+   max(-a,0) > max(-b,0) -- the first covering the descending runs from positive x,
+   the second the ascending runs from negative x.
+
+   On whether a control exists in which dependence on an ADDED parameter is both
+   harmless and needed: none is given, because at the level of which strategies
+   exist, forbidding that dependence loses nothing -- parity games are positionally
+   determined also on infinite arenas, so a winning prover has a strategy that reads
+   the current predicate and arguments only, and with it fixed the remaining game is
+   demonic, where the recorded-state reduction is sound and complete for a fine set
+   of rankings (Podelski and Rybalchenko).  Whether forbidding it can cost an answer
+   within a BOUNDED template space is not settled here. */
+forall (x: int). P x
+s.t.
+P (x: int): bool =mu x = 0 \/ P (x - 1) \/ P (x + 1);

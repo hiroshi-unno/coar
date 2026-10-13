@@ -1,7 +1,14 @@
+(* Per-module tracing.  [Make (val Config.enable)] or [(val Config.disable)]
+   gives a module its own [print], which forces the lazy message and writes
+   it to stderr only while tracing is on; [set_enable] switches it at run
+   time, and an [id] (the parallel domain's, by default the one set with
+   [set_id]) prefixes every line.  [print_stdout] writes unconditionally to
+   stdout and is for output that is part of a result, not tracing.  The
+   switches are atomics so that domains may read them concurrently. *)
 open Core
 
 module Config = struct
-  type t = { dbg_mode : bool; exec_time : bool } [@@deriving yojson]
+  type t = { dbg_mode : bool; [@default false] exec_time : bool [@default false] } [@@deriving yojson]
 
   module type ConfigType = sig
     val config : t
@@ -48,10 +55,10 @@ module Make (Config : Config.ConfigType) = struct
         Out_channel.print_endline @@ String.concat ~sep:"\n" lines
 
   let print_exec_time label fapp () =
-    let st = Time_float.now () in
+    let st = Clock.now_float () in
     let res = Lazy.force fapp in
     let diff =
-      Time_float.diff (Time_float.now ()) st |> Time_float.Span.to_sec
+      Time_float.diff (Clock.now_float ()) st |> Time_float.Span.to_sec
     in
     print @@ lazy (sprintf "**** call %s (time: %f)" label diff);
     res

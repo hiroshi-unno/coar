@@ -1,3 +1,11 @@
+(* Sets of example atoms ([ExAtom.t]) and their per-predicate projections.
+   [reduce bvs] keeps, of atoms that are instances of one another (by
+   [Atom.pattern_match], the variables [bvs] held fixed), only the most
+   general: an atom an existing member generalises is not added, and an atom
+   that generalises members replaces them.  The result depends on the order
+   the set is folded in only through which of two mutually matching atoms is
+   kept.  [reduce_with_source] does the same with a source carried beside
+   each atom. *)
 open Core
 open LogicOld
 

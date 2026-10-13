@@ -1,7 +1,7 @@
 (set-logic HORN)
 
 (declare-sort Int 0)
-(declare-datatypes (T) ((List (nil) (cons (hd T) (tl List)))))
+(declare-datatypes ((List 1)) ((par (T) ((nil) (cons (hd T) (tl (List T)))))))
 
 (declare-fun exists$ ((List Int) Bool) Bool)
 (define-fun p ((x Int)) Bool (

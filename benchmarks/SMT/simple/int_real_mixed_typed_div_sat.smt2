@@ -1,0 +1,7 @@
+(set-logic AUFNIRA)
+(declare-const x Int)
+(declare-const y Int)
+(assert (= x 3))
+(assert (= y 2))
+(assert (= (/ x y) 1.5))
+(check-sat)

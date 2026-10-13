@@ -1,0 +1,13 @@
+/* Rung two of an isolation ladder (the other rungs are the rot90_quadrant_rank
+   pair and rot90_tick_rank beside this file).  The rotation of the quadrant-rank
+   file, with two extra straight-line predicates in the cycle and nothing else
+   changed.  It answers valid in about 10 s once the well-founded template is
+   given four pieces, which is what the quadrant-rank file needs too -- so
+   predicate COUNT is not what makes the C-derived original hard, and that is the
+   point of keeping this file. */
+Main 0
+s.t.
+Main (z:int): bool =mu forall (a:real). forall (b:real). (a = real(0) /\ b = real(0)) \/ L6 a b;
+L6 (a:real) (b:real): bool =mu a >. real(0) /\ b >=. real(0) \/ L7 a b;
+L7 (a:real) (b:real): bool =mu a >. real(0) /\ b >=. real(0) \/ L8 a b;
+L8 (a:real) (b:real): bool =mu a >. real(0) /\ b >=. real(0) \/ L6 (-.b) a;

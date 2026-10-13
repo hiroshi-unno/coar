@@ -10,5 +10,5 @@
  (preprocess
   (pps ppx_deriving_yojson))
  (libraries core CoAR.pCSP CoAR.ast CoAR.common CoAR.LTS)
- (modules pred problem lexer parser util)
+ (modules accel pred problem lexer parser util)
  (synopsis "The definition of quantitative muCLP"))

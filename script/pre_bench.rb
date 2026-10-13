@@ -10,7 +10,7 @@ def execution(params, cmd, benchname)
   system(cmd)
 end
 
-params = ARGV.getopts('', 'bin:./_build/default/bin/main.exe',
+params = ARGV.getopts('', 'bin:./_build/default/main.exe',
                       'args: --problem psat --format smt-lib2 -mbi bench_info.csv',
                       'bench:./benchmarks/chc-comp18/lia',
                       'recursive',

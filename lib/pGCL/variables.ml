@@ -1,3 +1,5 @@
+(* Sets of named, sorted program variables, used when the pGCL frontend
+   collects the variables a statement reads or writes. *)
 open Core
 open Common.Ext
 

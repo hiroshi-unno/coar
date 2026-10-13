@@ -1,0 +1,23 @@
+{
+    "verbose": true,
+    "resolution_threshold": 4,
+    "num_elim_bool_vars": 0,
+    "refute_by_unfolding": false,
+    "refute_by_unfolding_fitting_doubling": false,
+    "share_determined_pvar_args": false,
+    "drop_constant_args": false,
+    "resolution_complete_max_clauses": 0,
+    "restore_witness_universals": false,
+    "add_fn_totality_consequences": false,
+    "condense_resolvents": false,
+    "condense_pure_resolvents": false,
+    "elim_joint_condense": false,
+    "elim_dedup_alpha_disjuncts": false,
+    "elim_subsume_clauses": false,
+    "elim_tautology_test": false,
+    "elim_assign_before_cnf": false,
+    "dedup_alpha_equivalent_disjuncts": false,
+    "pvar_elim_split_int_binders_at_ite": false,
+    "pvar_elim_implied_factor_equalities": false,
+    "pvar_elim_valid_timeout": 1000000000
+}

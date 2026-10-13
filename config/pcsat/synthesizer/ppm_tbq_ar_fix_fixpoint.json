@@ -1,0 +1,73 @@
+{
+    "strategy": [
+        "Template",
+        {
+            "solution_template": {
+                "update_strategy": [
+                    "UnsatCore"
+                ],
+                "compute_ucores": true,
+                "learn_quals_from_ucores": true,
+                "qualifier_generator": [
+                    "Filename",
+                    "./config/pcsat/qualifier/tb_fixpoint.json"
+                ],
+                "pex_strategy": [
+                    "InstDefault"
+                ],
+                "predicate_template": [
+                    "Arrays",
+                    [
+                        "Filename",
+                        "./config/pcsat/template/predicate_arrays_template_thr_fixpoint.json"
+                    ]
+                ],
+                "wf_predicate_template": [
+                    "WF",
+                    [
+                        "Filename",
+                        "./config/pcsat/template/parity_predicate_template_fix.json"
+                    ]
+                ],
+                "fn_predicate_template": [
+                    "FN",
+                    [
+                        "Filename",
+                        "./config/pcsat/template/fn_predicate_template.json"
+                    ]
+                ],
+                "ne_predicate_template": [
+                    "Filename",
+                    "./config/pcsat/template/ne_predicate_template.json"
+                ],
+                "adm_predicate_template": [
+                    "Filename",
+                    "./config/pcsat/template/adm_predicate_template.json"
+                ],
+                "integ_predicate_template": [
+                    "Filename",
+                    "./config/pcsat/template/integ_predicate_template.json"
+                ],
+                "int_function_template": [
+                    "IntFun",
+                    [
+                        "Filename",
+                        "./config/pcsat/template/int_function_template.json"
+                    ]
+                ],
+                "regex_template": [
+                    "RegEx",
+                    [
+                        "Filename",
+                        "./config/pcsat/template/regex_template.json"
+                    ]
+                ],
+                "keep_timeout_budget_across_rebuild": true,
+                "max_synthesis_timeout": 1000000000,
+                "synthesis_arith_solver": null,
+                "false_probe_on_negative_examples": false,
+                "candidate_select_constant_cases": false
+            }
+        }
+    ]
+}

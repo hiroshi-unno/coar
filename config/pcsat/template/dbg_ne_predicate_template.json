@@ -1,7 +1,3 @@
 {
-    "verbose": true,
-    "depth": 0,
-    "ext": 0,
-    "upper_bound_coeff": 1,
-    "upper_bound_const": 0
+    "verbose": true
 }

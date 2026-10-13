@@ -4,7 +4,7 @@
                      "S",
                      [
                             "Filename",
-                            "./config/pcsat/synthesizer/tb.json"
+                            "./config/pcsat/synthesizer/tb_interval3.json"
                      ]
               ],
               [
@@ -36,7 +36,6 @@
                      ]
               ]
        ],
-       "verbose": false,
        "rl_config": [
               "Filename",
               "./config/pcsat/rl/disable.json"

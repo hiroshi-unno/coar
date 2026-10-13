@@ -1,3 +1,8 @@
+(* One equation of a QFL (quantitative fixpoint logic) problem: a real-valued
+   function defined as the least or greatest fixpoint of its body, with
+   optional annotations and constraints on its arguments.  [to_formula]
+   states the prefixed-point (for a least fixpoint) or postfixed-point (for a
+   greatest one) inequality that a candidate must satisfy. *)
 open Core
 open Common.Ext
 open Ast
@@ -9,9 +14,11 @@ type t = {
   args : sort_env_list;
   body : Term.t;
   annots : Formula.t list;
+  arg_constrs : Formula.t list;
 }
 
-let make ?(annots = []) kind name args body = { kind; name; args; body; annots }
+let make ?(annots = []) ?(arg_constrs = []) kind name args body =
+  { kind; name; args; body; annots; arg_constrs }
 let map f pred = { pred with body = f pred.body }
 let map_list f = List.map ~f:(map f)
 let pvars_of_list = List.map ~f:(fun pred -> pred.name)

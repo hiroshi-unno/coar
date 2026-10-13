@@ -1,3 +1,16 @@
+(* Checks candidates against the examples already in the version space,
+   before validation asks about the clauses.
+
+   [check_candidates vs cands] instantiates every example clause that still
+   has a variable or a datatype term in an atom with each candidate, asks Z3
+   whether the instance can fail, and turns each countermodel into a new
+   ground example (the clause substituted by the model, guarded by what the
+   model says about uninterpreted terms).  It returns [`NoCandidate] for an
+   empty list, [`Valid] when no candidate produced such an example,
+   [`Unsat] (with a propagation witness recorded in [vs]) when unit
+   propagation over old and new examples reaches a conflict, and
+   [`Invalid] with the propagated example sets otherwise.  A query Z3 leaves
+   undecided yields the trivial example [true] as its counterexample. *)
 open Core
 open Common
 open Common.Ext
@@ -17,7 +30,7 @@ struct
   let _ = Debug.set_id id
 
   let check_clause =
-    let check_history = Hashtbl.Poly.create () in
+    let check_history = Hashtbl.PolyDeep.create () in
     fun ?(smt_timeout = None) phi ->
       match Hashtbl.Poly.find check_history phi with
       | Some model -> model
@@ -53,12 +66,12 @@ struct
         let cond =
           Formula.and_of
           @@ List.filter_map model ~f:(function
-               | (tvar, _), Some term -> (
-                   try
-                     let term1, _ = UTermEnv.of_tvar uenv tvar in
-                     Some (Formula.eq term1 term)
-                   with _ -> None)
-               | _ -> None)
+            | (tvar, _), Some term -> (
+                try
+                  let term1, _ = UTermEnv.of_tvar uenv tvar in
+                  Some (Formula.eq term1 term)
+                with exn_ when not (Common.Timer.is_async exn_) -> None)
+            | _ -> None)
         in
         let sub =
           List.fold model ~init:Map.Poly.empty ~f:(fun ret -> function
@@ -140,6 +153,14 @@ struct
     (dpos', dneg', und')
 
   let check_candidates ?(smt_timeout = None) vs (cands : CandSol.t list) =
+    if List.is_empty cands then
+      (* "nothing to check" is not "everything checked out".  The verdict below
+         is [`Valid] exactly when no candidate produced a counterexample, and an
+         empty list produces none -- so without this the caller reads *no
+         candidate* as *the candidate is valid* and can accept a solution that
+         was never proposed. *)
+      `NoCandidate
+    else
     let dpos, dneg, und = VersionSpace.pos_neg_und_examples_of vs in
     let dpos', dneg', und' =
       List.fold cands ~init:(Set.Poly.empty, Set.Poly.empty, Set.Poly.empty)
@@ -162,6 +183,21 @@ struct
       with
       | `Unsat conflicts ->
           Debug.print @@ lazy (str_of_conflicts conflicts);
+          (* the examples instantiated with the candidates are recorded as
+             untracked: they are not in the clause graph *)
+          let exs s =
+            List.map (Set.to_list s) ~f:(fst >> VersionSpace.witness_example vs)
+          in
+          VersionSpace.set_unsat_witness vs
+          @@ UnsatWitness.make
+               (PCSP.Problem.senv_of APCSP.problem)
+               (UnsatWitness.Propagation
+                  {
+                    conflicts = Set.to_list conflicts;
+                    positives = exs dpos;
+                    negatives = exs dneg;
+                    undecided = exs und;
+                  });
           `Unsat
       | `Result (dpos', dneg', und') -> `Invalid (dpos', dneg', und')
 end

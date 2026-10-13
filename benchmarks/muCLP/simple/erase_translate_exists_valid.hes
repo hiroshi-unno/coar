@@ -1,0 +1,5 @@
+/* Control for the erase_* inputs: exists a. P(a + 1) with P(x) the singleton x = 1 is valid, and
+   a + 1 is onto in a, so erasing the quantifier is sound here and must still happen. */
+exists (a: int). P (a + 1)
+s.t.
+P (x: int): bool =mu x = 1;

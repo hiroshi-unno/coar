@@ -1,0 +1,5 @@
+(set-logic ALL)
+(declare-const a Int)
+(assert (= a 1))
+(assert (not (= (let ((a 2) (b a)) b) 1)))
+(check-sat)

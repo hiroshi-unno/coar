@@ -1,3 +1,24 @@
+(* Simple-type, operation-signature and control-effect inference for OCaml
+   programs with algebraic effects, shared by RCaml and EffCaml.
+
+   [Make(..).fold_expr ~f dtenv is_handled senv expr c0] traverses a typed
+   expression against an expected computation type [c0] and returns the
+   effect and operation-signature constraints it generates (solved by
+   [MBcsol.solve]) together with a continuation built from the object [f] --
+   one method per construct ([f_ite], [f_assert], [f_annot], ...) -- which the
+   caller runs once they are solved, so that RCaml generates refinement
+   constraints and EffCaml a CPS translation over the same traversal.  With
+   [for_cps_trans] the subeffecting rule also records an operation-signature
+   constraint the CPS translation needs.  The module also converts OCaml types
+   and patterns to the tree's sorts and patterns, recognises the effect
+   primitives by name ([perform], [match_with], [shift], [reset], ...), and
+   reads attribute payloads ([find_val_attrs], [find_comp_attrs]).
+
+   Impure [&&]/[||] conditions of [if] and [assert] are distributed over the
+   branches rather than typed against a fresh predicate (see [fold_ite]), so
+   the continuation of a branch may be invoked several times and must be
+   re-entrant. *)
+
 open Core
 open Typedtree
 open Common
@@ -61,22 +82,22 @@ let occurs bound (target : Ident.t) (e : expression) =
   !found
 
 module Config = struct
-  type t = { verbose : bool; for_cps_trans : bool } [@@deriving yojson]
+  type t = { verbose : bool; [@default false] for_cps_trans : bool [@default false] } [@@deriving yojson]
 
   module type ConfigType = sig
     val config : t
   end
 
-  let load_ext_file = function
-    | ExtFile.Instance x -> Ok (ExtFile.Instance x)
-    | Filename filename -> (
-        let open Or_error in
-        try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
-        match of_yojson raw_json with
-        | Ok x -> Ok (ExtFile.Instance x)
-        | Error msg ->
-            error_string
-            @@ sprintf "Invalid MBcgen Configuration (%s): %s" filename msg)
+  include MakeExtFile (struct
+    type nonrec t = t
+
+    let of_yojson = of_yojson
+    let to_yojson = to_yojson
+    let name = "MBcgen"
+
+    (* a leaf: no nested config to load *)
+    let instantiate = Or_error.return
+  end)
 end
 
 module Make (Config : Config.ConfigType) = struct
@@ -189,9 +210,9 @@ module Make (Config : Config.ConfigType) = struct
         let svs =
           Set.Poly.of_list
           @@ List.map tys ~f:(fun ty ->
-                 match sort_of_type_expr ~lift ~env dtenv ty with
-                 | Sort.SVar svar -> svar
-                 | _ -> failwith "sort_of_type_expr")
+              match sort_of_type_expr ~lift ~env dtenv ty with
+              | Sort.SVar svar -> svar
+              | _ -> failwith "sort_of_type_expr")
         in
         Sort.mk_poly svs @@ sort_of_type_expr ~lift ~env dtenv ty
     | Tconstr (p, args, _) -> (
@@ -460,6 +481,33 @@ module Make (Config : Config.ConfigType) = struct
     | Texp_ident (p, _, _) -> f @@ Path.name p
     | _ -> false
 
+  (* [is_total_pure_expr e] holds only if evaluating [e] can neither fail,
+     diverge, nor perform an effect: variables, constants, nullary
+     constructors and total primitives (comparisons, [+], [-], [*], [not],
+     [&&], [||], ...) applied to such expressions.  Division and [mod] are
+     excluded because they can raise.  Used to keep the strict typing of
+     [&&]/[||] (see [Ast.Rtype.of_binop]) when short-circuiting cannot be
+     observed, since the [if]-desugaring is much more expensive to solve. *)
+  let rec is_total_pure_expr e =
+    match e.exp_desc with
+    | Texp_ident _ | Texp_constant _ | Texp_function _ -> true
+    | Texp_construct (_, _, args) -> List.for_all args ~f:is_total_pure_expr
+    | Texp_apply (e, args) ->
+        is_
+          (fun s ->
+            Ast.Rtype.is_psym s || Ast.Rtype.is_unop s || Ast.Rtype.is_binop s
+            ||
+            match s with
+            | "Stdlib.+" | "Stdlib.-" | "Stdlib.*" | "Stdlib.~-" | "Stdlib.abs"
+            | "Stdlib.+." | "Stdlib.-." | "Stdlib.*." | "Stdlib.float_of_int" ->
+                true
+            | _ -> false)
+          e
+        && List.for_all args ~f:(function
+          | _, Arg e -> is_total_pure_expr e
+          | _ -> false)
+    | _ -> false
+
   let subeff svs c1 c2 =
     let map, econstrs, oconstrs = Ast.Typeinf.subeff svs c1 c2 in
     if config.for_cps_trans && (not @@ Sort.is_pure c1.cont_eff) then
@@ -500,6 +548,102 @@ module Make (Config : Config.ConfigType) = struct
               ( is_pure e.exp_desc,
                 next,
                 Sort.{ op_sig = ovar; val_type = sort; cont_eff = evar } ) )
+    in
+    (* Conditions of [if] and [assert] that are impure [&&]/[||] applications
+       are distributed over the branches instead of being typed against a
+       fresh predicate:
+         if (a && b) then t else f  =  if a then (if b then t else f) else f
+         if (a || b) then t else f  =  if a then t else (if b then t else f)
+         assert (a && b)            =  if a then assert b else assert false
+         assert (a || b)            =  if a then () else assert b
+       Eliminating the condition's predicate afterwards copies the nested
+       conditions' predicates and is exponential in the nesting depth.
+       A branch's [next] may therefore be
+       invoked in several branches. *)
+    let is_and_op op =
+      is_ (function "Stdlib.&&" | "Stdlib.&" -> true | _ -> false) op
+    in
+    let rec fold_ite senv e1 ((_, evar2) as then_) else_opt cont =
+      match e1.exp_desc with
+      | Texp_apply (op, [ (_, Arg e11); (_, Arg e12) ])
+        when is_ Ast.Rtype.is_binop op && not (is_total_pure_expr e12) ->
+          let evar = Sort.mk_fresh_evar () in
+          let econstrs, oconstrs, next =
+            fold_ite senv e12 then_ else_opt evar
+          in
+          let econstrs', oconstrs', next' =
+            if is_and_op op then fold_ite senv e11 (next, evar) else_opt cont
+            else fold_ite senv e11 then_ (Some (next, evar)) cont
+          in
+          (Set.union econstrs econstrs', Set.union oconstrs oconstrs', next')
+      | _ ->
+          let evar1 = Sort.mk_fresh_evar () in
+          let econstrs1, oconstrs1, next1 =
+            call_fold senv e1
+              {
+                op_sig = c0.op_sig;
+                val_type = sort_of_expr ~lift:true dtenv e1;
+                cont_eff = evar1;
+              }
+          in
+          let econstrs_seq =
+            match else_opt with
+            | None -> Set.Poly.singleton ([ evar1; evar2 ], cont)
+            | Some (_, evar3) ->
+                Set.Poly.of_list
+                  [ ([ evar1; evar2 ], cont); ([ evar1; evar3 ], cont) ]
+          in
+          ( Set.union econstrs1 econstrs_seq,
+            oconstrs1,
+            f#f_ite (next1, evar1) then_ else_opt )
+    in
+    let rec fold_assert senv e cont =
+      match e.exp_desc with
+      | Texp_construct (_, cd, []) when String.(cd.cstr_name = "false") ->
+          let evar1 = Sort.mk_fresh_evar () in
+          ( Set.Poly.singleton ([ evar1 ], cont),
+            Set.Poly.empty,
+            f#f_assert (None, evar1) )
+      | Texp_apply (op, [ (_, Arg e1); (_, Arg e2) ])
+        when is_ Ast.Rtype.is_binop op && not (is_total_pure_expr e2) ->
+          let evar2 = Sort.mk_fresh_evar () in
+          let econstrs2, oconstrs2, next2 = fold_assert senv e2 evar2 in
+          let evar3 = Sort.mk_fresh_evar () in
+          let econstrs1, oconstrs1, next =
+            if is_and_op op then
+              fold_ite senv e1 (next2, evar2)
+                (Some (f#f_assert (None, evar3), evar3))
+                cont
+            else
+              fold_ite senv e1
+                (f#f_const (Datatype.mk_unit ()), evar3)
+                (Some (next2, evar2))
+                cont
+          in
+          ( Set.Poly.union_list
+              [
+                Set.Poly.singleton ([ Sort.Pure ], evar3); econstrs1; econstrs2;
+              ],
+            Set.Poly.union_list
+              [
+                Set.Poly.singleton (c0.op_sig, Sort.empty_closed_opsig);
+                oconstrs1;
+                oconstrs2;
+              ],
+            next )
+      | _ ->
+          let evar1 = Sort.mk_fresh_evar () in
+          let econstrs, oconstrs, next =
+            call_fold senv e
+              {
+                op_sig = c0.op_sig;
+                val_type = sort_of_expr ~lift:true dtenv e;
+                cont_eff = evar1;
+              }
+          in
+          ( Set.add econstrs ([ evar1 ], cont),
+            oconstrs,
+            f#f_assert (Some next, evar1) )
     in
     Debug.print
     @@ lazy
@@ -578,7 +722,7 @@ module Make (Config : Config.ConfigType) = struct
               let map, econstrs, oconstrs =
                 subeff
                   (Map.of_set_exn
-                  @@ Set.Poly.map ~f:(Fn.flip Pair.make None)
+                  @@ Set.Poly.map ~f:(Fn.flip Tuple2.create None)
                   @@ Term.svs_of_sort x_sort)
                   (Sort.mk_triple_from_sort x_sort)
                   c0
@@ -807,7 +951,7 @@ module Make (Config : Config.ConfigType) = struct
                        :: econstrss,
                     Set.Poly.union_list
                     @@ (Set.Poly.of_list
-                       @@ List.map ~f:(Pair.make c0.op_sig)
+                       @@ List.map ~f:(Tuple2.create c0.op_sig)
                        @@ opsig_op
                           :: List.filter_map nexts_either ~f:ovar_of_either)
                        :: oconstrss,
@@ -871,262 +1015,264 @@ module Make (Config : Config.ConfigType) = struct
                     let sort_op = sort_of_expr ~lift:true dtenv e_op in
                     List.unzip7
                     @@ List.map ~f:(fun case ->
-                           let pat =
-                             pattern_of dtenv ~sort:(Some sort_op) case.c_lhs
-                           in
-                           if false then
-                             print_endline
-                             @@ sprintf "case: %s"
-                                  (Ast.Pattern.str_of ~with_sort:true pat);
-                           let op_name, (x_op_params, s_op_params) =
-                             match pat with
-                             | Ast.Pattern.PCons (_dt, name, pat_params) ->
-                                 ( name,
-                                   List.unzip
-                                   @@ List.map pat_params ~f:(function
-                                        | Ast.Pattern.PAny sort ->
-                                            ( Ast.Ident.mk_fresh_tvar
-                                                ~prefix:(Some "dummy")
-                                                () (*dummy*),
-                                              sort )
-                                        | Ast.Pattern.PVar b -> b
-                                        | _ -> failwith "handling @ eff3") )
-                             | _ -> failwith "handling @ eff4"
-                           in
-                           let s_annot_opts =
-                             match case.c_lhs.pat_desc with
-                             | Tpat_construct (_loc, _cd, pats, _) ->
-                                 List.map pats ~f:(fun pat ->
-                                     match
-                                       ( find_val_attrs ~dtenv
-                                           ~attr_name:"annot_MB"
-                                           pat.pat_attributes,
-                                         find_val_attrs ~dtenv
-                                           ~attr_name:"annot" pat.pat_attributes
-                                       )
-                                     with
-                                     | Some t, _ | None, Some t ->
-                                         let sort_annot =
-                                           Ast.Rtype.sort_of_val t
-                                         in
-                                         if print_log then
-                                           print_endline
-                                           @@ sprintf "annot: %s"
-                                                (Term.str_of_sort sort_annot);
-                                         Some sort_annot
-                                     | None, None -> None)
-                             | _ -> failwith "handling @ eff5"
-                           in
-                           let s_op_params =
-                             (* update with annotated sorts *)
-                             List.map2_exn s_op_params s_annot_opts
-                               ~f:(fun s_op_param ->
-                                 Option.value ~default:s_op_param)
-                           in
-                           let senv'' =
-                             let pat_senv =
-                               Map.update_with (Ast.Pattern.senv_of pat sort_op)
-                               @@ Map.Poly.of_alist_exn
-                               @@ List.filter_map ~f:(fun (x, s_opt) ->
-                                      Option.map s_opt ~f:(Pair.make x))
-                               @@ List.zip_exn x_op_params s_annot_opts
-                             in
-                             Map.update_with (*shadowing*) senv' pat_senv
-                           in
-                           match case.c_rhs.exp_desc with
-                           | Texp_construct
-                               ( _,
-                                 { cstr_name = "Some"; _ },
-                                 [
-                                   ({
-                                      exp_desc =
-                                        Texp_function (k_arg :: args, body);
-                                      _;
-                                    } as exp0);
-                                 ] ) ->
-                               let is_atp =
-                                 let is_cont_app e =
-                                   match e.exp_desc with
-                                   | Texp_apply
-                                       (e, [ (_, Arg k); (_, Arg arg) (*ToDo*) ])
-                                     ->
-                                       is_ is_continue e
-                                       && is_
-                                            (fun k ->
-                                              String.(
-                                                k = Ident.name k_arg.fp_param))
-                                            k
-                                       && (not @@ occurs [] k_arg.fp_param arg)
-                                   | _ -> false (*ToDo*)
-                                 in
-                                 (*ToDo: support generic handlers in RCaml *)
-                                 config.for_cps_trans
-                                 && List.is_empty
-                                      args (* no handler parameters *)
-                                 &&
-                                 match body with
-                                 | Tfunction_body e -> (
-                                     match e.exp_desc with
-                                     | Texp_let (_, vbs, e) ->
-                                         is_cont_app e
-                                         && List.for_all vbs ~f:(fun vb ->
-                                                (* k_arg.fp_param does not occur free in vb *)
-                                                not
-                                                @@ occurs (bvs vb.vb_pat [])
-                                                     k_arg.fp_param vb.vb_expr)
-                                     | _ -> is_cont_app e)
-                                 | Tfunction_cases _ ->
-                                     failwith "handling @ eff6"
-                               in
-                               Debug.print
-                               @@ lazy
-                                    (sprintf "%s handler for %s"
-                                       (if is_atp then "ATP" else "ATM")
-                                       (Ast.Pattern.str_of pat));
-                               let op_sig_gen =
-                                 Sort.mk_fresh_empty_open_opsig ()
-                               in
-                               let k_pat =
-                                 match k_arg.fp_kind with
-                                 | Tparam_pat k_pat -> k_pat
-                                 | _ -> failwith "handling @ eff7"
-                               in
-                               let s_arity, c_ini =
-                                 match
-                                   sort_of_type_expr ~lift:true
-                                     ~env:k_pat.pat_env dtenv k_pat.pat_type
-                                 with
-                                 | T_dt.SDT dt
-                                   when String.(
-                                          Datatype.name_of dt = "continuation")
-                                   -> (
-                                     match Datatype.params_of dt with
-                                     | [ s_arity; s_ans ] ->
-                                         if false then
-                                           print_endline
-                                           @@ sprintf "s_arity: %s, s_ans: %s"
-                                                (Term.str_of_sort s_arity)
-                                                (Term.str_of_sort s_ans);
-                                         let c_ini =
-                                           Sort.
-                                             {
-                                               op_sig =
-                                                 (if is_atp then op_sig_gen
-                                                  else
-                                                    Sort
-                                                    .mk_fresh_empty_open_opsig
-                                                      ());
-                                               val_type = s_ans;
-                                               cont_eff =
-                                                 (if is_atp then Sort.Pure
-                                                  else if true then
-                                                    Sort.mk_fresh_evar ()
-                                                  else
-                                                    Sort.Eff
-                                                      ( Sort.mk_fresh_triple (),
-                                                        Sort.mk_fresh_triple ()
-                                                      ));
-                                             }
-                                         in
-                                         (s_arity, c_ini)
-                                     | _ -> failwith "handling @ eff8")
-                                 | _ -> failwith "handling @ eff9"
-                               in
-                               let s_cont = Sort.SArrow (s_arity, c_ini) in
-                               if false then
-                                 print_endline
-                                 @@ sprintf "s_cont: %s"
-                                      (Term.str_of_sort s_cont);
-                               let k_cont_opt, senv_clause =
-                                 match
-                                   pattern_of dtenv k_pat ~sort:(Some s_cont)
-                                 with
-                                 | PAny _ -> (None, senv'')
-                                 | PVar (k, _) ->
-                                     ( Some k,
-                                       Map.Poly.add_exn ~key:k ~data:s_cont
-                                         senv'' )
-                                 | _ -> failwith "handling @ eff10"
-                               in
-                               let e_clause =
-                                 {
-                                   exp0 with
-                                   exp_desc = Texp_function (args, body);
-                                   exp_type =
-                                     (match Types.get_desc exp0.exp_type with
-                                     | Types.Tarrow (_, _, ty_body, _) ->
-                                         ty_body
-                                     | _ ->
-                                         failwith
-                                         @@ sprintf "handling @ eff11: %s"
-                                              (str_of_stdbuf exp0.exp_type
-                                                 ~f:Printtyp.type_expr));
-                                 }
-                               in
-                               let c_fin =
-                                 Sort.
-                                   {
-                                     op_sig =
-                                       (if is_atp then op_sig_gen
-                                        else Sort.mk_fresh_empty_open_opsig ());
-                                     val_type =
-                                       sort_of_expr ~lift:true dtenv e_clause;
-                                     cont_eff =
-                                       (if is_atp then Sort.Pure
-                                        else Sort.mk_fresh_evar ());
-                                   }
-                               in
-                               let econstrs, oconstrs, next =
-                                 call_fold senv_clause e_clause c_fin
-                               in
-                               let op_kind =
-                                 if is_atp then ATPHandler else ATMHandler
-                               in
-                               let op_sort =
-                                 if is_atp then
-                                   (Sort.mk_eff_fun s_op_params
-                                      (*@ [
+                        let pat =
+                          pattern_of dtenv ~sort:(Some sort_op) case.c_lhs
+                        in
+                        if false then
+                          print_endline
+                          @@ sprintf "case: %s"
+                               (Ast.Pattern.str_of ~with_sort:true pat);
+                        let op_name, (x_op_params, s_op_params) =
+                          match pat with
+                          | Ast.Pattern.PCons (_dt, name, pat_params) ->
+                              ( name,
+                                (* A [_] parameter gets a prefixed fresh
+                                   binder, which is not fresh against the
+                                   program's own names: it must avoid the
+                                   variables in scope and its sibling
+                                   parameters, or it would shadow one. *)
+                                let taken v =
+                                  Map.Poly.mem senv' v
+                                  || List.exists pat_params ~f:(function
+                                    | Ast.Pattern.PVar (x, _) ->
+                                        Ast.Ident.tvar_equal x v
+                                    | _ -> false)
+                                in
+                                List.unzip
+                                @@ List.map pat_params ~f:(function
+                                  | Ast.Pattern.PAny sort ->
+                                      ( Ast.Ident.mk_fresh_tvar_avoiding
+                                          ~prefix:"dummy" ~taken ()
+                                        (*dummy*),
+                                        sort )
+                                  | Ast.Pattern.PVar b -> b
+                                  | _ -> failwith "handling @ eff3") )
+                          | _ -> failwith "handling @ eff4"
+                        in
+                        let s_annot_opts =
+                          match case.c_lhs.pat_desc with
+                          | Tpat_construct (_loc, _cd, pats, _) ->
+                              List.map pats ~f:(fun pat ->
+                                  match
+                                    ( find_val_attrs ~dtenv
+                                        ~attr_name:"annot_MB" pat.pat_attributes,
+                                      find_val_attrs ~dtenv ~attr_name:"annot"
+                                        pat.pat_attributes )
+                                  with
+                                  | Some t, _ | None, Some t ->
+                                      let sort_annot =
+                                        Ast.Rtype.sort_of_val t
+                                      in
+                                      if print_log then
+                                        print_endline
+                                        @@ sprintf "annot: %s"
+                                             (Term.str_of_sort sort_annot);
+                                      Some sort_annot
+                                  | None, None -> None)
+                          | _ -> failwith "handling @ eff5"
+                        in
+                        let s_op_params =
+                          (* update with annotated sorts *)
+                          List.map2_exn s_op_params s_annot_opts
+                            ~f:(fun s_op_param ->
+                              Option.value ~default:s_op_param)
+                        in
+                        let senv'' =
+                          let pat_senv =
+                            Map.update_with (Ast.Pattern.senv_of pat sort_op)
+                            @@ Map.Poly.of_alist_exn
+                            @@ List.filter_map ~f:(fun (x, s_opt) ->
+                                Option.map s_opt ~f:(Tuple2.create x))
+                            @@ List.zip_exn x_op_params s_annot_opts
+                          in
+                          Map.update_with (*shadowing*) senv' pat_senv
+                        in
+                        match case.c_rhs.exp_desc with
+                        | Texp_construct
+                            ( _,
+                              { cstr_name = "Some"; _ },
+                              [
+                                ({
+                                   exp_desc = Texp_function (k_arg :: args, body);
+                                   _;
+                                 } as exp0);
+                              ] ) ->
+                            let is_atp =
+                              let is_cont_app e =
+                                match e.exp_desc with
+                                | Texp_apply
+                                    (e, [ (_, Arg k); (_, Arg arg) (*ToDo*) ])
+                                  ->
+                                    is_ is_continue e
+                                    && is_
+                                         (fun k ->
+                                           String.(
+                                             k = Ident.name k_arg.fp_param))
+                                         k
+                                    && (not @@ occurs [] k_arg.fp_param arg)
+                                | _ -> false (*ToDo*)
+                              in
+                              (*ToDo: support generic handlers in RCaml *)
+                              config.for_cps_trans
+                              && List.is_empty args (* no handler parameters *)
+                              &&
+                              match body with
+                              | Tfunction_body e -> (
+                                  match e.exp_desc with
+                                  | Texp_let (_, vbs, e) ->
+                                      is_cont_app e
+                                      && List.for_all vbs ~f:(fun vb ->
+                                          (* k_arg.fp_param does not occur free in vb *)
+                                          not
+                                          @@ occurs (bvs vb.vb_pat [])
+                                               k_arg.fp_param vb.vb_expr)
+                                  | _ -> is_cont_app e)
+                              | Tfunction_cases _ -> failwith "handling @ eff6"
+                            in
+                            Debug.print
+                            @@ lazy
+                                 (sprintf "%s handler for %s"
+                                    (if is_atp then "ATP" else "ATM")
+                                    (Ast.Pattern.str_of pat));
+                            let op_sig_gen =
+                              Sort.mk_fresh_empty_open_opsig ()
+                            in
+                            let k_pat =
+                              match k_arg.fp_kind with
+                              | Tparam_pat k_pat -> k_pat
+                              | _ -> failwith "handling @ eff7"
+                            in
+                            let s_arity, c_ini =
+                              match
+                                sort_of_type_expr ~lift:true ~env:k_pat.pat_env
+                                  dtenv k_pat.pat_type
+                              with
+                              | T_dt.SDT dt
+                                when String.(
+                                       Datatype.name_of dt = "continuation")
+                                -> (
+                                  match Datatype.params_of dt with
+                                  | [ s_arity; s_ans ] ->
+                                      if false then
+                                        print_endline
+                                        @@ sprintf "s_arity: %s, s_ans: %s"
+                                             (Term.str_of_sort s_arity)
+                                             (Term.str_of_sort s_ans);
+                                      let c_ini =
+                                        Sort.
+                                          {
+                                            op_sig =
+                                              (if is_atp then op_sig_gen
+                                               else
+                                                 Sort.mk_fresh_empty_open_opsig
+                                                   ());
+                                            val_type = s_ans;
+                                            cont_eff =
+                                              (if is_atp then Sort.Pure
+                                               else if true then
+                                                 Sort.mk_fresh_evar ()
+                                               else
+                                                 Sort.Eff
+                                                   ( Sort.mk_fresh_triple (),
+                                                     Sort.mk_fresh_triple () ));
+                                          }
+                                      in
+                                      (s_arity, c_ini)
+                                  | _ -> failwith "handling @ eff8")
+                              | _ -> failwith "handling @ eff9"
+                            in
+                            let s_cont = Sort.SArrow (s_arity, c_ini) in
+                            if false then
+                              print_endline
+                              @@ sprintf "s_cont: %s" (Term.str_of_sort s_cont);
+                            let k_cont_opt, senv_clause =
+                              match
+                                pattern_of dtenv k_pat ~sort:(Some s_cont)
+                              with
+                              | PAny _ -> (None, senv'')
+                              | PVar (k, _) ->
+                                  ( Some k,
+                                    Map.Poly.add_exn ~key:k ~data:s_cont senv''
+                                  )
+                              | _ -> failwith "handling @ eff10"
+                            in
+                            let e_clause =
+                              {
+                                exp0 with
+                                exp_desc = Texp_function (args, body);
+                                exp_type =
+                                  (match Types.get_desc exp0.exp_type with
+                                  | Types.Tarrow (_, _, ty_body, _) -> ty_body
+                                  | _ ->
+                                      failwith
+                                      @@ sprintf "handling @ eff11: %s"
+                                           (str_of_stdbuf exp0.exp_type
+                                              ~f:Printtyp.type_expr));
+                              }
+                            in
+                            let c_fin =
+                              Sort.
+                                {
+                                  op_sig =
+                                    (if is_atp then op_sig_gen
+                                     else Sort.mk_fresh_empty_open_opsig ());
+                                  val_type =
+                                    sort_of_expr ~lift:true dtenv e_clause;
+                                  cont_eff =
+                                    (if is_atp then Sort.Pure
+                                     else Sort.mk_fresh_evar ());
+                                }
+                            in
+                            let econstrs, oconstrs, next =
+                              call_fold senv_clause e_clause c_fin
+                            in
+                            let op_kind =
+                              if is_atp then ATPHandler else ATMHandler
+                            in
+                            let op_sort =
+                              if is_atp then
+                                (Sort.mk_eff_fun s_op_params
+                                   (*@ [
                                           (* dummy continuation *)
                                           Sort.mk_fresh_svar ();
                                         ]*)
-                                      Sort.
-                                        {
-                                          op_sig =
-                                            Sort.empty_closed_opsig (*ToDo*);
-                                          val_type = s_arity;
-                                          cont_eff = Sort.Pure;
-                                        })
-                                     .val_type
-                                 else
-                                   Sort.mk_fun @@ s_op_params
-                                   @ [ Sort.SArrow (s_cont, c_fin) ]
-                               in
-                               if false then
-                                 print_endline
-                                 @@ sprintf "op_sort: %s"
-                                      (Term.str_of_sort op_sort);
-                               if print_log then
-                                 Debug.print
-                                 @@ lazy
-                                      (sprintf "senv_clause:\n%s\nop_sort: %s"
-                                         (str_of_sort_env_map Term.str_of_sort
-                                            senv_clause)
-                                         (Term.str_of_sort op_sort));
-                               ( econstrs,
-                                 Set.add oconstrs (c0.op_sig, op_sig_gen)
-                                 (* ToDo: generate other constraints on op_sig_gen *),
-                                 next,
-                                 op_name,
-                                 op_kind,
-                                 op_sort,
-                                 ( x_op_params,
-                                   s_op_params,
-                                   k_cont_opt,
-                                   s_cont,
-                                   c_fin ) )
-                           | _ -> failwith "handling @ eff12")
+                                   Sort.
+                                     {
+                                       op_sig = Sort.empty_closed_opsig (*ToDo*);
+                                       val_type = s_arity;
+                                       cont_eff = Sort.Pure;
+                                     })
+                                  .val_type
+                              else
+                                Sort.mk_fun @@ s_op_params
+                                @ [ Sort.SArrow (s_cont, c_fin) ]
+                            in
+                            if false then
+                              print_endline
+                              @@ sprintf "op_sort: %s"
+                                   (Term.str_of_sort op_sort);
+                            if print_log then
+                              Debug.print
+                              @@ lazy
+                                   (sprintf "senv_clause:\n%s\nop_sort: %s"
+                                      (str_of_sort_env_map Term.str_of_sort
+                                         senv_clause)
+                                      (Term.str_of_sort op_sort));
+                            ( econstrs,
+                              Set.add oconstrs (c0.op_sig, op_sig_gen)
+                              (* ToDo: generate other constraints on op_sig_gen *),
+                              next,
+                              op_name,
+                              op_kind,
+                              op_sort,
+                              ( x_op_params,
+                                s_op_params,
+                                k_cont_opt,
+                                s_cont,
+                                c_fin ) )
+                        | _ -> failwith "handling @ eff12")
                     @@ List.concat_map cases ~f:(fun case ->
-                           value_case_of case case.c_lhs)
+                        value_case_of case case.c_lhs)
                 | _ -> failwith "handling @ eff113"
               in
               (* exnc *)
@@ -1154,65 +1300,70 @@ module Make (Config : Config.ConfigType) = struct
                         in
                         List.unzip6
                         @@ List.map pat_body_list ~f:(fun (pat0, e_clause) ->
-                               let sort_pat =
-                                 sort_of_type_expr ~lift:true dtenv
-                                   ~env:pat0.pat_env pat0.pat_type
-                               in
-                               let pat =
-                                 pattern_of dtenv ~sort:(Some sort_pat) pat0
-                               in
-                               let exn_name, (x_exn_params, s_exn_params) =
-                                 match pat with
-                                 | Ast.Pattern.PCons (_dt, name, pat_params) ->
-                                     ( name,
-                                       List.unzip
-                                       @@ List.map pat_params ~f:(function
-                                            | Ast.Pattern.PAny sort ->
-                                                ( Ast.Ident.mk_fresh_tvar
-                                                    ~prefix:(Some "dummy")
-                                                    () (*dummy*),
-                                                  sort )
-                                            | Ast.Pattern.PVar b -> b
-                                            | _ -> failwith "handling @ exn3")
-                                     )
-                                 | Ast.Pattern.(PAny _ | PVar _) ->
-                                     failwith
-                                       "write out all exception clauses \
-                                        explicitly"
-                                 | _ -> failwith "handling @ exn4"
-                               in
-                               let s_arity = Sort.mk_fresh_svar () in
-                               let c_ini = Sort.mk_fresh_triple () in
-                               let s_cont = Sort.SArrow (s_arity, c_ini) in
-                               let c_fin =
-                                 Sort.
-                                   {
-                                     op_sig = Sort.mk_fresh_empty_open_opsig ();
-                                     val_type =
-                                       sort_of_expr ~lift:true dtenv e_clause;
-                                     cont_eff = Sort.mk_fresh_evar ();
-                                   }
-                               in
-                               let econstrs, oconstrs, next =
-                                 call_fold
-                                   (Map.update_with (*shadowing*) senv
-                                      (Ast.Pattern.senv_of pat sort_pat))
-                                   e_clause c_fin
-                               in
-                               let exn_sort =
-                                 Sort.mk_fun @@ s_exn_params
-                                 @ [ Sort.SArrow (s_cont, c_fin) ]
-                               in
-                               ( econstrs,
-                                 oconstrs,
-                                 next,
-                                 exn_name,
-                                 exn_sort,
-                                 ( x_exn_params,
-                                   s_exn_params,
-                                   None,
-                                   s_cont,
-                                   c_fin ) ))
+                            let sort_pat =
+                              sort_of_type_expr ~lift:true dtenv
+                                ~env:pat0.pat_env pat0.pat_type
+                            in
+                            let pat =
+                              pattern_of dtenv ~sort:(Some sort_pat) pat0
+                            in
+                            let exn_name, (x_exn_params, s_exn_params) =
+                              match pat with
+                              | Ast.Pattern.PCons (_dt, name, pat_params) ->
+                                  ( name,
+                                    (* as for an operation's parameters: a
+                                       [_] binder avoids the variables in
+                                       scope and its siblings *)
+                                    let taken v =
+                                      Map.Poly.mem senv v
+                                      || List.exists pat_params ~f:(function
+                                        | Ast.Pattern.PVar (x, _) ->
+                                            Ast.Ident.tvar_equal x v
+                                        | _ -> false)
+                                    in
+                                    List.unzip
+                                    @@ List.map pat_params ~f:(function
+                                      | Ast.Pattern.PAny sort ->
+                                          ( Ast.Ident.mk_fresh_tvar_avoiding
+                                              ~prefix:"dummy" ~taken ()
+                                            (*dummy*),
+                                            sort )
+                                      | Ast.Pattern.PVar b -> b
+                                      | _ -> failwith "handling @ exn3") )
+                              | Ast.Pattern.(PAny _ | PVar _) ->
+                                  failwith
+                                    "write out all exception clauses explicitly"
+                              | _ -> failwith "handling @ exn4"
+                            in
+                            let s_arity = Sort.mk_fresh_svar () in
+                            let c_ini = Sort.mk_fresh_triple () in
+                            let s_cont = Sort.SArrow (s_arity, c_ini) in
+                            let c_fin =
+                              Sort.
+                                {
+                                  op_sig = Sort.mk_fresh_empty_open_opsig ();
+                                  val_type =
+                                    sort_of_expr ~lift:true dtenv e_clause;
+                                  cont_eff = Sort.mk_fresh_evar ();
+                                }
+                            in
+                            let econstrs, oconstrs, next =
+                              call_fold
+                                (Map.update_with (*shadowing*) senv
+                                   (Ast.Pattern.senv_of pat sort_pat))
+                                e_clause c_fin
+                            in
+                            let exn_sort =
+                              Sort.mk_fun @@ s_exn_params
+                              @ [ Sort.SArrow (s_cont, c_fin) ]
+                            in
+                            ( econstrs,
+                              oconstrs,
+                              next,
+                              exn_name,
+                              exn_sort,
+                              (x_exn_params, s_exn_params, None, s_cont, c_fin)
+                            ))
                     | Texp_ident (p, _, ty) when is_raise @@ Path.name p -> (
                         let sort_arg =
                           match
@@ -1322,8 +1473,10 @@ module Make (Config : Config.ConfigType) = struct
                     let x_r =
                       match pat with
                       | PAny _ | PCons (_, "()", []) ->
-                          Ast.Ident.mk_fresh_tvar ~prefix:(Some "dummy")
-                            () (*dummy*)
+                          (* the return clause's binder must not shadow a
+                             variable its body may mention *)
+                          Ast.Ident.mk_fresh_tvar_avoiding ~prefix:"dummy"
+                            ~taken:(Map.Poly.mem senv) () (*dummy*)
                       | PVar (x_r, _) -> x_r
                       | _ ->
                           failwith @@ "handling @ ret4: "
@@ -1362,7 +1515,7 @@ module Make (Config : Config.ConfigType) = struct
                 if false then
                   print_endline
                   @@ sprintf "is_hrec: %s, rec_vars: %s"
-                       (Bool.string_of !is_hrec)
+                       (Bool.to_string !is_hrec)
                        (Set.to_list !rec_vars
                        |> List.map ~f:Ast.Ident.name_of_tvar
                        |> String.concat ~sep:", ");
@@ -1431,13 +1584,61 @@ module Make (Config : Config.ConfigType) = struct
                         es' );
                 }
                 c0
+          | Texp_apply (e, [ (_, Arg e1); (_, Arg e2) ])
+            when is_ Ast.Rtype.is_binop e && not (is_total_pure_expr e2) ->
+              (* short-circuit: e1 && e2 = if e1 then e2 else false,
+                 e1 || e2 = if e1 then true else e2 *)
+              (* OCaml's [&&] and [||] short-circuit: type [e1 && e2] as
+                 [if e1 then e2 else false] and [e1 || e2] as
+                 [if e1 then true else e2], mirroring the Texp_ifthenelse arm
+                 below, instead of as a strict binary function *)
+              let is_and =
+                is_ (function "Stdlib.&&" | "Stdlib.&" -> true | _ -> false) e
+              in
+              let evar1 = Sort.mk_fresh_evar () in
+              let econstrs1, oconstrs1, next1 =
+                call_fold senv e1
+                  {
+                    op_sig = c0.op_sig;
+                    val_type = sort_of_expr ~lift:true dtenv e1;
+                    cont_eff = evar1;
+                  }
+              in
+              let evar2 = Sort.mk_fresh_evar () in
+              let econstrs2, oconstrs2, next2 =
+                call_fold senv e2 { c0 with cont_eff = evar2 }
+              in
+              (* the constant branch, typed as the Texp_construct arm does *)
+              let evar3 = Sort.mk_fresh_evar () in
+              let econstrs3 = Set.Poly.singleton ([ Sort.Pure ], evar3) in
+              let oconstrs3 =
+                Set.Poly.singleton (c0.op_sig, Sort.empty_closed_opsig)
+              in
+              let next3 = f#f_const @@ T_bool.make (not is_and) in
+              let then_, else_ =
+                if is_and then ((next2, evar2), (next3, evar3))
+                else ((next3, evar3), (next2, evar2))
+              in
+              ( Set.Poly.union_list
+                  [
+                    Set.Poly.of_list
+                      [
+                        ([ evar1; evar2 ], c0.cont_eff);
+                        ([ evar1; evar3 ], c0.cont_eff);
+                      ];
+                    econstrs1;
+                    econstrs2;
+                    econstrs3;
+                  ],
+                Set.Poly.union_list [ oconstrs1; oconstrs2; oconstrs3 ],
+                f#f_ite (next1, evar1) then_ @@ Some else_ )
           | Texp_apply (e1, es) ->
               assert (not @@ is_ is_keyword e1);
               let econstrss, oconstrss, nexts_either =
                 List.unzip3
                 @@ List.map es ~f:(function
-                     | _label, Arg e -> mk_either senv e
-                     | _label, _ -> failwith "default arg not supported")
+                  | _label, Arg e -> mk_either senv e
+                  | _label, _ -> failwith "default arg not supported")
               in
               let ovars', evars', sort_fun =
                 Sort.of_args_ret
@@ -1461,56 +1662,34 @@ module Make (Config : Config.ConfigType) = struct
                    :: econstrs1 :: econstrss,
                 Set.Poly.union_list
                 @@ (Set.Poly.of_list
-                   @@ List.map ~f:(Pair.make c0.op_sig)
+                   @@ List.map ~f:(Tuple2.create c0.op_sig)
                    @@ (ovar1 :: ovars')
                    @ List.filter_map nexts_either ~f:ovar_of_either)
                    :: oconstrs1 :: oconstrss,
                 f#f_apply
                   (is_pure e1.exp_desc, next1, ovars', ovar1, evars', evar1)
                   nexts_either )
-          | Texp_ifthenelse (e1, e2, e3_opt) -> (
-              let evar1 = Sort.mk_fresh_evar () in
-              let econstrs1, oconstrs1, next1 =
-                call_fold senv e1
-                  {
-                    op_sig = c0.op_sig;
-                    val_type = sort_of_expr ~lift:true dtenv e1;
-                    cont_eff = evar1;
-                  }
-              in
+          | Texp_ifthenelse (e1, e2, e3_opt) ->
               let evar2 = Sort.mk_fresh_evar () in
               let econstrs2, oconstrs2, next2 =
                 call_fold senv e2 { c0 with cont_eff = evar2 }
               in
-              match e3_opt with
-              | None ->
-                  ( Set.Poly.union_list
-                      [
-                        Set.Poly.singleton ([ evar1; evar2 ], c0.cont_eff);
-                        econstrs1;
-                        econstrs2;
-                      ],
-                    Set.Poly.union_list [ oconstrs1; oconstrs2 ],
-                    f#f_ite (next1, evar1) (next2, evar2) None )
-              | Some e3 ->
-                  let evar3 = Sort.mk_fresh_evar () in
-                  let econstrs3, oconstrs3, next3 =
-                    call_fold senv e3 { c0 with cont_eff = evar3 }
-                  in
-                  ( Set.Poly.union_list
-                      [
-                        Set.Poly.of_list
-                          [
-                            ([ evar1; evar2 ], c0.cont_eff);
-                            ([ evar1; evar3 ], c0.cont_eff);
-                          ];
-                        econstrs1;
-                        econstrs2;
-                        econstrs3;
-                      ],
-                    Set.Poly.union_list [ oconstrs1; oconstrs2; oconstrs3 ],
-                    f#f_ite (next1, evar1) (next2, evar2) @@ Some (next3, evar3)
-                  ))
+              let econstrs3, oconstrs3, else_opt =
+                match e3_opt with
+                | None -> (Set.Poly.empty, Set.Poly.empty, None)
+                | Some e3 ->
+                    let evar3 = Sort.mk_fresh_evar () in
+                    let econstrs3, oconstrs3, next3 =
+                      call_fold senv e3 { c0 with cont_eff = evar3 }
+                    in
+                    (econstrs3, oconstrs3, Some (next3, evar3))
+              in
+              let econstrs1, oconstrs1, next =
+                fold_ite senv e1 (next2, evar2) else_opt c0.cont_eff
+              in
+              ( Set.Poly.union_list [ econstrs1; econstrs2; econstrs3 ],
+                Set.Poly.union_list [ oconstrs1; oconstrs2; oconstrs3 ],
+                next )
           | Texp_constant c ->
               let t =
                 match c with
@@ -1529,28 +1708,7 @@ module Make (Config : Config.ConfigType) = struct
               ( Set.Poly.singleton ([ Sort.Pure ], c0.cont_eff),
                 Set.Poly.singleton (c0.op_sig, Sort.empty_closed_opsig) (*ToDo*),
                 f#f_const t )
-          | Texp_assert (e, _) ->
-              let evar1 = Sort.mk_fresh_evar () in
-              let econstrs, oconstrs, next =
-                match e.exp_desc with
-                | Texp_construct (_, cd, [])
-                  when String.(cd.cstr_name = "false") ->
-                    (Set.Poly.empty, Set.Poly.empty, None)
-                | _ ->
-                    let econstrs, oconstrs, next =
-                      call_fold senv e
-                        {
-                          op_sig = c0.op_sig;
-                          val_type = sort_of_expr ~lift:true dtenv e;
-                          cont_eff = evar1;
-                        }
-                    in
-                    (econstrs, oconstrs, Some next)
-              in
-              ( Set.Poly.union_list
-                  [ Set.Poly.singleton ([ evar1 ], c0.cont_eff); econstrs ],
-                oconstrs,
-                f#f_assert (next, evar1) )
+          | Texp_assert (e, _) -> fold_assert senv e c0.cont_eff
           | Texp_let (rec_flag, vbs, e2) ->
               let defs =
                 List.map vbs ~f:(fun vb ->
@@ -1596,29 +1754,25 @@ module Make (Config : Config.ConfigType) = struct
                 in
                 List.unzip8
                 @@ List.map defs ~f:(fun (_, pat, expr, sort) ->
-                       let evar = Sort.mk_fresh_evar () in
-                       let old_rec_vars = !rec_vars in
-                       (rec_vars :=
-                          match rec_flag with
-                          | Recursive -> Ast.Pattern.tvars_of pat
-                          | Nonrecursive -> Set.Poly.empty);
-                       let econstrs, oconstrs, next =
-                         call_fold senv_bounds expr
-                           {
-                             op_sig = c0.op_sig;
-                             val_type = sort;
-                             cont_eff = evar;
-                           }
-                       in
-                       rec_vars := old_rec_vars;
-                       ( pat,
-                         econstrs,
-                         oconstrs,
-                         is_pure expr.exp_desc,
-                         is_fun expr.exp_desc,
-                         next,
-                         sort,
-                         evar ))
+                    let evar = Sort.mk_fresh_evar () in
+                    let old_rec_vars = !rec_vars in
+                    (rec_vars :=
+                       match rec_flag with
+                       | Recursive -> Ast.Pattern.tvars_of pat
+                       | Nonrecursive -> Set.Poly.empty);
+                    let econstrs, oconstrs, next =
+                      call_fold senv_bounds expr
+                        { op_sig = c0.op_sig; val_type = sort; cont_eff = evar }
+                    in
+                    rec_vars := old_rec_vars;
+                    ( pat,
+                      econstrs,
+                      oconstrs,
+                      is_pure expr.exp_desc,
+                      is_fun expr.exp_desc,
+                      next,
+                      sort,
+                      evar ))
               in
               let senv_body =
                 let pat_senvs =
@@ -1742,53 +1896,51 @@ module Make (Config : Config.ConfigType) = struct
               let pats, econstrss, oconstrss, nexts, evars =
                 List.unzip5
                 @@ List.map func.cases ~f:(fun case ->
-                       let sarg, econstrs_annot, oconstrs_annot =
-                         (* constr on MB type annotations on arguments *)
-                         match
-                           ( find_val_attrs ~dtenv ~attr_name:"annot_MB"
-                               case.c_lhs.pat_attributes,
-                             find_val_attrs ~dtenv ~attr_name:"annot"
-                               case.c_lhs.pat_attributes )
-                         with
-                         | None, None -> (sarg, Set.Poly.empty, Set.Poly.empty)
-                         | Some t, _ | None, Some t ->
-                             let sort_annot = Ast.Rtype.sort_of_val t in
-                             if print_log then
-                               print_endline
-                               @@ sprintf "annot: %s = %s"
-                                    (Term.str_of_sort sort_annot)
-                                    (Term.str_of_sort sarg);
-                             let eqtype s1 s2 =
-                               let _map (*ToDo*), econstrs, oconstrs =
-                                 Ast.Typeinf.subtype Map.Poly.empty s1 s2
-                               in
-                               let _map (*ToDo*), econstrs', oconstrs' =
-                                 Ast.Typeinf.subtype Map.Poly.empty s2 s1
-                               in
-                               ( Set.union econstrs econstrs',
-                                 Set.union oconstrs oconstrs' )
-                             in
-                             let econstrs, oconstrs = eqtype sarg sort_annot in
-                             (sort_annot, econstrs, oconstrs)
-                       in
-                       let pat =
-                         pattern_of dtenv ~sort:(Some sarg) case.c_lhs
-                       in
-                       let econstrs, oconstrs, next =
-                         call_fold
-                           (let pat_senv = Ast.Pattern.senv_of pat sarg in
-                            if print_log then (
-                              print_endline @@ Term.str_of_sort sarg;
-                              print_endline
-                              @@ str_of_sort_env_map Term.str_of_sort pat_senv);
-                            Map.update_with (*shadowing*) senv pat_senv)
-                           case.c_rhs sret
-                       in
-                       ( pat,
-                         Set.union econstrs_annot econstrs,
-                         Set.union oconstrs_annot oconstrs,
-                         next,
-                         sret.cont_eff ))
+                    let sarg, econstrs_annot, oconstrs_annot =
+                      (* constr on MB type annotations on arguments *)
+                      match
+                        ( find_val_attrs ~dtenv ~attr_name:"annot_MB"
+                            case.c_lhs.pat_attributes,
+                          find_val_attrs ~dtenv ~attr_name:"annot"
+                            case.c_lhs.pat_attributes )
+                      with
+                      | None, None -> (sarg, Set.Poly.empty, Set.Poly.empty)
+                      | Some t, _ | None, Some t ->
+                          let sort_annot = Ast.Rtype.sort_of_val t in
+                          if print_log then
+                            print_endline
+                            @@ sprintf "annot: %s = %s"
+                                 (Term.str_of_sort sort_annot)
+                                 (Term.str_of_sort sarg);
+                          let eqtype s1 s2 =
+                            let _map (*ToDo*), econstrs, oconstrs =
+                              Ast.Typeinf.subtype Map.Poly.empty s1 s2
+                            in
+                            let _map (*ToDo*), econstrs', oconstrs' =
+                              Ast.Typeinf.subtype Map.Poly.empty s2 s1
+                            in
+                            ( Set.union econstrs econstrs',
+                              Set.union oconstrs oconstrs' )
+                          in
+                          let econstrs, oconstrs = eqtype sarg sort_annot in
+                          (sort_annot, econstrs, oconstrs)
+                    in
+                    let pat = pattern_of dtenv ~sort:(Some sarg) case.c_lhs in
+                    let econstrs, oconstrs, next =
+                      call_fold
+                        (let pat_senv = Ast.Pattern.senv_of pat sarg in
+                         if print_log then (
+                           print_endline @@ Term.str_of_sort sarg;
+                           print_endline
+                           @@ str_of_sort_env_map Term.str_of_sort pat_senv);
+                         Map.update_with (*shadowing*) senv pat_senv)
+                        case.c_rhs sret
+                    in
+                    ( pat,
+                      Set.union econstrs_annot econstrs,
+                      Set.union oconstrs_annot oconstrs,
+                      next,
+                      sret.cont_eff ))
               in
               let t_annot_rty_opt =
                 (* refinement type annotations on arguments *)
@@ -1825,7 +1977,7 @@ module Make (Config : Config.ConfigType) = struct
                   in
                   let oconstrs_args =
                     Set.Poly.of_list
-                    @@ List.map ~f:(Pair.make c0.op_sig)
+                    @@ List.map ~f:(Tuple2.create c0.op_sig)
                     @@ List.filter_map nexts_either ~f:ovar_of_either
                   in
                   let econstrs_args =
@@ -1861,8 +2013,8 @@ module Make (Config : Config.ConfigType) = struct
                         let svs =
                           Set.Poly.of_list
                           @@ List.filter_map params ~f:(function
-                               | Sort.SVar svar -> Some svar
-                               | _ -> None)
+                            | Sort.SVar svar -> Some svar
+                            | _ -> None)
                         in
                         Sort.mk_poly svs @@ Sort.mk_fun
                         @@ Datatype.sorts_of_cons_name dt name
@@ -1912,7 +2064,7 @@ module Make (Config : Config.ConfigType) = struct
                      ~f:
                        (Ast.Typeinf.subtype
                           (Map.of_set_exn
-                          @@ Set.Poly.map svs ~f:(Fn.flip Pair.make None)))
+                          @@ Set.Poly.map svs ~f:(Fn.flip Tuple2.create None)))
               in
               (ref_id :=
                  let stheta =
@@ -1930,7 +2082,7 @@ module Make (Config : Config.ConfigType) = struct
                    :: (econstrss @ econstrss'),
                 Set.Poly.union_list
                 @@ (Set.Poly.of_list
-                   @@ List.map ~f:(Pair.make c0.op_sig)
+                   @@ List.map ~f:(Tuple2.create c0.op_sig)
                    @@ List.filter_map nexts_either ~f:ovar_of_either)
                    :: (oconstrss @ oconstrss'),
                 f#f_tuple nexts_either )
@@ -1942,29 +2094,28 @@ module Make (Config : Config.ConfigType) = struct
               let pats, econstrss, oconstrss, nexts, evars =
                 List.unzip5
                 @@ List.map ~f:(fun case ->
-                       let evar = Sort.mk_fresh_evar () in
-                       let pat =
-                         pattern_of dtenv ~sort:(Some sort1) case.c_lhs
-                       in
-                       let econstrs, oconstrs, next =
-                         call_fold
-                           (Map.update_with (*shadowing*) senv
-                           @@ Ast.Pattern.senv_of pat sort1)
-                           case.c_rhs
-                           { c0 with cont_eff = evar }
-                       in
-                       (pat, econstrs, oconstrs, next, evar))
+                    let evar = Sort.mk_fresh_evar () in
+                    let pat = pattern_of dtenv ~sort:(Some sort1) case.c_lhs in
+                    let econstrs, oconstrs, next =
+                      call_fold
+                        (Map.update_with (*shadowing*) senv
+                        @@ Ast.Pattern.senv_of pat sort1)
+                        case.c_rhs
+                        { c0 with cont_eff = evar }
+                    in
+                    (pat, econstrs, oconstrs, next, evar))
                 @@ List.concat_map cases ~f:(fun case ->
-                       value_case_of case case.c_lhs)
+                    value_case_of case case.c_lhs)
               in
               ( Set.Poly.union_list
                 @@ (Set.Poly.of_list
                    @@ List.map evars ~f:(fun evar ->
-                          (Option.to_list evar1 @ [ evar ], c0.cont_eff)))
+                       (Option.to_list evar1 @ [ evar ], c0.cont_eff)))
                    :: econstrs :: econstrss,
                 Set.Poly.union_list
                 @@ (Set.Poly.of_list
-                   @@ List.map (Option.to_list ovar1) ~f:(Pair.make c0.op_sig))
+                   @@ List.map (Option.to_list ovar1)
+                        ~f:(Tuple2.create c0.op_sig))
                    :: oconstrs :: oconstrss,
                 f#f_match matched pats (nexts, evars) )
           | Texp_sequence (e1, e2) ->

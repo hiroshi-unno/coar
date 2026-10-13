@@ -1,0 +1,38 @@
+/* The disjunct-reads-the-record unsoundness inside a nu/mu alternation: the choice
+   sits in a nu-predicate V, and the record it reads was added for the OUTER
+   mu-predicate E.  Same family as benchmarks/muCLP/simple/dwf_disj_bug.hes.
+
+   Verdict: INVALID.  R is false.  E x goes to V (x - 3); V climbs while its
+   argument is negative (the nu-loop, finitely many steps) and must then -- or may
+   earlier -- call E 0 or E 1.  So every play visits E infinitely often with only
+   finitely many V-steps in between, E is the outermost predicate visited
+   infinitely often, and E is a least fixpoint: the refuter wins every play and
+   E 0 is false.
+
+   The added parameters.  E and V are in one strongly connected component (E -> V
+   -> E), V is called only from E, and E is a mu-predicate processed after the
+   inner nu-predicate V, so the reduction gives BOTH the record r of E:
+     E'(r, x) = V'(r, x - 3)
+     V'(r, x) = (x < 0 /\ V'(r, x + 1))
+                \/ (E'(0,0) /\ E'(r,0) /\ WF_E(r,0))
+                \/ (E'(1,1) /\ E'(r,1) /\ WF_E(r,1)) \/ R x
+   with the query E'(0, 0).  V is a nu-predicate of the input, yet its disjunct
+   choice now has E's record in scope.
+
+   The unsound strategy: at V'(r, x) with x >= 0 call E 1 when r = 0 and E 0
+   otherwise, with WF_E the union of max(a,0) > max(b,0) and
+   max(3-a,0) > max(3-b,0).  Records are always 0 or 1, both choices dominate
+   them, and E' = V' = true is a post-fixpoint: the transformed problem is VALID.
+   An honest choice, a function of V's own argument x, makes the E-arguments a
+   deterministic sequence over {0,1}, which repeats some v, and the branch keeping
+   the record of the first v needs (v,v) in WF_E.  So an implementation that lets
+   a choice in V depend on the record answers "valid", which is wrong.
+
+   What this adds over the mu-only files: a fix that forbids record dependence only
+   inside the mu-predicates that own a record misses this one, because the choice is
+   in a nu-predicate. */
+E 0
+s.t.
+E (x: int): bool =mu V (x - 3);
+V (x: int): bool =nu (x < 0 /\ V (x + 1)) \/ E 0 \/ E 1 \/ R x;
+R (y: int): bool =nu y > 0 /\ R (y - 1);

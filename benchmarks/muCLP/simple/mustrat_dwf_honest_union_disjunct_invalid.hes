@@ -1,0 +1,39 @@
+/* A DISJUNCT chosen from the remembered copy that the disjunctively
+   well-founded (dwf) reduction adds, where the two ranking pieces that make
+   the cheat work are exactly the ones the honest parts of the problem ask for.
+
+   Verdict: INVALID.  Every y <> 0 has exactly one successor n(y) that R y
+   demands (1 -> 3 -> 2 -> 0, y >= 4 -> y - 1, y <= -1 -> y + 1), and every
+   orbit of n reaches 0, where y <> 0 fails; so R is false everywhere.  Then
+   the body of P maps the empty predicate to the empty predicate, so the least
+   fixpoint P is false everywhere and P 0 is false.
+
+   The reduction turns P into the greatest-fixpoint predicate P'(c, x), c the
+   remembered copy, and each call P(z) into
+   P'(z, z) /\ P'(c, z) /\ WF_P(c, z).  Take WF_P as the union of
+     r (a, b) := a > b /\ a >= 0     (rank a,  asked by the chains x >= 2 downwards)
+     r'(a, b) := a < b /\ a <= 0     (rank -a, asked by the chains x <= -1 upwards)
+   each a one-piece bounded linear ranking, so the union is disjunctively
+   well-founded.  Then
+     I(c, x) := (x >= 2 => c >= x) /\ (x <= -1 => c <= x)
+   is a post-fixpoint of the reduced equation that contains every (x, x): in
+   the region {0, 1} take P 0 when c <> 0 and P 1 when c = 0, a choice that
+   reads the copy c.  So the reduced query forall x. P'(x, x) holds, and a
+   check that leaves the disjunct to the greatest fixpoint is satisfiable.  A
+   choice that reads only x makes a real play cycle inside {0, 1}, and the
+   record-keeping branch then needs (v, v) in WF_P for a repeated value v.
+
+   Compared with mustrat_dwfparam_disjunct_invalid.hes: there every play of
+   the refuter's check starts at 0, so each ranking piece a one-piece template
+   can return contains (0, 1) and none contains (1, 0), and the cheat is
+   unreachable.  Here the query is universal, so plays can start outside the
+   cycle, and the two pieces come from different plays.  R's chain
+   1 -> 3 -> 2 -> 0 is ordered by no linear rank, which is meant to keep the
+   refuter from winning before the prover has both pieces.
+
+   A correct solver answers invalid.  An answer of valid is the unsound
+   disjunct choice realised. */
+forall (x: int). P x
+s.t.
+P (x: int): bool =mu (x >= 2 /\ P (x - 1)) \/ (x <= -1 /\ P (x + 1)) \/ (0 <= x /\ x <= 1 /\ (P 0 \/ P 1)) \/ R x;
+R (y: int): bool =nu y != 0 /\ (y = 1 => R 3) /\ (y = 3 => R 2) /\ (y = 2 => R 0) /\ (y >= 4 => R (y - 1)) /\ (y <= -1 => R (y + 1));

@@ -1,3 +1,13 @@
+(* How the solution template grows after a synthesis query fails.
+
+   [update templates iters state labels] is told, per unknown, the labels of
+   the template constraints in the failed query's unsat core ([None] meaning
+   a restart).  [UnsatCore] hands each template its own labels (or restarts
+   every template); [RL] prints each template's state on stdout and lets the
+   external agent choose the template's actions; [CBSynth] would let a
+   classification-based synthesis round decide, but no template implements
+   the update from a solution it relies on, so that path aborts; [Disable]
+   fails, for a configuration in which the template must never grow. *)
 open Core
 open Common
 open Common.Util
@@ -18,17 +28,14 @@ module Config = struct
         CBSynthesizer.Config.instantiate_ext_files cfg >>= fun cfg ->
         Ok (CBSynth cfg)
 
-  let load_ext_file = function
-    | ExtFile.Instance x -> Ok (ExtFile.Instance x)
-    | Filename filename -> (
-        let open Or_error in
-        try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
-        match of_yojson raw_json with
-        | Ok x -> instantiate_ext_files x >>= fun x -> Ok (ExtFile.Instance x)
-        | Error msg ->
-            error_string
-            @@ sprintf "Invalid TemplateUpdateStrategy Configuration (%s): %s"
-                 filename msg)
+  include MakeExtFile (struct
+    type nonrec t = t
+
+    let of_yojson = of_yojson
+    let to_yojson = to_yojson
+    let name = "TemplateUpdateStrategy"
+    let instantiate = instantiate_ext_files
+  end)
 
   module type ConfigType = sig
     val config : t

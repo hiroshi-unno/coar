@@ -9,10 +9,18 @@
 rule main = parse
   (* ignore spacing and newline characters *)
   [' ' '\t' '\r'';']+ { main lexbuf }
+(* [#= ... =#] is a block comment and [#] to the end of a line a line
+   comment, as in the Diabolo benchmark files.  A line comment must not start
+   with [#=]: ocamllex takes the longest match, so a line rule that also
+   matched [#=...] would win over the block rule and leave the block's body to
+   be parsed as a program. *)
 | "#=" { comment (Lexing.lexeme_start_p lexbuf) lexbuf}
 | '\n'
-| "//"[^'\n']*?'\n' 
-| "#"[^'\n']*?'\n' { Lexing.new_line lexbuf; main lexbuf }
+| "//"[^'\n']*?'\n'
+| '#' '\n'
+| '#' [^'=' '\n'] [^'\n']* '\n' { Lexing.new_line lexbuf; main lexbuf }
+| '#' [^'=' '\n'] [^'\n']* eof
+| '#' eof { Parser.EOF }
 
 (* keywords for instruction*)
 | "while" { Parser.WHILE }
@@ -22,6 +30,7 @@ rule main = parse
 | "observe" { Parser.OBSERVE }
 | "return" { Parser.RETURN }
 | "fail" { Parser.FAIL }
+| "?Ex" { Parser.EXPECTATION }
 
 (* keywords for rvalue *)
 | "~" {Parser.SAMPLE}

@@ -1,0 +1,7 @@
+/* exists a. P(a + a + a) with P(x) the singleton x = 1: invalid over the integers, since 3a = 1 has
+   no solution.  The optimizer's quantifier erasure once read a + a + a as onto in a (a variable
+   occurring an odd number of times under additions was taken to be adjustable) and replaced the
+   query by exists y. P(y), which is valid. */
+exists (a: int). P (a + a + a)
+s.t.
+P (x: int): bool =mu x = 1;

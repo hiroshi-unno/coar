@@ -3,81 +3,24 @@ open CoAR
 open Common
 open Common.Combinator
 
-type problem =
-  | PSAT  (** Boolean SAT Solving *)
-  | PDQSAT  (** Boolean QSAT/DQSAT Solving *)
-  | PHOSAT  (** Boolean HOSAT Solving *)
-  | PSMT  (** SMT Solving *)
-  | PHOMC  (** Higher-Order Model Checking *)
-  | PSyGuS  (** SyGyS Inv/CLIA *)
-  | PPCSP  (** pfwnCSP Satifiability Checking *)
-  | PCHCMax  (** CHC Maximization *)
-  | PMuCLP  (** muCLP Validity Checking *)
-  | PMuCLPInter  (** Interactive Conditional muCLP Validity Checking *)
-  | PQFL  (** QFL Validity Checking *)
-  | PPGCL  (** pGCL Verification *)
-  | PSGCL  (** SGCL Verification *)
-  | PCLTL  (** LTL Verification of C Programs *)
-  | PCCTL  (** CTL Verification of C Programs *)
-  | PLTSSafe of (* BV mode *) bool
-      (** Safety Verification of Labeled Transition Systems *)
-  | PLTSNSafe of (* BV mode *) bool
-      (** Non-Safety Verification of Labeled Transition Systems *)
-  | PLTSTerm of (* BV mode *) bool
-      (** Termination Verification of Labeled Transition Systems *)
-  | PLTSNTerm of (* BV mode *) bool
-      (** Non-Termination Verification of Labeled Transition Systems *)
-  | PLTSMuCal of (* BV mode *) bool
-      (** Modal mu-Calculus Model Checking of Labeled Transition Systems *)
-  | PLTSRel of (* BV mode *) bool
-      (** Relational Verification of Labeled Transition Systems *)
-  | PLTSTermInter of (* BV mode *) bool
-      (** Interactive Conditional (Non-)Termination Analysis of Labeled
-          Transition Systems *)
-  | PPLTSTerm
-      (** Termination Verification of Pushdown Labeled Transition Systems *)
-  | PPLTSNTerm
-      (** Non-Termination Verification of Pushdown Labeled Transition Systems *)
-  | POCaml  (** Refinement Type Inference of OCaml Programs *)
-[@@deriving show]
+(* the problem classes, their [-p] names and the help text come from one
+   table (lib/problemKind.ml); the backend compatibility check is
+   [Solver.supports] (lib/solver.ml). *)
+open ProblemKind
+
+type problem = ProblemKind.t
+
+let show_problem = ProblemKind.show
 
 let problem =
   Command.Arg_type.create (fun problem ->
-      let open Or_error in
-      problem |> String.lowercase |> function
-      | "sat" -> return PSAT
-      | "qsat" | "dqsat" -> return PDQSAT
-      | "hosat" -> return PHOSAT
-      | "smt" -> return PSMT
-      | "homc" -> return PHOMC
-      | "sygus" -> return PSyGuS
-      | "chc" | "pcsp" | "pfwcsp" | "pfwncsp" -> return PPCSP
-      | "chcmax" -> return PCHCMax
-      | "muclp" -> return PMuCLP
-      | "muclpinter" | "muclp-inter" -> return PMuCLPInter
-      | "qfl" -> return PQFL
-      | "pgcl" -> return PPGCL
-      | "sgcl" -> return PSGCL
-      | "cltl" | "c-ltl" -> return PCLTL
-      | "cctl" | "c-ctl" -> return PCCTL
-      | "ltssafe" | "lts-safe" -> return (PLTSSafe false)
-      | "ltssafebv" | "lts-safe-bv" -> return (PLTSSafe true)
-      | "ltsnsafe" | "lts-nsafe" -> return (PLTSNSafe false)
-      | "ltsnsafebv" | "lts-nsafe-bv" -> return (PLTSNSafe true)
-      | "ltsterm" | "lts-term" -> return (PLTSTerm false)
-      | "ltstermbv" | "lts-term-bv" -> return (PLTSTerm true)
-      | "ltsnterm" | "lts-nterm" -> return (PLTSNTerm false)
-      | "ltsntermbv" | "lts-nterm-bv" -> return (PLTSNTerm true)
-      | "ltsmucal" | "lts-mucal" -> return (PLTSMuCal false)
-      | "ltsmucalbv" | "lts-mucal-bv" -> return (PLTSMuCal true)
-      | "ltsrel" | "lts-rel" -> return (PLTSRel false)
-      | "ltsrelbv" | "lts-rel-bv" -> return (PLTSRel true)
-      | "ltsterminter" | "lts-term-inter" -> return (PLTSTermInter false)
-      | "ltsterminterbv" | "lts-term-inter-bv" -> return (PLTSTermInter true)
-      | "pltsterm" | "plts-term" -> return PPLTSTerm
-      | "pltsnterm" | "plts-nterm" -> return PPLTSNTerm
-      | "ml" -> return POCaml
-      | _ -> failwith (sprintf "invalid problem: %s" problem))
+      match ProblemKind.of_string problem with
+      | Some p -> Or_error.return p
+      | None ->
+          failwith
+            (sprintf "invalid problem: %s (accepted: %s)" problem
+               (String.concat ~sep:", "
+                  (List.concat_map ProblemKind.table ~f:(fun (_, _, ns) -> ns)))))
 
 let default_config_file = "./config/solver/muval_parallel_exc_tbq_ar.json"
 
@@ -96,169 +39,244 @@ let cmd =
            (optional_with_default (Or_error.return PMuCLP) problem)
            ~aliases:[ "-p" ]
            ~doc:
-             "choose problem \
-              [SAT/QSAT/DQSAT/HOSAT/SMT/HOMC/SyGuS/CHC/QCHC/DQCHC/pCSP/pfwCSP/pfwnCSP/CHCMax/muCLP/muCLPInter/QFL/CLTL/CCTL/LTSsafe/LTSnsafe/LTSterm/LTStermBV/LTSnterm/LTSntermBV/LTSmucal/LTSrel/LTStermInter/PLTSterm/PLTSnterm/ML] \
-              (default: muCLP)"
-      +> flag "--verbose" no_arg (* this option is obsolete *)
-           ~aliases:[ "-v" ] ~doc:"enable verbose mode")
+             (sprintf "choose problem %s (default: muCLP)"
+                (ProblemKind.help_string ()))
+      +> flag "--verbose" no_arg
+           ~aliases:[ "-v" ]
+           ~doc:
+             "print the frontend's diagnostics while reading the input (the \
+              solver's own tracing is set by verbose in the config)"
+      +> flag "--c-bound-wide-nondets" no_arg
+           ~doc:
+             "C frontend: bound 32-/64-bit __VERIFIER_nondet_* results by \
+              their width, as the LTS frontend does (default: unsigned ones \
+              are only x >= 0, signed ones unbounded)"
+      +> flag "--bv-default"
+           (optional_with_default "32s" string)
+           ~doc:
+             "WIDTH[s|u] width and signedness assumed for a bit-vector whose \
+              input specifies neither, e.g. a T2 file without TYPE \
+              declarations in BV mode (default: 32s)"
+      +> flag "--btor2-witness" (optional string)
+           ~doc:
+             "stdout|PATH -p btor2: on a sat answer, write a counterexample \
+              in the BTOR2 witness format to standard output (in place of \
+              the sat line, which is its first line) or to the file PATH \
+              (default: no witness is computed)"
+      +> flag "--btor2-witness-strict" no_arg
+           ~doc:
+             "-p btor2, with --btor2-witness: withhold a sat answer whose \
+              witness cannot be built (default: answer sat without it)")
+
+(* A refusal of the command line itself -- a malformed flag, a solver and a
+   problem class that do not go together, an input that does not exist -- is
+   one line on standard error and status 1, never a backtrace: nothing has
+   been solved, so there is no internal state worth showing, and a harness
+   reads a backtrace as the tool crashing. *)
+let usage_error msg =
+  prerr_endline msg;
+  exit 1
 
 let load_solver_config prblm solver =
-  let open Solver.Config in
-  match load_config solver with
+  (match ProblemKind.unimplemented prblm with
+  | Some why ->
+      usage_error
+      @@ sprintf
+           "the problem class %s is declared but has no implementation yet: %s"
+           (ProblemKind.name_of prblm)
+           why
+  | None -> ());
+  match Solver.Config.load_config solver with
   | Error err -> Error err
-  | Ok cfg -> (
-      Or_error.return
-      @@
-      match cfg with
-      | MuVal _
-        when Stdlib.(
-               prblm = PMuCLPInter
-               || prblm = PLTSTermInter false
-               || prblm = PLTSTermInter true) ->
-          cfg
-      | MuVal _ when Stdlib.(prblm = PQFL || prblm = PPGCL || prblm = PSGCL) ->
-          cfg
-      | (MuVal _ | MuCyc _ | Printer _)
-        when Stdlib.(
-               prblm = PSyGuS || prblm = PPCSP || prblm = PMuCLP
-               || prblm = PCLTL || prblm = PCCTL || prblm = PLTSSafe false
-               || prblm = PLTSSafe true || prblm = PLTSNSafe false
-               || prblm = PLTSNSafe true || prblm = PLTSTerm false
-               || prblm = PLTSTerm true || prblm = PLTSNTerm false
-               || prblm = PLTSNTerm true || prblm = PLTSMuCal false
-               || prblm = PLTSMuCal true || prblm = PLTSRel false
-               || prblm = PLTSRel true || prblm = PPLTSTerm
-               || prblm = PPLTSNTerm) ->
-          cfg
-      | (PCSat _ | SPACER _ | Hoice _ | PolyQEnt _)
-        when Stdlib.(prblm = PPCSP || prblm = PSyGuS) ->
-          cfg
-      | OptPCSat _ when Stdlib.(prblm = PCHCMax) -> cfg
-      | (RCaml _ | EffCaml _) when Stdlib.(prblm = POCaml) -> cfg
-      | (MiniSat _ | Z3Sat _) when Stdlib.(prblm = PSAT) -> cfg
-      | (HOMCSat _ | Printer _)
-        when Stdlib.(prblm = PSAT || prblm = PDQSAT || prblm = PHOSAT) ->
-          cfg
-      | (Z3Smt _ | MuCyc _) when Stdlib.(prblm = PSMT) -> cfg
-      | (TRecS _ | HorSat2 _ | Printer _) when Stdlib.(prblm = PHOMC) -> cfg
-      | _ ->
-          failwith
-          @@ sprintf "The specified solver does not support the problem %s"
-               (show_problem prblm))
+  | Ok cfg ->
+      if Solver.supports cfg prblm then Or_error.return cfg
+      else
+        usage_error
+        @@ sprintf "The specified solver does not support the problem %s"
+             (ProblemKind.name_of prblm)
 
-let load_sat filename =
-  match Filename.split_extension filename with
-  | _, Some ("dimacs" | "cnf") -> Ok (SAT.Problem.from_dimacs_file filename)
-  | fn, Some "gz"
-    when match Filename.split_extension fn with
-         | _, Some ("dimacs" | "cnf") -> true
-         | _ -> false ->
-      Ok (SAT.Problem.from_gzipped_dimacs_file filename)
-  | _ -> Or_error.unimplemented "load_sat"
+(* Each reader below is chosen by the file's extension; a file with another
+   extension is refused by name rather than reported as an unimplemented
+   function, which is what it used to say. *)
+let wrong_extension ~expected filename =
+  Or_error.error_string
+  @@ sprintf "cannot read %s: this problem class reads files ending in %s"
+       filename
+       (String.concat ~sep:", " (List.map expected ~f:(fun e -> "." ^ e)))
 
-let load_dqsat filename =
+(* [true] iff [filename] itself, or [filename] with its trailing [.gz]
+   stripped, has one of [exts] as its extension. *)
+let has_ext_or_gz exts filename =
+  let has_ext fn =
+    match snd (Filename.split_extension fn) with
+    | Some ext -> List.mem exts ext ~equal:String.equal
+    | None -> false
+  in
+  has_ext filename
+  ||
   match Filename.split_extension filename with
-  | _, Some ("qdimacs" | "dqdimacs") ->
-      Ok (DQSAT.Problem.from_dqdimacs_file filename)
-  | fn, Some "gz"
-    when match Filename.split_extension fn with
-         | _, Some ("qdimacs" | "dqdimacs") -> true
-         | _ -> false ->
-      Ok (DQSAT.Problem.from_gzipped_dqdimacs_file filename)
-  | _ -> Or_error.unimplemented "load_dqsat"
+  | fn, Some "gz" -> has_ext fn
+  | _ -> false
+
+let load_sat ~print filename =
+  if has_ext_or_gz [ "dimacs"; "cnf" ] filename then
+    match snd (Filename.split_extension filename) with
+    | Some "gz" -> Ok (SAT.Problem.from_gzipped_dimacs_file ~print filename)
+    | _ -> Ok (SAT.Problem.from_dimacs_file ~print filename)
+  else wrong_extension ~expected:["cnf"; "dimacs"; "cnf.gz"; "dimacs.gz"] filename
+
+let load_dqsat ~print filename =
+  if has_ext_or_gz [ "qdimacs"; "dqdimacs" ] filename then
+    match snd (Filename.split_extension filename) with
+    | Some "gz" -> Ok (DQSAT.Problem.from_gzipped_dqdimacs_file ~print filename)
+    | _ -> Ok (DQSAT.Problem.from_dqdimacs_file ~print filename)
+  else wrong_extension ~expected:["qdimacs"; "dqdimacs"; "qdimacs.gz"; "dqdimacs.gz"] filename
 
 let load_hosat filename =
   match snd (Filename.split_extension filename) with
   | Some "hosat" -> Ok (HOSAT.Problem.from_hosat_file filename)
-  | _ -> Or_error.unimplemented "load_hosat"
+  | _ -> wrong_extension ~expected:["hosat"] filename
 
 let load_smt ~print filename =
   match snd (Filename.split_extension filename) with
   | Some "smt2" ->
       Ok (SMT.Smtlib2.from_smt2_file ~print ~inline:true (*ToDo*) filename)
-  | _ -> Or_error.unimplemented "load_smt"
+  | _ -> wrong_extension ~expected:["smt2"] filename
 
 let load_homc ~print filename =
   match snd (Filename.split_extension filename) with
   | Some ("hrs" | "hors") -> Ok (HOMC.Problem.from_hors_file ~print filename)
   | Some ("hmtt" | "ehmtt") -> Ok (HOMC.Problem.from_ehmtt_file ~print filename)
-  | _ -> Or_error.unimplemented "load_homc"
+  | _ -> wrong_extension ~expected:["hrs"; "hors"; "hmtt"; "ehmtt"] filename
 
 let load_pcsp ~print filename =
-  match Filename.split_extension filename with
-  | _, Some "smt2" ->
-      Ok
-        (PCSP.Parser.from_smt2_file ~print ~inline:true (*ToDo*)
-           ~skolem_pred:true filename)
-  | fn, Some "gz"
-    when match Filename.split_extension fn with
-         | _, Some "smt2" -> true
-         | _ -> false ->
-      Ok
-        (PCSP.Parser.from_gzipped_smt2_file ~print ~inline:true (*ToDo*)
-           ~skolem_pred:true filename)
-  | _, Some "clp" -> Ok (PCSP.Parser.from_clp_file ~print filename)
-  | _ -> Or_error.unimplemented "load_pcsp"
+  match snd (Filename.split_extension filename) with
+  | Some "clp" -> Ok (PCSP.Parser.from_clp_file ~print filename)
+  | _ when has_ext_or_gz [ "smt2" ] filename -> (
+      match snd (Filename.split_extension filename) with
+      | Some "gz" ->
+          Ok
+            (PCSP.Parser.from_gzipped_smt2_file ~print ~inline:true (*ToDo*)
+               ~skolem_pred:true filename)
+      | _ ->
+          Ok
+            (PCSP.Parser.from_smt2_file ~print ~inline:true (*ToDo*)
+               ~skolem_pred:true filename))
+  | _ -> wrong_extension ~expected:["clp"; "smt2"; "smt2.gz"] filename
 
 let load_sygus filename =
   match snd (Filename.split_extension filename) with
   | Some "sl" -> SyGuS.Parser.from_file filename
-  | _ -> Or_error.unimplemented "load_sygus"
+  | _ -> wrong_extension ~expected:["sl"] filename
 
 let load_chcmax ~print filename =
   match snd (Filename.split_extension filename) with
   | Some "smt2" ->
       Result.Monad_infix.(
         load_pcsp ~print filename >>= (CHCOpt.Problem.of_pcsp >> Or_error.return))
-  | _ -> Or_error.unimplemented "load_chcmax"
+  | _ -> wrong_extension ~expected:["smt2"] filename
 
 let load_muclp ~print filename =
   match snd (Filename.split_extension filename) with
   | Some "hes" -> MuCLP.Util.from_file ~print filename
-  | _ -> Or_error.unimplemented "load_muclp"
+  | _ -> wrong_extension ~expected:["hes"] filename
 
 let load_qfl ~print filename =
   match snd (Filename.split_extension filename) with
   | Some "qhes" -> QFL.Util.from_file ~print filename
-  | _ -> Or_error.unimplemented "load_qfl"
+  | _ -> wrong_extension ~expected:["qhes"] filename
 
 let load_pgcl ~print filename =
   match snd (Filename.split_extension filename) with
   | Some "pgcl" -> PGCL.Util.from_file ~print filename
-  | _ -> Or_error.unimplemented "load_pgcl"
+  | _ -> wrong_extension ~expected:["pgcl"] filename
 
 let load_sgcl ~print filename =
   match snd (Filename.split_extension filename) with
   | Some "sgcl" -> SGCL.Util.from_file ~print filename
-  | _ -> Or_error.unimplemented "load_sgcl"
+  | _ -> wrong_extension ~expected:["sgcl"] filename
 
 let load_cltl ~print filename =
   match snd (Filename.split_extension filename) with
   | Some "c" -> C.Parser.from_cltl_file ~print filename
-  | _ -> Or_error.unimplemented "load_cltl"
+  | _ -> wrong_extension ~expected:["c"] filename
 
 let load_cctl ~print filename =
   match snd (Filename.split_extension filename) with
   | Some "c" -> C.Parser.from_cctl_file ~print filename
-  | _ -> Or_error.unimplemented "load_cctl"
+  | _ -> wrong_extension ~expected:["c"] filename
 
 let load_lts ~bv_mode filename =
   match snd (Filename.split_extension filename) with
   | Some "t2" -> LTS.Parser.from_file ~bv_mode filename
-  | _ -> Or_error.unimplemented "load_lts"
+  | _ -> wrong_extension ~expected:["t2"] filename
+
+(* The HWMCC 2019 word-level track names 181 of its BTOR2 models [.btor], and none of them is
+   in the legacy BTOR format: the extension does not tell the two apart, and only BTOR2 is
+   read, so a legacy file is refused by the reader at its first line that BTOR2 lacks. *)
+let load_btor2 filename =
+  match snd (Filename.split_extension filename) with
+  | Some ("btor2" | "btor") ->
+      Or_error.map ~f:BTOR2.Problem.ts_of (BTOR2.Parser.from_file filename)
+  | _ -> wrong_extension ~expected:["btor2"; "btor"] filename
 
 let load_plts ~print filename =
   match snd (Filename.split_extension filename) with
   | Some "smt2" -> PLTS.Parser.from_file ~print filename
-  | _ -> Or_error.unimplemented "load_plts"
+  | _ -> wrong_extension ~expected:["smt2"] filename
 
-let main filename solver problem verbose () =
+let main filename solver problem verbose c_bound_wide_nondets bv_default
+    btor2_witness btor2_witness_strict () =
   let open Or_error.Monad_infix in
+  if btor2_witness_strict && Option.is_none btor2_witness then
+    usage_error "--btor2-witness-strict: requires --btor2-witness";
+  (* an empty target is what a wrapper passes when its certificate argument is missing; read
+     as a path, it would make every witness fail to be written, and under strict every [sat]
+     be withheld *)
+  if Option.exists btor2_witness ~f:String.is_empty then
+    usage_error
+      "--btor2-witness: expected stdout or a file path, got an empty string";
+  C.CSyntax.bound_wide_nondets := c_bound_wide_nondets;
+  (match
+     Scanf.sscanf bv_default "%d%s" (fun w s ->
+         match s with
+         | "" | "s" -> Some (w, true)
+         | "u" -> Some (w, false)
+         | _ -> None)
+   with
+  | Some (w, signed) when w > 0 ->
+      Ast.LogicOld.T_bv.default_bits := w;
+      Ast.LogicOld.T_bv.default_signed := signed
+  | _ | (exception _) ->
+      usage_error
+        (sprintf "--bv-default: expected WIDTH[s|u] (e.g. 32s, 64u), got %s"
+           bv_default));
   let module Debug =
     Debug.Make ((val Debug.Config.(if verbose then enable else disable))) in
-  ok_exn
-    ( problem >>= fun problem ->
-      load_solver_config problem solver >>= fun cfg ->
+  (* What reaches the end of this function as an [Error], or as a [Refused],
+     is something a reader or a solver said about itself in words: an input it
+     does not handle, a pairing it declines, a failure it noticed.  It is
+     printed as one line on standard error with status 1.  The previous
+     [ok_exn] printed it as an OCaml backtrace whose frames named only this
+     function, which added nothing to the message and made a refusal
+     indistinguishable from a crash.  Every other exception still escapes
+     unchanged, with its backtrace. *)
+  let report_error msg =
+    prerr_endline ("error: " ^ msg);
+    (* a parallel backend may report its error while other domains still run *)
+    Common.ProcessExit.exit 1
+  in
+  match
+    try
+      `Done
+        ( problem >>= fun problem ->
+          load_solver_config problem solver >>= fun cfg ->
+          (* a missing input is refused once, here, instead of by whichever
+             reader first opens it *)
+          if
+            String.is_empty filename
+            || not (Sys_unix.file_exists_exn ~follow_symlinks:true filename)
+          then usage_error (sprintf "cannot read %s: no such file" filename);
       let module Config = struct
         let config = cfg
       end in
@@ -268,16 +286,62 @@ let main filename solver problem verbose () =
            (sprintf "*********** %s solving mode ************\n"
            @@ show_problem problem);
       match problem with
-      | PSAT -> load_sat filename >>= Solver.solve_sat
-      | PDQSAT -> load_dqsat filename >>= Solver.solve_dqsat
+      | PSAT -> load_sat ~print:Debug.print filename >>= Solver.solve_sat
+      | PDQSAT -> load_dqsat ~print:Debug.print filename >>= Solver.solve_dqsat
       | PHOSAT -> load_hosat filename >>= Solver.solve_hosat
       | PSMT -> load_smt ~print:Debug.print filename >>= Solver.solve_smt
-      | PHOMC -> load_homc ~print:Debug.print filename >>= Solver.solve_homc
+      | PHOMC -> (
+          load_homc ~print:Debug.print filename >>= fun homc ->
+          (* The two higher-order model checkers read different dialects of the
+             same extension and each rejects the other's, so a mismatch is an
+             unsupported input rather than a failed verification. The wrappers
+             refuse it too, but the whole command ends in [ok_exn], which would
+             turn their message into an OCaml backtrace; say it in one line with
+             a non-zero status instead, which is what a harness can act on. *)
+          let backend_reads_alternating =
+            match cfg with
+            | CoAR.Solver.Config.TRecS _ -> Some false
+            | CoAR.Solver.Config.HorSat2 _ -> Some true
+            | _ -> None
+          in
+          match backend_reads_alternating with
+          | Some reads_alt
+            when Stdlib.( <> ) reads_alt (HOMC.Problem.reads_alternating homc)
+            ->
+              print_endline
+              @@ sprintf
+                   "unsupported input dialect: this file specifies %s, which \
+                    %s does not read"
+                   (HOMC.Problem.dialect_str_of homc)
+                   (if reads_alt then "HorSat2" else "TRecS");
+              exit 1
+          | _ -> Solver.solve_homc homc)
       | PSyGuS ->
           load_sygus filename >>= Solver.solve_sygus ~filename:(Some filename)
       | PPCSP ->
+          (* PCSat reads an [.smt2] input a second time when its configuration
+             asks the reader for a switch, and a third time to learn which
+             unknowns every solution makes [true]; with [law_read_once] the
+             switches are set before this, the first reading, PCSat keeps it,
+             and the reading keeps its assertions for that question *)
+          (match cfg with
+          | CoAR.Solver.Config.PCSat c when c.PCSat.Config.law_read_once ->
+              PCSat.Solver.set_law_reader_switches c;
+              PCSP.Parser.keep_plain_assertions := true;
+              (* and the least-definition probe builds its problem from the
+                 assertions the problem in hand was made from, when they are
+                 the ones its own reading would start from *)
+              PCSP.Parser.keep_least_definition_base :=
+                c.PCSat.Config.least_definition_probe
+          | _ -> ());
           load_pcsp ~print:Debug.print filename
           >>= Solver.solve_pcsp ~filename:(Some filename)
+                ~require_context_model:
+                  (has_ext_or_gz [ "smt2" ] filename
+                  &&
+                  match cfg with
+                  | CoAR.Solver.Config.Printer _ -> false
+                  | _ -> true)
       | PCHCMax ->
           load_chcmax ~print:Debug.print filename
           >>= Solver.solve_chcopt ~filename:(Some filename)
@@ -286,20 +350,31 @@ let main filename solver problem verbose () =
           load_muclp ~print:Debug.print filename
           >>= Solver.solve_muclp_interactive
       | PQFL -> load_qfl ~print:Debug.print filename >>= Solver.solve_qfl
-      | PPGCL ->
-          ( load_pgcl ~print:Debug.print filename >>= fun pgcl ->
-            Or_error.return (PGCL.Util.problem_of ~print:Debug.print pgcl) )
-          >>= fun _ ->
+      | PPGCL -> (
           print_endline "Solving pGCL...";
-          Or_error.return ()
-          (* >>= Solver.solve_qfl *)
+          load_pgcl ~print:Debug.print filename >>= fun pgcl ->
+          match PGCL.Util.problem_of ~print:Debug.print pgcl with
+          | Some problem -> Solver.solve_qfl [ problem ]
+          (* Only a bound query is reduced to a solvable problem.  This used to be
+             [Or_error.return ()], so the run printed "Solving pGCL..." and exited 0 with no
+             answer -- indistinguishable from success, and the quietest way to be broken. *)
+          | None ->
+              (* Printed and exited rather than returned as an [Or_error]: the whole command
+                 ends in [ok_exn], so an error value reaches the user as an OCaml backtrace,
+                 which is the wrong shape for "this input asks for something the tool does not
+                 reduce". One line and a non-zero status is what a harness can act on. *)
+              print_endline
+              @@ sprintf
+                   "unsupported query: this pGCL program asks for %s, and only a bound query \
+                    is reduced to a solvable problem"
+                   (PGCL.PgclSyntax.Query.describe pgcl.query);
+              exit 1)
       | PSGCL ->
-          ( load_sgcl ~print:Debug.print filename >>= fun sgcl ->
-            Or_error.return (SGCL.Util.problem_of ~print:Debug.print sgcl) )
-          >>= fun _ ->
           print_endline "Solving SGCL...";
-          Or_error.return ()
-          (* >>= Solver.solve_qfl *)
+          load_sgcl ~print:Debug.print filename >>= fun sgcl ->
+          Or_error.return
+            [ SGCL.Util.problem_of ~filename ~print:Debug.print sgcl ]
+          >>= Solver.solve_qfl
       | PCLTL -> load_cltl ~print:Debug.print filename >>= Solver.solve_muclp
       | PCCTL -> load_cctl ~print:Debug.print filename >>= Solver.solve_muclp
       | PLTSSafe bv_mode ->
@@ -329,6 +404,26 @@ let main filename solver problem verbose () =
       | PPLTSNTerm ->
           load_plts ~print:Debug.print filename >>= fun plts ->
           Solver.solve_plts ~print:Debug.print (plts, PLTS.Problem.NonTerm)
-      | POCaml -> Solver.solve_ml filename )
+      | POCaml -> Solver.solve_ml filename
+      | PBTOR2 ->
+          load_btor2 filename
+          >>= Solver.solve_btor2 ~print:Debug.print
+                ?witness:(Option.map btor2_witness ~f:BTOR2.Witness.target_of_string)
+                ~strict:btor2_witness_strict )
+    with Common.Refusal.Refused msg -> `Refused msg
+  with
+  | `Done (Ok ()) -> ()
+  | `Done (Error err) -> report_error (Error.to_string_hum err)
+  | `Refused msg -> report_error msg
 
-let () = Command_unix.run ~version:Version.version @@ cmd main
+(* The process ends through [Common.ProcessExit.exit], never by falling off the
+   end of the program: a parallel backend (MuVal's primal/dual modes, the only
+   user of [Common.Util.Task]'s domain pool) returns its printed answer while
+   domains it never joined may still be inside Z3, and the C [exit] that ends
+   an OCaml program runs libz3's static destructors under them, which corrupted the heap after
+   the answer and turned an answered run into a crash or a hang.
+   [ProcessExit.exit] runs the OCaml [at_exit] handlers and flushes, then
+   ends the process without the C library's exit handlers. *)
+let () =
+  Command_unix.run ~version:Version.version @@ cmd main;
+  Common.ProcessExit.exit 0

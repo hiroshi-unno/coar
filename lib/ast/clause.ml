@@ -6,13 +6,42 @@ open Logic
 type t = sort_env_map * term Set.Poly.t * term Set.Poly.t * term
 (* assume: (ps, ns, phi): for_all (union ps ns) (BoolTerm.is_pvar_app exi_senv) *)
 
+(* A clause is a member of a [ClauseSet] and a vertex of the clause graph,
+   both of which order it by the tree shape of its environment map and its
+   two atom sets; every function in this module that returns a clause returns
+   it in canonical shape (see [Common.Ext.Set.canon]), and anything that
+   builds one by hand elsewhere calls this. *)
+let canon ((senv, ps, ns, phi) : t) : t =
+  (Map.canon senv, Set.canon ps, Set.canon ns, phi)
+
 let of_old_clause (uni_senv, pos, neg, phi) =
-  ( uni_senv,
-    Set.Poly.map pos ~f:ExtTerm.of_old_atom,
-    Set.Poly.map neg ~f:ExtTerm.of_old_atom,
-    ExtTerm.of_old_formula phi )
+  canon
+    ( uni_senv,
+      Set.Poly.map pos ~f:ExtTerm.of_old_atom,
+      Set.Poly.map neg ~f:ExtTerm.of_old_atom,
+      ExtTerm.of_old_formula phi )
+
+(* With [shared_dt_conversion] set, one clause is converted inside one
+   datatype-conversion scope ([ExtTerm.with_shared_datatype_conversion]), so
+   its atoms and its pure part share one copy of each datatype they mention,
+   and a caller that converts a set in one scope shares across the set.  The
+   result is the same value up to physical sharing: each conversion is a
+   function of its argument and datatype values are immutable.  Why: an atom
+   was converted outside any scope, and each datatype sort in it -- at every
+   variable, constructor and selector -- converted the whole graph of
+   datatypes it reaches again; on a Thrust closure input whose 2,400 clauses
+   apply an unknown over nested tuple and reference datatypes, converting the
+   clause set filled 6 GB.  Process-global (set once from the preprocessor's
+   configuration), since the conversion is reached from every backend. *)
+let shared_dt_conversion : bool Atomic.t = Atomic.make false
+
+let with_dt_scope f =
+  if Atomic.get shared_dt_conversion then
+    ExtTerm.with_shared_datatype_conversion f
+  else f ()
 
 let to_old_clause exi_senv (uni_senv, pos, neg, phi) =
+  with_dt_scope @@ fun () ->
   ( uni_senv,
     Set.Poly.map pos ~f:(ExtTerm.to_old_atm exi_senv uni_senv),
     Set.Poly.map neg ~f:(ExtTerm.to_old_atm exi_senv uni_senv),
@@ -70,6 +99,13 @@ let is_co_definite pvar ((_, _, ns, _) : t) =
 let pos_pvars ((_, ps, _, _) : t) = Set.Poly.map ps ~f:Term.pvar_of_atom
 let neg_pvars ((_, _, ns, _) : t) = Set.Poly.map ns ~f:Term.pvar_of_atom
 
+(** A clause is a self-loop when some predicate variable occurs both
+    positively (in its head) and negatively (in its body): a loop step
+    [P(x) /\ c -> P(x')].  Resolving a ground atom of [P] through it yields
+    another atom of the same [P], so repeated resolution unrolls the loop. *)
+let is_self_loop (cl : t) =
+  not (Set.is_empty (Set.inter (pos_pvars cl) (neg_pvars cl)))
+
 let pred_of_definite exi_senv (uni_senv, pos, neg, phi) =
   assert (Set.is_singleton pos);
   match Set.choose pos with
@@ -86,7 +122,7 @@ let pred_of_definite exi_senv (uni_senv, pos, neg, phi) =
       in
       let map = Map.of_list_exn env in
       let _, _, phi' =
-        Qelim.qelim map exi_senv
+        Qelim.elim_free_univ_vars map exi_senv
           ( Map.force_merge map uni_senv,
             [],
             BoolTerm.or_of @@ (phi :: neqs)
@@ -114,7 +150,7 @@ let pred_of_co_definite exi_senv (uni_senv, pos, neg, phi) =
       in
       let map = Map.of_list_exn env in
       let _, _, phi' =
-        Qelim.qelim map exi_senv
+        Qelim.elim_free_univ_vars map exi_senv
           ( Map.force_merge map uni_senv,
             [],
             BoolTerm.or_of @@ (phi :: neqs) @ Set.to_list pos )
@@ -129,8 +165,8 @@ let simplify_with positive negative ((senv, c_pos, c_neg, c_phi) : t) =
   (* ToDo: improve this to exploit parametric examples *)
   let positive = Set.Poly.map ~f:snd positive in
   let negative = Set.Poly.map ~f:snd negative in
-  if Set.disjoint c_pos positive && Set.disjoint c_neg negative then
-    Some (senv, Set.diff c_pos negative, Set.diff c_neg positive, c_phi)
+  if Set.are_disjoint c_pos positive && Set.are_disjoint c_neg negative then
+    Some (canon (senv, Set.diff c_pos negative, Set.diff c_neg positive, c_phi))
   else None
 
 (* param_senv and uni_senv are disjoint *)
@@ -178,7 +214,7 @@ let resolve_one_step ~print mode (param_senv, (papp : term)) exi_senv
         ExtTerm.to_old_fml exi_senv uni_senv' (ExtTerm.subst theta c_phi)
         |> Evaluator.simplify |> ExtTerm.of_old_formula
       in
-      let cl' = (uni_senv', c_pos', c_neg', c_phi') in
+      let cl' = canon (uni_senv', c_pos', c_neg', c_phi') in
       print @@ lazy ("cl': " ^ str_of exi_senv cl');
       Some (cl', Map.Poly.map theta ~f:(ExtTerm.to_old_trm exi_senv uni_senv')))
 
@@ -237,12 +273,13 @@ let refresh_pvar_args exi_senv ((senv, ps, ns, phi) : t) =
       (Map.of_set_exn
       @@ Set.concat_map ~f:Set.Poly.of_list (Set.union xss1 xss2))
   in
-  ( senv',
-    ps',
-    ns',
-    BoolTerm.or_of
-    @@ (phi :: List.concat (Set.to_list pneqss))
-    @ List.concat (Set.to_list nneqss) )
+  canon
+    ( senv',
+      ps',
+      ns',
+      BoolTerm.or_of
+      @@ (phi :: List.concat (Set.to_list pneqss))
+      @ List.concat (Set.to_list nneqss) )
 
 (*val refresh_tvar: (Atom.t list * Atom.t list * t) -> (Atom.t list * Atom.t list * t)*)
 let refresh_tvar ((senv, ps, ns, phi) : t) =
@@ -250,10 +287,11 @@ let refresh_tvar ((senv, ps, ns, phi) : t) =
     Map.of_set_exn
     @@ Set.Poly.map (Map.key_set senv) ~f:(fun x -> (x, Ident.mk_fresh_tvar ()))
   in
-  ( Map.rename_keys_map map senv,
-    Set.Poly.map ~f:(Term.rename map) ps,
-    Set.Poly.map ~f:(Term.rename map) ns,
-    Term.rename map phi )
+  canon
+    ( Map.rename_keys_map map senv,
+      Set.Poly.map ~f:(Term.rename map) ps,
+      Set.Poly.map ~f:(Term.rename map) ns,
+      Term.rename map phi )
 
 let fvs (_, ps, ns, phi) =
   Set.union (ExtTerm.fvs_of phi)
@@ -261,13 +299,14 @@ let fvs (_, ps, ns, phi) =
 
 let reduce_sort_map (senv, ps, ns, phi) =
   let ftvs = fvs (senv, ps, ns, phi) in
-  (Map.Poly.filter_keys senv ~f:(Set.mem ftvs), ps, ns, phi)
+  canon (Map.Poly.filter_keys senv ~f:(Set.mem ftvs), ps, ns, phi)
 
 let rename ren ((uni_senv, ps, ns, phi) : t) =
-  ( Map.rename_keys_map ren uni_senv,
-    Set.Poly.map ~f:(ExtTerm.rename ren) ps,
-    Set.Poly.map ~f:(ExtTerm.rename ren) ns,
-    ExtTerm.rename ren phi )
+  canon
+    ( Map.rename_keys_map ren uni_senv,
+      Set.Poly.map ~f:(ExtTerm.rename ren) ps,
+      Set.Poly.map ~f:(ExtTerm.rename ren) ns,
+      ExtTerm.rename ren phi )
 
 let subst exi_senv sub ((uni_senv, ps, ns, phi) : t) : t =
   let ps1, ps2 =
@@ -278,16 +317,17 @@ let subst exi_senv sub ((uni_senv, ps, ns, phi) : t) : t =
     Set.partition_tf ~f:(BoolTerm.is_pvar_app exi_senv uni_senv)
     @@ Set.Poly.map ns ~f:(Term.subst sub)
   in
-  ( uni_senv,
-    ps1,
-    ns1,
-    BoolTerm.or_of @@ Set.to_list
-    @@ Set.Poly.union_list
-         [
-           ps2;
-           Set.Poly.map ~f:BoolTerm.neg_of ns2;
-           Set.Poly.singleton @@ Term.subst sub phi;
-         ] )
+  canon
+    ( uni_senv,
+      ps1,
+      ns1,
+      BoolTerm.or_of @@ Set.to_list
+      @@ Set.Poly.union_list
+           [
+             ps2;
+             Set.Poly.map ~f:BoolTerm.neg_of ns2;
+             Set.Poly.singleton @@ Term.subst sub phi;
+           ] )
 
 let equal (c1 : sort_env_map * term Set.Poly.t * term Set.Poly.t * term) c2 =
   let env1, ps1, ns1, phi1 = c1 in
@@ -302,7 +342,7 @@ let normalize_uni_senv ((senv, ps, ns, phi) : t) =
     List.map ~f:fst
     @@ List.sort
          ~compare:
-           ( curry @@ function
+           ( Tuple2.curry @@ function
              | (_, Some n1), (_, Some n2) -> Int.compare n1 n2
              | (v1, _), (v2, _) ->
                  String.compare (Ident.name_of_tvar v1) (Ident.name_of_tvar v2)
@@ -316,17 +356,18 @@ let normalize_uni_senv ((senv, ps, ns, phi) : t) =
               (Int.of_string
               @@ Str.global_replace reg_number ""
               @@ Ident.name_of_tvar x)
-          with _ -> None ))
+          with exn_ when not (Common.Timer.is_async exn_) -> None ))
   in
   (*Debug.print @@ lazy "b";*)
   let sub =
     Map.Poly.of_alist_exn
     @@ List.mapi vars ~f:(fun i tvar -> (tvar, Ident.Tvar (sprintf "x%d" i)))
   in
-  ( Map.rename_keys_and_drop_unused senv ~f:(Map.Poly.find sub),
-    Set.Poly.map ps ~f:(ExtTerm.rename sub),
-    Set.Poly.map ns ~f:(ExtTerm.rename sub),
-    ExtTerm.rename sub phi )
+  canon
+    ( Map.rename_keys_and_drop_unused senv ~f:(Map.Poly.find sub),
+      Set.Poly.map ps ~f:(ExtTerm.rename sub),
+      Set.Poly.map ns ~f:(ExtTerm.rename sub),
+      ExtTerm.rename sub phi )
 
 let normalize_uni_senv_formula (senv, phi) =
   let senv, _, _, phi =
@@ -365,4 +406,4 @@ let disj (senv1, ps1, ns1, phi1) (senv2, ps2, ns2, phi2) =
   let ps = Set.union ps1 ps2 in
   let ns = Set.union ns1 ns2 in
   let phi = BoolTerm.or_of [ phi1; phi2 ] in
-  (senv, ps, ns, phi)
+  canon (senv, ps, ns, phi)

@@ -1,0 +1,26 @@
+[
+    "MuStrat",
+    {
+        "optimizer": [
+            "Filename",
+            "./config/muval/optimizer/enable_erase_query.json"
+        ],
+        "chc_solver": [
+            "Filename",
+            "./config/solver/gspacer_cex.json"
+        ],
+        "backup_chc_solver": [
+            "Filename",
+            "./config/solver/spacer_cex.json"
+        ],
+        "pcsp_solver": [
+            "Filename",
+            "./config/solver/pcsat_wopp_tbq_ar_fixpoint.json"
+        ],
+        "pcsp_solver_determ": [
+            "Filename",
+            "./config/solver/strat_synth_determ_forward.json"
+        ],
+        "output_yes_no": true
+    }
+]

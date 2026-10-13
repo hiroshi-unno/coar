@@ -1,3 +1,6 @@
+(* Dispatch for CHC optimization problems (a CHC system with a direction per
+   predicate and a priority order between them): builds the configured
+   optimizer, today always OptPCSat, and forwards [solve] to it unchanged. *)
 module type SolverType = sig
   val solve :
     ?print_sol:bool -> CHCOpt.Problem.t -> CHCOpt.Problem.solution * int

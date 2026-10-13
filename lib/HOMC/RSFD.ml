@@ -1,3 +1,10 @@
+(* Higher-order recursion schemes with finite data, the input of the external
+   model checkers: rules over nonterminals, variables, tree constructors
+   (terminals), finite-data values ([Fd]) and case analysis on them.  Beside
+   the syntax and its printer in the model checkers' format, this provides
+   [reduce], which resolves a case whose scrutinee is a known data value, and
+   [optimize_case], which moves large case branches into fresh nonterminals
+   (it must run after [reduce], since it rejects an unresolved [CaseFd]). *)
 open Core
 open Ast
 open Common.Ext
@@ -94,9 +101,9 @@ let rec fv bvs = function
   | Nonterm _id -> []
   | Var id -> if List.mem ~equal:Ident.tvar_equal bvs id then [] else [ id ]
   | Term _id -> []
-  | App (t1, t2) -> List.unique (fv bvs t1 @ fv bvs t2)
-  | Case (id, ts) -> List.unique (id :: List.concat_map ~f:(fv bvs) ts)
-  | CaseFd (_id, ts) -> List.unique @@ List.concat_map ~f:(fv bvs) ts
+  | App (t1, t2) -> List.dedup_keep_last (fv bvs t1 @ fv bvs t2)
+  | Case (id, ts) -> List.dedup_keep_last (id :: List.concat_map ~f:(fv bvs) ts)
+  | CaseFd (_id, ts) -> List.dedup_keep_last @@ List.concat_map ~f:(fv bvs) ts
 
 let case_size_th = ref 64 (* ad hoc threshold *)
 let case_id = ref 1

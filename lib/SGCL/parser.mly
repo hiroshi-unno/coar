@@ -9,7 +9,7 @@
 %token EOF
 %token WHILE
 %token IF ELSE FLIP
-%token RETURN FAIL OBSERVE SAMPLE
+%token RETURN FAIL OBSERVE SAMPLE EXPECTATION
 %token UNIFORMDISC GEOMETRIC BERNOULLI CATEGORICAL
 %token ASSIGN
 %token LPAREN RPAREN
@@ -32,8 +32,8 @@
 %%
 
 toplevel:
-    insts=Instructions return=Return EOF
-		{ Program.make insts return }
+    insts=Instructions return=Return spec=BoundSpec EOF 
+		{ Program.make ?bound:spec insts return }
 
 expr:
 	expr=T_Num EOF { expr }
@@ -44,6 +44,17 @@ Instructions:
 
 Return:
 	RETURN var=ID { Term.mk_var (Ident.Tvar var) @@ Sort.mk_fresh_svar () }
+
+BoundSpec:
+  | EXPECTATION LBRACKET post=T_Num RBRACKET op=PREDSYM bound=T_Num {
+      match op with
+      | T_num.NLeq _ -> Some (Program.mk_bound post Program.UB bound)
+      | T_num.NLt _ -> Some (Program.mk_bound post Program.UB ~strict:true bound)
+      | T_num.NGeq _ -> Some (Program.mk_bound post Program.LB bound)
+      | T_num.NGt _ -> Some (Program.mk_bound post Program.LB ~strict:true bound)
+      | _ -> failwith "unsupported SGCL expectation bound comparator"
+    }
+  | { None }
 
 Instruction:
   | WHILE  cond=T_bool  body=Block {

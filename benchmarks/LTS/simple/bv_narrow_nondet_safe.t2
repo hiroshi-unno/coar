@@ -1,0 +1,9 @@
+// A narrow signed nondet (char) in a bv(32) variable, BV mode.  Its range [-128, 127] is stated
+// with signed bit-vector comparisons, so neither error edge is reachable.  Expected: YES (-p ltssafebv).
+START: 0;
+TYPE x: bv(32);
+ERROR: err;
+FROM: 0; x := nondet_char(); TO: 1;
+FROM: 1; assume(x > 127); TO: err;
+FROM: 1; assume(x < -128); TO: err;
+FROM: 1; assume(x <= 127); TO: 2;

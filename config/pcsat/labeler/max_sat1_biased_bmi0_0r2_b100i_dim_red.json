@@ -1,5 +1,4 @@
 {
-    "verbose": false,
     "num_labelings": 1,
     "strategy": [
         "Mixed",

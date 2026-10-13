@@ -1,0 +1,22 @@
+/* A 90-degree rotation of a real vector, (a,b) -> (-b,a), asked to reach the
+   closed first quadrant infinitely often.  Valid: the rotation has period four,
+   so every fourth step is in the quadrant, for any start but the origin -- which
+   the query excludes.
+
+   The certificate is a rank that is CONSTANT on each quadrant, 3/2/1/0 around
+   the cycle, with no lexicographic structure: four pieces, one component.  The
+   template can express that and the shape search cannot reach it, because its
+   first growth step raises the lexicographic count to two and that count only
+   ever increases, so a shape with several pieces and ONE component is never
+   visited.  Set number_of_rfun_pieces to 4 in the well-founded predicate
+   template and this answers valid in about 14 s; at 2 or 3 pieces it does not
+   answer at all.
+
+   The integer twin beside this file needs none of that -- over the integers a
+   linear rank decreases by a whole unit for free, while over the reals the
+   state can be scaled toward the origin so no linear form drops by the fixed
+   one the decrease condition demands. */
+Main 0
+s.t.
+Main (z:int): bool =mu forall (a:real). forall (b:real). (a = real(0) /\ b = real(0)) \/ Q a b;
+Q (a:real) (b:real): bool =mu a >. real(0) /\ b >=. real(0) \/ Q (-.b) a;

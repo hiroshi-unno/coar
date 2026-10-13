@@ -1,0 +1,13 @@
+c expected: unsat
+c
+c x1 and not x1, written as two clauses on one line.  DIMACS ends a clause with
+c 0 and separates its numbers with whitespace, so the layout carries no meaning
+c and this is the same formula as the two-line version.  z3's own reader,
+c `z3 -dimacs`, answers s UNSATISFIABLE.
+c
+c It answered sat on all three backends because the reader stripped only the
+c LAST 0 of each line and took everything else for a literal: the line became one
+c clause holding 1, -1 and a variable named 0 that the file never declares, which
+c is a tautology.
+p cnf 1 2
+1 0 -1 0

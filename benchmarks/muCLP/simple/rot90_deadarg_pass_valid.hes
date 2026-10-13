@@ -1,0 +1,11 @@
+/* Isolation probe: an extra predicate argument that is PASSED THROUGH unchanged.
+   Answers in well under a second, because the muCLP optimizer's constant-argument
+   erasure sees that `d` is 0 at every call site and removes it, so the
+   well-founded template is built over two coordinates and is identical to the
+   version with no third argument at all.  Its twin `..._deadarg_alt_valid.hes`
+   differs only in that `d` alternates, and takes about 85 times as long.
+   Both are valid, and `d` is never read in either. */
+Main 0
+s.t.
+Main (z:int): bool =mu forall (a:int). forall (b:int). (a = 0 /\ b = 0) \/ Q a b 0;
+Q (a:int) (b:int) (d:int): bool =mu a > 0 /\ b >= 0 \/ Q (-b) a d;

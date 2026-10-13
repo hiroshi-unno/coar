@@ -117,9 +117,9 @@ let map_atm ~f = List.map ~f:(fun (atm, m) -> (f atm, m))
 let simplify (sequent : t) =
   {
     eqvars = sequent.eqvars;
-    left_atms = List.unique @@ sequent.left_atms;
+    left_atms = List.dedup_keep_last @@ sequent.left_atms;
     left_phi = Evaluator.simplify @@ sequent.left_phi;
-    right_atms = List.unique @@ sequent.right_atms;
+    right_atms = List.dedup_keep_last @@ sequent.right_atms;
     right_phi = Evaluator.simplify @@ sequent.right_phi;
   }
 
@@ -182,7 +182,7 @@ let normalize_body seq =
   if false then print_endline @@ "1: " ^ Formula.str_of phi1;
   let phi2 =
     Evaluator.simplify_neg @@ snd
-    @@ Qelim.qelim_old bounds Map.Poly.empty
+    @@ Qelim.elim_free_univ_vars_old bounds Map.Poly.empty
          (uni_senv, Evaluator.simplify_neg phi1)
   in
   if false then print_endline @@ "2: " ^ Formula.str_of phi2;
@@ -246,7 +246,7 @@ let pr ?(wo_guard = false) ppf sequent =
     if Fn.non Map.Poly.is_empty eqvars then
       Format.fprintf ppf "E %s. " (str_of_sort_env_map Term.str_of_sort eqvars)
   in
-  let pr_i ppf i = Format.fprintf ppf "(%a)" Integer.pr i in
+  let pr_i ppf i = Format.fprintf ppf "(%a)" Int.pp i in
   let pr_atm ?(wo_guard = false) ppf (atm, guard) =
     if wo_guard then Format.fprintf ppf "%s" (Atom.str_of atm)
     else
@@ -486,7 +486,7 @@ let rec elim_forall_heap_with_heuristics tsub sequent =
     |> List.concat_map List.permutations
     |> List.map ~f:(fun tlist ->
         List.map2_exn ~f:(fun x t -> (x,(t,Term.mk_var x))) heap_evars tlist)
-    |> List.unique
+    |> List.dedup_keep_last
   in
   let heap_evars phi =
     Formula.fold
@@ -511,9 +511,9 @@ let rec elim_forall_heap_with_heuristics tsub sequent =
     phi
     |> Formula.to_term
     |> Term.Heap.singleton_heaps
-    |> List.unique
+    |> List.dedup_keep_last
   in
-  let he = heap_evars sequent.left_phi |> List.unique in
+  let he = heap_evars sequent.left_phi |> List.dedup_keep_last in
   let si = singletons sequent.left_phi in
   let cand = mk_candidates he si in
   if he != [] then
@@ -542,7 +542,7 @@ let ktenv ent =
   in
   let ty = Type.mk_adt (Idnt.make "atom") (List.map ~f:fst cs) in
   List.map
-    ~f:(Pair.map_snd (fun i -> Type.mk_fun_args_ret (List.gen i (fun _ -> Type.new_var ())) ty))
+    ~f:(Tuple2.map_snd ~f:(fun i -> Type.mk_fun_args_ret (List.init i ~f:(fun _ -> Type.new_var ())) ty))
     cs
 
 let cgen tenv ent =
@@ -555,14 +555,14 @@ let cgen tenv ent =
       pvas_l
       |> List.map ~f:(SimTypInfer.cgen_pva tenv)
       |> List.split
-      |> Pair.map List.concat id
+      |> Tuple2.map_both ~f1:List.concat ~f2:id
     in
     let constr2, phi_l' = SimTypInfer.cgen_formula tenv phi_l in
     let constr3, pvas_r' =
       pvas_r
       |> List.map ~f:(SimTypInfer.cgen_pva tenv)
       |> List.split
-      |> Pair.map List.concat id
+      |> Tuple2.map_both ~f1:List.concat ~f2:id
     in
     let constr4, phi_r' = SimTypInfer.cgen_formula tenv phi_r in
     let evars' = List.filter ~f:(fun (id,ty) -> List.mem_assoc id evars) tenv in

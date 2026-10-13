@@ -6,6 +6,12 @@ open Ast
 open Ast.LogicOld
 open Effect.Shallow
 
+(* A refinement step that finds no interpolant leaves the search undecided,
+   which is an answer ([Verdict.Unknown]) and not an internal error: the
+   interpolation it asks for is incomplete (array MBP in particular), and the
+   search it belongs to was never promised to conclude. *)
+exception Search_undecided of string
+
 let args_of penv pvar = List.Assoc.find_exn ~equal:Stdlib.( = ) penv pvar
 
 let str_of_head = function
@@ -13,7 +19,7 @@ let str_of_head = function
   | Some pvar -> Ident.name_of_pvar pvar
 
 let str_of_head_with_args penv =
-  Option.str_of "root" (fun pvar ->
+  Option.value_map ~default:"root" ~f:(fun pvar ->
       Atom.str_of
       @@ Atom.mk_pvar_app pvar
            (List.map ~f:snd @@ args_of penv pvar)
@@ -61,7 +67,7 @@ let convert_model res_dc senv model =
           | (x, _), Some t -> Some (x, t))
     in
     try Map.Poly.of_alist_exn model
-    with _ ->
+    with exn_ when not (Common.Timer.is_async exn_) ->
       (* z3 may return a model like  [x |-> 1, x |-> 0]*)
       List.classify (fun x y -> Stdlib.(fst x = fst y)) model
       |> List.map ~f:List.hd_exn |> Map.Poly.of_alist_exn
@@ -125,6 +131,18 @@ let rec expand penv (problem : Problem.t) pvs level =
         @@ List.mapi pvs' ~f:(fun j pvar -> ((level', j), pvar))) )
   else failwith "[ProofSearch.expand] level >= 0 is required"
 
+(* What one refinement step yields.  The three cases are NOT two: [Refuted] is a
+   genuine refutation of the sub-problem -- the constraint solver proved there
+   is no counterexample, and the caller may conclude the property fails --
+   while [Undecided] is the constraint solver failing to decide, which the
+   caller must not read the same way.  Collapsing them, by giving an undecided
+   sub-query the same "no counterexample" answer a refutation gets, turns "we
+   could not tell" into a definite verdict; this was an uncaught exception
+   printing the whole problem as a backtrace instead, which at least did not
+   lie.  [Undecided] carries the verdict to report so that a budget exhausted
+   and a query given up on stay distinguishable to the user. *)
+type 'a step = Refined of 'a | Refuted | Undecided of Common.Verdict.t
+
 let solve ~config penv solve_chc problem (trace1, trace2) =
   assert (Fn.non List.is_empty trace2);
   let chcs, pvmap =
@@ -152,8 +170,8 @@ let solve ~config penv solve_chc problem (trace1, trace2) =
   | Result.Ok (PCSP.Problem.Sat sol, _) ->
       (*print_endline @@ PCSP.Problem.str_of_sol_with_witness @@ PCSP.Problem.Sat sol;*)
       let psub = snd @@ CandSolOld.of_subst sol in
-      Option.return
-      @@ ( ( trace1,
+      Refined
+        ( ( trace1,
              List.mapi trace2 ~f:(fun i frame ->
                  List.mapi (List.zip_exn penv frame)
                    ~f:(fun j ((_, params0), _) ->
@@ -169,10 +187,41 @@ let solve ~config penv solve_chc problem (trace1, trace2) =
                      @@ Formula.rename (ren_of_sort_env_list params params0) phi))
            ),
            Map.Poly.empty )
-  | Result.Ok (PCSP.Problem.Unsat _, _) -> None
-  | Result.Ok (PCSP.Problem.Unknown, _) ->
-      failwith ("CHC solver returned unknown:\n" ^ PCSP.Problem.str_of chcs)
+  | Result.Ok (PCSP.Problem.Unsat _, _) -> Refuted
+  | Result.Ok (PCSP.Problem.Unknown, _) -> Undecided Common.Verdict.Unknown
+  | Result.Ok (PCSP.Problem.Timeout, _) -> Undecided Common.Verdict.Timeout
+  (* anything left is the solver failing rather than answering, which is an
+     internal error and not a verdict *)
   | _ -> failwith "ProofSearch.solve"
+
+(* The backup when no interpolant is synthesized: project one side onto the
+   shared vocabulary. *)
+let backup_interpolant ~config phi1 phi2 =
+  if config.backup_for_interp then
+    let quantified =
+      if config.strongest_backup_for_interp then
+        let env =
+          Set.diff
+            (Formula.term_sort_env_of phi1)
+            (Formula.term_sort_env_of phi2)
+        in
+        Formula.mk_exists_if_bounded (Set.to_list env) phi1
+      else
+        let env =
+          Set.diff
+            (Formula.term_sort_env_of phi2)
+            (Formula.term_sort_env_of phi1)
+        in
+        Formula.mk_forall_if_bounded (Set.to_list env) phi2
+    in
+    let res = Evaluator.simplify @@ qelim ~config quantified in
+    (* A surviving quantifier means elimination declined, as it does on
+       bit-vectors; returning that as an interpolant is unsound. *)
+    if Formula.is_quantifier_free res then Option.return res else None
+  else
+    failwith
+    @@ sprintf "no interpolant for %s and %s" (Formula.str_of phi1)
+         (Formula.str_of phi2)
 
 let interpolate ~config solve_chc args phi1 phi2 =
   let name = "interp" in
@@ -206,23 +255,33 @@ let interpolate ~config solve_chc args phi1 phi2 =
       let psub = Map.of_set_exn @@ snd @@ CandSolOld.of_subst sol in
       Option.return @@ Evaluator.simplify @@ Formula.subst_preds psub pvapp
   | Result.Ok (PCSP.Problem.Unsat _, _) -> None
-  | Result.Ok (PCSP.Problem.Unknown, _) ->
-      if config.backup_for_interp then
-        let env =
-          Set.diff
-            (Formula.term_sort_env_of phi2)
-            (Formula.term_sort_env_of phi1)
-        in
-        Option.return @@ Evaluator.simplify @@ qelim ~config
-        @@ Formula.mk_forall_if_bounded (Set.to_list env) phi2
-      else
-        failwith
-        @@ sprintf "CHC solver returned unknown for %s and %s"
-             (Formula.str_of phi1) (Formula.str_of phi2)
+  (* a timeout is an unknown: no interpolant came back, so take the same fallback *)
+  | Result.Ok ((PCSP.Problem.Unknown | PCSP.Problem.Timeout), _) ->
+      backup_interpolant ~config phi1 phi2
   (* phi1 and phi2 should be quantifier-free *)
-  | _ -> failwith "ProofSearch.interpolate"
+  | Result.Ok (sol, _) ->
+      failwith
+      @@ sprintf "[ProofSearch.interpolate] unexpected answer: %s"
+           (PCSP.Problem.str_of_solution sol)
+  | Result.Error err -> Or_error.ok_exn (Result.Error err)
 
-let get_mbp ~config ~print model0 eliminated0 phi0 =
+(* Model-based projection of [phi0] onto the variables outside [eliminated0],
+   at the model [model0] (which need not assign every variable: the rest is
+   completed by one satisfiability call).  Postcondition: the result is
+   satisfied by the completed model and implies the existential closure of
+   [phi0] over [eliminated0]; a variable whose projection rule fails is
+   substituted by its model value, which keeps both halves.  With
+   [check_validity] a failing rule is raised instead and the result is
+   verified by the four checks at the end.  [ite_size_limit] bounds the
+   exhaustive conditional elimination (see [Mbp.ite_blowup_upto]). *)
+(* The optional arguments repeat the configuration's defaults, so that a caller which
+   reaches this directly rather than through [get_mbp] gets what the shipped
+   configuration gets unless it says otherwise.  They were allowed to differ once and
+   the one such caller then had the old behaviour by accident. *)
+let get_mbp_with ~ite_size_limit ?(resolve_ite_in_projection = false)
+    ?(name_subterms_in_projection = false)
+    ?(compare_branches_in_projection = false) ~check_validity ~print model0
+    eliminated0 phi0 =
   if Set.is_empty eliminated0 then phi0
   else (
     print @@ lazy ("\nMBP input: " ^ Formula.str_of phi0);
@@ -238,23 +297,171 @@ let get_mbp ~config ~print model0 eliminated0 phi0 =
              ~f:(function Ident.Tvar tvar, value ->
                sprintf "%s |-> %s" tvar (Term.str_of value)));
     let senv = Set.to_list @@ Formula.sort_env_of phi0 in
-    let bounds, phi =
-      Formula.split_quantifiers @@ Evaluator.simplify
-      @@ LogicOld.Formula.elim_let
-      @@ Normalizer.normalize_let ~rename:true
-      @@ Normalizer.normalize @@ Formula.rm_div_mod @@ Normalizer.normalize
-      @@ Formula.elim_ite
-      @@ Formula.mk_exists_if_bounded senv phi0
+    let extend_model model phi =
+      let phi = Formula.subst model phi in
+      if Formula.is_ground phi then model
+      else
+        match
+          Z3Smt.Z3interface.check_sat ~id:None (FunEnv.mk_empty ()) [ phi ]
+        with
+        | `Sat sub ->
+            Map.force_merge model @@ Map.Poly.of_alist_exn
+            @@ List.map sub ~f:(function
+              | (x, _s), Some t -> (x, t)
+              | (x, s), None -> (x, Term.mk_dummy s))
+        | `Unsat -> failwith "Unreachable here"
+        | _ -> failwith "Z3 timeout/unknown"
+    in
+    let phi_bounded = Formula.mk_exists_if_bounded senv phi0 in
+    (* [Formula.elim_ite] enumerates every path through the conditionals of an atom, which
+       is exponential but gives the projection the branches the model does not take too.
+       Keep it while the size it would produce is affordable, follow the model's single
+       path above. *)
+    let elim_ite =
+      if resolve_ite_in_projection then (
+        (* the model has to cover the input before the rewriting consults it *)
+        let model0 = extend_model model0 phi0 in
+        (* which variables this call is about to remove: the ones the caller named, plus
+           the ones the existential prefix below binds.  A conditional mentioning none of
+           them is carried through whole, where leaving it alone is free; one that
+           mentions any of them is settled here.  The test below is asked about the whole
+           conditional, branches included, not about its condition alone. *)
+        let targets =
+          (* peel the existential prefix by hand: [Formula.split_quantifiers] refuses a
+             formula that still carries let-bindings, and this runs before they are
+             inlined -- it used to be called here and raised on every input, which put
+             the whole projection into its caller's fallback without a word *)
+          let rec prefix acc = function
+            | Formula.Bind (Formula.Exists, senv', phi, _) ->
+                prefix (List.map senv' ~f:fst @ acc) phi
+            | _ -> acc
+          in
+          Set.union
+            (Set.Poly.map eliminated0 ~f:fst)
+            (Set.Poly.of_list @@ prefix [] phi_bounded)
+        in
+        fun phi ->
+          Mbp.elim_ite_with_model ~lenient:true model0 phi
+            ~keep:(fun t -> Set.is_empty @@ Set.inter (Term.fvs_of t) targets))
+      else if
+        match ite_size_limit with
+        | None -> true
+        | Some limit -> Mbp.ite_blowup_upto (limit + 1) phi_bounded <= limit
+      then Formula.elim_ite
+      else
+        (* the model has to cover the input before the rewriting consults it *)
+        let model0 = extend_model model0 phi0 in
+        fun phi ->
+          try Mbp.elim_ite_with_model model0 phi
+          with Mbp.IteModelUndetermined ->
+            print
+            @@ lazy
+                 "the model leaves a conditional open; falling back on rewriting every \
+                  branch";
+            Formula.elim_ite phi
+    in
+    (* Naming the compound subterms instead of inlining the let-bound definitions.
+       Everything up to the naming is what the other path does; [elim_ite] and
+       [elim_let], the two steps that multiply, are what it replaces.  The result is
+       carried in pieces rather than as one formula, because which of the names have to
+       be removed is decided from the definitions and cannot be read off the formula
+       once they are conjoined. *)
+    let flat =
+      if not name_subterms_in_projection then None
+      else
+        let model0 = extend_model model0 phi0 in
+        let flat =
+          Mbp.Flat.flatten model0
+          @@ Normalizer.normalize_let ~rename:true
+          @@ Normalizer.normalize @@ Formula.rm_div_mod @@ Normalizer.normalize
+          @@ phi_bounded
+        in
+        (* Which variables this call is about to remove: the ones the caller named, plus
+           whatever the preprocessing above bound on top of them -- the quotient and
+           remainder variables of [rm_div_mod].  Not the whole prefix: the input is
+           closed by binding every free variable of it, so the prefix is all of them, and
+           reading it as the set to remove would mark every definition in the circuit as
+           one that has to go.  What stays free is exactly the predicate's own arguments,
+           and a definition that depends only on those is left alone. *)
+        let targets =
+          Set.union (Set.Poly.map eliminated0 ~f:fst)
+          @@ Set.diff
+               (Set.Poly.of_list @@ List.map flat.Mbp.Flat.prefix ~f:fst)
+               (Set.Poly.of_list @@ List.map senv ~f:fst)
+        in
+        let flat, tainted =
+          Mbp.Flat.settle ~compare_branches:compare_branches_in_projection targets
+            flat
+        in
+        Some (Mbp.Flat.prune flat, tainted)
+    in
+    let phi, eliminated, order, expand =
+      match flat with
+      | None ->
+          let bounds, phi =
+            Formula.split_quantifiers @@ Evaluator.simplify
+            @@ LogicOld.Formula.elim_let
+            @@ Normalizer.normalize_let ~rename:true
+            @@ Normalizer.normalize @@ Formula.rm_div_mod
+            @@ Normalizer.normalize @@ elim_ite phi_bounded
+          in
+          let eliminated =
+            Set.Poly.union_list
+            @@ eliminated0
+               :: List.map bounds ~f:(function
+                 | Formula.Exists, senv' ->
+                     Set.(diff (Poly.of_list senv') (Set.Poly.of_list senv))
+                 | _ -> failwith "Universal quantifies are not supported")
+          in
+          (phi, eliminated, Set.to_list eliminated, Fn.id)
+      | Some (flat, tainted) ->
+          let bound =
+            Set.diff
+              (Set.Poly.of_list flat.Mbp.Flat.prefix)
+              (Set.Poly.of_list senv)
+          in
+          let is_tainted (x, _, _) = Set.mem tainted x in
+          let tainted_defs, pure_defs =
+            List.partition_tf flat.Mbp.Flat.defs ~f:is_tainted
+          in
+          print
+          @@ lazy
+               (sprintf
+                  "definitional form: %d definitions, %d of them to remove, %d \
+                   guards, %d branch comparisons"
+                  (List.length flat.Mbp.Flat.defs)
+                  (List.length tainted_defs)
+                  (List.length flat.Mbp.Flat.guards)
+                  (List.length flat.Mbp.Flat.facts));
+          let phi =
+            Formula.and_of
+            @@ (flat.Mbp.Flat.body
+               :: (Mbp.minimize_guards
+                     (flat.Mbp.Flat.guards @ flat.Mbp.Flat.facts)
+                  @ List.map tainted_defs ~f:Mbp.Flat.def_atom))
+          in
+          let names = List.map tainted_defs ~f:(fun (x, s, _) -> (x, s)) in
+          let eliminated =
+            Set.union (Set.union eliminated0 bound) (Set.Poly.of_list names)
+          in
+          (* The names first, innermost first, and the caller's variables after them.
+             The order is forced rather than chosen.  A name has exactly one defining
+             equation, so a rule can always remove it, but the rule that removes one of
+             the caller's variables reads every literal that mentions it -- the defining
+             equation included -- and what it returns need not be an equation for that
+             name any more.  Worse, the defining equation is itself an equation in the
+             variable being removed, so it is exactly what such a rule reaches for: on
+             [b = bvadd (x, a)] it solves for x, consumes the equation, and leaves b with
+             no definition and nothing to substitute.  A name whose definition mentions
+             one of the variables being removed therefore has to go first.  A name whose
+             definition mentions none of them is in no such literal, is touched by no
+             rule, and is put back by [expand] at the end. *)
+          ( phi,
+            eliminated,
+            names @ Set.to_list (Set.union eliminated0 bound),
+            Mbp.Flat.expand { flat with Mbp.Flat.defs = pure_defs } )
     in
     print @@ lazy ("preprocessed input: " ^ Formula.str_of phi);
-    let eliminated =
-      Set.Poly.union_list
-      @@ eliminated0
-         :: List.map bounds ~f:(function
-           | Formula.Exists, senv' ->
-               Set.(diff (Poly.of_list senv') (Set.Poly.of_list senv))
-           | _ -> failwith "Universal quantifies are not supported")
-    in
     if false then
       print
       @@ lazy
@@ -262,19 +469,11 @@ let get_mbp ~config ~print model0 eliminated0 phi0 =
            ^ str_of_sort_env_list Term.str_of_sort
            @@ Set.to_list eliminated);
     let model =
-      let phi = Formula.subst model0 phi in
-      if Formula.is_ground phi then model0
-      else
-        match
-          Z3Smt.Z3interface.check_sat ~id:None (FunEnv.mk_empty ()) [ phi ]
-        with
-        | `Sat sub ->
-            Map.force_merge model0 @@ Map.Poly.of_alist_exn
-            @@ List.map sub ~f:(function
-              | (x, _s), Some t -> (x, t)
-              | (x, s), None -> (x, Term.mk_dummy s))
-        | `Unsat -> failwith "Unreachable here"
-        | _ -> failwith "Z3 timeout/unknown"
+      extend_model
+        (match flat with
+        | None -> model0
+        | Some (flat, _) -> flat.Mbp.Flat.model)
+        phi
     in
     if false then
       print
@@ -428,7 +627,42 @@ let get_mbp ~config ~print model0 eliminated0 phi0 =
       @@ Set.to_list
       @@ Set.Poly.map ~f:Formula.mk_atom
       @@
-      let rec loop eliminated atoms =
+      (* Which atoms mention which variable, so that selecting the atoms one elimination
+         step has to look at does not sweep the whole set.  Recomputing the free variables
+         of every atom on every step is the shape that hurts: a projection with a few
+         hundred variables to remove over a few hundred atoms spent nearly two thirds of
+         its time there, while the atoms it actually rewrote were two or three.  Only
+         variables still to be eliminated need an entry; the index is repaired from the
+         atoms each step removes and adds. *)
+      let index_of targets atoms =
+        Set.fold atoms ~init:Map.Poly.empty ~f:(fun idx atm ->
+            Set.fold (Set.inter (Atom.fvs_of atm) targets) ~init:idx ~f:(fun idx v ->
+                Map.Poly.update idx v ~f:(function
+                  | None -> Set.Poly.singleton atm
+                  | Some s -> Set.add s atm)))
+      in
+      let reindex targets idx ~removed ~added =
+        let upd idx f atms =
+          Set.fold atms ~init:idx ~f:(fun idx atm ->
+              Set.fold (Set.inter (Atom.fvs_of atm) targets) ~init:idx
+                ~f:(fun idx v -> f idx v atm))
+        in
+        upd
+          (upd idx
+             (fun idx v atm ->
+               Map.Poly.change idx v ~f:(function
+                 | None -> None
+                 | Some s ->
+                     let s = Set.remove s atm in
+                     if Set.is_empty s then None else Some s))
+             removed)
+          (fun idx v atm ->
+            Map.Poly.update idx v ~f:(function
+              | None -> Set.Poly.singleton atm
+              | Some s -> Set.add s atm))
+          added
+      in
+      let rec loop targets idx eliminated atoms =
         match eliminated with
         | [] -> atoms
         | (x, s) :: eliminated' -> (
@@ -438,40 +672,89 @@ let get_mbp ~config ~print model0 eliminated0 phi0 =
               @@ lazy
                    ("eliminating " ^ Ident.name_of_tvar x ^ " in\n"
                    ^ String.concat_map_set ~sep:"\n" ~f:Atom.str_of atoms);
-            let atoms1, atoms2 =
-              Set.partition_tf atoms ~f:(fun atm -> Set.mem (Atom.fvs_of atm) x)
+            let atoms1 =
+              Option.value ~default:Set.Poly.empty @@ Map.Poly.find idx x
+            in
+            let atoms2 = Set.diff atoms atoms1 in
+            (* The theory rules read the shape of a literal -- which side the variable
+               is on, its coefficient, whether a bit-vector atom is a mask -- so a
+               conditional still inside one has to be settled before a rule sees it.
+               Only in these: the atoms of [atoms2] do not mention the variable and
+               travel on untouched, conditionals and all, which is what the projection's
+               own definition says to do with them. *)
+            (* A conditional that mentions none of the variables being eliminated was
+               carried through the preprocessing as one opaque term, because what it
+               denotes does not bear on any of them.  A theory rule reads the shape of a
+               literal, though, so if one cannot make sense of a literal that still
+               carries such a term, settle the conditionals in it against the model and
+               try that rule once more before giving up on the variable. *)
+            let resolved1 =
+              lazy (Set.concat_map atoms1 ~f:(Mbp.resolve_ite_in_atom model))
+            in
+            let has_ite = lazy (Set.exists atoms1 ~f:Mbp.has_ite_in_atom) in
+            let continue_with res =
+              let targets = Set.Poly.map ~f:fst @@ Set.Poly.of_list eliminated' in
+              loop targets
+                (reindex targets idx ~removed:atoms1 ~added:res)
+                eliminated' (Set.union atoms2 res)
+            in
+            let project atoms1 =
+              (match s with
+               | T_bool.SBool -> Mbp.Boolean.model_based_projection
+               | T_int.SInt -> Mbp.LIA.model_based_projection
+               | T_real.SReal -> Mbp.LRA.model_based_projection
+               | T_dt.SDT _ -> Mbp.ADT.model_based_projection
+               | T_array.SArray (_, _) -> Mbp.ARR.model_based_projection
+               | T_bv.SBV _ -> Mbp.BV.model_based_projection
+               | _ -> failwith "not supported")
+                ~print model x atoms1
+            in
+            let rotate () =
+              if is_looping x atoms then failwith "loop detected"
+              else
+                let eliminated = eliminated' @ [ (x, s) ] in
+                loop targets idx eliminated atoms
             in
             try
               try
-                loop eliminated' @@ Set.union atoms2
-                @@ (match s with
-                   | T_bool.SBool -> Mbp.Boolean.model_based_projection
-                   | T_int.SInt -> Mbp.LIA.model_based_projection
-                   | T_real.SReal -> Mbp.LRA.model_based_projection
-                   | T_dt.SDT _ -> Mbp.ADT.model_based_projection
-                   | T_array.SArray (_, _) -> Mbp.ARR.model_based_projection
-                   | _ -> failwith "not supported")
-                     ~print model x atoms1
-              with Mbp.NotNormalized ->
-                if is_looping x atoms then failwith "loop detected"
-                else loop (eliminated' @ [ (x, s) ]) atoms
-            with Failure _ as e ->
-              if config.check_validity then raise e
+                try continue_with @@ project atoms1
+                with Mbp.NotNormalized
+                when resolve_ite_in_projection && Lazy.force has_ite ->
+                  continue_with @@ project (Lazy.force resolved1)
+              with Mbp.NotNormalized -> rotate ()
+            with e when not (Common.Timer.is_async e) ->
+              (* this used to catch [Failure _] only, so a projection rule that
+                 raised anything else -- [Invalid_argument] from a shift helper
+                 given an amount past the width, [Assert_failure] from comparing
+                 a Bool array index -- aborted the whole run instead of falling
+                 back to the model's values.  The two backups further down catch
+                 by the same test.  The timeout is raised from a signal handler
+                 into whatever frame is running, so it has to stay excluded:
+                 swallowing it here would turn "we ran out of time" into a
+                 successful projection. *)
+              if check_validity then raise e
               else
-                loop eliminated' @@ Set.union atoms2
+                continue_with
                 @@
                 let sub = Map.Poly.singleton x (Map.Poly.find_exn model x) in
-                Set.concat_map atoms1
+                Set.concat_map
+                  (if resolve_ite_in_projection && Lazy.force has_ite then
+                     Lazy.force resolved1
+                   else atoms1)
                   ~f:(Atom.subst sub >> Mbp.normalize_mbp model))
       in
-      loop (Set.to_list eliminated) @@ preprocess atoms
+      let atoms = preprocess atoms in
+      let targets = Set.Poly.map ~f:fst eliminated in
+      loop targets (index_of targets atoms) order atoms
     in
-    let res = Evaluator.simplify res in
+    (* the names that survived stand for terms, and what this feeds has no let, so they
+       are substituted back here -- once, at the end, over what the projection left *)
+    let res = Evaluator.simplify @@ expand res in
     print @@ lazy ("MBP output: " ^ Formula.str_of res);
-    if config.check_validity then (
+    if check_validity then (
       if Fn.non Formula.is_quantifier_free phi0 then failwith "wrong MBP @1";
-      if Fn.non Evaluator.eval (Formula.subst model0 res) then
-        failwith "wrong MBP @2";
+      if Fn.non Evaluator.eval (Evaluator.simplify (Formula.subst model0 res))
+      then failwith "wrong MBP @2";
       if
         Fn.non Set.is_empty
         @@ Set.inter (Formula.fvs_of res) (Set.Poly.map ~f:fst eliminated0)
@@ -487,6 +770,13 @@ let get_mbp ~config ~print model0 eliminated0 phi0 =
       | `Sat _ -> failwith "wrong MBP @4"
       | _ -> res)
     else res)
+
+let get_mbp ~config =
+  get_mbp_with ~ite_size_limit:config.Config.ite_size_limit
+    ~resolve_ite_in_projection:config.Config.resolve_ite_in_projection
+    ~name_subterms_in_projection:config.Config.name_subterms_in_projection
+    ~compare_branches_in_projection:config.Config.compare_branches_in_projection
+    ~check_validity:config.Config.check_validity
 
 type frame = Formula.t list
 type trace = frame list * frame list
@@ -799,15 +1089,24 @@ let cex_of_countermodel ~config ~print penv seq cexs_left_phis cond model pvar
           @@ Formula.mk_imply
                (Formula.and_of (seq.Sequent.left_phi :: cexs_left_phis))
                (Formula.mk_false ())
-        with e ->
-          if config.backup_for_mbp then
+          (* the backup below is selected by a flag that is `true` in every shipped config, so
+           the [raise] beneath it never runs and this handler always swallows.  Without the
+           guard it swallows the alarm-driven timeout too, turning "we ran out of time" into a
+           successful projection over the model's values. *)
+        with e when not (Common.Timer.is_async e) ->
+          if config.backup_for_mbp then (
+            print
+            @@ lazy
+                 (sprintf
+                    "      MBP failed (%s); falling back to the model's values"
+                    (Exn.to_string e));
             (* qelim_except ~config ~exists:true args cond *)
             let model' = convert_model false senv model in
             Formula.and_of
             @@ List.filter_map (args_of penv pvar) ~f:(fun (x, s) ->
                 match Map.Poly.find model' x with
                 | None -> None
-                | Some t -> Some (Formula.eq (Term.mk_var x s) t))
+                | Some t -> Some (Formula.eq (Term.mk_var x s) t)))
           else raise e
       in
       print
@@ -929,25 +1228,60 @@ let query_of_countermodel ~config ~print penv pvar_opt seq cexs_left
              @ List.map atms_right ~f:(Atom.subst_preds psub))
              (Sequent.subst_preds_right psub_right seq).right_phi
       in
+      let eliminated = Set.filter senv ~f:(fst >> non_arg) in
       let mbp =
         let model' = convert_model true senv model in
         try
-          get_mbp ~config ~print model' (Set.filter senv ~f:(fst >> non_arg))
-          @@ Evaluator.simplify_neg ub
-        with e ->
-          if config.backup_for_mbp then
+          get_mbp ~config ~print model' eliminated @@ Evaluator.simplify_neg ub
+          (* same as the other backup: always taken, so guard the asynchronous exceptions out
+           of it rather than reporting a timeout as an answer *)
+        with e when not (Common.Timer.is_async e) ->
+          if config.backup_for_mbp then (
+            print
+            @@ lazy
+                 (sprintf
+                    "      MBP failed (%s); falling back to the model's values"
+                    (Exn.to_string e));
+            (* The projection's contract is that its result no longer mentions
+               what was eliminated.  This branch discharges those variables by
+               substituting the model's value for each, which covers exactly the
+               ones the model has an entry for -- every variable of the
+               environment the model was converted against, since that
+               conversion supplies a dummy for anything the solver left out, but
+               not a variable that reaches this formula from elsewhere.  The
+               quantifier-elimination call that would be correct by construction
+               is written below and not taken: it goes to a tactic that is
+               incomplete over arrays and can hand back a formula that still has
+               quantifiers, and it carries no budget of its own.  So the
+               substitution stands and the contract is checked instead, in the
+               mode that checks the projection's other obligations. *)
             (* qelim_except ~config ~exists:true aargs ub *)
-            if true then
-              Formula.subst
-                (Map.Poly.filter_keys model' ~f:non_arg)
-                seq.left_phi
-            else
-              let model' = convert_model false senv model in
-              Formula.and_of
-              @@ List.filter_map aargs ~f:(fun (x, s) ->
-                  match Map.Poly.find model' x with
-                  | None -> None
-                  | Some t -> Some (Formula.eq (Term.mk_var x s) t))
+            let res =
+              if true then
+                Formula.subst
+                  (Map.Poly.filter_keys model' ~f:non_arg)
+                  seq.left_phi
+              else
+                let model' = convert_model false senv model in
+                Formula.and_of
+                @@ List.filter_map aargs ~f:(fun (x, s) ->
+                    match Map.Poly.find model' x with
+                    | None -> None
+                    | Some t -> Some (Formula.eq (Term.mk_var x s) t))
+            in
+            if config.check_validity then (
+              let leftover =
+                Set.inter (Formula.fvs_of res)
+                @@ Set.Poly.map ~f:fst eliminated
+              in
+              if Fn.non Set.is_empty leftover then
+                failwith
+                @@ sprintf
+                     "the fallback for a failed projection still mentions %s, \
+                      which it was asked to eliminate"
+                     (String.concat_map_set ~sep:", " ~f:Ident.name_of_tvar
+                        leftover));
+            res)
           else raise e
       in
       (*print @@ lazy ("      ub: " ^ Formula.str_of ub);
@@ -1331,7 +1665,10 @@ let rec refine ~config ~print solve_chc seq_map penv pvar_opt (state0 : state)
                 print
                 @@ lazy (sprintf "done query for %s" (str_of_head pvar_opt));
                 interp
-            | None -> failwith "[ProofSearch.refine] interpolant not found"
+            | None ->
+                raise
+                  (Search_undecided
+                     "no interpolant separates the frame from the query")
           in
           let state3 = set_formula penv state2 pvar interp in
           let state4 =
@@ -1398,11 +1735,11 @@ let refine ~config ~print penv solve_chc seq_map problem (trace : trace) =
               Formula.mk_false (),
               empty_gcexs )
         with
-        | First (_trace, _cex, _induct, _gcexs) -> (*UNSAT*) None (*ToDo*)
+        | First (_trace, _cex, _induct, _gcexs) -> (*UNSAT*) Refuted (*ToDo*)
         | Second (trace, cex, induct, _gcexs) ->
             if Formula.is_false cex then (*SAT*)
-              Some (drop_frame trace, induct)
-            else (*UNSAT*) None (*ToDo*))
+              Refined (drop_frame trace, induct)
+            else (*UNSAT*) Refuted (*ToDo*))
 
 let rec is_covered_aux penv convert pre solvers = function
   | [] -> None
@@ -1489,8 +1826,11 @@ let rec search ~config ~print solve_chc penv is_covered seq_map problem trace
       ^ String.concat_map_set data ~sep:", " ~f:Formula.str_of);
   *)
   match refine ~config ~print penv solve_chc seq_map problem trace with
-  | None -> (MuCLP.Problem.Invalid, [])
-  | Some (trace', induct') -> (
+  | Refuted -> (Common.Verdict.Invalid, [])
+  (* an undecided sub-query is reported as such: it is not a refutation, and
+     reading it as one would turn "could not decide" into "the property fails" *)
+  | Undecided verdict -> (verdict, [])
+  | Refined (trace', induct') -> (
       print @@ lazy (Format.asprintf "Trace: @[<v>%a@]" pr_trace (penv, trace'));
       print @@ lazy "";
       let induct'' =
@@ -1510,7 +1850,7 @@ let rec search ~config ~print solve_chc penv is_covered seq_map problem trace
               Z3Smt.Z3interface.check_sat ~id:None (FunEnv.mk_empty ())
                 [ Formula.negate vc ]
             with
-            | `Unsat -> (MuCLP.Problem.Valid, [])
+            | `Unsat -> (Common.Verdict.Valid, [])
             | _ ->
                 (* bug of [solve_chc]? *)
                 if false then (
@@ -1519,7 +1859,7 @@ let rec search ~config ~print solve_chc penv is_covered seq_map problem trace
                   search ~config ~print solve_chc penv is_covered seq_map
                     problem trace' induct'')
                 else failwith "The solution found is not valid"
-          else (MuCLP.Problem.Valid, [])
+          else (Common.Verdict.Valid, [])
       | None ->
           search ~config ~print solve_chc penv is_covered seq_map problem trace'
             induct'')
@@ -1537,13 +1877,17 @@ let solve ~config ~print ?(dtenv = Map.Poly.empty) pcsp_solver problem =
   else print @@ lazy "Start bottom-up proof search";
   Or_error.return
   @@
-  if List.is_empty problem.Problem.goals then (MuCLP.Problem.Valid, [])
+  if List.is_empty problem.Problem.goals then (Common.Verdict.Valid, [])
   else
-    search ~config ~print
-      (fun ~bpvs arg ->
-        PCSPSolver.reset ();
-        let arg_with_dt =
-          PCSP.Problem.map_params arg ~f:(fun params -> { params with dtenv })
-        in
-        PCSPSolver.solve ~bpvs arg_with_dt)
-      penv (is_covered penv) seq_map problem empty_trace empty_induct
+    try
+      search ~config ~print
+        (fun ~bpvs arg ->
+          PCSPSolver.reset ();
+          let arg_with_dt =
+            PCSP.Problem.map_params arg ~f:(fun params -> { params with dtenv })
+          in
+          PCSPSolver.solve ~bpvs arg_with_dt)
+        penv (is_covered penv) seq_map problem empty_trace empty_induct
+    with Search_undecided reason ->
+      print @@ lazy (sprintf "[ProofSearch] undecided: %s" reason);
+      (Common.Verdict.Unknown, [])

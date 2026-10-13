@@ -34,19 +34,41 @@ let rec subst_formulas ?(subst = Map.Poly.empty) ltl =
     (Ltl.mk_neg ltl, subst)
   else if Ltl.is_p ltl then
     let fml = Ltl.let_p ltl in
-    let varname = Map.Poly.length subst + 1 |> sprintf "p%d" in
-    let pvar = Ident.Pvar varname in
+    (* One proposition per distinct atomic formula, not per occurrence.  Each
+       occurrence used to get its own [p<n>], so a property mentioning
+       [output = 23] nine times reached ltl3ba as nine unrelated propositions
+       p1 .. p9; the automaton it built had 137 states where the same formula
+       over one proposition has 2, and the C-to-muCLP product (one predicate
+       per automaton state and program statement) grew by the same factor --
+       178,648 predicates instead of 2,608 on the 263-conditional P15 files of
+       the CAV 2015 LTL corpus, 13.6 GB and 220 s of which 107 s were type
+       inference.  The two automata accept the same language, so the muCLP's
+       meaning is unchanged; only its size is. *)
+    let pvar =
+      match
+        List.find (Map.Poly.to_alist subst) ~f:(fun (_, (_, fml0)) ->
+            Stdlib.(fml0 = fml))
+      with
+      | Some (pvar, _) -> pvar
+      | None -> Ident.Pvar (Map.Poly.length subst + 1 |> sprintf "p%d")
+    in
     let fml' = Formula.mk_atom @@ Atom.mk_pvar_app pvar [] [] in
-    let subst = Map.Poly.add_exn subst ~key:pvar ~data:([], fml) in
+    let subst =
+      if Map.Poly.mem subst pvar then subst
+      else Map.Poly.add_exn subst ~key:pvar ~data:([], fml)
+    in
     (Ltl.mk_p fml', subst)
   else failwith @@ sprintf "not implemented: %s" (Ltl.string_of ltl)
 
 let bastr_of_ltlstr ltlstr =
   (let args = [ "-f"; "\"" ^ ltlstr ^ "\"" ] in
-   try Common.Util.Command.sync_command "ltl3ba" args []
-   with _ -> (
+   try
+     Common.Util.Command.sync_command
+       (Common.Util.Command.resolve_tool "ltl3ba")
+       args []
+   with exn_ when not (Common.Timer.is_async exn_) -> (
      try Common.Util.Command.sync_command "./ltl3ba" args []
-     with _ ->
+     with exn_ when not (Common.Timer.is_async exn_) ->
        failwith
          "ltl3ba not found, please install it or put it in the current \
           directory"))

@@ -1,25 +1,12 @@
 [
     "BFSB",
     {
-        "verbose": false,
         "qualifier_generator": [
             "Filename",
             "./config/pcsat/qualifier/interval.json"
         ],
-        "qual_order": [
-            "Rank"
-        ],
         "strategy": [
             "First"
-        ],
-        "bfsynth": [
-            "Instance",
-            [
-                "DTBF",
-                {
-                    "verbose": false
-                }
-            ]
         ]
     }
 ]

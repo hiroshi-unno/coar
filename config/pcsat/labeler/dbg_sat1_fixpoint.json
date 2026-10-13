@@ -1,0 +1,10 @@
+{
+    "verbose": true,
+    "num_labelings": 1,
+    "sat_solver": [
+        "Filename",
+        "./config/solver/dbg_minisat.json"
+    ],
+    "conflict_by_unification": false,
+    "discharge_guards_globally": false
+}

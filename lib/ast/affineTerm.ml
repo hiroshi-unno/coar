@@ -172,7 +172,8 @@ let coeff_of v t =
               [ t; Term.Var (v', _, _) ],
               _ )
           when Stdlib.(v = v') -> (
-            try ret := Some (Evaluator.eval_term t) with _ -> ())
+            try ret := Some (Evaluator.eval_term t)
+            with exn_ when not (Common.Timer.is_async exn_) -> ())
         | _ -> ());
   !ret
 
@@ -202,7 +203,7 @@ let extract_term (vret, sret) simplify_term affine =
       when Z.(Compare.(c = int2bv (T_bv.bits_of siz) minus_one)) ->
         Set.Poly.singleton (simplify_term ret)
     | Some _ -> Set.Poly.empty
-  with _ -> Set.Poly.empty
+  with exn_ when not (Common.Timer.is_async exn_) -> Set.Poly.empty
 
 let extract_terms_from_formula (vret, sret) simplify_term simplify_formula phi =
   match simplify_formula phi with

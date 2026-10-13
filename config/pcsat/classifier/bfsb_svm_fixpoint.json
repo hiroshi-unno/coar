@@ -1,0 +1,12 @@
+[
+    "BFSB",
+    {
+        "qualifier_generator": [
+            "Filename",
+            "./config/pcsat/qualifier/svm_fixpoint.json"
+        ],
+        "strategy": [
+            "First"
+        ]
+    }
+]

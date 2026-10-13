@@ -1,30 +1,3 @@
-[submodule "benchmarks/SMT/QF_ALIA"]
-	path = benchmarks/SMT/QF_ALIA
-	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/QF_ALIA.git
-[submodule "benchmarks/SMT/QF_DT"]
-	path = benchmarks/SMT/QF_DT
-	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/QF_DT.git
-[submodule "benchmarks/SMT/QF_LIA"]
-	path = benchmarks/SMT/QF_LIA
-	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/QF_LIA.git
-[submodule "benchmarks/SMT/QF_LIRA"]
-	path = benchmarks/SMT/QF_LIRA
-	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/QF_LIRA.git
-[submodule "benchmarks/SMT/QF_LRA"]
-	path = benchmarks/SMT/QF_LRA
-	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/QF_LRA.git
-[submodule "benchmarks/SMT/QF_NIA"]
-	path = benchmarks/SMT/QF_NIA
-	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/QF_NIA.git
-[submodule "benchmarks/SMT/QF_NIRA"]
-	path = benchmarks/SMT/QF_NIRA
-	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/QF_NIRA.git
-[submodule "benchmarks/SMT/QF_NRA"]
-	path = benchmarks/SMT/QF_NRA
-	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/QF_NRA.git
-[submodule "benchmarks/SMT/QF_UF"]
-	path = benchmarks/SMT/QF_UF
-	url = https://clc-gitlab.cs.uiowa.edu:2443/SMT-LIB-benchmarks/QF_UF.git
 [submodule "benchmarks/QSMT/ijcai2016"]
 	path = benchmarks/QSMT/ijcai2016
 	url = https://github.com/zkincaid/strategy-improvement.git
@@ -71,3 +44,12 @@
 	path = athena/llvm2kittel
 	url = https://github.com/addmai/llvm2kittel.git
 	branch = svcomp2026
+[submodule "benchmarks/hwmcc_to_chc"]
+	path = benchmarks/hwmcc_to_chc
+	url = https://bitbucket.org/KenjiSaotome/hwmcc_to_chc.git
+[submodule "benchmarks/CHC/hopv"]
+	path = benchmarks/CHC/hopv
+	url = https://github.com/hopv/benchmarks.git
+[submodule "benchmarks/SGCL/diabolo"]
+	path = benchmarks/SGCL/diabolo
+	url = https://github.com/fzaiser/diabolo.git

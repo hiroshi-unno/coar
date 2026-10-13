@@ -1,0 +1,5 @@
+/* forall a. P(|a|) over the reals with P(x) =nu x >= 0: valid, since |a| >= 0.  Erasing the
+   quantifier as if |a| were onto asks forall y. y >= 0, which is invalid. */
+forall (a: real). P (abs. a)
+s.t.
+P (x: real): bool =nu x >= 0.0;

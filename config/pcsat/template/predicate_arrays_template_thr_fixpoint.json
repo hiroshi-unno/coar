@@ -1,0 +1,5 @@
+{
+    "grow_disj_when_qpa_inert": false,
+    "restart_ladder": false,
+    "loop_rate_terms": 0
+}

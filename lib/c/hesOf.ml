@@ -1,3 +1,18 @@
+(* Translation of a C program and its temporal specification into a muCLP
+   problem (a hierarchical system of fixpoint equations).
+
+   [hes_of_cctl] handles a CTL property: the program is linked into a statement
+   graph ([Linked]), optimised against the specification's free variables
+   ([Optimizer]), and each pair of a subformula and a statement becomes one
+   predicate over the variables live there, a least fixpoint for an eventuality
+   and a greatest one for an invariance; the query applies the formula's
+   predicate at the initial state after the initial assignments.
+   [hes_of_chmes] handles an LTL property, given as the modal equation system
+   of the Buchi automaton of its negation: it builds the product of that
+   system with the statement graph, one predicate per pair of an equation and a
+   statement, states that some run satisfies the negated property, and returns
+   the dual of that problem, which is valid exactly when no run does. *)
+
 open Core
 open Common.Combinator
 open Linked
@@ -31,12 +46,12 @@ let fresh_pvar env phi =
 let get_funinfo prev_env env phi stmt =
   (* TODO: improve performance *)
   let phifv = Ctl.get_fv phi in
-  let rgenv = ReadGraph.get_rgenv phifv prev_env stmt in
+  let rgenv = ReadGraph.get_rgenv ~defs:false phifv prev_env stmt in
   let state =
     Variables.union phifv
       (ReadGraph.rgenv_entries rgenv
       |> List.filter ~f:(fun (_, rg) ->
-          ReadGraph.rg_get stmt rg |> ReadGraph.length > 0)
+          ReadGraph.rg_get stmt rg |> ReadGraph.is_read)
       |> List.map ~f:(fst >> fun (x, s) -> (Ident.name_of_tvar x, s))
       |> Variables.of_list)
     |> State.of_variables
@@ -240,16 +255,54 @@ let hes_of_chmes ~print (hmes, decls, inits, query_stmt) =
     Ident.Pvar
       (sprintf "L%d%s" (id_of_stmt stmt + 1) (Ident.name_of_pvar hmes_pvar))
   in
-  let state_of stmt =
-    let rgenv = ReadGraph.get_rgenv hmes_fv prev_env stmt in
-    Variables.union hmes_fv
-      (ReadGraph.rgenv_entries rgenv
-      |> List.filter ~f:(fun (_, rg) ->
-          ReadGraph.rg_get stmt rg |> ReadGraph.length > 0)
-      |> List.map ~f:(fst >> fun (x, s) -> (Ident.name_of_tvar x, s))
-      |> Variables.of_list)
-    |> State.of_variables
+  let live_vars_of =
+    (* Which variables are live at a statement used to be answered by running a
+       fresh backward dataflow fixpoint per program variable over the whole
+       control-flow graph, once for every statement asked about. That is one
+       factor of the graph size too many, and it made converting a loop body of
+       n conditionals cost about n^4: the requests are linear in n (1,986 for
+       125 distinct statements at n = 40), each fixpoint visits the graph about
+       n^1.85 times because it is seeded from every statement in turn, and each
+       visit merges a set that itself grows with the graph.
+
+       The fixpoint does not need repeating. What it returns is already a map
+       from *every* statement to that statement's answer, and the only use made
+       of it here is to read the entry for the statement asked about, so one
+       run from the query statement serves them all. Its variable set is then
+       every variable used in the graph rather than only those used from the
+       statement onwards, which is a superset -- and harmless, because a
+       variable not used from a statement onwards has an empty read graph
+       there and the filter below drops it anyway. Checked rather than assumed:
+       the printed muCLP is byte-identical on all 46 of the 352 tracked LTL
+       benchmarks that produce output, and on synthetic cascades up to n = 40.
+
+       The table then caches the filtering, which is cheap but asked for about
+       sixteen times per distinct statement. Physical identity is the right key:
+       the control-flow graph is a graph of shared nodes. *)
+    let rgenv = ReadGraph.get_rgenv ~defs:false hmes_fv prev_env query_stmt in
+    let cache = LinkedStatementHashtbl.create 1234 in
+    fun stmt ->
+      match LinkedStatementHashtbl.find_opt cache stmt with
+      | Some vars -> vars
+      | None ->
+          let vars =
+            Variables.union hmes_fv
+              (ReadGraph.rgenv_entries rgenv
+              |> List.filter ~f:(fun (_, rg) ->
+                  ReadGraph.rg_get stmt rg |> ReadGraph.is_read)
+              |> List.map ~f:(fst >> fun (x, s) -> (Ident.name_of_tvar x, s))
+              |> Variables.of_list)
+          in
+          LinkedStatementHashtbl.add cache stmt vars;
+          vars
   in
+  (* The memo above holds the variable set and not the [State.t], and it has to:
+     [State.t] is a list of [Term.t ref] and [State.update] assigns through
+     those references and hands the same list back, so a state that looks
+     functionally updated is destructively updated. Callers below do exactly
+     that.Each caller therefore needs its own [State.of_variables], which is
+     cheap; what was expensive was the fixpoint, and that is what is cached. *)
+  let state_of stmt = State.of_variables (live_vars_of stmt) in
   let hmes_preds, query_pvar = HMES.let_hmes hmes in
   let formula_of_dia stmt hmes_pvar =
     if LinkedStatement.is_assign stmt then

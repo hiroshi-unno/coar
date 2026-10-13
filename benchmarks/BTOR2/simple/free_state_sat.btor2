@@ -1,0 +1,9 @@
+; init but no next: the state is free from time 1 on
+1 sort bitvec 4
+2 sort bitvec 1
+3 zero 1
+4 state 1 s
+5 init 1 4 3
+6 constd 1 10
+7 eq 2 4 6
+8 bad 7

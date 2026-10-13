@@ -1,3 +1,9 @@
+(* Flattening of tuples before OptPCSat solves a problem: tuple-sorted
+   variables are replaced by tuples of fresh components, equalities and
+   disequalities between tuples become componentwise, predicate arguments are
+   flattened, and a functional predicate with a tuple-valued result is split
+   into one functional predicate per component (named by the predicate's
+   name followed by the component's index). *)
 open Core
 open Common
 open Common.Ext
@@ -53,9 +59,9 @@ let extract_tuples tuple_var_map exi_senv fnpvs (param_senv, phi) =
   let phi =
     ExtTerm.to_old_fml exi_senv param_senv phi
     |> (fun phi ->
-         Debug.print_log ~tag:"extract_tuple"
-         @@ lazy (sprintf "\n%s\n" @@ Formula.str_of phi);
-         phi)
+    Debug.print_log ~tag:"extract_tuple"
+    @@ lazy (sprintf "\n%s\n" @@ Formula.str_of phi);
+    phi)
     |> Formula.map_term ~f:(replace_tuple_var_to_cons_term tuple_var_map)
     |> Formula.map_term ~f:Evaluator.simplify_term
   in
@@ -79,7 +85,7 @@ let extract_tuples tuple_var_map exi_senv fnpvs (param_senv, phi) =
               let t1s = extract_tuple tuple_var_map t1 in
               let t2s = extract_tuple tuple_var_map t2 in
               if List.length t1s = 1 && List.length t2s = 1 then
-                Formula.mk_atom @@ Atom.App (op, t1s @ t2s, info)
+                Formula.mk_atom @@ Atom.mk_app ~info op (t1s @ t2s)
               else Formula.mk_atom atm
           | _ -> Formula.mk_atom atm
         else
@@ -93,15 +99,15 @@ let extract_tuples tuple_var_map exi_senv fnpvs (param_senv, phi) =
             let tsols = extract_tuple tuple_var_map tsol in
             Formula.and_of
             @@ List.foldi tsols ~init:[] ~f:(fun i acc t ->
-                   let pf = Tvar (sprintf "%s%d" (name_of_pvar pvar) (i + 1)) in
-                   let sorts = sorts @ [ Term.sort_of t; T_bool.SBool ] in
-                   Hash_set.Poly.add fn_pvs pf;
-                   Hashtbl.Poly.set exi_senv' ~key:pf
-                     ~data:(ExtTerm.of_old_sort @@ Sort.mk_fun sorts);
-                   (Formula.mk_atom
-                   @@ Atom.mk_pvar_app (tvar_to_pvar @@ pf) sorts
-                        (tparams @ [ t ]))
-                   :: acc)
+                let pf = Tvar (sprintf "%s%d" (name_of_pvar pvar) (i + 1)) in
+                let sorts = sorts @ [ Term.sort_of t; T_bool.SBool ] in
+                Hash_set.Poly.add fn_pvs pf;
+                Hashtbl.Poly.set exi_senv' ~key:pf
+                  ~data:(ExtTerm.of_old_sort @@ Sort.mk_fun sorts);
+                (Formula.mk_atom
+                @@ Atom.mk_pvar_app (tvar_to_pvar @@ pf) sorts (tparams @ [ t ])
+                )
+                :: acc)
           else
             let ts' =
               List.fold ts ~init:[] ~f:(fun acc t ->

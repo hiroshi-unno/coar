@@ -1,3 +1,8 @@
+(* Dispatcher for the classifiers of ordinary predicates used by the
+   classification-based synthesizer: a template-based classifier or a
+   Boolean-function synthesis over qualifiers, chosen by the configuration.
+   Every classifier answers [mk_classifier pvar params table labeling
+   examples] with candidate definitions of [pvar] over [params]. *)
 open Core
 open Common.Util
 open Ast
@@ -21,16 +26,14 @@ module Config = struct
         BFSB_Classifier.Config.instantiate_ext_files cfg >>= fun cfg ->
         Ok (BFSB cfg)
 
-  let load_ext_file = function
-    | ExtFile.Instance x -> Ok (ExtFile.Instance x)
-    | Filename filename -> (
-        let open Or_error in
-        try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
-        match of_yojson raw_json with
-        | Ok x -> instantiate_ext_files x >>= fun x -> Ok (ExtFile.Instance x)
-        | Error msg ->
-            error_string
-            @@ sprintf "Invalid Classifier Configuration (%s): %s" filename msg)
+  include MakeExtFile (struct
+    type nonrec t = t
+
+    let of_yojson = of_yojson
+    let to_yojson = to_yojson
+    let name = "Classifier"
+    let instantiate = instantiate_ext_files
+  end)
 end
 
 module type ClassifierType = sig

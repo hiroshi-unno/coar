@@ -1,3 +1,7 @@
+(* Per-unknown bounds on the shape of a solution template (number of
+   disjuncts, conjuncts, depth, ...), as declared in a source program's
+   annotations ([P.upb_nd = 2] and the like) or set by a solver.  A flag with no bound, or
+   an unknown not mentioned, is unbounded: [in_space] then answers [true]. *)
 open Core
 open Common.Ext
 

@@ -1,0 +1,9 @@
+// An unsigned nondet as wide as its bv(32) variable, BV mode.  Plain comparisons are signed, so
+// only the sign bit is constrained (x >= 0); the upper half of the unsigned range is not
+// representable and is lost (documented limitation).  Expected: YES (-p ltssafebv).
+START: 0;
+TYPE x: bv(32);
+ERROR: err;
+FROM: 0; x := nondet_uint(); TO: 1;
+FROM: 1; assume(x < 0); TO: err;
+FROM: 1; assume(x >= 0); TO: 2;

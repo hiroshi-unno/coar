@@ -1,0 +1,9 @@
+/* the sibling of parity_inner_mu_loop_invalid.hes in which the innermost least
+   fixpoint Z terminates: it counts down to 0, so the query holds.  The same
+   three alternating fixpoints share one strongly connected component and Z
+   still has the odd priority 3. */
+X 5
+s.t.
+X (x: int): bool =mu Y x;
+Y (x: int): bool =nu Z x;
+Z (x: int): bool =mu x = 0 \/ (x > 0 /\ Z (x - 1)) \/ (x < 0 /\ Y x) \/ (x < 0 /\ X x);

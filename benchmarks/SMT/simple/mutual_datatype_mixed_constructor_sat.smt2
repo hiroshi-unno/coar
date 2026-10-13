@@ -1,0 +1,10 @@
+; Parametric mutually recursive datatypes: nullary root with an inferred parametric sibling constructor.
+(set-logic ALL)
+(declare-datatypes ((A 0) (B 1))
+ (((anil) (acons (ab (B Bool))))
+  (par (T) ((bbase (base T)) (bcons (value T) (ba A))))))
+(declare-const a0 A)
+(declare-const a1 A)
+(assert (distinct a0 a1))
+(assert (= a1 (acons (bbase true))))
+(check-sat)

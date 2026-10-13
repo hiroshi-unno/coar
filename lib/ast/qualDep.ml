@@ -138,6 +138,31 @@ let rec map_atom ~f = function
         (mk_imply (map_atom ~f t1) (map_atom ~f t2))
         (mk_imply (map_atom ~f t2) (map_atom ~f t1))
 
+(** [merge_dep d1 d2] is the dependency of a qualifier derived twice.
+
+    A qualifier's dependency records the condition under which the qualifier may
+    be used -- [(qual <> 0) => conds] -- and two derivations of one qualifier can
+    carry different conditions, because the qualifier is normalized before it
+    becomes a key while the conditions come from the terms it was built from.
+    [tl nil] and a variable that happens to normalize to the same formula are the
+    case met in practice: one derivation is unconditional and the other requires
+    [false], the selector being applied to the wrong constructor.
+
+    Conjoining is not a choice among several readings.  The consumer builds one
+    constraint out of the whole map by conjoining every value in it, so two
+    entries kept under distinct keys and one entry holding their conjunction
+    produce the same constraint -- which is what makes this the combination that
+    changes nothing else.  Keeping either one alone would change it: keeping the
+    unconditional one lets a candidate use a qualifier whose term denotes
+    nothing, and keeping the conditional one is arbitrary in the other
+    direction.  [CAtom LTrue] is dropped rather than conjoined, since it
+    constrains nothing. *)
+let merge_dep d1 d2 =
+  if Stdlib.(d1 = d2) then d1
+  else match (d1, d2) with
+    | CAtom LTrue, d | d, CAtom LTrue -> d
+    | _ -> mk_and d1 d2
+
 let qual_and_deps_of qual conds =
   let qual = Normalizer.normalize @@ Evaluator.simplify qual in
   let dep =

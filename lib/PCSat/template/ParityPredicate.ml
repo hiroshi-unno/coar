@@ -1,3 +1,11 @@
+(* Template for a parity-condition predicate ([Kind.Parity]): like the tagged
+   well-founded family, its unknowns relate a state of tag [l] to a state of
+   tag [r] and share one ranking function per tag, but the required decrease
+   depends on the priorities the kind carries (maximum priority, the priority
+   of each tag, the truncation and the accepting set): there is one ranking
+   level per truncated priority, and at an accepting priority a non-strict
+   decrease is admitted too.  Uses the well-founded template's
+   configuration. *)
 open Core
 open Common
 open Common.Ext
@@ -44,6 +52,9 @@ let state_of param labels : state =
     param.ndc,
     param.nl,
     param.depth,
+    (* [Z.to_int] is safe: the bounds are the template's configured
+       coefficient and constant bounds, grown by one step at a time, never a
+       model integer *)
     Option.map ~f:Z.to_int param.ubrc,
     Option.map ~f:Z.to_int param.ubrd,
     Option.map ~f:Z.to_int param.ubdc,
@@ -125,6 +136,8 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
 
   let name_of () = Arg.name
   let kind_of () = Kind.str_of (Kind.Parity (nwf, (tag_l, tag_r)))
+  let kind = Kind.Parity (nwf, (tag_l, tag_r))
+  let flexible = false
   let sorts_of = Hashtbl.Poly.find_exn sorts_map
   let sorts_l = sorts_of tag_l
   let sorts_r = sorts_of tag_r
@@ -188,6 +201,9 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
 
   let update_hspace hspace =
     HypSpace.qualifiers_of ~fenv:Arg.fenv !param.depth hspace
+
+  let last_cert : Templ.kind_cert_templ option ref = ref None
+  let kind_cert_template () = !last_cert
 
   let gen_template ~ucore:_ (hspace : HypSpace.hspace) =
     let template =
@@ -265,6 +281,7 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
         (tag_l, params_left, tag_r, params_right)
         (quals_x, terms_x) (quals_y, terms_y)
     in
+    last_cert := Some template.Templ.cert;
     Debug.print
     @@ lazy
          (sprintf "[%s] predicate template:\n  %s"

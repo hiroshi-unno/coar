@@ -67,7 +67,8 @@ let generate_from_preds _preds = Set.Poly.empty
     }
   in
   let psub =
-    try FwAIHCSSolver.solve ~wide:true preds with _ -> []
+    try FwAIHCSSolver.solve ~wide:true preds
+    with exn_ when not (Common.Timer.is_async exn_) -> []
   in
   let not_useful e = Formula.is_true (Sequent.rphi_of e.sequent) in
   List.map of_psub_elem psub
@@ -127,7 +128,7 @@ let normalize lemma =
             {
               lemma.sequent with
               left_atms =
-                List.map ~f:(uncurry Atom.pvar_app_of_senv >> Sequent.guard) tl;
+                List.map ~f:(Tuple2.uncurry Atom.pvar_app_of_senv >> Sequent.guard) tl;
               left_phi = phi1';
             };
         }
@@ -142,7 +143,7 @@ let normalize lemma =
         {
           lemma.sequent with
           left_atms =
-            List.map ~f:(uncurry Atom.pvar_app_of_senv >> Sequent.guard) pvars1';
+            List.map ~f:(Tuple2.uncurry Atom.pvar_app_of_senv >> Sequent.guard) pvars1';
           left_phi = phi1';
         };
     }

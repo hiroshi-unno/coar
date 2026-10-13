@@ -89,6 +89,10 @@ let detect ~print pvar sorts (graph, components, node_map_rev) res =
             print @@ lazy "A non-WF cycle found: [";
             let papps = get_papps [] cycle in
             print @@ lazy "]\n";
-            Set.add acc
-              ExClause.
-                { positive = Set.Poly.empty; negative = Set.Poly.of_list papps }))
+            (* canonicalised, because a [Set.Poly] orders by the shape of the
+               tree it was built as: two cycles visited in different orders
+               give the same clause in two shapes, which the enclosing set
+               counts twice *)
+            Set.add acc @@ ExClause.canon
+            @@ ExClause.
+                 { positive = Set.Poly.empty; negative = Set.Poly.of_list papps }))

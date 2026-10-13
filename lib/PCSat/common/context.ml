@@ -1,3 +1,12 @@
+(* The state a PCSat solve can carry over to the next one on the same
+   context: the example graph, the truth tables, the problem and its sort
+   environment, as one [version], with a stack for incremental [push]/[pop].
+
+   [significant_version_of t pcsp] starts a solve of [pcsp] from the current
+   version when there is one, keeping the examples of the clauses [pcsp]
+   still has and the truth tables of the predicates whose sort is unchanged
+   ([remove_unused]); otherwise it starts empty.  [isolated] runs a solve of
+   a different problem without reading or overwriting the current version. *)
 open Core
 open Ast
 open Ident
@@ -40,6 +49,25 @@ let version_of version (vs : VersionSpace.t) : version =
 
 let set_version t v = t.version <- Some v
 let clear_version t = t.version <- None
+
+(* Run [f] as a solve that neither reads nor leaves behind this context's
+   current version: the version is cleared before [f] and put back on every
+   exit, raising included.  A solve started on a context whose version is set
+   reuses that version's example graph and truth tables (what an incremental
+   caller wants), so a solve of a DIFFERENT problem run in between -- a nested
+   solve of an instance, from inside the preprocessing of the problem the next
+   solve is about -- would otherwise hand its examples to that next solve,
+   which then starts from data about a problem it was never asked. *)
+let isolated t f =
+  let saved = t.version in
+  t.version <- None;
+  match f () with
+  | v ->
+      t.version <- saved;
+      v
+  | exception e ->
+      t.version <- saved;
+      raise e
 
 let push t =
   match t.version with

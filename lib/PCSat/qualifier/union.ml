@@ -1,3 +1,5 @@
+(* The union of several qualifier domains: each domain's qualifiers, renamed
+   onto one common parameter list. *)
 open Core
 open Common.Ext
 open Ast

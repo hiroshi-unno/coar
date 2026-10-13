@@ -1,0 +1,5 @@
+/* a safety property: the loop never leaves x >= 0; the greatest fixpoint has
+   an accepting priority and its parity predicate is satisfied reflexively */
+forall (x: int). x >= 0 => I x
+s.t.
+I (x: int): bool =nu x >= 0 /\ I (x + 1);

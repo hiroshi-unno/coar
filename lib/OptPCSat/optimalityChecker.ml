@@ -1,3 +1,14 @@
+(* Shared machinery of OptPCSat's optimality checkers.  A solution is shown
+   optimal for one predicate by solving an auxiliary pfwCSP with well-founded
+   and functional predicates: no strictly better interpretation is reachable,
+   which the method of Gu, Tsukada and Unno (POPL 2023) reduces to termination.
+   This module holds what the maximality and minimality checkers share: the
+   cheap direct check ([simple_check]: the solution is already valid for
+   maximization, or unsatisfiable for minimization), the naming of the auxiliary
+   predicates, Tseitin predicates for large disjunctions, and the elimination of
+   functional-predicate applications by quantifier elimination and equality
+   reasoning ([filter_pfapps]).  The last is sound only when the functional
+   predicates it relies on are single-valued, not merely total. *)
 open Core
 open Common
 open Common.Ext
@@ -76,7 +87,7 @@ let simple_check ~is_max p exi_senv theta =
   in
   let phi = if is_max then phi else LogicOld.Formula.mk_neg phi in
   try Z3Smt.Z3interface.is_valid ~id:(Atomic.get id) Map.Poly.empty phi
-  with _ -> false
+  with exn_ when not (Common.Timer.is_async exn_) -> false
 
 let dnf_clause_to_formula (ps, ns, phi) =
   let open Ast.LogicOld in
@@ -97,12 +108,12 @@ let merge_get_leq pure_phi =
       | Atom.App (Predicate.Psym T_int.Geq, [ t1; t2 ], info) as atm
         when AffineTerm.is_affine t1 ->
           let neg_atm =
-            Atom.App (Predicate.Psym T_int.Leq, [ t1; t2 ], info)
+            Atom.mk_app ~info (Predicate.Psym T_int.Leq) [ t1; t2 ]
             |> Normalizer.normalize_atom
           in
           if Set.mem ps neg_atm then
             let eq_atm =
-              Atom.App (Predicate.Psym T_bool.Eq, [ t1; t2 ], info)
+              Atom.mk_app ~info (Predicate.Psym T_bool.Eq) [ t1; t2 ]
             in
             Map.Poly.set acc ~key:atm ~data:eq_atm
             |> Map.Poly.set ~key:neg_atm ~data:eq_atm
@@ -134,7 +145,7 @@ let apply_qelim_on_pure_formula bound exi_senv uni_senv phi =
   let open Ast.LogicOld in
   let open Formula in
   let call_qelim phi =
-    Qelim.qelim_old bound exi_senv (uni_senv, nnf_of @@ mk_neg phi)
+    Qelim.elim_free_univ_vars_old bound exi_senv (uni_senv, nnf_of @@ mk_neg phi)
     |> snd |> mk_neg |> nnf_of |> Evaluator.simplify
   in
   let phi' =
@@ -198,7 +209,7 @@ let apply_qelim bound exi_senv uni_senv pred_phi pure_phi =
   |> Set.Poly.map ~f:(fun phi ->
       Debug.print_log ~tag:"qelim:" @@ lazy (LogicOld.Formula.str_of phi);
       let _, _, term =
-        Qelim.qelim bound exi_senv
+        Qelim.elim_free_univ_vars bound exi_senv
           (uni_senv, [], ExtTerm.of_old_formula @@ Evaluator.simplify_neg phi)
       in
       Debug.print_log ~tag:"after-qelim:"
@@ -672,7 +683,7 @@ let has_useable_pvar pcsp uni_senv atms =
   let exi_senv = PCSP.Problem.senv_of pcsp in
   Set.exists atms ~f:(fun t ->
       if ExtTerm.is_pvar_app exi_senv uni_senv t then
-        PCSP.Problem.is_ne_pred pcsp @@ ExtTerm.pvar_of_atom t
+        PCSP.Problem.is_tot_pred pcsp @@ ExtTerm.pvar_of_atom t
       else false)
 
 let elim_clauses pcsp =

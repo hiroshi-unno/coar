@@ -18,10 +18,12 @@
   CoAR.PCSat
   CoAR.MuVal
   CoAR.MuCyc
+  CoAR.MuStrat
   CoAR.Printer
   CoAR.RCaml
   CoAR.EffCaml
   CoAR.c
   CoAR.pGCL
-  CoAR.SGCL)
- (modules solver))
+  CoAR.SGCL
+  CoAR.BTOR2)
+ (modules problemKind solver))

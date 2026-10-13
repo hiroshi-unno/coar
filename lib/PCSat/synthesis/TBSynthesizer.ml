@@ -1,3 +1,10 @@
+(* The template-based synthesis phase of PCSat's CEGIS loop: a thin wrapper
+   over the solution template.  [run_phase] asks the template for a candidate
+   consistent with the current examples and returns it as a total candidate
+   (with its generalisation too when [generalize] is set) beside the partial
+   candidates the template proposes for single clauses; the template may
+   instead report the hypothesis space exhausted ([OutSpace]) or give the
+   round up ([Yield]), which returns no candidate. *)
 open Core
 open Common
 open Ast
@@ -5,9 +12,9 @@ open PCSatCommon
 
 module Config = struct
   type t = {
-    verbose : bool;
-    generalize : bool;
-    solution_template : SolutionTemplate.Config.t;
+    verbose : bool; [@default false]
+    generalize : bool; [@default false]
+    solution_template : SolutionTemplate.Config.t; [@default Common.Util.config_default SolutionTemplate.Config.of_yojson "{}"]
   }
   [@@deriving yojson]
 
@@ -64,4 +71,5 @@ struct
         in
         Ok (State.Continue (vs, cands))
     | SolutionTemplate.OutSpace ps -> Ok (State.OutSpace ps)
+    | SolutionTemplate.Yield -> Ok (State.Continue (vs, []))
 end

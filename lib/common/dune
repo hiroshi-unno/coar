@@ -3,16 +3,27 @@
  (public_name CoAR.common)
  (preprocess
   (pps ppx_deriving_yojson))
- (libraries core core_unix core_unix.sys_unix zarith domainslib yojson)
+ (libraries unix threads.posix core core_unix core_unix.sys_unix zarith domainslib yojson)
+ (foreign_stubs
+  (language c)
+  (names forkGuard_stubs clock_stubs processExit_stubs))
  (modules
   combinator
   ext
   util
   timer
+  clock
+  phaseTime
+  forkGuard
+  processExit
   debug
   messenger
   contFrac
   unionFind
   unionFindInt
+  verdict
+  refusal
+  smtlib
   lazyList
-  zipper))
+  zipper
+  dagCensus))

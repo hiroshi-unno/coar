@@ -153,8 +153,8 @@ FormulaAtom:
 /* Ast.LogicOld.Atom.t */
 Atom:
     atom=T_bool { atom }
-  | TRUE { Atom.True Dummy }
-  | FALSE { Atom.False Dummy }
+  | TRUE { Atom.mk_true ~info:Dummy () }
+  | FALSE { Atom.mk_false ~info:Dummy () }
 
 /*AtomAppArgs:
     { [] }
@@ -190,7 +190,7 @@ T_numNeg:
     Term.mk_fvar_app (Ident.Tvar "max") (List.map args ~f:(fun _ -> T_real.SReal)) T_real.SReal args }
   | MIN args=FvarAppArgs {
     Term.mk_fvar_app (Ident.Tvar "min") (List.map args ~f:(fun _ -> T_real.SReal)) T_real.SReal args }
-  | funname=ID args=FvarAppArgs {
+  | funname=ID args=FvarAppArgs1 {
       Term.mk_fvar_app (Ident.Tvar funname)
         (List.map args ~f:(fun t -> if T_tuple.is_stuple t then T_real.SReal else Term.sort_of t))
         T_real.SReal args
@@ -206,6 +206,15 @@ T_numAtom:
 FvarAppArgs:
     { [] }
   | arg=T_numAtom args=FvarAppArgs { arg :: args }
+
+/* Arguments of a function/predicate application: at least one. A bare `ID` at
+   the head of a term is a variable (T_numAtom), not a nullary application --
+   do not allow the empty list here. Allowing it makes every bare `ID`
+   ambiguous between the two, which LR(1) cannot resolve.
+   Nullary predicates still work: they parse as variables and are substituted
+   by name from the solution map, so `.qhes` files need no `P ()` form. */
+FvarAppArgs1:
+    arg=T_numAtom args=FvarAppArgs { arg :: args }
 
 /* Ast.LogicOld.T_bool */
 T_bool:

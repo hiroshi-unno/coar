@@ -3,30 +3,44 @@ open Common.Util
 open PCSatCommon
 
 module Config = struct
-  type t = { output_iteration : bool; sygus_comp : bool } [@@deriving yojson]
+  type t = {
+    output_iteration : bool; [@default true]
+    sygus_comp : bool; [@default false]
+    print_unsat_witness : bool; [@default false]
+        (* after an [unsat] verdict, print the evidence the solver recorded *)
+  }
+  [@@deriving yojson]
 
   module type ConfigType = sig
     val config : t
   end
 
-  let load_ext_file = function
-    | ExtFile.Instance x -> Ok (ExtFile.Instance x)
-    | Filename filename -> (
-        let open Or_error in
-        try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
-        match of_yojson raw_json with
-        | Ok x -> Ok (ExtFile.Instance x)
-        | Error msg ->
-            error_string
-            @@ sprintf "Invalid SolPrinter Configuration (%s): %s" filename msg)
+  include MakeExtFile (struct
+    type nonrec t = t
+
+    let of_yojson = of_yojson
+    let to_yojson = to_yojson
+    let name = "SolPrinter"
+
+    (* a leaf: no nested config to load *)
+    let instantiate = Or_error.return
+  end)
 end
 
 module type SolPrinterType = sig
   val print : State.output -> unit
+
+  val prints_solution : bool
+  (** whether [print] shows a [sat] answer's solution, and not only the
+      verdict (and the iteration count) *)
 end
 
 module Make (Config : Config.ConfigType) = struct
   let config = Config.config
+
+  (* [str_of_solution] prints the verdict of a [sat] answer and not its
+     substitution; only the SyGuS printer shows the solution *)
+  let prints_solution = config.sygus_comp
 
   let print (solution, info) =
     Out_channel.print_endline
@@ -37,6 +51,13 @@ module Make (Config : Config.ConfigType) = struct
         (PCSP.Problem.str_of_solution solution)
         info.State.num_cegis_iters
     else PCSP.Problem.str_of_solution solution;
+    (if config.print_unsat_witness then
+       match (solution, info.State.unsat_witness) with
+       | PCSP.Problem.Unsat _, Some w ->
+           Out_channel.print_endline (UnsatWitness.str_of w)
+       | PCSP.Problem.Unsat _, None ->
+           Out_channel.print_endline "(unsat-witness (none-recorded))"
+       | _ -> ());
     Out_channel.flush stdout
 end
 

@@ -166,7 +166,7 @@ VarDecl:
   }
 
 VarDeclIntType:
-  | UNSIGNED Int
+  | UNSIGNED Int { unsigned_seen := true }
   | CONST Int
   | STATIC Int
   | STATIC CONST Int
@@ -420,8 +420,8 @@ T_intAtom:
   | NONDET_DOUBLE LPAREN RPAREN { Term.mk_fsym_app (FunCall funname_nondet_double) [] ~info:Dummy }
 
 Cast:
+  | LPAREN UNSIGNED Int RPAREN { unsigned_seen := true }
   | LPAREN Int RPAREN
-  | LPAREN UNSIGNED Int RPAREN
   | LPAREN VOID RPAREN { () }
 
 /* Ast.LogicOld.T_bool */

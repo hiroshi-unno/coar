@@ -1,3 +1,8 @@
+(* OptPCSat's entry point: splits a CHC optimization problem into its
+   directions, priority and fronts and its pfwCSP, builds the lexicographic
+   improver for them and runs the optimizer, printing the final answer when
+   asked.  The method is Yu Gu, Takeshi Tsukada and Hiroshi Unno, "Optimal
+   CHC Solving via Termination Proofs", POPL 2023. *)
 open Core
 
 module type SolverType = sig

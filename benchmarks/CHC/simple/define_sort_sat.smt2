@@ -1,0 +1,11 @@
+; An SMT-LIB command the reader once refused: define-sort aliases, nullary and parametric.  Expected: sat.
+(set-logic HORN)
+(define-sort Idx () Int)
+(define-sort Pair (T) (Array T T))
+(declare-fun P (Idx) Bool)
+(declare-fun Q ((Pair Int)) Bool)
+(assert (forall ((i Idx)) (=> (> i 0) (P i))))
+(assert (forall ((i Idx)) (=> (and (P i) (<= i 0)) false)))
+(assert (forall ((a (Pair Int))) (=> (= (select a 0) 1) (Q a))))
+(assert (forall ((a (Pair Int))) (=> (and (Q a) (not (= (select a 0) 1))) false)))
+(check-sat)

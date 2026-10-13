@@ -1,0 +1,17 @@
+/* Isolation probe, and the one that costs: an extra predicate argument that is
+   never read but ALTERNATES between 0 and 1.  Constant-argument erasure cannot
+   remove it -- it is not constant -- so it survives into the well-founded
+   template as a third coordinate, and the qualifier generator emits
+   combinations over pairs and triples of coordinates: 27 qualifiers here
+   against 10 for the pass-through twin, for one extra variable that no
+   certificate can use.  Measured at 51 s against 0.6 s for the twin.
+
+   What this isolates: the cost is not the extra argument (the twin has one and
+   is free), not an extra predicate (`..._twopred_noflag_valid.hes` adds one and
+   is free), and not the real sort (this file is entirely integer).  It is an
+   argument whose value changes.  An analysis that removed arguments that are
+   never READ, rather than only those that are CONSTANT, would erase `d` here. */
+Main 0
+s.t.
+Main (z:int): bool =mu forall (a:int). forall (b:int). (a = 0 /\ b = 0) \/ Q a b 0;
+Q (a:int) (b:int) (d:int): bool =mu a > 0 /\ b >= 0 \/ Q (-b) a (1 - d);

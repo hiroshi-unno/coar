@@ -1,0 +1,13 @@
+/* The integer twin of the real-valued rotation beside this file: the same
+   problem, the same property, and the only difference is the sort.  This one
+   answers valid in under a second with the shipped template, where the real one
+   does not answer at all -- which is what makes the pair worth keeping.  Over
+   the integers a linear ranking function decreases by a whole unit whenever it
+   decreases, which is what the templates' decrease condition asks for; over the
+   reals the state can be scaled arbitrarily close to the origin, so no linear
+   form in (a,b) is guaranteed to drop by one and the rank has to be piecewise
+   constant instead. */
+Main 0
+s.t.
+Main (z:int): bool =mu forall (a:int). forall (b:int). (a = 0 /\ b = 0) \/ Q a b;
+Q (a:int) (b:int): bool =mu a > 0 /\ b >= 0 \/ Q (-b) a;

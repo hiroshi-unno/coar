@@ -1,3 +1,14 @@
+(* Template-based classifier: fit the configured template family (ordinary,
+   WF or FN, fixed-shape or flexible) to one predicate's labelled examples.
+
+   Each example becomes a constraint on the template's parameters, a hole
+   being instantiated by the truth-table value of each of its qualifiers on
+   that example; the constraints and the template's own parameter bounds are
+   asked of Z3 as one tracked query.  A model gives the candidate (holes
+   filled from their qualifiers, parameters from the model, the rest
+   defaulted); an unsat core is fed back to the template as the labels that
+   tell it how to grow, and the search repeats.  Only ground examples are
+   accepted: a parametric example fails an assertion. *)
 open Core
 open Common
 open Common.Ext
@@ -18,7 +29,7 @@ module Config = struct
     | FN_Flex of Template.FNPredicateFlex.Config.t ext_file
   [@@deriving yojson]
 
-  type t = { verbose : bool; kind : kind } [@@deriving yojson]
+  type t = { verbose : bool; [@default false] kind : kind [@default Common.Util.config_default kind_of_yojson {|["FN", ["Filename", "./config/pcsat/template/fn_predicate_template.json"]]|}] } [@@deriving yojson]
 
   module type ConfigType = sig
     val config : t
@@ -172,7 +183,7 @@ struct
                   ~id tt fenv qdeps
                   (ExAtom.normalize_params atom)
               in
-              let e = tt.table.{qi, ai} in
+              let e = tt.cells.{qi, ai} in
               if e = 1 then Logic.ExtTerm.(geq_of (mk_var key) (zero ()))
               else if e = -1 then Logic.ExtTerm.(leq_of (mk_var key) (zero ()))
               else if

@@ -1,3 +1,7 @@
+(* The interface of an improver: [improve] builds the constraint that a
+   solution strictly better than the current one exists (with the
+   non-emptiness predicates it introduces), and [gen_maxc] the constraint
+   that keeps an already optimized predicate at least as good as it is. *)
 open Ast.Ident
 open Ast.Logic
 

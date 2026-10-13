@@ -1,9 +1,12 @@
+(* Placeholder regressor: [mk_regressor] ignores its examples and returns a
+   dummy integer term with no template parameters, so a functional predicate
+   classified through it gets the candidate [ret = dummy]. *)
 open Core
 open Common
 open Ast.LogicOld
 
 module Config = struct
-  type t = { verbose : bool } [@@deriving yojson]
+  type t = { verbose : bool [@default false] } [@@deriving yojson]
 
   module type ConfigType = sig
     val config : t

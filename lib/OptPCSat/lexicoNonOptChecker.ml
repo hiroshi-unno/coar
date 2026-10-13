@@ -1,3 +1,11 @@
+(* The improver for an objective over a priority list of predicates, each
+   maximized or minimized.  [improve] states, for the current solution, that
+   a lexicographically better solution exists: each predicate in turn is
+   either strictly better or equal and the rest of the list improves.
+   Strictness is expressed with a non-emptiness predicate witnessing a point
+   where the new interpretation improves on the old.  With [point_wise] it
+   asks instead for a Pareto improvement: every predicate at least as good
+   and some one strictly better. *)
 open Core
 open Common
 open Ast.Logic

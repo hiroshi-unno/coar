@@ -1,3 +1,29 @@
+(* Template for ADMISSIBLE predicate variables.
+
+   Source: Satoshi Kura and Hiroshi Unno, "Automated Verification of Higher-Order
+   Probabilistic Programs via a Dependent Refinement Type System", Proceedings of
+   the ACM on Programming Languages 8 (ICFP 2024), 973-1002, doi:10.1145/3674662.
+   Admissible predicate variables are one of the two predicate-variable types that
+   paper adds to constrained Horn clauses, and this is its admissible template.
+
+   WHAT ADMISSIBILITY IS.  A subset S of an omega-cpo with least element bottom is
+   admissible when bottom is in S and S is closed under suprema of omega-chains; a
+   formula is admissible at a variable when the subset it cuts out at that variable
+   is admissible in that sense.  The condition exists for the FIXED POINT: the
+   typing rule for [fix f. M] needs the least fixed point to satisfy the predicate,
+   which Scott induction gives only for an admissible one.  Over [0, infinity] this
+   admits [r <= 1] and excludes both [r < 1] (not closed under suprema) and
+   [a <= r] (the least element is missing), which is why this system reasons about
+   upper bounds and finds lower bounds hard.
+
+   WHY THE TEMPLATE IS THE WHOLE PROOF.  Admissibility is a closure property of a
+   DENOTATION, quantifying over omega-chains, so there is no first-order query that
+   checks it -- and correspondingly nothing downstream re-verifies a candidate of
+   this kind.  What discharges the obligation is that every instantiation of this
+   template is admissible by construction, proved as a lemma in the paper above.
+   So WIDENING THIS TEMPLATE IS NOT A LOCAL CHANGE: a new shape needs that lemma
+   redone for it, and no test in this tree would report its absence. *)
+
 open Core
 open Common
 open Common.Ext
@@ -8,25 +34,25 @@ open Function
 
 module Config = struct
   type t = {
-    verbose : bool;
-    number_of_expr : int;
-    number_of_cond_conj : int;
-    depth : int;
-    ext : int;
-    upper_bound_expr_coeff : int option;
-    upper_bound_expr_const : int option;
-    expr_seeds : int list option;
-    upper_bound_cond_coeff : int option;
-    upper_bound_cond_const : int option;
-    cond_seeds : int list option;
-    max_number_of_cond_conj : int option;
-    threshold_expr_coeff : int option;
-    threshold_expr_const : int option;
-    threshold_cond_coeff : int option;
-    threshold_cond_const : int option;
-    ignore_bool : bool;
-    enable_lhs_param : bool;
-    fix_shape : bool;
+    verbose : bool; [@default false]
+    number_of_expr : int; [@default 1]
+    number_of_cond_conj : int; [@default 1]
+    depth : int; [@default 0]
+    ext : int; [@default 0]
+    upper_bound_expr_coeff : int option; [@default Some 1]
+    upper_bound_expr_const : int option; [@default Some 0]
+    expr_seeds : int list option; [@default None]
+    upper_bound_cond_coeff : int option; [@default Some 1]
+    upper_bound_cond_const : int option; [@default Some 0]
+    cond_seeds : int list option; [@default None]
+    max_number_of_cond_conj : int option; [@default None]
+    threshold_expr_coeff : int option; [@default None]
+    threshold_expr_const : int option; [@default None]
+    threshold_cond_coeff : int option; [@default None]
+    threshold_cond_const : int option; [@default None]
+    ignore_bool : bool; [@default true]
+    enable_lhs_param : bool; [@default true]
+    fix_shape : bool; [@default true]
   }
   [@@deriving yojson]
 
@@ -36,17 +62,14 @@ module Config = struct
 
   let instantiate_ext_files cfg = Ok cfg
 
-  let load_ext_file = function
-    | ExtFile.Instance x -> Ok (ExtFile.Instance x)
-    | Filename filename -> (
-        let open Or_error in
-        try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
-        match of_yojson raw_json with
-        | Ok x -> instantiate_ext_files x >>= fun x -> Ok (ExtFile.Instance x)
-        | Error msg ->
-            error_string
-            @@ sprintf "Invalid AdmPredicate Configuration (%s): %s" filename
-                 msg)
+  include MakeExtFile (struct
+    type nonrec t = t
+
+    let of_yojson = of_yojson
+    let to_yojson = to_yojson
+    let name = "AdmPredicate"
+    let instantiate = instantiate_ext_files
+  end)
 end
 
 module type ArgType = sig
@@ -109,6 +132,9 @@ let state_of param labels : state =
     param.nc,
     param.depth,
     param.ext,
+    (* [Z.to_int] is safe: the bounds are the template's configured
+       coefficient and constant bounds, grown by one step at a time, never a
+       model integer *)
     Option.map ~f:Z.to_int param.ubec,
     Option.map ~f:Z.to_int param.ubed,
     Option.map ~f:Z.to_int param.ubcc,
@@ -180,6 +206,8 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
 
   let name_of () = Arg.name
   let kind_of () = Kind.str_of (Kind.Adm Arg.with_cond)
+  let kind = Kind.Adm Arg.with_cond
+  let flexible = false
   let sort_of () = Sort.mk_fun @@ Arg.sorts @ [ T_bool.SBool ]
   let params_of () = sort_env_list_of_sorts Arg.sorts
 
@@ -218,13 +246,18 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
         ~qelim:(Z3Smt.Z3interface.qelim ~id ~fenv:Arg.fenv)
         params quals
     in
-    (quals', Set.union terms' (Templ.terms_over_set terms (List.initial params)))
+    ( quals',
+      Set.union terms' (Templ.terms_over_set terms (List.drop_last_exn params))
+    )
 
   let update_hspace hspace =
     HypSpace.qualifiers_of ~fenv:Arg.fenv !param.depth hspace
 
+  let kind_cert_template () = None
+
   let gen_template ~ucore:_ (hspace : HypSpace.hspace) =
     let template =
+      Function.refuse_without_template @@ fun () ->
       Templ.gen_adm_predicate ~print:Debug.print ~with_cond:Arg.with_cond
         ~ignore_bool:config.ignore_bool
         ~enable_lhs_param:config.enable_lhs_param
@@ -605,12 +638,13 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     if
       Integer.max_list
         [
+          (* safe for the same reason as in [state_of]: configured bounds *)
           (match param.ubec with Some n -> Z.to_int n | None -> 0);
           (match param.ubed with Some n -> Z.to_int n | None -> 0);
           (match param.ubcc with Some n -> Z.to_int n | None -> 0);
           (match param.ubcd with Some n -> Z.to_int n | None -> 0);
         ]
-      >= Integer.pow 4 (param.nd * param.nc)
+      >= Int.pow 4 (param.nd * param.nc)
       (*ToDo*)
     then
       let param, actions =
@@ -620,7 +654,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
       if
         List.exists Arg.sorts ~f:(fun s ->
             Term.is_dt_sort s || Term.is_array_sort s)
-        && param.nd * param.nc > Integer.pow (param.depth + 1) 3
+        && param.nd * param.nc > Int.pow (param.depth + 1) 3
       then increase_depth_ext (param, actions)
       else if
         (param.nd + param.nc) mod 2 = 0

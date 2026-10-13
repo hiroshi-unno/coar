@@ -1,3 +1,12 @@
+(* EffCaml's entry point: verify an effectful OCaml program by higher-order
+   model checking.
+
+   [solve_from_file] accepts only a [.ml] file; [Cgen.from_ml_file] translates
+   it into a list of named model-checking problems, and each is handed in turn
+   to the configured [HOMCSolver], which prints its own verdict.  The function
+   returns [Ok ()] once every problem has been tried: the solver's own result
+   for each problem is discarded, so an error from it is not propagated. *)
+
 open Core
 open Common
 open Common.Ext

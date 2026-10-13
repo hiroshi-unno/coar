@@ -1,3 +1,7 @@
+(* Dispatcher for the regressors that fit a result term to a functional
+   predicate's labelled examples: [mk_regressor args labeled] returns the
+   term over [args] and the template parameters left in it.  One learner is
+   configurable today. *)
 open Core
 open Common.Util
 open Ast.LogicOld
@@ -14,16 +18,14 @@ module Config = struct
         let open Or_error in
         DT_Regressor.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (DT cfg)
 
-  let load_ext_file = function
-    | ExtFile.Instance x -> Ok (ExtFile.Instance x)
-    | Filename filename -> (
-        let open Or_error in
-        try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
-        match of_yojson raw_json with
-        | Ok x -> instantiate_ext_files x >>= fun x -> Ok (ExtFile.Instance x)
-        | Error msg ->
-            error_string
-            @@ sprintf "Invalid Regressor Configuration (%s): %s" filename msg)
+  include MakeExtFile (struct
+    type nonrec t = t
+
+    let of_yojson = of_yojson
+    let to_yojson = to_yojson
+    let name = "Regressor"
+    let instantiate = instantiate_ext_files
+  end)
 end
 
 module type RegressorType = sig

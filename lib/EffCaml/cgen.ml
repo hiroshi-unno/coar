@@ -1,3 +1,32 @@
+(* EffCaml's front end: translate an OCaml program with algebraic effects and
+   handlers into a higher-order model-checking problem.
+
+   [from_ml_file] parses and type-checks the source with the OCaml compiler's
+   own front end and walks the typed structure item by item ([of_struct_item],
+   [top_level_aux]).  Each expression is traversed by [MBcgen.fold_expr]
+   (shared with RCaml, here in its CPS-translation mode) with callbacks that
+   emit the rules of a continuation-passing translation: effect operations
+   become calls of handler arguments, handlers and [shift]/[reset] become
+   explicit continuations, and the simple types, operation signatures and
+   control effects inferred by [MBcsol] give the CPS types ([cps_val_type_of]
+   and its siblings).  Boolean values are encoded by the terminals [tt]/[ff]
+   and the nonterminals [Not], [And], [Or], [Imply], [Iff] added at the top
+   level.
+
+   Item attributes say what is checked: [[@@@automaton]] declares tree-automaton
+   transitions, [[@@@check_toplevel]] gives a tree automaton the whole program's
+   behaviour tree is checked against, which yields one recursion scheme
+   ([Problem.RSFD]) for the model checker.  [[@@@check]]/[[@@@assert]], a
+   per-function type check, is parsed but its problem generation is not
+   implemented and fails.
+
+   Implements the higher-order model checking of effect-handling programs of
+   Sekiyama and Unno (OOPSLA 2024) and its answer-type-polymorphic extension by
+   Sekiyama, Dal Lago and Unno (OOPSLA 2025).
+
+   [top_level] resets the process-global datatype and function environments of
+   [Ast.LogicOld] before translating, so a translation is not reentrant. *)
+
 open Core
 open Typedtree
 open Common
@@ -66,7 +95,7 @@ module Make (Config : Config.ConfigType) = struct
             (Term.str_of_sort sort1 ^ " vs " ^ Term.str_of_sort sort2);
         Map.Poly.singleton x sort2
     | Pattern.PTuple pats, T_tuple.STuple sorts ->
-        Map.force_merge_list @@ List.map2_exn pats sorts ~f:(curry2 env_of_pat)
+        Map.force_merge_list @@ List.map2_exn pats sorts ~f:(Tuple2.curry env_of_pat)
     | Pattern.PCons _, _ ->
         failwith
           "[env_of_pat] not reachable here because [let T x = ... in ...] is \
@@ -116,7 +145,7 @@ module Make (Config : Config.ConfigType) = struct
         Sort.mk_arrow (cps_val_type_of s) (cps_comp_type_of c)
     | Sort.SPoly (svs, s) -> Sort.SPoly (svs, cps_val_type_of s)
     | ( Sort.SVar _ | T_bool.SBool | T_int.SInt | T_real.SReal
-      | T_string.SString | T_sequence.SSequence _ | T_regex.SRegEx ) as s ->
+      | T_string.SString | T_trace.STrace _ | T_regex.SRegEx ) as s ->
         s
     | T_array.SArray (s1, s2) ->
         T_array.SArray (cps_val_type_of s1, cps_val_type_of s2)
@@ -159,11 +188,14 @@ module Make (Config : Config.ConfigType) = struct
     let map =
       match op_sig with
       | Sort.OpSig (map, _) -> map
-      | _ -> failwith "not supported"
+      | _ ->
+          failwith
+          @@ sprintf "[tl_handlers_of] an operation signature is required: %s"
+               (Term.str_of_opsig op_sig)
     in
     List.unzip
     @@ List.map ~f:(fun (op, sort) ->
-        let sort = try ALMap.find_exn op map with _ -> sort in
+        let sort = try ALMap.find_exn op map with exn_ when not (Common.Timer.is_async exn_) -> sort in
         let nt = Ident.Tvar ("Top" ^ String.capitalize op) in
         let t = EHMTT.Term (Ident.Tvar ("op" ^ String.capitalize op)) in
         let k = Ident.Tvar "k" in
@@ -218,6 +250,23 @@ module Make (Config : Config.ConfigType) = struct
     conts_opt : ((string * EHMTT.term) list * EHMTT.term) option;
   }
 
+  (* [fresh_in ?also ctx prefix] draws a prefixed name for a rule parameter,
+     handler or continuation placed beside [ctx.args] and [ctx.senv].  A
+     prefixed name is the prefix followed by a global counter and is not fresh
+     against the program's own variables, which are among [ctx.args]: a
+     program variable [k12] and a drawn continuation [k12] would give a rule a
+     repeated parameter, binding the body's occurrence to the wrong one.  So
+     the name is redrawn while it is a variable of [ctx], or one of [also] --
+     the other parameters of the same rule that are not yet in [ctx].  With no
+     collision it is exactly one [mk_fresh_tvar] draw. *)
+  let fresh_in ?(also = []) ctx prefix =
+    Ident.mk_fresh_tvar_avoiding ~prefix
+      ~taken:(fun v ->
+        Map.Poly.mem ctx.senv v
+        || List.mem ~equal:Ident.tvar_equal ctx.args v
+        || List.mem ~equal:Ident.tvar_equal also v)
+      ()
+
   let cgen_let eff_map tl_hs_nts (tl_nt, tl_args) _fenv _dtenv ntenv is_rec pats
       (is_pures, next1s, c1s) maps senv =
     let pats = List.map pats ~f:replace_any_pat in
@@ -240,7 +289,9 @@ module Make (Config : Config.ConfigType) = struct
               in
               Map.Poly.add_exn ntenv ~key:x ~data
             else ntenv
-        | _ -> failwith "not supported")
+        (* only a variable pattern on the left of a [let]; a tuple or
+           constructor pattern is not handled *)
+        | _ -> failwith "[cgen_let] a let-bound pattern must be a variable")
     in
     let (tl_rules', tl_args', tl_nt'), rules, senv_aux =
       let senv_bound =
@@ -324,7 +375,8 @@ module Make (Config : Config.ConfigType) = struct
                   Map.force_merge senv0
                     (Map.Poly.of_alist_exn
                        ((tl_nt0, tl_nt0_sort) :: List.map rules ~f:fst)) )
-          | _ -> failwith "not supported")
+          (* as above: only a variable pattern on the left of a [let] *)
+          | _ -> failwith "[cgen_let] a let-bound pattern must be a variable")
     in
     let senv_body =
       Map.update_with senv (*shadowing*)
@@ -385,10 +437,10 @@ module Make (Config : Config.ConfigType) = struct
           try (op, ALMap.find_exn op hs)
           with Stdlib.Not_found -> failwith (op ^ " handler not passed"))
     in
-    let gen_hts op_sig =
+    let gen_hts ?also ctx op_sig =
       List.unzip3
       @@ List.map (get_map op_sig) ~f:(fun (name, sort) ->
-          let h = Ident.mk_fresh_tvar ~prefix:(Some "h") () in
+          let h = fresh_in ?also ctx "h" in
           ((name, EHMTT.mk_var h), h, sort))
     in
     MBcgen.fold_expr dtenv0 false senv0 expr
@@ -488,7 +540,7 @@ module Make (Config : Config.ConfigType) = struct
                           failwith
                             (sprintf "[cgen_expr] %s not supported"
                                (Term.str_of term))))
-               with _ ->
+               with exn_ when not (Common.Timer.is_async exn_) ->
                  if T_bool.is_true term then term_tt
                  else if T_bool.is_false term then term_ff
                  else
@@ -540,7 +592,7 @@ module Make (Config : Config.ConfigType) = struct
                        let t, rs = next { ctx with ty; conts_opt = None } in
                        (None, t, rs)
                      else
-                       let x = Ident.mk_fresh_tvar ~prefix:(Some "arg") () in
+                       let x = fresh_in ctx "arg" in
                        (Some ((x, ty.val_type), ty.cont_eff), EHMTT.mk_var x, [])
                  | Second (x, _sort) -> (None, lookup ctx.ntenv x, []))
              in
@@ -572,9 +624,7 @@ module Make (Config : Config.ConfigType) = struct
                                 @ List.map ys ~f:snd
                                 @ [ f_sort; Datatype.mk_unit_sort () ]
                               in
-                              let papp =
-                                Ident.mk_fresh_tvar ~prefix:(Some "papp") ()
-                              in
+                              let papp = fresh_in ctx "papp" in
                               let k_args =
                                 ctx.args @ List.map ~f:fst ys @ [ papp ]
                               in
@@ -657,7 +707,7 @@ module Make (Config : Config.ConfigType) = struct
                           let k_args = ctx.args @ List.map ~f:fst xs in
                           ((k, k_sort), (k_args, k_body))
                         in
-                        let xs_ini = List.initial xs in
+                        let xs_ini = List.drop_last_exn xs in
                         let ctx' =
                           {
                             ctx with
@@ -693,7 +743,7 @@ module Make (Config : Config.ConfigType) = struct
                        let t, rs = next { ctx with ty; conts_opt = None } in
                        (None, t, rs)
                      else
-                       let x = Ident.mk_fresh_tvar ~prefix:(Some "elem") () in
+                       let x = fresh_in ctx "elem" in
                        (Some (x, ty.Sort.val_type), EHMTT.mk_var x, [])
                  | Second (x, _sort) -> (None, lookup ctx.ntenv x, []))
              in
@@ -719,7 +769,7 @@ module Make (Config : Config.ConfigType) = struct
                           let k_args = ctx.args @ List.map ~f:fst xs in
                           ((k, k_sort), (k_args, k_body))
                         in
-                        let xs_ini = List.initial xs in
+                        let xs_ini = List.drop_last_exn xs in
                         let ctx' =
                           {
                             ctx with
@@ -752,20 +802,24 @@ module Make (Config : Config.ConfigType) = struct
                  | [ pat ], [ next ], [ cont ] ->
                      let x =
                        match pat with
-                       | PAny _ -> Ident.mk_fresh_tvar ~prefix:(Some "any") ()
+                       | PAny _ -> fresh_in ctx "any"
                        | PVar (x, _sort) -> replace_any_tvar x
-                       | PCons (_, "()", []) ->
-                           Ident.mk_fresh_tvar ~prefix:(Some "unit") ()
+                       | PCons (_, "()", []) -> fresh_in ctx "unit"
                        | _ ->
                            failwith
                              (sprintf "[cgen_expr] %s not supported"
                                 (Pattern.str_of pat))
                      in
-                     let hts, hs, hsorts = gen_hts c.op_sig in
+                     let hts, hs, hsorts = gen_hts ~also:[ x ] ctx c.op_sig in
                      let ini_ans_type, fin_ans_type =
                        match cont with
                        | Sort.Eff (c1, c2) -> (c1, c2)
                        | _ ->
+                           (* the rejection is written and switched off: a
+                              continuation whose sort is not [Sort.Eff] is
+                              *guessed* below instead of refused, so an input
+                              outside what this frontend supports yields a
+                              constraint system rather than an error *)
                            if false then failwith "not supported"
                            else
                              (*ToDo*)
@@ -774,7 +828,7 @@ module Make (Config : Config.ConfigType) = struct
                              in
                              (s, s)
                      in
-                     let k = Ident.mk_fresh_tvar ~prefix:(Some "k") () in
+                     let k = fresh_in ~also:[ x ] ctx "k" in
                      let ksort = Sort.SArrow (c.val_type, ini_ans_type) in
                      let ctx_body =
                        {
@@ -825,7 +879,7 @@ module Make (Config : Config.ConfigType) = struct
                      (Term.str_of_triple ctx.ty)
                      num_conts);
              let k = Ident.mk_fresh_tvar ~prefix:(Some "Kite") () in
-             let x = Ident.mk_fresh_tvar ~prefix:(Some "cond") () in
+             let x = fresh_in ctx "cond" in
              let ctx1 =
                {
                  ctx with
@@ -843,15 +897,11 @@ module Make (Config : Config.ConfigType) = struct
              let args_eta_exp =
                let map =
                  List.map (get_map ctx.ty.op_sig) ~f:(fun (_, s) ->
-                     (Ident.mk_fresh_tvar ~prefix:(Some "h") (), s))
+                     (fresh_in ctx "h", s))
                in
                List.concat
                @@ List.init num_conts ~f:(fun _ ->
-                   map
-                   @ [
-                       ( Ident.mk_fresh_tvar ~prefix:(Some "k") (),
-                         Sort.mk_fresh_svar () );
-                     ])
+                   map @ [ (fresh_in ctx "k", Sort.mk_fresh_svar ()) ])
              in
              let then_t, rules2 =
                let ctx2 =
@@ -909,15 +959,11 @@ module Make (Config : Config.ConfigType) = struct
              let args_eta_exp =
                let map =
                  List.map (get_map ctx.ty.op_sig) ~f:(fun (_, s) ->
-                     (Ident.mk_fresh_tvar ~prefix:(Some "h") (), s))
+                     (fresh_in ctx "h", s))
                in
                List.concat
                @@ List.init num_conts ~f:(fun _ ->
-                   map
-                   @ [
-                       ( Ident.mk_fresh_tvar ~prefix:(Some "k") (),
-                         Sort.mk_fresh_svar () );
-                     ])
+                   map @ [ (fresh_in ctx "k", Sort.mk_fresh_svar ()) ])
              in
              match (next_opt, args_eta_exp) with
              | None, [] ->
@@ -949,7 +995,7 @@ module Make (Config : Config.ConfigType) = struct
                          num_conts
                          (Term.str_of_triple ctx.ty));
                  let k = Ident.mk_fresh_tvar ~prefix:(Some "Kasr") () in
-                 let x = Ident.mk_fresh_tvar ~prefix:(Some "cond") () in
+                 let x = fresh_in ctx "cond" in
                  let ctx' =
                    {
                      ctx with
@@ -1021,7 +1067,7 @@ module Make (Config : Config.ConfigType) = struct
                    match pat with
                    | Pattern.PAny _ | Pattern.PCons (_, "()" (*ToDo*), []) ->
                        let ctx2 = { ctx with ty = c2 } in
-                       (next2 ctx2, Ident.mk_fresh_tvar ~prefix:(Some "any") ())
+                       (next2 ctx2, fresh_in ctx "any")
                    | Pattern.PVar (x, s) ->
                        let args, senv =
                          let name = Ident.name_of_tvar x in
@@ -1082,7 +1128,7 @@ module Make (Config : Config.ConfigType) = struct
                      Sort.mk_fun
                      @@ List.map ctx.args ~f:(Map.Poly.find_exn ctx.senv)
                      @ [ Datatype.mk_unit_sort (); Datatype.mk_unit_sort () ] ),
-                   ( ctx.args @ [ Ident.mk_fresh_tvar ~prefix:(Some "seq") () ],
+                   ( ctx.args @ [ fresh_in ctx "seq" ],
                      term2 ) )
                  :: rules2 )
 
@@ -1121,7 +1167,7 @@ module Make (Config : Config.ConfigType) = struct
                        let t, rs = next ctx in
                        (None, t, rs)
                      else
-                       let x = Ident.mk_fresh_tvar ~prefix:(Some "elem") () in
+                       let x = fresh_in ctx "elem" in
                        (Some (x, ty.val_type), EHMTT.mk_var x, [])
                  | Second (x, _sort) -> (None, lookup ctx.ntenv x, []))
              in
@@ -1182,7 +1228,7 @@ module Make (Config : Config.ConfigType) = struct
                           let k_args = ctx.args @ List.map ~f:fst xs in
                           ((k, k_sort), (k_args, k_body))
                         in
-                        let xs_ini = List.initial xs in
+                        let xs_ini = List.drop_last_exn xs in
                         let ctx' =
                           {
                             ctx with
@@ -1235,8 +1281,8 @@ module Make (Config : Config.ConfigType) = struct
                  Sort.mk_fresh_svar ()
                  (*ToDo*)
                in
-               let k = Ident.mk_fresh_tvar ~prefix:(Some "k") () in
-               let hts, hs, hsorts = gen_hts c_r.op_sig in
+               let k = fresh_in ~also:[ x_r ] ctx "k" in
+               let hts, hs, hsorts = gen_hts ~also:[ x_r ] ctx c_r.op_sig in
                let ctx_r =
                  {
                    ctx with
@@ -1278,7 +1324,7 @@ module Make (Config : Config.ConfigType) = struct
                @@ List.map (get_ops c_b.op_sig) ~f:(fun op ->
                    let i, _ =
                      try List.findi_exn names ~f:(fun _ -> String.( = ) op)
-                     with _ -> failwith @@ op ^ " not found"
+                     with exn_ when not (Common.Timer.is_async exn_) -> failwith @@ op ^ " not found"
                    in
                    let next = List.nth_exn nexts i in
                    let x_args, sort_args, k_opt, sort_k, c_h =
@@ -1289,21 +1335,29 @@ module Make (Config : Config.ConfigType) = struct
                        List.fold2_exn x_args sort_args ~init:ctx.senv
                          ~f:(fun senv x s ->
                            try Map.Poly.add_exn senv ~key:x ~data:s
-                           with _ ->
+                           with exn_ when not (Common.Timer.is_async exn_) ->
                              failwith @@ Ident.name_of_tvar x
                              ^ " already defined")
                      in
                      match k_opt with
                      | Some k -> (Map.Poly.add_exn senv' ~key:k ~data:sort_k, k)
                      | None ->
-                         (senv', mk_fresh_tvar ~prefix:(Some "k") () (*dummy*))
+                         (* a placeholder continuation parameter, beside the
+                            clause's own arguments *)
+                         ( senv',
+                           Ident.mk_fresh_tvar_avoiding ~prefix:"k"
+                             ~taken:(fun v ->
+                               Map.Poly.mem senv' v
+                               || List.mem ~equal:Ident.tvar_equal ctx.args v)
+                             () (*dummy*) )
                    in
                    let ksort =
                      Sort.mk_fresh_svar ()
                      (*ToDo*)
                    in
-                   let k = Ident.mk_fresh_tvar ~prefix:(Some "k") () in
-                   let hts, hs, hsorts = gen_hts c_h.op_sig in
+                   let also = x_args @ [ k_arg ] in
+                   let k = fresh_in ~also ctx "k" in
+                   let hts, hs, hsorts = gen_hts ~also ctx c_h.op_sig in
                    let ctx_h =
                      {
                        ctx with
@@ -1490,7 +1544,7 @@ module Make (Config : Config.ConfigType) = struct
                 Map.Poly.map !MBcgen.ref_id ~f:(Term.subst_sorts_sort stheta)
               in
               try Map.force_merge ref_id stheta
-              with _ ->
+              with exn_ when not (Common.Timer.is_async exn_) ->
                 failwith
                 @@ sprintf "fail to force merge:\nref_id: %s\nstheta: %s"
                      (str_of_sort_subst Term.str_of_sort ref_id)
@@ -1668,8 +1722,11 @@ module Make (Config : Config.ConfigType) = struct
                   | Texp_constant (Const_nativeint _) ->
                       failwith "Const_nativeint"
                   | _ -> failwith "Tstr_eval")
-              | _ -> failwith "unsupported")
-          | _ -> failwith "unsupported"
+              | _ ->
+                  failwith
+                    "an attribute payload must be a single string constant"
+              )
+          | _ -> failwith "an attribute payload must be a structure"
         in
         match attr.Parsetree.attr_name.txt with
         | "automaton" ->
@@ -1846,17 +1903,13 @@ module Make (Config : Config.ConfigType) = struct
 
   let from_ml_file filename =
     let res =
-      let ic = In_channel.create filename in
-      let lexbuf = Lexing.from_channel ic in
-      Lexing.set_filename lexbuf filename;
-      try
-        let res = Parse.implementation lexbuf in
-        In_channel.close ic;
-        res
-      with e ->
-        LexingHelper.print_error_information lexbuf;
-        In_channel.close ic;
-        raise e
+      In_channel.with_file filename ~f:(fun ic ->
+          let lexbuf = Lexing.from_channel ic in
+          Lexing.set_filename lexbuf filename;
+          try Parse.implementation lexbuf
+          with e ->
+            LexingHelper.print_error_information lexbuf;
+            raise e)
     in
     top_level res
 end

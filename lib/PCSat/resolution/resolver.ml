@@ -7,7 +7,17 @@ open PCSatCommon
 
 (** Configuration of Resolver *)
 module Config = struct
-  type t = Disable | Old of OldResolver.Config.t | SMT of SMTResolver.Config.t
+  (* [Graph] is named after the module it builds: it instantiates
+     [GraphResolver], while the record it carries is [SMTResolver.Config.t] --
+     [GraphResolver.Make] takes that module's [ConfigType], having none of its
+     own.  [SMTResolver.ml] itself is instantiated by no configuration, so a
+     probe placed there prints nothing, which does not mean that this phase
+     does not run.  [SMTResolver] is kept deliberately: an SMT-based resolver may be written again, and its
+     [Config] is live in the meantime. *)
+  type t =
+    | Disable
+    | Old of OldResolver.Config.t
+    | Graph of SMTResolver.Config.t
   [@@deriving yojson]
 
   let instantiate_ext_files = function
@@ -15,20 +25,19 @@ module Config = struct
     | Old cfg ->
         let open Or_error in
         OldResolver.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (Old cfg)
-    | SMT cfg ->
+    | Graph cfg ->
         let open Or_error in
-        SMTResolver.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (SMT cfg)
+        SMTResolver.Config.instantiate_ext_files cfg >>= fun cfg ->
+        Ok (Graph cfg)
 
-  let load_ext_file = function
-    | ExtFile.Instance x -> Ok (ExtFile.Instance x)
-    | Filename filename -> (
-        let open Or_error in
-        try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
-        match of_yojson raw_json with
-        | Ok x -> instantiate_ext_files x >>= fun x -> Ok (ExtFile.Instance x)
-        | Error msg ->
-            error_string
-            @@ sprintf "Invalid Resolver Configuration (%s): %s" filename msg)
+  include MakeExtFile (struct
+    type nonrec t = t
+
+    let of_yojson = of_yojson
+    let to_yojson = to_yojson
+    let name = "Resolver"
+    let instantiate = instantiate_ext_files
+  end)
 
   module type ConfigType = sig
     val config : t
@@ -50,7 +59,7 @@ module Make
   let verbose =
     match config with
     | Old cfg -> cfg.verbose
-    | SMT cfg -> cfg.verbose
+    | Graph cfg -> cfg.verbose
     | Disable -> false
 
   module Debug =
@@ -70,7 +79,7 @@ module Make
                          let config = cfg
                        end)
                        (APCSP))
-         | SMT cfg ->
+         | Graph cfg ->
              (module GraphResolver.Make
                        (struct
                          let config = cfg

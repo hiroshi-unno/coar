@@ -1,3 +1,17 @@
+(* Template for a functional predicate [FN(x, r)] -- one that holds of exactly
+   one result [r] for each argument [x] -- and, through [MakeTot], for a total
+   predicate over a given set of argument positions.
+
+   The template is the graph [r = f(x)] of a guarded piecewise term: an
+   if-then-else chain over [number_of_expr] expressions whose guards have
+   [number_of_cond_conj] conjuncts, ending in an unguarded branch, the
+   expressions affine over the arguments and the hypothesis space's terms
+   with bounded coefficients (or, for a sequence result with
+   [seq_result_function_template], a choice among bounded constructions).
+   Since the term denotes a value everywhere, every instance is single-valued
+   and total by construction, which is what makes the kind sound without a
+   separate check.  Shape, depth and bounds
+   grow from the labels of an unsat core as in the other templates. *)
 open Core
 open Common
 open Common.Ext
@@ -8,30 +22,60 @@ open Function
 
 module Config = struct
   type t = {
-    verbose : bool;
-    number_of_expr : int;
-    number_of_cond_conj : int;
-    depth : int;
-    ext : int;
-    upper_bound_expr_coeff : int option;
-    upper_bound_expr_const : int option;
-    expr_seeds : int list option;
-    upper_bound_cond_coeff : int option;
-    upper_bound_cond_const : int option;
-    cond_seeds : int list option;
-    max_number_of_cond_conj : int option;
-    lower_bound_expr_coeff : int option;
-    lower_bound_cond_coeff : int option;
-    bound_each_expr_coeff : int option;
-    bound_each_cond_coeff : int option;
-    threshold_expr_coeff : int option;
-    threshold_expr_const : int option;
-    threshold_cond_coeff : int option;
-    threshold_cond_const : int option;
-    ignore_bool : bool;
-    fix_shape : bool;
-    fix_depth_ext : bool;
-    fix_upper_bound : bool;
+    verbose : bool; [@default true]
+    number_of_expr : int; [@default 1]
+    number_of_cond_conj : int; [@default 1]
+    depth : int; [@default 0]
+    ext : int; [@default 0]
+    upper_bound_expr_coeff : int option; [@default Some 1]
+    upper_bound_expr_const : int option; [@default Some 0]
+    expr_seeds : int list option; [@default None]
+    upper_bound_cond_coeff : int option; [@default Some 1]
+    upper_bound_cond_const : int option; [@default Some 0]
+    cond_seeds : int list option; [@default None]
+    max_number_of_cond_conj : int option; [@default None]
+    lower_bound_expr_coeff : int option; [@default None]
+    lower_bound_cond_coeff : int option; [@default None]
+    bound_each_expr_coeff : int option; [@default None]
+    bound_each_cond_coeff : int option; [@default None]
+    threshold_expr_coeff : int option; [@default None]
+    threshold_expr_const : int option; [@default None]
+    threshold_cond_coeff : int option; [@default None]
+    threshold_cond_const : int option; [@default None]
+    ignore_bool : bool; [@default true]
+    fix_shape : bool; [@default true]
+    fix_depth_ext : bool; [@default false]
+    fix_upper_bound : bool; [@default false]
+    seq_result_function_template : bool; [@default false]
+        (** Build a template for an unknown whose result sort is a sequence
+            (otherwise refused, answered [unknown]): an [ite] chain choosing
+            among candidate results built from the arguments (see
+            [Templ.seq_candidates]) under learned conditions. *)
+    seq_result_concat_depth : int; [@default 1]
+        (** concatenations a candidate result may contain *)
+    seq_result_max_candidates : int; [@default 24]
+        (** length of the candidate result list *)
+    seq_result_selector_depth : int; [@default 2]
+        (** selector chains through single-constructor datatype arguments *)
+    seq_result_prefixes : bool; [@default false]
+        (** also offer [seq.extract s 0 n] at integer arguments [n] *)
+    skip_non_numeric_result_qelim : bool; [@default false]
+        (** a qualifier that mentions the result, when the result sort is
+            not an integer, a real or a bit-vector, is dropped from the
+            initial qualifiers instead of being handed to quantifier
+            elimination over the result.  Not exact in general: an
+            elimination that removes the binder (an equation [r = t] by the
+            one-point rule) gives a qualifier over the arguments, which this
+            drops. *)
+    fn_linear_part_own_args_only : bool; [@default false]
+        (** the affine part of an integer, real or bit-vector result's
+            template has coefficients on the unknown's own numeric arguments
+            only, and the hypothesis-space terms are offered by the selector
+            alone ([Templ.gen_irb_fun] says what is lost: [-t] and sums of
+            terms).  One coefficient per term and a bound on the sum of their
+            absolute values made the synthesis query undecidable by Z3 within
+            its budget once there are thousands of terms.  A restriction of
+            the candidates only, so not a soundness matter. *)
   }
   [@@deriving yojson]
 
@@ -41,17 +85,14 @@ module Config = struct
 
   let instantiate_ext_files cfg = Ok cfg
 
-  let load_ext_file = function
-    | ExtFile.Instance x -> Ok (ExtFile.Instance x)
-    | Filename filename -> (
-        let open Or_error in
-        try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
-        match of_yojson raw_json with
-        | Ok x -> instantiate_ext_files x >>= fun x -> Ok (ExtFile.Instance x)
-        | Error msg ->
-            error_string
-            @@ sprintf "Invalid FNPredicate Configuration (%s): %s" filename msg
-        )
+  include MakeExtFile (struct
+    type nonrec t = t
+
+    let of_yojson = of_yojson
+    let to_yojson = to_yojson
+    let name = "FNPredicate"
+    let instantiate = instantiate_ext_files
+  end)
 end
 
 module type ArgType = sig
@@ -114,6 +155,9 @@ let state_of param labels : state =
     param.nc,
     param.depth,
     param.ext,
+    (* [Z.to_int] is safe: the bounds are the template's configured
+       coefficient and constant bounds, grown by one step at a time, never a
+       model integer *)
     Option.map ~f:Z.to_int param.ubec,
     Option.map ~f:Z.to_int param.ubed,
     Option.map ~f:Z.to_int param.ubcc,
@@ -125,7 +169,21 @@ let state_of param labels : state =
     Set.mem labels CondConst,
     Set.mem labels TimeOut )
 
-module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
+(* What the template is for.  [total = None] is a functional predicate, whose
+   last argument is the result.  [total = Some (universal, relation)] is a
+   total predicate over the [universal] positions whose template is the graph
+   of a function of those positions, one guarded piecewise term per remaining
+   position, widened by a DNF relation when [relation] holds
+   ([Templ.gen_tot_fun_predicate], which says why every member is total).  The
+   shape parameters, their bounds and the labels that move them are the
+   functional template's in both cases. *)
+module type WitnessType = sig
+  val kind : Kind.t
+  val total : (int list * bool) option
+end
+
+module MakeGen (Cfg : Config.ConfigType) (Arg : ArgType) (W : WitnessType) :
+  Function.Type = struct
   let config = Cfg.config
   let id = Arg.id
 
@@ -182,7 +240,9 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     }
 
   let name_of () = Arg.name
-  let kind_of () = Kind.str_of Kind.FN
+  let kind_of () = Kind.str_of W.kind
+  let kind = W.kind
+  let flexible = false
   let sort_of () = Sort.mk_fun @@ Arg.sorts @ [ T_bool.SBool ]
   let params_of () = sort_env_list_of_sorts Arg.sorts
 
@@ -227,17 +287,50 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     let params = params_of () in
     let quals', terms' =
       Qual.extract_terms_from_quals
+        ~skip_non_numeric:config.skip_non_numeric_result_qelim
         ~qelim:(Z3Smt.Z3interface.qelim ~id ~fenv:Arg.fenv)
         params quals
     in
-    (quals', Set.union terms' (Templ.terms_over_set terms (List.initial params)))
+    (* a functional predicate's result is not an input of its own term, so no
+       term may mention it; a total one's witness terms are cut down to the
+       arguments each may read by the template itself *)
+    ( quals',
+      Set.union terms'
+        (Templ.terms_over_set terms
+           (if Option.is_none W.total then List.drop_last_exn params
+            else params)) )
 
   let update_hspace hspace =
     HypSpace.qualifiers_of ~fenv:Arg.fenv !param.depth hspace
 
+  let kind_cert_template () = None
+
   let gen_template ~ucore:_ (hspace : HypSpace.hspace) =
     let template =
-      Templ.gen_fn_predicate ~print:Debug.print ~ignore_bool:config.ignore_bool
+      Function.refuse_without_template @@ fun () ->
+      let seq_result =
+        if config.seq_result_function_template then
+          Some
+            Templ.
+              {
+                seq_concat_depth = config.seq_result_concat_depth;
+                seq_max_candidates = config.seq_result_max_candidates;
+                seq_selector_depth = config.seq_result_selector_depth;
+                seq_prefixes = config.seq_result_prefixes;
+              }
+        else None
+      in
+      (fun ~print ~ignore_bool tfp tfsp params ->
+        match W.total with
+        | None ->
+            Templ.gen_fn_predicate
+              ~linear_own_args_only:config.fn_linear_part_own_args_only ~print
+              ~ignore_bool ?seq_result tfp tfsp params
+        | Some (universal, relation) ->
+            Templ.gen_tot_fun_predicate
+              ~linear_own_args_only:config.fn_linear_part_own_args_only ~print
+              ~ignore_bool ~universal ~relation ?seq_result tfp tfsp params)
+        ~print:Debug.print ~ignore_bool:config.ignore_bool
         {
           consts = Set.to_list hspace.consts;
           terms = Set.to_list hspace.terms;
@@ -631,7 +724,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     if
       List.exists Arg.sorts ~f:(fun s ->
           Term.is_dt_sort s || Term.is_array_sort s)
-      && param.nd * param.nc > Integer.pow (param.depth + 1) 3
+      && param.nd * param.nc > Int.pow (param.depth + 1) 3
     then (*ToDo: try_then*) increase_depth_ext (param, actions)
     else if
       (param.nd + param.nc) mod 2 = 0
@@ -746,3 +839,25 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
             (Ident.name_of_tvar Arg.name));
     Debug.print @@ lazy (str_of ())
 end
+
+module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type =
+  MakeGen (Cfg) (Arg)
+    (struct
+      let kind = Kind.FN
+      let total = None
+    end)
+
+(* A total predicate over [U.universal] given the functional template's width
+   for its witnesses, and with [U.relation] a relation beside them. *)
+module MakeTot
+    (Cfg : Config.ConfigType)
+    (Arg : ArgType)
+    (U : sig
+      val universal : int list
+      val relation : bool
+    end) : Function.Type =
+  MakeGen (Cfg) (Arg)
+    (struct
+      let kind = Kind.Tot U.universal
+      let total = Some (U.universal, U.relation)
+    end)

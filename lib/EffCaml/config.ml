@@ -1,7 +1,10 @@
+(* Configuration of EffCaml: whether to trace, and the higher-order model
+   checker ([HOMCSolver]) its generated problems are handed to. *)
+
 open Core
 open Common.Util
 
-type t = { verbose : bool; solver : HOMCSolver.Config.t ext_file }
+type t = { verbose : bool; [@default false] solver : HOMCSolver.Config.t ext_file [@default Common.Util.ExtFile.Filename "./config/solver/horsat2_ce.json"] }
 [@@deriving yojson]
 
 module type ConfigType = sig
@@ -13,13 +16,11 @@ let instantiate_ext_files cfg =
   HOMCSolver.Config.load_ext_file cfg.solver >>= fun solver ->
   Ok { cfg with solver }
 
-let load_ext_file = function
-  | ExtFile.Instance x -> Ok (ExtFile.Instance x)
-  | Filename filename -> (
-      let open Or_error in
-      try_with (fun () -> Yojson.Safe.from_file filename) >>= fun raw_json ->
-      match of_yojson raw_json with
-      | Ok x -> instantiate_ext_files x >>= fun x -> Ok (ExtFile.Instance x)
-      | Error msg ->
-          error_string
-          @@ sprintf "Invalid EffCaml Configuration (%s): %s" filename msg)
+include MakeExtFile (struct
+  type nonrec t = t
+
+  let of_yojson = of_yojson
+  let to_yojson = to_yojson
+  let name = "EffCaml"
+  let instantiate = instantiate_ext_files
+end)

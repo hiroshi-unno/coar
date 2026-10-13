@@ -1,0 +1,31 @@
+Reproducing the seeded-optimum defect (an infeasible seed reported as the optimum) needs three things that cannot live in one benchmark file:
+an input, a `.sol` seed beside it, and a config with `load_init_sol` set.  The
+seed is looked up by the input's basename in the PROCESS WORKING DIRECTORY, not
+beside the input, so the experiment has to run in a directory of its own -- which
+is also why a stale `.sol` from another run is enough to trigger the defect.
+
+To reproduce, in an empty directory with a `config` symlink to the repository:
+
+  seeded.smt2
+    (set-logic HORN)
+    (declare-fun P (Int) Bool)
+    (assert (forall ((x Int)) (=> (P x) (>= x 0))))
+    (check-sat)
+
+  seeded.sol
+    (define-fun P ((x Int)) Bool true)
+
+  a copy of config/solver/optpcsat_nc_tb_interval3.json with load_init_sol true
+
+  main.exe -c <that config> -p chcmax seeded.smt2
+
+The seed is infeasible: P(x) = true violates the clause at x = -1.  It used to be
+taken as the initial solution without being checked, and since nothing can
+enlarge the all-true predicate it passed the optimality reasoning unchanged and
+was reported as `Maxsat, 0, P(x) = true` -- an invalid optimum.  The seed is now
+checked against the constraints and, failing, the run solves for an initial
+solution as it would have without one: `Maxsat, 0, P(x) = x >= 0`.
+
+Two controls, same input and config, unchanged by the repair:
+  seed P(x) = x >= 0  (feasible, already optimal)  -> Maxsat, 0, P(x) = x >= 0
+  seed P(x) = false   (feasible, not optimal)      -> Maxsat, 1, P(x) = x >= 0

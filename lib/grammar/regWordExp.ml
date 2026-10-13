@@ -35,7 +35,11 @@ let rec match_regex p xs =
         else iter (ys @ [ List.hd_exn zs ]) (List.tl_exn zs)
       in
       iter [] xs
-  | RepeatInf _ -> failwith "unimplementedz"
+  (* an infinite repetition has no finite matching word; nothing calls this
+     function today, and the omega-regular case would need a different
+     interface than "does this finite list match" *)
+  | RepeatInf _ ->
+      failwith "[match_regex] an infinite repetition matches no finite word"
 
 let rec str_of str_of_symbol = function
   | Empty -> "bot"

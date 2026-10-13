@@ -119,7 +119,8 @@ let induct unfolded depth defs lemmas sequent pvam =
     {
       sequent with
       left_atms =
-        List.map pv_senv_list ~f:(uncurry Atom.pvar_app_of_senv >> Sequent.guard);
+        List.map pv_senv_list
+          ~f:(Tuple2.uncurry Atom.pvar_app_of_senv >> Sequent.guard);
       left_phi = Formula.and_of (sequent.left_phi :: phi :: phis);
     }
     |> Lemma.make (Some (pv_senv, depth))
@@ -151,7 +152,7 @@ let unfold_and_induct ~print ~config unfolded depth defs lemmas sequent pvam =
           sequent with
           left_atms =
             List.map pv_senv_list
-              ~f:(uncurry Atom.pvar_app_of_senv >> Sequent.guard);
+              ~f:(Tuple2.uncurry Atom.pvar_app_of_senv >> Sequent.guard);
           left_phi = Formula.and_of (sequent.left_phi :: phi :: phis);
         }
         |> Lemma.make (Some (pv_senv, depth + 1))
@@ -273,7 +274,7 @@ let rec apply_defs ~print preds_senv (atms, phi) hatm = function
                     >> Formula.exists exists_vars
                      >> (fun phi ->
                      snd
-                     @@ Qelim.qelim_old Map.Poly.empty preds_senv
+                     @@ Qelim.elim_free_univ_vars_old Map.Poly.empty preds_senv
                      @@ ( Logic.of_old_sort_env_map @@ Map.of_set_exn
                           @@ Formula.term_sort_env_of phi,
                           phi ))
@@ -297,11 +298,11 @@ let fold ~print ~config defs lemmas sequent =
           match lookup defs gatm with
           | None -> raise UnfoldFailed
           | Some atms_phi_list ->
-              List.map ~f:Sequent.guard @@ List.unique
+              List.map ~f:Sequent.guard @@ List.dedup_keep_last
               @@ apply_defs ~print preds_senv
                    (List.map ~f:fst @@ sequent.left_atms, sequent.left_phi)
                    (fst gatm) atms_phi_list)
-      @@ List.unique
+      @@ List.dedup_keep_last
       @@ (if config.fold_lemmas then
             (* LHS atoms of user defined lemma (for successful application of the lemmas) *)
             List.concat_map ~f:(fun (lem : Lemma.t) -> lem.sequent.left_atms)
@@ -384,7 +385,7 @@ let apply ~print ~config lemmas sequent =
                    | None -> []
                    | Some ((pvar, senv), _) ->
                        [ Atom.pvar_app_of_senv pvar senv ])
-                 @ List.map pvars1 ~f:(uncurry Atom.pvar_app_of_senv)
+                 @ List.map pvars1 ~f:(Tuple2.uncurry Atom.pvar_app_of_senv)
                in
                (* Try all sigma candidates *)
                List.fold_left sigmas
@@ -609,4 +610,4 @@ let solve ~print ~config pcsp_solver problem =
           then Valid
           else Invalid),
         prooftrees )
-  with Unkown -> Ok (MuCLP.Problem.Unknown, [])
+  with Unkown -> Ok (Verdict.Unknown, [])

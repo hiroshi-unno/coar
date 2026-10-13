@@ -4,6 +4,4 @@
  (preprocess
   (pps ppx_deriving_yojson))
  (libraries core CoAR.Printer CoAR.SMT)
- (modules
-  config
-  solver))
+ (modules config solver))

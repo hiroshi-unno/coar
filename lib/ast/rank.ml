@@ -1,3 +1,8 @@
+(* A syntactic rank of a qualifier formula -- the largest absolute integer
+   literal (none counts as smallest), then the number of term variables, then
+   the size of the formula -- compared lexicographically, so that simpler
+   qualifiers come first.  Used to order qualifiers and truth-table columns
+   when candidates are preferred by simplicity. *)
 open Core
 open Common.Ext
 open LogicOld

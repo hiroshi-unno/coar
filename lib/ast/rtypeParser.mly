@@ -100,6 +100,11 @@ let print _ = ()
 //%right LARROW COLEQ
 //%left COMMA
 
+/* `<=>` binds loosest, per the usual logical convention:
+   `a => b <=> c` is `(a => b) <=> c`. IFF previously had no precedence at all,
+   so menhir resolved it by shifting, which gave the tighter reading
+   `a => (b <=> c)`. */
+%right IFF
 %right IMP
 %left OR VERT
 %left AND //AMP
@@ -182,8 +187,10 @@ term:
   | term ADD term { fun env -> T_num.mk_nadd ($1 env) ($3 env) }
   | term SUB term { fun env -> T_num.mk_nsub ($1 env) ($3 env) }
   | term AST term { fun env -> T_num.mk_nmul ($1 env) ($3 env) }
-  | term DIV term { fun env -> T_num.mk_ndiv Value.Euclidean ($1 env) ($3 env) }
-  | term MOD term { fun env -> T_num.mk_nrem Value.Euclidean ($1 env) ($3 env) }
+  (* OCaml's / and mod truncate toward zero; keep the annotation language
+     consistent with the program side (Rtype: "Stdlib./", "Stdlib.mod"). *)
+  | term DIV term { fun env -> T_num.mk_ndiv Value.Truncated ($1 env) ($3 env) }
+  | term MOD term { fun env -> T_num.mk_nrem Value.Truncated ($1 env) ($3 env) }
   | term FADD term { fun env -> T_real.mk_radd ($1 env) ($3 env) }
   | term FSUB term { fun env -> T_real.mk_rsub ($1 env) ($3 env) }
   | term FMUL term { fun env -> T_real.mk_rmul ($1 env) ($3 env) }
@@ -236,13 +243,13 @@ term:
     | Some dt -> fun env -> T_dt.mk_sel_by_cons dt cons_name n ($3 env)
     | None -> failwith @@ "undefined constructor" ^ cons_name
   }
-  | EPSILON { fun _ -> Term.mk_fsym_app T_sequence.SeqEpsilon [] }
-  | EVENT LPAREN IDENT RPAREN { fun _ -> Term.mk_fsym_app (T_sequence.SeqSymbol $3) [] }
+  | EPSILON { fun _ -> Term.mk_fsym_app T_trace.TrEpsilon [] }
+  | EVENT LPAREN IDENT RPAREN { fun _ -> Term.mk_fsym_app (T_trace.TrSymbol $3) [] }
   | term PLUSPLUS term {
     fun env ->
     match Term.sort_of @@ $1 env with
-    | T_sequence.SSequence fin ->
-      Term.mk_fsym_app (T_sequence.SeqConcat fin) [$1 env; $3 env]
+    | T_trace.STrace fin ->
+      Term.mk_fsym_app (T_trace.TrConcat fin) [$1 env; $3 env]
     | _ -> failwith "type error"
   }
   //  | term EQEQ term { T_bool.of_atom @@ T_bool.mk_eq $1 $3 }
@@ -337,7 +344,7 @@ atom:
   // | term SUBSET term { Formula.Set.mk_subset Type.mk_unknown $1 $3 }
   | term IN eff {
     let fin, regexp = $3 in
-    fun env -> Atom.mk_psym_app (T_sequence.SeqInRegExp (fin, regexp)) [$1 env]
+    fun env -> Atom.mk_psym_app (T_trace.TrInRegExp (fin, regexp)) [$1 env]
   }
 atom_or_term:
   | atom { fun env -> T_bool.of_atom ($1 env) }
@@ -475,8 +482,8 @@ comp_ty:
     let x2 = Ident.Tvar $8 in
     { op_sig = ALMap.empty(*temporary*), None;
       val_type = $2 env;
-      temp_eff = ((x1, $6 (Map.Poly.set env ~key:x1 ~data:(T_sequence.SSequence true))),
-                  (x2, $10 (Map.Poly.set env ~key:x2 ~data:(T_sequence.SSequence false))));
+      temp_eff = ((x1, $6 (Map.Poly.set env ~key:x1 ~data:(T_trace.STrace true))),
+                  (x2, $10 (Map.Poly.set env ~key:x2 ~data:(T_trace.STrace false))));
       cont_eff = Rtype.Pure }
   }
   // (T / S)
@@ -506,8 +513,8 @@ comp_ty:
     { op_sig = $2 env;
       val_type = t;
       temp_eff =
-        ((x1, $8 (Map.Poly.set env ~key:x1 ~data:(T_sequence.SSequence true))),
-         (x2, $12 (Map.Poly.set env ~key:x1 ~data:(T_sequence.SSequence false))));
+        ((x1, $8 (Map.Poly.set env ~key:x1 ~data:(T_trace.STrace true))),
+         (x2, $12 (Map.Poly.set env ~key:x1 ~data:(T_trace.STrace false))));
       cont_eff = $14 env (Rtype.sort_of_val t) }
   }
 

@@ -1,11 +1,9 @@
 [
     "HOMCSat",
     {
-        "verbose": false,
         "solver": [
             "Filename",
             "./config/solver/horsat2.json"
-        ],
-        "encode_bool_ops": false
+        ]
     }
 ]

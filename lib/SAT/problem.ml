@@ -20,24 +20,22 @@ let input_line_exn gz_in =
   in
   read_line ()
 
-let from_dimacs_file filename =
-  let ic = In_channel.create ~binary:false filename in
-  let res =
-    make @@ snd
-    @@ Parser.parse ~no_quant:true [] [] [] (fun () ->
-           In_channel.input_line_exn ic)
-  in
-  In_channel.close ic;
-  res
+let with_gzipped_file filename ~f =
+  In_channel.with_file ~binary:true filename ~f:(fun ic ->
+      let gzip = Gzip.open_in_chan ic in
+      Exn.protect ~finally:(fun () -> Gzip.dispose gzip)
+        ~f:(fun () -> f gzip))
 
-let from_gzipped_dimacs_file filename =
-  let ic = Gzip.open_in filename in
-  let res =
-    make @@ snd
-    @@ Parser.parse ~no_quant:true [] [] [] (fun () -> input_line_exn ic)
-  in
-  Gzip.close_in ic;
-  res
+let from_dimacs_file ?print filename =
+  In_channel.with_file ~binary:false filename ~f:(fun ic ->
+      make @@ snd
+      @@ Parser.parse ~no_quant:true ?print [] [] [] (fun () ->
+             In_channel.input_line_exn ic))
+
+let from_gzipped_dimacs_file ?print filename =
+  with_gzipped_file filename ~f:(fun ic ->
+      make @@ snd
+      @@ Parser.parse ~no_quant:true ?print [] [] [] (fun () -> input_line_exn ic))
 
 let of_prop_formula = Ast.PropLogic.Formula.cnf_of >> make
 let clauses_of (Cnf l) = l

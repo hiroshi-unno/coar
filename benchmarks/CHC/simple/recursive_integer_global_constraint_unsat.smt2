@@ -1,0 +1,5 @@
+(set-logic HORN)
+(declare-const p Int)
+(define-fun-rec f ((x Int)) Int (+ (f 0) p))
+(assert (= p 1))
+(check-sat)

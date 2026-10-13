@@ -1,3 +1,21 @@
+# This file is the context filter for the released image built by
+# .github/workflows/build-docker-image.yml from the Dockerfile at the repository
+# root.  It is also read by any other build whose context is this repository --
+# including each per-paper artifact's own `docker build -f <dir>/Dockerfile ..`.
+# Those two uses want opposite things: the released image wants the artifact
+# directories out, and an artifact whose Dockerfile does `COPY . ` wants its own
+# directory in, or the experiment scripts its README names are missing from the
+# image it produces (the build still succeeds, because copying a directory that
+# is not in the context is not an error -- this went unnoticed for a year in two
+# packages).  The two uses are kept apart by giving those artifacts their own
+# filter: BuildKit reads `<path-to-dockerfile>.dockerignore` in preference to
+# this file, so `cav26ae/Dockerfile.dockerignore` and
+# `icfp24ae/Dockerfile.dockerignore` exclude everything below except the one
+# directory their build needs, and nothing here changes.  A per-Dockerfile
+# filter REPLACES this file rather than adding to it, so each copy repeats the
+# rest of these lines.  Docker's rule: patterns apply in order, the last match
+# wins, and a pattern matching a directory excludes everything below it.
+
 .git
 _build
 .vscode
@@ -10,6 +28,6 @@ oopsla25ae
 pldi26ae_lower
 pldi26ae_omega
 cav26ae
-forStarExec
+script/starexec
 learner
 script

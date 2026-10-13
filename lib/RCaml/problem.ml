@@ -1,3 +1,11 @@
+(* The problems RCaml's constraint generator produces, each named by the
+   assertion or annotation it came from.  [PAssertion (mu, nu, pcsp)] is a
+   predicate constraint satisfaction problem whose satisfiability proves a
+   refinement-type assertion, with the predicate variables standing for least
+   ([mu]) and greatest ([nu]) fixpoints and their definitions; a
+   [POptimization] is a CHC optimization problem asking for maximally precise
+   refinement types. *)
+
 open Ast.LogicOld
 
 type ptype =

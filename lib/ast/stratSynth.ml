@@ -1,3 +1,24 @@
+(* Quantified satisfiability by strategy improvement.
+
+   This implements Azadeh Farzan and Zachary Kincaid, "Linear Arithmetic
+   Satisfiability via Strategy Improvement", IJCAI-16, pp. 735-743: a quantified
+   formula is read as a game between two players -- [SAT] and [UNSAT] below --
+   and the procedure improves candidate strategies for both until one is
+   winning, so that an SMT solver is only ever asked about the ground fragment
+   and no quantifier is eliminated explicitly.
+
+   [select] in the functor argument is the paper's model-guided term selection
+   function: given a ground formula F, a model M of F and a variable x, it
+   returns a term t with x not in t and M |= F[x := t].  The paper's own
+   remark is that this is inspired by model-based projection (Komuravelli,
+   Gurfinkel and Chaki, CAV 2014) and by Weispfenning's decision procedure for
+   linear real arithmetic; a neighbouring file takes the projection route
+   instead, and returns a region where this returns a term.
+
+   [LIA] implements the paper's VIRTUAL term selection -- a term is a triple
+   (affine expression, divisor, offset), and the divisibility modulus [delta]
+   is what makes the integer case work -- while [LRA] returns ordinary terms.
+   [QBF] is a stub. *)
 open Core
 open Common.Ext
 open Common.Combinator
@@ -645,6 +666,29 @@ module LIA = struct
             let delta = delta model tvar f in
             (Affine.of_z Z.zero, Z.one, Z.(erem ev_tvar delta)))
 
+  (* [select_bounds M x F], beside [select] and not used by it: when [F]
+     bounds [x] at [M] from both sides, the two extreme terms [lub] and [glb]
+     as a pair (the one nearer [M(x)] first, the upper one on a tie), else
+     [None].  Each satisfies [select]'s contract -- free of [x], and
+     [M |= F[x := t]] -- because both are the model's value moved to the
+     extreme of its congruence class modulo the divisibility atoms' period
+     inside every bound that holds at [M]: the atoms true at [M] stay true,
+     and [F] has negation only inside atoms, so an atom that becomes true
+     cannot falsify it.  A caller that wants a move at the edge of the
+     admissible interval rather than [select]'s preference uses it. *)
+  let select_bounds model tvar f =
+    match (lub model tvar f, glb model tvar f) with
+    | Some u, Some l ->
+        let v =
+          match Map.Poly.find model tvar with
+          | Some v -> v
+          | None -> default_value
+        in
+        if Z.Compare.(Z.(eval_term model u - v) <= Z.(v - eval_term model l))
+        then Some (u, l)
+        else Some (l, u)
+    | _ -> None
+
   let check_sat solve f senv =
     match solve senv (term_of_formula (fun x -> term_of_atom x) f) with
     | None -> None
@@ -1020,6 +1064,48 @@ module LRA = struct
         | None, Some glb -> RTerm.(glb + RTerm.of_q Q.one)
         | None, None -> RTerm.of_q default_value)
 
+  (* [M |= F] for a ground formula; [false] on a binder, which the callers
+     below never pass *)
+  let rec holds model = function
+    | Atom (Eq0 t) -> Q.(eval_term model t = zero)
+    | Atom (Gt0 t) -> Q.(eval_term model t > zero)
+    | And l -> List.for_all l ~f:(holds model)
+    | Or l -> List.exists l ~f:(holds model)
+    | Bind _ -> false
+
+  (* [select_bounds M x F], beside [select] and not used by it: when no
+     equality fixes [x] at [M] and [F] bounds it from both sides there, a pair
+     of terms at the two ends of the admissible interval, the end nearer
+     [M(x)] first (the upper one on a tie), else [None].  The bounds [ub_and_lb]
+     collects come from strict atoms [t > 0], so the bound itself need not be
+     admissible: an end is the bound [b] when [M |= F[x := b]] (as when the
+     input said [x <= b], which reaches here as [b - x = 0 \/ b - x > 0]),
+     and otherwise the point [(7 b + b') / 8] a little inside it, [b'] the
+     other bound.  That point lies strictly between the tightest lower and
+     upper bounds at [M], so every atom true at [M] that mentions [x] stays
+     true (an equality true at [M] would have been [eq]'s case), and an atom
+     that becomes true cannot falsify [F], whose negations are inside atoms.
+     Both ends therefore satisfy [select]'s contract. *)
+  let select_bounds model tvar f =
+    match eq model tvar f with
+    | Some _ -> None
+    | None -> (
+        let ub, lb = ub_and_lb model tvar f in
+        match (lub model ub, glb model lb) with
+        | Some u, Some l ->
+            let at t =
+              Map.Poly.set model ~key:tvar ~data:(eval_term model t)
+            in
+            let end_at b other =
+              if holds (at b) f then b
+              else RTerm.div RTerm.(RTerm.mul (Q.of_int 7) b + other) (Q.of_int 8)
+            in
+            let u' = end_at u l and l' = end_at l u in
+            let v = Map.Poly.find_exn model tvar in
+            let mid = Q.((eval_term model u + eval_term model l) / of_int 2) in
+            if Q.(v >= mid) then Some (u', l') else Some (l', u')
+        | _ -> None)
+
   let check_sat solve f senv =
     match solve senv (term_of_formula (fun x -> term_of_atom x) f) with
     | None -> None
@@ -1223,4 +1309,114 @@ module QBFStrategySynthesis = struct
 
   and ssforest_to_string ?(indent = 0) f =
     List.map f ~f:(sstree_to_string ~indent) |> String.concat
+end
+
+(* Model-guided term selection reached from the first-order representation.
+
+   The procedure above is written over [Logic]'s terms, while the
+   quantified-satisfiability loop that wants witness terms is written over
+   [LogicOld]'s.  [select_terms] converts across: the conjunction of [atoms]
+   becomes this file's formula once, a term is chosen for each variable in
+   turn, and only the terms are converted back.
+
+   The variables are eliminated in sequence and each is chosen against the
+   formula with the earlier choices already substituted, because [select]
+   guarantees only that the model satisfies the formula with its own variable
+   replaced: two terms chosen independently against one formula need not
+   satisfy it together.  The substitution is [subst_atom]'s, which case-splits
+   on the residue of the virtual term's divisor and scales, so the formula
+   stays inside the linear-plus-divisibility fragment -- converting the term
+   back and substituting over the first-order terms instead leaves a division
+   the reader below cannot take.  A term chosen earlier may mention a variable
+   eliminated later, so the terms are composed as they are collected.
+
+   [None] where the variables are not all of one sort this file implements --
+   the integer and the real fragment are different representations and a
+   formula cannot be in both -- where the conjunction is outside the fragment
+   the reader accepts, or where any of it raises.  A caller that gets [None]
+   does whatever it would have done with no terms at all.
+
+   One shape is declined often enough to be worth naming: the reader has no
+   case for integer division, and resolving a variable's bounds against each
+   other -- the other way to eliminate a variable, which a caller normally
+   falls back to -- puts a quotient into the atoms it leaves behind.  Those
+   atoms reach a later conjunction through the lemmas they enter, so a caller
+   that mixes the two ways sees this decline a quarter of the time (measured at
+   161 against 52 over six two-coin Frobenius problems), and the problems where
+   it declines most are the ones where the terms help least.  Reading a
+   quotient would mean giving it a variable of its own with the two bounds that
+   define it, which is a change to the shared reader rather than to this
+   module.
+
+   The contract is the one [select] states: a variable does not occur in its
+   own term, and the model satisfies the conjunction once the terms are put
+   in.  Nothing here re-checks that.
+
+   The model is read only for the variables it gives a value of the right sort
+   to.  A variable of another sort cannot occur in an atom this reader accepts,
+   so dropping those loses nothing; a variable of the right sort that the model
+   does not mention is one [select] gives its own default value. *)
+module Old = struct
+  (* The strategy synthesis functor has this recursion too, on a path another
+     solver uses; this is a separate copy rather than a shared one so that the
+     entry points here cannot change what that path does. *)
+  let rec subst_in ~subst_atom tvar t = function
+    | PreFormula.Atom a -> subst_atom tvar t a
+    | PreFormula.And l ->
+        PreFormula.And (List.map l ~f:(subst_in ~subst_atom tvar t))
+    | PreFormula.Or l ->
+        PreFormula.Or (List.map l ~f:(subst_in ~subst_atom tvar t))
+    | PreFormula.Bind (b, u, f) ->
+        PreFormula.Bind (b, u, subst_in ~subst_atom tvar t f)
+
+  let senv_of_atoms atoms =
+    Set.fold atoms ~init:Map.Poly.empty ~f:(fun senv atm ->
+        Set.fold (LogicOld.Atom.term_sort_env_of atm) ~init:senv
+          ~f:(fun senv (x, s) ->
+            Map.Poly.set senv ~key:x ~data:(ExtTerm.of_old_sort s)))
+
+  let term_of_atoms atoms =
+    ExtTerm.of_old_formula @@ LogicOld.Formula.and_of
+    @@ List.map ~f:LogicOld.Formula.mk_atom
+    @@ Set.to_list atoms
+
+  let model_of ~f model =
+    Map.Poly.filter_map model ~f:(fun t ->
+        match Evaluator.eval_term t with v -> f v | exception _ -> None)
+
+  (* one theory's sequence of choices, given that theory's reader, selection,
+     substitution and term conversion *)
+  let run ~formula_of_term ~select ~subst_atom ~term_of_term ~model xs atoms =
+    let senv = senv_of_atoms atoms in
+    Option.map (formula_of_term (term_of_atoms atoms)) ~f:(fun f ->
+        fst
+        @@ List.fold xs ~init:(Map.Poly.empty, f) ~f:(fun (sub, f) x ->
+               let t = select model x f in
+               let told =
+                 ExtTerm.to_old_trm Map.Poly.empty senv (term_of_term t)
+               in
+               let one = Map.Poly.singleton x told in
+               ( Map.Poly.set
+                   (Map.Poly.map sub ~f:(LogicOld.Term.subst one))
+                   ~key:x ~data:told,
+                 subst_in ~subst_atom x t f )))
+
+  let select_terms model xs atoms =
+    try
+      let sorts_are p = List.for_all xs ~f:(fun (_, s) -> p s) in
+      let names = List.map xs ~f:fst in
+      if List.is_empty xs then Some Map.Poly.empty
+      else if sorts_are LogicOld.Term.is_int_sort then
+        run ~formula_of_term:LIA.formula_of_term ~select:LIA.select
+          ~subst_atom:LIA.subst_atom ~term_of_term:LIA.term_of_term
+          ~model:(model_of model ~f:(function Value.Int i -> Some i | _ -> None))
+          names atoms
+      else if sorts_are LogicOld.Term.is_real_sort then
+        run ~formula_of_term:LRA.formula_of_term ~select:LRA.select
+          ~subst_atom:LRA.subst_atom ~term_of_term:LRA.term_of_term
+          ~model:
+            (model_of model ~f:(function Value.Real r -> Some r | _ -> None))
+          names atoms
+      else None
+    with e when not (Common.Timer.is_async e) -> None
 end

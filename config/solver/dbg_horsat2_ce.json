@@ -2,8 +2,6 @@
     "HorSat2",
     {
         "verbose": true,
-        "noce": false,
-        "merge": false,
-        "gfp": false
+        "noce": false
     }
 ]

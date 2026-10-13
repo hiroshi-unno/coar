@@ -4,14 +4,14 @@
                      "S",
                      [
                             "Filename",
-                            "./config/pcsat/synthesizer/dbg_rl_flex_thr.json"
+                            "./config/pcsat/synthesizer/dbg_rl_thr.json"
                      ]
               ],
               [
                      "V",
                      [
                             "Filename",
-                            "./config/pcsat/validator/dbg_rl.json"
+                            "./config/pcsat/validator/dbg_nce.json"
                      ]
               ],
               [

@@ -1,3 +1,12 @@
+(* A negation-free view of [LogicOld] formulas: n-ary conjunction and
+   disjunction, quantifier blocks, constants, theory atoms and predicate
+   applications.  [of_formula] accepts only formulas without negation (other
+   than inside an atom), implication, equivalence, [let] or fixpoint
+   definitions, and raises otherwise, so put a formula in negation normal
+   form first; [simplify] flattens nested connectives and adjacent binders of
+   one kind and folds the constants.  [neg] pushes a negation down to the
+   atoms and raises on a predicate application.  The muCLP optimiser works on
+   this form. *)
 open Core
 open Common.Ext
 open Common.Combinator
@@ -155,7 +164,7 @@ let update_bounds bounds bounds' =
       if true then Hashtbl.Poly.update ht tvar ~f:(fun _old_sort -> sort)
       else
         try Hashtbl.Poly.add_exn ht ~key:tvar ~data:sort
-        with _ ->
+        with exn_ when not (Common.Timer.is_async exn_) ->
           if Stdlib.( <> ) (Hashtbl.Poly.find_exn ht tvar) sort then
             failwith
             @@ sprintf "update_bounds: %s, %s"

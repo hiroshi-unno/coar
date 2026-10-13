@@ -1,3 +1,19 @@
+(* The C frontend's entry points: read a C program annotated with a CTL
+   ([from_cctl_file], [-p cctl]) or LTL ([from_cltl_file], [-p cltl]) property
+   and translate it into a muCLP problem whose validity is the property.
+
+   The program is normalised before translation: function calls are inlined
+   ([ElimFuncall]; calls inside conditions are first lifted into assignments),
+   [#define]s are substituted (on the LTL path textually, by [Preprocess]), and
+   on the LTL path local declarations are also renamed apart ([ElimVardecl]),
+   returns from [main] become exits and the leading assignments become the
+   initial state ([Init.of_stmt]).  The SV-COMP nondeterministic
+   value functions are declared as ordinary functions here.  An LTL property is
+   negated, turned into a Buchi automaton by the external tool LTL3BA and then
+   into a modal equation system; [HesOf] does the rest.
+
+   Syntax and semantic errors are returned as [Error], never raised. *)
+
 open Core
 open Common.Ext
 open Common.Util
@@ -543,11 +559,34 @@ end = struct
   let elim_vardecl stmt = fst @@ elim_vardecl_rep Map.Poly.empty stmt
 end
 
+(* [__VERIFIER_nondet_<type>()] as a function whose result is bounded by the
+   width of <type> *)
+let nondet_int_fun name bits signed =
+  let r = "#nondet_" ^ name in
+  FunDecl.mk_fun_int name []
+    (Statement.of_statements
+       [
+         Statement.mk_vardecl r T_int.SInt;
+         Statement.mk_nondet_int_assign r;
+         Statement.mk_assume (nondet_range r bits signed);
+         Statement.mk_return_int
+           (Term.mk_var (Ident.Tvar r) T_int.SInt ~info:Dummy);
+       ])
+
+let warn_unsigned ~print =
+  if !unsigned_seen then
+    print
+    @@ lazy
+         "[warning] `unsigned` is treated as a mathematical integer: no \
+          wrap-around modulo 2^w is modelled"
+
 let parse_cctl_from_lexbuf ~print lexbuf =
   try
+    unsigned_seen := false;
     let (phi, decls, inits, body), defs, fundecls =
       CCtlParser.toplevel CCtlLexer.main lexbuf
     in
+    warn_unsigned ~print;
     (* a = 3; b = a; -> a = 3; b = 3; *)
     let inits = sub_inits inits in
     let def_subst = Define.subst_of_defines defs in
@@ -594,9 +633,11 @@ let parse_cctl_from_lexbuf ~print lexbuf =
 
 let parse_cltl_from_lexbuf ~print lexbuf =
   try
+    unsigned_seen := false;
     let (ltl, decls, inits, body), defs, fundecls =
       CLtlParser.toplevel CLtlLexer.main lexbuf
     in
+    warn_unsigned ~print;
     let fundecls =
       [
         FunDecl.mk_fun_int "#dec"
@@ -629,22 +670,14 @@ let parse_cltl_from_lexbuf ~print lexbuf =
                Statement.mk_return_int
                  (Term.mk_var tvar T_int.SUnrefInt ~info:Dummy);
              ]);
-        FunDecl.mk_fun_int funname_nondet_char []
-          (Statement.mk_return_nondet_int ());
-        FunDecl.mk_fun_int funname_nondet_uchar []
-          (Statement.mk_return_nondet_int ());
-        FunDecl.mk_fun_int funname_nondet_short []
-          (Statement.mk_return_nondet_int ());
-        FunDecl.mk_fun_int funname_nondet_ushort []
-          (Statement.mk_return_nondet_int ());
-        FunDecl.mk_fun_int funname_nondet_int []
-          (Statement.mk_return_nondet_int ());
-        FunDecl.mk_fun_int funname_nondet_uint []
-          (Statement.mk_return_nondet_int ());
-        FunDecl.mk_fun_int funname_nondet_long []
-          (Statement.mk_return_nondet_int ());
-        FunDecl.mk_fun_int funname_nondet_ulong []
-          (Statement.mk_return_nondet_int ());
+        nondet_int_fun funname_nondet_char 8 true;
+        nondet_int_fun funname_nondet_uchar 8 false;
+        nondet_int_fun funname_nondet_short 16 true;
+        nondet_int_fun funname_nondet_ushort 16 false;
+        nondet_int_fun funname_nondet_int 32 true;
+        nondet_int_fun funname_nondet_uint 32 false;
+        nondet_int_fun funname_nondet_long 64 true;
+        nondet_int_fun funname_nondet_ulong 64 false;
         FunDecl.mk_fun_real funname_nondet_float []
           (Statement.mk_return_nondet_real ());
         FunDecl.mk_fun_real funname_nondet_double []
@@ -717,16 +750,14 @@ let parse_cltl_from_lexbuf ~print lexbuf =
   | CLtlLexer.ErrorFormatted error -> Result.fail (Error.of_string error)
 
 let read_file file =
-  let ic = In_channel.create file in
-  let res = ref "" in
-  try
-    while true do
-      res := !res ^ In_channel.input_line_exn ic ^ "\n"
-    done;
-    assert false
-  with End_of_file ->
-    In_channel.close ic;
-    !res
+  In_channel.with_file file ~f:(fun ic ->
+      let res = ref "" in
+      try
+        while true do
+          res := !res ^ In_channel.input_line_exn ic ^ "\n"
+        done;
+        assert false
+      with End_of_file -> !res)
 
 module Preprocess : sig
   val preprocess : string -> string

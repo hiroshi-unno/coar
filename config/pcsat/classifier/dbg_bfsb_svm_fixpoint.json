@@ -1,0 +1,22 @@
+[
+    "BFSB",
+    {
+        "verbose": true,
+        "qualifier_generator": [
+            "Filename",
+            "./config/pcsat/qualifier/svm_fixpoint.json"
+        ],
+        "strategy": [
+            "First"
+        ],
+        "bfsynth": [
+            "Instance",
+            [
+                "DTBF",
+                {
+                    "verbose": true
+                }
+            ]
+        ]
+    }
+]

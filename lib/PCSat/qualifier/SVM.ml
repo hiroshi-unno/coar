@@ -1,3 +1,11 @@
+(* Qualifier domain that separates the positive from the negative examples
+   of a predicate by halfspaces found with a linear support vector machine
+   (libsvm), recursively on each side until one side is empty.  The float
+   hyperplane is turned into an integer one either exactly or, with
+   [approx_level] > 0, by continued fractions of at most that length; with
+   [approx_level] <= 0 the shortest approximation that classifies every
+   example as the exact one does is searched for.  Examples must be integer
+   points: a parameter of any other sort fails. *)
 open Core
 open Common
 open Common.Ext

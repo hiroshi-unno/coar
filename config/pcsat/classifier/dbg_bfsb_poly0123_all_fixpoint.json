@@ -1,0 +1,19 @@
+[
+    "BFSB",
+    {
+        "verbose": true,
+        "qualifier_generator": [
+            "Filename",
+            "./config/pcsat/qualifier/polyhedron0123_fixpoint.json"
+        ],
+        "bfsynth": [
+            "Instance",
+            [
+                "DTBF",
+                {
+                    "verbose": true
+                }
+            ]
+        ]
+    }
+]
