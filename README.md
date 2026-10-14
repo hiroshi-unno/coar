@@ -17,10 +17,10 @@ An overview of the fixed-point logic solvers MuVal, MuStrat, and MuCyc for $`\mu
 
 * [Installation](#installation)
 * [Usage](#usage): running the tool, [which invocation do I want?](#which-invocation-do-i-want), reading the answer, configuration
-* [Program verification](#program-verification): OCaml and C programs
+* [Program verification](#program-verification): OCaml and C programs, probabilistic programs (pGCL and SGCL)
 * [Transition system verification](#transition-system-verification): labeled transition systems (T2), integer transition systems of the Termination Competition, BTOR2 hardware models
 * [Constraint solving](#constraint-solving): CHC and its extensions, CHC maximization, SyGuS, regular expressions
-* [Fixpoint logic](#fixpoint-logic): muArith and muCLP, QFL, pGCL and sGCL programs, HFL and QHFL
+* [Fixpoint logic](#fixpoint-logic): muArith and muCLP, QFL, HFL and QHFL
 * [SMT](#smt): quantified SMT
 * [Higher-order model checking and Boolean satisfiability](#higher-order-model-checking-and-boolean-satisfiability)
 * [Printing a problem instead of solving it](#printing-a-problem-instead-of-solving-it)
@@ -163,7 +163,7 @@ what you have to the `-p` name, the file extension, a typical configuration and 
 | a **fixpoint logic** formula (muArith, muCLP) | `muclp` | `.hes` | `muval_*.json`, `mucyc*.json`, `mustrat*.json` | [muArith and muCLP](#muarith-and-muclp) |
 | the same, answered interactively | `muclpinter` | `.hes` | `muval_interactive_*.json` | [Interactive mode](#muval-interactive-conditional-mode) |
 | a **quantified SMT** formula | `smt` | `.smt2` | `mucyc*.json`, `mustrat*.json`, `z3_smt.json` | [Quantified SMT](#quantified-smt) |
-| a **probabilistic** fixpoint formula, or a pGCL / sGCL program | `qfl`, `pgcl`, `sgcl` | `.qhes`, `.pgcl`, `.sgcl` | `muval_*.json` | [QFL](#qfl), [pGCL and sGCL](#pgcl-and-sgcl-programs-reduced-to-qfl) |
+| a **probabilistic** fixpoint formula, or a pGCL / SGCL program | `qfl`, `pgcl`, `sgcl` | `.qhes`, `.pgcl`, `.sgcl` | `muval_*.json` | [QFL](#qfl), [pGCL and SGCL](#probabilistic-programs-pgcl-and-sgcl) |
 | a **SAT / QSAT / DQSAT / HOSAT** instance | `sat`, `qsat`, `dqsat`, `hosat` | `.dimacs`, `.qdimacs`, `.dqdimacs`, `.hosat` | `dbg_homcsat.json` | [HOMCSat](#sat-qsat-dqsat-and-hosat-with-homcsat) |
 | a **higher-order model checking** problem | `homc` | `.hrs`, `.hors`, `.hmtt`, `.ehmtt` | `horsat2.json`, `trecs.json` | [Higher-order model checking](#higher-order-model-checking) |
 | a SAT/QSAT/HOSAT, SMT, CHC or pCSP, SyGuS, fixpoint-logic, C, transition-system or BTOR2 input, to be **printed** in the form a backend would receive rather than solved | as above | as above | `printer.json`, `printer_smt2.json` | [Printing](#printing-a-problem-instead-of-solving-it) |
@@ -180,7 +180,7 @@ forms differ by backend:
 | form | example | meaning |
 | --- | --- | --- |
 | verdict and iteration count | `sat,2` | satisfiable, found after 2 CEGIS iterations |
-| verdict, iterations, exchange counts | `valid,5,5\|2` | valid; 5 iterations; the parallel primal and dual solvers exchanged 5 and 2 clauses |
+| verdict, iterations, exchange counts | `valid,5,5\|2` | MuVal running its primal (prove) and dual (disprove) solvers in parallel: valid; 5 CEGIS iterations of **whichever side answered first** (the output does not say which, and a `valid` can come from either, the dual's refutation being flipped); the primal side sent bounds 5 times and the dual side 2 times |
 | a word | `YES` / `NO` / `MAYBE` | for termination-style problems on labeled transition systems |
 | `unknown`, `timeout` | | **ordinary answers, not errors** — the tool ran and did not decide |
 
@@ -297,6 +297,39 @@ bound of an `int` or `uint` needs the flag.
 
 Please obtain and use the benchmark set from the following paper:
 * Byron Cook and Eric Koskinen. Reasoning about nondeterminism in programs. PLDI 2013.
+
+### Probabilistic programs (pGCL and SGCL)
+
+A probabilistic or stochastic program is translated into a QFL problem and solved by MuVal<sup>QFL</sup>,
+so the configurations are those of the [QFL](#qfl) section. Input: a `.pgcl` or `.sgcl` file, `-p pgcl` or
+`-p sgcl`. The SGCL inputs are the benchmark set of Diabolo (https://github.com/fzaiser/diabolo;
+Zaiser, Murawski and Ong, *Guaranteed Bounds on Posterior Distributions of Discrete Probabilistic
+Programs with Loops*, POPL 2025), included as a submodule:
+`git submodule update --init benchmarks/SGCL/diabolo`.
+
+```bash
+./_build/default/main.exe -c ./config/solver/muval_quant_polyqent_deg1.json -p sgcl ./benchmarks/SGCL/diabolo/benchmarks/geo.sgcl
+# valid, ...
+```
+
+For `-p pgcl`, only a **bound** query — does the expected value stay within a stated bound, written
+`?Ex [e] <= b` (or `<`, `>=`, `>`) at the end of the program — is reduced to a solvable problem.
+The example asks whether the number of failures before a fair coin first succeeds has expectation
+at most 1, which is exact:
+
+```bash
+./_build/default/main.exe -c ./config/solver/muval_quant_polyqent_deg1.json -p pgcl ./benchmarks/pGCL/simple/geometric_count_bound_valid.pgcl
+# valid, ...
+```
+
+A program that asks for the expected value of an expression itself (`?Ex [e]`, or no query at all)
+is reported as an unsupported query rather than silently producing nothing:
+
+```bash
+./_build/default/main.exe -c ./config/solver/muval_quant_polyqent_deg1.json -p pgcl ./benchmarks/pGCL/from_qhes/ert_random_walk.pgcl
+# unsupported query: this pGCL program asks for the expected value of an expression,
+# and only a bound query is reduced to a solvable problem
+```
 
 ## Transition system verification
 
@@ -687,29 +720,6 @@ MuVal<sup>QFL</sup> checks QFL formulas. Input: a `.qhes` file, `-p qfl`. Build
 
 ```bash
 ./_build/default/main.exe -c ./config/solver/muval_quant_polyqent_deg1.json -p qfl ./benchmarks/QFL/distribution_bounds/threedim_deg2.qhes
-```
-
-### pGCL and sGCL programs (reduced to QFL)
-
-A probabilistic or stochastic program is translated into a QFL problem and solved by MuVal<sup>QFL</sup>,
-so the configurations are those of the QFL section. Input: a `.pgcl` or `.sgcl` file, `-p pgcl` or
-`-p sgcl`. The sGCL inputs are the benchmark set of Diabolo (https://github.com/fzaiser/diabolo;
-Zaiser, Murawski and Ong, *Guaranteed Bounds on Posterior Distributions of Discrete Probabilistic
-Programs with Loops*, POPL 2025), included as a submodule:
-`git submodule update --init benchmarks/SGCL/diabolo`.
-
-```bash
-./_build/default/main.exe -c ./config/solver/muval_parallel_exc_tbq_ar.json -p sgcl ./benchmarks/SGCL/diabolo/benchmarks/geo.sgcl
-```
-
-For `-p pgcl`, only a **bound** query — does the expected value stay within a stated bound — is
-reduced to a solvable problem. A program that asks for the expected value of an expression itself
-is reported as an unsupported query rather than silently producing nothing:
-
-```bash
-./_build/default/main.exe -c ./config/solver/muval_parallel_exc_tbq_ar.json -p pgcl ./benchmarks/pGCL/from_qhes/ert_random_walk.pgcl
-# unsupported query: this pGCL program asks for the expected value of an expression,
-# and only a bound query is reduced to a solvable problem
 ```
 
 ### HFL and QHFL

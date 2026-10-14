@@ -1,4 +1,4 @@
-(* Abstract syntax of sGCL, a probabilistic guarded command language with
+(* Abstract syntax of SGCL, a probabilistic guarded command language with
    real-valued variables, and its reduction to QFL.  Statements are
    assignment (also in increment and decrement form), conditional, loop,
    probabilistic choice, a loop that continues with a given probability

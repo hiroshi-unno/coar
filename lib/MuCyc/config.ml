@@ -135,7 +135,7 @@ type t = {
      them differ is a disequality, the weakest literal there is; on one input 5,242 of
      5,766 of them were disequalities. *)
   compare_branches_in_projection : bool; [@default false]
-  enable_pvar_elim : bool; [@default false]
+  enable_pvar_elim : bool; [@default true]
   check_validity : bool; [@default false]
   (* options for relational verification [CAV'17] *)
   ask_pred_app_to_unfold : bool; [@default false]

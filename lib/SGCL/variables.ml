@@ -1,4 +1,4 @@
-(* Sets of named, sorted program variables, used when the sGCL frontend
+(* Sets of named, sorted program variables, used when the SGCL frontend
    collects the variables a program mentions. *)
 open Core
 open Common.Ext

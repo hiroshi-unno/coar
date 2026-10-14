@@ -7,7 +7,7 @@ IFS=$'\n\t'
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 solver='mucyc-returnF-mbp0-indNF'
-export options='-c ./config/solver/mucyc_chc_comp_returnF_mbp0_indNF.json -p pcsp'
+export options='-c ./config/solver/mucyc_returnF_mbp0_indNF.json -p pcsp'
 export cmd="/root/coar/main.exe"
 export para=6
 export timeout=300

@@ -148,6 +148,21 @@ type t = {
           ground pair and the demand on the ranking only weakens; an answer
           still comes from a won strategy check.  Off, the regions are formed
           as before the field existed. *)
+  passed_choices_at_ranked_visits_only : bool; [@default false]
+      (** Read only with [generalise_chain_pairs] and
+          [chain_pair_regions_with_passed_choices].  The passed-over
+          alternatives' losing conditions are taken only at the nodes of a
+          segment that visit the ranked predicate, never at its auxiliary
+          nodes, among them the ones naming the checked side's term
+          alternatives: their clause bodies hold that side's strategy
+          constants, and conditions read there cut a region into slices
+          bounded by those constants, which can leave the region problem
+          unsolved within its budget.  Soundness is unchanged: a condition
+          still only narrows a region, and dropping some only widens the
+          narrowed region back towards the unnarrowed one, so every region
+          still contains its ground pair and an answer still comes from a won
+          strategy check.  Off, conditions are taken at every node but a
+          segment's last. *)
   extra_plays_at_initial_budget : bool; [@default false]
       (** Read only when [counter_plays_per_check] is above 1.  Ask each extra
           counter-play at [chc_initial_timeout] (or the check's own budget when

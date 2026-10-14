@@ -629,6 +629,10 @@ module Make (Cfg : Config.ConfigType) = struct
             else str_of_solution)
             sol
         in
+        (* [info] is the CEGIS iteration count of the side that answered: in the
+           parallel modes, whichever of the primal and dual tasks returned first,
+           which this line does not name.  The two send counts are keyed by the
+           sending side: partial solutions the primal sent, then the dual. *)
         let str_info =
           match
             ( Hashtbl.Poly.find send_records id_primal,

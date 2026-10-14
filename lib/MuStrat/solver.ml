@@ -2136,8 +2136,9 @@ module Make (Cfg : Config.ConfigType) = struct
      ranked side makes by repeating its move, under every choice of the
      checked side's universals.  The path condition is then projected onto
      the states of [x_0] and [x_k] by model-based projection, at the model
-     assigning every [x_i] the play's arguments.  [passed node x_i] adds, for
-     each [n_i] ([i < k]), conditions over [x_i] that hold at the play's
+     assigning every [x_i] the play's arguments.  [passed ~visit node x_i]
+     adds, for each [n_i] ([i < k]; [visit] says whether [n_i] is a visit of
+     the ranked predicate), conditions over [x_i] that hold at the play's
      arguments of [n_i] (the losing conditions of the alternatives the ranked
      side passed over there, see [PassedChoices]); they only narrow the path
      condition, so the region they give is a subset of the one without them
@@ -2152,7 +2153,7 @@ module Make (Cfg : Config.ConfigType) = struct
      whose region is [true] or mentions no variable, gets no entry: its
      ground pair is still asked by the caller.  Nothing here decides an
      answer: the regions only constrain a copy the strategy check judges. *)
-  let chain_regions_of ?(passed = fun _ _ -> []) ~decisions tree ~wf_key
+  let chain_regions_of ?(passed = fun ~visit:_ _ _ -> []) ~decisions tree ~wf_key
       ~arity =
     let open Ast.LogicOld in
     let n = arity / 2 in
@@ -2256,7 +2257,8 @@ module Make (Cfg : Config.ConfigType) = struct
                         [ Formula.eq (List.last_exn args) (List.last_exn child.args) ]
                       else [])
                 in
-                (eqs head_args xs @ premise_eqs @ pure @ passed node xs)
+                (eqs head_args xs @ premise_eqs @ pure
+                 @ passed ~visit:(Option.is_some (state_of node)) node xs)
                 @ instances rest
             | _ -> []
           in
@@ -2822,7 +2824,9 @@ module Make (Cfg : Config.ConfigType) = struct
        clauses of the check [check] that returned the play
        ([PassedChoices]), computed once per predicate and kept here.  They
        narrow the chain-pair regions and nothing else; without [check] or
-       with the field off, no condition. *)
+       with the field off, no condition.  Under
+       [passed_choices_at_ranked_visits_only] they are taken only at the
+       visits of the ranked predicate ([PassedChoices.at_node]). *)
     let passed =
       match check with
       | Some chc
@@ -2849,8 +2853,9 @@ module Make (Cfg : Config.ConfigType) = struct
             Z3Smt.Z3interface.qelim ~timeout:(Some 1000) ~id:None
               ~fenv:(get_fenv ()) phi
           in
-          fun (node : play_node) xs ->
-            if List.is_empty xs || String.is_empty (Ident.name_of_pvar node.pvar)
+          let visits_only = config.passed_choices_at_ranked_visits_only in
+          fun ~visit (node : play_node) xs ->
+            if (visits_only && not visit) || List.is_empty xs || String.is_empty (Ident.name_of_pvar node.pvar)
             then []
             else
               let params, conds =
@@ -2881,8 +2886,9 @@ module Make (Cfg : Config.ConfigType) = struct
                  || List.length node.args <> List.length xs
               then []
               else
-                PassedChoices.at_point conds params ~point:node.args ~vars:xs
-      | _ -> fun _ _ -> []
+                PassedChoices.at_node ~visits_only ~visit conds params
+                  ~point:node.args ~vars:xs
+      | _ -> fun ~visit:_ _ _ -> []
     in
     (*if verbose then*)
     Debug.print @@ lazy (sprintf "## cex: %s\n" (Formula.str_of cex));

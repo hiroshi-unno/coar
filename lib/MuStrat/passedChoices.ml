@@ -180,3 +180,19 @@ let at_point conds params ~point ~vars =
       | true -> Some (Formula.rename ren l)
       | false -> None
       | exception exn when not (Common.Timer.is_async exn) -> None)
+
+(* [at_point] at one node of a chain segment, gated by where the node sits.
+   [visit] says whether the node is a visit of the ranked predicate (a node
+   whose atom carries a state of the ranking being fitted).  Under
+   [visits_only], a node that is not a visit contributes nothing: the other
+   nodes of a segment are auxiliary predicates of the check, among them the
+   ones naming the checked side's term alternatives, whose clause bodies hold
+   that side's strategy constants, so their losing conditions cut a region
+   into slices bounded by those constants rather than restoring where the
+   ranked side's own move is right.  Contract: the result is a sub-list of
+   [at_point conds params ~point ~vars] (the whole of it when [visit] or not
+   [visits_only], empty otherwise), so it only drops narrowing conditions; a
+   region narrowed by it contains the region narrowed by [at_point] and is
+   contained in the unnarrowed one, and still contains the play's pair. *)
+let at_node ~visits_only ~visit conds params ~point ~vars =
+  if visits_only && not visit then [] else at_point conds params ~point ~vars
