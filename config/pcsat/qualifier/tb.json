@@ -3,5 +3,10 @@
   "add_bool": true,
   "add_homogeneous": true,
   "filter_out_quantified": true,
-  "add_arg_transpositions": true
+  "families": {
+    "arg_transpositions": [
+      "Transpositions",
+      {}
+    ]
+  }
 }

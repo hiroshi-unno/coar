@@ -1,0 +1,25 @@
+%BEGING
+Mult x y = case x of
+	  zero => zero
+	| succ z => Add y (Mult z y)
+.
+Add x y = case x of
+	  zero => y
+	| succ z => succ(Add z y)
+.
+%ENDG
+
+%BEGINA
+/* qi0 : even, qi1 : odd */
+qi0 succ -> qi1.
+qi0 zero -> .
+qi1 succ -> qi0.
+/* q0 : even */
+q0 succ -> q1.
+q0 zero -> .
+q1 succ -> q0.
+%ENDA
+
+%BEGINT
+Mult : qi0 -> qi1 -> q0.
+%ENDT

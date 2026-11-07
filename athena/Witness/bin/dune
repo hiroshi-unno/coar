@@ -1,0 +1,5 @@
+(executable
+ (name main)
+ (public_name athena-witness)
+ (package athena-witness)
+ (libraries athena_witness cmdliner))

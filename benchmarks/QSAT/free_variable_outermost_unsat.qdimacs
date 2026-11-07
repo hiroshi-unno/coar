@@ -1,0 +1,7 @@
+c forall x1. x2 <=> x1, with x2 free
+c A free variable is existential in the outermost block: exists x2 forall x1. x2 <=> x1, which is false.
+c (Read as innermost, exists after x1, it would be true.)
+p cnf 2 2
+a 1 0
+-2 1 0
+2 -1 0

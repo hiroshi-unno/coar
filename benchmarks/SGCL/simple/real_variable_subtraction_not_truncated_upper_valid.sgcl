@@ -1,0 +1,10 @@
+# A variable made real (here by the decimal 0.5 added to it) keeps the real subtraction: only
+# integer subtraction is truncated at 0. From r = 0.5, `r -= 1` gives -0.5 and `r += 1` gives
+# 0.5, so the expectation is 0.5 and the upper bound 0.5 holds.
+# Expected: valid. Truncating the real subtraction too would end at 1 and lose this answer.
+r := 0;
+r += 0.5;
+r -= 1;
+r += 1;
+return r
+?Ex[r] <= 0.5

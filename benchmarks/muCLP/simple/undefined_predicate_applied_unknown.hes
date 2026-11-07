@@ -1,0 +1,3 @@
+P 0
+s.t.
+P (x: int): bool =mu x > 2 \/ Q (x + 1);

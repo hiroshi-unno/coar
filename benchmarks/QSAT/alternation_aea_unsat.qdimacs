@@ -1,0 +1,8 @@
+c forall x1 exists x2 forall x3: x3 true needs x2, x3 false needs x2 = not x1
+p cnf 3 3
+a 1 0
+e 2 0
+a 3 0
+1 2 3 0
+-1 -2 3 0
+2 -3 0

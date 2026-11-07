@@ -84,10 +84,15 @@ The following instructions assume that you are in the root directory of the GitH
 To reproduce the experimental results described in the paper, run:
 
 ```
-./script/oopsla2025/run.sh
+./oopsla25ae/run.sh
 ```
 
 This command runs the tool on each benchmark found in the directory `./benchmarks/OCaml/oopsla25`, which includes all the benchmarks presented in the implementation section (Section 7) of the paper.
+It runs them one at a time without a time limit and prints one CSV row per benchmark, `file,verdict,seconds,iterations`
+(`sat` means the program satisfies its specification, `unsat` that it violates it); each run's full output is kept in
+`oopsla25_logs/<benchmark>.log`. The run is `effcaml_nolimit` of corpus `oopsla25ae` in the repository's table of runs,
+`script/bench_runs.txt`, which `script/run_corpus.sh` runs through the shared runner `script/run_bench.sh`;
+`script/run_corpus.sh --dry-run oopsla25ae effcaml_nolimit` prints the command.
 
 The following is the correspondence between the benchmarks in the paper and the files in `./benchmarks/OCaml/oopsla25`.
 

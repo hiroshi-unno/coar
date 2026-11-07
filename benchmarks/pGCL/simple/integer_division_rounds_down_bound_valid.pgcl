@@ -1,0 +1,8 @@
+# x and y are nat variables, so y := x / 2 is integer division: y is 5 / 2 = 2, and the
+# upper bound 2 on its expectation holds.
+# Expected: valid.  Read with every variable a real, y was 2.5 and the bound was not proved.
+nat x;
+nat y;
+x := 5;
+y := x / 2;
+?Ex [y] <= 2

@@ -166,12 +166,44 @@ type case = {
 
 type t = { cases : case list; input_fvs : (Ident.tvar * Sort.t) list }
 
-let subst1 x t phi = Formula.subst (Map.Poly.singleton x t) phi
+let checked_term_subst sub term =
+  if not (Evaluator.scalar_substitution_is_safe sub (Formula.eq term term)) then
+    raise (Skip "unsafe scalar substitution in array witness");
+  Term.subst sub term
+
+let subst1 x t phi =
+  let sub = Map.Poly.singleton x t in
+  if not (Evaluator.scalar_substitution_is_safe sub phi) then
+    raise (Skip "unsafe scalar substitution in array formula");
+  Formula.subst sub phi
+
+let names_of_conjs conjs =
+  Set.Poly.union_list (List.map conjs ~f:Formula.names_spelled_in)
+
+let fresh_supply names =
+  let occupied = ref names in
+  fun () ->
+    let rec draw () =
+      let x = Ident.mk_fresh_tvar () in
+      if Set.mem !occupied x then draw ()
+      else (occupied := Set.add !occupied x; x)
+    in
+    draw ()
+
+let rename_formals params raw body =
+  let bools, calls = List.fold params
+      ~init:(Map.Poly.empty, Map.Poly.empty)
+      ~f:(fun (bools, calls) (x, sort) ->
+        let y = Map.Poly.find_exn raw x in
+        ((if Term.is_bool_sort sort then Map.Poly.set bools ~key:x ~data:y else bools),
+         if Sort.is_arrow sort then Map.Poly.set calls ~key:(x, sort) ~data:y else calls)) in
+  T_bool.let_formula
+    (Formula.alpha_rename_term_vars raw bools calls (T_bool.of_formula body))
 
 (* the conjuncts after the one-point rule for array equations and the
    skolemisation of top-level existentials, with the substitutions made and
    the fresh names drawn *)
-let normalise conjs =
+let normalise_with_draw draw conjs =
   let defs = ref [] and fresh = ref Set.Poly.empty in
   let rec loop conjs =
     match
@@ -187,11 +219,11 @@ let normalise conjs =
     | Some (i, `Ex (senv, body)) ->
         let map =
           List.fold senv ~init:Map.Poly.empty ~f:(fun m (x, s) ->
-              let y = Ident.mk_fresh_tvar () in
+              let y = draw () in
               fresh := Set.add !fresh y;
               Map.Poly.set m ~key:x ~data:(Term.mk_var y s))
         in
-        let body = Formula.subst map body in
+        let body = rename_formals senv (Map.Poly.map map ~f:Term.tvar_of) body in
         let rest = List.filteri conjs ~f:(fun j _ -> j <> i) in
         loop (rest @ Formula.conjuncts_list_of body)
     | Some (i, `Def (x, s, t)) ->
@@ -199,13 +231,16 @@ let normalise conjs =
         defs :=
           (x, s, t)
           :: List.map !defs ~f:(fun (y, sy, u) ->
-              (y, sy, Term.subst (Map.Poly.singleton x t) u));
+              (y, sy, checked_term_subst (Map.Poly.singleton x t) u));
         loop
           (List.concat_map rest ~f:(fun c ->
                Formula.conjuncts_list_of (subst1 x t c)))
   in
   let conjs = loop conjs in
   (conjs, List.rev !defs, !fresh)
+
+let normalise conjs =
+  normalise_with_draw (fresh_supply (names_of_conjs conjs)) conjs
 
 (* ---- classifying an array's occurrences ---- *)
 
@@ -380,16 +415,16 @@ let replace_reads x ~reads ?at phi =
 
 (* one elimination of [x] from the conjuncts, or [None] when its universal
    is outside the fragment *)
-let eliminate conjs x sort (u : usage) =
-  let reads = List.map u.ground ~f:(fun s -> (s, Ident.mk_fresh_tvar ())) in
-  let tv = Ident.mk_fresh_tvar () and vv = Ident.mk_fresh_tvar () in
+let eliminate_with_draw draw conjs x sort (u : usage) =
+  let reads = List.map u.ground ~f:(fun s -> (s, draw ())) in
+  let tv = draw () and vv = draw () in
   let univ, rest =
     List.mapi conjs ~f:(fun k c -> (k, c))
     |> List.partition_map ~f:(fun (k, c) ->
         if List.mem u.univ k ~equal:Int.equal then
           match c with
           | Formula.Bind (Formula.Forall, [ (t0, _) ], body, _) ->
-              First (subst1 t0 (Term.mk_var tv T_int.SInt) body)
+              First (rename_formals [t0, T_int.SInt] (Map.Poly.singleton t0 tv) body)
           | _ -> assert false
         else Second c)
   in
@@ -437,9 +472,13 @@ let eliminate conjs x sort (u : usage) =
           ( rest @ at_reads @ consistent @ [ outside ],
             { arr = x; arr_sort = sort; reads; tv; vv; phi; sols } )
 
-let rewrite_case conjs =
+let eliminate conjs x sort u =
+  eliminate_with_draw (fresh_supply (Set.add (names_of_conjs conjs) x)) conjs x sort u
+
+let rewrite_case_with_taken taken conjs =
+  let draw = fresh_supply (Set.union taken (names_of_conjs conjs)) in
   let conjs, defs, fresh =
-    normalise (List.concat_map conjs ~f:Formula.conjuncts_list_of)
+    normalise_with_draw draw (List.concat_map conjs ~f:Formula.conjuncts_list_of)
   in
   let conjs =
     List.concat_map conjs ~f:(fun c ->
@@ -458,7 +497,7 @@ let rewrite_case conjs =
     match cand with
     | None -> (conjs, List.rev elims)
     | Some (x, u) -> (
-        match eliminate conjs x (T_array.SArray (T_int.SInt, T_int.SInt)) u with
+        match eliminate_with_draw draw conjs x (T_array.SArray (T_int.SInt, T_int.SInt)) u with
         | None -> loop conjs elims (Set.add tried x)
         | Some (conjs, e) -> loop conjs (e :: elims) (Set.add tried x))
   in
@@ -470,8 +509,11 @@ let rewrite_case conjs =
   in
   { formula = Formula.and_of conjs; defs; elims; fresh }
 
+let rewrite_case conjs = rewrite_case_with_taken Set.Poly.empty conjs
+
 let rewrite (psi : Formula.t) : (t, string) Result.t =
   try
+    let taken = Formula.names_spelled_in psi in
     let psi = prepare psi in
     let conjs = Formula.conjuncts_list_of psi in
     let cases =
@@ -484,7 +526,7 @@ let rewrite (psi : Formula.t) : (t, string) Result.t =
     in
     if List.length cases > max_cases then Error "too many cases"
     else
-      let cases = List.map cases ~f:rewrite_case in
+      let cases = List.map cases ~f:(rewrite_case_with_taken taken) in
       if List.for_all cases ~f:(fun c -> List.is_empty c.elims) then
         Error "no array eliminated"
       else
@@ -505,7 +547,12 @@ let abs_term t = T_bool.ifte (Formula.geq t (T_int.zero ())) t (T_int.mk_neg t)
 (* the array [e] denotes, as a [lambda] whose free variables are those of
    the case formula's model *)
 let array_term (e : elim) =
-  let x = Ident.mk_fresh_tvar () in
+  let taken = Set.Poly.union_list
+      [ Formula.names_spelled_in e.phi;
+        Set.Poly.of_list (e.arr :: e.tv :: e.vv :: List.map e.reads ~f:snd);
+        Set.Poly.union_list (List.map (e.sols @ List.map e.reads ~f:fst)
+          ~f:(fun t -> Formula.names_spelled_in (Formula.eq t t))) ] in
+  let x = (fresh_supply taken) () in
   let xv = Term.mk_var x T_int.SInt in
   let g =
     List.fold e.sols ~init:(T_int.one ()) ~f:(fun acc s -> T_int.mk_add acc (abs_term s))
@@ -513,7 +560,7 @@ let array_term (e : elim) =
   let witness =
     List.fold_right e.sols ~init:g ~f:(fun s acc ->
         T_bool.ifte (subst1 e.vv s e.phi) s acc)
-    |> Term.subst (Map.Poly.singleton e.tv xv)
+    |> checked_term_subst (Map.Poly.singleton e.tv xv)
   in
   let body =
     List.fold_right e.reads ~init:witness ~f:(fun (s, v) acc ->

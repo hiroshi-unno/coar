@@ -41,7 +41,15 @@
               "Filename",
               "./config/pcsat/rl/enable.json"
        ],
-       "dedup_normalized_examples": false,
-       "early_point_pin_first_no_unknown_query": false,
-       "prove_unknown_free_clauses_first": false
+       "zero_unknown": {
+              "early_stage": {
+                     "pins": [
+                            "Early_pins",
+                            {
+                                   "point_pin_first": false
+                            }
+                     ]
+              }
+       },
+       "unknown_free_clauses": {"prove_first": ["No_prove_first"]}
 }

@@ -1,0 +1,6 @@
+START: 5;
+ERROR: 1;
+
+FROM: 0;
+x := x - 1;
+TO: 1;

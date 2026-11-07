@@ -1,0 +1,11 @@
+extern int __VERIFIER_nondet_int(void);
+extern void __VERIFIER_assume(int);
+extern void abort(void);
+extern void exit(int);
+extern void __assert_fail(const char *, const char *, unsigned int, const char *) __attribute__((__noreturn__));
+void reach_error() { __assert_fail("0", "t.c", 3, "reach_error"); }
+void __VERIFIER_assert(int cond) { if (!cond) { reach_error(); abort(); } }
+int main(void) {
+  int x = __VERIFIER_nondet_int();
+  while (1) { if (x > 10) exit(0); x++; }   /* x++ overflowing is UB: not considered */
+}

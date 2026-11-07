@@ -57,10 +57,11 @@ type smt_solver_instance = {
           instance ever saw that counter at zero, so the per-target ones ran
           unconstrained and Z3 answered with selector values outside their
           range. *)
+  mutable core_tracking : Z3Smt.Z3interface.core_tracking_state;
   tracked_labels : Z3.Expr.expr list ref;
       (** every label tracked in [solver] since it was created or renewed,
-          kept for [synthesis_fresh_solver_per_check], which asks the question
-          of a fresh solver under these labels as assumptions *)
+          kept for the fresh-solver modes of [synthesis_solver], which ask the
+          question of a fresh solver under these labels as assumptions *)
 }
 
 module Config = struct
@@ -84,6 +85,10 @@ module Config = struct
   type fn_goal_constraint = Existential | Universal | Omit
   [@@deriving yojson]
 
+  (* See the [quantified_away_components] field. *)
+  type quantified_away_components = Keep | Avoid_unguarded | Avoid_self_guarded
+  [@@deriving yojson]
+
   type predicate_template =
     | DNF of Template.PredicateDNF.Config.t ext_file
     | Flex of Template.PredicateFlex.Config.t ext_file
@@ -93,6 +98,27 @@ module Config = struct
   type wf_predicate_template =
     | WF of Template.WFPredicate.Config.t ext_file
     | WF_Flex of Template.WFPredicateFlex.Config.t ext_file
+  [@@deriving yojson]
+
+  (** The template an unknown of the disjunctively well-founded kind ([DWF])
+      is given.  Either is sound: a [DWF] solution must be contained in a
+      finite union of well-founded relations, and each is such a union by
+      construction. *)
+  type dwf_predicate_template =
+    | Same_as_wf
+        (** the [wf_predicate_template] itself: one (piecewise
+            lexicographic) ranking, so every solution is in fact
+            well-founded, and a relation holding a cycle is never found *)
+    | Union_of_wf of int
+        (** the union of that many independent instances of the [WF]
+            template, each with parameters and qualifier holes of its own and
+            all at one shape, which grows for all of them together; its
+            certificate is the list of the members' rankings.  It reaches
+            relations no single ranking contains, such as
+            [x > y /\ x >= 0 \/ x < y /\ x <= 0], and contains every
+            relation the single template has at the same shape when the
+            ranking coefficients may all be zero.  Requires
+            [wf_predicate_template = WF] and at least one member *)
   [@@deriving yojson]
 
   type fn_predicate_template =
@@ -110,142 +136,124 @@ module Config = struct
     | RealFun_Flex of Template.RealFunctionFlex.Config.t ext_file
   [@@deriving yojson]*)
 
+  (** Which solver each check of the incremental synthesis query is asked
+      of.  A fresh solver holds the incremental solver's assertions and is
+      asked under the tracked labels as assumptions
+      ([Z3interface.incr_check_sat_unsat_core ~fresh_labels]): the question,
+      its models and its unsat cores are those of the incremental check, and
+      what changes is that no state of the earlier checks is carried into it. *)
+  type synthesis_solver =
+    | Incremental  (** every check of the incremental solver alone *)
+    | Fresh_per_check
+        (** every check of a fresh solver.  On quantified synthesis
+            constraints the incremental solver was seen to come back
+            undecided ([unknown], or out of its budget, and then re-asked at
+            doubled budgets) on questions a fresh solver answers in 1-2 s,
+            while every check pays the internalisation of the whole query *)
+    | Fresh_after_undecided
+        (** the incremental solver first, and only a question it leaves
+            undecided ([unknown], a timeout) of a fresh solver, once, at the
+            same budget.  A decided answer is the incremental one; the fresh
+            one is the same question *)
+  [@@deriving yojson]
+
+  (** Which consistent candidate a decided synthesis question returns.  A
+      qualifier is {e specific} when it bounds one coordinate by a constant or
+      excludes one point: it mentions at most one coordinate (a maximal
+      subterm not built by integer or real arithmetic -- a variable, a
+      selector chain, a sequence length, an element) and carries a constant,
+      an integer literal of absolute value above 1 outside a product or a
+      ground constructor term with arguments ([seq.len v < 3],
+      [x <> tuple(tuple(0, 10), 2)]).  The other qualifiers relate two or more
+      coordinates, or compare one with 0 or 1 or a nullary constructor.  The
+      first model of the query takes specific qualifiers as freely as the
+      others, and over examples they are the cheapest witness separating one
+      negative example from the positives, so a candidate memorises the
+      example points instead of using the relational atoms the vocabulary
+      also offers. *)
+  type literal_preference =
+    | Any_literal  (** the solver's first model *)
+    | General_first
+        (** once the question is decided satisfiable, it is asked again with
+            every specific qualifier's key fixed to 0, and if that has no
+            model, with the key of every specific qualifier mentioning an
+            integer literal the problem does not mention fixed to 0; the first
+            model found is returned, the first model of the plain question if
+            neither has one.  A rung is not asked when the first model already
+            satisfies it.  Every model returned is a model of the plain
+            question, so the candidate is one it could have returned, and
+            whether the question has a model is decided by the plain question
+            alone: the ladder changes which candidate a round proposes, never
+            whether it proposes one.  At most two extra questions per decided
+            round, each bounded by [general_first_timeout]. *)
+  [@@deriving yojson]
+
+  (** The well-founded LP candidate route.  At the start of each synthesis
+      round, every well-founded unknown whose parameters are numeric states
+      and whose unit positive examples are linear gets a candidate built by
+      linear programming from those examples, each parametric example read
+      exactly as its region ([PCSatCommon.WfLp]); the round then asks the
+      templates of the other unknowns with those candidates fixed, over every
+      example, on a solver instance of its own.  A model's candidate is
+      proposed; otherwise the round is the ordinary one, the well-founded
+      unknowns' templates included.  Sound whatever the linear programs
+      answer: every such candidate is a well-founded order of the ranking
+      template's shape, and it is validated as any candidate is. *)
+  type wf_lp = {
+    depth : int; [@default 3]
+        (** the most lexicographic components the construction builds *)
+    offers : bool; [@default true]
+        (** also ask the candidate to contain the pairs the unknown's
+            positive atoms offer in examples beside other unknowns' atoms,
+            and fall back to the unit examples alone when no construction
+            ranks them all *)
+    unit_first : bool; [@default true]
+        (** ask first for components with integer coefficients in [-1, 1],
+            which prefers a lexicographic order over few positions to one
+            function whose coefficients grow with the examples *)
+    rational : bool; [@default true]
+        (** ask the unbounded questions as linear programs over the
+            rationals and scale each component to integers, rather than as
+            integer programs *)
+    timeout_ms : int; [@default 1000]  (** each linear question's budget *)
+    max_slides : int; [@default 3]
+        (** the route stops for an unknown, for the rest of the solve, once
+            this many of its candidates have repeated coefficients an earlier
+            one had: ground examples along one direction make the linear
+            program answer the same coefficients with a constant one step
+            larger each round (or alternate between two such vectors), a
+            sequence the template's own bounds and growth leave *)
+    const_ladder : bool; [@default false]
+        (** ask each question of the unbounded pass first with the
+            component's constant within [-1, 1], then within [-M, M] for the
+            problem's largest absolute integer literal [M], and with the
+            constant free only when neither has an answer.  The questions
+            decided are the same, so whether a candidate is found is
+            unchanged; only which components are returned changes: a free
+            constant is the solver's choice and can follow the ground
+            examples (a constant one larger each round) where a constant
+            within the problem's literals cannot pass the largest of them. *)
+  }
+  [@@deriving yojson]
+
+  type wf_lp_candidate = Off | Lp of wf_lp [@@deriving yojson]
+
   type regex_template = RegEx of Template.RegEx.Config.t ext_file
   [@@deriving yojson]
 
-  type t = {
-    verbose : bool; [@default false]
-    pex_strategy : pex_strategy; [@default InstDefault]
-    fn_goal_constraint : fn_goal_constraint; [@default Existential]
-    (* [true]: for a *parametric* example atom, do not decide the qualifier
-       holes from the truth table on an instantiated copy of the atom; keep the
-       qualifiers themselves, applied to the atom's symbolic arguments, so that
-       the solver decides them together with the template parameters.  Use with
-       [pex_strategy = Quantify], which then binds the parameters that the
-       qualifiers mention.  The default [false] keeps the behaviour of forcing
-       the holes through the ground truth table, which is provably relatively
-       incomplete: there are satisfiable problems it cannot solve and this
-       route can.  Ground atoms are
-       unaffected either way. *)
-    symbolic_holes_for_parametric : bool; [@default true]
-    (* [true]: in an example clause, an atom that shares a parameter of a sort
-       variable or of a sequence with another atom of the clause is read
-       EXACTLY -- its qualifiers kept symbolic, as for the parametric atoms
-       above -- with each such parameter one universally bound variable across
-       the clause, instead of through that atom's own truth-table row.  The
-       row grounds the atom's parameters apart from the other atoms', so a
-       candidate that satisfies the clause only through the implication (the
-       body atom forces what makes the head true) is rejected at every shape.
-       The constraint this builds lies between the per-atom reading and the
-       clause, and it is used only when it quantifies no sequence after the
-       lengths and literal-index reads of each sequence are abstracted;
-       otherwise the per-atom reading is kept ([SharedParams]).  On the cell
-       route an atom's celled copies count as that one atom, and only one copy
-       of it is read exactly; a read of a literal sequence past its length is
-       bound universally, since the theory leaves its value open.  On by
-       default: it recovered both sides of an input whose misses were exactly
-       this rejection, and on inputs with no such parameter it does nothing
-       but allocate, which can still move a solver model through the
-       collector. *)
-    symbolic_shared_params : bool; [@default true]
-    (* [true]: once per run, in a round whose example set is non-empty and has
-       no predicate application among any clause's positive atoms, propose
-       [false] for every predicate instead of asking the template search
-       ([FalseProbe]).  Every such candidate is consistent with those
-       examples, and the search has no preference among them: on the cell
-       route it returned an unsatisfiable conjunction over an argument the
-       fact clause leaves free, so the fact counterexample came back ground
-       there where [false] draws it open.  Applies only when every unknown is
-       of the ordinary kind.  Sound whatever it proposes, since a candidate is
-       validated against the problem.  On by default: over 162 Rust-derived
-       inputs at 120 s it gained answers and lost none. *)
-    false_probe_on_negative_examples : bool; [@default true]
-    (* [true]: a diagnostic that acts on nothing.  Each time the synthesis
-       constraints are generated, the solution loaded by the PCSat
-       configuration's [load_oracle_sol] is checked against every example
-       clause as this synthesizer states it -- for a predicate with cells, the
-       celled clause, with the solution's universals restricted to the cells
-       each atom offers ([PCSatCommon.OracleProbe]) -- and the first clause it
-       violates is printed, with its predicates and their offered cells.  A
-       one-line tally per round and the first violation of the run go to
-       stderr, the rest through the module's trace.  It tells an example set
-       that excludes the intended solution from a search that does not reach
-       it.  The run's decisions are unchanged; its checks are extra Z3 queries,
-       so they can move the solver's own draws as any extra query can. *)
-    oracle_example_probe : bool; [@default false]
-    (* [> 0]: in each example clause's synthesis constraint, a positive
-       existential (negative universal) that binds a sequence is replaced by
-       the disjunction (conjunction) of its instances at the sequence and
-       integer literals of its body, their prefixes and suffixes, one literal
-       equal to none of them, and the enclosing binders of each other sort, when
-       there are at most this many instances ([Ast.SeqExistInst]).  The
-       constraint becomes stronger, never weaker: a candidate it yields
-       satisfies the examples, and a candidate it excludes may be lost.  It is
-       for a guard quantifying over sequences, whose existentials under the
-       example's universals left one synthesis query undecided at 100 s where
-       the rewritten query answered in half a second.  [0], the default,
-       leaves every constraint as it is. *)
-    seq_exist_instances : int; [@default 0]
-    (* [true]: a hole whose body reads the hole's parameters (a qualifier kept
-       symbolic -- route (a), the sort-variable, exact-head, exact-step and
-       shared-parameter readings) is substituted into an atom's constraint by
-       [Logic.Term.subst_rename_on_capture], one traversal that reduces an
-       application by all its arguments at once and renames a binder only
-       where it could capture, instead of [Logic.Term.subst], which renames
-       every binder it passes and reduces one argument at a time.  The two
-       results are alpha-equivalent (the stated contract of both), so the
-       constraint is the same up to the names of bound variables; fewer fresh
-       names are drawn, which moves later names and so individual CEGIS runs.
-       [false], the default, substitutes as before. *)
-    hole_subst_rename_on_capture : bool; [@default false]
-    (* [true]: the other substitutions of constraint generation -- the
-       predicates' templates into an example atom, a clause's grounding
-       substitution into its disjunction (whole, or per atom share), and the
-       shared-parameter reading's renaming and grounding -- are done by
-       [Logic.Term.subst_rename_on_capture] instead of [Logic.Term.subst].
-       Each of these terms and maps is beta-normal (templates are lambdas over
-       hole applications, groundings map variables to closed terms), which is
-       the precondition under which the two are alpha-equivalent; so every
-       constraint is the same up to the names of bound variables.  [subst]
-       renames every binder it passes with a traversal of its body and
-       reduces a template applied to n arguments one argument at a time;
-       this does one traversal and draws a fresh name only where a binder
-       could capture.  [false], the default, substitutes as before. *)
-    cgen_subst_rename_on_capture : bool; [@default false]
-    (* [true]: a candidate built from the model keeps, of every template
-       [case] whose selector parameter the model sets to an in-range literal,
-       only the selected branch ([Logic.select_constant_cases]); the
-       candidate is the same function in every model.  A function template
-       chooses its result among the hypothesis space's terms of the result
-       sort by such a selector, so without it a candidate carries every one
-       of those terms, possibly thousands, into each place the candidate is
-       substituted (validation's clause questions first), where the
-       conversion and simplification reduce them to one.  [false], the
-       default, keeps the case whole. *)
-    candidate_select_constant_cases : bool; [@default true]
-    (* [> 0]: a budget in milliseconds for each validity question the truth
-       tables ask while this phase runs -- the rows constraint generation adds
-       for new example atoms and the columns a rebuilt hypothesis space adds
-       for new qualifiers, each an evaluation against every atom or qualifier
-       already there.  A question not decided in time leaves its cell
-       undecided and is not recorded as "not valid", so a later question can
-       still decide it: answers can be lost, never decided wrongly.  The
-       labeling phase has the same field.  [0], the default, asks without a
-       budget, as before. *)
-    truth_table_valid_timeout : int; [@default 0]
-    predicate_template : predicate_template; [@default Common.Util.config_default predicate_template_of_yojson {|["Arrays", ["Filename", "./config/pcsat/template/predicate_arrays_template_cell.json"]]|}]
-    wf_predicate_template : wf_predicate_template; [@default Common.Util.config_default wf_predicate_template_of_yojson {|["WF", ["Filename", "./config/pcsat/template/wf_predicate_template.json"]]|}]
-    fn_predicate_template : fn_predicate_template; [@default Common.Util.config_default fn_predicate_template_of_yojson {|["FN", ["Filename", "./config/pcsat/template/fn_predicate_template.json"]]|}]
-    ne_predicate_template : Template.NEPredicate.Config.t ext_file; [@default Common.Util.ExtFile.Filename "./config/pcsat/template/ne_predicate_template.json"]
-    adm_predicate_template : Template.AdmPredicate.Config.t ext_file; [@default Common.Util.ExtFile.Filename "./config/pcsat/template/adm_predicate_template.json"]
-    integ_predicate_template : Template.IntegPredicate.Config.t ext_file; [@default Common.Util.ExtFile.Filename "./config/pcsat/template/integ_predicate_template.json"]
-    int_function_template : int_function_template; [@default Common.Util.config_default int_function_template_of_yojson {|["IntFun", ["Filename", "./config/pcsat/template/int_function_template.json"]]|}]
-    regex_template : regex_template; [@default Common.Util.config_default regex_template_of_yojson {|["RegEx", ["Filename", "./config/pcsat/template/regex_template.json"]]|}]
-    update_strategy : TemplateUpdateStrategy.Config.t; [@default TemplateUpdateStrategy.Config.UnsatCore]
-    compute_ucores : bool; [@default true]
-    qualifier_generator : Qualifier.Generator.Config.t ext_file; [@default Common.Util.ExtFile.Filename "./config/pcsat/qualifier/tb.json"]
-    extract_qualifiers : bool; [@default true]
-    extract_terms : bool; [@default false]
+  (** where the extracted constants of a predicate are read from:
+      [Its_qualifiers], the qualifiers extracted for it;
+      [Clauses_mentioning_it], every clause of the problem that applies it;
+      [All_clauses], every clause of the problem.  String constants are read
+      from every clause under all three. *)
+  type constants_source = Its_qualifiers | Clauses_mentioning_it | All_clauses
+  [@@deriving yojson]
+
+  (** the vocabulary the unsat-core qualifier learning is given: what is
+      extracted from the clauses and the qualifiers *)
+  type extract = {
+    qualifiers : bool; [@default true]
+    terms : bool; [@default false]
         (** supply the unsat-core qualifier learning with the terms it fits its
             five restricted templates over.  It is the ONLY consumer of those
             terms -- the synthesis template is built with none -- so with this
@@ -259,9 +267,185 @@ module Config = struct
             set it in the [dbg_] chain as well, since those are copies rather
             than views and a field absent from both leaves nothing to
             notice. *)
-    extract_constants : bool; [@default true]
+    constants : bool; [@default true]
+    constants_from : constants_source; [@default Its_qualifiers]
+        (** the formulas [constants] reads a predicate's constants from; the
+            default keeps them to the ones near the predicate, as the
+            extraction has always run *)
+    terms_mention_a_param : bool; [@default true]
+        (** keep an extracted term only when it mentions one of the predicate's
+            own parameters.
+
+            A term that mentions none of them is CLOSED, and the qualifiers the
+            generator builds over a closed term are closed too -- so each takes
+            the same value at every example of that predicate and separates no
+            two of them, while still enlarging the space and the synthesis
+            query.  The ground facts a solution does need are extracted from the
+            clauses directly and are present either way.
+
+            Measured on a four-clause datatype problem whose solution is
+            [P(x) := (tl nil = nil) /\ x in 0..3]: with the extraction on and
+            this filter off, two closed terms take the space from 9 qualifiers
+            to 14 and the run never answers at 45 s, widening the shape to 85
+            disjuncts; with the filter on it is 9 qualifiers again and [sat,2]
+            in under a second, three runs of three.  The qualifier the solution
+            needs is among the nine in both cases.
+
+            [true] by default, and it can only bite where [learning.extract.terms] is on,
+            which is not the shipped default -- so this changes no shipped
+            configuration and exists because it may be what makes that flag
+            affordable.  A sort test was tried first and is WORSE for the same
+            benefit: it drops every datatype term, and a predicate over a
+            datatype wants the testers and equalities built from one.  What this
+            keeps that a sort test would not is a datatype term involving a
+            parameter, [is_cons (tl x)] and the like. *)
+    max_terms : int option; [@default None]
+        (** at most this many terms in the qualifier learning's vocabulary, per
+            predicate, smallest first.
+
+            The vocabulary is every compound non-Boolean top-level term of every
+            qualifier the predicate has, and it was unbounded.  Measured over ten
+            predicates it is 4, 6, 8, 8, 8, 12, 14, 15, 44 and 100 terms -- a
+            factor of twenty-five -- which is why the bound is per predicate and
+            not global.
+
+            [None] by default, which is the vocabulary as it was.  What it does
+            and does not buy is measured, over 37 files, three settings and three
+            builds of one logic that differ only in where the fresh-name counter
+            starts, one run per cell with the address layout pinned.  There are
+            two regimes and this field addresses one of them.  Where it bites
+            (18 files with more than twenty terms) switching the vocabulary on
+            costs 1.73x wall and a bound of twenty costs 1.21x, so it recovers
+            about seventy per cent of the cost and loses no answer.  Where it is
+            inert (19 files with twenty or fewer) the vocabulary costs 3.81x and
+            the bound necessarily costs the same -- and every answer lost in the
+            whole sweep, four of 57 runs, is in that half.
+
+            So the bound is worth having for cost and is NOT the remedy for the
+            lost answers: on the file that loses its answer outright, a bound of
+            ONE loses it too.  Size is not what is expensive there; having any
+            vocabulary at all is, because these terms reach the hypothesis space
+            and not only the learning.  See the comment at the extraction itself.
+
+            Smallest first because a term's size is the only ordering available
+            without asking what the failure was about, and a smaller term is
+            cheaper for the affine templates the learning fits.  It is
+            deterministic, which matters: the set's own order is by the names
+            inside the terms, and those move whenever a fresh variable is drawn.
+        *)
+  }
+  [@@deriving yojson]
+
+  (** which blame reaches the structure growth when the qualifier learning
+      fails *)
+  type blame = {
+    (* ACTS ON LEVEL 3 of the failure policy -- what the structure growth is
+       told to grow, when the qualifier learning of level 2 has failed.
+
+       After this many consecutive unsat cores whose labels blame neither the
+       coefficients nor the constants, blame them anyway.  The shape search
+       reacts only to the labels the core carries, so a bound that no core
+       mentions is never raised however long the search runs.  0 is off, and
+       the constants are relaxed 500 times more rarely than the coefficients,
+       a ratio taken from the work this comes from rather than measured here.
+       "The coefficients" of an unknown are what its own template names so
+       ([Template.Function.Type.coeff_labels], likewise constants): every
+       template kind is relaxed, each with its own labels, and only for a
+       bound the template in use (the latest candidate search's query) states
+       no constraint for -- where the bound was a labelled constraint that
+       search's core could have named and did not, the core is believed and
+       the bound stays ([Template.Function.relax_starved]).
+
+       A LAST RESORT, and measured not to be aimed at the cause.  Probing
+       where those two labels are *produced* rather than where they arrive:
+       the main synthesis call emits neither, ever, because the array
+       template's ordinary arm asks for zero affine atoms with no bounds, so
+       no such constraint exists for a core to name; the only producer is the
+       last of the five unsat-core attempts, which does carry them, rarely --
+       once in one benchmark's whole run, four times in 157 in another.  So
+       the labels are scarce rather than missing, and forcing one in makes
+       the search raise a bound the template it will next generate does not
+       use.  Before reaching for this, ask instead whether that arm should
+       have affine atoms at all: without them an array predicate can only say
+       disjunctions of the qualifiers it is handed. *)
+    force_after : int; [@default 0]
+    (* ACTS ON THE HANDOVER FROM LEVEL 2 TO LEVEL 3: when no qualifier-learning
+       attempt succeeds, which of their blame maps reaches the structure
+       growth.
+
+       When no unsat-core attempt teaches a qualifier, which attempt's blame
+       drives the template widening.  [false], the default, uses the **last**
+       attempt's map and discards the other five -- including the one from the
+       template actually in use, which is what the [ToDo] in the loop below
+       names.  [true] unions them all per predicate.
+
+       It is off because it is measurably *inert*, not because it costs
+       anything.  Instrumented, the union was compared with the last attempt's
+       map at every firing -- 66 firings over fifteen CHC files -- and they were
+       **identical every time**.  Two reasons, and both are worth knowing before
+       changing this: the five variant templates are built over the same
+       hypothesis space and the same examples, so their cores blame the same
+       predicates with the same labels; and the primary template's extra blame
+       is [Qual], which the label-to-action table in the array template maps to
+       **no action at all**.  Consistent with the corpus differential, which
+       found 0 verdict disagreements and no answer gained or lost over 120 files.
+       (That run also reported 1.13x wall.  With the maps identical the merge
+       cannot be its cause, and no same-binary control was taken for it, so that
+       number says nothing and is not a reason for anything.)
+
+       So the [ToDo] this answers describes a real gap in principle -- the map
+       from the template actually in use is among the discarded -- and an
+       unobservable one in practice.  Whoever makes [Qual] act should measure
+       this again, because that is what would make the primary map carry
+       something the variants do not. *)
+    every_attempt : bool; [@default false]
+  }
+  [@@deriving yojson]
+
+  (** when the shape grows beside the qualifier learning *)
+  type widen = {
+    from_core_after_timeout : bool; [@default false]
+        (** when every qualifier-learning attempt of a failed round came back
+            without a qualifier and the last one's labels are [TimeOut] alone
+            (that attempt's query timed out), grow the shape from the latest
+            earlier core that blamed something -- an earlier attempt's, or the
+            candidate search's own -- instead of from the timeout, which no
+            template module acts on, so the shape would never grow.  Off,
+            nothing changes. *)
+    shape_with_learning : bool; [@default false]
+        (** grow the structural parameters in an iteration where the qualifier
+            learning DID learn something, as well as in one where it did not.
+
+            The synthesizer has two moves when it cannot fit its examples --
+            enlarge the vocabulary a candidate may use, and enlarge the shape it
+            may take -- and they are not symmetric.  Learning reports whether it
+            changed anything; growing the shape is unconditional and its only
+            failure is a template leaving a bound that is unset in every shipped
+            configuration.  So "try the other one first" names no program, and
+            the shipped policy -- spend the whole vocabulary budget, then take
+            one structural step -- is the only order the asymmetry admits.
+
+            This is the alternative that is well defined: take both moves on
+            every failure, so that neither budget is spent before the other.  It
+            matters because the ratio is otherwise a consequence rather than a
+            choice: measured over four files of one corpus, learning fires 21
+            times against 4 failures on one and 5 against 86 on another, so a
+            policy that ties the structural budget to learning's failures hands
+            those two wildly different budgets.
+
+            [false] by default, which is the behaviour this phase has always
+            had.  Which policy is better is a question about a corpus and not
+            about this code, and nothing here answers it. *)
+  }
+  [@@deriving yojson]
+
+  (** qualifier learning from unsat cores (whether cores are computed and
+      learnt from, [compute_ucores] and [learn_quals_from_ucores], and the
+      [update_strategy], stay at the top level, where batch drivers locate
+      this record by them) *)
+  type learning = {
+    extract : extract; [@default Common.Util.config_default extract_of_yojson "{}"]
     reduce_quals_terms : bool; [@default false]
-    learn_quals_from_ucores : bool; [@default true]
     (* Keep, of the qualifiers learned from an unsat core, only those whose
        free variables are the predicate's parameters.  The learned solution of
        a celled template comes back read as [forall j. phi(x, j, a[j])], and
@@ -279,68 +463,151 @@ module Config = struct
        a template with neither cells nor quantified index variables -- no atom
        has such a variable and the switch changes nothing.  On by default:
        over 162 Rust-derived inputs at 120 s it gained answers and lost none. *)
-    ucore_quals_params_only : bool; [@default true]
-    (* How many extra solver calls a found candidate may spend on having
-       fewer qualifier literals; 0 (the default) spends none and keeps the
-       first model.  A qualifier hole gives each qualifier an integer key --
-       positive takes the qualifier, negative its negation, zero neither --
-       and the first model of the synthesis query takes whatever keys the
-       solver happened to pick, which is typically almost every qualifier in
-       every disjunct: a cube around the examples it was fitted to, true of
-       the sample and of little else.  With a positive value the query is
-       asked again, in the same solver and with the same constraints, under
-       the extra bound "at most [m] keys are nonzero", [m] halving the gap
-       between the smallest count found and the largest refuted; each answer
-       is a model of the same constraints, so every candidate kept is one the
-       unbounded query could have returned. *)
-    shrink_candidate_literals : int; [@default 0]
-    (* The solver budget of each of those calls, in milliseconds; a call that
-       runs out counts as a refutation of its bound. *)
-    shrink_candidate_timeout : int; [@default 2000]
-    (* Drop a found candidate's qualifier literals one at a time by
-       evaluation, with no solver search: each nonzero key is set to zero in
-       the model and the change is kept when every constraint of the
-       synthesis query that mentions the key still evaluates to [true] under
-       the modified model.  Keys whose qualifier mentions an integer literal
-       the problem does not are tried first, then the higher-ranked ones.
-       Each candidate kept is a model of the same constraints, so it is one
-       the query could have returned; validation checks it as any other, and
-       soundness is unaffected.  Off by default. *)
-    drop_candidate_literals : bool; [@default false]
+    ucore_params_only : bool; [@default true]
+    blame : blame; [@default Common.Util.config_default blame_of_yojson "{}"]
+    widen : widen; [@default Common.Util.config_default widen_of_yojson "{}"]
+    yield_after_failures : int option; [@default None]
+        (** return [Yield] after this many consecutive rounds in which the
+            examples could not be fitted and the templates were grown instead.
+            [None], the default, never yields, which is the behaviour this phase
+            has always had: its only other exits are a candidate and a shape
+            bound that is itself unset by default, so a synthesis that cannot fit
+            the examples spins inside the phase and the later phases stop running
+            -- measured at 706 candidate searches against 9 completed rounds on
+            one input.  Yielding hands the round on so that validation, labeling
+            and resolution run on what is already known; resolution derives new
+            examples without needing a candidate, and it is reached only when
+            this phase returns. *)
+  }
+  [@@deriving yojson]
+
+  (** how a substitution into a constraint names bound variables *)
+  type rename_on_capture = {
+    (* [true]: a hole whose body reads the hole's parameters (a qualifier kept
+       symbolic -- route (a), the sort-variable, exact-head, exact-step and
+       shared-parameter readings) is substituted into an atom's constraint by
+       [Logic.Term.subst_rename_on_capture], one traversal that reduces an
+       application by all its arguments at once and renames a binder only
+       where it could capture, instead of [Logic.Term.subst], which renames
+       every binder it passes and reduces one argument at a time.  The two
+       results are alpha-equivalent (the stated contract of both), so the
+       constraint is the same up to the names of bound variables; fewer fresh
+       names are drawn, which moves later names and so individual CEGIS runs.
+       [false], the default, substitutes as before. *)
+    holes : bool; [@default false]
+    (* [true]: the other substitutions of constraint generation -- the
+       predicates' templates into an example atom, a clause's grounding
+       substitution into its disjunction (whole, or per atom share), and the
+       shared-parameter reading's renaming and grounding -- are done by
+       [Logic.Term.subst_rename_on_capture] instead of [Logic.Term.subst].
+       Each of these terms and maps is beta-normal (templates are lambdas over
+       hole applications, groundings map variables to closed terms), which is
+       the precondition under which the two are alpha-equivalent; so every
+       constraint is the same up to the names of bound variables.  [subst]
+       renames every binder it passes with a traversal of its body and
+       reduces a template applied to n arguments one argument at a time;
+       this does one traversal and draws a fresh name only where a binder
+       could capture.  [false], the default, substitutes as before. *)
+    cgen : bool; [@default false]
+  }
+  [@@deriving yojson]
+
+  (** how parametric example atoms and example clauses become synthesis
+      constraints (the strategy, [pex_strategy], stays at the top level,
+      where batch drivers locate this record by it) *)
+  type parametric = {
+    fn_goal_constraint : fn_goal_constraint; [@default Existential]
+    (* [true]: for a *parametric* example atom, do not decide the qualifier
+       holes from the truth table on an instantiated copy of the atom; keep the
+       qualifiers themselves, applied to the atom's symbolic arguments, so that
+       the solver decides them together with the template parameters.  Use with
+       [pex_strategy = Quantify], which then binds the parameters that the
+       qualifiers mention.  The default [false] keeps the behaviour of forcing
+       the holes through the ground truth table, which is provably relatively
+       incomplete: there are satisfiable problems it cannot solve and this
+       route can.  Ground atoms are
+       unaffected either way. *)
+    symbolic_holes : bool; [@default false]
+    (* [true]: in an example clause, an atom that shares a parameter of a sort
+       variable or of a sequence with another atom of the clause is read
+       EXACTLY -- its qualifiers kept symbolic, as for the parametric atoms
+       above -- with each such parameter one universally bound variable across
+       the clause, instead of through that atom's own truth-table row.  The
+       row grounds the atom's parameters apart from the other atoms', so a
+       candidate that satisfies the clause only through the implication (the
+       body atom forces what makes the head true) is rejected at every shape.
+       The constraint this builds lies between the per-atom reading and the
+       clause, and it is used only when it quantifies no sequence after the
+       lengths and literal-index reads of each sequence are abstracted;
+       otherwise the per-atom reading is kept ([SharedParams]).  On the cell
+       route an atom's celled copies count as that one atom, and only one copy
+       of it is read exactly; a read of a literal sequence past its length is
+       bound universally, since the theory leaves its value open.  On by
+       default: on the CHC and Rust-derived inputs it answered a few more
+       files than the per-atom reading (205 against 204 of 232, and 58
+       against 56 of 85 cell and sequence inputs); of the files it answered
+       less often, four are ones on which it provably does nothing (draws)
+       and one answers only at the edge of its budget.  On inputs with no such
+       parameter its only effect is allocation. *)
+    symbolic_shared_params : bool; [@default true]
+    (* [> 0]: in each example clause's synthesis constraint, a positive
+       existential (negative universal) that binds a sequence is replaced by
+       the disjunction (conjunction) of its instances at the sequence and
+       integer literals of its body, their prefixes and suffixes, one literal
+       equal to none of them, and the enclosing binders of each other sort, when
+       there are at most this many instances ([Ast.SeqExistInst]).  The
+       constraint becomes stronger, never weaker: a candidate it yields
+       satisfies the examples, and a candidate it excludes may be lost.  It is
+       for a guard quantifying over sequences, whose existentials under the
+       example's universals left one synthesis query undecided at 100 s where
+       the rewritten query answered in half a second.  [0], the default,
+       leaves every constraint as it is. *)
+    seq_exist_instances : int; [@default 0]
+    rename_on_capture : rename_on_capture;
+        [@default Common.Util.config_default rename_on_capture_of_yojson "{}"]
     (* Build a clause's constraint by keeping its quantifier structure and
        handing it to a solver for quantified formulas, instead of evaluating
        each hole against the truth table.  Off by default; see
        [replace_concrete_clause_with_QSAT], which is unfinished work preserved
        from an abandoned branch. *)
     qsat_clause_constraints : bool; [@default false]
-    (* How many celled variants of each example clause to generate (each a
-       different sample of the candidate cells); 0 turns the expansion and
-       the read-back off.  It is independent of the array template's
-       [number_of_cells_per_array], the number of cell columns a template
-       binds, with one exception that [instantiate_ext_files] refuses: cell
-       columns with no expansion, which leaves the columns in the candidate
-       with nothing to convert them and fails at conversion. *)
-    celled_examples : int; [@default 0]
-    (* Whether an example clause's BODY atoms are expanded at every candidate
-       cell instead of at a sample of them.
+    (* Let the solver choose each template's quantifier prefix -- which of its
+       index variables are universal and in what order -- instead of taking
+       the [forall i_1..i_n] the template generated.  It needs a template that
+       binds indices ([number_of_quantifiers_per_array]) and the clause
+       constraints to carry the marker ([parametric.qsat_clause_constraints]); with
+       neither it has nothing to choose and nothing changes. *)
+    quantifier_prefix : bool; [@default false]
+    (* [true]: an example clause with two or more parameters of one sort
+       variable also asserts that the sort's carrier has that many distinct
+       elements ([exists q_1..q_k. distinct q_1..q_k], one per sort variable).
+       Without it the synthesis query may be satisfied in a model whose
+       carrier has one element, where every parameter of that sort is equal
+       and an example such as [u <> 0 \/ $1 = $2] -- a clause whose
+       distinctness sits in its own body, not in an atom's condition, so the
+       condition witness below does not see it -- imposes nothing: the same
+       refuted candidate is proposed for ever.  Sound in both directions: a
+       genuine solution holds in every carrier, in particular in one with k
+       elements, so the conjunct excludes none; it only rules out the
+       carriers on which the example is vacuous.  Off by default. *)
+    svar_carrier_witness : bool; [@default false]
+  }
+  [@@deriving yojson]
 
-       The two sides of a clause are not symmetric under the celled reading
-       [P(a) = forall j. phi(j, a[j])].  A head atom is satisfied at every
-       cell, so any sample of it asks for less than the example does, which
-       validation catches.  A body atom is violated at ONE cell, so asserting
-       its negation at a sampled cell asks for more: the sample has to contain
-       the witness, and where it does not the demand rejects the correct
-       solution.  On a prefix-bound invariant that is most of the draws --
-       [not (0 <= j) \/ not (j <= i) \/ v <= bound] is true at every index past
-       [i], so every candidate cell except the witness refutes the answer.
+  (** how the cell expansion reads an example clause's BODY atom whose
+      sequence argument is open (its elements not stated by the term, such
+      as a parameter or a dummy constant concatenated with literals):
+      [Sentinel_only] offers the sentinel cell alone, which demands the
+      candidate false at the sentinel for every value of the open part and
+      so is stronger than the example; [Ground_instance] grounds the open
+      part at the empty sequence throughout the clause, an instance of the
+      example whose cells cover every position, and drops the clause from
+      the celled query when no such instance exists *)
+  type open_body_sequences = Sentinel_only | Ground_instance
+  [@@deriving yojson]
 
-       Every candidate cell as separate body atoms of one clause is a
-       disjunction, hence the weakest sound reading the sample allows: false at
-       one of these.  It costs atoms rather than clauses.  It applies only
-       where there is one array argument and one cell column, because the
-       enumeration is otherwise over tuples and the count is a product; the
-       sampled path is kept for the rest. *)
-    celled_negative_exhaustive : bool; [@default false]
+  (** the cell route's settings of the solution template *)
+  type cells = {
     (* The same for the HEAD atoms, and it is sound for the opposite reason.
        A head atom asserts [forall j. phi], so phi at every candidate cell is a
        conjunction of consequences -- each implied by what the example says --
@@ -354,7 +621,7 @@ module Config = struct
        A conjunction over head atoms is separate CLAUSES, not more atoms in
        one, because several positive atoms of one clause read as a
        disjunction. *)
-    celled_positive_exhaustive : bool; [@default false]
+    positive_exhaustive : bool; [@default false]
     (* Offer, as candidate cells, the integer ARGUMENTS of the example atom
        itself and their two neighbours, beside the indices read off the array.
 
@@ -373,7 +640,7 @@ module Config = struct
        reading the indices off the clause, which is what the design asks for
        and what an example cannot do, since it records the predicate's
        arguments and not the terms its clause read the array at. *)
-    cell_candidates_from_args : bool; [@default false]
+    candidates_from_args : bool; [@default false]
     (* ... and whether that widening applies to the HEAD side as well as the
        body side.
 
@@ -415,7 +682,7 @@ module Config = struct
        guesses its indices from the array -- stored indices, their neighbours,
        a small prefix -- and an input whose witness is outside that set can
        never be pinned, however many rounds run.  The index is computed one
-       phase away and discarded there; [Validator.Config.record_cell_witnesses]
+       phase away and discarded there; [Validator.Config.examples.record.cell_witnesses]
        is what stops discarding it, and both switches are needed for either to
        do anything. *)
     (* Instantiate an array-sorted parameter of a parametric example at an
@@ -448,8 +715,8 @@ module Config = struct
        instance index is applied UNIFORMLY across a clause, because a clause's
        parameters are its atoms' union by name and mixing two instances in one
        clause yields a clause the original does not imply. *)
-    celled_array_instances : int; [@default 1]
-    celled_varying_array_instances : bool; [@default false]
+    array_instances : int; [@default 1]
+    varying_array_instances : bool; [@default false]
     (* How many leading indices a varying array actually varies at.  It is a
        number rather than a constant because it is the one place the example
        side and the candidate side can disagree without saying so: the cells a
@@ -458,36 +725,36 @@ module Config = struct
        beyond them reading the array's default -- constant, at exactly the
        indices the abstraction will look. Three is what this did before and is
        kept as the default so the field changes nothing until it is set. *)
-    celled_varying_array_width : int; [@default 3]
-    (* The sequence counterpart of [celled_varying_array_instances]: ground an
+    varying_array_width : int; [@default 3]
+    (* The sequence counterpart of [cells.varying_array_instances]: ground an
        example clause's parametric SEQUENCE parameters, before the cells are
        read, at a short non-empty literal whose elements differ, instead of
        leaving them to the dummy.  The dummy of a sequence parameter is a
        symbolic constant, whose elements the cell reader cannot state, so the
        atom offers no cell; and where a clause fixes nothing about a sequence
        the cheapest value is the empty one, which offers none either.  The
-       literal has [celled_varying_array_width] positions (more to cover the
-       clause's integer arguments under [celled_varying_array_at_args]) and at
+       literal has [cells.varying_array_width] positions (more to cover the
+       clause's integer arguments under [cells.varying_array_at_args]) and at
        most as many as the cell reader offers, so no cell is past its length.
        Sound for the same reason as the array side: any instantiation of a
        parameter no condition mentions is an instance, hence a consequence.
-       Uses [celled_array_instances] instances, as the array side does.  Off by
+       Uses [cells.array_instances] instances, as the array side does.  Off by
        default. *)
-    celled_varying_sequence_instances : bool; [@default false]
-    cell_candidates_from_arg_sums : bool; [@default false]
-    (* Where [cell_candidates_from_args] offers each integer argument and its
+    varying_sequence_instances : bool; [@default false]
+    candidates_from_arg_sums : bool; [@default false]
+    (* Where [cells.candidates_from_args] offers each integer argument and its
        two neighbours as a candidate cell, also offer the pairwise SUMS of the
        integer arguments.  An invariant [a[k] = b[i+k]] is checked at [k] and at
        [i+k]; the arguments give [k], and without the sums [i+k] is offered only
        if it happens to be stored or in the short prefix -- which on the input
        that asks for it, whose counterexamples carry indices in the thousands,
-       it never is.  Only acts where [cell_candidates_from_args] does.
+       it never is.  Only acts where [cells.candidates_from_args] does.
        Measured over 43 cell-route inputs at 30 s: it fires (a cell at [i+k]
        on about a quarter of the celled atoms of the input that asks for it),
        and costs answers -- 21 answered against 23, where the arguments alone
        give 20 -- because every extra candidate multiplies the two-array
        product and heavier synthesis rounds are what that input is short of. *)
-    celled_varying_array_growing : bool; [@default false]
+    varying_array_growing : bool; [@default false]
     (* Whether the values a varying array stores are drawn from a range that
        grows with the CEGIS round.  Off, they are [seed + n] -- small, and the
        same on every round -- so a candidate that bounds an array's contents by
@@ -496,7 +763,7 @@ module Config = struct
        at round [r] is [(seed + n) * (r + 1)], negated at odd [n], so the
        contents spread in both directions as the loop proceeds; and the
        default, read at every index not stored, is nonzero and grows too, with
-       its sign alternating between the instances [celled_array_instances]
+       its sign alternating between the instances [cells.array_instances]
        asks for, so that a bound of the contents by zero does not fit both
        instances at an index neither stores.  Every third instance gives all the array
        parameters of a clause the SAME array: an atom that must hold for every
@@ -505,9 +772,9 @@ module Config = struct
        head, since arrays seeded by different names differ everywhere.  Every
        instantiation of a parametric example is a consequence of it, so the
        choice of values is sound whatever it is; it decides only what a value
-       bound must survive.  With [celled_expansion_cache] on, an expansion
+       bound must survive.  With [cells.expansion_cache] on, an expansion
        stored at one round keeps that round's values. *)
-    celled_varying_array_at_args : bool; [@default false]
+    varying_array_at_args : bool; [@default false]
     (* WHERE a varying array varies.  Off, it is the leading indices
        [0 .. width-1], whatever the example is about.  On, it is the integer
        argument values of the clause's atoms and their pairwise sums -- the
@@ -522,7 +789,7 @@ module Config = struct
        a base fact with its counter at 0 -- the common case -- the only integer
        argument is 0, so this varies the array at a single index and cannot
        inform an invariant about index relations there. *)
-    cell_candidates_below_zero : int; [@default 0]
+    candidates_below_zero : int; [@default 0]
     (* How many negative indices, [-1] down to [-m], an integer level offers
        beside what the array offers.  The array's offer is every stored index,
        its two neighbours and the prefix [0 .. 5], so over a constant array --
@@ -535,7 +802,7 @@ module Config = struct
        indices ([k = j + i] at [i = 0]) distinguishes.  Sound in both
        directions: an offered cell is an instance of the atom's own universal
        on the head side and one more disjunct on the body side. *)
-    cell_candidates_from_cell_values : int; [@default 0]
+    candidates_from_cell_values : int; [@default 0]
     (* How many integer VALUES held by an example atom's OTHER celled arrays and
        sequences -- the values at the cells those offer, for a sequence its
        elements at the in-range positions it offers -- an integer index level
@@ -557,9 +824,9 @@ module Config = struct
        the concrete counterexample.  The trade: a weaker demand on the body
        side and a stronger one on the head side, and more instances -- with two
        arrays the product grows by up to this many per level -- so larger
-       synthesis queries and more atoms past [celled_product_bound]. *)
-    cell_witness_indices : bool; [@default false]
-    celled_head_parametric : bool; [@default false]
+       synthesis queries and more atoms past [cells.product_bound]. *)
+    witness_indices : bool; [@default false]
+    head_parametric : bool; [@default false]
     (* Which form the parametric head takes.  [true] writes the value column as
        the read against the counterexample's own array, which is the statement
        itself and is measured UNUSABLE -- the synthesis query becomes
@@ -573,7 +840,7 @@ module Config = struct
        is a weakening on the mixed ones, which is still stronger than sampling.
        Kept as a switch rather than deleted because the two forms answer the
        same question and only a measurement separates them. *)
-    celled_head_parametric_full : bool; [@default false]
+    head_parametric_full : bool; [@default false]
     (* Neither form above states its head exactly, whatever [pex_strategy]
        says, and for one reason: a template hole is replaced by the truth
        table's value of each qualifier at the atom's ROW, and the row of a
@@ -596,7 +863,7 @@ module Config = struct
        example.  Under any other [pex_strategy] the parameters are substituted
        by their defaults again and this buys nothing.  A clause of any other
        shape, or an atom whose array is a sequence, keeps the paths above. *)
-    celled_head_exact : bool; [@default false]
+    head_exact : bool; [@default false]
     (* Keep the guard of an example atom whose every parameter the default
        instance turned into a dummy constant.  The instance [cond => P(t)] at
        those constants still has [cond] over them, and a dummy constant stands
@@ -607,7 +874,7 @@ module Config = struct
        synthesis constraint.  The candidates are still validated, so this
        costs solutions and never soundness.  On, such an atom is expanded from
        its parametric form, with the parameters and the guard it had. *)
-    celled_keep_instance_guards : bool; [@default true]
+    keep_instance_guards : bool; [@default true]
     (* The exact form of a STEP example, [N(u1) => P(u2)] with one celled
        atom on each side, where [N] and [P] are read back as
        [forall j. phi(x.., j, a[j])].  Its meaning is
@@ -630,10 +897,10 @@ module Config = struct
        the example.  Arrays are read at symbolic indices through their
        concrete [store] chains, so the query stays over integers.  Any other
        shape -- a sequence, a curried array, more than one atom on a side, a
-       product of instances past [celled_product_bound] -- falls back to the
+       product of instances past [cells.product_bound] -- falls back to the
        ordinary expansion. *)
-    celled_step_exact : bool; [@default false]
-    (* With [celled_step_exact], write each instantiated group of hole
+    step_exact : bool; [@default false]
+    (* With [cells.step_exact], write each instantiated group of hole
        entries of an exact step example once ([PCSatCommon.HoleNaming]): a
        hole's entries are grouped by the argument positions their qualifiers
        read, each group instance (hole, positions, the arguments there) gets
@@ -653,11 +920,11 @@ module Config = struct
        parameters only, and to a constraint read under [Quantify] or
        [InstDefault] (not the shared-parameter reading); elsewhere the
        constraint is built as before. *)
-    celled_step_exact_name_groups : bool; [@default false]
+    step_exact_name_groups : bool; [@default false]
     (* Expand the body atom of a GOAL example -- an example clause with no
        positive atom -- at the cells its own clause read, when the validator or
-       the resolver recorded them ([Validator.Config.record_goal_reads],
-       [SMTResolver.Config.record_goal_reads]; the reads are kept in the side
+       the resolver recorded them ([Validator.Config.examples.record.goal_reads],
+       [SMTResolver.Config.goal_reads]; the reads are kept in the side
        table [GoalReads], never in the example).
 
        Under the read-back [N(x, a) := forall k. phi(x, k, a[k])] a goal
@@ -674,13 +941,13 @@ module Config = struct
        witness.  An exact record replaces the default cells by its read tuple
        (an array the clause does not read keeps its default cells); a record
        from a clause with a head is added to the default cells.  A record whose
-       product, or the union over records, exceeds [celled_product_bound]
+       product, or the union over records, exceeds [cells.product_bound]
        falls back to the ordinary expansion. *)
-    celled_goal_at_reads : bool; [@default true]
+    goal_at_reads : bool; [@default true]
     (* Offer a positive example's head, in the exhaustive expansion, also at
        the indices its refutations named: the index at which a candidate's
        read-back failed in the head of the clause that produced the example
-       ([Validator.Config.record_head_witnesses] records them, beside the
+       ([Validator.Config.examples.record.head_witnesses] records them, beside the
        example, in [GoalReads]).  Over a constant array the head is otherwise
        demanded at the prefix [0 .. 5] alone, so a candidate false only below
        zero or past it meets the example, the validator refutes it with the
@@ -689,7 +956,7 @@ module Config = struct
        more consequence of the example: it never excludes a solution, and it
        is never offered to a body atom.  Off, or with nothing recorded, the
        expansion is the one it was. *)
-    celled_head_at_witnesses : bool; [@default false]
+    head_at_witnesses : bool; [@default false]
     (* At most this many extra cell tuples per body atom of a GOAL example --
        an example clause with no positive atom -- beside whichever expansion
        the atom got (at the recorded reads, exhaustive, or sampled); [0] adds
@@ -697,7 +964,7 @@ module Config = struct
        sequence cell to another in-range position, and then one index level of
        an array cell: an integer level to a value the tuple's own cells hold,
        one of the atom's integer arguments, or one of [-1 .. -m] ([m] is
-       [cell_candidates_below_zero], at least 1); any other level to a term of
+       [cells.candidates_below_zero], at least 1); any other level to a term of
        its sort the atom's arguments reach -- see
        [CellArray.goal_cell_variants].
 
@@ -707,21 +974,21 @@ module Config = struct
        [q(c, v[k])] reading one array at a value a sequence holds fails at the
        pair (position [k], index [v[k]]), and an index bound [j >= 0] over a
        constant array fails only at a negative [j].  The exhaustive product
-       falls back to one sampled tuple past [celled_product_bound], and the
+       falls back to one sampled tuple past [cells.product_bound], and the
        recorded reads name only the indices the clause read, so neither pair
        is offered by construction.  Every variant is a true cell tuple of the
        counterexample's arrays and only adds a disjunct to the example's body,
        so it cannot make a verdict unsound; it costs synthesis-query size. *)
-    celled_goal_value_variants : int; [@default 0]
-    (* With [celled_goal_value_variants] on: order the variants so that those
+    goal_value_variants : int; [@default 0]
+    (* With [cells.goal_value_variants] on: order the variants so that those
        pairing an array cell's integer index with the value a sequence cell of
        the same tuple holds come before the limit cuts the list.  That pair is
        where [q(c, v[k])] fails, and it is two or three moves from a base
        tuple, so with several arrays and argument terms the plain order fills
        the limit before reaching it.  Order only: the variants are the same
        true cell tuples, so soundness is that of the field above. *)
-    celled_goal_linked_variants_first : bool; [@default false]
-    (* With [celled_goal_value_variants] on: offer the variants to the BODY
+    goal_linked_variants_first : bool; [@default false]
+    (* With [cells.goal_value_variants] on: offer the variants to the BODY
        atoms of a clause with a positive atom too.  A step example
        [N(u1) => P(u2)] under the read-back [forall cells. phi] means
        [(exists cells. not phi_N) \/ P(u2)], and the expansion writes the body
@@ -731,16 +998,16 @@ module Config = struct
        constant array fails only at a negative index the body never offers,
        and a step whose head's accumulator took that value then demands the
        bound's violation of every candidate that keeps the bound. *)
-    celled_step_body_value_variants : bool; [@default false]
-    cell_candidates_from_args_in_head : bool; [@default false]
+    step_body_value_variants : bool; [@default false]
+    candidates_from_args_in_head : bool; [@default false]
     (* How many (index, value) tuples the exhaustive expansion may build for one
        atom.  It enumerates the PRODUCT of every array's candidates, because an
        invariant relating two arrays is refuted at a pair of indices and drawing
        each array's cell independently finds the witness only by luck; the
        product is therefore the point and also the cost.  Past the bound the
        atom falls back to the sampled path, which is weaker and sound. *)
-    celled_product_bound : int; [@default 64]
-    (* Where a BODY atom's product is over [celled_product_bound], offer a
+    product_bound : int; [@default 64]
+    (* Where a BODY atom's product is over [cells.product_bound], offer a
        sweep instead of one sampled tuple: every array held at the cell the
        sampler draws for it (the same draw, so the sampled tuple is among the
        offered ones) and each array in turn ranging over all of its candidate
@@ -761,10 +1028,10 @@ module Config = struct
        never one the exhaustive expansion would reject.  The head side is
        untouched: a head atom's tuples are separate demands, so sampling there
        weakens rather than strengthens. *)
-    celled_over_bound_sweep : bool; [@default true]
-    (* The HEAD-side counterpart of [celled_over_bound_sweep], for the
-       exhaustive head expansion ([celled_positive_exhaustive]): where a head
-       atom's product of cell candidates is over [celled_product_bound], offer
+    over_bound_sweep : bool; [@default true]
+    (* The HEAD-side counterpart of [cells.over_bound_sweep], for the
+       exhaustive head expansion ([cells.positive_exhaustive]): where a head
+       atom's product of cell candidates is over [cells.product_bound], offer
        the sweep's tuples (the sampled tuple, and each array in turn ranging
        over all of its candidates with the others at the sample) instead of
        sending every head atom of the clause back to one sampled tuple.
@@ -776,7 +1043,7 @@ module Config = struct
        solution is never excluded, and the sweep contains the sampled tuple,
        so the demand is never weaker than the fallback's.  An atom whose
        product fits is expanded exhaustively as before; an atom that offers no
-       cell, or whose sweep is itself over [m * celled_product_bound] tuples
+       cell, or whose sweep is itself over [m * cells.product_bound] tuples
        for [m] arrays, still sends the clause to the sampler.
 
        Why: a step counterexample [N(t) => P(t')] over two arrays, each storing
@@ -786,7 +1053,7 @@ module Config = struct
        synthesizer proposes it again, and a repeat read as non-progress grows
        the template instead -- three to four disjuncts for an invariant that
        needs one, at ten times the synthesis cost per round. *)
-    celled_head_over_bound_sweep : bool; [@default false]
+    head_over_bound_sweep : bool; [@default false]
     (* Take the candidate cells from the atom's own integer arguments ALONE,
        instead of adding them to what the array offers.
 
@@ -803,20 +1070,20 @@ module Config = struct
        would have caught, so it is a switch and not a default; what it buys is
        the size of the product, which is measured to be what stops an input
        with two arrays. *)
-    cell_candidates_from_args_only : bool; [@default false]
+    candidates_from_args_only : bool; [@default false]
     (* Give a predicate's SEQUENCE arguments cells as well as its arrays: a
        sequence of a scalar reachable from the parameters becomes a cell path
        with one integer index, its cells are the positions below its length,
        and a candidate learned over them is read back as [forall j. 0 <= j <
        seq.len s => phi(j, seq.nth s j, ..)], the range being the premise that
        makes every read denote something.  This setting decides the path list
-       for the template as well as for the example expansion -- the template's
-       own field of the same name is overwritten with it -- because the two
+       for the template as well as for the example expansion -- the array
+       template is handed it and has no field of its own -- because the two
        must agree on which paths there are.  On by default: it changes the
        template of every predicate over a sequence under a cell chain, and
        nothing outside a cell chain. *)
     sequence_cells : bool; [@default true]
-    (* With [sequence_cells], give every sequence one extra cell, the SENTINEL
+    (* With [cells.sequence_cells], give every sequence one extra cell, the SENTINEL
        at index -1 holding the element sort's plain constant, so that a
        candidate [phi] is read back as [phi(-1, d, x..) /\ forall j. 0 <= j <
        seq.len s => phi(j, seq.nth s j, x..)].  Without it every candidate is
@@ -824,10 +1091,17 @@ module Config = struct
        false there is met by none of them.  The same setting lets the
        template keep the qualifiers that speak of a sequence only through its
        length ([i < seq.len s]) when it otherwise keeps only cell qualifiers,
-       since the sentinel instance is where such a fact is stated; the
-       template's own field of that name is overwritten with it.  On by
-       default; it changes nothing unless [sequence_cells] is on. *)
+       since the sentinel instance is where such a fact is stated; the array
+       template is handed it, as [cells.sequence_cells].  On by
+       default; it changes nothing unless [cells.sequence_cells] is on. *)
     sequence_sentinel_cell : bool; [@default true]
+    (* See [open_body_sequences].  Acts only with [cells.sequence_cells] and
+       [cells.sequence_sentinel_cell] on, since without the sentinel an open
+       sequence is refused before any cell is read.  [Ground_instance] by
+       default: the sentinel-only reading can exclude every solution from the
+       synthesis query, and the instance never does; [Sentinel_only] keeps the
+       earlier reading for comparison. *)
+    open_body_sequences : open_body_sequences; [@default Ground_instance]
     (* When a candidate learned over cells does not use one cell -- neither its
        index nor its value column occurs in the formula -- read the candidate
        back without that cell's universal, which is then vacuous.  The
@@ -855,7 +1129,7 @@ module Config = struct
        It narrows the body side, so it can drop the tuple that would have been
        the witness and is a heuristic rather than a refinement -- the same
        standing as the candidate set it filters. *)
-    celled_tuples_related : bool; [@default false]
+    tuples_related : bool; [@default false]
     (* Collapse the candidate indices of a CONSTANT array level into classes
        before the exhaustive expansion builds its cells.  Over such a level
        every cell holds the same value, so two cells differ only by their
@@ -871,10 +1145,10 @@ module Config = struct
        template must not mention the column outside its holes -- an affine
        atom with synthesized coefficients separates any two integers.  Where
        either fails for an atom, that atom is expanded in full.  It is also
-       not applied where [celled_tuples_related] filters a product of several
+       not applied where [cells.tuples_related] filters a product of several
        arrays, since that filter judges pairs of concrete indices and a
        representative need not stand in the relation its class-mates do. *)
-    celled_collapse_constant_indices : bool; [@default false]
+    collapse_constant_indices : bool; [@default false]
     (* The same collapse over a level that STORES values at some indices.
        Every candidate index that is not stored at such a level reads the
        level's default, so among the non-stored indices two cells differ only
@@ -883,12 +1157,12 @@ module Config = struct
        is never merged with a stored one.  A level whose stored indices are not
        all integer literals, or with a function or a parameter array above or
        at it, is not collapsed.  It covers constant levels too, so it collapses
-       them whether or not [celled_collapse_constant_indices] is set.  For the
+       them whether or not [cells.collapse_constant_indices] is set.  For the
        last level, whose non-stored cells all hold the default, the default is
        substituted for the value column when the forms are computed, so a
        qualifier comparing index and value together does not refuse the level
        merely because the stored cells hold other values. *)
-    celled_collapse_default_indices : bool; [@default false]
+    collapse_default_indices : bool; [@default false]
     (* Reuse an example clause's celled expansion across synthesis attempts
        instead of rebuilding it on every attempt, the unsat-core restarts
        included, which re-expand the same examples many times over.  Only an
@@ -896,87 +1170,185 @@ module Config = struct
        constraints an attempt receives are the ones it would have built -- up
        to the names of the fresh index variables a parametric head expansion
        binds -- and the sampler's stream is not moved.  An OCaml-side saving
-       only; the query the solver receives is unchanged. *)
-    celled_expansion_cache : bool; [@default false]
-    (* Let the solver choose each template's quantifier prefix -- which of its
-       index variables are universal and in what order -- instead of taking
-       the [forall i_1..i_n] the template generated.  It needs a template that
-       binds indices ([number_of_quantifiers_per_array]) and the clause
-       constraints to carry the marker ([qsat_clause_constraints]); with
-       neither it has nothing to choose and nothing changes. *)
-    synthesize_quantifier_prefix : bool; [@default false]
-    (* ACTS ON LEVEL 3 of the failure policy -- what the structure growth is
-       told to grow, when the qualifier learning of level 2 has failed.
+       only; the query the solver receives is unchanged up to those names.
+       On by default, being exact up to fresh names. *)
+    expansion_cache : bool; [@default true]
+  }
+  [@@deriving yojson]
 
-       After this many consecutive unsat cores whose labels blame neither the
-       coefficients nor the constants, blame them anyway.  The shape search
-       reacts only to the labels the core carries, so a bound that no core
-       mentions is never raised however long the search runs.  0 is off, and
-       the constants are relaxed 500 times more rarely than the coefficients,
-       a ratio taken from the work this comes from rather than measured here.
+  type t = {
+    verbose : bool; [@default false]
+    pex_strategy : pex_strategy; [@default InstDefault]
+    fn_result_one_point : bool; [@default false]
+        (** read an example clause whose every parameter is the result of one
+            premise application of a functional unknown -- the form the
+            validator's [examples.fn_results_open] gives a violated clause --
+            by the one-point rule ([fn_one_point]): each such result is
+            replaced by the witness's template term, so the constraint is the
+            clause's pure part at the example's arguments, exactly, whatever
+            [pex_strategy] says.  Any other clause keeps the paths below. *)
+    parametric : parametric; [@default Common.Util.config_default parametric_of_yojson "{}"]
+        (** parametric examples, beside [pex_strategy] *)
+    (* [true]: once per run, in a round whose example set is non-empty and has
+       no predicate application among any clause's positive atoms, propose
+       [false] for every predicate instead of asking the template search
+       ([FalseProbe]).  Every such candidate is consistent with those
+       examples, and the search has no preference among them: on the cell
+       route it returned an unsatisfiable conjunction over an argument the
+       fact clause leaves free, so the fact counterexample came back ground
+       there where [false] draws it open.  Applies only when every unknown is
+       of the ordinary kind.  Sound whatever it proposes, since a candidate is
+       validated against the problem.  Off by default: no input is known that
+       needs it (over 162 Rust-derived inputs at 120 s its gains were higher
+       answer rates on files also answered without it, and it lost none). *)
+    false_probe_on_negative_examples : bool; [@default false]
+    wf_lp_candidate : wf_lp_candidate; [@default Off]
+    (* the well-founded LP candidate route; see [wf_lp_candidate] *)
+    (* [true]: a diagnostic that acts on nothing.  Each time the synthesis
+       constraints are generated, the solution loaded by the PCSat
+       configuration's [load_oracle_sol] is checked against every example
+       clause as this synthesizer states it -- for a predicate with cells, the
+       celled clause, with the solution's universals restricted to the cells
+       each atom offers ([PCSatCommon.OracleProbe]) -- and the first clause it
+       violates is printed, with its predicates and their offered cells.  A
+       one-line tally per round and the first violation of the run go to
+       stderr, the rest through the module's trace.  It tells an example set
+       that excludes the intended solution from a search that does not reach
+       it.  The run's decisions are unchanged; its checks are extra Z3 queries,
+       so they can move the solver's own draws as any extra query can. *)
+    oracle_example_probe : bool; [@default false]
+    (* [true]: a candidate built from the model keeps, of every template
+       [case] whose selector parameter the model sets to an in-range literal,
+       only the selected branch ([Logic.select_constant_cases]); the
+       candidate is the same function in every model.  A function template
+       chooses its result among the hypothesis space's terms of the result
+       sort by such a selector, so without it a candidate carries every one
+       of those terms, possibly thousands, into each place the candidate is
+       substituted (validation's clause questions first), where the
+       conversion and simplification reduce them to one.  [false], the
+       default, keeps the case whole.  Off because the reduction is exact as
+       a function but not as a term: the reduced candidate's syntax is what
+       later rounds read, and on a muCLP input under the primal-dual solver it
+       took an answer reached in three runs of three to one of three, while
+       no input is known that only the reduction answers.  Its gain is time
+       where a function template's case carries thousands of terms (one
+       candidate's validation preparation went from about 1,000 s to about
+       1 s), so set it where function templates are large. *)
+    candidate_select_constant_cases : bool; [@default false]
+    (* [> 0]: a budget in milliseconds for each validity question the truth
+       tables ask while this phase runs -- the rows constraint generation adds
+       for new example atoms and the columns a rebuilt hypothesis space adds
+       for new qualifiers, each an evaluation against every atom or qualifier
+       already there.  A question not decided in time leaves its cell
+       undecided and is not recorded as "not valid", so a later question can
+       still decide it: answers can be lost, never decided wrongly.  The
+       labeling phase has the same field.  [None], the default, asks without a
+       budget, and so does a value of [0] or less. *)
+    truth_table_valid_timeout_ms : int option; [@default None]
+    predicate_template : predicate_template; [@default Common.Util.config_default predicate_template_of_yojson {|["Arrays", ["Filename", "./config/pcsat/template/predicate_arrays_template_cell.json"]]|}]
+    wf_predicate_template : wf_predicate_template; [@default Common.Util.config_default wf_predicate_template_of_yojson {|["WF", ["Filename", "./config/pcsat/template/wf_predicate_template.json"]]|}]
+    dwf_predicate_template : dwf_predicate_template; [@default Same_as_wf]
+    parity_predicate_template : Template.ParityPredicate.Config.t; [@default Common.Util.config_default Template.ParityPredicate.Config.of_yojson "{}"]
+        (** the parity-predicate template's own growth rule; its shape and
+            bounds come from [wf_predicate_template] *)
+    fn_predicate_template : fn_predicate_template; [@default Common.Util.config_default fn_predicate_template_of_yojson {|["FN", ["Filename", "./config/pcsat/template/fn_predicate_template.json"]]|}]
+    ne_predicate_template : Template.NEPredicate.Config.t ext_file; [@default Common.Util.ExtFile.Filename "./config/pcsat/template/ne_predicate_template.json"]
+    adm_predicate_template : Template.AdmPredicate.Config.t ext_file; [@default Common.Util.ExtFile.Filename "./config/pcsat/template/adm_predicate_template.json"]
+    integ_predicate_template : Template.IntegPredicate.Config.t ext_file; [@default Common.Util.ExtFile.Filename "./config/pcsat/template/integ_predicate_template.json"]
+    int_function_template : int_function_template; [@default Common.Util.config_default int_function_template_of_yojson {|["IntFun", ["Filename", "./config/pcsat/template/int_function_template.json"]]|}]
+    regex_template : regex_template; [@default Common.Util.config_default regex_template_of_yojson {|["RegEx", ["Filename", "./config/pcsat/template/regex_template.json"]]|}]
+    update_strategy : TemplateUpdateStrategy.Config.t; [@default TemplateUpdateStrategy.Config.UnsatCore]
+    compute_ucores : bool; [@default true]
+    qualifier_generator : Qualifier.Generator.Config.t ext_file; [@default Common.Util.ExtFile.Filename "./config/pcsat/qualifier/tb.json"]
+    learning : learning; [@default Common.Util.config_default learning_of_yojson "{}"]
+        (** qualifier learning, beside [compute_ucores] and
+            [learn_quals_from_ucores] *)
+    learn_quals_from_ucores : bool; [@default true]
+    (* How many extra solver calls a found candidate may spend on having
+       fewer qualifier literals; 0 (the default) spends none and keeps the
+       first model.  A qualifier hole gives each qualifier an integer key --
+       positive takes the qualifier, negative its negation, zero neither --
+       and the first model of the synthesis query takes whatever keys the
+       solver happened to pick, which is typically almost every qualifier in
+       every disjunct: a cube around the examples it was fitted to, true of
+       the sample and of little else.  With a positive value the query is
+       asked again, in the same solver and with the same constraints, under
+       the extra bound "at most [m] keys are nonzero", [m] halving the gap
+       between the smallest count found and the largest refuted; each answer
+       is a model of the same constraints, so every candidate kept is one the
+       unbounded query could have returned. *)
+    shrink_candidate_literals : int; [@default 0]
+    (* The solver budget of each of those calls, in milliseconds; a call that
+       runs out counts as a refutation of its bound. *)
+    shrink_candidate_timeout : int; [@default 2000]
+    (* Drop a found candidate's qualifier literals one at a time by
+       evaluation, with no solver search: each nonzero key is set to zero in
+       the model and the change is kept when every constraint of the
+       synthesis query that mentions the key still evaluates to [true] under
+       the modified model.  Keys whose qualifier mentions an integer literal
+       the problem does not are tried first, then the higher-ranked ones.
+       Each candidate kept is a model of the same constraints, so it is one
+       the query could have returned; validation checks it as any other, and
+       soundness is unaffected.  Off by default. *)
+    drop_candidate_literals : bool; [@default false]
+    (* Whether an ordinary predicate's hypothesis space leaves out every term
+       and qualifier that reads a component of an argument which each clause
+       requiring the predicate quantifies away: at every positive occurrence
+       the component is a clause variable occurring nowhere else, the shape of
+       a requirement stated for every final value of a mutable reference.
+       [Avoid_unguarded] does so for those components only; some solution then
+       never reads them (replace the predicate by its universal closure over
+       the component), so atoms over them can only fit the examples'
+       arbitrary values there, which the first model of the synthesis query
+       uses as cheap witnesses.  [Avoid_self_guarded] also takes components
+       whose variable is otherwise constrained only by conditions on itself
+       (machine-integer ranges); there the existence of a solution that
+       ignores the component is assumed, not proved.  Both restrict the
+       candidates only: validation checks every candidate, so soundness is
+       unaffected.  [Keep] (the default) offers every atom. *)
+    quantified_away_components : quantified_away_components; [@default Keep]
+    (* Which of the consistent candidates a decided synthesis question
+       returns, as far as qualifier literals specific to the examples go (see
+       [literal_preference]).  [Any_literal], the default, keeps the solver's
+       first model. *)
+    candidate_literal_preference : literal_preference; [@default Any_literal]
+    (* The solver budget, in milliseconds, of each extra question
+       [General_first] asks; one that runs out counts as having no model. *)
+    general_first_timeout : int; [@default 2000]
+    (* How many celled variants of each example clause to generate (each a
+       different sample of the candidate cells); 0 turns the expansion and
+       the read-back off.  It is independent of the array template's
+       [cells.number_of_cells_per_array], the number of cell columns a template
+       binds, with one exception that [instantiate_ext_files] refuses: cell
+       columns with no expansion, which leaves the columns in the candidate
+       with nothing to convert them and fails at conversion. *)
+    celled_examples : int; [@default 0]
+    (* Whether an example clause's BODY atoms are expanded at every candidate
+       cell instead of at a sample of them.
 
-       A LAST RESORT, and measured not to be aimed at the cause.  Probing
-       where those two labels are *produced* rather than where they arrive:
-       the main synthesis call emits neither, ever, because the array
-       template's ordinary arm asks for zero affine atoms with no bounds, so
-       no such constraint exists for a core to name; the only producer is the
-       last of the five unsat-core attempts, which does carry them, rarely --
-       once in one benchmark's whole run, four times in 157 in another.  So
-       the labels are scarce rather than missing, and forcing one in makes
-       the search raise a bound the template it will next generate does not
-       use.  Before reaching for this, ask instead whether that arm should
-       have affine atoms at all: without them an array predicate can only say
-       disjunctions of the qualifiers it is handed. *)
-    force_bound_blame_after : int; [@default 0]
-    (* ACTS ON THE HANDOVER FROM LEVEL 2 TO LEVEL 3: when no qualifier-learning
-       attempt succeeds, which of their blame maps reaches the structure
-       growth.
+       The two sides of a clause are not symmetric under the celled reading
+       [P(a) = forall j. phi(j, a[j])].  A head atom is satisfied at every
+       cell, so any sample of it asks for less than the example does, which
+       validation catches.  A body atom is violated at ONE cell, so asserting
+       its negation at a sampled cell asks for more: the sample has to contain
+       the witness, and where it does not the demand rejects the correct
+       solution.  On a prefix-bound invariant that is most of the draws --
+       [not (0 <= j) \/ not (j <= i) \/ v <= bound] is true at every index past
+       [i], so every candidate cell except the witness refutes the answer.
 
-       When no unsat-core attempt teaches a qualifier, which attempt's blame
-       drives the template widening.  [false], the default, uses the **last**
-       attempt's map and discards the other five -- including the one from the
-       template actually in use, which is what the [ToDo] in the loop below
-       names.  [true] unions them all per predicate.
-
-       It is off because it is measurably *inert*, not because it costs
-       anything.  Instrumented, the union was compared with the last attempt's
-       map at every firing -- 66 firings over fifteen CHC files -- and they were
-       **identical every time**.  Two reasons, and both are worth knowing before
-       changing this: the five variant templates are built over the same
-       hypothesis space and the same examples, so their cores blame the same
-       predicates with the same labels; and the primary template's extra blame
-       is [Qual], which the label-to-action table in the array template maps to
-       **no action at all**.  Consistent with the corpus differential, which
-       found 0 verdict disagreements and no answer gained or lost over 120 files.
-       (That run also reported 1.13x wall.  With the maps identical the merge
-       cannot be its cause, and no same-binary control was taken for it, so that
-       number says nothing and is not a reason for anything.)
-
-       So the [ToDo] this answers describes a real gap in principle -- the map
-       from the template actually in use is among the discarded -- and an
-       unobservable one in practice.  Whoever makes [Qual] act should measure
-       this again, because that is what would make the primary map carry
-       something the variants do not. *)
-    blame_from_every_qualifier_attempt : bool; [@default false]
-    widen_from_core_after_learning_timeout : bool; [@default false]
-        (** when every qualifier-learning attempt of a failed round came back
-            without a qualifier and the last one's labels are [TimeOut] alone
-            (that attempt's query timed out), grow the shape from the latest
-            earlier core that blamed something -- an earlier attempt's, or the
-            candidate search's own -- instead of from the timeout, which no
-            template module acts on, so the shape would never grow.  Off,
-            nothing changes. *)
+       Every candidate cell as separate body atoms of one clause is a
+       disjunction, hence the weakest sound reading the sample allows: false at
+       one of these.  It costs atoms rather than clauses.  It applies only
+       where there is one array argument and one cell column, because the
+       enumeration is otherwise over tuples and the count is a product; the
+       sampled path is kept for the rest. *)
+    celled_negative_exhaustive : bool; [@default false]
+    cells : cells; [@default Common.Util.config_default cells_of_yojson "{}"]
+        (** the cell route: how example clauses are expanded at candidate
+            cells and how a candidate over cells is read back (the marker
+            keys [celled_examples] and [celled_negative_exhaustive] stay at
+            the top level, where batch drivers locate this record by them) *)
     smt_timeout : int option; [@default Some 16000]
-    keep_timeout_budget_across_rebuild : bool; [@default false]
-        (** when the synthesis query times out, the templates are regenerated
-            with the same shape over the same examples (every template module
-            ignores the timeout label), and renewing the solver instances puts
-            the configured [smt_timeout] back -- so the doubled budget set at
-            the timeout is never read and the same query is asked again at the
-            same budget.  On, a rebuild caused only by such a timeout keeps
-            each instance's doubled budget, capped by
-            [max_synthesis_timeout]; any other rebuild returns to
-            [smt_timeout].  Off, nothing changes. *)
     reask_on_timeout_without_rebuild : bool; [@default false]
         (** when the first synthesis query of a round (the one over the
             qualifiers in hand) times out and the answer teaches nothing
@@ -988,10 +1360,9 @@ module Config = struct
             and a timeout at the cap, or any other answer, goes on as before.
             Off, nothing changes. *)
     max_synthesis_timeout : int option; [@default None]
-        (** the cap on that kept budget, in milliseconds; [None] means four
-            times [smt_timeout].  Read only with
-            [keep_timeout_budget_across_rebuild] or
-            [reask_on_timeout_without_rebuild] on. *)
+        (** the cap on the synthesis query's budget kept across a
+            timeout-only rebuild (see [renew_smt_instance]), in milliseconds;
+            [None] means four times [smt_timeout]. *)
     synthesis_arith_solver : int option; [@default Some 2]
         (** Z3's [smt.arith.solver] for the synthesis query (and its one-shot
             attempt): [Some 2] asks it with the simplex-based [theory_arith]
@@ -1000,8 +1371,20 @@ module Config = struct
             both decide linear arithmetic, so only its time can change.  On
             template-coefficient queries the default spent its time in bound
             propagation and the tableau, and the older solver decided them 5
-            to 30 times faster.  [None], the default, leaves the parameter
-            unset. *)
+            to 30 times faster, which is why [Some 2] is the default.
+            [None] leaves the parameter unset (Z3's own [lp] core).
+
+            What it can change.  On a quantifier-free linear query, which is
+            every synthesis query of a problem whose unknowns take only
+            scalar arguments under the default [pex_strategy] (each parameter
+            of a scalar sort is grounded at its dummy before the query is
+            built, and a template is linear in its coefficients), both solvers decide the question, so only the time
+            and the model -- hence the candidate and the run's trajectory --
+            can change.  Whether the question is DECIDED can change only on a
+            query outside that fragment: a parameter of a sort variable or an
+            uninterpreted sort bound by [forall], or a [Quantify] reading.
+            That is the class the gain was measured on, so no shape test on
+            the problem separates the gain from that risk. *)
     synthesis_oneshot_first_ms : int; [@default 0]
         (** a budget in milliseconds for asking each synthesis query first of
             a fresh, non-incremental solver and using its model when it
@@ -1011,26 +1394,40 @@ module Config = struct
             over many witness templates it was seen heavy-tailed: queries a
             one-shot check answers in under a second took 16 s or more.  0
             asks only the incremental solver. *)
-    synthesis_fresh_solver_per_check : bool; [@default false]
-        (** ask every check of the incremental synthesis solver of a fresh
-            solver holding the same assertions, under the tracked labels as
-            assumptions ([Z3interface.incr_check_sat_unsat_core
-            ~fresh_labels]).  The question, its models and its unsat cores are
-            those of the incremental check; what changes is that no state of
-            the earlier checks is carried into it.  On quantified synthesis
-            constraints the incremental solver was seen to come back undecided
-            ([unknown], or out of its budget, and then re-asked at doubled
-            budgets) on questions a fresh solver answers in 1-2 s, while every
-            check pays the internalisation of the whole query. *)
-    synthesis_fresh_solver_after_undecided : bool; [@default false]
-        (** ask the incremental synthesis solver first, as without the field,
-            and only a question it leaves undecided ([unknown], a timeout) of a
-            fresh solver as [synthesis_fresh_solver_per_check] does, once, at
-            the same budget.  A decided answer is the incremental one; the
-            fresh one is the same question.  Ignored when
-            [synthesis_fresh_solver_per_check] is on. *)
+    synthesis_solver : synthesis_solver; [@default Incremental]
+        (** which solver each check of the synthesis query is asked of (see
+            [synthesis_solver]) *)
     sync_threshold : int option; [@default None]
     restart_threshold : int option; [@default Some 20]
+    rotate_undecided_grow_too : bool; [@default false]
+        (** with [rotate_undecided_tries] > 0: when the plain synthesis
+            question returned the candidate of the round before and rotation
+            proposes another one, grow every template as a round without
+            progress does, instead of only when rotation finds no alternative.
+            Why: a rotated candidate counts as progress, so with this off the
+            template growth that answers some inputs is starved while every
+            rotated candidate is rejected for the same undecided questions
+            again.  false: growth only when rotation keeps the plain
+            candidate. *)
+    rotate_undecided_tries : int; [@default 0]
+        (** after a validation round that rejected the candidate and learnt
+            nothing because some clause questions were left undecided, how
+            many more times the synthesis query may be asked, each time with a
+            constraint excluding the template-parameter assignment just found
+            on the unknowns those clauses apply
+            ([PCSatCommon.UndecidedRotation]), while the candidate it gives
+            defines those unknowns as a candidate so rejected before did.  The
+            first candidate that differs there is proposed; when every try
+            gives such a candidate, or the excluded question is unsatisfiable
+            or undecided, the candidate of the plain question is proposed, as
+            without the field.  Sound for both answers: the exclusion is put
+            on one question and never on the examples, a candidate it gives is
+            validated like any other, and the core of an unsatisfiable
+            excluded question is discarded.  Why: on an input whose remaining
+            clause questions the solver does not decide, every round was
+            fruitless and proposed the candidate of the round before, so the
+            same questions were asked for an hour while nothing was learnt
+            about the unknowns they apply.  0: never asked again. *)
     non_progress_up_to_bound_names : bool; [@default true]
         (** compare this round's candidate with the last one up to the names
             of every bound variable ([PCSatCommon.CandidateEquiv]), not only
@@ -1044,103 +1441,6 @@ module Config = struct
             traced rounds proposing the candidate of the round before up to the
             name of its quantified index.  On by default; firing the update
             changes the search wherever a quantified candidate repeats. *)
-    extracted_terms_mention_a_param : bool; [@default true]
-        (** keep an extracted term only when it mentions one of the predicate's
-            own parameters.
-
-            A term that mentions none of them is CLOSED, and the qualifiers the
-            generator builds over a closed term are closed too -- so each takes
-            the same value at every example of that predicate and separates no
-            two of them, while still enlarging the space and the synthesis
-            query.  The ground facts a solution does need are extracted from the
-            clauses directly and are present either way.
-
-            Measured on a four-clause datatype problem whose solution is
-            [P(x) := (tl nil = nil) /\ x in 0..3]: with the extraction on and
-            this filter off, two closed terms take the space from 9 qualifiers
-            to 14 and the run never answers at 45 s, widening the shape to 85
-            disjuncts; with the filter on it is 9 qualifiers again and [sat,2]
-            in under a second, three runs of three.  The qualifier the solution
-            needs is among the nine in both cases.
-
-            [true] by default, and it can only bite where [extract_terms] is on,
-            which is not the shipped default -- so this changes no shipped
-            configuration and exists because it may be what makes that flag
-            affordable.  A sort test was tried first and is WORSE for the same
-            benefit: it drops every datatype term, and a predicate over a
-            datatype wants the testers and equalities built from one.  What this
-            keeps that a sort test would not is a datatype term involving a
-            parameter, [is_cons (tl x)] and the like. *)
-    max_extracted_terms : int option; [@default None]
-        (** at most this many terms in the qualifier learning's vocabulary, per
-            predicate, smallest first.
-
-            The vocabulary is every compound non-Boolean top-level term of every
-            qualifier the predicate has, and it was unbounded.  Measured over ten
-            predicates it is 4, 6, 8, 8, 8, 12, 14, 15, 44 and 100 terms -- a
-            factor of twenty-five -- which is why the bound is per predicate and
-            not global.
-
-            [None] by default, which is the vocabulary as it was.  What it does
-            and does not buy is measured, over 37 files, three settings and three
-            builds of one logic that differ only in where the fresh-name counter
-            starts, one run per cell with the address layout pinned.  There are
-            two regimes and this field addresses one of them.  Where it bites
-            (18 files with more than twenty terms) switching the vocabulary on
-            costs 1.73x wall and a bound of twenty costs 1.21x, so it recovers
-            about seventy per cent of the cost and loses no answer.  Where it is
-            inert (19 files with twenty or fewer) the vocabulary costs 3.81x and
-            the bound necessarily costs the same -- and every answer lost in the
-            whole sweep, four of 57 runs, is in that half.
-
-            So the bound is worth having for cost and is NOT the remedy for the
-            lost answers: on the file that loses its answer outright, a bound of
-            ONE loses it too.  Size is not what is expensive there; having any
-            vocabulary at all is, because these terms reach the hypothesis space
-            and not only the learning.  See the comment at the extraction itself.
-
-            Smallest first because a term's size is the only ordering available
-            without asking what the failure was about, and a smaller term is
-            cheaper for the affine templates the learning fits.  It is
-            deterministic, which matters: the set's own order is by the names
-            inside the terms, and those move whenever a fresh variable is drawn.
-        *)
-    widen_shape_with_learning : bool; [@default false]
-        (** grow the structural parameters in an iteration where the qualifier
-            learning DID learn something, as well as in one where it did not.
-
-            The synthesizer has two moves when it cannot fit its examples --
-            enlarge the vocabulary a candidate may use, and enlarge the shape it
-            may take -- and they are not symmetric.  Learning reports whether it
-            changed anything; growing the shape is unconditional and its only
-            failure is a template leaving a bound that is unset in every shipped
-            configuration.  So "try the other one first" names no program, and
-            the shipped policy -- spend the whole vocabulary budget, then take
-            one structural step -- is the only order the asymmetry admits.
-
-            This is the alternative that is well defined: take both moves on
-            every failure, so that neither budget is spent before the other.  It
-            matters because the ratio is otherwise a consequence rather than a
-            choice: measured over four files of one corpus, learning fires 21
-            times against 4 failures on one and 5 against 86 on another, so a
-            policy that ties the structural budget to learning's failures hands
-            those two wildly different budgets.
-
-            [false] by default, which is the behaviour this phase has always
-            had.  Which policy is better is a question about a corpus and not
-            about this code, and nothing here answers it. *)
-    yield_after_failures : int option; [@default None]
-        (** return [Yield] after this many consecutive rounds in which the
-            examples could not be fitted and the templates were grown instead.
-            [None], the default, never yields, which is the behaviour this phase
-            has always had: its only other exits are a candidate and a shape
-            bound that is itself unset by default, so a synthesis that cannot fit
-            the examples spins inside the phase and the later phases stop running
-            -- measured at 706 candidate searches against 9 completed rounds on
-            one input.  Yielding hands the round on so that validation, labeling
-            and resolution run on what is already known; resolution derives new
-            examples without needing a candidate, and it is reached only when
-            this phase returns. *)
   }
   [@@deriving yojson]
 
@@ -1164,14 +1464,30 @@ module Config = struct
     | Arrays arrays -> (
         match ExtFile.unwrap arrays with
         | Ok (a : Template.PredicateArrays.Config.t)
-          when a.number_of_cells_per_array > 0 && cfg.celled_examples <= 0 ->
+          when a.cells.number_of_cells_per_array > 0 && cfg.celled_examples <= 0 ->
             error_string
             @@ sprintf
-                 "the array template's number_of_cells_per_array is %d but \
-                  the synthesizer's celled_examples is %d: cells need \
-                  celled_examples > 0 (or number_of_cells_per_array = 0)"
-                 a.number_of_cells_per_array cfg.celled_examples
+                 "the array template's cells.number_of_cells_per_array is %d \
+                  but the synthesizer's celled_examples is %d: cells need \
+                  celled_examples > 0 (or cells.number_of_cells_per_array = 0)"
+                 a.cells.number_of_cells_per_array cfg.celled_examples
         | _ -> Ok ())
+    | _ -> Ok ())
+    >>= fun () ->
+    (match (cfg.dwf_predicate_template, cfg.wf_predicate_template) with
+    | Same_as_wf, _ | Union_of_wf _, WF _ -> Ok ()
+    | Union_of_wf _, WF_Flex _ ->
+        error_string
+          "dwf_predicate_template = Union_of_wf needs wf_predicate_template = \
+           WF: the union is of the WF template's instances")
+    >>= fun () ->
+    (match cfg.dwf_predicate_template with
+    | Union_of_wf k when k < 1 ->
+        error_string
+        @@ sprintf
+             "dwf_predicate_template = Union_of_wf %d: the union needs at \
+              least one member"
+             k
     | _ -> Ok ())
     >>= fun () ->
     (match cfg.wf_predicate_template with
@@ -1718,7 +2034,7 @@ module KeyEval = struct
 end
 
 (* The universal reading of a goal clause over functional predicates, as the
-   synthesis query states it under [fn_goal_constraint = Universal].
+   synthesis query states it under [parametric.fn_goal_constraint = Universal].
    [close ~uni_senv fml] binds universally, in one block at the top, exactly
    the free term variables of [fml] that [uni_senv] (the clause's own
    variables) names, and leaves every other free variable (a template
@@ -1728,12 +2044,109 @@ end
    in every model (it is [fml]'s closure over those variables), and is [fml]
    itself, physically, when [fml] has no such variable. *)
 module FnGoalClosure = struct
+  (** whether a clause is a goal over functional predicates, the clauses the
+      synthesis query states with each predicate's function template
+      substituted: no head atom, and at least one body atom, every one an
+      application of a functional predicate ([is_fn]) to one variable.
+
+      The body must be non-empty.  A clause with no atom at all -- one that
+      mentions no unknown, which the elimination leaves when it cannot decide
+      a resolvent -- passes the "every body atom" test vacuously, and was
+      asserted as its pure part with its variables free: a question about the
+      pure part's satisfiability that names no template parameter, so its
+      answer selects no candidate, while the solver had to decide it on every
+      synthesis query.  On a Rust-derived input whose unknown-free clauses are
+      quantified sequence formulas it made every query run out of its budget,
+      round after round.  The clause stays in the problem, and validation
+      checks it as it checks every clause. *)
+  let is_fn_goal_clause ~is_fn (pos, neg) =
+    Set.is_empty pos
+    && (not (Set.is_empty neg))
+    && Set.for_all neg ~f:(fun t ->
+           match Logic.Term.let_apps t with
+           | Logic.Var (tvar, _), [ Logic.Var _ ] -> is_fn tvar
+           | _ -> false)
+
   let close ~uni_senv fml =
     Formula.mk_forall_if_bounded
       (Set.to_list
       @@ Set.filter (Formula.term_sort_env_of fml)
            ~f:(fst >> Map.Poly.mem uni_senv))
       fml
+end
+
+(* A cheap negative answer to the question "does this formula have a free
+   variable of sort [SString], or the string constant symbol anywhere?", which
+   [cgen] asks of every disjunct it assembles and of every constraint (by
+   collecting the free-variable environment and the function-symbol set, two
+   set-building traversals of the whole formula).
+
+   Contract: [may_mention phi = false] implies that
+   [Formula.term_sort_env_of phi] holds no pair whose sort satisfies
+   [Term.is_string_sort] and [Formula.funsyms_of phi] holds no [StrConst], and
+   that neither raises.  Argument: every pair of [term_sort_env_of] comes from a
+   variable node carrying that sort or from an uninterpreted [FVar] symbol whose
+   sort is built from its argument and result sorts (a string sort only when it
+   has no arguments and returns a string); every element of [funsyms_of] is a
+   function symbol of some application node.  The walk below visits every term
+   node -- inside atoms, predicate fixpoints, binders' random terms, embedded
+   formulas, array lambdas and lets -- and answers [true] at any variable of
+   string sort (bound or free), any [FVar] with a string argument or result,
+   any [StrConst], and any [LetRec] (where [funsyms_of] raises).  So [false] is
+   exact; [true] says nothing, and callers then ask the full question.  It
+   allocates nothing and stops at the first hit. *)
+module StringMention = struct
+  let rec may_mention_term = function
+    | Term.Var (_, s, _) -> Term.is_string_sort s
+    | Term.FunApp (fsym, args, _) ->
+        (match fsym with
+        | T_string.StrConst _ -> true
+        | FVar (_, sargs, sret) ->
+            Term.is_string_sort sret || List.exists sargs ~f:Term.is_string_sort
+        | T_bool.Formula phi -> may_mention phi
+        | _ -> false)
+        || List.exists args ~f:may_mention_term
+    | Term.LetTerm (_, s, def, body, _) ->
+        Term.is_string_sort s || may_mention_term def || may_mention_term body
+
+  and may_mention_atom = function
+    | Atom.True _ | Atom.False _ -> false
+    | Atom.App (pred, args, _) ->
+        (match pred with
+        | Predicate.Fixpoint def -> may_mention def.body
+        | Predicate.Var _ | Predicate.Psym _ -> false)
+        || List.exists args ~f:may_mention_term
+
+  and may_mention = function
+    | Formula.Atom (atom, _) -> may_mention_atom atom
+    | Formula.UnaryOp (_, phi, _) -> may_mention phi
+    | Formula.BinaryOp (_, phi1, phi2, _) -> may_mention phi1 || may_mention phi2
+    | Formula.Bind (binder, _, phi, _) ->
+        (match binder with
+         | Formula.Random rand -> List.exists (Rand.terms_of rand) ~f:may_mention_term
+         | _ -> false)
+        || may_mention phi
+    | Formula.LetRec _ -> true
+    | Formula.LetFormula (_, s, def, phi, _) ->
+        Term.is_string_sort s || may_mention_term def || may_mention phi
+
+  (* The full question the quick one answers negatively: a free variable of
+     sort [SString] or a [StrConst] symbol; a failure to answer counts as
+     "may mention strings". *)
+  let full phi =
+    try
+      Set.exists (Formula.term_sort_env_of phi) ~f:(snd >> Term.is_string_sort)
+      || Set.exists (Formula.funsyms_of phi) ~f:(function
+           | T_string.StrConst _ -> true
+           | _ -> false)
+    with exn_ when not (Common.Timer.is_async exn_) -> true
+
+  (* COAR_EXACT_CROSSCHECK set: where [may_mention] answered [false], the full
+     question is asked too and a [true] reported on stderr *)
+  let crosscheck phi =
+    PropLogic.Formula.crosscheck_tick ();
+    if full phi then
+      Stdlib.prerr_endline "exact-crosscheck: StringMention DIFFERS"
 end
 
 module DisjunctionAssembly = struct
@@ -1751,12 +2164,10 @@ module DisjunctionAssembly = struct
      failure to answer counts as "may mention strings", which only sends the
      caller back to asking the question of the whole formula. *)
   let stringy_disjunct phi =
-    try
-      Set.exists (Formula.term_sort_env_of phi) ~f:(snd >> Term.is_string_sort)
-      || Set.exists (Formula.funsyms_of phi) ~f:(function
-           | T_string.StrConst _ -> true
-           | _ -> false)
-    with exn_ when not (Common.Timer.is_async exn_) -> true
+    if not (StringMention.may_mention phi) then (
+      if PropLogic.Formula.crosscheck then StringMention.crosscheck phi;
+      false)
+    else StringMention.full phi
 
   (* [subst] is [Logic.Term.subst] or a substitution alpha-equivalent to it
      on beta-normal input; the share is then the same up to bound names. *)
@@ -1847,7 +2258,7 @@ module Make
       (APCSP)
 
   let extracted_qualifiers =
-    if not config.extract_qualifiers then Map.Poly.empty
+    if not config.learning.extract.qualifiers then Map.Poly.empty
     else
       Map.Poly.fold (PCSP.Problem.senv_of APCSP.problem) ~init:Map.Poly.empty
         ~f:(fun ~key:(Ident.Tvar name) ~data:sort acc ->
@@ -1855,6 +2266,9 @@ module Make
             LogicOld.sort_env_list_of_sorts
             @@ List.map (Logic.Sort.args_of sort) ~f:Logic.ExtTerm.to_old_sort
           in
+          (* one predicate's qualifiers at a time: a safe point to end a
+             probe whose strict deadline has passed *)
+          PCSatCommon.SolveDeadline.check_at_stage ();
           let quals =
             Common.PhaseTime.with_phase "generate-extracted" @@ fun () ->
             Set.Poly.map ~f:snd
@@ -1865,7 +2279,7 @@ module Make
           Map.Poly.add_exn acc ~key:(Ident.Pvar name) ~data:(args, quals))
 
   let extracted_terms =
-    if not config.extract_terms then Map.Poly.empty
+    if not config.learning.extract.terms then Map.Poly.empty
     else
       Map.Poly.map extracted_qualifiers ~f:(fun (args, phis) ->
           ( args,
@@ -1910,13 +2324,13 @@ module Make
               Set.filter ~f:(fun t ->
                   Fn.non Term.is_bool_sort (Term.sort_of t)
                   && Term.is_compound (*ToDo*) t
-                  && ((not config.extracted_terms_mention_a_param)
+                  && ((not config.learning.extract.terms_mention_a_param)
                      || not (Set.are_disjoint (Term.tvs_of t) param_vs)))
               @@ Set.concat_map phis ~f:Formula.terms_of
             in
             Debug.print
             @@ lazy (sprintf "vocabulary before bound: %d" (Set.length all));
-            match config.max_extracted_terms with
+            match config.learning.extract.max_terms with
             | Some n when Set.length all > n ->
                 Set.Poly.of_list @@ List.take
                   (List.sort (Set.to_list all) ~compare:(fun t1 t2 ->
@@ -1927,7 +2341,7 @@ module Make
             | _ -> all ))
 
   let extracted_consts =
-    if not config.extract_constants then Map.Poly.empty
+    if not config.learning.extract.constants then Map.Poly.empty
     else
       let str_consts =
         Set.concat_map (PCSP.Problem.old_formulas_of APCSP.problem)
@@ -1957,12 +2371,12 @@ module Make
             | _ -> Set.Poly.empty (*ToDo*))
           @@ Set.concat_map ~f:Formula.funsyms_of
           @@
-          if true then phis
-          else
-            (if true then
-               Set.filter ~f:(fun phi -> Set.mem (Formula.pvs_of phi) key)
-             else Fn.id)
-            @@ PCSP.Problem.old_formulas_of APCSP.problem)
+          match config.learning.extract.constants_from with
+          | Its_qualifiers -> phis
+          | Clauses_mentioning_it ->
+              Set.filter ~f:(fun phi -> Set.mem (Formula.pvs_of phi) key)
+              @@ PCSP.Problem.old_formulas_of APCSP.problem
+          | All_clauses -> PCSP.Problem.old_formulas_of APCSP.problem)
 
   (* The absolute value of every integer literal the (preprocessed) problem
      mentions, including those inside the arguments of a predicate application,
@@ -2006,11 +2420,40 @@ module Make
           let fenv = PCSP.Problem.fenv_of APCSP.problem
           let sol_space = PCSP.Problem.sol_space_of APCSP.problem
           let id = id
-          let with_cond = PCSP.Problem.is_adm_pred_with_cond APCSP.problem tvar
+          let adm =
+            Option.value ~default:Kind.Adm_expectation
+            @@ PCSP.Problem.adm_of APCSP.problem tvar
           let nwf_tag = PCSP.Problem.nwf_tag_of APCSP.problem tvar
+
+          (* the tag pairs of every member of [tvar]'s parity family, read
+             from the kind map (which keeps the members preprocessing
+             eliminated); empty for an unknown of no parity family *)
+          let family_calls =
+            match nwf_tag with
+            | None -> []
+            | Some (nwf, _) ->
+                Map.Poly.fold
+                  (PCSP.Problem.kind_map_of APCSP.problem)
+                  ~init:[]
+                  ~f:(fun ~key:_ ~data acc ->
+                    match data with
+                    | Kind.Parity (nwf', lr)
+                      when Ident.tvar_equal nwf'.name nwf.name ->
+                        lr :: acc
+                    | _ -> acc)
+
           let problem_int_consts = problem_int_consts
           let problem_formulas = problem_formulas
           let problem_clauses = problem_clauses
+
+          (* the path list is one contract between the template and the
+             example expansion, so the array template takes its sequence
+             setting from here; a sentinel cell exists only where sequences
+             have cells *)
+          let sequence_cells = config.cells.sequence_cells
+
+          let sequence_sentinel_cell =
+            config.cells.sequence_cells && config.cells.sequence_sentinel_cell
 
           (* over [x1 ... xn], normalised as the generator normalises them;
              a literal [true]/[false] is dropped *)
@@ -2055,21 +2498,32 @@ module Make
           | Arrays predicate_template ->
               (module Template.PredicateArrays.Make
                         (struct
-                          (* the path list is one contract between the
-                             template and the example expansion, so the
-                             sequence setting comes from here and not from the
-                             template's own file *)
                           let config =
-                            {
-                              (ExtFile.unwrap_or_abort predicate_template) with
-                              Template.PredicateArrays.Config.sequence_cells =
-                                config.sequence_cells;
-                              sequence_sentinel_cell =
-                                config.sequence_cells
-                                && config.sequence_sentinel_cell;
-                            }
+                            ExtFile.unwrap_or_abort predicate_template
                         end)
                         (Arg) : Template.Function.Type)
+        else if
+          PCSP.Problem.is_dwf_pred APCSP.problem tvar
+          &&
+          match config.dwf_predicate_template with
+          | Union_of_wf _ -> true
+          | Same_as_wf -> false
+        then
+          match (config.dwf_predicate_template, config.wf_predicate_template) with
+          | Union_of_wf members, WF wf_predicate_template ->
+              (module Template.DWFPredicate.Make
+                        (struct
+                          let config =
+                            ExtFile.unwrap_or_abort wf_predicate_template
+                        end)
+                        (struct
+                          let number = members
+                        end)
+                        (Arg) : Template.Function.Type)
+          | _ ->
+              (* refused when the configuration is loaded *)
+              failwith
+              @@ sprintf "not supported: %s" (Ident.name_of_tvar tvar)
         else if
           PCSP.Problem.(
             is_wf_pred APCSP.problem tvar || is_dwf_pred APCSP.problem tvar)
@@ -2107,6 +2561,9 @@ module Make
                         (struct
                           let config =
                             ExtFile.unwrap_or_abort wf_predicate_template
+                        end)
+                        (struct
+                          let config = config.parity_predicate_template
                         end)
                         (Arg) : Template.Function.Type)
           | WF_Flex _ ->
@@ -2196,22 +2653,30 @@ module Make
                             ExtFile.unwrap_or_abort int_function_template
                         end)
                         (Arg) : Template.Function.Type)
-          (*else if PCSP.Problem.is_real_fun APCSP.problem tvar then
-          match config.real_function_template with
-          | RealFun real_function_template ->
-              (module Template.RealFunction.Make
+        else if PCSP.Problem.is_real_fun APCSP.problem tvar then
+          (* The integer function template at sort [Real], configured by the
+             same field: the family and its growth are the same, and only the
+             result sort differs.  A real-valued unknown -- in particular a
+             nullary one, a real constant such as a template parameter of a
+             polynomial quantified entailment from the quantitative fixpoint
+             solver -- otherwise fell through to the no-template refusal
+             below, so a problem PCSat can search was answered [unknown]
+             before any search. *)
+          match config.int_function_template with
+          | IntFun int_function_template ->
+              (module Template.IntFunction.MakeReal
                         (struct
                           let config =
-                            ExtFile.unwrap_or_abort real_function_template
+                            ExtFile.unwrap_or_abort int_function_template
                         end)
                         (Arg) : Template.Function.Type)
-          | RealFun_Flex real_function_template ->
-              (module Template.RealFunctionFlex.Make
+          | IntFun_Flex int_function_template ->
+              (module Template.IntFunctionFlex.MakeReal
                         (struct
                           let config =
-                            ExtFile.unwrap_or_abort real_function_template
+                            ExtFile.unwrap_or_abort int_function_template
                         end)
-                        (Arg) : Template.Function.Type)*)
+                        (Arg) : Template.Function.Type)
         else if PCSP.Problem.is_regex APCSP.problem tvar then
           match config.regex_template with
           | RegEx regex_template ->
@@ -2320,11 +2785,12 @@ module Make
 
   (* the certificate templates of the current templates, per predicate *)
   let ref_cert_templates :
-      (Ident.tvar, Templ.kind_cert_templ list) Map.Poly.t ref =
+      (Ident.tvar, Templ.kind_cert_templ list list) Map.Poly.t ref =
     ref Map.Poly.empty
   (* several template sets coexist (the ucore variants); every generated
      certificate template is kept and the one whose parameters the model
-     binds is used *)
+     binds is used.  An entry is a union: the certificates of one generated
+     template, one per member of a disjunctive template, one otherwise *)
 
   let candidate_of_model (temp_param_senv : Logic.sort_env_map)
       (templates : Logic.cand_map) (qualifiers_map : qualifiers_map)
@@ -2333,18 +2799,17 @@ module Make
        once from the model rather than by a scan of the model per parameter,
        which was quadratic: with one parameter per qualifier per hole and a
        model of the same size, a large vocabulary made this lookup the cost of
-       the whole call.  [first_binding_table] keeps the first element of the
-       model for each variable, which is exactly the element [List.find] on
-       the variable returns, so the substitution is the same. *)
-    let model_of_tvar = Logic.first_binding_table model in
+       the whole call.  The table is keyed by name AND sort ([Logic.model_table]),
+       so an entry a pooled solver context left at another sort reads as absent,
+       which the fill-in below already handles. *)
+    let model_of_tvar = Logic.model_table model in
     let temp_param_sub =
       Map.Poly.mapi temp_param_senv ~f:(fun ~key ~data ->
           snd (* ToDo: support parameteric candidate solution and CEGIS(T) *)
           @@ Logic.ExtTerm.remove_dontcare_elem
-          @@
-          match Hashtbl.find model_of_tvar key with
-          | None -> ((key, data), None)
-          | Some opt -> opt)
+               ( (key, data),
+                 Option.join (Logic.model_table_find model_of_tvar (key, data))
+               ))
     in
     (* a qualifier whose parameter the model sets to 0 contributes only [true]
        to its hole's instantiated template, so it is left out before the
@@ -2431,13 +2896,15 @@ module Make
           in
           match
             Option.bind (Map.Poly.find !ref_cert_templates tvar) ~f:(fun cts ->
-                List.find cts ~f:(fun ct ->
-                    (not (List.is_empty ct.Templ.cert_levels))
-                    && Set.is_subset (params_of ct) ~of_:bound
-                    && Set.is_subset (holes_of ct) ~of_:hole_names))
+                List.find cts ~f:(fun union ->
+                    (not (List.is_empty union))
+                    && List.for_all union ~f:(fun ct ->
+                           (not (List.is_empty ct.Templ.cert_levels))
+                           && Set.is_subset (params_of ct) ~of_:bound
+                           && Set.is_subset (holes_of ct) ~of_:hole_names)))
           with
           | None -> None
-          | Some ct -> (
+          | Some union -> (
               try
                 let hole_qualifiers_map =
                   Map.Poly.find_exn qualifiers_map tvar
@@ -2449,44 +2916,44 @@ module Make
                       >> Logic.ExtTerm.simplify_formula Map.Poly.empty
                            (Map.Poly.of_alist_exn senv))
                 in
-                let uni =
-                  Map.Poly.of_alist_exn
-                    (Logic.of_old_sort_env_list (cert_params ct))
+                let inst_member ct =
+                  let uni =
+                    Map.Poly.of_alist_exn
+                      (Logic.of_old_sort_env_list (cert_params ct))
+                  in
+                  let inst t =
+                    t
+                    |> Logic.ExtTerm.subst temp_param_sub
+                    |> Logic.ExtTerm.subst hole_template_map
+                  in
+                  let inst_f phi =
+                    Evaluator.simplify
+                    @@ Logic.ExtTerm.to_old_fml Map.Poly.empty uni
+                    @@ inst (Logic.ExtTerm.of_old_formula phi)
+                  in
+                  let inst_t t =
+                    Evaluator.simplify_term
+                    @@ Logic.ExtTerm.to_old_trm Map.Poly.empty uni
+                    @@ inst (Logic.ExtTerm.of_old_term t)
+                  in
+                  let inst_pieces =
+                    List.map ~f:(fun (disc, rs) ->
+                        (inst_f disc, List.map rs ~f:inst_t))
+                  in
+                  {
+                    KindCert.params_shared = ct.Templ.cert_params_shared;
+                    params_x = ct.Templ.cert_params_x;
+                    params_y = ct.Templ.cert_params_y;
+                    levels =
+                      List.map ct.Templ.cert_levels ~f:(fun (px, py) ->
+                          (inst_pieces px, inst_pieces py));
+                    accepting = ct.Templ.cert_accepting;
+                  }
                 in
-                let inst t =
-                  t
-                  |> Logic.ExtTerm.subst temp_param_sub
-                  |> Logic.ExtTerm.subst hole_template_map
-                in
-                let inst_f phi =
-                  Evaluator.simplify
-                  @@ Logic.ExtTerm.to_old_fml Map.Poly.empty uni
-                  @@ inst (Logic.ExtTerm.of_old_formula phi)
-                in
-                let inst_t t =
-                  Evaluator.simplify_term
-                  @@ Logic.ExtTerm.to_old_trm Map.Poly.empty uni
-                  @@ inst (Logic.ExtTerm.of_old_term t)
-                in
-                let inst_pieces =
-                  List.map ~f:(fun (disc, rs) ->
-                      (inst_f disc, List.map rs ~f:inst_t))
-                in
-                (* one ranking: the WF template is used for DWF too, so a DWF
-                   solution's certificate is a union of one *)
-                Some
-                  ( tvar,
-                    [
-                      {
-                        KindCert.params_shared = ct.Templ.cert_params_shared;
-                        params_x = ct.Templ.cert_params_x;
-                        params_y = ct.Templ.cert_params_y;
-                        levels =
-                          List.map ct.Templ.cert_levels ~f:(fun (px, py) ->
-                              (inst_pieces px, inst_pieces py));
-                        accepting = ct.Templ.cert_accepting;
-                      };
-                    ] )
+                (* one ranking per member: a list of one for every template
+                   but the disjunctive DWF one, whose solution is the union
+                   of its members' relations *)
+                Some (tvar, List.map union ~f:inst_member)
               with e when not (Common.Timer.is_async e) ->
                 Debug.print
                 @@ lazy
@@ -2541,7 +3008,7 @@ module Make
       | None | Some "" -> false | Some _ -> true)
     let names = [| "expand"; "parts"; "witness"; "assemble"; "convert"; "close";
                    "seqinst"; "string"; "row"; "holemap"; "tsubst"; "hsubst";
-                   "shared" |]
+                   "shared"; "derive" |]
     let times = Array.create ~len:(Array.length names) 0.
     let clauses = ref 0
     let celled = ref 0
@@ -2949,7 +3416,7 @@ module Make
       @@ lazy ("size after: " ^ string_of_int @@ Logic.ExtTerm.ast_size term');
     term'
 
-  (* The cell index variables an exact step expansion ([celled_step_exact])
+  (* The cell index variables an exact step expansion ([cells.step_exact])
      made universal.  Constraint generation reads it twice: an atom holding one
      of them has its holes evaluated symbolically, since its truth-table row
      would put the index at a default; and no instantiation strategy grounds
@@ -3031,18 +3498,18 @@ module Make
      bound variables (measured identical on 20,413 atom constraints of a
      celled run, whose templates bind nothing). *)
   (* the substitution of constraint generation other than the holes'; see
-     [cgen_subst_rename_on_capture] *)
+     [parametric.rename_on_capture.cgen] *)
   let cgen_subst env term =
-    if config.cgen_subst_rename_on_capture then
+    if config.parametric.rename_on_capture.cgen then
       Logic.Term.subst_rename_on_capture env term
     else Logic.Term.subst env term
 
   let subst_holes (holes : (Ident.tvar, Logic.term) Map.Poly.t) term =
-    if config.hole_subst_rename_on_capture then
+    if config.parametric.rename_on_capture.holes then
       Logic.Term.subst_up_to_bound_names_linear holes term
     else Logic.Term.subst_up_to_bound_names holes term
 
-  (* The group names of [celled_step_exact_name_groups]
+  (* The group names of [cells.step_exact_name_groups]
      ([PCSatCommon.HoleNaming]) for one [cgen] call, like the atom memo:
      [None] outside [cgen] and with the switch off.  [naming_clause] says
      whether the clause whose atoms are being built binds the names its atoms
@@ -3127,22 +3594,22 @@ module Make
              a run with this route switched off pays nothing for it, and this
              test is made for every example atom *)
             (* an atom sharing a parameter with another atom of its clause,
-               under [symbolic_shared_params]: its parameters are one variable
+               under [parametric.symbolic_shared_params]: its parameters are one variable
                across the clause, bound by the caller *)
             symbolic
-            || config.symbolic_holes_for_parametric && ExAtom.is_ppapp atom
+            || config.parametric.symbolic_holes && ExAtom.is_ppapp atom
                && Map.Poly.exists (ExAtom.params_of atom) ~f:Sort.is_svar
-            (* the exact celled head ([celled_head_exact]), recognised as a
+            (* the exact celled head ([cells.head_exact]), recognised as a
                parametric head with an ARRAY parameter: on the cell route
                every other celled atom has its arrays grounded before its
                cells are read.  Its holes must see the cell indices, which
                the table's row would put at their defaults *)
-            || config.celled_head_exact && polarity && ExAtom.is_ppapp atom
+            || config.cells.head_exact && polarity && ExAtom.is_ppapp atom
                && Map.Poly.exists (ExAtom.params_of atom) ~f:T_array.is_sarray
             (* an atom of an exact step expansion, on either side: its cell
                indices are the head's universal, and on the body side the
                frame instance reads the same variables *)
-            || config.celled_step_exact && ExAtom.is_ppapp atom
+            || config.cells.step_exact && ExAtom.is_ppapp atom
                && holds_exact_step_index atom
         in
         let eval_hole =
@@ -3169,13 +3636,16 @@ module Make
           else eval_qual tt (atom_row tt fenv qdeps unknowns atom) polarity
         in
         (* the holes' group instances named once per [cgen] call, inside a
-           clause that binds the names ([celled_step_exact_name_groups]) *)
+           clause that binds the names ([cells.step_exact_name_groups]) *)
         let named =
           match (!hole_naming, ExAtom.args_of atom) with
           | Some table, Some args
             when !naming_clause
                  && List.for_all args ~f:(fun t ->
-                        Set.is_empty (Term.fvar_apps_of t))
+                        Set.is_empty (Term.fvar_apps_of t)
+                        && not
+                             (Set.exists (Term.tvs_of t)
+                                ~f:(Map.Poly.mem template_map)))
                  && holes_applied_to_params template_map hole_qualifiers_map
                       pvar (List.length args) ->
               CgenProfile.time 9 @@ fun () ->
@@ -3187,27 +3657,68 @@ module Make
                 hole_qualifiers_map ~f:eval_hole
           | _ -> None
         in
-        match named with
-        | Some hole_map -> Map.Poly.of_alist_exn hole_map
-        | None ->
-        CgenProfile.time 9 @@ fun () ->
-        Map.Poly.of_alist_exn
-        @@ hole_map_of hole_qualifiers_map sorts ~f:eval_hole
-        @
-        match ExAtom.args_of atom with
-        | None -> assert false
-        | Some args ->
-            List.concat_map ~f:(fun fvar_app ->
-                let tvar, sargs, _, args, _ = Term.let_fvar_app fvar_app in
-                let hole_qualifiers_map =
-                  Map.Poly.find_exn qualifiers_map tvar
-                in
-                hole_map_of hole_qualifiers_map sargs
-                  ~f:
-                    (old_eval_qual polarity unknowns
-                       (ExAtom.params_of atom, Formula.mk_true (), sargs, args)))
-            @@ Set.to_list @@ Set.Poly.union_list
-            @@ List.map ~f:Term.fvar_apps_of args
+        let maps =
+          match named with
+          | Some hole_map -> hole_map
+          | None ->
+              CgenProfile.time 9 @@ fun () ->
+              let args = Option.value_exn (ExAtom.args_of atom) in
+              let applications =
+                Set.Poly.union_list (List.map args ~f:Term.fvar_apps_of)
+              in
+              let applied_fvars =
+                Set.Poly.map applications ~f:(fun app ->
+                    let tvar, _, _, _, _ = Term.let_fvar_app app in
+                    tvar)
+              in
+              let function_holes tvar sargs args =
+                match Map.Poly.find qualifiers_map tvar with
+                | None ->
+                    raise
+                      (PCSP.Problem.NoTemplate
+                         (sprintf
+                            "%s occurs in a predicate argument but has no \
+                             function template qualifiers"
+                            (Ident.name_of_tvar tvar)))
+                | Some quals ->
+                    hole_map_of quals sargs
+                      ~f:
+                        (old_eval_qual polarity unknowns
+                           ( ExAtom.params_of atom,
+                             Formula.mk_true (),
+                             sargs,
+                             args ))
+              in
+              let application_maps =
+                List.concat_map (Set.to_list applications) ~f:(fun app ->
+                    let tvar, sargs, _, args, _ = Term.let_fvar_app app in
+                    function_holes tvar sargs args)
+              in
+              (* As on the pure-constraint route, a nullary unknown travels as
+                 a variable, not a function application. Its substituted
+                 template still contains holes, which must be bound here. *)
+              let nullary_maps =
+                List.concat_map
+                  (Set.to_list
+                  @@ Set.filter
+                       (Set.Poly.union_list (List.map args ~f:Term.tvs_of))
+                       ~f:(fun tvar ->
+                         Map.Poly.mem template_map tvar
+                         && not (Set.mem applied_fvars tvar)))
+                  ~f:(fun tvar -> function_holes tvar [] [])
+              in
+              hole_map_of hole_qualifiers_map sorts ~f:eval_hole
+              @ application_maps @ nullary_maps
+        in
+        match Map.Poly.of_alist maps with
+        | `Ok map -> map
+        | `Duplicate_key hole ->
+            raise
+              (PCSP.Problem.NoTemplate
+                 (sprintf
+                    "hole %s is bound twice: a function variable applied at \
+                     several argument lists in one example is not supported"
+                    (Ident.name_of_tvar hole)))
       in
       let _, term = ExAtom.to_formula polarity atom in
       if false then
@@ -3259,6 +3770,10 @@ module Make
       * (Ident.tvar * Logic.term) list option
       * DisjunctionAssembly.derived)
       list;
+    shared_slot : SharedParams.slot;
+        (** the shares of the shared-parameter reading
+            ([SharedParams.constraint_of]), kept apart from [shares]: that
+            reading converts under its own environment and substitutions *)
   }
 
   let atom_constr_memo :
@@ -3268,7 +3783,7 @@ module Make
       ref =
     ref None
 
-  (* the guards of [celled_step_exact_name_groups]'s names as memo entries,
+  (* the guards of [cells.step_exact_name_groups]'s names as memo entries,
      one per name, for one [cgen] call *)
   let guard_entries : (Ident.tvar, atom_entry) Hashtbl.t = Hashtbl.Poly.create ()
 
@@ -3433,7 +3948,13 @@ module Make
             | Some e -> incr CgenProfile.memo_hits; (e.term, Some e)
             | None ->
                 incr CgenProfile.memo_misses;
-                let e = { term = compute (); shares = [] } in
+                let e =
+                  {
+                    term = compute ();
+                    shares = [];
+                    shared_slot = SharedParams.new_slot ();
+                  }
+                in
                 memo := Map.Poly.set !memo ~key ~data:e;
                 (e.term, Some e)))
 
@@ -3453,6 +3974,7 @@ module Make
     | Some (_, _, d) -> d
     | None ->
         let d =
+          CgenProfile.time 13 @@ fun () ->
           DisjunctionAssembly.derive ~subst:cgen_subst ~temp_param_senv ~params
             ~sub entry.term
         in
@@ -3478,7 +4000,8 @@ module Make
        fails with that name unbound, out of the synthesizer, where the caller
        wanted a verdict.  It is a failure to decide like any other, so it takes
        the same answer: do not assert the witness.  That is the safe direction,
-       since asserting it only ever WEAKENS what the candidate must satisfy. *)
+       since leaving it out only ever WEAKENS the synthesis query (the witness
+       is a conjunct), so no candidate the query would accept is lost. *)
     | exception exn_ when not (Common.Timer.is_async exn_) -> false
     | phi ->
     Hashtbl.Poly.find_or_add witness_cache (Formula.str_of phi)
@@ -3498,7 +4021,7 @@ module Make
      universal -- the "QSAT hole" -- which is what a strategy-improvement
      solver is given to close.
 
-     Switched by [qsat_clause_constraints], off by default.  It is unfinished
+     Switched by [parametric.qsat_clause_constraints], off by default.  It is unfinished
      on the branch and is kept because the *route* is a design alternative to
      the propositional abstraction and not merely an implementation of it: the
      hole stays a quantified formula rather than a row of a table.
@@ -3628,17 +4151,167 @@ module Make
         | None -> quantified
         | Some w -> Logic.BoolTerm.and_of [ w; quantified ])
 
+  (* The one-point reading of an example clause over witness results.
+
+     Shape: every atom of [clause] is either a formula atom or a NEGATIVE
+     application [g => not F(a, r)] of a functional unknown [F] whose last
+     argument is a parameter [r] that occurs in no other argument of any atom
+     (it may occur in guards and formula atoms); every parameter of that kind
+     is called a result.  Other parameters may occur in the arguments [a].
+
+     Meaning.  A functional unknown's template is the graph [r = t(a)] of a
+     term (the template of [FNPredicate], an [ite] chain ending in an
+     unguarded branch), so the atom instantiated is [g => r <> t(a)], i.e.
+     [not g \/ r <> t(a)], and for a result [r] that occurs in no other
+     literal's equation
+       [forall r. (r <> t(a) \/ psi(r)) <=> psi(t(a))]    (one-point rule).
+     Applied to every result in turn (no [t(a)] mentions a result: the
+     results are excluded from the arguments [a]), the clause becomes the
+     disjunction of the negated guards and the formula atoms with each result
+     replaced by its template term -- for an example from a counterexample,
+     the clause's own pure part at the counterexample's arguments, over the
+     template's parameters.  The remaining parameters are read as
+     [pex_strategy] reads them: a universal for [Quantify], the dummy for a
+     parameter of a fixed carrier under the other strategies.
+
+     Contract.  [None] when the clause is not of the shape, when a template
+     term cannot be read off the atom's constraint as an equation with the
+     result alone on one side (a total predicate's template is a disjunction,
+     for one), or when the conversion raises; the caller then keeps its own
+     reading.  [Some c]: [c] is equivalent to the per-atom reading of the
+     clause under [Quantify], provided the atom's holes take the values its
+     truth-table row gives them, which is so when no hole qualifier of [F]
+     reads the result position (a row is taken with the parameters at their
+     defaults). *)
+  let fn_one_point vs template_map qualifiers_map unknowns temp_param_senv
+      clause =
+    let params = ExClause.params_of clause in
+    if Map.Poly.is_empty params || Set.is_empty clause.ExClause.negative then
+      None
+    else
+      let fns = PCSP.Problem.fnpvs_of APCSP.problem in
+      let args_of_atom atm = Option.value ~default:[] (ExAtom.args_of atm) in
+      let all_atoms =
+        Set.to_list (Set.union clause.ExClause.positive clause.ExClause.negative)
+      in
+      let mentions x t = Set.mem (Term.tvs_of t) x in
+      let result_of atm =
+        match atm with
+        | ExAtom.PPApp ((ps, _), ((pvar, _), args))
+          when Set.mem fns (Ident.pvar_to_tvar pvar) -> (
+            match List.rev args with
+            | Term.Var (r, _, _) :: rest
+              when Map.Poly.mem ps r
+                   && (not (List.exists rest ~f:(mentions r)))
+                   && List.for_all all_atoms ~f:(fun other ->
+                          phys_equal other atm
+                          || not
+                               (List.exists (args_of_atom other) ~f:(mentions r)))
+              ->
+                Some r
+            | _ -> None)
+        | _ -> None
+      in
+      let negs = Set.to_list clause.ExClause.negative in
+      let results = List.map negs ~f:(fun atm -> (atm, result_of atm)) in
+      if
+        (not (List.for_all results ~f:(fun (_, r) -> Option.is_some r)))
+        || Set.exists clause.ExClause.positive ~f:(Fn.non ExAtom.is_fcon)
+      then None
+      else
+        try
+          let param_senv = Logic.of_old_sort_env_map params in
+          let senv = Map.force_merge param_senv temp_param_senv in
+          (* each result's template term, read off the unguarded atom's
+             constraint [r = t(a)] *)
+          let defs =
+            List.map results ~f:(fun (atm, r) ->
+                let r = Option.value_exn r in
+                let unguarded =
+                  match atm with
+                  | ExAtom.PPApp ((ps, _), papp) ->
+                      ExAtom.PPApp ((ps, Formula.mk_true ()), papp)
+                  | _ -> atm
+                in
+                let c =
+                  Logic.ExtTerm.to_old_fml Map.Poly.empty senv
+                  @@ cgen_from_exatom vs template_map qualifiers_map unknowns
+                       param_senv temp_param_senv true unguarded
+                in
+                let is_r = function
+                  | Term.Var (x, _, _) -> Ident.tvar_equal x r
+                  | _ -> false
+                in
+                match c with
+                | Formula.Atom
+                    (Atom.App (Predicate.Psym T_bool.Eq, [ t1; t2 ], _), _) ->
+                    if is_r t1 then (r, t2)
+                    else if is_r t2 then (r, t1)
+                    else raise Stdlib.Exit
+                | _ -> raise Stdlib.Exit)
+          in
+          let sub = Map.Poly.of_alist_exn defs in
+          if
+            List.exists defs ~f:(fun (_, e) ->
+                Set.exists (Term.tvs_of e) ~f:(Map.Poly.mem sub))
+          then None
+          else
+            let disjuncts =
+              List.map negs ~f:(fun atm ->
+                  let _, cond, _ = ExAtom.to_old_formula_and_cond atm in
+                  Formula.mk_neg cond)
+              @ List.map (Set.to_list clause.ExClause.positive) ~f:(fun atm ->
+                  let _, phi, _ = ExAtom.to_old_formula_and_cond atm in
+                  phi)
+            in
+            let phi = Formula.subst sub (Formula.or_of disjuncts) in
+            let rest =
+              Map.Poly.filter_keys params ~f:(Fn.non (Map.Poly.mem sub))
+            in
+            let ground, kept =
+              match config.pex_strategy with
+              | Quantify -> (Map.Poly.empty, rest)
+              | InstDefault | InstRand _ ->
+                  Map.Poly.partition_tf rest ~f:(fun srt ->
+                      not (Sort.is_svar srt || T_dt.is_sus srt))
+            in
+            let phi =
+              Formula.subst
+                (Map.Poly.map ground ~f:Term.mk_dummy)
+                phi
+            in
+            Common.PhaseTime.event "synthesis/fn-one-point";
+            Some
+              (Logic.BoolTerm.forall
+                 (Map.Poly.to_alist (Logic.of_old_sort_env_map kept))
+                 (Logic.ExtTerm.of_old_formula phi))
+        with
+        | Stdlib.Exit ->
+            Common.PhaseTime.event "synthesis/fn-one-point-declined";
+            None
+        | exn_ when not (Common.Timer.is_async exn_) ->
+            Common.PhaseTime.event "synthesis/fn-one-point-failed";
+            None
+
   let cgen_from_pex_parts vs template_map qualifiers_map unknowns
       temp_param_senv clause =
+    match
+      if config.fn_result_one_point then
+        fn_one_point vs template_map qualifiers_map unknowns temp_param_senv
+          clause
+      else None
+    with
+    | Some c -> Whole c
+    | None ->
     let param_senv = Logic.of_old_sort_env_map @@ ExClause.params_of clause in
     let entries = ref [] in
     (* whether this clause binds the group names of its atoms' holes
-       ([celled_step_exact_name_groups]); only the [Quantify] and
+       ([cells.step_exact_name_groups]); only the [Quantify] and
        [InstDefault] constraints below bind them.  The names enter only the
        terms [build_terms] builds: the shared-parameter reading builds its
        atoms itself, outside [naming_clause], so they hold no name *)
     let naming =
-      config.celled_step_exact_name_groups && config.celled_step_exact
+      config.cells.step_exact_name_groups && config.cells.step_exact
       && Option.is_some !hole_naming
       && (match config.pex_strategy with
          | Quantify | InstDefault -> true
@@ -3666,12 +4339,12 @@ module Make
                (Set.Poly.map clause.ExClause.positive ~f:(f true))
                (Set.Poly.map clause.ExClause.negative ~f:(f false)))
     in
-    (* Built at once, as it always was, unless [symbolic_shared_params] may
+    (* Built at once, as it always was, unless [parametric.symbolic_shared_params] may
        replace it: building it registers the atoms' rows in the truth tables,
        which the shared-parameter reading of a symbolic atom must not do for
        nothing. *)
     let terms =
-      if config.symbolic_shared_params then lazy (build_terms ())
+      if config.parametric.symbolic_shared_params then lazy (build_terms ())
       else Lazy.from_val (build_terms ())
     in
     let conds_of_clause () =
@@ -3723,6 +4396,83 @@ module Make
                    (Logic.BoolTerm.and_of conds))
             else None
     in
+    (* [parametric.svar_carrier_witness]: per sort variable with k >= 2
+       parameters here, [exists q_1..q_k. distinct], over fresh names so that
+       it shares no binder with the clause.  Implied by every carrier of k or
+       more elements, hence by every genuine solution. *)
+    let carrier_witness () =
+      if not config.parametric.svar_carrier_witness then None
+      else
+        (* only the parameters that an equality or disequality between two
+           sort-variable parameters mentions: a one-element carrier makes
+           exactly those atoms constant, and asserting a larger carrier for
+           every clause with such parameters cost an answer on an input whose
+           parameters occur only under unknown functions (its synthesis
+           queries ran several times slower) *)
+        let compared =
+          let is_svar_param x =
+            match Map.Poly.find param_senv x with
+            | Some (Logic.Sort.SVar _) -> true
+            | _ -> false
+          in
+          Set.fold
+            (Set.union clause.ExClause.positive clause.ExClause.negative)
+            ~init:Set.Poly.empty ~f:(fun acc atom ->
+              let _, cond, phi = ExAtom.to_old_formula_and_cond atom in
+              let pos, neg =
+                Formula.atoms_of (Formula.and_of [ phi; cond ])
+              in
+              Set.fold (Set.union pos neg) ~init:acc ~f:(fun acc -> function
+                | Atom.App
+                    ( Predicate.Psym (T_bool.Eq | T_bool.Neq),
+                      [ Term.Var (x, _, _); Term.Var (y, _, _) ],
+                      _ )
+                  when is_svar_param x && is_svar_param y ->
+                    Set.add (Set.add acc x) y
+                | _ -> acc))
+        in
+        let by_svar =
+          Map.Poly.fold param_senv ~init:Map.Poly.empty
+            ~f:(fun ~key ~data acc ->
+              match data with
+              | Logic.Sort.SVar _ when Set.mem compared key ->
+                  Map.Poly.update acc data ~f:(function
+                    | None -> 1
+                    | Some n -> n + 1)
+              | _ -> acc)
+        in
+        let conjs =
+          Map.Poly.to_alist by_svar
+          |> List.filter_map ~f:(fun (srt, k) ->
+                 if k < 2 then None
+                 else
+                   let qs =
+                     List.init k ~f:(fun _ -> Ident.mk_fresh_tvar ())
+                   in
+                   let neqs =
+                     List.concat_mapi qs ~f:(fun i qi ->
+                         List.filteri qs ~f:(fun j _ -> j > i)
+                         |> List.map ~f:(fun qj ->
+                                Logic.BoolTerm.neq_of srt
+                                  (Logic.Term.mk_var qi)
+                                  (Logic.Term.mk_var qj)))
+                   in
+                   Some
+                     (Logic.BoolTerm.exists
+                        (List.map qs ~f:(fun q -> (q, srt)))
+                        (Logic.BoolTerm.and_of neqs)))
+        in
+        if List.is_empty conjs then None
+        else (
+          Common.PhaseTime.event "synthesis/svar-carrier-witness";
+          Some (Logic.BoolTerm.and_of conjs))
+    in
+    let witness () =
+      match (witness (), carrier_witness ()) with
+      | None, None -> None
+      | Some w, None | None, Some w -> Some w
+      | Some w1, Some w2 -> Some (Logic.BoolTerm.and_of [ w1; w2 ])
+    in
     let with_witnesses quantified =
       match witness () with
       | None -> quantified
@@ -3736,7 +4486,7 @@ module Make
        conjoins several instances of the whole clause, and which of them a
        shared variable should range over is a question it does not answer. *)
     let shared =
-      if not config.symbolic_shared_params then None
+      if not config.parametric.symbolic_shared_params then None
       else
         match config.pex_strategy with
         | InstRand _ -> None
@@ -3772,6 +4522,13 @@ module Make
                         cgen_from_exatom ~symbolic vs template_map
                           qualifiers_map unknowns param_senv temp_param_senv
                           polarity atom)
+                      ~atom_slot:(fun ~symbolic polarity atom ->
+                        let term, entry =
+                          cgen_from_exatom_entry ~symbolic vs template_map
+                            qualifiers_map unknowns param_senv temp_param_senv
+                            polarity atom
+                        in
+                        (term, Option.map entry ~f:(fun e -> e.shared_slot)))
                       analysis clause
                   with exn_ when not (Common.Timer.is_async exn_) -> None
                 in
@@ -3807,7 +4564,11 @@ module Make
           let gentries =
             List.map guards ~f:(fun ((n, _) as g) ->
                 Hashtbl.find_or_add guard_entries n ~default:(fun () ->
-                    { term = HoleNaming.guard g; shares = [] }))
+                    {
+                      term = HoleNaming.guard g;
+                      shares = [];
+                      shared_slot = SharedParams.new_slot ();
+                    }))
           in
           entries := !entries @ gentries;
           ( terms @ List.map gentries ~f:(fun e -> e.term),
@@ -3858,6 +4619,44 @@ module Make
               in
               Term.subst sub phi))
     | InstDefault ->
+        (* A COUNT, NOT A CHANGE: whether the default point this branch grounds
+           the parameters at falsifies a guard of the example.  Where it does,
+           the atom's disjunct is [not false \/ ...] and the whole example says
+           nothing to the synthesis query -- a counterexample generalised into
+           a region that excludes the default point teaches the synthesizer
+           nothing, so the same candidate can come back.  Counted only when the
+           phase-time account is on. *)
+        if !Common.PhaseTime.on && not (Map.Poly.is_empty param_senv) then begin
+          let ground =
+            Map.Poly.filter_mapi (ExClause.params_of clause)
+              ~f:(fun ~key ~data ->
+                if
+                  Sort.is_svar data || T_dt.is_sus data
+                  || Hash_set.mem exact_step_indices key
+                then None
+                else Some (Term.mk_dummy data))
+          in
+          let atoms =
+            Set.to_list
+              (Set.union clause.ExClause.positive clause.ExClause.negative)
+          in
+          let guards =
+            List.filter_map atoms ~f:(fun atm ->
+                let _, cond, _ = ExAtom.to_old_formula_and_cond atm in
+                if Formula.is_true cond then None else Some cond)
+          in
+          let vacuous =
+            List.exists guards ~f:(fun cond ->
+                try
+                  Formula.is_false
+                    (Evaluator.simplify (Formula.subst ground cond))
+                with exn_ when not (Common.Timer.is_async exn_) -> false)
+          in
+          Common.PhaseTime.event_here ~in_copy:false
+            (if List.is_empty guards then "pex-default-unguarded"
+             else if vacuous then "pex-default-guard-false"
+             else "pex-default-guard-not-false")
+        end;
         let sub =
           Map.Poly.mapi param_senv ~f:(fun ~key ~data ->
               match data with
@@ -3966,15 +4765,17 @@ module Make
     (* Qualifier searches and template rebuilds drop whole native contexts.
        Their native heaps do not drive OCaml's collector, so a fast failing
        search can exhaust the resident cap before those contexts are reclaimed.
-       Collect before creating the next one once the resident set has grown
-       enough for dropped contexts to matter: a collection before every one
+       Collect before creating the next one once the native part of the
+       resident set (the OCaml heap excluded) has grown enough for dropped
+       contexts to matter: a collection before every one
        made forced collections a third to a half of a short run's wall clock.
        Live instances remain reachable. *)
     Z3Smt.Z3interface.full_major_if_resident_grew ();
     let ctx =
-      Z3.mk_context
-        (("model", "true") :: (if ucore then [ ("unsat_core", "true") ] else []))
-      (*dummy*)
+      Common.PhaseTime.with_phase "new-context" (fun () ->
+          Z3.mk_context
+            (("model", "true")
+            :: (if ucore then [ ("unsat_core", "true") ] else [])))
     in
     let solver =
       Z3.Solver.mk_solver ctx None
@@ -4001,6 +4802,7 @@ module Make
       z3fenv;
       smt_timeout;
       has_param_bounds = false;
+      core_tracking = Z3Smt.Z3interface.create_core_tracking_state ();
       tracked_labels = ref [];
     }
 
@@ -4060,8 +4862,13 @@ module Make
 
   (* The budget the renewed instance starts with: the configured one, except
      that a rebuild caused only by a synthesis timeout keeps the instance's
-     current (doubled, capped) budget when
-     [keep_timeout_budget_across_rebuild] is on. *)
+     current (doubled, capped by [max_synthesis_timeout]) budget.  It must:
+     a timeout labels every predicate [TimeOut], which every template module
+     ignores, so that rebuild regenerates the same templates over the same
+     examples, and putting the configured budget back would ask the same
+     query again at the budget it has just run out of -- the doubling set at
+     the timeout would never be read.  Any other rebuild (a changed shape,
+     new qualifiers, new examples) returns to [smt_timeout]. *)
   let renew_smt_instance ~reason instance =
     (*Z3.Solver.reset instance.solver;*)
     let instance' = create_smt_instance () in
@@ -4071,10 +4878,10 @@ module Make
     instance.z3fenv <- instance'.z3fenv;
     instance.smt_timeout <-
       SynthesisBudget.on_rebuild
-        ~keep:config.keep_timeout_budget_across_rebuild
-        ~configured:instance'.smt_timeout ~cap:synthesis_timeout_cap
+        ~keep:true ~configured:instance'.smt_timeout ~cap:synthesis_timeout_cap
         ~current:instance.smt_timeout reason;
     instance.has_param_bounds <- instance'.has_param_bounds;
+    instance.core_tracking <- instance'.core_tracking;
     instance.tracked_labels := []
 
   let renew_all_smt_instances ~reason () =
@@ -4087,9 +4894,11 @@ module Make
      examples may be new. *)
   let rebuild_after_timeout_only = ref false
 
-  (* Whether the last [csolve] ended in a timeout -- Z3's, or the timer's
-     raised through it -- rather than in [unknown] for another reason, which
-     labels every predicate [TimeOut] too but does not raise the budget. *)
+  (* Whether the last [csolve] ended in the query's own timeout (Z3's
+     [timeout] parameter, answered as [`Timeout]) rather than in [unknown]
+     for another reason, which labels every predicate [TimeOut] too but does
+     not raise the budget.  The process timer's [Timer.Timeout] never sets it:
+     [csolve] re-raises that exception to its caller. *)
   let last_query_timed_out = ref false
 
   (* An answer that taught nothing but that the query ran out of time: no
@@ -4113,6 +4922,15 @@ module Make
   (* for incremental solving *)
   let prev_sample = ref Set.Poly.empty
   let prev_cand = ref Map.Poly.empty
+
+  (* the template-parameter assignment the last satisfiable synthesis question
+     returned, before it is read back into a candidate; what
+     [rotate_undecided_tries] excludes *)
+  let last_sat_model : ((Ident.tvar * Sort.t) * Term.t option) list ref = ref []
+
+  (* the candidates validation rejected in a round that learnt nothing because
+     clause questions were left undecided, newest first, at most 64 *)
+  let undecided_rejected : Logic.cand_map list ref = ref []
 
   (* whether [false_probe_on_negative_examples] has fired; it fires at most
      once per run, so a probe whose counterexamples add no positive example
@@ -4304,11 +5122,11 @@ module Make
   (* The one list of cell paths every consumer below agrees on, sequences
      included exactly when the configuration asks for them. *)
   let array_paths_of_sorts sorts =
-    CellArray.array_paths_of_sorts ~sequences:config.sequence_cells sorts
+    CellArray.array_paths_of_sorts ~sequences:config.cells.sequence_cells sorts
 
   (* whether a sequence's cells include the sentinel; the example side and the
      read-back both read this one value, so they cannot disagree *)
-  let seq_sentinel = config.sequence_cells && config.sequence_sentinel_cell
+  let seq_sentinel = config.cells.sequence_cells && config.cells.sequence_sentinel_cell
 
   (* The CEGIS round the current synthesis call serves, set on entry to
      [synthesize]; read only by the growing range of a varying array. *)
@@ -4326,7 +5144,7 @@ module Make
   let split_atom (atom : ExAtom.t) :
       ExAtom.t * (ExAtom.t -> ExAtom.t) * Logic.sort_env_map =
     CellArray.split_example_atom
-      ~keep_instance_guards:config.celled_keep_instance_guards atom
+      ~keep_instance_guards:config.cells.keep_instance_guards atom
 
   (* The arrays an example atom carries, by argument position. *)
   let celled_example ~params (atom : ExAtom.t) =
@@ -4380,9 +5198,9 @@ module Make
              (sprintf "[cell] refuting index not offered: %s"
                 (String.concat ~sep:", " (List.map missed ~f:Z.to_string)))
 
-  (* see [cell_candidates_below_zero] *)
+  (* see [cells.candidates_below_zero] *)
   let below_zero_candidates () =
-    List.init (max 0 config.cell_candidates_below_zero) ~f:(fun k ->
+    List.init (max 0 config.cells.candidates_below_zero) ~f:(fun k ->
         Logic.IntTerm.mk_from_int (-(k + 1)))
 
   (* What the atom's own arguments contribute to the candidate indices, per
@@ -4407,7 +5225,7 @@ module Make
                     | v -> List.map [ Z.pred v; v; Z.succ v ] ~f:Logic.IntTerm.mk_int
                     | exception exn_ when not (Common.Timer.is_async exn_) -> [])
                 @
-                if not config.cell_candidates_from_arg_sums then []
+                if not config.cells.candidates_from_arg_sums then []
                 else List.map (CellArray.argument_indices [ atom ]) ~f:Logic.IntTerm.mk_int)
               @ below_zero_candidates ()
             else
@@ -4429,7 +5247,7 @@ module Make
       (array : cell_array) =
     level_candidates ~path ~extra ~from_array
       ~witnesses:
-        (if not config.cell_witness_indices then []
+        (if not config.cells.witness_indices then []
          else
            (* the indices a refutation actually named, which is the one part
               of this set that is not a guess *)
@@ -4451,7 +5269,7 @@ module Make
     cell_tuples ~path array per_level
 
   (* [extra_of k path] -- the caller's extra candidates for the [k]-th array of
-     an atom -- with, when [cell_candidates_from_cell_values] is positive, the
+     an atom -- with, when [cells.candidates_from_cell_values] is positive, the
      integer values the atom's OTHER arrays hold at the cells they offer added
      at every integer level (see that field).  The other arrays' cells are
      built from their own [extra_of] without this addition, so the values are
@@ -4459,7 +5277,7 @@ module Make
      array's own cells are built. *)
   let extra_with_cell_values ~from_array ~extra_of paths arrays k path =
     let extra = extra_of k path in
-    let limit = config.cell_candidates_from_cell_values in
+    let limit = config.cells.candidates_from_cell_values in
     if limit <= 0 then extra
     else
       let others =
@@ -4743,7 +5561,7 @@ module Make
         | _ -> assert false)
 
   (* What [expand_all_outcome] made of an atom: its expanded atoms; or, where
-     the product of the per-array candidates is over [celled_product_bound],
+     the product of the per-array candidates is over [cells.product_bound],
      those candidates (and the relatedness offsets the product would filter
      by) so that a caller can sweep them; or nothing, where the shape declines
      the expansion or an array offered no cell. *)
@@ -4800,9 +5618,9 @@ module Make
              The product is bounded, because it is a product: past the cap the
              atom keeps the sampled path, which is weaker and sound. *)
           let per_array =
-            let from_array = not (config.cell_candidates_from_args_only && wide) in
+            let from_array = not (config.cells.candidates_from_args_only && wide) in
             let extra_of _ path =
-              extra_candidates ~ints:(config.cell_candidates_from_args && wide) atom path
+              extra_candidates ~ints:(config.cells.candidates_from_args && wide) atom path
             in
             List.mapi paths ~f:(fun k path ->
                 make_cells ~path
@@ -4816,14 +5634,14 @@ module Make
           let per_array =
             match qualifiers_map with
             | Some qualifiers_map
-              when (config.celled_collapse_constant_indices
-                   || config.celled_collapse_default_indices)
+              when (config.cells.collapse_constant_indices
+                   || config.cells.collapse_default_indices)
                    && not
-                        (config.celled_tuples_related
+                        (config.cells.tuples_related
                         && List.length per_array >= 2) ->
                 List.mapi per_array ~f:(fun k cells ->
                     let arr = Stdlib.List.assoc k arrays in
-                    let defaults = config.celled_collapse_default_indices in
+                    let defaults = config.cells.collapse_default_indices in
                     let forms, values =
                       collapse_forms ~defaults ~qualifiers_map ~template_map atom
                         paths k arr cells
@@ -4845,7 +5663,7 @@ module Make
             | _ -> per_array
           in
           let related =
-            if (not config.celled_tuples_related) || List.length per_array < 2 then None
+            if (not config.cells.tuples_related) || List.length per_array < 2 then None
             else
               Some
                 (Z.zero
@@ -4858,7 +5676,7 @@ module Make
                         | exception exn_ when not (Common.Timer.is_async exn_) -> None)
                 | _ -> []))
           in
-          (match array_product ~bound:config.celled_product_bound ?related per_array with
+          (match array_product ~bound:config.cells.product_bound ?related per_array with
           | Empty ->
               Debug.print @@ lazy "celled expansion declined: an array offered no cells";
               Declined
@@ -4868,7 +5686,7 @@ module Make
                    (sprintf
                       "celled expansion declined: product %d over bound %d (%d \
                        arrays)"
-                      size config.celled_product_bound (List.length per_array));
+                      size config.cells.product_bound (List.length per_array));
               Over_bound { paths; per_array; related }
           | Tuples tuples -> Expanded (celled_atoms_of_tuples atom paths arrays tuples))
     | _ -> Declined
@@ -4895,7 +5713,7 @@ module Make
         | cell :: _ -> cell
         | [] -> assert false (* [fill_cells 1] always offers one cell *))
 
-  (* The sweep [celled_over_bound_sweep] offers a body atom whose product is
+  (* The sweep [cells.over_bound_sweep] offers a body atom whose product is
      over the bound: per variant, the sampled tuple and the tuples that vary
      one array at a time over its candidates ([CellArray.array_sweep]).
 
@@ -4915,7 +5733,7 @@ module Make
      sampled fallback admits, and admits nothing the exhaustive expansion
      rejects.
 
-     Bounded by [m * celled_product_bound] tuples for [m] arrays -- each array
+     Bounded by [m * cells.product_bound] tuples for [m] arrays -- each array
      ranging alone at most as wide as the bound allows one atom -- since the
      sweep is linear in the candidates; past that, [None], and the caller
      samples as before.  The draws are taken first, so a declined sweep
@@ -4924,11 +5742,11 @@ module Make
       ExAtom.t list option =
     let m = List.length per_array in
     let size = List.sum (module Int) per_array ~f:List.length - (m - 1) in
-    if size > m * config.celled_product_bound then (
+    if size > m * config.cells.product_bound then (
       Debug.print
       @@ lazy
            (sprintf "celled sweep declined: %d tuples over bound %d (%d arrays)" size
-              (m * config.celled_product_bound) m);
+              (m * config.cells.product_bound) m);
       None)
     else
       let tuples =
@@ -4963,14 +5781,14 @@ module Make
     let denom = CellQual.total_cell_width paths in
     if denom = 0 || extras % denom <> 0 then 0 else extras / denom
 
-  (* A goal example's body atom at the cells its clause read ([celled_goal_at_reads]):
+  (* A goal example's body atom at the cells its clause read ([cells.goal_at_reads]):
      the tuples [GoalReads.cells_at_reads] gives for the atom's records, with
      every other array at the cells the exhaustive expansion would offer it.
      Any set of cells gives a constraint that implies the example (see
      [GoalReads.cells_at_reads]), so this is sound whatever the records hold.
      [None] -- the caller keeps its ordinary expansion -- where the atom has no
      cellable array, its template took other than one cell per array, or the
-     tuples are empty or past [celled_product_bound]. *)
+     tuples are empty or past [cells.product_bound]. *)
   let expand_at_goal_reads (atom : ExAtom.t) arrays template_map
       (records : GoalReads.record list) : ExAtom.t list option =
     match atom with
@@ -4980,9 +5798,9 @@ module Make
         then None
         else
           let default_cells k path =
-            let from_array = not config.cell_candidates_from_args_only in
+            let from_array = not config.cells.candidates_from_args_only in
             let extra_of _ path =
-              extra_candidates ~ints:config.cell_candidates_from_args atom path
+              extra_candidates ~ints:config.cells.candidates_from_args atom path
             in
             make_cells ~path
               ~extra:(extra_with_cell_values ~from_array ~extra_of paths arrays k path)
@@ -4991,7 +5809,7 @@ module Make
           in
           (match
              GoalReads.cells_at_reads ~paths ~arrays ~default_cells
-               ~bound:config.celled_product_bound records
+               ~bound:config.cells.product_bound records
            with
           | Tuples tuples ->
               Debug.print
@@ -5003,7 +5821,7 @@ module Make
               Debug.print
               @@ lazy
                    (sprintf "celled goal at reads declined: %d tuples over bound %d" size
-                      config.celled_product_bound);
+                      config.cells.product_bound);
               None
           | Empty -> None)
     | _ -> None
@@ -5015,7 +5833,7 @@ module Make
      the concretization says the example means, [forall j. P#(j, a[j], x..)],
      and does not: the holes are evaluated at the atom's truth-table row, where
      [j] is at its default, and [a] is the array the example was grounded at
-     ([celled_head_exact] is the form that keeps both).  [None] where the
+     ([cells.head_exact] is the form that keeps both).  [None] where the
      atom has no cellable array or the template took no cell columns, and the
      caller then leaves the atom alone. *)
   let expand_parametric ~full (atom : ExAtom.t) arrays
@@ -5054,7 +5872,7 @@ module Make
                (orig_args @ !extra_args))
     | _ -> None
 
-  (* The exact form of a parametric head atom ([celled_head_exact]): the
+  (* The exact form of a parametric head atom ([cells.head_exact]): the
      atom's parameters stay variables, and per cellable array and per cell
      column a fresh index variable [j] and the read [t[j]] of the atom's own
      array argument [t] are appended; the index variables join the atom's
@@ -5109,7 +5927,7 @@ module Make
                      @ List.concat_map cells ~f:(fun (_, _, a, _) -> a))))
     | _ -> None
 
-  (* The exact form of a step example ([celled_step_exact]): one body atom and
+  (* The exact form of a step example ([cells.step_exact]): one body atom and
      one head atom, each over a predicate whose template took cell columns.
      The head gets its cells at fresh index variables, registered in
      [exact_step_indices] so that constraint generation keeps them universal;
@@ -5173,7 +5991,7 @@ module Make
                   ~literals:
                     (CellArray.argument_indices ~cap:Int.max_value
                        [ core_b; core_h ])
-                  ~bound:config.celled_product_bound
+                  ~bound:config.cells.product_bound
               with
               | None ->
                   (* printed because the fallback is silent and a run that
@@ -5313,7 +6131,7 @@ module Make
             in
             let body = inner rest in
             if
-              config.readback_drops_unused_cells
+              config.cells.readback_drops_unused_cells
               && not (Logic.Term.occurs_free arg body)
             then
               (* [body] is [inner rest] after the value column was replaced by
@@ -5455,11 +6273,11 @@ module Make
      the construction and the argument that the result is an instance. *)
   let ground_arrays_varying_at ~inst (clause : ExClause.t) : ExClause.t =
     let grounded =
-      CellArray.ground_varying ~arrays:config.celled_varying_array_instances
-        ~sequences:config.celled_varying_sequence_instances
-        ~width:config.celled_varying_array_width
-        ~at_args:config.celled_varying_array_at_args
-        ~growing:config.celled_varying_array_growing ~round:!current_round ~inst
+      CellArray.ground_varying ~arrays:config.cells.varying_array_instances
+        ~sequences:config.cells.varying_sequence_instances
+        ~width:config.cells.varying_array_width
+        ~at_args:config.cells.varying_array_at_args
+        ~growing:config.cells.varying_array_growing ~round:!current_round ~inst
         clause
     in
     (* printed because nothing else in a run says whether any example had a
@@ -5472,7 +6290,7 @@ module Make
     grounded
 
   let head_witnesses_of_clause (clause : ExClause.t) : Z.t list =
-    if not config.celled_head_at_witnesses then []
+    if not config.cells.head_at_witnesses then []
     else
       List.dedup_and_sort ~compare:Z.compare
       @@ List.concat_map (Set.to_list clause.ExClause.positive)
@@ -5480,7 +6298,7 @@ module Make
 
   let celled_clauses_of_uncached ?qualifiers_map ~num template_map (clause : ExClause.t) :
       ExClause.t list =
-    (* [celled_head_at_witnesses]: the indices the refutations behind this
+    (* [cells.head_at_witnesses]: the indices the refutations behind this
        example named in its head, read with the example as it is stored --
        before any grounding below, which would change the key -- and offered to
        every head atom of every instance; with one head atom, the usual shape,
@@ -5495,7 +6313,7 @@ module Make
        is shared with an atom grounded below, and the atom is taken before any
        grounding of its arrays *)
     let exact =
-      if config.celled_head_exact && Set.is_empty clause.ExClause.negative then
+      if config.cells.head_exact && Set.is_empty clause.ExClause.negative then
         match Set.to_list clause.ExClause.positive with
         | [ atom ] ->
             Option.map (expand_exact atom template_map) ~f:(fun atom ->
@@ -5514,16 +6332,49 @@ module Make
     let instances =
       if
         not
-          (config.celled_varying_array_instances
-          || config.celled_varying_sequence_instances)
+          (config.cells.varying_array_instances
+          || config.cells.varying_sequence_instances)
       then [ clause ]
       else
-        List.map (List.init (max 1 config.celled_array_instances) ~f:Fn.id)
+        List.map (List.init (max 1 config.cells.array_instances) ~f:Fn.id)
           ~f:(fun inst -> ground_arrays_varying_at ~inst clause)
+    in
+    (* [cells.open_body_sequences]: a body atom over an open sequence is read
+       at an instance whose body sequences are literals, or the clause gives
+       no celled constraint; never at the sentinel alone, which is stronger
+       than the example (see [CellArray.ground_open_body_sequences]) *)
+    let instances =
+      match config.cells.open_body_sequences with
+      | Sentinel_only -> instances
+      | Ground_instance when not seq_sentinel -> instances
+      | Ground_instance ->
+          let celled atom =
+            match ExAtom.pvar_sorts_of atom with
+            | Some (pvar, sorts) -> (
+                match Map.Poly.find template_map (Ident.pvar_to_tvar pvar) with
+                | Some t -> lambda_params_of t > List.length sorts
+                | None -> false)
+            | None -> false
+          in
+          List.concat_map instances ~f:(fun clause ->
+              match CellArray.ground_open_body_sequences ~celled clause with
+              | CellArray.Unchanged -> [ clause ]
+              | CellArray.Grounded grounded ->
+                  Debug.print
+                  @@ lazy
+                       (sprintf "open body sequence grounded: %s"
+                          (ExClause.str_of grounded));
+                  [ grounded ]
+              | CellArray.Dropped ->
+                  Debug.print
+                  @@ lazy
+                       (sprintf "open body sequence, clause left uncelled: %s"
+                          (ExClause.str_of clause));
+                  [])
     in
     List.concat_map instances ~f:(fun clause ->
     match
-      if config.celled_step_exact then expand_exact_step clause template_map
+      if config.cells.step_exact then expand_exact_step clause template_map
       else None
     with
     | Some exact -> [ exact ]
@@ -5607,11 +6458,11 @@ module Make
           wrap updated)
     in
     (* A goal example's body atoms at the cells their clause read, where a
-       record exists ([celled_goal_at_reads]); the others, and every atom when
+       record exists ([cells.goal_at_reads]); the others, and every atom when
        the switch is off or the clause has a head, go through the ordinary
        expansion below exactly as before. *)
     let at_reads, rest_negative =
-      if not (config.celled_goal_at_reads && Set.is_empty clause.ExClause.positive)
+      if not (config.cells.goal_at_reads && Set.is_empty clause.ExClause.positive)
       then ([], clause.ExClause.negative)
       else
         Set.fold clause.ExClause.negative ~init:([], Set.Poly.empty)
@@ -5636,7 +6487,7 @@ module Make
       @@ (fun ordinary -> at_reads @ ordinary)
       @@
       if not config.celled_negative_exhaustive then sampled ()
-      else if config.celled_over_bound_sweep then
+      else if config.cells.over_bound_sweep then
         (* per atom: exhaustive where its product fits, the sweep where it is
            over the bound, and the sampler only for an atom that declines both
            -- one atom over the bound no longer samples the others *)
@@ -5667,16 +6518,16 @@ module Make
         if List.exists enumerated ~f:Option.is_none then sampled ()
         else List.concat @@ List.filter_map enumerated ~f:Fn.id
     in
-    (* [celled_goal_value_variants]: a goal example's celled body atoms (and,
-       with [celled_step_body_value_variants], a step example's), each
+    (* [cells.goal_value_variants]: a goal example's celled body atoms (and,
+       with [cells.step_body_value_variants], a step example's), each
        with its variants beside it.  An expanded atom is matched to the atom it
        was expanded from by predicate and by its leading arguments, which the
        expansion leaves as they were; one that matches none is kept alone. *)
     let negative =
       if
         not
-          (offers_value_variants ~limit:config.celled_goal_value_variants
-             ~step_bodies:config.celled_step_body_value_variants
+          (offers_value_variants ~limit:config.cells.goal_value_variants
+             ~step_bodies:config.cells.step_body_value_variants
              ~has_positive:(not (Set.is_empty clause.ExClause.positive)))
       then negative
       else
@@ -5694,7 +6545,7 @@ module Make
               match LogicOld.T_int.let_int t with
               | v -> Some (Logic.IntTerm.mk_int v)
               | exception exn_ when not (Common.Timer.is_async exn_) -> None)
-          @ List.init (max 1 config.cell_candidates_below_zero) ~f:(fun k ->
+          @ List.init (max 1 config.cells.candidates_below_zero) ~f:(fun k ->
                 Logic.IntTerm.mk_from_int (-(k + 1)))
         in
         let variants_of ((pvar, sorts), terms) =
@@ -5725,13 +6576,13 @@ module Make
                       (rest, (k, (List.drop_last_exn seg, List.last_exn seg))))
                 in
                 List.map
-                  (goal_cell_variants ~linked_first:config.celled_goal_linked_variants_first
+                  (goal_cell_variants ~linked_first:config.cells.goal_linked_variants_first
                      ~paths ~arrays ~extra_values:(extra_values args)
                      ~level_terms:(fun si ->
                        List.map
                          (CellQual.terms_of_sort si (List.zip_exn args (List.take sorts (List.length args))))
                          ~f:(fun t -> Logic.ExtTerm.of_old_term @@ Evaluator.simplify_term t))
-                     ~limit:config.celled_goal_value_variants slots)
+                     ~limit:config.cells.goal_value_variants slots)
                   ~f:(fun changes ->
                     let _, cells =
                       List.fold_map (List.zip_exn segments changes)
@@ -5762,7 +6613,7 @@ module Make
     Debug.print
     @@ lazy
          (sprintf
-            "celled expansion: %d body atom(s) from %d (%s), %d head atom(s),              %d variant(s)"
+            "celled expansion: %d body atom(s) from %d (%s), %d head atom(s), %d variant(s)"
             (Set.length negative)
             (Set.length clause.ExClause.negative)
             (if config.celled_negative_exhaustive then "every candidate cell"
@@ -5785,14 +6636,14 @@ module Make
         List.init num ~f:(fun _ ->
             expand_side clause.ExClause.positive)
       in
-      if config.celled_head_parametric then
+      if config.cells.head_parametric then
         let parametric =
           List.map (Set.to_list clause.ExClause.positive) ~f:(fun atom ->
               let ground, wrap, params = split_atom atom in
               let arrays = own_arrays ground params in
               wrap
                 (match
-                   expand_parametric ~full:config.celled_head_parametric_full
+                   expand_parametric ~full:config.cells.head_parametric_full
                      ground arrays template_map
                  with
                 | Some a -> a
@@ -5802,7 +6653,7 @@ module Make
                     in
                     updated))
         in
-        if config.celled_head_parametric_full then
+        if config.cells.head_parametric_full then
           (* the read is written out against the array, so this one clause is
              the whole of [forall j. phi] and nothing else is needed *)
           [ parametric ]
@@ -5815,7 +6666,7 @@ module Make
                 List.map (Set.to_list clause.ExClause.positive) ~f:(fun atom ->
                     let core, wrap, params = split_atom atom in
                     Option.map ~f:(List.map ~f:wrap)
-                    @@ expand_all ?qualifiers_map ~wide:config.cell_candidates_from_args_in_head
+                    @@ expand_all ?qualifiers_map ~wide:config.cells.candidates_from_args_in_head
                          core (own_arrays core params) template_map)
               in
               if List.exists enumerated ~f:Option.is_none then sampled ()
@@ -5825,7 +6676,7 @@ module Make
                 | first :: _ as columns ->
                     List.init (List.length first) ~f:(fun k ->
                         List.filter_map columns ~f:(fun atoms -> List.nth atoms k)))
-      else if not config.celled_positive_exhaustive then sampled ()
+      else if not config.cells.positive_exhaustive then sampled ()
       else
         let enumerated =
           List.map (Set.to_list clause.ExClause.positive) ~f:(fun atom ->
@@ -5833,17 +6684,17 @@ module Make
               let arrays = own_arrays core params in
               Option.map ~f:(List.map ~f:wrap)
               @@
-              if not config.celled_head_over_bound_sweep then
+              if not config.cells.head_over_bound_sweep then
                 expand_all ?qualifiers_map
-                  ~wide:config.cell_candidates_from_args_in_head
+                  ~wide:config.cells.candidates_from_args_in_head
                   ~extra_indices:head_witnesses core arrays template_map
               else
-                (* [celled_head_over_bound_sweep]: over the bound, the
+                (* [cells.head_over_bound_sweep]: over the bound, the
                    sweep's tuples are separate demands, each an instance of
                    the head's universal *)
                 match
                   expand_all_outcome ?qualifiers_map
-                    ~wide:config.cell_candidates_from_args_in_head
+                    ~wide:config.cells.candidates_from_args_in_head
                     ~extra_indices:head_witnesses core arrays template_map
                 with
                 | Expanded atoms -> Some atoms
@@ -5869,7 +6720,7 @@ module Make
     List.map head_variants ~f:(fun positive ->
         ExClause.canon { positive = Set.Poly.of_list positive; negative }))
 
-  (* The cache behind [celled_expansion_cache]: an example clause's celled
+  (* The cache behind [cells.expansion_cache]: an example clause's celled
      expansion, reused across synthesis attempts.
 
      What the expansion reads, and therefore what the key must hold:
@@ -5877,14 +6728,14 @@ module Make
      - of the template map, only the number of binders of each template the
        clause's predicates have, which decides how many cells each atom takes
        -- so the key holds that count per predicate rather than the templates;
-     - the indices earlier refutations named, when [cell_witness_indices]
+     - the indices earlier refutations named, when [cells.witness_indices]
        offers them, since they join every integer candidate set and they only
        grow during a run;
      - the recorded reads of the clause's body atoms, when
-       [celled_goal_at_reads] expands a goal example at them, since they grow
+       [cells.goal_at_reads] expands a goal example at them, since they grow
        during a run too;
      - the indices recorded for the clause's head atoms, when
-       [celled_head_at_witnesses] offers them, for the same reason;
+       [cells.head_at_witnesses] offers them, for the same reason;
      - the configuration, which is fixed for this module instance, and the
        process-global datatype and function environments, which the
        evaluation reads and which no synthesis attempt changes;
@@ -5924,9 +6775,9 @@ module Make
        indices reads them, so the two are not combined: with the
        collapse on, every attempt expands afresh. *)
     if
-      (not config.celled_expansion_cache)
-      || config.celled_collapse_constant_indices
-      || config.celled_collapse_default_indices
+      (not config.cells.expansion_cache)
+      || config.cells.collapse_constant_indices
+      || config.cells.collapse_default_indices
     then
       celled_clauses_of_uncached ?qualifiers_map ~num template_map clause
     else
@@ -5936,12 +6787,12 @@ module Make
               ( pvar,
                 Option.map ~f:Logic.Term.num_binds
                 @@ Map.Poly.find template_map (Ident.pvar_to_tvar pvar) )),
-          (if config.cell_witness_indices then Some (CellQual.witnesses ())
+          (if config.cells.witness_indices then Some (CellQual.witnesses ())
            else None),
           (* the recorded reads grow during a run (the resolver can add a
              record for an example already expanded), so they are part of what
              the expansion read *)
-          ( (if config.celled_goal_at_reads then
+          ( (if config.cells.goal_at_reads then
                Some
                  (List.map (Set.to_list clause.ExClause.negative)
                     ~f:GoalReads.records_of_atom)
@@ -6002,9 +6853,18 @@ module Make
     end
 
   (* Consecutive unsat cores whose labels blamed neither, for
-     [force_bound_blame_after]. *)
+     [learning.blame.force_after]. *)
   let unsats_without_updating_coefficients = ref 0
   let unsats_without_updating_consts = ref 0
+
+  (* the (unknown, label) pairs of the bound constraints the latest candidate
+     search (the query asked of [default_smt_instance]) carried: the bounds
+     the template in use states, which a core of that search could name.
+     Read only by the starvation relaxation; empty until the first search *)
+  let main_query_offered :
+      (Ident.tvar * Template.Function.parameter_update_type) Set.Poly.t Lazy.t
+      ref =
+    ref (lazy Set.Poly.empty)
 
   (* ------------------------------------------------------------------
      Reading back the quantifier prefix the solver chose.
@@ -6041,11 +6901,10 @@ module Make
     let _, binds, _ = prefix_binds_of t in
     List.init (List.length binds) ~f:(fun i ->
         match
-          List.find model ~f:(fun ((tv, _), _) ->
-              String.equal (Ident.name_of_tvar tv) (sprintf "Q%d" (i + 1)))
+          Logic.model_find model
+            (Ident.Tvar (sprintf "Q%d" (i + 1)), Logic.BoolTerm.SBool)
         with
-        | Some ((_, sort), Some term) ->
-            assert (Logic.BoolTerm.is_bool_sort sort);
+        | Some (Some term) ->
             if Logic.BoolTerm.is_true term then Logic.Forall else Logic.Exists
         | _ -> Logic.Exists)
 
@@ -6274,7 +7133,7 @@ module Make
             let unknowns =
               Set.filter (ExClause.tvs_of clause) ~f:(Map.Poly.mem templates)
             in
-            if config.qsat_clause_constraints then
+            if config.parametric.qsat_clause_constraints then
               Evaluator.simplify
               @@ replace_concrete_clause_with_QSAT vs template_map
                    qualifiers_map unknowns temp_param_senv clause
@@ -6358,11 +7217,11 @@ module Make
                   temp_param_senv clause
               in
               let constr =
-                if config.seq_exist_instances <= 0 then constr
+                if config.parametric.seq_exist_instances <= 0 then constr
                 else
                   CgenProfile.time 6 (fun () ->
                   Ast.SeqExistInst.rewrite
-                    ~max_instances:config.seq_exist_instances constr)
+                    ~max_instances:config.parametric.seq_exist_instances constr)
               in
               incr CgenProfile.clauses;
               (*Z3Smt.Z3interface.simplify ~id (LogicOld.get_fenv ())
@@ -6373,12 +7232,17 @@ module Make
                  would answer [true] *)
               if
                 CgenProfile.time 7 (fun () -> (not string_free)
-                && (Set.exists
-                      (Formula.term_sort_env_of constr)
-                      ~f:(snd >> Term.is_string_sort)
-                   || Set.exists (Formula.funsyms_of constr) ~f:(function
-                        | T_string.StrConst _ -> true
-                        | _ -> false)))
+                && (if StringMention.may_mention constr then
+                      Set.exists
+                        (Formula.term_sort_env_of constr)
+                        ~f:(snd >> Term.is_string_sort)
+                      || Set.exists (Formula.funsyms_of constr) ~f:(function
+                           | T_string.StrConst _ -> true
+                           | _ -> false)
+                    else (
+                      if PropLogic.Formula.crosscheck then
+                        StringMention.crosscheck constr;
+                      false)))
               then
                 (* ite expressions are eliminated if string theory is involved *)
                 (* this causes a significant performance degradation when applied to other theories *)
@@ -6457,7 +7321,7 @@ module Make
       if add_param_cnstrs then
         let key_constr_map, key_tvar_update_list_map =
           let constr, tvs =
-            if Stdlib.(config.fn_goal_constraint = Config.Omit) then
+            if Stdlib.(config.parametric.fn_goal_constraint = Config.Omit) then
               (Formula.mk_true (), Set.Poly.empty)
             else if
               Map.Poly.existsi templates ~f:(fun ~key ~data:_ ->
@@ -6492,20 +7356,16 @@ module Make
                 @@ Set.Poly.filter_map (PCSP.Problem.clauses_of APCSP.problem)
                      ~f:(fun (uni_senv, pos, neg, phi) ->
                        if
-                         Set.is_empty pos
-                         && Set.for_all neg
-                              ~f:
-                                ( Logic.Term.let_apps >> function
-                                  | Var (tvar, _), [ Var _ ] -> (
-                                      match
-                                        Map.Poly.find
-                                          (PCSP.Problem.kind_map_of
-                                             APCSP.problem)
-                                          tvar
-                                      with
-                                      | Some k -> Kind.is_fn k
-                                      | _ -> false)
-                                  | _ -> false )
+                         FnGoalClosure.is_fn_goal_clause
+                           ~is_fn:(fun tvar ->
+                             match
+                               Map.Poly.find
+                                 (PCSP.Problem.kind_map_of APCSP.problem)
+                                 tvar
+                             with
+                             | Some k -> Kind.is_fn k
+                             | _ -> false)
+                           (pos, neg)
                        then (
                          if false then
                            Debug.print
@@ -6574,7 +7434,7 @@ module Make
                             universal in the clause; free here they would be
                             existential to the solver *)
                          let fml =
-                           match config.fn_goal_constraint with
+                           match config.parametric.fn_goal_constraint with
                            | Config.Universal ->
                                FnGoalClosure.close ~uni_senv fml
                            | Config.Existential | Config.Omit -> fml
@@ -6707,12 +7567,17 @@ module Make
      constraints are the same values; only the time differs.  Measured on a
      Thrust input whose clauses carry nested tuple, reference and option
      datatypes, the datatype conversion was about a sixth of constraint
-     generation. *)
+     generation.  It also runs inside one scope of
+     [Evaluator.with_check_simplify_memo], whose contract is likewise that
+     every cell of a truth-table row added here gets the value it gets
+     without it: the rows added in one call evaluate the same instantiated
+     qualifiers again and again, and the scope simplifies each once. *)
   let cgen ?incremental ?temporary_sample ?add_param_cnstrs sample vs arg =
     Logic.ExtTerm.with_shared_datatype_conversion @@ fun () ->
+    Evaluator.with_check_simplify_memo @@ fun () ->
     atom_constr_memo := Some (ref Map.Poly.empty);
     hole_naming :=
-      if config.celled_step_exact_name_groups then Some (HoleNaming.create ())
+      if config.cells.step_exact_name_groups then Some (HoleNaming.create ())
       else None;
     Hashtbl.clear template_shape_ok;
     Hashtbl.clear guard_entries;
@@ -6745,10 +7610,8 @@ module Make
       @@ List.concat_map (Map.Poly.data qualifiers_map)
            ~f:(List.concat_map ~f:(snd >> List.map ~f:fst))
     in
-    let key_value model k =
-      List.find_map model ~f:(fun ((x, _), t_opt) ->
-          if Stdlib.(x = k) then t_opt else None)
-    in
+    (* every key is an integer coefficient: read at that sort *)
+    let key_value model k = LogicOld.model_value model (k, T_int.SInt) in
     (* an absent key is one the solver did not care about, which the
        candidate reads as zero *)
     let nonzero model =
@@ -6769,7 +7632,8 @@ module Make
       if List.is_empty keys then None
       else
         match
-          Z3Smt.Z3interface.incr_check_sat_unsat_core ~id ~enable:false
+          Z3Smt.Z3interface.incr_check_sat_unsat_core
+            ~tracking_state:inst.core_tracking ~id ~enable:false
             ~timeout:(Some config.shrink_candidate_timeout)
             ~non_tracked:
               (Set.add temporary_constrs
@@ -6863,10 +7727,8 @@ module Make
              (List.concat_map
                 ~f:(snd >> List.map ~f:(fun (k, (_, _, phi)) -> (k, phi))))
     in
-    let key_value k =
-      List.find_map model ~f:(fun ((x, _), t_opt) ->
-          if Stdlib.(x = k) then t_opt else None)
-    in
+    (* every key is an integer coefficient: read at that sort *)
+    let key_value k = LogicOld.model_value model (k, T_int.SInt) in
     let nonzero =
       List.filter quals ~f:(fun (k, _) ->
           match key_value k with
@@ -7093,6 +7955,149 @@ module Make
       List.map model ~f:(fun (((x, _) as b), t_opt) ->
           if Set.mem zeroed x then (b, Some (T_int.zero ())) else (b, t_opt))
 
+  (* Whether a qualifier is specific to the examples, in the sense of
+     [literal_preference]: at most one coordinate and a constant.  A
+     coordinate is a maximal subterm not built by integer or real arithmetic,
+     compared by its printed form; a literal factor of a product is a
+     coefficient, not a constant; a ground subterm that is not arithmetic is
+     a value, and a constant when it is a constructor applied to arguments
+     (a nullary one such as [seq.empty] or [None] is a test, not a point). *)
+  let specific_qualifier phi =
+    let coords = Hash_set.Poly.create () in
+    let constant = ref false in
+    let literal_above_one n = Z.gt (Z.abs n) Z.one in
+    let rec walk t =
+      match t with
+      | Term.FunApp (T_int.Int n, [], _) ->
+          if literal_above_one n then constant := true
+      | Term.FunApp (T_real.Real r, [], _) ->
+          if Q.gt (Q.abs r) Q.one then constant := true
+      | Term.FunApp ((T_int.Mul | T_real.RMul), args, _) ->
+          List.iter args ~f:(function
+            | Term.FunApp ((T_int.Int _ | T_real.Real _), [], _) -> ()
+            | a -> walk a)
+      | Term.FunApp
+          ( ( T_int.Neg | T_int.Nop | T_int.Abs | T_int.Add | T_int.Sub
+            | T_real.RNeg | T_real.RAbs | T_real.RAdd | T_real.RSub ),
+            args,
+            _ ) ->
+          List.iter args ~f:walk
+      | Term.FunApp (_, args, _) when Set.is_empty (Term.tvs_of t) ->
+          if not (List.is_empty args) then constant := true
+      | _ -> Hash_set.add coords (Term.str_of t)
+    in
+    let pos, neg = Formula.atoms_of phi in
+    Set.iter (Set.union pos neg) ~f:(function
+      | Atom.App (_, ts, _) -> List.iter ts ~f:walk
+      | Atom.True _ | Atom.False _ -> ());
+    !constant && Hash_set.length coords <= 1
+
+  (* Contract: [model] is a model of the query [inst]'s solver holds together
+     with [temporary_constrs].  The result is a model of the same constraints:
+     the first model the ladder of [General_first] finds, or [model] itself
+     when the ladder finds none or [model] already satisfies the rung it
+     would ask.  Each extra question is a check of the same solver with its
+     rung's equalities passed as untracked constraints, pushed and popped
+     around the check, so the solver is left as it was found.  Its outcome is
+     counted under the phase [general-first/<rung>/<outcome>]. *)
+  let prefer_general_literals (inst : smt_solver_instance) ~temporary_constrs
+      (qualifiers_map : qualifiers_map) model =
+    let quals =
+      List.dedup_and_sort
+        ~compare:(fun (k1, _) (k2, _) -> Ident.tvar_compare k1 k2)
+      @@ List.concat_map (Map.Poly.data qualifiers_map)
+           ~f:
+             (List.concat_map
+                ~f:(snd >> List.map ~f:(fun (k, (_, _, phi)) -> (k, phi))))
+    in
+    let foreign =
+      let consts =
+        lazy
+          (Set.Poly.of_list
+          @@ List.filter_map (Lazy.force problem_int_consts) ~f:(fun t ->
+                 if T_int.is_int t then Some (T_int.let_int t) else None))
+      in
+      fun phi ->
+        Set.exists (Formula.funsyms_of phi) ~f:(function
+          | T_int.Int n ->
+              Z.gt (Z.abs n) Z.one && not (Set.mem (Lazy.force consts) (Z.abs n))
+          | _ -> false)
+    in
+    let specific =
+      List.filter_map quals ~f:(fun (k, phi) ->
+          if specific_qualifier phi then Some (k, foreign phi) else None)
+    in
+    let nonzero model k =
+      match LogicOld.model_value model (k, T_int.SInt) with
+      | None -> false
+      | Some t when T_int.is_int t -> not (Z.equal (T_int.let_int t) Z.zero)
+      | Some _ -> true
+    in
+    let count phase = Common.PhaseTime.with_phase phase (fun () -> ()) in
+    let ask name ks =
+      Common.PhaseTime.with_phase ("general-first/" ^ name) @@ fun () ->
+      let timeout =
+        match PCSatCommon.SolveDeadline.remaining_ms_strict () with
+        | None -> config.general_first_timeout
+        | Some left -> Int.min left config.general_first_timeout
+      in
+      if timeout <= 0 then None
+      else
+        let zeros =
+          Set.Poly.of_list
+          @@ List.map ks ~f:(fun k ->
+                 Formula.eq (Term.mk_var k T_int.SInt) (T_int.zero ()))
+        in
+        match
+          Z3Smt.Z3interface.incr_check_sat_unsat_core
+            ~tracking_state:inst.core_tracking ~id ~enable:false
+            ~timeout:(Some timeout)
+            ~non_tracked:(Set.union temporary_constrs zeros)
+            inst.solver inst.ctx inst.z3fenv inst.z3dtenv Map.Poly.empty
+        with
+        | `Sat model' ->
+            count "sat";
+            Some model'
+        | `Unsat _ ->
+            count "unsat";
+            None
+        | `Timeout | `Unknown _ ->
+            count "undecided";
+            None
+    in
+    let rungs =
+      [
+        ("all-specific", List.map specific ~f:fst);
+        ( "foreign-specific",
+          List.filter_map specific ~f:(fun (k, f) -> if f then Some k else None)
+        );
+      ]
+    in
+    let used = List.count specific ~f:(fun (k, _) -> nonzero model k) in
+    let rec climb = function
+      | [] ->
+          count "general-first/first-model";
+          (model, "the first model")
+      | (name, ks) :: rest ->
+          if not (List.exists ks ~f:(nonzero model)) then (
+            count ("general-first/" ^ name ^ "/already");
+            (model, name ^ ", already"))
+          else (
+            match ask name ks with
+            | Some m -> (m, name)
+            | None -> climb rest)
+    in
+    let model', rung = climb rungs in
+    Debug.print
+    @@ lazy
+         (sprintf
+            "candidate_literal_preference: %d of %d qualifier keys specific, \
+             %d of them nonzero in the first model, %d in the one kept (%s)"
+            (List.length specific) (List.length quals) used
+            (List.count specific ~f:(fun (k, _) -> nonzero model' k))
+            rung);
+    model'
+
   let synth_query_dump_count = ref 0
 
   (* With COAR_DUMP_SYNTH_CHECK=<dir> set, every Z3 check a synthesis query
@@ -7112,6 +8117,77 @@ module Make
         Z3Smt.Z3interface.with_query_dump
           (sprintf "%s/check_%d_%d" dir (Pid.to_int (Core_unix.getpid ())) n)
           f
+
+  (* With COAR_SYNTH_SIZE_PROBE set, each synthesis query reports on stderr,
+     before it is asked, how many holes and qualifiers each unknown's template
+     has, and, for its three largest tracked constraints, the size, the number
+     of free variables and how many of those are the selector parameters of
+     each hole, with the unknowns of the example clause behind it (each with
+     its number of parameters).  A constraint's free variables are almost all
+     selector parameters, one per qualifier of every hole its atoms apply,
+     each read as one sign literal: so a constraint of an atom of a template
+     with many holes over many qualifiers is that product in size, and this
+     says which unknown and which holes it is, at the cost of one traversal
+     of the three constraints, where the full query dump
+     (COAR_DUMP_SYNTH_QUERY) prints every query. *)
+  let size_probe_on =
+    Lazy.from_val
+      (match Sys.getenv "COAR_SYNTH_SIZE_PROBE" with
+      | None | Some "" -> false
+      | Some _ -> true)
+
+  let report_query_sizes (qualifiers_map : qualifiers_map) key_constr_map
+      key_clause_map =
+    let owner = Hashtbl.Poly.create () in
+    Map.Poly.iteri qualifiers_map ~f:(fun ~key:tvar ~data:holes ->
+        let nq = ref 0 in
+        List.iter holes ~f:(fun (hole, kqs) ->
+            List.iter kqs ~f:(fun (k, _) ->
+                incr nq;
+                Hashtbl.set owner ~key:k
+                  ~data:
+                    (Ident.name_of_tvar tvar ^ "/" ^ Ident.name_of_tvar hole)));
+        if !nq > 0 then
+          Stdlib.prerr_endline
+          @@ sprintf "[size-probe] template %s: %d holes, %d qualifiers"
+               (Ident.name_of_tvar tvar) (List.length holes) !nq);
+    let sized =
+      List.map (Map.Poly.to_alist key_constr_map) ~f:(fun (k, phi) ->
+          (Formula.ast_size phi, k, phi))
+      |> List.sort ~compare:(fun (a, _, _) (b, _, _) -> Int.compare b a)
+    in
+    List.iter (List.take sized 3) ~f:(fun (size, k, phi) ->
+        let fvs = Formula.term_sort_env_of phi in
+        let by = Hashtbl.Poly.create () in
+        Set.iter fvs ~f:(fun (x, _) ->
+            Hashtbl.incr by
+              (Option.value (Hashtbl.find owner x) ~default:"(other)"));
+        Stdlib.prerr_endline
+        @@ sprintf "[size-probe] tracked %s: size %d, %d free variables (%s); %s"
+             k size (Set.length fvs)
+             (String.concat ~sep:", "
+             @@ List.map
+                  (List.sort ~compare:(fun (_, a) (_, b) -> Int.compare b a)
+                  @@ Hashtbl.to_alist by)
+                  ~f:(fun (o, n) -> sprintf "%s %d" o n))
+             (match Map.Poly.find key_clause_map k with
+             | None -> "not an example"
+             | Some cl ->
+                 "atoms "
+                 ^ String.concat ~sep:" "
+                     (List.map
+                        (Set.to_list
+                           (Set.union cl.ExClause.positive cl.ExClause.negative))
+                        ~f:(fun a ->
+                          match ExAtom.pvar_of a with
+                          | Some p ->
+                              sprintf "%s/%d" (Ident.name_of_pvar p)
+                                (Map.Poly.length (ExAtom.params_of a))
+                          | None -> "formula"))));
+    Stdlib.prerr_endline
+    @@ sprintf "[size-probe] query: %d tracked, total size %d"
+         (List.length sized)
+         (List.sum (module Int) sized ~f:(fun (s, _, _) -> s))
 
   let rec csolve ?(ucore = true) ?(again = false)
       (smt_solver_instance : smt_solver_instance) arg =
@@ -7153,6 +8229,8 @@ module Make
        one place that holds every part of the query as it is asked; without the
        variable nothing is built. *)
     last_query_timed_out := false;
+    if Lazy.force size_probe_on then
+      report_query_sizes qualifiers_map key_constr_map key_clause_map;
     declare_reached_in smt_solver_instance
       (Map.Poly.data key_constr_map @ Set.to_list temporary_constrs);
     let dump_started = Common.Clock.now_float () in
@@ -7222,7 +8300,7 @@ module Make
                  (Option.value_map smt_solver_instance.smt_timeout ~default:"none"
                     ~f:string_of_int)
                  examples
-                 (Z3.Solver.to_string s));
+                 (Z3Smt.Z3interface.dump_text s));
           Some file
     in
     let dump_result r =
@@ -7245,7 +8323,8 @@ module Make
       @@ with_synth_check_dump
       @@ fun () ->
       Common.PhaseTime.with_phase "check" @@ fun () ->
-      Z3Smt.Z3interface.incr_check_sat_unsat_core ~id
+      Z3Smt.Z3interface.incr_check_sat_unsat_core
+        ~tracking_state:smt_solver_instance.core_tracking ~id
         ~enable:(ucore && config.compute_ucores)
         ~timeout:
           (match PCSatCommon.SolveDeadline.remaining_ms_strict () with
@@ -7258,18 +8337,18 @@ module Make
                    ~f:(Int.min left)))
         ~non_tracked:temporary_constrs ~asserted:again
         ?fresh_labels:
-          (if
-             config.synthesis_fresh_solver_per_check
-             || config.synthesis_fresh_solver_after_undecided
-           then Some smt_solver_instance.tracked_labels
-           else None)
+          (match config.synthesis_solver with
+          | Incremental -> None
+          | Fresh_per_check | Fresh_after_undecided ->
+              Some smt_solver_instance.tracked_labels)
         ~fresh_after_undecided:
-          (config.synthesis_fresh_solver_after_undecided
-          && not config.synthesis_fresh_solver_per_check)
+          (match config.synthesis_solver with
+          | Fresh_after_undecided -> true
+          | Incremental | Fresh_per_check -> false)
         ~oneshot_first_ms:config.synthesis_oneshot_first_ms
         ~arith_solver:config.synthesis_arith_solver
         ~qvars:
-          (if not config.synthesize_quantifier_prefix then Map.Poly.empty
+          (if not config.parametric.quantifier_prefix then Map.Poly.empty
            else
              (* how many indices each template binds; the query defines the
                 prefix over that many *)
@@ -7283,6 +8362,13 @@ module Make
     | `Sat model ->
         Debug.print @@ lazy "sat";
         let model =
+          match config.candidate_literal_preference with
+          | Any_literal -> model
+          | General_first ->
+              prefer_general_literals smt_solver_instance ~temporary_constrs
+                qualifiers_map model
+        in
+        let model =
           if config.shrink_candidate_literals <= 0 then model
           else
             shrink_qualifier_literals smt_solver_instance ~temporary_constrs
@@ -7294,6 +8380,7 @@ module Make
             drop_qualifier_literals smt_solver_instance ~temporary_constrs
               qualifiers_map model
         in
+        last_sat_model := model;
         (* with COAR_DUMP_SYNTH_QUERY, the model the candidate is read from
            is appended to the query's dump: every assigned template parameter,
            and for each qualifier key its hole and qualifier, so a nonzero
@@ -7341,7 +8428,7 @@ module Make
         (* the prefix was the solver's to choose, so the candidate is not the
            template's prefix but the one the model names *)
         let cand =
-          if config.synthesize_quantifier_prefix then
+          if config.parametric.quantifier_prefix then
             with_chosen_prefix model cand
           else cand
         in
@@ -7350,9 +8437,7 @@ module Make
         Debug.print
         @@ lazy ("unsat, reason:" ^ String.concat ~sep:"," unsat_keys);
         let unsat_keys =
-          if ucore && config.compute_ucores then
-            List.map unsat_keys ~f:(fun s ->
-                String.sub s ~pos:1 ~len:(String.length s - 2))
+          if ucore && config.compute_ucores then unsat_keys
           else Map.Poly.keys key_clause_map (* ToDo *)
         in
         let ucores =
@@ -7370,59 +8455,52 @@ module Make
                (sprintf "unsat cores: %s" @@ Yojson.Safe.to_string
                @@ ucores_to_yojson unsat_keys);
           RLConfig.unlock ());
-        (* [relaxing] is [false] in every shipped configuration, and then the
-           fold below is exactly the one that was here before: the bookkeeping
-           the starvation relaxation needs -- which of the coefficient and
-           constant bounds this core blamed -- is skipped entirely rather than
-           computed and discarded. *)
-        let relaxing = config.force_bound_blame_after > 0 in
-        let update_coefficients = ref false in
-        let update_consts = ref false in
         let pvar_labels_map =
           List.fold unsat_keys ~init:Map.Poly.empty ~f:(fun map key ->
               match Map.Poly.find key_tvar_update_list_map key with
               | Some pvar_update_list ->
                   List.fold pvar_update_list ~init:map
                     ~f:(fun map (pvar, label) ->
-                      if relaxing then
-                        (* by name, because the label's type is extensible and
-                           each template module adds its own constructors, so a
-                           consumer cannot match another module's [Coeff] *)
-                        (match
-                           Template.PredicateArrays.str_of_param_update_type
-                             label
-                         with
-                        | "Coeff" ->
-                            unsats_without_updating_coefficients := 0;
-                            update_coefficients := true
-                        | "Const" ->
-                            unsats_without_updating_consts := 0;
-                            update_consts := true
-                        | _ -> ());
                       Map.Poly.update map pvar ~f:(function
                         | Some labels -> Set.add labels label
                         | None -> Set.Poly.singleton label))
               | None -> map)
         in
+        (* The starvation relaxation ([learning.blame.force_after] positive;
+           it is 0 in every shipped configuration, and then nothing below is
+           evaluated and the core's labels go on as they are).  It asks each
+           unknown's own template which labels grow its coefficient and
+           constant bounds: the label type is extensible with constructors per
+           template module, and naming one module's [Coeff] here once handed
+           it to functional, well-founded and other templates, which fail on a
+           label that is not theirs. *)
         let pvar_labels_map =
-          if not relaxing then pvar_labels_map
-          else begin
-            if not !update_coefficients then incr unsats_without_updating_coefficients;
-            if not !update_consts then incr unsats_without_updating_consts;
-            let relax counter every label map =
-              if !counter < every then map
-              else begin
-                counter := 0;
-                Map.Poly.map map ~f:(Fn.flip Set.add label)
-              end
+          if config.learning.blame.force_after <= 0 then pvar_labels_map
+          else
+            (* Which bounds the template in use states: the (unknown, label)
+               pairs the candidate search's own query carried a constraint
+               for.  That query is the one asked of [default_smt_instance];
+               the qualifier-learning attempts ask other instances about
+               other templates (an array unknown's last attempt, for one,
+               states coefficient bounds the template in use has no atom
+               for), so they are judged by the latest candidate search's
+               pairs, not their own.  Computed only when the relaxation can
+               fire. *)
+            let () =
+              if phys_equal smt_solver_instance default_smt_instance then
+                main_query_offered :=
+                  lazy
+                    (Map.Poly.fold key_tvar_update_list_map
+                       ~init:Set.Poly.empty ~f:(fun ~key:_ ~data acc ->
+                         List.fold data ~init:acc ~f:Set.add))
             in
-            relax unsats_without_updating_consts
-              (500 * config.force_bound_blame_after)
-              Template.PredicateArrays.Const
-            @@ relax unsats_without_updating_coefficients
-                 config.force_bound_blame_after Template.PredicateArrays.Coeff
-                 pvar_labels_map
-          end
+            Template.Function.relax_starved
+              ~template_of:(Map.Poly.find template_modules)
+              ~offered:(fun pvar label ->
+                Set.mem (Lazy.force !main_query_offered) (pvar, label))
+              ~force_after:config.learning.blame.force_after
+              ~starved_coeff:unsats_without_updating_coefficients
+              ~starved_const:unsats_without_updating_consts pvar_labels_map
         in
         let pvar_labels_map =
           pvar_labels_map |> Map.Poly.to_alist
@@ -7467,7 +8545,29 @@ module Make
           ( Set.Poly.empty,
             Map.Poly.map tvar_update_map ~f:(fun _ ->
                 Set.Poly.singleton TimeOut) )
-    | (exception Timer.Timeout (*ToDo: not properly handled*)) | `Timeout ->
+    | exception Timer.Timeout ->
+        (* The process timer's [Timer.Timeout] is the one-shot SIGALRM a caller
+           arms around a whole constraint-solving call (e.g. the budget given
+           to [PCSPSolver.solve ~timeout]).  Nothing inside the synthesis arms
+           that timer -- a nested [Timer.enable_timeout] is masked by the
+           outermost one, and the query's own budget is Z3's [timeout]
+           parameter, answered as [`Timeout] below -- so the exception can only
+           be the caller's, and it is re-raised so that the caller's budget
+           ends the call.  Read as the query's own timeout instead, it would
+           spend the one-shot alarm and leave nothing bounding the rest of the
+           call: a refinement handed to PCSat at an 8 s budget was seen still
+           synthesising, query after query, 50 s later.
+
+           The callers' contract: every place that arms the timer around a
+           PCSat call maps the propagated [Timer.Timeout] to a timeout answer.
+           [PCSPSolver.Solver.solve] and [solve_with_kind_certificates] (the
+           calls MuStrat and RCaml make with a budget) answer
+           [PCSP.Problem.Timeout], and MuVal's interactive refinement does the
+           same with its own handler.  A run that arms no timer (a plain PCSat
+           or MuVal run) never sees the exception.  A new caller that arms the
+           timer around PCSat must keep this contract. *)
+        raise Timer.Timeout
+    | `Timeout ->
         Debug.print
         @@ lazy
              ("timeout: "
@@ -7481,20 +8581,15 @@ module Make
 
            What happens next: this answer labels every predicate [TimeOut],
            which every template module ignores, so the shape is unchanged; the
-           caller then regenerates the templates and renews every instance.
-           With [keep_timeout_budget_across_rebuild] off, the renewal puts the
-           configured budget back, so the doubled value set here is never read
-           and the same query (fresh parameter names, same shape, same
-           examples) is asked again at the configured budget.  With it on, that
-           timeout-only rebuild keeps the doubled budget, and the doubling is
-           capped by [max_synthesis_timeout] (default four times the configured
-           budget). *)
+           caller then regenerates the templates and renews every instance,
+           and that timeout-only rebuild keeps the doubled budget (were it
+           reset, the same query -- fresh parameter names, same shape, same
+           examples -- would be asked again at the budget that just ran out).
+           The doubling is capped by [max_synthesis_timeout] (default four
+           times the configured budget). *)
         smt_solver_instance.smt_timeout <-
-          SynthesisBudget.after_timeout
-            ~keep:
-              (config.keep_timeout_budget_across_rebuild
-              || config.reask_on_timeout_without_rebuild)
-            ~cap:synthesis_timeout_cap smt_solver_instance.smt_timeout;
+          SynthesisBudget.after_timeout ~keep:true ~cap:synthesis_timeout_cap
+            smt_solver_instance.smt_timeout;
         last_query_timed_out := true;
         UnsatCore
           ( Set.Poly.empty,
@@ -7588,7 +8683,7 @@ module Make
           Map.Poly.add_exn quals_map ~key:tvar ~data:hole_qualifiers_map ))
 
   let reduce_quals_terms vs =
-    if config.reduce_quals_terms then (
+    if config.learning.reduce_quals_terms then (
       let reduced_quals_map =
         Hashtbl.Poly.map vs.VersionSpace.truth_table ~f:(fun tt ->
             let qlist = List.init (TruthTable.length_of_quals tt) ~f:Fn.id in
@@ -7671,6 +8766,33 @@ module Make
                   (String.concat_map_set ~sep:"\n" ~f:Term.str_of consts)));
         (ref quals, ref terms, ref consts))
 
+  (* Per ordinary predicate, the argument components every clause requiring
+     it quantifies away (see [QuantifiedAwayPaths]); empty under
+     [quantified_away_components = Keep].  Read off the problem being
+     solved, once. *)
+  let quantified_away_paths =
+    lazy
+      (match config.quantified_away_components with
+       | Keep -> Map.Poly.empty
+       | Avoid_unguarded | Avoid_self_guarded ->
+         let m =
+           Common.PhaseTime.with_phase "quantified-away-paths" @@ fun () ->
+           QuantifiedAwayPaths.of_problem
+             ~self_guarded:
+               (match config.quantified_away_components with
+               | Avoid_self_guarded -> true
+               | Keep | Avoid_unguarded -> false)
+             APCSP.problem
+         in
+         Map.Poly.iteri m ~f:(fun ~key ~data ->
+             Debug.print
+             @@ lazy
+                  (sprintf "quantified-away components of %s: %s"
+                     (Ident.name_of_tvar key)
+                     (String.concat_map_list ~sep:", " data ~f:(fun (i, p) ->
+                          sprintf "%d.%s" i (String.concat ~sep:"." p)))));
+         m)
+
   let update_hspaces vs =
     Map.Poly.iteri template_modules ~f:(fun ~key ~data:(module FT) ->
         let name = Ident.name_of_tvar key in
@@ -7688,6 +8810,37 @@ module Make
               terms = !ref_terms;
               consts = !ref_consts;
             }
+        in
+        let hspace =
+          match Map.Poly.find (Lazy.force quantified_away_paths) key with
+          | None -> hspace
+          | Some paths ->
+              Common.PhaseTime.with_phase "quantified-away-filter" @@ fun () ->
+              let touches = QuantifiedAwayPaths.term_touches hspace.params paths in
+              let quals =
+                Set.filter hspace.quals
+                  ~f:
+                    (Fn.non
+                    @@ QuantifiedAwayPaths.formula_touches hspace.params paths)
+              in
+              let terms = Set.filter hspace.terms ~f:(Fn.non touches) in
+              Debug.print
+              @@ lazy
+                   (sprintf
+                      "[%s] quantified-away components %s: %d of %d \
+                       qualifiers and %d of %d terms kept"
+                      name
+                      (String.concat_map_list ~sep:", " paths
+                         ~f:(fun (i, p) ->
+                           sprintf "%d.%s" i (String.concat ~sep:"." p)))
+                      (Set.length quals) (Set.length hspace.quals)
+                      (Set.length terms) (Set.length hspace.terms));
+              {
+                hspace with
+                quals;
+                terms;
+                qdeps = Map.Poly.filter_keys hspace.qdeps ~f:(Set.mem quals);
+              }
         in
         Debug.print
         @@ lazy
@@ -7948,7 +9101,7 @@ module Make
                           Set.union pos neg
                       in
                       let quals =
-                        if not config.ucore_quals_params_only then quals
+                        if not config.learning.ucore_params_only then quals
                         else params_only_quals ~params:(FT.params_of ()) quals
                       in
                       Set.Poly.map ~f:snd @@ QualifierGenerator.elim_neg
@@ -7999,11 +9152,189 @@ module Make
      order between them is a search policy rather than a detail.  A round that
      fails at level 3 and is not allowed to yield comes back to level 1 with a
      wider shape, which is the loop this phase has no other exit from. *)
+  (* Counts of the well-founded LP route ([wf_lp_candidate]), printed to
+     stderr at exit when COAR_WF_LP_COUNT is set: rounds tried, candidates
+     built, joint queries answered with a candidate.  They are what proves a
+     run read the field. *)
+  let wf_lp_counts = [| 0; 0; 0 |]
+
+  let wf_lp_trace =
+    match Sys.getenv "COAR_WF_LP_COUNT" with
+    | None | Some "" -> false
+    | Some _ -> true
+
+  let () =
+    match Sys.getenv "COAR_WF_LP_COUNT" with
+    | None | Some "" -> ()
+    | Some _ ->
+        Stdlib.at_exit (fun () ->
+            Stdlib.prerr_endline
+            @@ sprintf "wf-lp: rounds %d, candidates %d, proposed %d"
+                 wf_lp_counts.(0) wf_lp_counts.(1) wf_lp_counts.(2))
+
+  (* [wf_lp_round vs]: under [wf_lp_candidate], a candidate map in which each
+     well-founded unknown the linear-programming construction applies to has
+     its closed LP candidate and every other unknown its template's answer to
+     the query over all examples with those candidates fixed; [None] when the
+     field is off, when the construction applies to no unknown, when that
+     query has no model, or when building it raises (asynchronous exceptions
+     excepted).
+     Post: the query is asked on a solver instance made for it, with the
+     template parameters' bounds, and constraint generation runs
+     non-incrementally, so neither the incremental instance nor the
+     incremental constraint maps are touched: a [None] leaves the round
+     exactly as it would be without the field.  A [Some] candidate is
+     consistent with every example as the template path states examples. *)
+  (* per well-founded unknown: the coefficient vectors of the route's
+     candidates so far and how many rounds proposed coefficients already
+     proposed (with another constant, or alternating between two vectors);
+     an unknown whose count reached the route's [max_slides] is left to
+     its template *)
+  let wf_lp_last : (Ident.tvar, Z.t list list list * int) Hashtbl.t =
+    Hashtbl.Poly.create ()
+
+  let wf_lp_stopped : Ident.tvar Hash_set.t = Hash_set.Poly.create ()
+
+  (* [const_ladder] of [wf_lp_candidate]: the largest absolute integer
+     literal of the problem being solved, at least 1 *)
+  let wf_lp_literal =
+    lazy
+      (Set.fold (PCSP.Problem.formulas_of APCSP.problem) ~init:Z.one
+         ~f:(fun acc (_, phi) ->
+           Set.fold (Logic.IntTerm.int_consts_of phi) ~init:acc
+             ~f:(fun acc z -> Z.max acc (Z.abs z))))
+
+  let wf_lp_round vs =
+    match config.wf_lp_candidate with
+    | Off -> None
+    | Lp lp -> (
+      wf_lp_counts.(0) <- wf_lp_counts.(0) + 1;
+      let kind_map = PCSP.Problem.kind_map_of APCSP.problem in
+      let temp_param_senv, templates, temp_param_cnstrs, qualifiers_map =
+        !ref_templates
+      in
+      let examples = VersionSpace.synthesis_examples_of vs in
+      let fixed =
+        Map.Poly.filter_mapi templates ~f:(fun ~key:tvar ~data:(sort, (upd, _)) ->
+            match Map.Poly.find kind_map tvar with
+            | Some k when Kind.is_wf k && not (Hash_set.mem wf_lp_stopped tvar)
+              -> (
+                let sorts =
+                  List.map (Logic.Sort.args_of sort) ~f:Logic.ExtTerm.to_old_sort
+                in
+                match
+                  WfLp.candidate ~id ~timeout_ms:lp.timeout_ms
+                    ~rational:lp.rational
+                    ?const_ladder:
+                      (if lp.const_ladder then
+                         Some
+                           (RankingCheck.const_ladder ~first:Z.one
+                              ~literal:(Lazy.force wf_lp_literal) ())
+                       else None)
+                    ~mixed:lp.offers
+                    ~depth:lp.depth
+                    ~unit_first:lp.unit_first
+                    ~direct_points:true ~sorts (Ident.tvar_to_pvar tvar)
+                    examples
+                with
+                | WfLp.Candidate (_, _, fs)
+                  when let coeffs = List.map fs ~f:fst in
+                       let seen, slides =
+                         Option.value (Hashtbl.find wf_lp_last tvar)
+                           ~default:([], 0)
+                       in
+                       let slides =
+                         if List.mem seen coeffs ~equal:Stdlib.( = ) then
+                           slides + 1
+                         else slides
+                       in
+                       Hashtbl.set wf_lp_last ~key:tvar
+                         ~data:(coeffs :: seen, slides);
+                       slides >= lp.max_slides ->
+                    Hash_set.add wf_lp_stopped tvar;
+                    if wf_lp_trace then
+                      Stdlib.prerr_endline
+                      @@ sprintf "wf-lp: %s left to its template (coefficients repeated)"
+                           (Ident.name_of_tvar tvar);
+                    None
+                | WfLp.Candidate (lam, descr, _) ->
+                    if wf_lp_trace then
+                      Stdlib.prerr_endline
+                      @@ sprintf "wf-lp: %s := %s over %d example(s)"
+                           (Ident.name_of_tvar tvar) descr
+                           (Set.length examples);
+                    Debug.print
+                    @@ lazy
+                         (sprintf "*** WF LP candidate for %s: %s"
+                            (Ident.name_of_tvar tvar) descr);
+                    Some (sort, (upd, lam))
+                | WfLp.Not_applicable reason ->
+                    if wf_lp_trace then
+                      Stdlib.prerr_endline
+                      @@ sprintf "wf-lp: not applicable to %s: %s"
+                           (Ident.name_of_tvar tvar) reason;
+                    Debug.print
+                    @@ lazy
+                         (sprintf "*** WF LP route does not apply to %s: %s"
+                            (Ident.name_of_tvar tvar) reason);
+                    None
+                | WfLp.No_ranking ->
+                    Debug.print
+                    @@ lazy
+                         (sprintf "*** no WF LP candidate for %s"
+                            (Ident.name_of_tvar tvar));
+                    None)
+            | _ -> None)
+      in
+      if Map.Poly.is_empty fixed then None
+      else (
+        wf_lp_counts.(1) <- wf_lp_counts.(1) + 1;
+        try
+          let templates' =
+            Map.Poly.mapi templates ~f:(fun ~key ~data ->
+                Option.value (Map.Poly.find fixed key) ~default:data)
+          in
+          let temp_param_cnstrs' =
+            Map.Poly.filter_keys temp_param_cnstrs ~f:(fun key ->
+                not (Map.Poly.mem fixed key))
+          in
+          let qualifiers_map' =
+            Map.Poly.mapi qualifiers_map ~f:(fun ~key ~data ->
+                if Map.Poly.mem fixed key then [] else data)
+          in
+          let inst = fresh_ucore_instance ~ucore:false () in
+          let arg =
+            cgen ~incremental:false ~add_param_cnstrs:(take_param_cnstrs inst)
+              examples vs
+              (temp_param_senv, templates', temp_param_cnstrs', qualifiers_map')
+          in
+          match csolve ~ucore:false inst arg with
+          | Candidate (cand, certs) ->
+              wf_lp_counts.(2) <- wf_lp_counts.(2) + 1;
+              Debug.print
+              @@ lazy "*** the WF LP candidates and the other templates fit";
+              Some
+                ( cand,
+                  List.filter certs ~f:(fun (tvar, _) ->
+                      not (Map.Poly.mem fixed tvar)) )
+          | UnsatCore _ ->
+              if wf_lp_trace then
+                Stdlib.prerr_endline "wf-lp: the joint query has no model";
+              Debug.print
+              @@ lazy
+                   "*** the other templates do not fit with the WF LP \
+                    candidates; the ordinary round follows";
+              None
+        with exn when not (Common.Timer.is_async exn) ->
+          Debug.print
+          @@ lazy (sprintf "*** the WF LP round raised: %s" (Exn.to_string exn));
+          None))
+
   let rec synthesize num_iters state =
     PCSatCommon.TruthTable.with_valid_budget
-      (if config.truth_table_valid_timeout > 0 then
-         Some config.truth_table_valid_timeout
-       else None)
+      (match config.truth_table_valid_timeout_ms with
+      | Some ms when ms > 0 -> Some ms
+      | _ -> None)
     @@ fun () -> synthesize_body num_iters state
 
   and synthesize_body num_iters state =
@@ -8012,6 +9343,104 @@ module Make
     current_round := num_iters;
     rebuild_after_timeout_only := false;
     let vs = State.version_space_of state in
+    (* [rotate_undecided_tries]: the unknowns the last round's undecided
+       clauses apply, when that round learnt nothing; the candidate proposed
+       then is recorded as rejected for want of an answer *)
+    let rotate_for =
+      let u = !(vs.VersionSpace.undecided_unknowns) in
+      if config.rotate_undecided_tries <= 0 || Set.is_empty u then
+        Set.Poly.empty
+      else (
+        if not (Map.Poly.is_empty !prev_cand) then
+          undecided_rejected := List.take (!prev_cand :: !undecided_rejected) 64;
+        u)
+    in
+    (* a candidate defining [rotate_for] as a rejected one did is replaced, if
+       the synthesis question still has a model once that assignment is
+       excluded, by the first such model's candidate that does not; otherwise
+       it is kept *)
+    let rotate arg (cand, certs) =
+      let rejected c =
+        List.exists !undecided_rejected
+          ~f:(PCSatCommon.UndecidedRotation.agrees_on rotate_for c)
+      in
+      if Set.is_empty rotate_for || not (rejected cand) then (cand, certs)
+      else
+        let ( temporary_constrs,
+              key_constr_map,
+              key_tvar_update_list_map,
+              key_clause_map,
+              templates,
+              tvar_update_map,
+              temp_param_senv,
+              qualifiers_map ) =
+          arg
+        in
+        let params, keys =
+          PCSatCommon.UndecidedRotation.params_of
+            ~temp_params:(Map.key_set temp_param_senv)
+            ~template_fvs:(fun p ->
+              match Map.Poly.find templates p with
+              | Some (_, t) -> Logic.ExtTerm.fvs_of t
+              | None -> Set.Poly.empty)
+            ~qualifier_keys:(fun p ->
+              match Map.Poly.find qualifiers_map p with
+              | Some holes ->
+                  Set.Poly.of_list
+                  @@ List.concat_map holes ~f:(fun (_, kqs) ->
+                      List.map kqs ~f:fst)
+              | None -> Set.Poly.empty)
+            rotate_for
+        in
+        let saved_timeout = default_smt_instance.smt_timeout in
+        let saved_timed_out = !last_query_timed_out in
+        let rec go n blocks =
+          if n <= 0 then (
+            Common.PhaseTime.event "synthesis/rotate-exhausted";
+            (cand, certs))
+          else
+            match
+              PCSatCommon.UndecidedRotation.block ~params ~keys !last_sat_model
+            with
+            | None ->
+                Common.PhaseTime.event "synthesis/rotate-nothing-to-exclude";
+                (cand, certs)
+            | Some b -> (
+                let blocks = Set.add blocks b in
+                match
+                  Common.PhaseTime.with_phase "rotate" (fun () ->
+                      csolve ~ucore:true ~again:true default_smt_instance
+                        ( Set.union temporary_constrs blocks,
+                          key_constr_map,
+                          key_tvar_update_list_map,
+                          key_clause_map,
+                          templates,
+                          tvar_update_map,
+                          temp_param_senv,
+                          qualifiers_map ))
+                with
+                | Candidate (c', certs') ->
+                    if rejected c' then go (n - 1) blocks
+                    else (
+                      Common.PhaseTime.event "synthesis/rotated";
+                      Debug.print
+                      @@ lazy
+                           (sprintf
+                              "*** a candidate differing on %s from those \
+                               rejected for undecided clauses"
+                              (String.concat_map_set ~sep:"," rotate_for
+                                 ~f:Ident.name_of_tvar));
+                      (c', certs'))
+                | UnsatCore _ ->
+                    Common.PhaseTime.event "synthesis/rotate-no-model";
+                    (cand, certs))
+        in
+        Common.Timer.protect
+          ~finally:(fun () ->
+            default_smt_instance.smt_timeout <- saved_timeout;
+            last_query_timed_out := saved_timed_out)
+          (fun () -> go config.rotate_undecided_tries Set.Poly.empty)
+    in
     let rec inner () =
       (* a strict deadline of an enclosing run has passed: hand control back
          to the loop, whose next phase boundary answers [Timeout] *)
@@ -8026,45 +9455,62 @@ module Make
         let secs t0 t1 = Time_float.Span.to_sec (Time_float.diff t1 t0) in
         let t0 = stamp () in
         Common.PhaseTime.with_phase "hspaces" (fun () -> update_hspaces vs);
-        let t1 = stamp () in
-        if Lazy.force CgenProfile.on then
-          Stdlib.prerr_endline
-          @@ sprintf "[rebuild-profile] hspaces done %.3f" (secs t0 t1);
-        ignore @@ reduce_quals_terms vs;
-        VersionSpace.initialize_predicates id vs
-          (PCSP.Problem.kind_map_of APCSP.problem)
-        (*quals_terms_map*);
-        let t2 = stamp () in
-        Debug.print @@ lazy "**** for non-ucore";
-        ref_templates :=
-          Common.PhaseTime.with_phase "templates" (fun () ->
-              initialize_templates ~ucore:None vs);
-        let t3 = stamp () in
-        if config.learn_quals_from_ucores then
-          Common.PhaseTime.with_phase "ucore-templates" (fun () ->
-              List.iter qualifier_learning_strategies ~f:(fun strategy ->
-                  Debug.print @@ lazy (sprintf "**** for %s" strategy.name);
-                  strategy.templates <-
-                    initialize_templates
-                      ~ucore:
-                        (Some
-                           (strategy.shape, strategy.eq_atom, strategy.only_bools))
-                      vs));
-        if Lazy.force CgenProfile.on then
-          Stdlib.prerr_endline
-          @@ sprintf
-               "[rebuild-profile] hspaces %.3f predicates %.3f templates %.3f \
-                ucore_templates %.3f"
-               (secs t0 t1) (secs t1 t2) (secs t2 t3) (secs t3 (stamp ()));
-        Debug.print @@ lazy "templates generated";
-        let reason =
-          if !rebuild_after_timeout_only then SynthesisBudget.Timeout_only
-          else SynthesisBudget.Other
-        in
-        rebuild_after_timeout_only := false;
-        Common.PhaseTime.with_phase "renew-smt" (fun () ->
-            renew_all_smt_instances ~reason ());
-        Debug.print @@ lazy "solver initialized");
+        (* a strict deadline that passed while the hypothesis spaces and
+           their truth tables were brought up to date (which stops entering
+           cells at it) leaves the rest of the rebuild undone: the check
+           below gives the round up, and the next round that is asked
+           rebuilds from the start, since nothing here marks it done *)
+        if not (PCSatCommon.SolveDeadline.expired_strict ()) then (
+          let t1 = stamp () in
+          if Lazy.force CgenProfile.on then
+            Stdlib.prerr_endline
+            @@ sprintf "[rebuild-profile] hspaces done %.3f" (secs t0 t1);
+          ignore @@ reduce_quals_terms vs;
+          VersionSpace.initialize_predicates id vs
+            (PCSP.Problem.kind_map_of APCSP.problem)
+          (*quals_terms_map*);
+          let t2 = stamp () in
+          Debug.print @@ lazy "**** for non-ucore";
+          ref_templates :=
+            Common.PhaseTime.with_phase "templates" (fun () ->
+                initialize_templates ~ucore:None vs);
+          let t3 = stamp () in
+          if config.learn_quals_from_ucores then
+            Common.PhaseTime.with_phase "ucore-templates" (fun () ->
+                List.iter qualifier_learning_strategies ~f:(fun strategy ->
+                    Debug.print @@ lazy (sprintf "**** for %s" strategy.name);
+                    strategy.templates <-
+                      initialize_templates
+                        ~ucore:
+                          (Some
+                             (strategy.shape, strategy.eq_atom, strategy.only_bools))
+                        vs));
+          if Lazy.force CgenProfile.on then
+            Stdlib.prerr_endline
+            @@ sprintf
+                 "[rebuild-profile] hspaces %.3f predicates %.3f templates %.3f \
+                  ucore_templates %.3f"
+                 (secs t0 t1) (secs t1 t2) (secs t2 t3) (secs t3 (stamp ()));
+          Debug.print @@ lazy "templates generated";
+          let reason =
+            if !rebuild_after_timeout_only then SynthesisBudget.Timeout_only
+            else SynthesisBudget.Other
+          in
+          rebuild_after_timeout_only := false;
+          Common.PhaseTime.with_phase "renew-smt" (fun () ->
+              renew_all_smt_instances ~reason ());
+          Debug.print @@ lazy "solver initialized"));
+      (* The deadline is read again here, after the rebuild and before any
+         constraint is generated.  The check on entering the round is not
+         enough: a rebuild can run past the deadline, and the constraint
+         generation and the solver call after it are then answered for a
+         loop that discards the answer at its next phase boundary.  They are
+         not merely wasted: asserting a constraint into the solver is not
+         covered by the solver's timeout, and a constraint of about 400,000
+         nodes from one parametric example, asserted past the deadline, kept
+         a run inside the assertion for minutes and past 3.5 GB. *)
+      if PCSatCommon.SolveDeadline.expired_strict () then Yield
+      else
       let quals_terms_changed =
         !iters_after_updated <> 0
         && reduce_quals_terms vs (*ToDo: always false?*)
@@ -8104,8 +9550,16 @@ module Make
               default_smt_instance.smt_timeout <-
                 int_of_string_opt @@ In_channel.input_line_exn In_channel.stdin;
               RLConfig.unlock ());
+            match
+              Common.PhaseTime.with_phase "wf-lp" (fun () -> wf_lp_round vs)
+            with
+            | Some (cand, certs) ->
+                VersionSpace.set_kind_certs vs certs;
+                vs.VersionSpace.synthesis_stalled := false;
+                Cands (cand, [])
+            | None ->
             let diff_sample =
-              Set.diff (VersionSpace.examples_of vs) !prev_sample
+              Set.diff (VersionSpace.synthesis_examples_of vs) !prev_sample
             in
             (* Level 1: a candidate over the qualifiers already in hand.  It
                asks for an unsat core because a failure here is what levels 2
@@ -8128,10 +9582,9 @@ module Make
                 (fun ~again -> csolve ~ucore:true ~again default_smt_instance arg)
             with
             | Candidate (cand, certs) ->
-                VersionSpace.set_kind_certs vs certs;
-                iters_after_updated := !iters_after_updated + 1;
-                prev_sample := Set.Poly.union_list [ diff_sample; !prev_sample ];
-                if
+                (* whether [cand] is the candidate the last round proposed,
+                   which is what makes a round "non-progress" *)
+                let non_progress cand =
                   let normalize term =
                     let senv, term = Logic.ExtTerm.let_lam term in
                     let senv' =
@@ -8154,7 +9607,34 @@ module Make
                       (fun (_, phi1) (_, phi2) ->
                         Stdlib.(normalize phi1 = normalize phi2))
                       !prev_cand cand
-                then (
+                in
+                let plain_cand = cand in
+                let cand, certs = rotate arg (cand, certs) in
+                VersionSpace.set_kind_certs vs certs;
+                iters_after_updated := !iters_after_updated + 1;
+                prev_sample := Set.Poly.union_list [ diff_sample; !prev_sample ];
+                (* [rotate_undecided_grow_too]: the plain question returned the
+                   last round's candidate and rotation replaced it; the
+                   templates are grown as on a non-progress round, and the
+                   rotated candidate is still proposed this round *)
+                let grown_beside_rotation =
+                  config.rotate_undecided_grow_too
+                  && (not (phys_equal plain_cand cand))
+                  && non_progress plain_cand
+                in
+                if grown_beside_rotation then (
+                  init_incr ();
+                  Common.PhaseTime.event "synthesis/non-progress-beside-rotation";
+                  TemplateUpdateStrategy.update template_modules num_iters state
+                    (Some
+                       (Map.Poly.map template_modules ~f:(fun _ ->
+                            Set.Poly.singleton Shape))));
+                let outs_beside_rotation =
+                  if grown_beside_rotation then out_space_of () else []
+                in
+                if not (List.is_empty outs_beside_rotation) then
+                  OutSpace outs_beside_rotation
+                else if non_progress cand then (
                   (* non progress detecetd *)
                   init_incr ();
                   Common.PhaseTime.event "synthesis/non-progress";
@@ -8228,7 +9708,7 @@ module Make
                        value it never reads and the result is the last
                        attempt's map, exactly as before. *)
                     let merge_labels acc m =
-                      if config.blame_from_every_qualifier_attempt then
+                      if config.learning.blame.every_attempt then
                         merge_labels acc m
                       else m
                     in
@@ -8264,7 +9744,7 @@ module Make
                                 let blame =
                                   SynthesisBudget.blame_after_learning
                                     ~prefer_informative:
-                                      config.widen_from_core_after_learning_timeout
+                                      config.learning.widen.from_core_after_timeout
                                     ~informative ~last:acc ~earlier:seen
                                 in
                                 if not (phys_equal blame acc) then
@@ -8309,13 +9789,13 @@ module Make
                      4 failures on one file and 5 against 86 on another: tying
                      the structural budget to learning's failures hands those
                      two files wildly different budgets, and this does not. *)
-                  if config.widen_shape_with_learning then widen_shape ();
+                  if config.learning.widen.shape_with_learning then widen_shape ();
                   match out_space_of () with
                   | [] -> inner ()
                   | outs -> OutSpace outs)
                 else (
                   consecutive_failures := !consecutive_failures + 1;
-                  match config.yield_after_failures with
+                  match config.learning.yield_after_failures with
                   | Some n when !consecutive_failures >= n ->
                       Debug.print
                       @@ lazy
@@ -8336,9 +9816,37 @@ module Make
                      every predicate labelled [TimeOut] -- leaves the shape as
                      it was, so the rebuild it leads to may keep the doubled
                      budget (see [renew_smt_instance]). *)
-                  rebuild_after_timeout_only :=
-                    timeout_only_labels ucores0 pvar_labels_map0;
+                  let timeout_only =
+                    timeout_only_labels ucores0 pvar_labels_map0
+                  in
+                  (* A parity template that reads a timeout as a shape failure
+                     ([timeout_as_shape_failure_after]) may change its shape
+                     here; the rebuild is then not timeout-only and the new
+                     shape is asked at the configured budget.  Off, no template
+                     reads [TimeOut] and the states are not compared. *)
+                  let states_before =
+                    if
+                      timeout_only
+                      && Option.is_some
+                           config.parity_predicate_template
+                             .timeout_as_shape_failure_after
+                    then
+                      Some
+                        (Map.Poly.map template_modules
+                           ~f:(fun (module FT : Template.Function.Type) ->
+                             FT.str_of ()))
+                    else None
+                  in
                   widen_shape ();
+                  rebuild_after_timeout_only :=
+                    timeout_only
+                    && Option.value_map states_before ~default:true
+                         ~f:(fun before ->
+                           Map.Poly.for_alli before ~f:(fun ~key ~data ->
+                               let (module FT : Template.Function.Type) =
+                                 Map.Poly.find_exn template_modules key
+                               in
+                               String.equal data (FT.str_of ())));
                   match out_space_of () with
                   | [] -> inner ()
                   | outs -> OutSpace outs))
@@ -8353,7 +9861,7 @@ module Make
       config.false_probe_on_negative_examples && (not !false_probe_done)
       && FalseProbe.applies
            ~kind_map:(PCSP.Problem.kind_map_of APCSP.problem)
-           ~senv (VersionSpace.examples_of vs)
+           ~senv (VersionSpace.synthesis_examples_of vs)
     then (
       false_probe_done := true;
       Debug.print

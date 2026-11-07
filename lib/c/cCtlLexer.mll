@@ -36,6 +36,7 @@ rule main = parse
 | "do" { CCtlParser.DO }
 | "for" { CCtlParser.FOR }
 | "break" { CCtlParser.BREAK }
+| "continue" { CCtlParser.CONTINUE }
 | "return" { CCtlParser.RETURN }
 | "goto" { CCtlParser.GOTO }
 | "__VERIFIER_assume" { CCtlParser.ASSUME }
@@ -124,7 +125,10 @@ rule main = parse
       let str = Lexing.lexeme lexbuf in
       CCtlParser.ID str
     }
-| ('0'|('+'|'-')?['1'-'9']['0'-'9']*)
+(* unsigned: a sign is the operator before the literal, so that x-1 and x+1
+   lex as a subtraction and an addition rather than as x followed by the
+   literal -1 or 1 *)
+| ('0'|['1'-'9']['0'-'9']*)
     {
       let str = Lexing.lexeme lexbuf in
       CCtlParser.INTL (int_of_string str)

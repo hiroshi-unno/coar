@@ -1,5 +1,5 @@
 {
-  "strategy": [
+  "synthesizer": [
     "Classification",
     {
       "verbose": true,

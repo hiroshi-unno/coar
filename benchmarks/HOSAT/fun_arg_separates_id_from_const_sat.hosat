@@ -1,0 +1,7 @@
+_exists f : (bool -> bool) -> bool. _exists i : bool -> bool. _exists c : bool -> bool.
+(
+    (* i is the identity and c the constant false: they agree at false and differ at true *)
+    (_forall z : bool. ((i(z) <=> z()) && not (c(z)))) &&
+    (* so some f tells them apart *)
+    f(i) && not (f(c))
+)

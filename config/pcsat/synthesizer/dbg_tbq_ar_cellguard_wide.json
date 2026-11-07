@@ -1,5 +1,5 @@
 {
-  "strategy": [
+  "synthesizer": [
     "Template",
     {
       "verbose": true,
@@ -66,8 +66,10 @@
         "verbose": true,
         "celled_examples": 1,
         "celled_negative_exhaustive": true,
-        "celled_positive_exhaustive": true,
-        "celled_varying_array_instances": true
+        "cells": {
+          "positive_exhaustive": true,
+          "varying_array_instances": true
+        }
       }
     }
   ],

@@ -1,0 +1,14 @@
+[
+    "OptPCSat",
+    {
+        "improve_solver": [
+            "Filename",
+            "./config/solver/dbg_pcsat.json"
+        ],
+        "opt_check_solver": [
+            "Filename",
+            "./config/solver/dbg_pcsat.json"
+        ],
+        "verbose": true
+    }
+]

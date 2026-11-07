@@ -1,0 +1,2 @@
+(invariant (loc 11 3) (function "main") (vars (i signed 32) (n unsigned 32) (t signed 32)) (and (or (>= i 0) (and (< i 0) (>= (+ i 4294967296) 0))) (or (<= i 100) (and (< i 0) (<= (+ i 4294967296) 100))) (<= (* n 4294967296) 0) (<= t 3)))
+(skipped (function "f") "the IR gives no loop location")

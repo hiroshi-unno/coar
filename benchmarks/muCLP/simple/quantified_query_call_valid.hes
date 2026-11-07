@@ -1,0 +1,7 @@
+/* The query applies a fixpoint predicate under its own universal quantifier.
+   A solver that closes the query over its free variables must bind only the
+   term variable x, never the predicate I.  Valid: from any x, counting up
+   reaches a non-negative value. */
+forall (x: int). I x
+s.t.
+I (x: int): bool =mu x >= 0 \/ I (x + 1);

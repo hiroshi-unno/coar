@@ -9,7 +9,7 @@
             "Filename",
             "./config/solver/pcsat_tb_fix1.json"
         ],
-        "mode": [
+        "side_conditions": [
             "NonVacuous"
         ]
     }

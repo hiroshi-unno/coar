@@ -1,0 +1,26 @@
+; (optional): needs `lp` and `lp-glpk` (GLPK, free software), both depopts of
+; CoAR.opam, so `dune build` skips this library without them.  The commercial
+; Gurobi engine is used only where the `lp-gurobi` package is installed (so
+; CoAR.MIPGurobi is built): the [select] below builds GurobiEngine from
+; gurobiEngine.gurobi.ml then, and from
+; gurobiEngine.none.ml (which answers with an error) otherwise.
+(library
+ (name MIPSolver)
+ (public_name CoAR.MIPSolver)
+ (optional)
+ (preprocess
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
+ (libraries
+  core
+  lp
+  lp-glpk
+  CoAR.ast
+  CoAR.common
+  CoAR.MIP
+  (select
+   gurobiEngine.ml
+   from
+   (CoAR.MIPGurobi -> gurobiEngine.gurobi.ml)
+   (-> gurobiEngine.none.ml)))
+ (modules config gurobiEngine solver)
+ (synopsis "An MIP solver based on ocaml-lp: GLPK, or Gurobi where installed"))

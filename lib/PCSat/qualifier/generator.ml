@@ -83,174 +83,153 @@ module Config = struct
     | Union of domain list
   [@@deriving yojson]
 
-  type t = {
-    verbose : bool; [@default false]
-    domains : domain list; [@default [ Null ]]
-    extract_pcsp : bool; [@default true]  (** extract qualifiers from pfwCSP *)
-    normalize_pcsp : bool; [@default true]  (** normalize pfwCSP to enhance extraction *)
-    share_normalize_of_clauses : bool; [@default false]
+  (** Where the candidate atoms an input declares for an unknown
+      ([(set-info :candidates ...)]) enter the qualifiers this generator
+      offers. *)
+  type declared_atoms =
+    | Own_unknown
+        (** a declared atom is a qualifier of the unknown it was declared for
+            and of no other, so which declared atom matters can be measured one
+            unknown at a time *)
+    | Propagated
+        (** the declared atoms take part in [propagate_quals] like extracted
+            qualifiers *)
+    | Houdini_only
+        (** the declared atoms are kept out of the qualifiers, so the
+            hypothesis space the synthesizer searches is the one extraction
+            gives without the declarations; they are then read only by the
+            validator's Houdini-style pre-pass, which takes them from the
+            problem's parameters and not from here.  A declared atom widens the
+            space every template hole searches, and on a Rust-derived loop that
+            answers [sat] without its declarations (3 of 3 runs) the widened
+            space was measured to lose the answer (0 of 3 at 60 s, sixteen
+            atoms declared for the loop head, none of them the invariant); with
+            this, what the declarations add is the pre-pass's attempt *)
+  [@@deriving yojson]
+
+  (** How the normalisation of a clause with several atoms builds each atom's
+      copy of the pure part (rewritten for the variables the atom binds). *)
+  type per_atom_copies =
+    | Whole
+        (** substitute into the whole pure part once per atom
+            ([per_atom_disjuncts_whole]) *)
+    | By_disjunct of {
+        relevant_only : bool; [@default false]
+            (** an atom's copy keeps only the disjuncts its substitution
+                changes and that then mention a variable the atom binds.  The
+                clause stays equivalent; the disjuncts, hence the qualifiers
+                extracted from them, change *)
+      }
+        (** build the copy disjunct by disjunct, once for each distinct
+            restriction of the atom's substitution to the disjunct's free
+            variables ([per_atom_disjuncts_by_disjunct]).  The disjunct set is
+            the same as [Whole]'s up to the names of bound variables: copies
+            that differ only in those names are built once *)
+  [@@deriving yojson]
+
+  type normalize_per_atom = {
+    copies : per_atom_copies; [@default Whole]
+    extractable_only : bool; [@default true]
+        (** an atom's copy of a disjunct of the pure part is kept only when
+            the extraction can read a qualifier from it
+            ([image_may_give_a_qualifier]): every atom of the simplified copy
+            that mentions the variables of two or more applications gives none,
+            since each application's arguments are fresh variables of its own.
+            Read under either [copies].  The clause stays equivalent (it keeps
+            the pure part and every disequality between variables of one
+            class) and the qualifiers extracted from it are meant to be the
+            same.  Why: in a clause of some 70 functional applications, each
+            argument's class holds a copy per application, an atom's copy of a
+            disjunct names the other applications' copies for every class the
+            atom does not bind, and nine in ten atoms of the normalised clause
+            spanned several applications.  On by default, being exact *)
+  }
+  [@@deriving yojson]
+
+  (** Shortcuts that leave the clauses and the qualifiers the same values;
+      each is independent of the others. *)
+  type memos = {
+    share_normalize_of_clauses : bool; [@default true]
         (** the normalisation of the clauses for extraction runs inside one
             scope of each node-address memo: the term conversions'
             ([Logic.ExtTerm.with_shared_term_conversion]), the simplifier's
             ([Evaluator.with_shared_simplify]), the normaliser's and the let
             passes' ([LogicOld.with_shared_let_passes]).  Each memo acts only
-            when its own switch is on ([share_rebuilt_formulas],
-            [share_let_passes]); each stores a result only when computing it
-            drew no fresh name, so the clauses are the same values with the
-            same draws, but shared where the input was.  Why: a clause's pure
-            part reached this normalisation shared, and every conversion and
-            rebuild here made it a tree, once per clause and once more per
-            atom *)
-    normalize_per_atom_relevant_only : bool; [@default false]
-        (** with [normalize_per_atom_by_disjunct], an atom's copy of the pure
-            part keeps only the disjuncts its substitution changes and that
-            then mention a variable the atom binds.  The clause stays
-            equivalent; the disjuncts, hence the qualifiers extracted from
-            them, change *)
-    normalize_per_atom_extractable_only : bool; [@default false]
-        (** in the normalisation of a clause with several atoms, an atom's
-            copy of a disjunct of the pure part is kept only when the
-            extraction can read a qualifier from it
-            ([image_may_give_a_qualifier]): every atom of the simplified copy
-            that mentions the variables of two or more applications gives none,
-            since each application's arguments are fresh variables of its own.
-            The clause stays equivalent (it keeps the pure part and every
-            disequality between variables of one class) and the qualifiers
-            extracted from it are meant to be the same.  Why: in a clause of
-            some 70 functional applications, each argument's class holds a copy
-            per application, an atom's copy of a disjunct names the other
-            applications' copies for every class the atom does not bind, and
-            nine in ten atoms of the normalised clause spanned several
-            applications *)
-    normalize_per_atom_by_disjunct : bool; [@default false]
-        (** in the normalisation of a clause with several atoms, the copy of
-            the pure part rewritten for each atom's bound variables is built
-            disjunct by disjunct, once for each distinct restriction of the
-            atom's substitution to the disjunct's free variables, instead of
-            substituting into the whole pure part once per atom
-            ([per_atom_disjuncts_by_disjunct]).  The disjunct set is the same
-            up to the names of bound variables: copies that differ only in
-            those names are built once *)
-    dedup_alpha_equivalent_disjuncts : bool; [@default true]
-        (** after that normalization, drop disjuncts of a clause that differ
-            only in the names of their bound variables; the normalization
-            distributes, so one premise can leave it as several alpha-variants
-            of itself *)
-    propagate_quals : bool; [@default true]  (** propagate qualifiers *)
-    propagate_declared_atoms : bool; [@default false]
-        (** let the candidate atoms the input declares for an unknown
-            ([(set-info :candidates ...)]) take part in [propagate_quals] like
-            extracted qualifiers.  Off: a declared atom is a qualifier of the
-            unknown it was declared for and of no other, so which declared atom
-            matters can be measured one unknown at a time. *)
-    declared_atoms_houdini_only : bool; [@default false]
-        (** keep the declared candidate atoms out of the qualifiers this
-            generator offers, so the hypothesis space the synthesizer searches
-            is the one extraction gives without the declarations; the atoms are
-            then read only by the validator's Houdini-style pre-pass, which
-            takes them from the problem's parameters and not from here.  A
-            declared atom widens the space every template hole searches, and
-            on a Rust-derived loop that answers [sat] without its declarations
-            (3 of 3 runs) the widened space was measured to lose the answer (0
-            of 3 at 60 s, sixteen atoms declared for the loop head, none of
-            them the invariant); with this on, what the declarations add is
-            the pre-pass's attempt.  Off: the
-            declared atoms are qualifiers of their unknown ([declared_qualifiers]
-            below). *)
-    add_bool : bool; [@default true]  (** add qualifiers for boolean variables *)
-    offset_parity_quals : bool; [@default false]
-        (** add [x mod 2 = 0] for an integer argument position of an unknown
-            that some clause reads at two constant offsets: two applications
-            of the unknown in one clause's premise whose arguments there
-            differ by a nonzero constant ([I i /\ I (i + 1) => false]), or a
-            premise application and a conclusion application that differ there
-            by a nonzero even constant ([I i => I (i + 2)]).  Such a clause
-            separates values of that argument by their parity, which no linear
-            atom states, while an ordinary step by one relates no two values
-            of the same parity.  The same atom for every integer argument of
-            every unknown ([add_mod2_quals] of the templates) was measured to
-            answer the inputs that need it and to slow the rest down by a third;
-            this adds it only where a clause asks for it. *)
-    add_homogeneous : bool; [@default false]  (** add homogeneous qualifiers *)
-    add_reflections : bool; [@default true]
-        (** also offer each halfspace approached from the other side: a space
-            that holds [-t >= 0] and not [t >= 0] cannot put a boundary on the
-            other piece of a partition, because the negation of [t <= 0] is the
-            strict [t > 0] and excludes it *)
-    add_arg_equalities : bool; [@default false]
-        (** also offer, for each pair of the predicate's parameters that have
-            the same non-array sort, the qualifier saying the two are equal --
-            which no extraction reaches unless a clause already wrote it, and no
-            numeric domain reaches at all for a datatype or an uninterpreted
-            sort *)
-    add_arg_transpositions : bool; [@default false]
-        (** also add, for each qualifier, the forms obtained by swapping a
-            pair of the predicate's parameters that have the same sort *)
-    transpositions_keep_words : bool; [@default true]
-        (** with [add_arg_transpositions], drop a form the swaps produced (the
-            extracted qualifier itself is kept) that puts under
-            [(_ int_to_bv n)] a parameter the problem never reads as a word,
-            when the predicate has a parameter it does.  A parameter position
-            is read as a word when some clause applies the predicate there to
-            a variable that occurs directly under [int_to_bv] in the same
-            clause.  On a loop counting the set bits of a 64-bit word
-            ([inv w b k n1 n2], the counts [n1], [n2] never converted), the
-            swaps of the one bit atom [bit_b(w) = 0] over five [Int]
-            parameters put the counts under [int_to_bv] as well; each
-            candidate carrying one then made the validation question split
-            the count into an unbounded quotient and a word, and one such
-            question was not answered in 30 s while the loop's other
-            questions took well under a second. *)
-    add_neg : bool; [@default false]  (** add negation of qualifiers *)
-    add_func_qual_disj : bool; [@default true]
-        (** add disjoined qualifiers involving function variables *)
-    filter_out_neg : bool; [@default true]
-    filter_out_non_div_mod : bool; [@default false]
-    filter_out_quantified : bool; [@default false]
-    sat_point_instances : bool; [@default false]
-        (** ground a parametric example at a point its own CONDITION admits,
-            rather than at the dummy point, before the numeric domains read it.
-            Those domains build their half-spaces out of the instantiated
-            argument tuples, and the dummy point does not look at the condition
-            at all -- an integer parameter becomes 0 -- so every parametric
-            example whose condition that point misses contributes the same
-            tuple, and a vocabulary learned from a set of identical points
-            separates none of them.  Any point is a consequence of the example,
-            so the choice is sound either way; what it decides is whether the
-            points differ.  Off by default: it costs one satisfiability query
-            per parametric atom, and where the conditions are ones the dummy
-            point already satisfies it buys nothing. *)
-    instantiate_quantified_quals : bool; [@default true]
-        (** offer an atom that sits under a quantifier inside a clause as a
-            qualifier, instantiated at the unknown's own arguments *)
-    ground_open_term_quals : bool; [@default true]
-        (** offer a GROUND atom as a qualifier to every unknown applied in the
-            clause, when the background theory does not fix its value. The
-            ordinary rule keeps an atom only when one of its variables is an
-            argument of an unknown, which a ground atom fails vacuously; that
-            is right for an atom the theory decides, whose value is the same at
-            every example and so separates nothing, and wrong for one whose
-            value the theory leaves open -- a selector on the wrong
-            constructor, a division by zero, an uninterpreted symbol. A
-            solution may have to name such a fact as a guard, as in
-            [P(x) := (tl nil = nil) /\ 0 <= x], and no atom over the unknown's
-            own parameters can express it. *)
-    nested_selector_subst : bool; [@default false]
-        (** when a clause binds an argument of an unknown by an equation
-            [u = c(..)] with [c] the only constructor of its datatype, also
-            recover the variables that sit inside NESTED constructors of
-            single-constructor datatypes -- [u = mut (tuple (tuple x3 x2)) x0]
-            gives [x2 = tuple_1 (tuple_0 (mut_current u))] -- rather than only
-            the variables that are direct arguments of [c].  Every selector
-            introduced is total, since each constructor on the path is the
-            only one of its datatype; a constructor of a datatype with several
-            constructors stops the descent, because its selectors are partial.
-            Off, only one level is looked at, which is what drops every atom
-            over the integer leaves of a value that a Rust-derived problem
-            wraps in a reference and a tuple. *)
-    instantiate_quals_memo : bool; [@default false]
-        (** in [instantiate_quantified_quals], instantiate an atom at an
-            application of an unknown only when no atom equal to it up to a
+            when its own switch is on (the preprocessor's [sharing.formulas] at
+            [Rebuilt_formulas], [sharing.let_passes]); each stores a result only
+            when computing it drew no fresh name, so the clauses are the same
+            values with the same draws, but shared where the input was.  Read
+            only with [normalize_pcsp].  Why: a clause's pure part reached this
+            normalisation shared, and every conversion and rebuild here made it
+            a tree, once per clause and once more per atom.  On by default,
+            being exact *)
+    share_across_clauses : bool; [@default false]
+        (** with [share_normalize_of_clauses], whether its memo scopes span
+            all the clauses ([true]) or are opened for each clause in turn
+            ([false]).  Exact either way: every
+            memo returns the values and draws it returns without its scope,
+            so the clauses are the same values with the same draws, and the
+            scope decides only which equal nodes are physically one and how
+            long the tables live.  Why per clause: a table keeps every node it
+            was asked about, with its image, until its scope ends, so a scope
+            over all clauses holds every intermediate of every clause; and
+            without any scope each clause's output is a tree.  On a
+            Rust-derived closure input of 409 clauses whose normalised
+            clauses have thousands of disjuncts, the live heap at the 225th
+            clause was 3.7 GB with one scope, 3.4 GB with none and 1.6 GB
+            with a scope per clause, and only the last finished the
+            normalisation under a 6 GB cap (the problem it built held 3.2 GB,
+            and the deduplication after it still met the cap).  The cost is the sharing between
+            clauses, which a clause normalised on its own does not keep
+            anyway *)
+    share_per_atom_copies : bool; [@default false]
+        (** with [share_normalize_of_clauses], whether the memo scopes stay
+            open while a clause with several atoms is rewritten per atom (the
+            per-atom copies of its pure part, their conversion, simplification
+            and the final let normalisation).  [false] closes them for that
+            part ([Evaluator.without_shared_simplify] and its siblings) and
+            reopens them after.  Exact either way: every memo returns the
+            values and draws it returns without its scope, so the clauses are
+            the same values with the same draws.  Why off: every copy is a new
+            term (the substitution rebuilds the whole pure part and renames
+            every binder), and the tables compare by identity, so no later
+            call can meet a stored copy again; storing it only keeps it alive
+            until the scope closes and makes the minor collector promote
+            every node of it.  On a Rust-derived input of 30 clauses whose
+            heaviest have 13-16 atoms over a pure part of about 17,000 nodes,
+            the copies kept open doubled the per-atom step's time and the
+            live heap reached about 1 GB before the scope closed, against
+            about 0.56 GB with them closed *)
+    share_step_preimages : bool; [@default true]
+        (** in [families.step_preimages], eliminate each distinct question
+            once: a question is a function of the clause's constraint, of the
+            head's and the premise's arguments and of the qualifier, never of
+            the unknown, and its free variables (the unknown's parameters)
+            and bound variables (the clause's) are given canonical names, so
+            questions that differ only in names are one formula.  A question
+            met before is answered by the atoms its first elimination gave; a
+            question whose elimination raised is not stored and is asked
+            again.  The questions asked are the same with or without the memo
+            (both name them canonically), so the qualifiers are the same.
+            Why: the family asks one elimination per clause x same-unknown
+            head/premise pair x relational equality qualifier, and a
+            frontend's clauses repeat the same step for many unknowns of one
+            shape; on the constraints RCaml generates for an eight-queens
+            program the family asks 21,278 questions before the first CEGIS
+            iteration, 13,262 of them equal to an earlier one.  An
+            elimination has a one-second budget, so on a loaded machine one
+            copy of a question can time out where another does not: the memo
+            then keeps the first answer, which asking again might have lost
+            or gained.  On by default: over 477 Rust-derived inputs at 120 s
+            it changed no verdict and no input's answer rate beyond run-to-run
+            variation, and the median per-input time ratio was 1.00.  A
+            comparison on a heavily loaded machine gave different qualifier
+            sets with and without it on the eight-queens constraints, which
+            timed-out duplicates can explain but which was not shown to be
+            only that *)
+    instantiate_quals : bool; [@default true]
+        (** in [families.instantiate_quantified], instantiate an atom at
+            an application of an unknown only when no atom equal to it up to a
             renaming of its bound variables has been instantiated at that
             application in the same clause.  The instances are the same,
             since each bound variable ranges independently over the
@@ -258,18 +237,19 @@ module Config = struct
             of 2,000 atoms whose premises restate one quantified fact per
             obligation, each copy with its own bound names, was instantiated
             copy by copy at a dozen applications of thirty arguments, 90 s of
-            the generator's 100 s. *)
-    parity_pvar_apps_only : bool; [@default false]
-        (** in [offset_parity_quals]'s reading of the problem, simplify only
-            the atoms that mention an unknown ([Formula.pvar_apps_of]) rather
-            than every atom of every clause, of which it uses only the
+            the generator's 100 s.  On by default, being exact *)
+    parity_pvar_apps_only : bool; [@default true]
+        (** in [families.offset_parity]'s reading of the problem, simplify
+            only the atoms that mention an unknown ([Formula.pvar_apps_of])
+            rather than every atom of every clause, of which it uses only the
             applications of unknowns.  The applications found are the same
             (an atom that mentions no unknown cannot simplify into an
             application of one).  Why: on a Rust-derived input of 119 clauses
             with about 22,000 atoms and 570 applications, the reading took
             about 30 s of the qualifier generator's 60 s, every one of it
-            spent simplifying atoms it then discarded. *)
-    extract_atom_quals_once : bool; [@default false]
+            spent simplifying atoms it then discarded.  On by default, being
+            exact *)
+    extract_atom_quals_once : bool; [@default true]
         (** in the qualifier extraction, build the quantified qualifier of a
             clause's atom (and decide whether its private variables occur in
             a division) once per atom rather than once per unknown
@@ -280,8 +260,46 @@ module Config = struct
             Why: a clause of a Rust-derived input holds hundreds of atoms and
             up to a dozen applications of unknowns with thirty arguments
             each, and the extraction rebuilt the same qualifier for each
-            application. *)
-    lift_index_quals : bool; [@default false]
+            application.  On by default, being exact up to fresh names *)
+  }
+  [@@deriving yojson]
+
+  (** Whether each qualifier is also offered with pairs of the predicate's
+      parameters of one sort swapped. *)
+  type arg_transpositions =
+    | Off
+    | Transpositions of {
+        keep_words : bool; [@default true]
+            (** drop a form the swaps produced (the
+                extracted qualifier itself is kept) that puts under
+                [(_ int_to_bv n)] a parameter the problem never reads as a word,
+                when the predicate has a parameter it does.  A parameter position
+                is read as a word when some clause applies the predicate there to
+                a variable that occurs directly under [int_to_bv] in the same
+                clause.  On a loop counting the set bits of a 64-bit word
+                ([inv w b k n1 n2], the counts [n1], [n2] never converted), the
+                swaps of the one bit atom [bit_b(w) = 0] over five [Int]
+                parameters put the counts under [int_to_bv] as well; each
+                candidate carrying one then made the validation question split
+                the count into an unbounded quotient and a word, and one such
+                question was not answered in 30 s while the loop's other
+                questions took well under a second. *)
+      }
+        (** also add, for each qualifier, the forms obtained by swapping a
+            pair of the predicate's parameters that have the same sort *)
+  [@@deriving yojson]
+
+  (** Whether an atom about an array argument's contents is offered as a
+      qualifier about that array's cell columns. *)
+  type lift_index =
+    | Off
+    | Lift of {
+        max_vars : int; [@default 1]
+            (** how many out-of-scope variables an atom may mention and still be
+                lifted.  Two variables both rewritten to the same index column say
+                something the atom did not (they were distinct indices), which is a
+                legal but wilder guess, so one is the default. *)
+      }
         (** offer an atom about an ARRAY ARGUMENT'S CONTENTS as a qualifier
             about that array's cell columns.
 
@@ -304,17 +322,24 @@ module Config = struct
             cost is a larger hypothesis space.  The result mentions placeholder
             columns and is therefore useless to any template that generates no
             cells, which drops it. *)
-    lift_read_quals : bool; [@default false]
+  [@@deriving yojson]
+
+  (** The qualifiers about cell columns: the liftings of atoms about an
+      array's or a sequence's contents. *)
+  type lift = {
+    index : lift_index; [@default Off]
+        (** see [lift_index] *)
+    read : bool; [@default false]
         (** also lift an atom that reads an in-scope array at a term the
             predicate already takes -- [a[i] = 0], say -- into the guarded form
-            [#cidx = i => a[#cidx] = 0].  The unguarded lifting above does not
+            [#cidx = i => a[#cidx] = 0].  The unguarded lifting [index] does not
             apply to it, because it has no out-of-scope variable, and the atom
             itself is already a qualifier; what this adds is the same fact
             stated about the cell, which is the only form a celled example can
             evaluate. *)
-    lift_seq_nth_quals : bool; [@default true]
+    seq_nth : bool; [@default true]
         (** also collect the reads [seq.nth s j] of a sequence of integers, not
-            only the array reads, for the two liftings above, so that an atom
+            only the array reads, for [index] and [read], so that an atom
             about a sequence's elements becomes one about that sequence's cell
             columns.  It matters only where the template gives sequences cells;
             elsewhere a schema naming a sequence's columns instantiates
@@ -324,7 +349,98 @@ module Config = struct
             theory leaves open; the cell columns themselves carry the range,
             since a sequence cell exists only inside it (or at the sentinel,
             whose value is a constant). *)
-    seq_store_equality_quals : bool; [@default false]
+    clause_cell_disjunctions : bool; [@default true]
+        (** offer, per clause, read index [j] and array [a] it indexes, the
+            DISJUNCTION of the clause's disjuncts about [a]'s cell at [j] as one
+            qualifier ([CellQual.clause_cell_disjunctions]): the disjuncts with
+            no binder that mention [j] and otherwise only variables the
+            clause's unknowns are applied to, lifted by the renaming
+            [index] uses, when there are at least two.  A goal
+            [I(a, i, n) /\ 0 <= j /\ j <= n /\ a[j] <> j => bot] then offers
+            [#cidx < 0 \/ #cidx > n \/ #cval = #cidx], which is the body of
+            the invariant's universal: with the atoms alone the template needs
+            one disjunct of its own shape per atom.  At most one qualifier per
+            (clause, read index, array), read off the problem.  It adds
+            vocabulary only, so it cannot bear on soundness; such a qualifier
+            is kept whole rather than split into its atoms after extraction. *)
+  }
+  [@@deriving yojson]
+
+  (** Qualifier families added to what extraction and the numeric domains
+      give, each independent of the others. *)
+  type families = {
+    offset_parity : bool; [@default false]
+        (** add [x mod 2 = 0] for an integer argument position of an unknown
+            that some clause reads at two constant offsets: two applications
+            of the unknown in one clause's premise whose arguments there
+            differ by a nonzero constant ([I i /\ I (i + 1) => false]), or a
+            premise application and a conclusion application that differ there
+            by a nonzero even constant ([I i => I (i + 2)]).  Such a clause
+            separates values of that argument by their parity, which no linear
+            atom states, while an ordinary step by one relates no two values
+            of the same parity.  The same atom for every integer argument of
+            every unknown ([add_mod2_quals] of the templates) was measured to
+            answer the inputs that need it and to slow the rest down by a third;
+            this adds it only where a clause asks for it. *)
+    reflections : bool; [@default false]
+        (** also offer each halfspace approached from the other side: a space
+            that holds [-t >= 0] and not [t >= 0] cannot put a boundary on the
+            other piece of a partition, because the negation of [t <= 0] is the
+            strict [t > 0] and excludes it.  Off by default: no input is known
+            that needs it (on 120 CHC inputs it lost no answer and gained
+            none, at 0.97 of the time) *)
+    arg_equalities : bool; [@default false]
+        (** also offer, for each pair of the predicate's parameters that have
+            the same non-array sort, the qualifier saying the two are equal --
+            which no extraction reaches unless a clause already wrote it, and no
+            numeric domain reaches at all for a datatype or an uninterpreted
+            sort *)
+    arg_transpositions : arg_transpositions; [@default Off]
+        (** see [arg_transpositions] *)
+    sat_point_instances : bool; [@default false]
+        (** ground a parametric example at a point its own CONDITION admits,
+            rather than at the dummy point, before the numeric domains read it.
+            Those domains build their half-spaces out of the instantiated
+            argument tuples, and the dummy point does not look at the condition
+            at all -- an integer parameter becomes 0 -- so every parametric
+            example whose condition that point misses contributes the same
+            tuple, and a vocabulary learned from a set of identical points
+            separates none of them.  Any point is a consequence of the example,
+            so the choice is sound either way; what it decides is whether the
+            points differ.  Off by default: it costs one satisfiability query
+            per parametric atom, and where the conditions are ones the dummy
+            point already satisfies it buys nothing. *)
+    instantiate_quantified : bool; [@default true]
+        (** offer an atom that sits under a quantifier inside a clause as a
+            qualifier, instantiated at the unknown's own arguments *)
+    ground_open_terms : bool; [@default true]
+        (** offer a GROUND atom as a qualifier to every unknown applied in the
+            clause, when the background theory does not fix its value. The
+            ordinary rule keeps an atom only when one of its variables is an
+            argument of an unknown, which a ground atom fails vacuously; that
+            is right for an atom the theory decides, whose value is the same at
+            every example and so separates nothing, and wrong for one whose
+            value the theory leaves open -- a selector on the wrong
+            constructor, a division by zero, an uninterpreted symbol. A
+            solution may have to name such a fact as a guard, as in
+            [P(x) := (tl nil = nil) /\ 0 <= x], and no atom over the unknown's
+            own parameters can express it. *)
+    nested_selector_subst : bool; [@default true]
+        (** when a clause binds an argument of an unknown by an equation
+            [u = c(..)] with [c] the only constructor of its datatype, also
+            recover the variables that sit inside NESTED constructors of
+            single-constructor datatypes -- [u = mut (tuple (tuple x3 x2)) x0]
+            gives [x2 = tuple_1 (tuple_0 (mut_current u))] -- rather than only
+            the variables that are direct arguments of [c].  Every selector
+            introduced is total, since each constructor on the path is the
+            only one of its datatype; a constructor of a datatype with several
+            constructors stops the descent, because its selectors are partial.
+            Off, only one level is looked at, which is what drops every atom
+            over the integer leaves of a value that a Rust-derived problem
+            wraps in a reference and a tuple.  On by default *)
+    lift : lift; [@default Common.Util.config_default lift_of_yojson "{}"]
+        (** the qualifiers about cell columns (see [lift]) *)
+    seq_store_equalities : bool; [@default false]
         (** offer [x = seq.store s i v] to an unknown for each sequence write
             [seq.store s i v] in a clause whose variables are all arguments of
             that unknown, [x] ranging over the unknown's other arguments of the
@@ -333,25 +449,100 @@ module Config = struct
             an atom over one unknown's arguments.  The writes come from the
             problem, so the vocabulary is bounded by the writes it contains
             times the unknown's sequence arguments. *)
-    lift_index_quals_max_vars : int; [@default 1]
-    lift_clause_cell_disjunctions : bool; [@default true]
-        (** offer, per clause, read index [j] and array [a] it indexes, the
-            DISJUNCTION of the clause's disjuncts about [a]'s cell at [j] as one
-            qualifier ([CellQual.clause_cell_disjunctions]): the disjuncts with
-            no binder that mention [j] and otherwise only variables the
-            clause's unknowns are applied to, lifted by the renaming
-            [lift_index_quals] uses, when there are at least two.  A goal
-            [I(a, i, n) /\ 0 <= j /\ j <= n /\ a[j] <> j => bot] then offers
-            [#cidx < 0 \/ #cidx > n \/ #cval = #cidx], which is the body of
-            the invariant's universal: with the atoms alone the template needs
-            one disjunct of its own shape per atom.  At most one qualifier per
-            (clause, read index, array), read off the problem.  It adds
-            vocabulary only, so it cannot bear on soundness; such a qualifier
-            is kept whole rather than split into its atoms after extraction. *)
-        (** how many out-of-scope variables an atom may mention and still be
-            lifted.  Two variables both rewritten to the same index column say
-            something the atom did not (they were distinct indices), which is a
-            legal but wilder guess, so one is the default. *)
+    step_preimages : bool; [@default false]
+        (** also offer, for every clause that applies one unknown [P] both in
+            its conclusion and in its premise ([P(h) <= P(b) /\ ... /\ c],
+            a step of a loop), the atoms over at least two of [P]'s
+            parameters of the one-step PRE-IMAGE of each integer or real
+            EQUALITY qualifier [q] of [P] that mentions at least two of them:
+            the quantifier-free form of
+            [exists (clause variables). x = b /\ c /\ q(h)] over [P]'s
+            parameters [x], the other unknowns of the premise read as true.
+            Why: an invariant of a product of two loops that a scheduler
+            interleaves holds an aligned relation [q] at the points where the
+            copies are in step and, in between, the relation one step away
+            from it, which is [q] moved through that step -- [2 y1 - y2 = 0]
+            aligned, [2 y1 - y2 - x = 0] after one copy has added [x] once
+            more -- and no extraction offers that atom, because the clause
+            states it only across a premise and a conclusion variable, while
+            the qualifier-only template of the default configuration cannot
+            build it from coefficients either.  All atoms of the eliminated
+            formula are kept, the one-sided and strict halves of an equality
+            and the step's guards included; keeping only the equalities it
+            states lost every answer on the inputs this was built for.  One
+            step only, never closed under further steps, so the vocabulary
+            grows at most by the atoms of (relational equality qualifiers) x
+            (recursive clauses) eliminations.  Only clauses over integers, reals and Booleans are
+            read, and each elimination has a one-second budget and is skipped
+            when it fails.  It adds vocabulary only, so it cannot bear on the
+            soundness of a verdict. *)
+    membership_instances : bool; [@default false]
+        (** also offer, for every finite-membership fact a quantified
+            subformula of the problem or of the input states --
+            [forall q. G(q) => t(q) = k1 \/ ... \/ t(q) = kn], its guard also
+            written [q <> x], or [t(q)] in a finite set literal -- the
+            disjunction [t(x) = k1 \/ ... \/ t(x) = kn] as ONE qualifier, for
+            every parameter [x] of each unknown whose sort is the bound's
+            ([MembershipFacts]).  The extraction offers the [n] equations
+            only as separate atoms, so a goal that needs the membership of an
+            unknown's parameter waits for the template to grow its disjunct
+            count.  At most one qualifier per (fact, parameter); a fact is
+            read off the formulas, so the vocabulary is bounded by the
+            problem.  It adds vocabulary only and every candidate is still
+            validated, so it cannot bear on the soundness of a verdict.  Off
+            by default: on the Rust-derived loop it was built for, whose
+            invariant on about ten unknowns is [ps(dl) = 2 \/ ps(dl) = 4 \/
+            ps(dl) = 8] with the membership stated as a precondition, it
+            offered exactly that disjunction on the thirteen unknowns with a
+            parameter of [dl]'s sort and the run still gave no answer in
+            300 s (two runs of two, eight CEGIS iterations each against six
+            or seven without it), so the missing atom was not what kept the
+            template from the invariant there. *)
+  }
+  [@@deriving yojson]
+
+  type t = {
+    verbose : bool; [@default false]
+    domains : domain list; [@default [ Null ]]
+    svm_rational_approximation : Common.ContFrac.rational_approximation;
+        [@default Common.ContFrac.Ratio_recursion]
+        (** how an [SVM] domain turns its floating-point hyperplane into small
+            integers: [Ratio_recursion] (a multidimensional continued-fraction
+            recursion over the depth) or [Per_coordinate] (each coefficient's
+            last convergent with denominator at most [d], over a common
+            denominator, searched over [d]) *)
+    extract_pcsp : bool; [@default true]  (** extract qualifiers from pfwCSP *)
+    normalize_pcsp : bool; [@default true]  (** normalize pfwCSP to enhance extraction *)
+    normalize_per_atom : normalize_per_atom;
+        [@default Common.Util.config_default normalize_per_atom_of_yojson "{}"]
+        (** how the normalisation of a clause with several atoms copies the
+            pure part for each atom (see [normalize_per_atom]); read only with
+            [normalize_pcsp] *)
+    memos : memos; [@default Common.Util.config_default memos_of_yojson "{}"]
+        (** shortcuts of the normalisation and the extraction that leave the
+            qualifiers the same (see [memos]) *)
+    dedup_alpha_equivalent_disjuncts : bool; [@default true]
+        (** after that normalization, drop disjuncts of a clause that differ
+            only in the names of their bound variables; the normalization
+            distributes, so one premise can leave it as several alpha-variants
+            of itself *)
+    propagate_quals : bool; [@default true]  (** propagate qualifiers *)
+    declared_atoms : declared_atoms; [@default Own_unknown]
+        (** where the candidate atoms an input declares for an unknown
+            ([(set-info :candidates ...)]) enter the qualifiers (see
+            [declared_atoms]) *)
+    add_bool : bool; [@default true]  (** add qualifiers for boolean variables *)
+    families : families;
+        [@default Common.Util.config_default families_of_yojson "{}"]
+        (** the qualifier families offered beside extraction (see
+            [families]) *)
+    add_homogeneous : bool; [@default false]  (** add homogeneous qualifiers *)
+    add_neg : bool; [@default false]  (** add negation of qualifiers *)
+    add_func_qual_disj : bool; [@default true]
+        (** add disjoined qualifiers involving function variables *)
+    filter_out_neg : bool; [@default true]
+    filter_out_non_div_mod : bool; [@default false]
+    filter_out_quantified : bool; [@default false]
     reduce : bool; [@default false]  (** reduce redundant qualifiers *)
   }
   [@@deriving yojson]
@@ -412,9 +603,19 @@ let per_atom_disjuncts_whole exi_senv uni_senv atms fvs_phi phi eqcs =
       if Set.are_disjoint fvs_phi bounds_atm then Set.Poly.empty
       else
         let sub, phis = atom_sub_and_neqs eqcs bounds_atm in
-        LogicOld.Formula.disjuncts_of @@ LogicOld.Formula.alpha_rename_let
-        @@ Logic.ExtTerm.to_old_fml exi_senv uni_senv
-        @@ Logic.BoolTerm.or_of (Logic.Term.subst sub phi :: phis))
+        let ph = Common.PhaseTime.with_phase in
+        let t =
+          ph "img-subst" @@ fun () ->
+          Logic.BoolTerm.or_of (Logic.Term.subst sub phi :: phis)
+        in
+        let f =
+          ph "img-conv" @@ fun () ->
+          Logic.ExtTerm.to_old_fml exi_senv uni_senv t
+        in
+        let f =
+          ph "img-alpha" @@ fun () -> LogicOld.Formula.alpha_rename_let f
+        in
+        ph "img-disj" @@ fun () -> LogicOld.Formula.disjuncts_of f)
 
 (* [per_atom_disjuncts_whole] up to the names of bound variables, in time
    proportional to what the atoms change.
@@ -538,6 +739,16 @@ let per_atom_disjuncts_by_disjunct ?(restrict = true) ?(relevant_only = false)
    application other than the one it is offered to, and is dropped where the
    qualifier is mapped onto the parameters.  So the remaining atoms give
    nothing. *)
+(* [families.step_preimages]' eliminations: the questions handed to Z3, and
+   those answered from [memos.share_step_preimages]' memo instead.  Counters
+   for the tests only, like the next: no decision reads them. *)
+let step_preimage_questions = Atomic.make 0
+let step_preimage_shared = Atomic.make 0
+
+(* the eliminations that raised (a timeout of the one-second budget, mostly):
+   not stored, so a later equal question is asked again *)
+let step_preimage_failed = Atomic.make 0
+
 let image_may_give_a_qualifier ~is_unknown apps_vars phi =
   let open LogicOld in
   (not (Formula.is_let_free phi))
@@ -700,13 +911,38 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
                   ~data:(Logic.ExtTerm.str_of phi')
             | None -> ())
       in
+      let scopes f =
+        Logic.ExtTerm.with_shared_term_conversion @@ fun () ->
+        Evaluator.with_shared_simplify @@ fun () ->
+        Normalizer.with_shared_normalize @@ fun () ->
+        LogicOld.with_shared_let_passes f
+      in
+      (* [memos.share_across_clauses]: the scopes over all clauses, or one
+         per clause *)
       let shared f =
-        if config.share_normalize_of_clauses then
-          Logic.ExtTerm.with_shared_term_conversion @@ fun () ->
-          Evaluator.with_shared_simplify @@ fun () ->
-          Normalizer.with_shared_normalize @@ fun () ->
-          LogicOld.with_shared_let_passes f
+        if
+          config.memos.share_normalize_of_clauses
+          && config.memos.share_across_clauses
+        then scopes f
         else f ()
+      in
+      let shared_clause f =
+        if
+          config.memos.share_normalize_of_clauses
+          && not config.memos.share_across_clauses
+        then scopes f
+        else f ()
+      in
+      (* the per-atom rewriting outside the memo scopes [shared] opens
+         ([memos.share_per_atom_copies]): the same values and draws, since
+         each memo changes only sharing *)
+      let unshared_per_atom f =
+        if config.memos.share_per_atom_copies then f ()
+        else
+          Logic.ExtTerm.without_shared_term_conversion @@ fun () ->
+          Evaluator.without_shared_simplify @@ fun () ->
+          Normalizer.without_shared_normalize @@ fun () ->
+          LogicOld.without_shared_let_passes f
       in
       let pcsp =
         Common.PhaseTime.with_phase "normalize-of-clauses" @@ fun () ->
@@ -724,8 +960,12 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
             if print_log then (
               print_endline "begin";
               Out_channel.flush stdout);
+            (* one clause at a time: a safe point to end a probe whose strict
+               deadline has passed *)
+            PCSatCommon.SolveDeadline.check_at_stage ();
             Common.PhaseTime.with_phase "normalize-clause" @@ fun () ->
             census_clause !count @@ fun () ->
+            shared_clause @@ fun () ->
             let phi =
               Common.PhaseTime.with_phase "let" @@ fun () ->
               Normalizer.normalize_let
@@ -774,22 +1014,27 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
                   @@ Logic.ExtTerm.to_old_fml exi_senv uni_senv phi0
                 else
                   Common.PhaseTime.with_phase "per-atom" @@ fun () ->
+                  unshared_per_atom @@ fun () ->
                   let fvs_phi = Logic.Term.fvs_of phi in
                   (* the copies are built before the pure part and the
                      disequalities are converted; keep this order, since the
                      conversions can draw fresh names and a run's later names
                      depend on the order of the draws *)
                   let images =
-                    if config.normalize_per_atom_by_disjunct then
-                      Common.PhaseTime.with_phase "by-disjunct" @@ fun () ->
-                      per_atom_disjuncts_by_disjunct
-                        ~relevant_only:config.normalize_per_atom_relevant_only
-                        exi_senv uni_senv atms fvs_phi phi eqcs
-                    else
-                      per_atom_disjuncts_whole exi_senv uni_senv atms fvs_phi
-                        phi eqcs
+                    match config.normalize_per_atom.copies with
+                    | By_disjunct { relevant_only } ->
+                        Common.PhaseTime.with_phase "by-disjunct" @@ fun () ->
+                        per_atom_disjuncts_by_disjunct ~relevant_only exi_senv
+                          uni_senv atms fvs_phi phi eqcs
+                    | Whole ->
+                        Common.PhaseTime.with_phase "images" @@ fun () ->
+                        per_atom_disjuncts_whole exi_senv uni_senv atms fvs_phi
+                          phi eqcs
                   in
-                  let phi_old = Logic.ExtTerm.to_old_fml exi_senv uni_senv phi in
+                  let phi_old =
+                    Common.PhaseTime.with_phase "base" @@ fun () ->
+                    Logic.ExtTerm.to_old_fml exi_senv uni_senv phi
+                  in
                   let neqs =
                     Set.concat_map eqcs ~f:(fun (eqc, ty) ->
                         match Set.to_list eqc with
@@ -806,7 +1051,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
                   if print_log then print_endline "qelimed";
                   let disjs =
                     Common.PhaseTime.with_phase "simplify" @@ fun () ->
-                    if not config.normalize_per_atom_extractable_only then
+                    if not config.normalize_per_atom.extractable_only then
                       Set.Poly.map (Set.union base images) ~f:Evaluator.simplify
                       (*Z3Smt.Z3interface.simplify (Problem.fenv_of APCSP.problem)*)
                     else
@@ -819,7 +1064,10 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
                       let is_unknown = Map.Poly.mem exi_senv in
                       let dropped = ref 0 in
                       let kept =
-                        Set.Poly.filter_map (Set.diff images base) ~f:(fun d ->
+                        Set.Poly.filter_map
+                          (Common.PhaseTime.with_phase "diff" @@ fun () ->
+                           Set.diff images base)
+                          ~f:(fun d ->
                             let d = Evaluator.simplify d in
                             if
                               image_may_give_a_qualifier ~is_unknown apps_vars d
@@ -834,6 +1082,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
                       Set.union (Set.Poly.map base ~f:Evaluator.simplify) kept
                   in
                   (* Formula.elim_ite @@ Formula.elim_let_equivalid @@ Formula.elim_let @@ *)
+                  Common.PhaseTime.with_phase "or-let" @@ fun () ->
                   Normalizer.normalize_let @@ LogicOld.Formula.or_of
                   @@ Set.to_list disjs
               in
@@ -885,6 +1134,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
         (module SVM.Make (struct
           let approx_level = approx_level
           let csvm = csvm
+          let rational_approximation = config.svm_rational_approximation
         end) : QualifierType)
     | NN dummy_param ->
         (module NN.Make (struct
@@ -904,11 +1154,11 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
     else Fn.id
 
   (* whether [phi] is a clause's disjunction about a cell
-     ([lift_clause_cell_disjunctions]): no other extracted qualifier is a
+     ([families.lift.clause_cell_disjunctions]): no other extracted qualifier is a
      quantifier-free cell schema that is not an atom, since the per-atom
      liftings return atoms *)
   let is_clause_cell_disjunction phi =
-    config.lift_clause_cell_disjunctions
+    config.families.lift.clause_cell_disjunctions
     && (not (Formula.is_atom phi))
     && Formula.is_quantifier_free phi
     && CellQual.mentions_placeholder phi
@@ -923,7 +1173,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
           Set.fold quals ~init:Set.Poly.empty ~f:(fun acc (ids, phi) ->
               (* a quantifier-free cell schema that is not an atom can only be a
                  clause's disjunction about a cell
-                 ([lift_clause_cell_disjunctions]); the qualifier is the whole
+                 ([families.lift.clause_cell_disjunctions]); the qualifier is the whole
                  disjunction, so it is not split into its atoms below, and it
                  has no quantifier to eliminate *)
               if is_clause_cell_disjunction phi then Set.add acc (ids, phi)
@@ -1035,7 +1285,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
      constructors: there a selector is partial, [sel u] for a [u] built by
      another constructor denotes a value the theory leaves open, and an atom
      about it says less than it appears to.  By default only the direct
-     variable arguments of the constructor are recovered; [nested_selector_subst]
+     variable arguments of the constructor are recovered; [families.nested_selector_subst]
      also follows arguments built by further single-constructor constructors. *)
   let selector_subst_of_clause atomics bvars =
     List.fold atomics ~init:Map.Poly.empty ~f:(fun sub atomic ->
@@ -1059,7 +1309,17 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
                       = List.length (T_dt.sels_of_cons (T_dt.DTCons (cname, [], dt)))
               ->
                 let usort = T_dt.SDT dt in
-                if not config.nested_selector_subst then
+                if not config.families.nested_selector_subst then (
+                  (* act census (instrument only): an argument built by the
+                     only constructor of its datatype is what the nested
+                     substitution would descend into *)
+                  if
+                    Common.ActCensus.on ()
+                    && List.exists args ~f:(function
+                         | Term.FunApp (T_dt.DTCons (_, _, dt'), _, _) ->
+                             List.length (Datatype.conses_of dt') = 1
+                         | _ -> false)
+                  then Common.ActCensus.note "families.nested_selector_subst";
                   List.foldi args ~init:sub ~f:(fun i sub arg ->
                       match arg with
                       | Term.Var (y, _, _) when not (Set.mem bvars y) ->
@@ -1067,7 +1327,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
                             ~data:
                               (T_dt.mk_sel_by_cons dt cname i
                               @@ Term.mk_var u usort)
-                      | _ -> sub)
+                      | _ -> sub))
                 else
                   (* [base] is a term denoting the value built by
                      [cons(args)]; each argument is then the corresponding
@@ -1109,6 +1369,9 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
     let n = ref 0
 
     let clause phi acc k =
+      (* one clause's extraction at a time: a safe point to end a probe whose
+         strict deadline has passed *)
+      PCSatCommon.SolveDeadline.check_at_stage ();
       Common.PhaseTime.with_phase "clause" @@ fun () ->
       if not (Lazy.force on) then k acc
       else (
@@ -1172,8 +1435,11 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
     stamp "extract-start";
     (* whether any qualifier here can mention a cell column *)
     let lifts =
-      config.lift_index_quals || config.lift_read_quals
-      || config.lift_clause_cell_disjunctions
+      (match config.families.lift.index with
+       | Off -> false
+       | Lift _ -> true)
+      || config.families.lift.read
+      || config.families.lift.clause_cell_disjunctions
     in
     let cls =
       Common.PhaseTime.with_phase "formulas" @@ fun () ->
@@ -1181,9 +1447,9 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
         ~f:(Tuple2.uncurry @@ Logic.ExtTerm.to_old_fml (Problem.senv_of pcsp))
     in
     stamp "extract-formulas";
-    (* the (unknown, argument position) pairs [offset_parity_quals] asks for *)
+    (* the (unknown, argument position) pairs [families.offset_parity] asks for *)
     let parity_positions =
-      if not config.offset_parity_quals then Set.Poly.empty
+      if not config.families.offset_parity then Set.Poly.empty
       else
         let const_offset t1 t2 =
           if not (Term.is_int_sort (Term.sort_of t1)) then None
@@ -1220,7 +1486,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
         in
         Set.fold cls0 ~init:Set.Poly.empty ~f:(fun acc phi ->
             let pos_papps, neg_papps =
-              if config.parity_pvar_apps_only then
+              if config.memos.parity_pvar_apps_only then
                 Formula.pvar_apps_of ~simplifier:Evaluator.simplify phi
               else
                 let _, pos, neg =
@@ -1292,7 +1558,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
           selector_subst_of_clause atomics (Set.Poly.map bvs ~f:fst)
         in
         (* the (application, canonical atom) pairs instantiated so far in
-           this clause ([instantiate_quals_memo]) *)
+           this clause ([memos.instantiate_quals]) *)
         let inst_seen = Hashtbl.PolyDeep.create () in
         (* Which clause variables index a read of an array that an unknown of
            this clause is applied to, and where those reads are.  This is a
@@ -1333,7 +1599,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
         (* the sequence reads of this clause, collected the same way; see
            [CellQual.seq_nth_read] for what makes a read eligible *)
         let seq_reads =
-          if not (lifts && config.lift_seq_nth_quals) then Set.Poly.empty
+          if not (lifts && config.families.lift.seq_nth) then Set.Poly.empty
           else
             Set.Poly.filter_map
               (Formula.filtered_terms_of ~f:T_seq.is_nth phi)
@@ -1344,15 +1610,15 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
            without the range premise; only checked with the switch on, so that
            the array liftings are unchanged without it *)
         let keeps_seq_read_atom atm =
-          config.lift_seq_nth_quals && CellQual.mentions_seq_read_atom atm
+          config.families.lift.seq_nth && CellQual.mentions_seq_read_atom atm
         in
         let keeps_seq_read_atom_formula q =
-          config.lift_seq_nth_quals && CellQual.mentions_seq_read q
+          config.families.lift.seq_nth && CellQual.mentions_seq_read q
         in
         (* The equalities relating an unknown's sequence arguments by a write
            this clause performs; see [CellQual.seq_store_equalities]. *)
         let acc =
-          if not config.seq_store_equality_quals then acc
+          if not config.families.seq_store_equalities then acc
           else
             let stores =
               Set.to_list @@ Formula.filtered_terms_of ~f:T_seq.is_store phi
@@ -1386,7 +1652,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
         (* the clause's disjunction about one cell, offered whole to the
            unknowns applied to the array (see [CellQual.clause_cell_disjunctions]) *)
         let acc =
-          if not config.lift_clause_cell_disjunctions then acc
+          if not config.families.lift.clause_cell_disjunctions then acc
           else
             List.fold
               (CellQual.clause_cell_disjunctions ~bvars
@@ -1436,7 +1702,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
                and why the number of bound variables is capped. *)
             let acc =
               Common.PhaseTime.with_phase "instantiate" @@ fun () ->
-              if (not config.instantiate_quantified_quals) || Set.is_empty tvs
+              if (not config.families.instantiate_quantified) || Set.is_empty tvs
               then acc
               else
                 let qvs =
@@ -1452,7 +1718,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
                           (Atom.str_of atomic) (Set.length qvs));
                   acc)
                 else
-                  (* [instantiate_quals_memo]: the instances of [atomic] at
+                  (* [memos.instantiate_quals]: the instances of [atomic] at
                      [pa] depend on [atomic] only up to a renaming of [qvs],
                      since each bound variable ranges independently over the
                      arguments of its sort; so an atom equal to one already
@@ -1473,7 +1739,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
                     ~f:(fun acc (pa, pftv) ->
                       let args = Set.Poly.map pftv ~f:fst in
                       if
-                        config.instantiate_quals_memo
+                        config.memos.instantiate_quals
                         && not
                              (ExtractCensus.first_instance inst_seen
                                 (pa, Lazy.force canon))
@@ -1552,10 +1818,14 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
                       Set.add acc (pa, lifted))
                 in
                 let acc =
+                  let max_vars =
+                    match config.families.lift.index with
+                    | Off -> None
+                    | Lift { max_vars } -> Some max_vars
+                  in
                   if
-                    (not config.lift_index_quals)
-                    || Set.is_empty fvs
-                    || Set.length fvs > config.lift_index_quals_max_vars
+                    Option.is_none max_vars || Set.is_empty fvs
+                    || Set.length fvs > Option.value_exn max_vars
                   then acc
                   else
                     (* every out-of-scope variable of the atom must be a read
@@ -1615,14 +1885,14 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
                    term the predicate already takes is a qualifier as it
                    stands, but a celled example carries no array to read, so
                    the same fact has to be available about a cell. *)
-                if (not config.lift_read_quals) || not (Set.is_empty fvs) then
+                if (not config.families.lift.read) || not (Set.is_empty fvs) then
                   acc
                 else
                   let here =
                     Atom.filtered_terms_of
                       ~f:(fun t ->
                         T_array.is_select t
-                        || (config.lift_seq_nth_quals && T_seq.is_nth t))
+                        || (config.families.lift.seq_nth && T_seq.is_nth t))
                       atomic
                   in
                   (* Every read in the atom is replaced at once, one per
@@ -1707,7 +1977,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
                  applied in this clause rather than to one of them. *)
               let recovered_ground =
                 if
-                  (not config.ground_open_term_quals)
+                  (not config.families.ground_open_terms)
                   || mentions_an_unknown
                   || (not @@ Set.is_empty tvs)
                   || (not
@@ -1755,7 +2025,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
                  rather than once per application; the values are the same,
                  since both are functions of [atomic] and [fvs] *)
               let once f =
-                if config.extract_atom_quals_once then
+                if config.memos.extract_atom_quals_once then
                   let v = lazy (f ()) in
                   fun () -> Lazy.force v
                 else f
@@ -1920,7 +2190,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
                   if
                     Formula.is_ground phi
                     && not
-                         (config.ground_open_term_quals
+                         (config.families.ground_open_terms
                          && ClauseOld.interpretation_dependent phi)
                   then None
                   else Some (ids, phi)
@@ -2150,10 +2420,11 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
   (* the declared atoms as the hypothesis space sees them: none when they are
      for the Houdini pre-pass only *)
   let declared_qualifiers =
-    if config.declared_atoms_houdini_only then Map.Poly.empty
-    else declared_qualifiers
+    match config.declared_atoms with
+    | Houdini_only -> Map.Poly.empty
+    | Own_unknown | Propagated -> declared_qualifiers
 
-  (* [transpositions_keep_words]: the parameter positions of each unknown the
+  (* [Transpositions { keep_words }]: the parameter positions of each unknown the
      problem reads as words *)
   let int_to_bv_vars = Qual.int_to_bv_vars
 
@@ -2193,7 +2464,11 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
           ~extracted permuted
 
   let extracted_qualifiers =
-    let declared_first = config.propagate_declared_atoms in
+    let declared_first =
+      match config.declared_atoms with
+      | Propagated -> true
+      | Own_unknown | Houdini_only -> false
+    in
     (if (not declared_first) || not config.extract_pcsp then
        union_quals declared_qualifiers
      else Fn.id)
@@ -2226,6 +2501,280 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
       else extracted)
     else Map.Poly.empty
 
+  (* [families.step_preimages]: [quals_map] with the atoms of the one-step
+     pre-images of each unknown's relational equality qualifiers added (see
+     the field).
+     Contract: returns a map above [quals_map] (nothing is removed); every
+     added qualifier is a quantifier-free atom over the unknown's parameter
+     names [x1 .. xn] alone, with the positions it mentions as its [ids].
+     Assumes the qualifiers of an unknown are written over those names, as
+     extraction and propagation write them.
+     Each question names the unknown's parameters canonically (by position
+     and sort) and its bound variables by a counter in traversal order, unless
+     a clause variable is already spelled like a canonical parameter, when it
+     keeps fresh names and is never shared; under [memos.share_step_preimages]
+     a question equal to one asked before (as a formula: the same question up
+     to the names of the clause's variables) is not asked again. *)
+  let step_preimages quals_map =
+    if not config.families.step_preimages then quals_map
+    else
+      let exi_senv = Problem.senv_of APCSP.problem in
+      let fenv = Problem.fenv_of APCSP.problem in
+      let x_i = QualPropagation.x_i in
+      let arith s = Term.is_int_sort s || Term.is_real_sort s || Term.is_bool_sort s in
+      let is_equality = function
+        | Formula.Atom (Atom.App (Predicate.Psym T_bool.Eq, [ t; _ ], _), _) ->
+            Term.is_int_sort (Term.sort_of t) || Term.is_real_sort (Term.sort_of t)
+        | _ -> false
+      in
+      (* the atoms (over the canonical parameters) each canonical question
+         gave, for this problem only; keyed on the whole formula, since the
+         default hash sees only its first nodes *)
+      let memo = Hashtbl.PolyDeep.create () in
+      (* the canonical name of the unknown's [i]-th parameter; the sort is in
+         the name, so a name never meets the solver's context with two sorts *)
+      let canonical_param i s =
+        Ident.Tvar
+          (sprintf "#spy%d%s" i
+             (if Term.is_int_sort s then "i"
+              else if Term.is_real_sort s then "r"
+              else "b"))
+      in
+      let images =
+        Set.fold (Problem.clauses_of APCSP.problem) ~init:Map.Poly.empty
+          ~f:(fun acc c ->
+            let uni_senv, ps, ns, phi = Clause.to_old_clause exi_senv c in
+            let senv = Map.Poly.to_alist (Logic.to_old_sort_env_map uni_senv) in
+            let apps atms =
+              List.filter_map (Set.to_list atms) ~f:(function
+                | Atom.App (Predicate.Var (p, sorts), args, _) -> Some (p, sorts, args)
+                | _ -> None)
+            in
+            let heads = apps ps and bodies = apps ns in
+            if
+              List.is_empty heads
+              || (not (List.for_all senv ~f:(snd >> arith)))
+              || not (Formula.is_quantifier_free phi)
+            then acc
+            else
+              (* every name the clause spells: a canonical parameter name
+                 among them would be captured by the renaming *)
+              let clause_names =
+                lazy
+                  (Set.union
+                     (Set.Poly.of_list (List.map senv ~f:fst))
+                     (Set.Poly.union_list
+                        (Formula.names_spelled_in phi
+                        :: List.map (heads @ bodies) ~f:(fun (_, _, args) ->
+                               Set.Poly.union_list
+                                 (List.map args ~f:Term.tvs_of)))))
+              in
+              List.fold heads ~init:acc ~f:(fun acc (p, sorts, hargs) ->
+                  List.fold bodies ~init:acc ~f:(fun acc (p', _, bargs) ->
+                      match Map.Poly.find quals_map p with
+                      | Some quals
+                        when Ident.pvar_equal p p'
+                             && List.for_all sorts ~f:arith ->
+                          let canonical =
+                            not
+                              (List.existsi sorts ~f:(fun i s ->
+                                   Set.mem (Lazy.force clause_names)
+                                     (canonical_param i s)))
+                          in
+                          let ys =
+                            List.mapi sorts ~f:(fun i s ->
+                                ( (if canonical then canonical_param i s
+                                   else Ident.mk_fresh_tvar ()),
+                                  s ))
+                          in
+                          let to_x =
+                            Map.Poly.of_alist_exn
+                            @@ List.mapi ys ~f:(fun i (y, s) ->
+                                (y, Term.mk_var (x_i i) s))
+                          in
+                          let index =
+                            Map.Poly.of_alist_exn
+                            @@ List.mapi ys ~f:(fun i (y, _) -> (y, i))
+                          in
+                          let defs =
+                            List.map2_exn ys bargs ~f:(fun (y, s) t ->
+                                Formula.eq (Term.mk_var y s) t)
+                          in
+                          let to_h =
+                            Map.Poly.of_alist_exn
+                            @@ List.mapi hargs ~f:(fun i t -> (x_i i, t))
+                          in
+                          let found =
+                            Set.fold quals ~init:Set.Poly.empty
+                              ~f:(fun found (_, q) ->
+                                if
+                                  Set.length (Formula.tvs_of q) < 2
+                                  || not (is_equality q)
+                                then found
+                                else
+                                  let body =
+                                    Formula.mk_exists_if_bounded senv
+                                    @@ Formula.and_of
+                                         (Formula.mk_neg phi
+                                         :: Formula.subst to_h q :: defs)
+                                  in
+                                  (* the clause's variables, bound here,
+                                     renamed by a counter in traversal order;
+                                     a counter name the question already
+                                     spells is skipped, so nothing is
+                                     captured *)
+                                  let question =
+                                    if not canonical then body
+                                    else
+                                      let taken = Formula.names_spelled_in body in
+                                      let n = ref 0 in
+                                      let rec next () =
+                                        incr n;
+                                        let x = Ident.Tvar (sprintf "#spb%d" !n) in
+                                        if Set.mem taken x then next () else x
+                                      in
+                                      Formula.aconv_tvar_norm next body
+                                  in
+                                  (* the qualifiers the question's elimination
+                                     gives; [None] when the elimination raised *)
+                                  let eliminate () =
+                                    Atomic.incr step_preimage_questions;
+                                    match
+                                      Common.PhaseTime.with_phase "step-preimage"
+                                        (fun () ->
+                                          Z3Smt.Z3interface.qelim
+                                            ~timeout:(Some 1000) ~id ~fenv question)
+                                    with
+                                    | exception exn_
+                                      when not (Common.Timer.is_async exn_) ->
+                                        Atomic.incr step_preimage_failed;
+                                        None
+                                    | phi' when not (Formula.is_quantifier_free phi') ->
+                                        Some Set.Poly.empty
+                                    | phi' ->
+                                        (* every atom of the pre-image over at
+                                           least two parameters, the one-sided
+                                           and strict halves included: keeping
+                                           only the equalities it states lost
+                                           the inputs this family is for *)
+                                        let pos, neg = Formula.atoms_of phi' in
+                                        Some
+                                          (Set.fold (Set.union pos neg)
+                                             ~init:Set.Poly.empty
+                                             ~f:(fun found atm ->
+                                               let tvs = Atom.tvs_of atm in
+                                               if
+                                                 Set.length tvs < 2
+                                                 || not
+                                                      (Set.for_all tvs
+                                                         ~f:(Map.Poly.mem index))
+                                               then found
+                                               else
+                                                 let q' =
+                                                   Normalizer.normalize
+                                                   @@ Evaluator.simplify
+                                                   @@ Formula.subst to_x
+                                                        (Formula.mk_atom atm)
+                                                 in
+                                                 if
+                                                   Formula.is_true q'
+                                                   || Formula.is_false q'
+                                                 then found
+                                                 else
+                                                   Set.add found
+                                                     ( Set.Poly.map tvs
+                                                         ~f:(Map.Poly.find_exn index),
+                                                       q' )))
+                                  in
+                                  (* a canonical question's atoms depend on the
+                                     question alone ([index] and [to_x] are
+                                     the same for every canonical question of
+                                     the unknown's sorts), so a stored answer
+                                     is the one asking would give *)
+                                  let atoms =
+                                    if canonical && config.memos.share_step_preimages
+                                    then (
+                                      match Hashtbl.find memo question with
+                                      | Some atoms ->
+                                          Atomic.incr step_preimage_shared;
+                                          Common.PhaseTime.event "step-preimage-shared";
+                                          atoms
+                                      | None -> (
+                                          match eliminate () with
+                                          | Some atoms ->
+                                              Hashtbl.set memo ~key:question ~data:atoms;
+                                              atoms
+                                          | None -> Set.Poly.empty))
+                                    else
+                                      Option.value (eliminate ())
+                                        ~default:Set.Poly.empty
+                                  in
+                                  Set.union found atoms)
+                          in
+                          Debug.print
+                          @@ lazy
+                               (sprintf "[step-preimages] %s: %s"
+                                  (Ident.name_of_pvar p)
+                                  (String.concat_map_set ~sep:"; " found
+                                     ~f:(snd >> Formula.str_of)));
+                          Map.Poly.update acc p ~f:(function
+                            | None -> found
+                            | Some d -> Set.union d found)
+                      | _ -> acc)))
+      in
+      union_quals quals_map images
+
+  let extracted_qualifiers = step_preimages extracted_qualifiers
+
+  (* [families.membership_instances]: [quals_map] with, for every unknown and
+     every finite-membership fact of the problem's formulas or of the input's
+     assertions, the fact's disjunction at each parameter of the bound's sort,
+     as one qualifier (see the field and [MembershipFacts]).
+     Contract: returns a map above [quals_map] (nothing is removed); every
+     added qualifier is a quantifier-free disjunction of equations over one
+     parameter name [xi] of the unknown (named as every qualifier here is,
+     [sort_env_list_of_sorts]), with that position as its [ids]; at most one
+     per (fact, parameter).  Each one offered is printed and counted as the
+     phase-report event [membership-instance]. *)
+  let membership_instances quals_map =
+    if not config.families.membership_instances then quals_map
+    else
+      Common.PhaseTime.with_phase "membership-instances" @@ fun () ->
+      let input =
+        match LogicOld.get_input_record () with
+        | LogicOld.InputAsRead phis -> phis
+        | LogicOld.InputDigest { quantified; _ } -> quantified
+      in
+      let facts =
+        MembershipFacts.facts
+          (input @ Set.to_list (PCSP.Problem.old_formulas_of APCSP.problem))
+      in
+      if List.is_empty facts then quals_map
+      else
+        Map.Poly.fold (PCSP.Problem.senv_of APCSP.problem) ~init:quals_map
+          ~f:(fun ~key ~data acc ->
+            let params =
+              sort_env_list_of_sorts
+              @@ List.map (Logic.Sort.args_of data) ~f:Logic.ExtTerm.to_old_sort
+            in
+            match MembershipFacts.instances facts params with
+            | [] -> acc
+            | insts ->
+                let quals =
+                  Set.Poly.of_list
+                  @@ List.map insts ~f:(fun (i, phi) ->
+                      Common.PhaseTime.event "membership-instance";
+                      Debug.print
+                      @@ lazy
+                           (sprintf "[membership-instances] %s: %s"
+                              (Ident.name_of_tvar key) (Formula.str_of phi));
+                      (Set.Poly.singleton i, phi))
+                in
+                union_quals acc
+                  (Map.Poly.singleton (Ident.tvar_to_pvar key) quals))
+
+  let extracted_qualifiers = membership_instances extracted_qualifiers
+
   let generate pvar params labeled_atoms examples n =
     match List.nth domains n with
     | None -> failwith "generate"
@@ -2235,7 +2784,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
            that step unchanged -- so one site covers all of them and the
            domains keep their signatures *)
         let labeled_atoms =
-          if not config.sat_point_instances then labeled_atoms
+          if not config.families.sat_point_instances then labeled_atoms
           else
             let sat_point =
               ExampleInstance.chooser
@@ -2268,7 +2817,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
                    "parametric atoms grounded so far: %d, of which %d at a \
                     point their condition rejects"
                    grounded vacuous));
-        (* a clause's disjunction about a cell ([lift_clause_cell_disjunctions])
+        (* a clause's disjunction about a cell ([families.lift.clause_cell_disjunctions])
            is offered as read off its clause: the families below rewrite an
            atom (swap arguments, drop a constant, reflect a halfspace), and
            applied to every atom of a disjunction at once they make a variant
@@ -2289,15 +2838,17 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
              not @@ Set.exists (Formula.fvs_of phi) ~f:(fun tvar ->
                 not @@ List.exists params ~f:(fun (tvar1, _) -> Stdlib.(tvar = tvar1)))) *)
           |> Set.Poly.map ~f:(fun (_, phi) -> (params, phi))
-          |> (if config.add_arg_transpositions then fun extracted ->
-                let permuted =
-                  Common.PhaseTime.with_phase "gen-permutations" (fun () ->
-                      Qual.add_arg_permutations ?limit:None extracted)
-                in
-                if config.transpositions_keep_words then
-                  keep_word_forms pvar params extracted permuted
-                else permuted
-              else Fn.id)
+          |> (match config.families.arg_transpositions with
+             | Transpositions { keep_words } ->
+                 fun extracted ->
+                   let permuted =
+                     Common.PhaseTime.with_phase "gen-permutations" (fun () ->
+                         Qual.add_arg_permutations ?limit:None extracted)
+                   in
+                   if keep_words then
+                     keep_word_forms pvar params extracted permuted
+                   else permuted
+             | Off -> Fn.id)
           (* An extracted qualifier carries whatever constant the clause it came
              from compared against, so a slice whose contract says its first
              element is 10 contributes only "that element is not 10" and the
@@ -2325,7 +2876,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
         (* built from the parameters rather than from a qualifier, so it is
            unioned in rather than mapped over either set above *)
         let equalities =
-          if not config.add_arg_equalities then Set.Poly.empty
+          if not config.families.arg_equalities then Set.Poly.empty
           else
             Qual.arg_equalities params
             |> if config.add_neg then Qual.add_neg else Fn.id
@@ -2396,7 +2947,7 @@ module Make (Cfg : Config.ConfigType) (APCSP : Problem.ProblemType) :
         (* reflected AFTER normalization, because before it a halfspace may
            still be written as [0 <= -t] rather than [-t >= 0] and the
            reflection would not see it *)
-        |> (if config.add_reflections then Qual.add_reflections else Fn.id)
+        |> (if config.families.reflections then Qual.add_reflections else Fn.id)
         |> Set.union
              (if config.filter_out_non_div_mod then
                 Set.filter clause_disjs ~f:Qual.div_mod_filter

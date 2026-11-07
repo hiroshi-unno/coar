@@ -1,0 +1,6 @@
+type HTML = html[Head, Body]
+type Head = head[(Base)*,Title]
+type Base = base[]
+type Title = title[Text]
+type Body = Text
+type Text = text[]

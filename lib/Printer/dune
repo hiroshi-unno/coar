@@ -2,7 +2,7 @@
  (name Printer)
  (public_name CoAR.Printer)
  (preprocess
-  (pps ppx_deriving_yojson))
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
  (libraries
   core
   z3
@@ -14,5 +14,9 @@
   CoAR.muCLP
   CoAR.pCSP
   CoAR.PCSat
-  CoAR.HOMCSat)
+  CoAR.HOMCSat
+  CoAR.automata
+  CoAR.grammar
+  CoAR.HFL
+  CoAR.QFL)
  (modules config smtlib2 solver))

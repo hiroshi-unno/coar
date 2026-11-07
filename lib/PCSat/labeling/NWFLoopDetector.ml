@@ -4,28 +4,11 @@
 open Core
 open Ast
 
-let find_cycle graph vertiecs =
-  (* graph must be strongly connected *)
-  let open Graph in
-  let open Pack.Digraph in
-  let rec inner stack visited ver =
-    if Set.mem visited ver then
-      match List.findi stack ~f:(fun _ v -> Stdlib.(v = ver)) with
-      | Some (i, _) -> ver :: List.take stack (i + 1) |> List.rev
-      | None -> assert false
-    else
-      inner (ver :: stack) (Set.add visited ver) (List.hd_exn (succ graph ver))
-  in
-  let start = Set.choose_exn vertiecs in
-  inner [] Set.Poly.empty start
-
-(* ToDo: implement Johnson algorithm to find all cycle *)
-let find_cycles graph vertiecs = [ find_cycle graph vertiecs ]
+(* The cycles are found by [LoopDetector.find_cycles]. *)
 
 let term_map m examples =
   (* size of examples is more than 0 *)
-  let open Graph in
-  let open Pack.Digraph in
+  let open IntDigraph in
   let cnt = ref 0 in
   let map =
     Set.fold ~init:Map.Poly.empty examples ~f:(fun map -> function
@@ -55,8 +38,7 @@ let term_map m examples =
   (map, rmap, !cnt)
 
 let gen_graph m sample =
-  let open Graph in
-  let open Pack.Digraph in
+  let open IntDigraph in
   let node_map, node_map_rev, n = term_map m sample in
   let graph = create ~size:n () in
   Set.iter sample ~f:(fun (_, (idl, idr), terms) ->
@@ -88,8 +70,7 @@ let rec get_papps_nwf ~print name m node_map_rev acc = function
   | _ -> acc
 
 let detect_nwf ~print name m (graph, components, node_map_rev) res =
-  let open Graph in
-  let open Pack.Digraph in
+  let open IntDigraph in
   List.fold ~init:res components ~f:(fun acc component ->
       if List.length component <= 1 then acc
       else
@@ -98,7 +79,7 @@ let detect_nwf ~print name m (graph, components, node_map_rev) res =
         Set.iter component ~f:(fun v ->
             List.iter (succ graph v) ~f:(fun s ->
                 if Set.mem component s then add_edge subgraph v s else ()));
-        List.fold ~init:acc (find_cycles subgraph component)
+        List.fold ~init:acc (LoopDetector.find_cycles subgraph component)
           ~f:(fun acc cycle ->
             print @@ lazy "A non-NWF cycle found: [";
             let papps = get_papps_nwf ~print name m node_map_rev [] cycle in
@@ -158,6 +139,24 @@ let is_sat_parity_cond m node_map_rev = function
       is_accepting_priority nwf min
   | _ -> assert false
 
+(* [switch_target_verdict nwf tags]: for a family with a priority switch,
+   whether the closed walk visiting [tags] is refuted (its least priority is
+   rejecting) under the switch's target priorities; [None] without a switch.
+   The refutation tests above read the family's initial priorities whether or
+   not the switch has been taken, which is sound only because the switch's
+   producer guarantees that the two priority functions refute the same closed
+   walks; this is the run-time evidence of that premise, printed beside each
+   refutation in verbose runs. *)
+let switch_target_verdict (nwf : Kind.nwf) tags =
+  match nwf.Kind.priority_switch with
+  | None -> None
+  | Some { target = _, sigma, _, acc_set; _ } -> (
+      match List.map tags ~f:(Map.Poly.find sigma) |> Option.all with
+      | None | Some [] -> None
+      | Some (p :: ps) ->
+          let least = List.fold ps ~init:p ~f:min in
+          Some (not (Set.mem acc_set least)))
+
 let rec get_papps_parity ~print m node_map_rev acc = function
   | v1 :: v2 :: tl ->
       let t1, idl = Map.Poly.find_exn node_map_rev v1 in
@@ -176,8 +175,7 @@ let rec get_papps_parity ~print m node_map_rev acc = function
   | _ -> acc
 
 let detect_parity ~print m (graph, components, node_map_rev) res =
-  let open Graph in
-  let open Pack.Digraph in
+  let open IntDigraph in
   List.fold ~init:res components ~f:(fun acc component ->
       if List.length component <= 1 then acc
       else
@@ -186,10 +184,26 @@ let detect_parity ~print m (graph, components, node_map_rev) res =
         Set.iter component ~f:(fun v ->
             List.iter (succ graph v) ~f:(fun s ->
                 if Set.mem component s then add_edge subgraph v s else ()));
-        List.fold ~init:acc (find_cycles subgraph component)
+        List.fold ~init:acc (LoopDetector.find_cycles subgraph component)
           ~f:(fun acc cycle ->
             if is_sat_parity_cond m node_map_rev cycle then acc
             else (
+              (match cycle with
+              | v1 :: v2 :: _ ->
+                  let tag v = snd (Map.Poly.find_exn node_map_rev v) in
+                  let nwf, _, _, _ = Map.Poly.find_exn m (tag v1, tag v2) in
+                  Option.iter (switch_target_verdict nwf (List.map cycle ~f:tag))
+                    ~f:(fun refuted ->
+                      print
+                      @@ lazy
+                           (sprintf
+                              "parity cycle refuted under the initial \
+                               priorities; under the switch target: %s \
+                               (switch %s)"
+                              (if refuted then "refuted" else "NOT REFUTED")
+                              (if Kind.priority_switched nwf then "taken"
+                               else "not taken")))
+              | _ -> ());
               print @@ lazy "A non-parity cycle found: [";
               let papps = get_papps_parity ~print m node_map_rev [] cycle in
               print @@ lazy "]\n";

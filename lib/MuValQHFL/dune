@@ -1,0 +1,9 @@
+(library
+ (name MuValQHFL)
+ (public_name CoAR.MuValQHFL)
+ (preprocess
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
+ (libraries core CoAR.common CoAR.ast CoAR.RCaml CoAR.pCSP)
+ (modules config solver)
+ (synopsis
+  "Quantitative HFL: bounds of lambda-HFL terms in RCaml's expectation modes"))

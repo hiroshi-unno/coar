@@ -147,10 +147,12 @@ let skip_induction_cells = Atomic.make false
    the cell is ground (no free variable in the qualifier or the row's
    condition) or parametric, by whether evaluation alone decided it or the
    solver was asked, and by the outcome; the solver's wall time is summed.
-   One line to stderr at exit, and a snapshot at most once a second (a run
-   killed at its budget runs no [at_exit]); [COAR_RECQUAL_CENSUS=2] also
-   prints every formula of such a cell handed to the solver.  Without the
-   variable nothing is walked. *)
+   One line to stderr at exit or, with the phase-time account on, at its
+   report (also made on a signal or a hand-over to a forked copy), and a
+   snapshot at most once a second (a run killed with neither runs no
+   [at_exit], and its last snapshot can predate most of its cells);
+   [COAR_RECQUAL_CENSUS=2] also prints every formula of such a cell handed
+   to the solver.  Without the variable nothing is walked. *)
 module RecQualCensus = struct
   (* evaluated now: a [lazy] forced by two domains at once raises [Lazy.Undefined] *)
   let on =
@@ -188,12 +190,28 @@ module RecQualCensus = struct
   let last = Atomic.make 0.
 
   let snapshot () =
-    let now = Core_unix.gettimeofday () in
+    let now = Common.Clock.now_s () in
     let l = Atomic.get last in
     if Float.(now -. l >= 1.) && Atomic.compare_and_set last l now then report ()
 
+  (* The once-a-second snapshot alone is not the count of a run killed at its
+     budget: its last line is whichever snapshot came last, and when every
+     cell applying a defined function is evaluated within a second of the
+     first one (a run whose later rounds build no such cell), that line is
+     the one printed at the first solver question, before any cell had been
+     counted -- [cells=0 ... solver_calls=1] although dozens of cells were
+     evaluated.  So the count is also printed by the phase-time account's
+     report, when that account is on, which every way of ending the process
+     makes: a termination signal and a run handed to a forked copy end it
+     without running [at_exit].  Printed once: whichever comes first. *)
+  let final = Atomic.make false
+
+  let final_report () = if not (Atomic.exchange final true) then report ()
+
   let register () =
-    if not (Atomic.exchange registered true) then Stdlib.at_exit report
+    if not (Atomic.exchange registered true) then (
+      Stdlib.at_exit final_report;
+      Common.PhaseTime.at_report final_report)
 
   (* [COAR_RECQUAL_CENSUS=2]: also print each formula handed to the solver *)
   (* evaluated now: a [lazy] forced by two domains at once raises [Lazy.Undefined] *)
@@ -250,11 +268,60 @@ let column_cond ~print (table : table) qdeps qi =
         table.qconds <- IncrArray.auto_set table.qconds qi (Some (qdeps, qual, c));
       c
 
+(* The bound of [asks_for_a_long_sequence], [0] meaning off.  Process-wide, set
+   from PCSat's [simplifier.truth_table_long_sequence_bound]. *)
+let long_sequence_bound = Atomic.make 0
+
+(* [asks_for_a_long_sequence phi]: the bound [k] of [long_sequence_bound] is
+   positive, [phi] has a free sequence-sorted variable, and an integer literal
+   of absolute value at least [k] occurs in [phi] (under binders too).
+
+   Why: Z3 (5.1.0, also 5.3.3 and the 5.3.4 nightly) answers a question that
+   forces a free sequence to be long by building it one element at a time:
+   [len s > N],
+   a sequence equal to [seq.extract s N (len s - N)] and a recursive
+   definition applied to [s] and to [N] (unfolded [N] times) each take
+   seconds at [N = 100] to [1000] and do not return at the thousands a
+   counterexample model puts in an example, while memory grows to gigabytes.
+   Z3's own budgets do not bound it: on z3 5.1.0 a 3 s [timeout] stopped
+   neither [len s > 1000] nor the suffix equality asked after a [push] within
+   40 s, and an [rlimit] of 10^6 stopped the first in about a second while
+   10^7 and 10^8 did not stop it within 40 s, nor 10^6 the second.  The
+   recursive shape does keep both budgets, but a cell is asked with none
+   unless a phase sets one.  Such literals come from
+   counterexample models, so a cell's question meets them whenever an example
+   carries one beside a sequence parameter.  The test reads only the shape:
+   it neither asks the solver nor depends on time or load. *)
+let asks_for_a_long_sequence phi =
+  let k = Atomic.get long_sequence_bound in
+  k > 0
+  && SeqLengthForm.has_free_seq_var phi
+  &&
+  let bound = Z.of_int k in
+  let found = ref false in
+  Formula.iter_term phi ~f:(function
+    | Term.FunApp (T_int.Int n, [], _) when Z.geq (Z.abs n) bound ->
+        found := true
+    | _ -> ());
+  (* counted as the phase event [<phase>/tt-long-sequence-refused], so that a
+     phase report says where and how often the refusal acted *)
+  if !found then
+    Common.PhaseTime.event_here ~in_copy:true "tt-long-sequence-refused";
+  !found
+
 (* A cell's validity question.  With [SeqLengthForm.enabled] a question over
    free sequence variables is first asked over their lengths and arrays
    ([SeqLengthForm.decide_z3]), whose answer, when it gives one, is the
    answer to the same question; otherwise, and with the switch off, it is
-   asked of Z3 as it always was. *)
+   asked of Z3 as it always was -- except that a question
+   [asks_for_a_long_sequence] selects is not asked at all and raises
+   [Undecided_in_time], which [eval_pred_aux] reads as an undecided cell
+   without recording any answer for the question.
+   CONTRACT of that refusal: the cell becomes [None] ([res_unknown]), exactly
+   what a refused or timed-out question produces, so no cell is decided that
+   would not have been, and no verdict can change; what it costs is
+   completeness, a refused question Z3 would have decided (some are, at
+   once, in a fresh context) leaving its cell undecided. *)
 let z3_is_valid ~id fenv phi =
   match
     if Atomic.get SeqLengthForm.enabled then
@@ -262,7 +329,9 @@ let z3_is_valid ~id fenv phi =
     else None
   with
   | Some b -> b
-  | None -> Z3Smt.Z3interface.is_valid ~id fenv phi
+  | None ->
+      if asks_for_a_long_sequence phi then raise Undecided_in_time
+      else Z3Smt.Z3interface.is_valid ~id fenv phi
 
 let z3_check_valid ~timeout ~id fenv phi =
   match
@@ -272,7 +341,9 @@ let z3_check_valid ~timeout ~id fenv phi =
   with
   | Some true -> `Valid
   | Some false -> `Invalid []
-  | None -> Z3Smt.Z3interface.check_valid ~timeout ~id fenv phi
+  | None ->
+      if asks_for_a_long_sequence phi then raise Undecided_in_time
+      else Z3Smt.Z3interface.check_valid ~timeout ~id fenv phi
 
 (* [cond_of_qual], when given, must be [qdep_cond ~print qdeps qual]
    ([column_cond] supplies it), and is then used instead of recomputing it. *)
@@ -323,11 +394,11 @@ let eval_pred_aux ?cond_of_qual ~print ~id fenv qdeps (params, qual)
   let unfolded =
     if (ground_on || skip_on) && not (Set.is_empty (Formula.fvar_apps_of phi))
     then (
-      let t0 = Time_ns.now () in
+      let t0 = Common.Clock.now_ns () in
       let r = Evaluator.unfold_rec_apps_why phi in
       if Lazy.force RecQualCensus.verbose then
         Stdlib.Printf.eprintf "[recqual-census] unfold %.3f s %s -> %s\n%!"
-          (Time_ns.Span.to_sec (Time_ns.diff (Time_ns.now ()) t0))
+          (Time_ns.Span.to_sec (Time_ns.diff (Common.Clock.now_ns ()) t0))
           (Formula.str_of phi)
           (match r with
           | Ok p -> Formula.str_of p
@@ -351,6 +422,10 @@ let eval_pred_aux ?cond_of_qual ~print ~id fenv qdeps (params, qual)
           else Option.value (Evaluator.unfold_rec_apps cond) ~default:cond )
     | `Skip | `As_before -> (phi, cond)
   in
+  (* integer quantifiers over a ground range expanded into their instances
+     when configured ([Ast.RangePin.expand_ground], an equivalence) *)
+  let phi = Ast.RangePin.expand_ground_configured phi in
+  let cond = Ast.RangePin.expand_ground_configured cond in
   let asked = ref false in
   (* With [COAR_TT_ASK_LOG=path] in the environment, each question a cell
      sends to the solver is written to [path] before it is asked (so a run
@@ -368,11 +443,11 @@ let eval_pred_aux ?cond_of_qual ~print ~id fenv qdeps (params, qual)
         let text = Formula.str_of phi in
         let where = Common.PhaseTime.current_path () in
         Out_channel.write_all path ~data:(";; " ^ where ^ "\n" ^ text);
-        let t0 = Time_ns.now () in
+        let t0 = Common.Clock.now_ns () in
         let r =
           Z3Smt.Z3interface.with_query_dump (path ^ ".q") (fun () -> f phi)
         in
-        let secs = Time_ns.Span.to_sec (Time_ns.diff (Time_ns.now ()) t0) in
+        let secs = Time_ns.Span.to_sec (Time_ns.diff (Common.Clock.now_ns ()) t0) in
         let digest = Md5.to_hex (Md5.digest_string text) in
         Out_channel.with_file (path ^ ".tsv") ~append:true ~f:(fun oc ->
             Out_channel.output_string oc
@@ -405,13 +480,13 @@ let eval_pred_aux ?cond_of_qual ~print ~id fenv qdeps (params, qual)
           Stdlib.Printf.eprintf "[recqual-census] ask %s %s\n%!"
             (if c = 0 then "ground" else "parametric")
             (Formula.str_of phi);
-        let t0 = Time_ns.now () in
+        let t0 = Common.Clock.now_ns () in
         Exn.protect
           ~f:(fun () -> f phi)
           ~finally:(fun () ->
             RecQualCensus.add ((8 * c) + 5)
               (Int.of_float @@ Time_ns.Span.to_us
-              @@ Time_ns.diff (Time_ns.now ()) t0)))
+              @@ Time_ns.diff (Common.Clock.now_ns ()) t0)))
   in
   (* Inside a solve given a strict deadline ([SolveDeadline]) a validity
      question goes to the solver with the time left as its budget, and not at
@@ -439,8 +514,12 @@ let eval_pred_aux ?cond_of_qual ~print ~id fenv qdeps (params, qual)
           else ask (z3_is_valid ~id fenv) phi
         in
         try Evaluator.check ~cond is_valid phi with Undecided_in_time -> None)
-    | None ->
-        Evaluator.check ~cond (ask (z3_is_valid ~id fenv)) phi
+    | None -> (
+        (* [z3_is_valid] raises [Undecided_in_time] on a question it refuses
+           ([asks_for_a_long_sequence]); with the bound off it never does, and
+           this is the call it always was *)
+        try Evaluator.check ~cond (ask (z3_is_valid ~id fenv)) phi
+        with Undecided_in_time -> None)
     | Some _ -> (
         let is_valid phi =
           if
@@ -564,21 +643,45 @@ let update_map_with_atom ~print ~id t fenv hspaces atom =
   match ExAtom.pvar_of atom with
   | None -> ()
   | Some pvar ->
-      let hspace = Hashtbl.Poly.find_exn hspaces (Ident.pvar_to_tvar pvar) in
-      update_with_atom ~print ~id (get_table t pvar) fenv hspace.HypSpace.qdeps
-        atom
+      (* Assumes every example mentions only unknowns that have a hypothesis
+         space, i.e. unknowns of the problem the synthesizer was built for.
+         Examples carried over from an earlier solve are filtered to such
+         unknowns where the carry-over is made ([Context.remove_unused]); an
+         example breaking the assumption is a defect upstream, and the failure
+         names the unknown and the spaces present so that it says where the
+         example came from, instead of Base's anonymous [Not_found_s]. *)
+      match Hashtbl.Poly.find hspaces (Ident.pvar_to_tvar pvar) with
+      | Some hspace ->
+          update_with_atom ~print ~id (get_table t pvar) fenv
+            hspace.HypSpace.qdeps atom
+      | None ->
+          failwith
+            (sprintf
+               "TruthTable: an example mentions %s, which has no hypothesis \
+                space (spaces: %s); example atom: %s"
+               (Ident.name_of_pvar pvar)
+               (String.concat ~sep:","
+                  (List.map (Hashtbl.Poly.keys hspaces) ~f:Ident.name_of_tvar))
+               (ExAtom.str_of atom))
 
 let update_map_with_atoms ~print ~id t qdeps fenv =
   Set.iter ~f:(update_map_with_atom ~print ~id t fenv qdeps)
 
-let update_map_with_example ~print ~id t fenv hspaces example =
-  Set.iter example.ExClause.negative
-    ~f:(update_map_with_atom ~print ~id t fenv hspaces);
-  Set.iter example.ExClause.positive
-    ~f:(update_map_with_atom ~print ~id t fenv hspaces)
+(* [live], when given, is asked before each atom is entered, and an atom asked
+   for while it answers [false] is left out.  An atom is entered whole (a row
+   with every column) or not at all, and [index_of_atom] enters a missing one
+   when it is looked up, so a table left short this way stays consistent and
+   a later update completes it.  Without [live] every atom is entered. *)
+let update_map_with_example ?(live = fun () -> true) ~print ~id t fenv hspaces
+    example =
+  let enter atom =
+    if live () then update_map_with_atom ~print ~id t fenv hspaces atom
+  in
+  Set.iter example.ExClause.negative ~f:enter;
+  Set.iter example.ExClause.positive ~f:enter
 
-let update_map_with_examples ~print ~id t fenv hspaces =
-  Set.iter ~f:(update_map_with_example ~print ~id t fenv hspaces)
+let update_map_with_examples ?live ~print ~id t fenv hspaces =
+  Set.iter ~f:(update_map_with_example ?live ~print ~id t fenv hspaces)
 
 (* The parameter list every qualifier in this table is read against.  A table
    is a cache of "what is this qualifier's value at this atom", and the two are
@@ -632,12 +735,16 @@ let set_params table params =
    hypothesis space's parameters, which every template module builds as
    [x1 .. xn] over the predicate's argument sorts, and the classification
    synthesizer's list, built the same way from the same sorts; a table is
-   never shared between predicates, and cloning one copies its list. *)
-let update_map_with_qualifiers ~print ~id t fenv qdeps pvar (params, qualifiers)
-    =
+   never shared between predicates, and cloning one copies its list.
+   [live] is read as in [update_map_with_example], before each qualifier: a
+   column is entered whole or not at all, and [index_of_qual] enters a missing
+   one when it is looked up. *)
+let update_map_with_qualifiers ?(live = fun () -> true) ~print ~id t fenv qdeps
+    pvar (params, qualifiers) =
   let table = get_table t pvar in
   set_params table params;
-  Set.iter qualifiers ~f:(update_with_qualifier ~print ~id table fenv qdeps)
+  Set.iter qualifiers ~f:(fun qual ->
+      if live () then update_with_qualifier ~print ~id table fenv qdeps qual)
 
 (* this may update truth table *)
 let index_of_atom ~print ~id table fenv qdeps atom =
@@ -658,7 +765,7 @@ let index_of_atom ~print ~id table fenv qdeps atom =
          by first occurrence): a candidate duplicate up to renaming, not a
          proof that the two rows mean the same. *)
       let trace = Option.is_some (Sys.getenv "COAR_NEWROW_TRACE") in
-      let t0 = Time_ns.now () in
+      let t0 = Common.Clock.now_ns () in
       (* a row added on demand evaluates every qualifier at the atom; its own
          phase so that the account separates it from the rest of its caller *)
       Common.PhaseTime.with_phase "new-row" (fun () ->
@@ -684,7 +791,7 @@ let index_of_atom ~print ~id table fenv qdeps atom =
            "[newrow] row=%d quals=%d params=%d secs=%.3f dup=%s atom=%s\n%!" ai
            (length_of_quals table)
            (Map.Poly.length (ExAtom.params_of atom))
-           (Time_ns.Span.to_sec (Time_ns.diff (Time_ns.now ()) t0))
+           (Time_ns.Span.to_sec (Time_ns.diff (Common.Clock.now_ns ()) t0))
            (match dup with Some i -> string_of_int i | None -> "none")
            (ExAtom.str_of atom));
       ai

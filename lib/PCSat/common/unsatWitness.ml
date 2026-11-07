@@ -58,14 +58,34 @@ type body =
   | Countermodel of {
       formula : Formula.t;
       model : Formula.t;
-      witnesses : (Ident.tvar * Sort.t * Term.t) list;
+      witnesses : (Ident.tvar * Sort.t * Term.t) list Lazy.t;
     }
       (** no unknown is left and Z3 refuted the remaining formula with the given
           model of its free variables; [witnesses] are closed terms for
           existential binders of the negation of a clause the model falsifies
           (universal binders of the clause), which let a checker decide that
           negation by existential introduction when it binds a sequence (see
-          [CountermodelWitness]); possibly empty *)
+          [CountermodelWitness]); possibly empty.
+
+          LAZY, AND FORCED ONLY WHERE THE TERMS ARE READ.  Finding them asks
+          the solver one question per quantified conjunct of each grounded
+          clause, each with the zero-unknown query budget, and the verdict
+          does not depend on them; built eagerly, the search ran between the
+          refutation and the printing of [unsat] and took most of a run whose
+          refutation itself was quick.  Contract: the suspension is built by
+          the refuting site with every argument fixed there (formula, model,
+          the function environment current at that moment), so forcing it
+          later computes the terms an eager search would have computed, up to
+          the solver's nondeterminism; it is forced only by [force_witnesses],
+          which [str_of ~force:true] (the printer, after the verdict line is
+          out) and the checker's countermodel arm call, and by nothing that
+          runs before the verdict.  A suspension built inside a nested solve
+          over a finite instance resolves datatypes by name in the
+          process-wide environment, which is restored when that solve ends,
+          so it is forced only where the instance's environments are
+          installed again (the checker); the printer shows it only if already
+          forced.  The value never crosses a fork: forked copies return
+          plain tags, never a solve's [info]. *)
   | External of string
       (** a component whose evidence is not yet recorded (strategy synthesis for
           FN totality, the old resolver) *)
@@ -113,6 +133,17 @@ and t = {
 
 let make ?(problem = None) senv body = { senv; body; problem }
 
+(* The countermodel's witness terms, searching for them on first use.  The
+   search is its own phase of the phase account, with an event
+   [countermodel-witness] at each forcing, so that its time is booked to it
+   and not to whatever phase happens to be open around the reader. *)
+let force_witnesses (ws : (Ident.tvar * Sort.t * Term.t) list Lazy.t) =
+  if Lazy.is_val ws then Lazy.force ws
+  else
+    Common.PhaseTime.with_phase "countermodel-witness" (fun () ->
+        Common.PhaseTime.event_here "countermodel-witness";
+        Lazy.force ws)
+
 let str_of_source senv = function
   | Clause c -> sprintf "(clause %s)" (Clause.str_of senv c)
   | Assumed c -> sprintf "(assumed %s)" (Clause.str_of senv c)
@@ -155,7 +186,13 @@ let rec has_assumption { body; _ } =
   | FalseConstraint _ | Countermodel _ | External _ -> false
   | FiniteInstance { nested; _ } -> has_assumption nested
 
-let rec str_of ({ senv; body; _ } as w) =
+(* [force] (default [true]): whether a countermodel's witness terms not yet
+   searched for are searched for now (see [Countermodel]); without it, or
+   inside a finite instance's nested refutation, they are shown only when
+   already found, and otherwise as [(witnesses not-searched)].  A trace calls
+   it with [~force:false], so that turning tracing on does not move the
+   search before the verdict. *)
+let rec str_of ?(force = true) ({ senv; body; _ } as w) =
   let head, rest =
     match body with
     | Conflict { atom; positives; negatives } ->
@@ -186,17 +223,22 @@ let rec str_of ({ senv; body; _ } as w) =
         ( "(countermodel)",
           sprintf "\n (formula %s)\n (model %s)%s" (Formula.str_of formula)
             (Formula.str_of model)
-            (if List.is_empty witnesses then ""
+            (if not (force || Lazy.is_val witnesses) then
+               "\n (witnesses not-searched)"
              else
-               sprintf "\n (witnesses %s)"
-                 (String.concat_map_list witnesses ~sep:" " ~f:(fun (x, _, t) ->
-                      sprintf "(%s %s)" (Ident.name_of_tvar x) (Term.str_of t))))
-        )
+               let witnesses = force_witnesses witnesses in
+               if List.is_empty witnesses then ""
+               else
+                 sprintf "\n (witnesses %s)"
+                   (String.concat_map_list witnesses ~sep:" "
+                      ~f:(fun (x, _, t) ->
+                        sprintf "(%s %s)" (Ident.name_of_tvar x)
+                          (Term.str_of t)))) )
     | External what -> (sprintf "(external \"%s\")" what, "")
     | FiniteInstance { leaf = uni_senv, term; size; nested; _ } ->
         ( sprintf "(finite-instance (size %d))" size,
           "\n " ^ Logic.ExtTerm.str_of_formula senv uni_senv term ^ "\n "
-          ^ str_of nested )
+          ^ str_of ~force:false nested )
   in
   sprintf "(unsat-witness %s%s%s)" head rest
     (if has_assumption w then "\n (conditional-on-assumed-clauses)" else "")

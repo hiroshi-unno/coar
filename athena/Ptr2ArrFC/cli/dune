@@ -1,0 +1,11 @@
+; The ptr2arr command line as a library: the standalone executable in ../bin
+; and CoAR's main.exe both run the transformation through it. Optional, so a
+; build of the enclosing repository without Frama-C skips it.
+
+(library
+ (optional)
+ (name ptr2arr_cli)
+ (public_name frama-c-ptr2arr.cli)
+ (flags :standard -open Frama_c_kernel)
+ (libraries unix frama-c.kernel frama-c-eva.core ptr2arr_fc))
+

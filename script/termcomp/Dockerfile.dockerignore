@@ -14,3 +14,8 @@ script/starexec
 learner
 script
 !script/termcomp/solver.sh
+# Build outputs of the athena tools, built again inside the image
+athena/Ptr2ArrFC/_build
+
+# Build directories of script/llvmfront/dune.sh at the root
+_build_llvmfront

@@ -1,0 +1,9 @@
+; (optional): binds the commercial Gurobi solver through `lp-gurobi`, so it is
+; built only where that package is installed.  CoAR.MIPSolver uses it through
+; dune's [select] when it is built.
+(library
+ (name MIPGurobi)
+ (public_name CoAR.MIPGurobi)
+ (optional)
+ (libraries core ctypes ctypes.foreign lp lp-gurobi)
+ (modules gurobiInterface))

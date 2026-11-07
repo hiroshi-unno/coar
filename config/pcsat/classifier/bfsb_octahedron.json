@@ -5,7 +5,7 @@
             "Filename",
             "./config/pcsat/qualifier/octahedron.json"
         ],
-        "strategy": [
+        "selection": [
             "First"
         ]
     }

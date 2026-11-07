@@ -1,0 +1,2 @@
+(* h expects a function of sort bool -> bool and is applied to the formula true *)
+_exists h : (bool -> bool) -> bool. _forall f : bool -> bool. (h(f) && h(|true|))

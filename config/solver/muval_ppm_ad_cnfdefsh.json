@@ -1,0 +1,24 @@
+[
+    "MuVal",
+    {
+        "optimizer": [
+            "Filename",
+            "./config/muclp/optimizer/enable.json"
+        ],
+        "fixpoint_reduction": [
+            "Parity_progress_measure",
+            {
+                "use_scc": false,
+                "loop_levels": false
+            }
+        ],
+        "pcsp_solver_primal": [
+            "Filename",
+            "./config/solver/pcsat_fixpoint_cnfdefsh.json"
+        ],
+        "pcsp_solver_dual": [
+            "Filename",
+            "./config/solver/pcsat_fixpoint_cnfdefsh.json"
+        ]
+    }
+]

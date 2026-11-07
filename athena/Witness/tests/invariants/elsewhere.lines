@@ -1,0 +1,1 @@
+(invariant (loc 12 3) (function "main") (vars (i signed 32)) (>= i 0))

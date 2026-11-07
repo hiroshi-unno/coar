@@ -53,26 +53,49 @@ module Make (Config : Config.ConfigType) : SolverType = struct
        Z3 unfolds a recursive definition only where a query applies it, so an
        uncalled definition with no model was answered sat. Ordinary declarations plus all equations are used in a fresh
        query context for this supported family only. *)
+    (* The interpretations Z3 chose for the model's functions, filled on the
+       two paths whose model is Z3's own model of the question (with every
+       defining equation asserted, or with no known function at all); they
+       are only printed.  The certificate paths below leave it empty, so a
+       function there prints as a don't-care. *)
+    let fun_values = ref [] in
     let result =
       if Z3interface.supports_defining_equations fenv then
         Z3interface.check_sat_base ~fresh_solver:true ~defining_equations:true
-          ~id:None fenv [ phi ]
+          ~fun_values_out:fun_values ~id:None fenv [ phi ]
       else if
         Z3interface.refutes_defining_context_by_instances ~phis:[ phi ] ~id:None fenv
+        || (not (Z3interface.has_total_defining_context ~id:None fenv))
+           && Z3interface.refutes_defining_context_by_first_order_instances
+                ~phis:[ phi ] ~id:None fenv
       then `Unsat
-      else if Map.Poly.is_empty fenv then Z3interface.check_sat ~id:None fenv [ phi ]
+      else if Map.Poly.is_empty fenv then
+        Z3interface.check_sat_policy ~fun_values_out:fun_values ~id:None fenv
+          [ phi ]
       else
         match Z3interface.defining_context_projection_model ~id:None fenv [phi] with
         | Some model -> `Sat model
         | None ->
+            (* [check_sat] over a non-empty environment outside the
+               full-equation family returns [`Sat] only with a certificate
+               that does not read the native interpretation of the known
+               functions (a finite expansion, or a certified total
+               first-order context whose standard interpretation extends the
+               native background model), and that background model extended
+               by the standard interpretation is a model of the input and of
+               every defining equation, which is what [sat] asserts here.
+               Any other positive answer has already become [`Unknown]. *)
             (match Z3interface.check_sat ~id:None fenv [phi] with
              | `Unsat -> `Unsat
+             | `Sat model -> `Sat model
              | _ -> `Unknown "known-function context has no verified model certificate")
     in
     match result with
     | `Sat model ->
         let solution = SMT.Problem.Sat model in
-        if print_sol then print_endline (SMT.Problem.str_of_solution solution);
+        if print_sol then
+          print_endline
+            (SMT.Problem.str_of_solution ~fun_values:!fun_values solution);
         Ok solution
     | `Unsat ->
         let solution = SMT.Problem.Unsat in

@@ -1,0 +1,12 @@
+; a negated reference denotes bitwise negation, which an array does not have: the reader refuses
+; "-5" below, where 5 is an array state, rather than translating it
+1 sort bitvec 2
+2 sort bitvec 8
+3 sort array 1 2
+4 sort bitvec 1
+5 state 3 a
+6 zero 1
+7 read 2 -5 6
+8 zero 2
+9 neq 4 7 8
+10 bad 9

@@ -155,7 +155,7 @@ let depth_of qfl =
       match pred.kind with
       | Predicate.Mu -> if lv % 2 = 1 then lv else lv + 1
       | Predicate.Nu -> if lv % 2 = 0 then lv else lv + 1
-      | Predicate.Fix -> failwith "depth_of")
+      | Predicate.MuOrNu -> failwith "depth_of")
 
 let level_of qfl tvar =
   let lv, found =
@@ -166,7 +166,7 @@ let level_of qfl tvar =
             match pred.kind with
             | Predicate.Mu -> if lv % 2 = 1 then lv else lv + 1
             | Predicate.Nu -> if lv % 2 = 0 then lv else lv + 1
-            | Predicate.Fix -> failwith "level_of"
+            | Predicate.MuOrNu -> failwith "level_of"
           in
           if Ident.tvar_equal tvar pred.name then (lv', true) else (lv', false))
   in
@@ -211,7 +211,21 @@ let unfold qfl =
         then Second (pred.name, (pred.args, pred.body))
         else First pred)
   in
-  let fsub = Map.Poly.of_alist_exn funs in
+  (* [fsub] is closed under itself: no definition in it applies another
+     function of [fsub].  Callers substitute it in one pass (into the query, the
+     remaining bodies and the nonnegativity constraints), so a definition that
+     called another inlined function -- an entry expression over the
+     post-expectation's function, both non-recursive -- left that application
+     behind as an unknown function symbol, and the bound could not be proved.
+     Each function in [fsub] is either applied by no equation or applies
+     none, so a chain of them is at most two long and one round of
+     substitution closes it. *)
+  let fsub =
+    let fsub = Map.Poly.of_alist_exn funs in
+    Map.Poly.mapi fsub ~f:(fun ~key ~data:(args, body) ->
+        let pred = Pred.subst_funcs fsub (Pred.make Predicate.Mu key args body) in
+        (pred.args, pred.body))
+  in
   ( fsub,
     {
       preds = List.map preds ~f:(Pred.subst_funcs fsub);

@@ -89,6 +89,7 @@ struct
         let fenv : LogicOld.FunEnv.t = Map.Poly.empty
         let sol_space = PCSP.Problem.sol_space_of APCSP.problem
         let id = id
+        let problem_clauses = lazy []
       end in
       match config.kind with
       | Ord_DNF cfg ->
@@ -273,9 +274,7 @@ struct
                 snd @@ Logic.ExtTerm.remove_dontcare_elem
                 (* ToDo: support parameteric candidate solution and CEGIS(T)*)
                 @@
-                match List.find model ~f:(fst >> fst >> Stdlib.( = ) key) with
-                | None -> ((key, data), None)
-                | Some opt -> opt)
+                ((key, data), Option.join (Logic.model_find model (key, data))))
           in
           let hole_sub =
             Map.Poly.of_alist_exn
@@ -310,10 +309,7 @@ struct
       | `Unsat unsat_keys ->
           Debug.print
           @@ lazy ("unsat, reason:" ^ String.concat unsat_keys ~sep:",");
-          let unsat_keys =
-            List.map unsat_keys ~f:(fun str ->
-                String.sub str ~pos:1 ~len:(String.length str - 2))
-          in
+          (* Unsat-core IDs are the exact keys supplied to the tracking API. *)
           let labels =
             List.fold unsat_keys ~init:Set.Poly.empty ~f:(fun labels key ->
                 Set.add labels @@ Map.Poly.find_exn key_tvar_update_list_map key)

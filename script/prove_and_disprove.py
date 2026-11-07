@@ -12,27 +12,43 @@ import traceback
 
 ground_children = Manager().list()
 
+def refusal_reason(returncode, err):
+    """The reason of a refusal -- status 1 with a last stderr line `error: <reason>` -- made
+    safe for an unquoted CSV field, or None for any other run (a crash, a signal)."""
+    if returncode != 1:
+        return None
+    lines = [line for line in err.decode("utf-8", "replace").splitlines()
+             if line.startswith("error: ")]
+    if not lines:
+        return None
+    reason = lines[-1][len("error: "):].replace(",", ";").replace('"', "'")
+    return "".join(c if " " <= c <= "~" else "?" for c in reason)[:200]
+
+
 def run_coar(args, timeout):
     cmd = "dune exec main -- " + args
     start = time.time()
-    with Popen([cmd], stdout=PIPE, shell=True) as p:
+    with Popen([cmd], stdout=PIPE, stderr=PIPE, shell=True) as p:
 #        print("opend")
         ground_children.append(p.pid)
 #        print("append")
         try:
-            p.wait(timeout=timeout)
+            out, err = p.communicate(timeout=timeout)
             elapsed = time.time() - start
-            res = p.stdout.read().decode("utf-8").rstrip('\n')
+            sys.stderr.buffer.write(err)
+            res = out.decode("utf-8").rstrip('\n')
             res_ = list(map(lambda s: s.lstrip(' '), res.split(",")))
             if len(res_) == 2:
-                res, ite = list(map(lambda s: s.lstrip(' '), res.split(",")))
+                res, ite = res_
                 if res in ["sat", "unsat"]:
                     return (res, elapsed, ite)
             elif len(res_) == 1:
                 if res in ["valid", "invalid"]:
                     return (res, elapsed, None)
-            else:
-                return ("abort", elapsed, None)
+            reason = refusal_reason(p.returncode, err)
+            if reason is not None:
+                return ("refused", elapsed, reason)
+            return ("abort", elapsed, None)
         except TimeoutExpired:
             p.kill()
             return ("timeout", timeout, None)

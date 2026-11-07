@@ -36,6 +36,31 @@ let of_fundef (Ident.Tvar x, t) : pred_subst_elem =
          (String.concat_map_list ~sep:"," ~f:(fst >> Ident.name_of_tvar) args)
          (Logic.ExtTerm.str_of t')
 
+(* [of_term_fundef (x, t)] reads [t = fun args -> body], the solution of a
+   function [x] whose result is not Bool, as its parameters renamed to the
+   normalised names [of_fundef] uses and its body as a term over them.
+   [of_fundef] reads every body as a formula and so cannot take one of these.
+   The body may still hold a template's [Case] selection; resolving it is the
+   printer's business. *)
+let of_term_fundef (Ident.Tvar x, t) : Ident.tvar * (sort_env_list * Term.t)
+    =
+  let args, t' = Logic.Term.let_lam t in
+  let params, map =
+    normalize_sort_env_list @@ Logic.to_old_sort_env_list args
+  in
+  try
+    ( Ident.Tvar x,
+      ( params,
+        Term.rename map
+        @@ Logic.ExtTerm.to_old_trm Map.Poly.empty (Map.of_list_exn args) t' )
+    )
+  with exn_ when not (Common.Timer.is_async exn_) ->
+    failwith
+    @@ sprintf "[of_term_fundef] the given solution for %s(%s) is ill-formed: %s"
+         x
+         (String.concat_map_list ~sep:"," ~f:(fst >> Ident.name_of_tvar) args)
+         (Logic.ExtTerm.str_of t')
+
 let of_subst (sub : Logic.term_subst_map) : t =
   ( Map.Poly.empty,
     Set.Poly.of_list @@ List.map ~f:of_fundef @@ Map.Poly.to_alist sub )

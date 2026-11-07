@@ -11,9 +11,10 @@ open Core
    done at the timeout is never read, and the same query is asked again at the
    same budget until the run ends.
 
-   [keep] (the [keep_timeout_budget_across_rebuild] switch) lets the doubled
-   budget survive exactly that rebuild, capped so that one round cannot take
-   the whole run.  Any other rebuild -- a changed shape, new qualifiers, a new
+   [keep] lets the doubled budget survive exactly that rebuild, capped so
+   that one round cannot take the whole run.  The synthesizer always passes
+   [keep] true; [keep] false is the old reset, kept for a test that shows
+   the difference.  Any other rebuild -- a changed shape, new qualifiers, a new
    call with new examples -- returns to the configured budget.
 
    All three functions are total and leave a [None] budget (no Z3 timeout) as
@@ -76,7 +77,7 @@ let on_rebuild ~keep ~configured ~cap ~current reason =
    reads, so the rebuild that follows regenerates the same templates (fresh
    parameter names) and the same example constraints -- 11 to 40 s per round
    on large array inputs -- only to ask the same question, at the configured
-   budget unless [keep_timeout_budget_across_rebuild] is on. *)
+   budget unless the rebuild keeps the doubled budget. *)
 let ask_reasking ~reask ~timeout_only ~budget ~expired ask =
   let raised before after =
     match (before, after) with

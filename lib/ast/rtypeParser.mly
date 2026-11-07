@@ -93,6 +93,14 @@ let print _ = ()
 
 %token EOF
 
+/* A quantifier's body extends as far to the right as possible, the usual
+   binder convention: `_forall x:int. A && B => C` is `forall x. (A && B => C)`,
+   and `A && _exists y:int. B || C` is `A && (exists y. (B || C))`.  The
+   quantifier rules carry this lowest precedence; without it each took the
+   precedence of its last terminal, DOT, the highest, so menhir reduced the
+   quantifier before any connective and the body stopped at the first `&&`,
+   `||`, `=>` or `<=>`, leaving the variable free in the rest. */
+%nonassoc prec_binder
 //%right prec_tyarrow
 %nonassoc prec_typair
 //%left prec_tyapp
@@ -362,17 +370,17 @@ prop:
   // | LT IDENT GT prop { Formula.diamond $2 $4 }
   // | MU IDENT DOT prop { Formula.mu (Idnt.make $2) $4 }
   // | NU IDENT DOT prop { Formula.nu (Idnt.make $2) $4 }
-  | FORALL binds DOT prop {
+  | FORALL binds DOT prop %prec prec_binder {
     fun env ->
     let env' = List.fold $2 ~init:env ~f:(fun env (x, s) -> Map.Poly.set env ~key:x ~data:s) in
     Formula.forall $2 ($4 env')
   }
-  | EXISTS binds DOT prop {
+  | EXISTS binds DOT prop %prec prec_binder {
     fun env ->
     let env' = List.fold $2 ~init:env ~f:(fun env (x, s) -> Map.Poly.set env ~key:x ~data:s) in
     Formula.exists $2 ($4 env')
   }
-  | FORALL DOT prop {
+  | FORALL DOT prop %prec prec_binder {
     fun env -> Formula.forall [] ($3 env)
   }
 binds:

@@ -1,0 +1,15 @@
+# x is a nat variable equal to 1, and the same quotient x / 2 appears in a guard and in the
+# expectation.  In the guard (inside the program) it is integer division, 0, so c is 0; in
+# the expectation it is exact division, 1/2.  The expectation of c + x / 2 is 1/2, so the
+# upper bound 1/2 holds (the lower-bound file beside this one pins the other side).
+# Expected: valid.  With exact division in the guard, c was 1, the expectation was 3/2, and
+# the bound was not proved.
+nat x;
+nat c;
+x := 1;
+if (x / 2 > 0) {
+	c := 1;
+} else {
+	c := 0;
+}
+?Ex [c + x / 2] <= 1/2

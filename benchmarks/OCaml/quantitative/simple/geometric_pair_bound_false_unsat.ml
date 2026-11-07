@@ -1,0 +1,13 @@
+(* The pair of geometric_pair_bound_true_sat.ml, whose second component is
+   exactly 1/2, with the second bound lowered to 1/4: false, so no solver may
+   answer sat. *)
+[@@@mode "hfl_prop_as_expectation"]
+
+let p = 0.5
+let rec f x k =
+  let r11, r12 = k () in
+  let r21, r22 = f () k in
+  p *. r11 +. (1.0 -. p) *. (r21 +. 1.0),
+  p *. r12 +. (1.0 -. p) *. (r22 +. 0.5)
+
+[@@@assert "typeof(f) <: unit -> (unit -> { r : prop * prop | r = Tuple(0.0, 0.0) }) -> { ret : prop * prop | 0.0 <= $proj(0, ret) && $proj(0, ret) <= 1.0 && 0.0 <= $proj(1, ret) && $proj(1, ret) <= 0.25 }"]

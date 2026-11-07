@@ -2,7 +2,7 @@
  (name resolution)
  (public_name CoAR.PCSat.resolution)
  (preprocess
-  (pps ppx_deriving_yojson))
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
  (libraries
   core
   yojson
@@ -11,4 +11,4 @@
   CoAR.Z3Smt
   CoAR.PCSat.synthesis
   CoAR.PCSat.common)
- (modules loopDepth keepOpenParams resolver oldResolver graphResolver SMTResolver))
+ (modules loopDepth keepOpenParams problemClauseFilter atomMatching resolver oldResolver graphResolver SMTResolver))

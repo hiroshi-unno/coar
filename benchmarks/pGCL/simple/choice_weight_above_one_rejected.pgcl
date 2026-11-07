@@ -1,0 +1,11 @@
+# A probabilistic choice whose weight 3/2 is not a probability: the program has no meaning.
+# Expected: refused with one line naming the weight.  The rule 3/2 * wp(S1, f) - 1/2 * wp(S2, f)
+# used to be applied as it stands, giving the expectation of c as -1, so the bound below was
+# proved for a program none of whose runs ends with c below 0.
+nat c;
+{
+	c := 0;
+}[3/2]{
+	c := 2;
+}
+?Ex [c] <= 0

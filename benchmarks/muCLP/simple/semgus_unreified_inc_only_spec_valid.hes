@@ -1,0 +1,6 @@
+/* Unreified as semgus_unreified_inc_dec_spec_valid.hes, with only increments: the invariant of the dual
+   predicate is y != x + size(p) - 1, so the program's size suffices. */
+(declare-datatypes ((Prog 0)) (((Nil) (Inc (inext Prog)))))
+forall (x: int) (y: int). Sem (Inc (Inc (Inc Nil))) x y => y = x + 3
+s.t.
+Sem (p: Prog) (x: int) (y: int) : bool =mu (p = Nil /\ y = x) \/ (exists (q: Prog). p = (Inc q) /\ Sem q (x + 1) y);

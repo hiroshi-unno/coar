@@ -1,0 +1,4 @@
+X 1.0 >= 2.34
+s.t.
+// the integral of (1 + r)^2 over r in [0, 1] is 7/3 = 2.333..., below the bound
+X (x : real) : real =mu unif r. (x + r) * (x + r);

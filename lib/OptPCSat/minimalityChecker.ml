@@ -142,7 +142,25 @@ module Make (Config : Config.ConfigType) :
       @@ lazy (ExtTerm.str_of_formula exi_senv uni_senv head);
       let bodys =
         let body =
-          let pfapps = List.map pfapps ~f:(snd >> fst >> snd) in
+          (* A functional predicate's application is kept only while its
+             result variable still occurs in the head.  [filter_pfapps]
+             substitutes a term of the application's arguments for that
+             variable, which is sound as the CHOICE of the predicate as the
+             graph of that term -- and then the application must go: kept as
+             [FN(y, t(y))] it holds only where the solver's own [FN] happens
+             to return [t(y)], a total [FN] can avoid that everywhere, and the
+             clause becomes vacuous, so a non-minimal solution was certified
+             minimal ([P(0)], [P(x) /\ x < 5 => P(x + 1)] with
+             [P = 0 <= x <= 6]).  An application whose result variable never
+             occurred in the head may go as well: the result occurs nowhere
+             else and the predicate is total. *)
+          let pfapps =
+            let head_fvs = ExtTerm.fvs_of head in
+            List.filter_map pfapps ~f:(fun (_, ((_, pfapp), (_, fnret))) ->
+                if Set.mem head_fvs (fst @@ ExtTerm.let_var fnret) then
+                  Some pfapp
+                else None)
+          in
           ExtTerm.subst eqsubst
           @@ ExtTerm.and_of
                [ ExtTerm.mk_var_app pdom_0 @@ args_y; ExtTerm.and_of pfapps ]
@@ -295,6 +313,7 @@ module Make (Config : Config.ConfigType) :
         sigma = (* dummy *) Map.Poly.empty;
         trunc = (* dummy *) Fn.id;
         acc_set = (* dummy *) Set.Poly.empty;
+        priority_switch = None;
       }
     in
     List.iter idxs ~f:(fun (key, (_, data, _)) ->

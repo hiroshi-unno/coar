@@ -1,0 +1,11 @@
+[
+    "SPACER",
+    {
+        "preprocessor": [
+            "Filename",
+            "./config/pcsat/preprocessor/disable.json"
+        ],
+        "cex_needed": true,
+        "gg_concretize": false
+    }
+]

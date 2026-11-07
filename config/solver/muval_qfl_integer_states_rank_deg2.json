@@ -1,0 +1,13 @@
+[
+    "MuVal",
+    {
+        "qfl": {
+            "integer_states": true,
+            "templates": {
+                "rank": {
+                    "term_degree": 2
+                }
+            }
+        }
+    }
+]

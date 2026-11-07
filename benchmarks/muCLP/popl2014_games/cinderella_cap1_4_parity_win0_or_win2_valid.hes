@@ -1,0 +1,60 @@
+/* Game G5 of Beyene, Chaudhuri, Popeea, Rybalchenko, "A constraint-based approach to solving games on
+infinite graphs", POPL 2014, pp. 221-233, https://doi.org/10.1145/2535838.2535860
+(Table 1; Section 5.3), as the paper defines it: Eve = Cinderella, Adam = Stepmother (moving first),
+capacity c = 1.4, objective win(0) \/ win(2), where win(i) = GF p_i /\ AND_{j<i} FG not p_j, i.e. the least
+colour seen infinitely often is i.  Every state (after either player's move) carries a colour.
+Cinderella-Stepmother game, Section 2 of the paper: five buckets b1..b5 on a circle, all empty
+initially.  stepmother(v,v') = (b1'+..+b5' = b1+..+b5+1 /\ bi' >= bi): she pours one unit, split as she
+likes.  cinderella(v,v') = some i with bi' = 0 /\ b(i+1 mod 5)' = 0, the other buckets unchanged.
+overflow(v) = some bi > c.  The game is turn-based with Adam moving first (Section 3.1), Eve's
+deadlock losing and Adam's deadlock leaving no play; the game does not stop at an overflow.
+Bucket contents are reals (the paper's capacities 1.4 and its strategy's 0.8, 0.1 are not integers).
+The objective is a min-parity condition, solved by the nested fixpoint nu X0. mu X1. ... with one
+equation per colour and position kind, colour 0 outermost (the first equation is the outermost);
+X_i's sign is nu when i is a colour Cinderella wants least, mu otherwise.  A_i(v): Stepmother to
+move, E_i(v): Cinderella to move.
+Colours as in Section 5.3: 0 no overflow, 1 b1 > c, 2 b1 <= c /\ b2 > c, 3 (the paper's 'color = 3, 4 or 5')
+the rest.  Expected verdict from Table 1.
+expected: valid */
+A0 (0.0) (0.0) (0.0) (0.0) (0.0)
+s.t.
+A0 (b1: real) (b2: real) (b3: real) (b4: real) (b5: real): bool =nu
+  ((b1 <= 1.4 /\ b2 <= 1.4 /\ b3 <= 1.4 /\ b4 <= 1.4 /\ b5 <= 1.4) /\ (forall (d1: real) (d2: real) (d3: real) (d4: real) (d5: real). (d1 >= 0.0 /\ d2 >= 0.0 /\ d3 >= 0.0 /\ d4 >= 0.0 /\ d5 >= 0.0 /\ d1 + d2 + d3 + d4 + d5 = 1.0) => E0 (b1 + d1) (b2 + d2) (b3 + d3) (b4 + d4) (b5 + d5))) \/
+  ((b1 > 1.4) /\ (forall (d1: real) (d2: real) (d3: real) (d4: real) (d5: real). (d1 >= 0.0 /\ d2 >= 0.0 /\ d3 >= 0.0 /\ d4 >= 0.0 /\ d5 >= 0.0 /\ d1 + d2 + d3 + d4 + d5 = 1.0) => E1 (b1 + d1) (b2 + d2) (b3 + d3) (b4 + d4) (b5 + d5))) \/
+  ((b1 <= 1.4 /\ b2 > 1.4) /\ (forall (d1: real) (d2: real) (d3: real) (d4: real) (d5: real). (d1 >= 0.0 /\ d2 >= 0.0 /\ d3 >= 0.0 /\ d4 >= 0.0 /\ d5 >= 0.0 /\ d1 + d2 + d3 + d4 + d5 = 1.0) => E2 (b1 + d1) (b2 + d2) (b3 + d3) (b4 + d4) (b5 + d5))) \/
+  ((b1 <= 1.4 /\ b2 <= 1.4 /\ (b3 > 1.4 \/ b4 > 1.4 \/ b5 > 1.4)) /\ (forall (d1: real) (d2: real) (d3: real) (d4: real) (d5: real). (d1 >= 0.0 /\ d2 >= 0.0 /\ d3 >= 0.0 /\ d4 >= 0.0 /\ d5 >= 0.0 /\ d1 + d2 + d3 + d4 + d5 = 1.0) => E3 (b1 + d1) (b2 + d2) (b3 + d3) (b4 + d4) (b5 + d5)));
+E0 (b1: real) (b2: real) (b3: real) (b4: real) (b5: real): bool =nu
+  ((b1 <= 1.4 /\ b2 <= 1.4 /\ b3 <= 1.4 /\ b4 <= 1.4 /\ b5 <= 1.4) /\ (A0 (0.0) (0.0) (b3) (b4) (b5) \/ A0 (b1) (0.0) (0.0) (b4) (b5) \/ A0 (b1) (b2) (0.0) (0.0) (b5) \/ A0 (b1) (b2) (b3) (0.0) (0.0) \/ A0 (0.0) (b2) (b3) (b4) (0.0))) \/
+  ((b1 > 1.4) /\ (A1 (0.0) (0.0) (b3) (b4) (b5) \/ A1 (b1) (0.0) (0.0) (b4) (b5) \/ A1 (b1) (b2) (0.0) (0.0) (b5) \/ A1 (b1) (b2) (b3) (0.0) (0.0) \/ A1 (0.0) (b2) (b3) (b4) (0.0))) \/
+  ((b1 <= 1.4 /\ b2 > 1.4) /\ (A2 (0.0) (0.0) (b3) (b4) (b5) \/ A2 (b1) (0.0) (0.0) (b4) (b5) \/ A2 (b1) (b2) (0.0) (0.0) (b5) \/ A2 (b1) (b2) (b3) (0.0) (0.0) \/ A2 (0.0) (b2) (b3) (b4) (0.0))) \/
+  ((b1 <= 1.4 /\ b2 <= 1.4 /\ (b3 > 1.4 \/ b4 > 1.4 \/ b5 > 1.4)) /\ (A3 (0.0) (0.0) (b3) (b4) (b5) \/ A3 (b1) (0.0) (0.0) (b4) (b5) \/ A3 (b1) (b2) (0.0) (0.0) (b5) \/ A3 (b1) (b2) (b3) (0.0) (0.0) \/ A3 (0.0) (b2) (b3) (b4) (0.0)));
+A1 (b1: real) (b2: real) (b3: real) (b4: real) (b5: real): bool =mu
+  ((b1 <= 1.4 /\ b2 <= 1.4 /\ b3 <= 1.4 /\ b4 <= 1.4 /\ b5 <= 1.4) /\ (forall (d1: real) (d2: real) (d3: real) (d4: real) (d5: real). (d1 >= 0.0 /\ d2 >= 0.0 /\ d3 >= 0.0 /\ d4 >= 0.0 /\ d5 >= 0.0 /\ d1 + d2 + d3 + d4 + d5 = 1.0) => E0 (b1 + d1) (b2 + d2) (b3 + d3) (b4 + d4) (b5 + d5))) \/
+  ((b1 > 1.4) /\ (forall (d1: real) (d2: real) (d3: real) (d4: real) (d5: real). (d1 >= 0.0 /\ d2 >= 0.0 /\ d3 >= 0.0 /\ d4 >= 0.0 /\ d5 >= 0.0 /\ d1 + d2 + d3 + d4 + d5 = 1.0) => E1 (b1 + d1) (b2 + d2) (b3 + d3) (b4 + d4) (b5 + d5))) \/
+  ((b1 <= 1.4 /\ b2 > 1.4) /\ (forall (d1: real) (d2: real) (d3: real) (d4: real) (d5: real). (d1 >= 0.0 /\ d2 >= 0.0 /\ d3 >= 0.0 /\ d4 >= 0.0 /\ d5 >= 0.0 /\ d1 + d2 + d3 + d4 + d5 = 1.0) => E2 (b1 + d1) (b2 + d2) (b3 + d3) (b4 + d4) (b5 + d5))) \/
+  ((b1 <= 1.4 /\ b2 <= 1.4 /\ (b3 > 1.4 \/ b4 > 1.4 \/ b5 > 1.4)) /\ (forall (d1: real) (d2: real) (d3: real) (d4: real) (d5: real). (d1 >= 0.0 /\ d2 >= 0.0 /\ d3 >= 0.0 /\ d4 >= 0.0 /\ d5 >= 0.0 /\ d1 + d2 + d3 + d4 + d5 = 1.0) => E3 (b1 + d1) (b2 + d2) (b3 + d3) (b4 + d4) (b5 + d5)));
+E1 (b1: real) (b2: real) (b3: real) (b4: real) (b5: real): bool =mu
+  ((b1 <= 1.4 /\ b2 <= 1.4 /\ b3 <= 1.4 /\ b4 <= 1.4 /\ b5 <= 1.4) /\ (A0 (0.0) (0.0) (b3) (b4) (b5) \/ A0 (b1) (0.0) (0.0) (b4) (b5) \/ A0 (b1) (b2) (0.0) (0.0) (b5) \/ A0 (b1) (b2) (b3) (0.0) (0.0) \/ A0 (0.0) (b2) (b3) (b4) (0.0))) \/
+  ((b1 > 1.4) /\ (A1 (0.0) (0.0) (b3) (b4) (b5) \/ A1 (b1) (0.0) (0.0) (b4) (b5) \/ A1 (b1) (b2) (0.0) (0.0) (b5) \/ A1 (b1) (b2) (b3) (0.0) (0.0) \/ A1 (0.0) (b2) (b3) (b4) (0.0))) \/
+  ((b1 <= 1.4 /\ b2 > 1.4) /\ (A2 (0.0) (0.0) (b3) (b4) (b5) \/ A2 (b1) (0.0) (0.0) (b4) (b5) \/ A2 (b1) (b2) (0.0) (0.0) (b5) \/ A2 (b1) (b2) (b3) (0.0) (0.0) \/ A2 (0.0) (b2) (b3) (b4) (0.0))) \/
+  ((b1 <= 1.4 /\ b2 <= 1.4 /\ (b3 > 1.4 \/ b4 > 1.4 \/ b5 > 1.4)) /\ (A3 (0.0) (0.0) (b3) (b4) (b5) \/ A3 (b1) (0.0) (0.0) (b4) (b5) \/ A3 (b1) (b2) (0.0) (0.0) (b5) \/ A3 (b1) (b2) (b3) (0.0) (0.0) \/ A3 (0.0) (b2) (b3) (b4) (0.0)));
+A2 (b1: real) (b2: real) (b3: real) (b4: real) (b5: real): bool =nu
+  ((b1 <= 1.4 /\ b2 <= 1.4 /\ b3 <= 1.4 /\ b4 <= 1.4 /\ b5 <= 1.4) /\ (forall (d1: real) (d2: real) (d3: real) (d4: real) (d5: real). (d1 >= 0.0 /\ d2 >= 0.0 /\ d3 >= 0.0 /\ d4 >= 0.0 /\ d5 >= 0.0 /\ d1 + d2 + d3 + d4 + d5 = 1.0) => E0 (b1 + d1) (b2 + d2) (b3 + d3) (b4 + d4) (b5 + d5))) \/
+  ((b1 > 1.4) /\ (forall (d1: real) (d2: real) (d3: real) (d4: real) (d5: real). (d1 >= 0.0 /\ d2 >= 0.0 /\ d3 >= 0.0 /\ d4 >= 0.0 /\ d5 >= 0.0 /\ d1 + d2 + d3 + d4 + d5 = 1.0) => E1 (b1 + d1) (b2 + d2) (b3 + d3) (b4 + d4) (b5 + d5))) \/
+  ((b1 <= 1.4 /\ b2 > 1.4) /\ (forall (d1: real) (d2: real) (d3: real) (d4: real) (d5: real). (d1 >= 0.0 /\ d2 >= 0.0 /\ d3 >= 0.0 /\ d4 >= 0.0 /\ d5 >= 0.0 /\ d1 + d2 + d3 + d4 + d5 = 1.0) => E2 (b1 + d1) (b2 + d2) (b3 + d3) (b4 + d4) (b5 + d5))) \/
+  ((b1 <= 1.4 /\ b2 <= 1.4 /\ (b3 > 1.4 \/ b4 > 1.4 \/ b5 > 1.4)) /\ (forall (d1: real) (d2: real) (d3: real) (d4: real) (d5: real). (d1 >= 0.0 /\ d2 >= 0.0 /\ d3 >= 0.0 /\ d4 >= 0.0 /\ d5 >= 0.0 /\ d1 + d2 + d3 + d4 + d5 = 1.0) => E3 (b1 + d1) (b2 + d2) (b3 + d3) (b4 + d4) (b5 + d5)));
+E2 (b1: real) (b2: real) (b3: real) (b4: real) (b5: real): bool =nu
+  ((b1 <= 1.4 /\ b2 <= 1.4 /\ b3 <= 1.4 /\ b4 <= 1.4 /\ b5 <= 1.4) /\ (A0 (0.0) (0.0) (b3) (b4) (b5) \/ A0 (b1) (0.0) (0.0) (b4) (b5) \/ A0 (b1) (b2) (0.0) (0.0) (b5) \/ A0 (b1) (b2) (b3) (0.0) (0.0) \/ A0 (0.0) (b2) (b3) (b4) (0.0))) \/
+  ((b1 > 1.4) /\ (A1 (0.0) (0.0) (b3) (b4) (b5) \/ A1 (b1) (0.0) (0.0) (b4) (b5) \/ A1 (b1) (b2) (0.0) (0.0) (b5) \/ A1 (b1) (b2) (b3) (0.0) (0.0) \/ A1 (0.0) (b2) (b3) (b4) (0.0))) \/
+  ((b1 <= 1.4 /\ b2 > 1.4) /\ (A2 (0.0) (0.0) (b3) (b4) (b5) \/ A2 (b1) (0.0) (0.0) (b4) (b5) \/ A2 (b1) (b2) (0.0) (0.0) (b5) \/ A2 (b1) (b2) (b3) (0.0) (0.0) \/ A2 (0.0) (b2) (b3) (b4) (0.0))) \/
+  ((b1 <= 1.4 /\ b2 <= 1.4 /\ (b3 > 1.4 \/ b4 > 1.4 \/ b5 > 1.4)) /\ (A3 (0.0) (0.0) (b3) (b4) (b5) \/ A3 (b1) (0.0) (0.0) (b4) (b5) \/ A3 (b1) (b2) (0.0) (0.0) (b5) \/ A3 (b1) (b2) (b3) (0.0) (0.0) \/ A3 (0.0) (b2) (b3) (b4) (0.0)));
+A3 (b1: real) (b2: real) (b3: real) (b4: real) (b5: real): bool =mu
+  ((b1 <= 1.4 /\ b2 <= 1.4 /\ b3 <= 1.4 /\ b4 <= 1.4 /\ b5 <= 1.4) /\ (forall (d1: real) (d2: real) (d3: real) (d4: real) (d5: real). (d1 >= 0.0 /\ d2 >= 0.0 /\ d3 >= 0.0 /\ d4 >= 0.0 /\ d5 >= 0.0 /\ d1 + d2 + d3 + d4 + d5 = 1.0) => E0 (b1 + d1) (b2 + d2) (b3 + d3) (b4 + d4) (b5 + d5))) \/
+  ((b1 > 1.4) /\ (forall (d1: real) (d2: real) (d3: real) (d4: real) (d5: real). (d1 >= 0.0 /\ d2 >= 0.0 /\ d3 >= 0.0 /\ d4 >= 0.0 /\ d5 >= 0.0 /\ d1 + d2 + d3 + d4 + d5 = 1.0) => E1 (b1 + d1) (b2 + d2) (b3 + d3) (b4 + d4) (b5 + d5))) \/
+  ((b1 <= 1.4 /\ b2 > 1.4) /\ (forall (d1: real) (d2: real) (d3: real) (d4: real) (d5: real). (d1 >= 0.0 /\ d2 >= 0.0 /\ d3 >= 0.0 /\ d4 >= 0.0 /\ d5 >= 0.0 /\ d1 + d2 + d3 + d4 + d5 = 1.0) => E2 (b1 + d1) (b2 + d2) (b3 + d3) (b4 + d4) (b5 + d5))) \/
+  ((b1 <= 1.4 /\ b2 <= 1.4 /\ (b3 > 1.4 \/ b4 > 1.4 \/ b5 > 1.4)) /\ (forall (d1: real) (d2: real) (d3: real) (d4: real) (d5: real). (d1 >= 0.0 /\ d2 >= 0.0 /\ d3 >= 0.0 /\ d4 >= 0.0 /\ d5 >= 0.0 /\ d1 + d2 + d3 + d4 + d5 = 1.0) => E3 (b1 + d1) (b2 + d2) (b3 + d3) (b4 + d4) (b5 + d5)));
+E3 (b1: real) (b2: real) (b3: real) (b4: real) (b5: real): bool =mu
+  ((b1 <= 1.4 /\ b2 <= 1.4 /\ b3 <= 1.4 /\ b4 <= 1.4 /\ b5 <= 1.4) /\ (A0 (0.0) (0.0) (b3) (b4) (b5) \/ A0 (b1) (0.0) (0.0) (b4) (b5) \/ A0 (b1) (b2) (0.0) (0.0) (b5) \/ A0 (b1) (b2) (b3) (0.0) (0.0) \/ A0 (0.0) (b2) (b3) (b4) (0.0))) \/
+  ((b1 > 1.4) /\ (A1 (0.0) (0.0) (b3) (b4) (b5) \/ A1 (b1) (0.0) (0.0) (b4) (b5) \/ A1 (b1) (b2) (0.0) (0.0) (b5) \/ A1 (b1) (b2) (b3) (0.0) (0.0) \/ A1 (0.0) (b2) (b3) (b4) (0.0))) \/
+  ((b1 <= 1.4 /\ b2 > 1.4) /\ (A2 (0.0) (0.0) (b3) (b4) (b5) \/ A2 (b1) (0.0) (0.0) (b4) (b5) \/ A2 (b1) (b2) (0.0) (0.0) (b5) \/ A2 (b1) (b2) (b3) (0.0) (0.0) \/ A2 (0.0) (b2) (b3) (b4) (0.0))) \/
+  ((b1 <= 1.4 /\ b2 <= 1.4 /\ (b3 > 1.4 \/ b4 > 1.4 \/ b5 > 1.4)) /\ (A3 (0.0) (0.0) (b3) (b4) (b5) \/ A3 (b1) (0.0) (0.0) (b4) (b5) \/ A3 (b1) (b2) (0.0) (0.0) (b5) \/ A3 (b1) (b2) (b3) (0.0) (0.0) \/ A3 (0.0) (b2) (b3) (b4) (0.0)));

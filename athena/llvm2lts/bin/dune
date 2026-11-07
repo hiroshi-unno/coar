@@ -1,0 +1,12 @@
+; Built only when LLVM2LTS_BUILD=1 (script/llvm2lts/dune.sh sets it, in the
+; image that holds the LLVM 19 bindings).  Without the bindings a plain
+; `dune build` of the enclosing tree would otherwise fail here: `(optional)`
+; does not take an executable out of the default alias, and `enabled_if` on
+; an executable cannot test whether a library is installed.
+
+(executable
+ (name main)
+ (public_name llvm2lts)
+ (enabled_if
+  (= %{env:LLVM2LTS_BUILD=0} 1))
+ (libraries llvm2lts))

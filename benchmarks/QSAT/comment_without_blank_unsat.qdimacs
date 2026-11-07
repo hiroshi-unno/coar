@@ -1,0 +1,8 @@
+c A comment line is any line whose first character is c: the formula is
+c exists x1 forall x2. x1 and not x1.
+p cnf 2 2
+e 1 0
+a 2 0
+1 0
+c-----this line is a comment, not the literals of a clause
+-1 0

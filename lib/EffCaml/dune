@@ -2,7 +2,7 @@
  (name EffCaml)
  (public_name CoAR.EffCaml)
  (preprocess
-  (pps ppx_deriving_yojson))
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
  (libraries
   core
   yojson
@@ -13,5 +13,6 @@
   CoAR.automata
   CoAR.HOMC
   CoAR.HOMCSolver
-  CoAR.RCaml)
- (modules config cgen solver))
+  CoAR.RCaml
+  CoAR.CPS)
+ (modules config recCallGuard cgen solver))

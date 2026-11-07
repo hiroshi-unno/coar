@@ -1,0 +1,23 @@
+/* The program coerces its own terminal success__ to q1, which does not
+   accept it, and the coerced tree is case-analysed, so the coercion's
+   assertion fails: unsat.  The reduction's coercion problem marks a checked
+   leaf with a terminal it adds and accepts it from every state; when that
+   terminal was named success__, the program's success__ was accepted
+   there. */
+%BEGING
+Main x -> F (coerce q1 success__).
+F y -> case y of
+  a y' => e
+| e => e.
+%ENDG
+
+%BEGINA
+q0 a -> q0.
+q0 e -> .
+q1 a -> q1.
+q1 e -> .
+%ENDA
+
+%BEGINT
+Main : q0 -> q0.
+%ENDT

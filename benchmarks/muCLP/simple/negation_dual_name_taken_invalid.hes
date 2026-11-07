@@ -1,0 +1,8 @@
+/* The file defines both P and P_neg, and P_neg negates P.  P holds
+   everywhere (every x reaches 5 counting up), so P_neg 3 is 3 < 0 \/ not
+   (P 3), which is false.  The dual drawn for the negation of P must not
+   take the name P_neg, which the input already defines. */
+P_neg 3
+s.t.
+P (x: int) : bool =mu x >= 5 \/ P (x + 1);
+P_neg (x: int) : bool =mu x < 0 \/ not (P x);

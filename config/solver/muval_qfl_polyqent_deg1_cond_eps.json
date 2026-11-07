@@ -1,0 +1,42 @@
+[
+    "MuVal",
+    {
+        "task": [
+            "Prove"
+        ],
+        "optimizer": [
+            "Filename",
+            "./config/muclp/optimizer/disable.json"
+        ],
+        "pcsp_solver_primal": [
+            "Filename",
+            "./config/solver/polyqent_deg1.json"
+        ],
+        "pcsp_solver_dual": [
+            "Filename",
+            "./config/solver/polyqent_deg1.json"
+        ],
+        "output_iteration": false,
+        "qfl": {
+            "output_time": true,
+            "output_witness": true,
+            "templates": {
+                "prefp": {
+                    "num_conds": 0,
+                    "use_orig_ite": true
+                },
+                "rank": {
+                    "num_conds": 0,
+                    "use_orig_ite": true
+                },
+                "postfp": {
+                    "num_conds": 0,
+                    "use_orig_ite": true
+                },
+                "underapprox": {
+                    "term_degree": 0
+                }
+            }
+        }
+    }
+]

@@ -30,7 +30,7 @@ let str_of_sort = function
 let str_of_fop = function
   | Predicate.Mu -> "mu"
   | Predicate.Nu -> "nu"
-  | Predicate.Fix -> failwith "str_of_fop"
+  | Predicate.MuOrNu -> failwith "str_of_fop"
 
 let rec sexp_of_formula = function
   | Formula.Atom (atom, _) ->

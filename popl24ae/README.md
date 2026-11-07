@@ -1,5 +1,7 @@
 # POPL24 Artifact Evaluation
 
+The paper-time configuration and tool are in the Zenodo archive; this directory is kept current: it runs today's strongest version of the paper's own method, the refinement type system with answer refinement modification for algebraic effects, inferred by RCaml at its default settings (`config/solver/rcaml.json`) and, for the paper's Spacer column, `rcaml_wopp_spacer.json`, and follows CoAR's current defaults in everything that is not that method.
+
 We explain how to reproduce the evaluation results shown in Table 1 and 2 in the following paper:
 
 Fuga Kawamata, Hiroshi Unno, Taro Sekiyama, and Tachio Terauchi. Answer Refinement Modification: Refinement Type System for Algebraic Effects and Handlers. POPL 2024.
@@ -35,11 +37,11 @@ Fuga Kawamata, Hiroshi Unno, Taro Sekiyama, and Tachio Terauchi. Answer Refineme
 
 Now you can run a sanity test by the following command:
 ```bash
-./_build/default/main.exe -c ./config/solver/rcaml_pcsat_tb_ar.json -p ml ./benchmarks/OCaml/safety/simple/sum.ml
+./_build/default/main.exe -c ./config/solver/rcaml.json -p ml ./benchmarks/OCaml/safety/simple/sum.ml
 ```
 (or also you can build and run sequentially by the following command:)
 ```bash
-dune exec main -- -c ./config/solver/rcaml_pcsat_tb_ar.json -p ml ./benchmarks/OCaml/safety/simple/sum.ml
+dune exec main -- -c ./config/solver/rcaml.json -p ml ./benchmarks/OCaml/safety/simple/sum.ml
 ```
 If the installation has been done successfully, you will see the output similar to below:
 ```
@@ -56,6 +58,27 @@ cd popl24ae
 
 This will reproduce the results shown in Table 1 and 2 in the paper. It takes about 60 minutes to be completed.
 
+Python 3 is required for input and result validation. Before executing any family,
+`exp.sh` validates all three nonempty memory manifests, unique benchmark names,
+existing files and finite nonnegative memory values. Spaces in filenames are
+preserved; CSV delimiter, quote and line-break characters are refused. The
+memory threshold is an exclusion filter based on the supplied measurements,
+not an enforced process-memory limit. A fully excluded family starts no worker.
+
+All three result files are staged and checked for complete benchmark identities
+before publication. A failed runner or malformed/missing result preserves the
+previous published files and reports the staging directory containing partial
+results. Each final file replacement is atomic; replacement of all three files
+is not a filesystem transaction. `abort`, `refused`, `unknown` and `timeout` remain recorded
+outcomes (`refused` is a run the tool declined: status 1 with an `error:` line, shown
+as `refused` in the tables), rather than infrastructure failures. These checks do not establish
+verdict correctness or reproduce the paper's measurements.
+
+Run the small mock-process checks without executing benchmarks:
+```bash
+python3 script/check_popl24_evaluation.py
+```
+
 * The results corresponding to the "Spacer" column in Table 1 will be output in `results_spacer.csv`.
 * The results corresponding to the "PCSat" column in Table 1 will be output in `results_pcsat.csv`.
 * The results corresponding to Table 2 will be output in `results_cps.csv`.
@@ -71,6 +94,28 @@ that have almost the same structure as the tables in the paper.
 ```bash
 ./convert.sh
 ```
+The converter validates all three nonempty result files before replacing any
+table. Spacer and PCSat must contain identical full benchmark identity sets,
+including exclusions. Matching sets do not establish corpus completeness or
+that files came from the same run; no source-file existence or run provenance
+check is inferred from conversion. It rejects duplicate identities, unsupported verdicts, malformed
+exclusions and nonfinite or negative elapsed times. Table 1 compares decided
+answers with the terminal `-SAT.ml` or `-UNSAT.ml` filename tag; this is a
+comparison with the artifact's expected label, not an independent correctness
+proof. Table 2 groups by program identity and the terminal `_DS.ml`, `_CPS.ml`
+and `_CPS_opt.ml` roles, requiring exactly one of each. Input order does not
+determine column placement. Different source directories with the same displayed
+program name are refused as ambiguous.
+
+Malformed or missing input preserves all existing tables. Final replacements
+are atomic individually, but are not a transaction across all three files.
+Raw result CSVs are never rewritten by conversion.
+
+Check conversion with small fixtures:
+```bash
+python3 script/check_popl24_conversion.py
+```
+
 This produces three CSV files: `table_spacer.csv`, `table_pcsat.csv`, and `table_cps.csv`.
 The first two files correspond to Table 1 in the paper,
 and the third one corresponds to Table 2 in the paper.
@@ -81,6 +126,7 @@ and the third one corresponds to Table 2 in the paper.
   - `timeout`: Time limit in seconds.
   - `para`: The number of parallel executions. You can disable parallelism by setting this variable to `1`.
   - `memlimit`: Memory limit in GB. By changing this variable, you can exclude benchmarks that require more than `memlimit` GB of memory. The amount of required memory for each benchmark is based on a measurement of memory usage  performed on our machine, which is listed in `memusage_spacer.csv`, `memusage_pcsat.csv`, and `memusage_cps.csv`.
+- The paper's numbers were obtained with Z3 4.12.x (OCaml 5.0). The "Spacer" configuration depends on the Z3 version: with Z3 5.1.0, `bfs-UNSAT.ml` and `choose-max-UNSAT.ml` are not answered and the other `choose-*` benchmarks are several times slower (for example `choose-max-SAT.ml` takes minutes rather than seconds). This is a change in Z3's Spacer between 4.12.2 and 4.13.3, not in the benchmarks or their encoding: the same Horn clauses are solved by Z3 4.12.2 and not by Z3 5.1.0.
 
 ## Additional Artifact Description
 - The benchmark program files are located at `<porject root>/benchmarks/OCaml/popl24/arm/` (for Table 1) and `<porject root>/benchmarks/OCaml/popl24/cps/` (for Table 2).
@@ -89,5 +135,6 @@ and the third one corresponds to Table 2 in the paper.
   ./_build/default/main.exe -c <config file> -p ml ./path/to/program.ml
   ```
   The `<config file>` can be either
-  - `./config/solver/rcaml_pcsat_tb_ar.json`: which is used in the "PCSat" configuration in Table 1, or
+  - `./config/solver/rcaml.json`: RCaml at its default settings, which `exp.sh` uses for the "PCSat" column of
+    Table 1 (the paper's numbers were taken with `rcaml_pcsat_tb_ar.json`, deleted on 2026-11-03), or
   - `./config/solver/rcaml_wopp_spacer.json`: which is used in the "Spacer" configuration in Table 1 and Table 2.

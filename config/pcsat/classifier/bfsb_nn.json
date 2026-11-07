@@ -5,7 +5,7 @@
             "Filename",
             "./config/pcsat/qualifier/nn.json"
         ],
-        "strategy": [
+        "selection": [
             "First"
         ]
     }

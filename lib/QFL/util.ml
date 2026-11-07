@@ -15,7 +15,9 @@ open Ast
 open Ast.LogicOld
 open Problem
 
-let typeinf_query ~print = function
+(* [arg_sorts]: the parameter sorts of the function a bound query applies, when
+   the problem declares it; an argument of an undeclared one is [real] *)
+let typeinf_query ~print ?(arg_sorts = []) = function
   | ASAT (init, param_senv, param_constr) ->
       let senv = Map.Poly.of_alist_exn param_senv in
       ASAT
@@ -27,16 +29,29 @@ let typeinf_query ~print = function
           param_senv,
           Typeinf.typeinf_formula ~print ~default:None ~senv param_constr )
   | Check query ->
+      (* a variable the query quantifies has the sort it is declared with, and
+         any other is [real]: reading every variable as [real] typed [x] in
+         [forall (x : int). x >= 0 => F x >= 1.0] as an [int] in the
+         antecedent and a [real] in the argument, one variable at two sorts *)
       let senv =
-        let vs = Set.Poly.union_list @@ List.map query.args ~f:Term.fvs_of in
+        let vs =
+          Set.Poly.union_list
+          @@ List.map (query.bound :: query.args) ~f:Term.fvs_of
+        in
         Map.of_set_exn
-          (Set.Poly.map vs ~f:(fun v -> (v, T_real.SReal (*ToDo*))))
+          (Set.Poly.map vs ~f:(fun v ->
+               ( v,
+                 match List.Assoc.find query.params ~equal:Ident.tvar_equal v with
+                 | Some s -> s
+                 | None -> T_real.SReal (*ToDo*) )))
       in
       let args =
-        List.map query.args
-          ~f:
-            (Typeinf.typeinf_term ~print ~default:None ~senv
-               ~sort_opt:(Some T_real.SReal (*ToDo*)))
+        List.mapi query.args ~f:(fun i arg ->
+            Typeinf.typeinf_term ~print ~default:None ~senv
+              ~sort_opt:
+                (Some
+                   (Option.value ~default:T_real.SReal (List.nth arg_sorts i)))
+              arg)
       in
       let bound =
         Typeinf.typeinf_term ~print ~default:None ~senv
@@ -57,24 +72,78 @@ let typeinf_query ~print = function
       in
       DistCheck { name = query.name; args; params; bound }
 
+(* [refuse_ill_sorted what f] is [f ()], with a sort mismatch the type
+   inference reports as a [Failure] (an [int] argument used where the body is
+   [real], for instance: the language has no implicit conversion) turned into
+   a refusal naming [what]; uncaught, it reached the user as a backtrace *)
+let refuse_ill_sorted what f =
+  try f ()
+  with Failure msg when String.is_prefix msg ~prefix:"unification failure" ->
+    Common.Refusal.refuse "%s is ill-sorted (%s)" what msg
+
+(* [call_constrs params t] equates the sort of every argument of an application
+   of a declared function in [t] with the sort that function declares for that
+   parameter.  Bodies are typed one at a time, and the reader gives an
+   application's argument the sort of the argument term, so without these a
+   variable that is not a parameter and is used only as an argument of another
+   function (as [x] in [Z (y : real) : real =mu X x y]) kept an open sort
+   variable, which reached Z3 as an unknown sort and crashed the solver; with
+   them it takes the declared sort, and an argument of another sort (an [int]
+   literal for a [real] parameter) is refused as ill-sorted. *)
+let call_constrs params t =
+  Set.Poly.union_list
+  @@ List.map (Set.to_list @@ Term.fvar_apps_of t) ~f:(function
+    | Term.FunApp (FVar (name, sargs, _), _, _) -> (
+        match Map.Poly.find params name with
+        | Some declared when List.length declared = List.length sargs ->
+            Set.Poly.of_list
+            @@ List.map2_exn sargs declared ~f:(fun s d -> Typeinf.CEq (s, d))
+        | _ -> Set.Poly.empty)
+    | _ -> Set.Poly.empty)
+
 let typeinf ~print qfl =
   (* ToDo: infer types of mutually recursive predicates *)
+  let params =
+    Map.Poly.of_alist_reduce ~f:(fun s _ -> s)
+    @@ List.map qfl.preds ~f:(fun (pred : Pred.t) ->
+        (pred.name, List.map pred.args ~f:snd))
+  in
   {
     preds =
       List.map qfl.preds ~f:(fun pred ->
           let senv = Map.Poly.of_alist_exn pred.args in
+          refuse_ill_sorted
+            (sprintf "the body of %s" (Ident.name_of_tvar pred.name))
+          @@ fun () ->
           {
             pred with
             body =
               Typeinf.typeinf_term ~print ~default:(Some T_real.SReal (*ToDo*))
-                ~senv pred.body;
+                ~senv
+                ~constrs_opt:(Some (call_constrs params pred.body))
+                pred.body;
             annots =
               List.map pred.annots
                 ~f:
                   (Typeinf.typeinf_formula ~print
                      ~default:(Some T_real.SReal (*ToDo*)) ~senv);
+            arg_constrs =
+              List.map pred.arg_constrs
+                ~f:
+                  (Typeinf.typeinf_formula ~print
+                     ~default:(Some T_real.SReal (*ToDo*)) ~senv);
           });
-    query = typeinf_query ~print qfl.query;
+    query =
+      (let arg_sorts =
+         match qfl.query with
+         | Check { name; args; _ } -> (
+             match Map.Poly.find params name with
+             | Some sorts when List.length sorts = List.length args -> sorts
+             | _ -> [])
+         | _ -> []
+       in
+       refuse_ill_sorted "the query" (fun () ->
+           typeinf_query ~print ~arg_sorts qfl.query));
   }
 
 (* Two mistakes in an input that the type inference below does not report and
@@ -140,9 +209,47 @@ let ill_formed qfl =
                T_real.SReal args)
       | ASAT (None, _, _) -> None)
 
+(* [orient_query qfl] makes the head of a bound query a function of the
+   problem.  The reader takes the left side of a comparison as the head when it
+   can be one, so [y <= F] for a parameter [y] arrives as a bound on [y] by
+   [F]; that is the lower bound [F >= y], and it is turned round.  A query whose
+   head names no function of the problem on either side is refused: it used to
+   be handed to the solver as a bound on the parameter, which could only fail.
+   Returns [qfl] unchanged when its head is a function. *)
+let orient_query qfl =
+  let is_fun name =
+    List.exists qfl.preds ~f:(fun (pred : Pred.t) ->
+        Ident.tvar_equal pred.name name)
+  in
+  match qfl.query with
+  | Check ({ name; args; bound; kind; _ } as check) when not (is_fun name) -> (
+      let old_head =
+        if List.is_empty args then Term.mk_var name (Sort.mk_fresh_svar ())
+        else
+          Term.mk_fvar_app name
+            (List.map args ~f:(fun _ -> T_real.SReal))
+            T_real.SReal args
+      in
+      let swap name' args' =
+        let kind = match kind with UB -> LB | LB -> UB in
+        { qfl with query = Check { check with name = name'; args = args'; bound = old_head; kind } }
+      in
+      match bound with
+      | Term.Var (name', _, _) when is_fun name' -> swap name' []
+      | FunApp (FVar (name', _, _), args', _) when is_fun name' -> swap name' args'
+      | _ ->
+          Common.Refusal.refuse
+            "the query bounds %s, which is not a function of the problem"
+            (Ident.name_of_tvar name))
+  | _ -> qfl
+
+(* A bound may compare the head with another function application
+   ([F 1 <= G 1]); the reader accepts it, and whether the bound checker can
+   certify it is the checker's question: it refuses a recursive function in
+   the bound and a head not monotone in the ones it applies. *)
 let parse_from_lexbuf ~print lexbuf =
   try
-    let qfl = Parser.toplevel Lexer.main lexbuf in
+    let qfl = orient_query @@ Parser.toplevel Lexer.main lexbuf in
     match ill_formed qfl with
     | Some msg -> Or_error.error_string msg
     | None -> (

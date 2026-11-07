@@ -1,0 +1,26 @@
+// A loop whose counter lives in memory: while (m[p] >= 0) m[p] = m[p]; over 32-bit signed cells of a memory m
+// indexed by 64-bit addresses, as the LLVM-based front end lowers a pointer dereference (m : bv64 -> bv32).
+// It does not terminate from any memory whose cell at p is non-negative.  The memory is a state variable at every
+// location, so a ranking, NWF or parity template built over the state receives an array-sorted parameter beside the
+// bit-vector ones, and only the numeric ones may enter its linear expressions.
+// Expected: NO under -p ltstermbv, YES under -p ltsntermbv (muval.json, muval_ppm.json, muval_ppm_scc_ad.json).
+START: 0;
+
+FROM: 0;
+m := nondet();
+p := 1;
+w := sign_extend(32, 64, p);
+TO: 1;
+
+FROM: 1;
+v := select_array(m, w);
+TO: 2;
+
+FROM: 2;
+assume(v sge 0);
+m := store_array(m, w, v);
+TO: 1;
+
+FROM: 2;
+assume(v slt 0);
+TO: 3;

@@ -1,0 +1,12 @@
+c forall x1. exists x2. forall x3. exists y4(x3). (y4 <=> x3) and (x2 <=> x3)
+c y4 = x3 meets the first conjunct, but x2 (an e line) depends only on x1,
+c the universal declared before it, so it cannot follow x3: false.
+p cnf 4 4
+a 1 0
+e 2 0
+a 3 0
+d 4 3 0
+-4 3 0
+4 -3 0
+-2 3 0
+2 -3 0

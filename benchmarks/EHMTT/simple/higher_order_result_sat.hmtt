@@ -1,0 +1,22 @@
+%BEGING
+Apply f x -> c (f x).
+Copy x -> case x of
+	 e => e
+| a x' => a (Copy x')
+| b x' => b (Copy x')
+| c x' => c (Copy x')
+| d x' => d (Copy x').
+%ENDG
+
+%BEGINA
+q0 a -> q0.
+q0 b -> q0.
+q0 e -> .
+q1 c -> q1.
+q1 d -> q1.
+q1 e -> .
+%ENDA
+
+%BEGINT
+Apply : (q0 -> q1) -> q0 -> q1.
+%ENDT

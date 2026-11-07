@@ -1,0 +1,13 @@
+[
+    "PolyQEntTempl",
+    {
+        "preprocessor": [
+            "Filename",
+            "./config/pcsat/preprocessor/enable.json"
+        ],
+        "polyqent": [
+            "Instance",
+            {}
+        ]
+    }
+]

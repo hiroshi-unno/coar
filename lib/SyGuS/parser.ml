@@ -1,7 +1,12 @@
 (* Reader for the SyGuS input format (linear integer arithmetic only; any other
    [set-logic] raises), producing the problem of [Problem.Make] with each
    [synth-fun] or [synth-inv] and its grammar, the declared variables and the
-   constraints (an [inv-constraint] expanded into its three implications).
+   constraints (an [inv-constraint] expanded into its three implications, and
+   each constraint made conditional on the [assume]d terms, if any).  Every
+   defined function is expanded while reading, and so is every [let] whose
+   expansion stays small; a [let] whose expansion would not is kept as a [Let]
+   binder over a fresh name, so the only binders a constraint contains are
+   such [Let]s, and no two of them bind the same name.
    [solution_from_file] reads a list of [define-fun]s, used to load a candidate
    solution for a run. *)
 open Core
@@ -21,9 +26,20 @@ end
 
 let count = ref 0
 
-let get_var () =
-  incr count;
-  Ident.Tvar (sprintf "INV_%d" !count)
+(* A fresh variable for the expansion of an [inv-constraint], named [INV_n] and
+   guaranteed not to satisfy [taken].  The caller passes every name the file
+   has given a meaning (declared variables, functions to synthesise, defined
+   functions): a legal input may itself use [INV_1], and a generated variable
+   equal to a declared one was added to the declared variables a second time
+   (a crash), while one equal to the invariant's own name turned an
+   application of the invariant into an Int argument of function sort. *)
+let get_var ~taken =
+  let rec go () =
+    incr count;
+    let v = Ident.Tvar (sprintf "INV_%d" !count) in
+    if taken v then go () else v
+  in
+  go ()
 
 module BoolTerm : TermType = struct
   open BoolTerm
@@ -201,6 +217,58 @@ end = struct
      as an operator or a numeral and fails on "z" or on "Start". *)
   let _ = parse_cfg
 
+  (* The sort of each fresh name a [let] binds, for [sort_of_let_def]: the
+     names are fresh, so one table for the whole read cannot confuse two
+     scopes. *)
+  let let_sorts : (Ident.tvar, Sort.t) Hashtbl.Poly.t = Hashtbl.Poly.create ()
+
+  (* The sort of an untyped [let]'s definition [t], read in [venv] (declared
+     variables and the parameters of the enclosing [define-fun]) and the sorts
+     of the [let] names bound so far.  The conversion to a constraint problem
+     needs it: a [Let] whose variable is used as a Boolean atom must say it is
+     Boolean.  An [ite]'s result sort is a sort variable, so it is read off the
+     [then] branch; a term whose sort cannot be determined here keeps a sort
+     variable. *)
+  let rec sort_of_let_def venv t =
+    let env =
+      Hashtbl.fold let_sorts ~init:venv ~f:(fun ~key ~data acc ->
+          Map.Poly.set acc ~key ~data)
+    in
+    match Ast.Logic.ExtTerm.head_sort_of env t with
+    | Sort.SVar _ -> (
+        match let_apps t with
+        | _, [ _; t_then; _ ] -> sort_of_let_def venv t_then
+        | _ -> Sort.mk_fresh_svar ())
+    | sort -> sort
+    | exception exn_ when not (Common.Timer.is_async exn_) ->
+        Sort.mk_fresh_svar ()
+
+  (* Whether [t] with every [Let] substituted away has at most [cap] nodes;
+     the count saturates, so a [let] chain whose expansion is exponential is
+     measured in time linear in its size.  The variables a [Let] binds are
+     fresh, so a name never needs to be looked up past its own binder. *)
+  let expanded_size_at_most cap t =
+    let rec size env = function
+      | Var (v, _) -> Option.value (Map.Poly.find env v) ~default:1
+      | Con _ -> 1
+      | App (t1, t2, _) -> min cap (size env t1 + size env t2)
+      | Bin (_, _, _, t1, _) | TyApp (t1, _, _) | TyLam (_, t1, _) ->
+          min cap (1 + size env t1)
+      | Let (v, _, def, body, _) ->
+          size (Map.Poly.set env ~key:v ~data:(size env def)) body
+    in
+    size Map.Poly.empty t < cap
+
+  (* The expansion bound above which a [let] is kept as a binder rather than
+     substituted.  Keeping every [let] would send every such input through the
+     constraint pipeline's [let] handling, which once answered a satisfiable
+     CHC encoding of a Lustre benchmark [unsat] where the same clauses with
+     their [let]s expanded were answered [sat]; substituting every [let]
+     exhausts memory on a chain whose expansion is exponential.  A file of the
+     SyGuS invariant corpus expands to a few thousand nodes or to about 1e10,
+     so any bound between keeps the first kind on the substituting path. *)
+  let let_expansion_cap = 100_000
+
   let rec parse_term problem fenv venv = function
     | Sexp.List (Sexp.Atom op :: args) -> (
         match Problem.find_synth_fun_of problem (Ident.Tvar op) with
@@ -238,55 +306,113 @@ end = struct
                     in
                     and_of @@ pairs ts
                 | "let" -> (
+                    (* A [let] is read as a binder, [Let (x', s, d, body)],
+                       under a FRESH name [x'] for each bound name [x]: the
+                       body is read with [x] standing for the variable [x'].
+                       The definitions are then substituted for the fresh
+                       names unless the expansion would pass
+                       [let_expansion_cap], in which case the binder is
+                       kept.  Substituting unconditionally (as this reader
+                       once did) copies a definition into every use, and a
+                       chain of [let]s each using the previous name several
+                       times grows exponentially: the Lustre-generated
+                       SyGuS invariant benchmarks nest 44 [let]s whose
+                       expansion has about 1.5e10 nodes, and the reader grew
+                       by about 80 MB/s until it was killed.  The fresh name
+                       is what keeps the binder from capturing: [fenv] holds
+                       terms read in an OUTER scope, and one placed under a
+                       binder of the same name would be captured by it -- in
+                       [(let ((y x)) (let ((x Int 5)) (= y 5)))] the [x]
+                       that [y] stands for must stay the outer [x], or the
+                       constraint reads as [5 = 5].  Bindings are
+                       simultaneous: every definition is read in the outer
+                       scope.  SyGuS v1 writes [(var sort def)], v2/SMT-LIB
+                       [(var def)]; an untyped binding gets the sort of its
+                       definition ([sort_of_let_def]). *)
                     match args with
-                    | [
-                     Sexp.List
-                       [ Sexp.List [ Sexp.Atom var; Sexp.Atom sort; def ] ];
-                     body;
-                    ] ->
-                        let def_term = parse_term problem fenv venv def in
-                        let term_sort = ExtTerm.sort_of_text sort in
-                        let tvar = Ident.Tvar var in
-                        let venv' =
-                          Map.Poly.set venv ~key:tvar ~data:term_sort
-                        in
-                        (* print_endline @@ sprintf "[parse_term] let %s = %s  in %s" var (Sexp.to_string def) (Sexp.to_string body); *)
-                        mk_let tvar term_sort def_term
-                        @@ parse_term problem fenv venv' body
                     | [ Sexp.List binds; body ] ->
                         let bound =
                           List.map binds ~f:(function
-                            | Sexp.List [ Sexp.Atom var; _; def ]
+                            | Sexp.List [ Sexp.Atom var; Sexp.Atom sort; def ]
+                              ->
+                                ( Ident.Tvar var,
+                                  Term.sort_of_text sort,
+                                  parse_term problem fenv venv def )
                             | Sexp.List [ Sexp.Atom var; def ] ->
-                                (Ident.Tvar var, def)
+                                let def = parse_term problem fenv venv def in
+                                (Ident.Tvar var, sort_of_let_def venv def, def)
                             | _ -> failwith "let")
+                          |> List.map ~f:(fun (tvar, sort, def) ->
+                                 let fresh = Ident.mk_fresh_tvar () in
+                                 Hashtbl.set let_sorts ~key:fresh ~data:sort;
+                                 (tvar, fresh, sort, def))
                         in
                         let fenv =
-                          (* bindings are simultaneous: definitions are parsed
-                             in the outer [fenv]; SyGuS v1 writes
-                             [(var sort def)], v2/SMT-LIB [(var def)] *)
-                          List.fold bound ~init:fenv ~f:(fun acc (tvar, def) ->
-                              Map.Poly.set acc ~key:tvar
-                                ~data:(parse_term problem fenv venv def))
+                          List.fold bound ~init:fenv
+                            ~f:(fun acc (tvar, fresh, _, _) ->
+                              Map.Poly.set acc ~key:tvar ~data:(mk_var fresh))
                         in
                         (* The inner binding is the nearer one and must win over
-                           an outer declared variable of the same name.  These
-                           definitions go into [fenv] while a declared variable
+                           an outer declared variable of the same name.  The
+                           bound names go into [fenv] while a declared variable
                            lives in [venv], and the lookup for an atom consults
                            [venv] first -- so the outer declaration won, and
                            [(declare-var x Int)] beside [(let ((x 0)) x)] made
-                           the body read as the declared [x].  The two
-                           constraints of the report then became [x = 0] and
-                           [x = x], turning a realizable problem unsat and an
-                           infeasible one sat.  Removing the bound names from
-                           [venv] for the BODY restores the nearest binding
-                           without changing where the definitions are read. *)
+                           the body read as the declared [x], turning a
+                           realizable problem unsat and an infeasible one sat.
+                           Removing the bound names from [venv] for the BODY
+                           restores the nearest binding. *)
                         let venv =
-                          List.fold bound ~init:venv ~f:(fun acc (tvar, _) ->
+                          List.fold bound ~init:venv
+                            ~f:(fun acc (tvar, _, _, _) ->
                               Map.Poly.remove acc tvar)
                         in
-                        parse_term problem fenv venv body
+                        let body = parse_term problem fenv venv body in
+                        let bound_term =
+                          List.fold_right bound ~init:body
+                            ~f:(fun (_, fresh, sort, def) acc ->
+                              mk_let fresh sort def acc)
+                        in
+                        if expanded_size_at_most let_expansion_cap bound_term
+                        then
+                          subst
+                            (Map.Poly.of_alist_exn
+                            @@ List.map bound ~f:(fun (_, fresh, _, def) ->
+                                   (fresh, def)))
+                            body
+                        else bound_term
                     | _ -> failwith "let")
+                (* SMT-LIB's attributes for operators of more than two
+                   operands (Core and Ints theories): [=] and the orders are
+                   :chainable, [(op a b c)] meaning [(and (op a b) (op b c))];
+                   [-], [div] and [xor] are :left-assoc; [=>] is :right-assoc.
+                   The theory constructors below take exactly two operands,
+                   and three or more used to be rejected ([-]) or applied
+                   regardless and refused later as an unknown symbol. *)
+                | ("=" | "<=" | "<" | ">=" | ">") when List.length args > 2 ->
+                    let rec chain = function
+                      | a :: (b :: _ as rest) ->
+                          Sexp.List [ Sexp.Atom op; a; b ] :: chain rest
+                      | _ -> []
+                    in
+                    and_of
+                      (List.map (chain args) ~f:(parse_term problem fenv venv))
+                | ("-" | "div" | "xor") when List.length args > 2 -> (
+                    match args with
+                    | a :: b :: rest ->
+                        parse_term problem fenv venv
+                        @@ Sexp.List
+                             (Sexp.Atom op
+                             :: Sexp.List [ Sexp.Atom op; a; b ]
+                             :: rest)
+                    | _ -> assert false)
+                | "=>" when List.length args > 2 -> (
+                    match List.rev args with
+                    | last :: rev_init ->
+                        parse_term problem fenv venv
+                        @@ List.fold rev_init ~init:last ~f:(fun acc a ->
+                               Sexp.List [ Sexp.Atom op; a; acc ])
+                    | [] -> assert false)
                 | _ -> (
                     match Term.term_of_op op args with
                     | Some x ->
@@ -304,9 +430,16 @@ end = struct
                 (* if the term is an interpreted variable, substitute it  *)
                 beta_reduction term
             | None -> (
-                match Term.term_of_op var [] with
-                | Some term -> term (* nullary term *)
-                | None -> failwith @@ sprintf "unknown operator: %s" var)))
+                match Problem.find_synth_fun_of problem (Ident.Tvar var) with
+                | Some _ ->
+                    (* a function to synthesise of no parameters: SMT-LIB writes
+                       its application as the bare symbol, [c] and not [(c)];
+                       it was sent to the numeral reader and rejected *)
+                    mk_var (Ident.Tvar var)
+                | None -> (
+                    match Term.term_of_op var [] with
+                    | Some term -> term (* nullary term *)
+                    | None -> failwith @@ sprintf "unknown operator: %s" var))))
     | _ -> failwith "unknown style of constraint"
 
   let parse_inv_constraint problem fenv inv_f pre_f trans_f post_f =
@@ -332,9 +465,14 @@ end = struct
     (* p2 and p3 => p4 *)
     (* p2 => p5 *)
     let var_list, var_list' =
+      let taken v =
+        let synth_funs, declared_vars, _ = problem in
+        Map.Poly.mem synth_funs v || Map.Poly.mem declared_vars v
+        || Map.Poly.mem fenv v
+      in
       let rec sub acc = function
         | Sort.SArrow (s, c) when Sort.is_pure_triple c ->
-            sub ((get_var (), s) :: acc) c.val_type
+            sub ((get_var ~taken, s) :: acc) c.val_type
         | Sort.SArrow (_, _) -> failwith "sub"
         | _ -> List.rev acc
       in
@@ -420,28 +558,60 @@ end = struct
         (problem, Map.Poly.add_exn fenv ~key:name ~data:term)
     | Sexp.List [ Sexp.Atom "define-sort" ] ->
         failwith "define-sort is not supported yet"
-    | Sexp.List [ Sexp.Atom "set-info" ] -> failwith "not implemented yet"
-    | Sexp.List [ Sexp.Atom "set-option" ] -> failwith "not implemented yet"
     | Sexp.List (Sexp.Atom cmd :: _) ->
         failwith @@ sprintf "unknown smt cmd : %s" cmd
     | _ -> failwith "unknown smt cmd"
 
-  let rec parse_cmds problem fenv (venv : sort_env_map) = function
+  (* [assumes] holds the terms of the [assume] commands read so far (SyGuS-IF
+     2.1).  The specification is that the conjunction of all assumptions
+     implies the conjunction of all constraints, wherever in the file each
+     appears; so at [check-synth] every constraint [c] becomes
+     [assumptions => c], which is the same formula split per constraint. *)
+  let rec parse_cmds assumes problem fenv (venv : sort_env_map) = function
     | [] -> Result.fail @@ Error.of_string "lack of check-synth command"
-    | Sexp.List [ Sexp.Atom "check-synth" ] :: [] -> Ok problem
+    | Sexp.List [ Sexp.Atom "check-synth" ] :: [] -> (
+        match assumes with
+        | [] -> Ok problem
+        | _ ->
+            let synth_funs, declared_vars, constraints = problem in
+            let assumption = and_of (List.rev assumes) in
+            Ok
+              (Problem.mk_problem synth_funs declared_vars
+                 (List.map constraints ~f:(fun c ->
+                      mk_apps (mk_imply ()) [ assumption; c ]))))
+    | Sexp.List [ Sexp.Atom "assume"; t ] :: es ->
+        parse_cmds
+          (parse_term problem fenv venv t :: assumes)
+          problem fenv venv es
+    | Sexp.List (Sexp.Atom ("set-info" | "set-option" | "set-feature") :: _)
+      :: es ->
+        (* metadata, solver options and feature declarations: none changes
+           what the problem means, and each used to stop the reader *)
+        parse_cmds assumes problem fenv venv es
     | Sexp.List [ Sexp.Atom "constraint"; constr ] :: es ->
         let problem' =
           Problem.add_constraint problem @@ parse_term problem fenv venv constr
         in
-        parse_cmds problem' fenv venv es
+        parse_cmds assumes problem' fenv venv es
     | Sexp.List [ Sexp.Atom "declare-var"; Sexp.Atom var; Sexp.Atom sort ] :: es
-    | Sexp.List
-        [ Sexp.Atom "declare-primed-var"; Sexp.Atom var; Sexp.Atom sort ]
-      :: es ->
+      ->
         let var = Ident.Tvar var in
         let sort = Term.sort_of_text sort in
         let problem' = Problem.add_declared_var problem var sort in
-        parse_cmds problem' fenv (Map.Poly.add_exn venv ~key:var ~data:sort) es
+        parse_cmds assumes problem' fenv (Map.Poly.add_exn venv ~key:var ~data:sort) es
+    | Sexp.List
+        [ Sexp.Atom "declare-primed-var"; Sexp.Atom var; Sexp.Atom sort ]
+      :: es ->
+        (* SyGuS-IF 1.0: declares both [var] and its primed copy [var!]; the
+           copy was missing, so a constraint naming it was rejected *)
+        let sort = Term.sort_of_text sort in
+        let vars = [ Ident.Tvar var; Ident.Tvar (var ^ "!") ] in
+        let problem', venv' =
+          List.fold vars ~init:(problem, venv) ~f:(fun (p, v) x ->
+              ( Problem.add_declared_var p x sort,
+                Map.Poly.add_exn v ~key:x ~data:sort ))
+        in
+        parse_cmds assumes problem' fenv venv' es
     | Sexp.List
         [
           Sexp.Atom "inv-constraint";
@@ -465,9 +635,7 @@ end = struct
         let problem' =
           List.fold ~init:problem constrs ~f:Problem.add_constraint
         in
-        parse_cmds problem' fenv venv es
-    | Sexp.List [ Sexp.Atom "set-feature" ] :: _es ->
-        failwith "not implemented yet"
+        parse_cmds assumes problem' fenv venv es
     | Sexp.List
         (Sexp.Atom "synth-fun"
         :: Sexp.Atom name
@@ -479,7 +647,7 @@ end = struct
           parse_synth_fun problem (Ident.Tvar name) args
             (Term.sort_of_text sort) grammer_def
         in
-        parse_cmds problem' fenv venv es
+        parse_cmds assumes problem' fenv venv es
     | Sexp.List
         (Sexp.Atom "synth-inv"
         :: Sexp.Atom name
@@ -489,13 +657,13 @@ end = struct
         let problem' =
           parse_synth_fun problem (Ident.Tvar name) args SBool grammer_def
         in
-        parse_cmds problem' fenv venv es
+        parse_cmds assumes problem' fenv venv es
     | cmd :: es ->
         let problem', fenv' = parse_smt_cmd problem fenv venv cmd in
-        parse_cmds problem' fenv' venv es
+        parse_cmds assumes problem' fenv' venv es
 
   let of_problem =
-    parse_cmds
+    parse_cmds []
       (Problem.mk_problem Map.Poly.empty Map.Poly.empty [])
       Map.Poly.empty Map.Poly.empty
 end
@@ -506,15 +674,51 @@ let parse = function
       | Lia ->
           let module Parser = Make (ExtTerm) (Problem.ExtTerm) in
           Parser.of_problem es
-      | _ -> failwith "parser of the logic is not implemented yet")
+      | _ ->
+          Result.fail
+          @@ Error.of_thunk (fun () ->
+              sprintf
+                "[set-logic] SyGuS logic %s is not supported: only LIA (or \
+                 SAT) is implemented"
+                logic))
   | _ ->
       Result.fail
       @@ Error.of_thunk (fun () ->
           sprintf "sygus problem file should start from 'set-logic'")
 
+(* SMT-LIB's quoted symbol [|s|] is the same symbol as [s] whenever [s] is a
+   legal simple symbol; the s-expression reader keeps the bars as part of the
+   atom, so a file declaring [|x|] and using [x] was rejected, and a solution
+   printed by [Printer] (which quotes every name) did not name the function
+   it defines when read back.  Bars are removed only when what is inside is a
+   simple symbol that is not a reserved word: [|5|] is a symbol and not the
+   numeral, and [|let|] is not the binder.  A quoted symbol containing white
+   space is split by the s-expression reader before this point and is not
+   supported. *)
+let rec unquote_symbols = function
+  | Sexp.Atom s as atom ->
+      let n = String.length s in
+      if n >= 3 && Char.equal s.[0] '|' && Char.equal s.[n - 1] '|' then
+        let inner = String.sub s ~pos:1 ~len:(n - 2) in
+        let simple_char c =
+          Char.is_alphanum c || String.mem "~!@$%^&*_-+=<>.?/" c
+        in
+        let reserved =
+          [ "let"; "forall"; "exists"; "!"; "_"; "as"; "par"; "match";
+            "NUMERAL"; "DECIMAL"; "STRING"; "BINARY"; "HEXADECIMAL" ]
+        in
+        if
+          String.for_all inner ~f:simple_char
+          && (not (Char.is_digit inner.[0]))
+          && not (List.mem reserved inner ~equal:String.equal)
+        then Sexp.Atom inner
+        else atom
+      else atom
+  | Sexp.List l -> Sexp.List (List.map l ~f:unquote_symbols)
+
 let from_file filename =
   match Many.parse_string @@ In_channel.read_all filename with
-  | Ok sexps -> parse sexps
+  | Ok sexps -> parse (List.map sexps ~f:unquote_symbols)
   | Error err ->
       Result.fail
       @@ Error.of_thunk (fun () ->
@@ -528,7 +732,10 @@ let solution_from_file filename =
     | Ok sexps ->
         let module Parser = Make (ExtTerm) (Problem.ExtTerm) in
         Result.return
-        @@ List.map sexps ~f:(Parser.parse_fundef Map.Poly.empty Map.Poly.empty)
+        @@ List.map sexps
+             ~f:
+               (unquote_symbols
+               >> Parser.parse_fundef Map.Poly.empty Map.Poly.empty)
     | Error err ->
         Result.fail
         @@ Error.of_thunk (fun () ->

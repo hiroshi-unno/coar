@@ -1,0 +1,15 @@
+# A halving loop on a nat: x := x / 2 is integer division, so from x = 5 the loop runs three
+# times (5, 2, 1, 0) and terminates with c = 3; the upper bound 0 on the expectation of c is
+# false.
+# Expected: unknown.  The bound checker works over the reals, and integer division has no real
+# counterpart, so the problem is not relaxed and no answer is given.  Read with x a real, the
+# loop never terminated, the expectation was 0, and the bound 0 held.
+nat x;
+nat c;
+x := 5;
+c := 0;
+while (0 < x) {
+	x := x / 2;
+	c := c + 1;
+}
+?Ex [c] <= 0

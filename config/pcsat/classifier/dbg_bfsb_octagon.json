@@ -6,7 +6,7 @@
             "Filename",
             "./config/pcsat/qualifier/octagon.json"
         ],
-        "strategy": [
+        "selection": [
             "First"
         ],
         "bfsynth": [

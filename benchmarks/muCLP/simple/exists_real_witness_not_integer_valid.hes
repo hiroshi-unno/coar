@@ -1,0 +1,8 @@
+/* Valid: r = 0.5 is a witness, and P holds at every non-negative real.  No
+   integer is a witness, so a search for the existential's witness among the
+   integers finds none and refutes a problem that is not this one: that
+   refutation must not be printed as invalid.  With an integer witness
+   (r + r = 2) the same search succeeds. */
+exists (r: real). r + r = 1.0 /\ P r
+s.t.
+P (x: real): bool =nu x >= 0.0;

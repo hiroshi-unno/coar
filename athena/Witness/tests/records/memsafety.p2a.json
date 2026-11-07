@@ -1,0 +1,17 @@
+{
+  "input": { "path": "memsafety.c", "sha256": "22f090946620d8be0d485388a5f55719f7df5c055271b1435c1b3b1194aac3b9", "frama_c": "33.0 (Arsenic)", "args": [], "machdep": "gcc_x86_64" },
+  "source_map": {
+    "input_file": "memsafety.c",
+    "statements": [
+    { "output_line": 50, "output_column": 3, "function": "__p2a_main", "role": "call", "input": { "line": 5, "column": 3, "function": "main" }, "property": null, "cond_negated": null },
+    { "output_line": 60, "output_column": 3, "function": "__p2a_main", "role": "branch", "input": { "line": 7, "column": 3, "function": "main" }, "property": null, "cond_negated": false },
+    { "output_line": 63, "output_column": 9, "function": "__p2a_main", "role": "target", "input": { "line": 8, "column": 5, "function": "main" }, "property": "valid-deref", "cond_negated": null },
+    { "output_line": 64, "output_column": 9, "function": "__p2a_main", "role": "target", "input": { "line": 8, "column": 5, "function": "main" }, "property": "valid-deref", "cond_negated": null },
+    { "output_line": 66, "output_column": 3, "function": "__p2a_main", "role": "target", "input": { "line": 10, "column": 3, "function": "main" }, "property": "valid-free", "cond_negated": null },
+    { "output_line": 67, "output_column": 15, "function": "__p2a_main", "role": "target", "input": { "line": 12, "column": 5, "function": "main" }, "property": "valid-free", "cond_negated": null },
+    { "output_line": 70, "output_column": 3, "function": "p2a_free", "role": "other", "input": null, "property": null, "cond_negated": null },
+    { "output_line": 71, "output_column": 3, "function": "p2a_free", "role": "target", "input": null, "property": "valid-free", "cond_negated": null },
+    { "output_line": 77, "output_column": 3, "function": "main", "role": "target", "input": { "line": 14, "column": 3, "function": "main" }, "property": "valid-memtrack", "cond_negated": null }
+    ]
+  }
+}

@@ -8,7 +8,7 @@
  (name QFL)
  (public_name CoAR.QFL)
  (preprocess
-  (pps ppx_deriving_yojson))
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
  (libraries core CoAR.pCSP CoAR.ast CoAR.common CoAR.LTS)
- (modules accel pred problem lexer parser util)
+ (modules unif accel pred problem lexer parser util qhes)
  (synopsis "The definition of quantitative muCLP"))

@@ -1,3 +1,10 @@
+# Rendering of QFL/ert_random_walk_{lb,ub}.qhes, X 1.0 <= 3.0 (and >= 3.0): the expected
+# runtime of a walk that steps down with probability 2/3, one tick per step, from x = 1.
+# The rendering has no initial state, so the query states the bound at every x: the
+# expected runtime from x is 3 * x (drift -1/3 per step), which at x = 1 is the source's
+# 3.  The lower source reads ?Ert [0] >= 3 * x here.  The second-moment sources
+# (ert_random_walk_2nd_*) bound the expected square of the runtime, which ?Ert does not
+# express.
 nat x;
 
 while (0 < x) {
@@ -8,3 +15,5 @@ while (0 < x) {
 		x := x + 1;
 	}
 }
+
+?Ert [0] <= 3 * x

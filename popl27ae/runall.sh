@@ -20,45 +20,57 @@ run_family() {
 mkdir -p results/popl2023mod
 
 # POPL23 benchmarks
+echo
 echo "=== POPL23 benchmarks - MuValPPM SCC & AD ==="
-run_family ./script/popl2023mod/muval_parallel_exc_ppm_tbq_ar_300.sh popl2023mod/muval_ppm_scc_ad.csv
+run_family ./script/popl2023mod/muval_ppm_popl27_300.sh popl2023mod/muval_ppm_popl27.csv
 
+echo
 echo "=== POPL23 benchmarks - MuValPPM AD ==="
-run_family ./script/popl2023mod/muval_parallel_exc_ppm_ad_tbq_ar_300.sh popl2023mod/muval_ppm_ad.csv
+run_family ./script/popl2023mod/muval_ppm_popl27_no_scc_300.sh popl2023mod/muval_ppm_popl27_no_scc.csv
 
+echo
 echo "=== POPL23 benchmarks - MuValPPM SCC ==="
-run_family ./script/popl2023mod/muval_parallel_exc_ppm_scc_tbq_ar_300.sh popl2023mod/muval_ppm_scc.csv
+run_family ./script/popl2023mod/muval_ppm_popl27_no_ad_300.sh popl2023mod/muval_ppm_popl27_no_ad.csv
 
+echo
 echo "=== POPL23 benchmarks - MuValPPM no optimization ==="
-run_family ./script/popl2023mod/muval_parallel_exc_ppm_noopt_tbq_ar_300.sh popl2023mod/muval_ppm_noopt.csv
+run_family ./script/popl2023mod/muval_ppm_popl27_no_scc_ad_300.sh popl2023mod/muval_ppm_popl27_no_scc_ad.csv
 
+echo
 echo "=== POPL23 benchmarks - MuVal [Unno et al. 2023] ==="
-run_family ./script/popl2023mod/muval_parallel_exc_tbq_ar_300.sh popl2023mod/muval.csv
+run_family ./script/popl2023mod/muval_popl27_300.sh popl2023mod/muval.csv
 
+echo
 echo "=== POPL23 benchmarks - MuStrat [Tsukada et al. 2025] ==="
-run_family ./script/popl2023mod/mustrat_300.sh popl2023mod/mustrat.csv
+run_family ./script/popl2023mod/mustrat_popl27_300.sh popl2023mod/mustrat.csv
 
 
 mkdir -p results/term25its
 
 # TermCOMP ITS benchmarks
+echo
 echo "=== TermCOMP ITS benchmarks - MuValPPM SCC & AD ==="
-run_family ./script/term25its/muval_parallel_exc_ppm_tbq_ar.sh term25its/muval_ppm_scc_ad.csv
+run_family ./script/term25its/muval_ppm_popl27_300.sh term25its/muval_ppm_popl27.csv
 
+echo
 echo "=== TermCOMP ITS benchmarks - MuValPPM AD ==="
-run_family ./script/term25its/muval_parallel_exc_ppm_ad_tbq_ar.sh term25its/muval_ppm_ad.csv
+run_family ./script/term25its/muval_ppm_popl27_no_scc_300.sh term25its/muval_ppm_popl27_no_scc.csv
 
+echo
 echo "=== TermCOMP ITS benchmarks - MuValPPM SCC ==="
-run_family ./script/term25its/muval_parallel_exc_ppm_scc_tbq_ar.sh term25its/muval_ppm_scc.csv
+run_family ./script/term25its/muval_ppm_popl27_no_ad_300.sh term25its/muval_ppm_popl27_no_ad.csv
 
+echo
 echo "=== TermCOMP ITS benchmarks - MuValPPM no optimization ==="
-run_family ./script/term25its/muval_parallel_exc_ppm_noopt_tbq_ar.sh term25its/muval_ppm_noopt.csv
+run_family ./script/term25its/muval_ppm_popl27_no_scc_ad_300.sh term25its/muval_ppm_popl27_no_scc_ad.csv
 
+echo
 echo "=== TermCOMP ITS benchmarks - MuVal [Unno et al. 2023] ==="
-run_family ./script/term25its/muval_parallel_exc_tbq_ar.sh term25its/muval.csv
+run_family ./script/term25its/muval_popl27_300.sh term25its/muval.csv
 
+echo
 echo "=== TermCOMP ITS benchmarks - MuStrat [Tsukada et al. 2025] ==="
-run_family ./script/term25its/mustrat.sh term25its/mustrat.csv
+run_family ./script/term25its/mustrat_popl27_300.sh term25its/mustrat.csv
 
 # Check complete, matching benchmark identities before publishing either corpus.
 python3 "$artifact_dir/summarize_results.py" --validate-times "$staging/popl2023mod"/*.csv >/dev/null

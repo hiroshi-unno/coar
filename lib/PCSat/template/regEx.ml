@@ -197,7 +197,14 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     | (Depth | Shape) :: labels -> inner (increase_depth param_actions) labels
     | (Dummy | QualDep) :: labels -> inner param_actions labels
     | TimeOut :: _labels -> param_actions (* z3 may unexpectedly time out*)
-    | _ -> assert false
+    | _ ->
+        (* another template module's label: excluded by the contract of
+           [Function.Type.update_with_labels] *)
+        assert false
+
+  (* no coefficient or constant bounds to grow *)
+  let coeff_labels = []
+  let const_labels = []
 
   let actions_of labels =
     (snd @@ inner (!param, []) @@ Set.to_list labels) @ [ "end" ]

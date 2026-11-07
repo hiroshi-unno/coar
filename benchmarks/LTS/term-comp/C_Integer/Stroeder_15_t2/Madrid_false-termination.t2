@@ -1,9 +1,0 @@
-///*** 1_main ***///
-START: main_entry;
-
-FROM: main_entry;
-TO: main_while.body;
-
-FROM: main_while.body;
-TO: main_while.body;
-

@@ -1,0 +1,82 @@
+[
+    "MuCyc",
+    {
+        "verbose": true,
+        "simplify": true,
+        "reduce": true,
+        "slice_forward": true,
+        "slice_backward": true,
+        "gen_lemmas_with_ai": false,
+        "gen_determ_conjs": false,
+        "pcsp_solver": [
+            "Filename",
+            "./config/solver/spacer_sol.json"
+        ],
+        "refinement_strategy": [
+            "Refine",
+            [
+                "MBP",
+                1
+            ],
+            [
+                "Or"
+            ]
+        ],
+        "timeout_check_valid": 0,
+        "timeout_prove_each_conj": 3,
+        "top_down_search": false,
+        "monotone_trace": false,
+        "induction": null,
+        "query_reuse": false,
+        "counterexample_sharing": null,
+        "enable_pvar_elim": false,
+        "check_validity": false,
+        "ask_pred_app_to_unfold": false,
+        "valid_with_smt_threshold": null,
+        "induct_threshold": null,
+        "enable_apply_threshold": false,
+        "normalize_lemma": false,
+        "check_lemma_lhs": false,
+        "fold_lemmas": false,
+        "backtrack_strategy": [
+            "Deepest_own_variable"
+        ],
+        "projection_lets": [
+            "Name_subterms",
+            {
+                "substitute_tainted": true
+            }
+        ],
+        "mbp_implicant": true,
+        "mbp_implicant_fold_lets": true,
+        "mbp_implicant_slice_defs": true,
+        "mbp_implicant_partial": true,
+        "mbp_implicant_lift_ite": true,
+        "mbp_implicant_lift_after_slice": true,
+        "countermodel_body_session": true,
+        "countermodel_session_memo": true,
+        "persistent_frames": {
+            "seed_by_level": false,
+            "level_solvers": 64,
+            "bit_level": true,
+            "incremental_exit": true,
+            "lazy_nonlinear": true,
+            "kept_bit_models": true,
+            "exit_simple_solver": true,
+            "leaf_templates": true,
+            "bit_domain": true,
+            "bit_domain_pin": true
+        },
+        "simplify_inline_lets_once": true,
+        "simplify_skip_settled_bv_eval": true,
+        "bv_reuse_unchanged_prepass": true,
+        "bv_normalize_once": true,
+        "bv_joint_alias_in_projection": true,
+        "interpolant_search": [
+            "Spacer_blocking",
+            {
+                "max_rounds": 100
+            }
+        ]
+    }
+]

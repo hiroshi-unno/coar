@@ -1,0 +1,4 @@
+/* The last line is a line comment with no newline after it. */
+F 0
+s.t.
+F (x: int) : bool =mu x >= 3 \/ F (x + 1); // counts up to 3

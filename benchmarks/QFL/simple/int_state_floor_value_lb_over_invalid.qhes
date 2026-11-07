@@ -1,0 +1,5 @@
+// The value of X at 3 is exactly 3 on the integers, so the lower bound 3.5
+// does not hold; a checker that reads integer states must not prove it.
+X 3 >= 3.5
+s.t.
+X (x : int) : real =mu if x >= 1 then 1.0 + X (x - 1) else 0.0;

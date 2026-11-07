@@ -1,0 +1,8 @@
+/* Does every input n terminate?  A step from x > 0 decreases x, except under input 2, where a
+   nondeterministic choice c is added to x: the choice c = 0 keeps x = 2 for ever.  So the
+   query is invalid, and its only refutations start from n = 2 and repeat a state: a lasso
+   reached from one input value through one choice.  A refutation built from ground instances
+   needs exactly the input 2 and the choice 0 among the values it tries. */
+forall (n: int). P n n
+s.t.
+P (n: int) (x: int): bool =mu x <= 0 \/ ((n = 2 => (forall (c: int). P n (x + c))) /\ (n != 2 => P n (x - 1)));

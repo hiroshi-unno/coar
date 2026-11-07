@@ -1,0 +1,9 @@
+# loop(3) { S } runs S exactly three times: from c = 0 the expectation of c is 3, so the
+# upper bound 2.5 is false (an unrolling that ran the body twice would make it hold).
+# Expected: unknown (the bound checker does not refute).
+nat c;
+c := 0;
+loop(3) {
+	c := c + 1;
+}
+?Ex [c] <= 2.5

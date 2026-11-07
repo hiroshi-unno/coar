@@ -1,0 +1,2 @@
+(* y must equal x, and with z false the second conjunct needs y true, which fails at x false *)
+_forall x : bool. _exists y : bool. _forall z : bool. ((x () <=> y ()) && (|y ()| <> |z ()| || z ()))

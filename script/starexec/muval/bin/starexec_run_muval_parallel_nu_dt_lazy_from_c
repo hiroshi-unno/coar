@@ -5,9 +5,9 @@ INPUT=$(basename $1 ".c")
 ./clang -c -emit-llvm -O0 $1 -o ${INPUT}.bc 2> /dev/null
 ./llvm2kittel --dump-ll --no-slicing --eager-inline --t2 ${INPUT}.bc > ${INPUT}.t2
 
-(./main.exe -c ./config/solver/muval_term_comp_prove_nu_dt_lazy.json -p ltsterm  ${INPUT}.t2 > output1 2> /dev/null) &
+(./main.exe -c ./config/solver/muval_dt_prove_nu_lazy_yesno.json -p ltsterm  ${INPUT}.t2 > output1 2> /dev/null) &
 pid1=$!
-(./main.exe -c ./config/solver/muval_term_comp_disprove_nu_dt_lazy.json -p ltsterm  ${INPUT}.t2 > output2 2> /dev/null) &
+(./main.exe -c ./config/solver/muval_dt_disprove_nu_lazy_yesno.json -p ltsterm  ${INPUT}.t2 > output2 2> /dev/null) &
 pid2=$!
 
 while :

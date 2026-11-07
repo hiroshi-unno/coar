@@ -1,0 +1,15 @@
+[
+    "RCaml",
+    {
+        "solver": [
+            "Filename",
+            "./config/solver/spacer_flat.json"
+        ],
+        "chc_optimizer": [
+            "Filename",
+            "./config/solver/optpcsat_nc_tb_ar.json"
+        ],
+        "verbose": false,
+        "enable_pvar_elim": false
+    }
+]

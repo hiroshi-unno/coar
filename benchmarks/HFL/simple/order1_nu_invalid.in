@@ -1,0 +1,4 @@
+/* Inv fails at x = 5, which every x <= 5 reaches by counting up. */
+%HES
+Main x =v x > 5 || Inv x.
+Inv x =v x <> 5 && Inv (x + 1).

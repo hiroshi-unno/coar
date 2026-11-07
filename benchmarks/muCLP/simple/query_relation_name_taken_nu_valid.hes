@@ -1,0 +1,8 @@
+/* The greatest-fixpoint twin of query_relation_name_taken_mu_invalid.hes.
+   Entry_ holds exactly at x < 5, so every y is non-negative or satisfies it
+   and the query is valid.  Its dual asks for a negative y in the least
+   fixpoint x >= 5; if the dual's query relation shares the predicate's name
+   and sorts, that fixpoint's clauses derive the goal: a wrong invalid. */
+forall (y: int). y >= 0 \/ Entry_ y
+s.t.
+Entry_ (x: int): bool =nu x != 5 /\ Entry_ (x - 1);

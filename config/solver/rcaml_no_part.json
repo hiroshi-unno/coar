@@ -1,0 +1,9 @@
+[
+    "RCaml",
+    {
+        "cgen_config": {
+            "can_fail_only_at_total_apps": true
+        },
+        "verbose": false
+    }
+]

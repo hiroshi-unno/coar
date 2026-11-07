@@ -9,11 +9,11 @@ solver='muval'
 SCRIPT_DIR=$(cd $(dirname "${BASH_SOURCE[0]}") && pwd)
 REPO_ROOT_DIR="$SCRIPT_DIR/../.."
 
-export options="--timeout=60 --category=C"
+export options="--timeout=60 --category=C_MemorySafety"
 export cmd="solver"
-export timeout=60
+export timeout=300
 export para=6
-# export options="-c $REPO_ROOT_DIR/config/solver/muval_parallel_tbq_ar.json -p pltsterm"
+# export options="-c $REPO_ROOT_DIR/config/solver/muval.json -p pltsterm"
 
 # prepare a directory to store results (includes a timestamp in it's name)
 TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")

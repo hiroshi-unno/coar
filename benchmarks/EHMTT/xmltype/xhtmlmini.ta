@@ -1,0 +1,23 @@
+%BEGINA
+q0 html -> q4 q3.
+q1 leaf -> .
+q1 b -> q3 q1.
+q1 div -> q1 q1.
+q1 h1 -> q3 q1.
+q1 h2 -> q3 q1.
+q1 h3 -> q3 q1.
+q1 h4 -> q3 q1.
+q1 h5 -> q3 q1.
+q1 h6 -> q3 q1.
+q1 h7 -> q3 q1.
+q1 h8 -> q3 q1.
+q1 h9 -> q3 q1.
+q1 p -> q3 q1.
+q2 leaf -> .
+q2 meta -> q3 q2.
+q3 leaf -> .
+q4 head -> q6 q5.
+q5 body -> q1 q3.
+q6 meta -> q3 q6.
+q6 title -> q3 q2.
+%ENDA

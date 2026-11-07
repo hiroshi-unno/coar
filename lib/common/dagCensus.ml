@@ -73,7 +73,7 @@ let enabled = Option.is_some (Sys.getenv_opt "COAR_SHARE_CENSUS")
 
 let report ?(items = -1) label v =
   if enabled then (
-    let t0 = Unix.gettimeofday () in
+    let t0 = Clock.now_s () in
     let phys, distinct = count v in
     let heap = (Gc.quick_stat ()).Gc.heap_words * 8 / 1_000_000 in
     Printf.eprintf
@@ -83,4 +83,4 @@ let report ?(items = -1) label v =
       label items phys distinct
       (float_of_int phys /. float_of_int (max 1 distinct))
       heap
-      (Unix.gettimeofday () -. t0))
+      (Clock.now_s () -. t0))

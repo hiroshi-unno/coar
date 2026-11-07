@@ -5,6 +5,21 @@ open Common.Combinator
 open Ident
 open LogicOld
 
+(* How a predicate-polymorphic definition (a [let]-bound function whose type
+   RCaml generalises over its refinement predicates) reaches the constraints.
+   - [Copying]: every use renames the abstracted predicates to fresh ones and
+     copies the definition's constraints onto the copies, so the definition is
+     checked once per use, at that use's instance.
+   - [Universal_interface]: where the definition qualifies, it is checked once:
+     the predicates of its functional parameters' results become universally
+     quantified Bool-valued functions, its other own predicates take them as
+     leading arguments (their dependency set), its constraints are emitted
+     once, and a use is connected to the definition by one interface clause per
+     predicate of the type at a positive position, whose premise
+     [forall a. X(a) => K(a)] relates each universal [X] to the use's instance
+     [K].  A definition that does not qualify is copied. *)
+type pred_poly_encoding = Copying | Universal_interface [@@deriving yojson]
+
 type config = {
   depend_on_func_args : bool; [@default false]
   depend_on_ref_args : bool; [@default false]
@@ -37,6 +52,20 @@ type config = {
   enable_pred_poly_for_ref_types : bool; [@default false]
   (* instantiate unbound sort variables to int before constraint solving *)
   instantiate_svars_to_int : bool; [@default true]
+  (* when a computation with a temporal effect is sequenced before one with a
+     control effect, type the intermediate computation by a fresh refinement
+     template and a subtyping constraint; false composes the effect into the
+     continuation's type instead, which introduces no predicate variable but
+     can fail to type a program the template types *)
+  fresh_pred_for_cont_composition : bool; [@default true]
+  (* type a constructor application by the generic instantiation of the
+     constructor's value type at the argument and result sorts; false uses the
+     constructor-specific instantiation from the argument sorts and the
+     expected value type, whose precision relative to the generic one has not
+     been established *)
+  generic_constructor_instantiation : bool; [@default true]
+  (* see [pred_poly_encoding] *)
+  pred_poly_encoding : pred_poly_encoding; [@default Copying]
 }
 [@@deriving yojson]
 
@@ -972,16 +1001,22 @@ let compose_temp_eff es =
       @@ Formula.eq (Term.mk_var x @@ T_trace.STrace true) fin
          :: fin_phis ),
     ( y,
+      (* The infinite traces of e1; ...; en are those of some ei preceded by
+         finite traces of e1, ..., e(i-1): the disjunct for ei requires the
+         finite effects of its predecessors only (Nanjo et al., LICS 2018,
+         the concatenation of effects, whose infinite part is
+         [Phi1nu(x) \/ exists y z. x = y.z /\ Phi1mu(y) /\ Phi2nu(z)]).
+         Requiring every component's finite effect, as this did, made a
+         computation followed by one that never terminates (finite effect
+         [false]) have no infinite traces at all, so a liveness violation
+         such as an infinite loop of events was proved absent. *)
       Formula.exists (List.concat @@ (xs :: ys :: fin_senvs) @ inf_senvs)
-      @@ Formula.and_of
-      @@ (Formula.or_of
-         @@ List.map2_exn (List.rev infs) inf_phis ~f:(fun inf inf_phi ->
-                Formula.and_of
-                  [
-                    Formula.eq (Term.mk_var y @@ T_trace.STrace false) inf;
-                    inf_phi;
-                  ]))
-         :: fin_phis ) )
+      @@ Formula.or_of
+      @@ List.mapi (List.zip_exn (List.rev infs) inf_phis)
+           ~f:(fun i (inf, inf_phi) ->
+             Formula.and_of
+             @@ Formula.eq (Term.mk_var y @@ T_trace.STrace false) inf
+                :: inf_phi :: List.take fin_phis i) ) )
 
 let rec compose_temp_cont es = function
   | Pure -> Pure
@@ -1464,8 +1499,20 @@ and tsub_of_opsig ~config sub = function
       let lefts, boths, _rights = ALMap.split_lbr opsig opmap in
       if List.is_empty lefts (* && List.is_empty rights *) then
         List.fold boths ~init:sub ~f:(fun sub -> snd >> tsub_of_val ~config sub)
-      else failwith "tsub_of_opsig"
-  | _ -> failwith "tsub_of_opsig"
+      else
+        (* an exception raised and not handled is an operation of the
+           inferred type, so a type that omits it ends here: say which *)
+        failwith
+        @@ sprintf
+             "[tsub_of_opsig] the operations (raised exceptions included) %s \
+              are not in the operation signature %s"
+             (String.concat_map_list ~sep:", " lefts ~f:fst)
+             (Term.str_of_opsig (Sort.OpSig (opmap, None)))
+  | opsig, s ->
+      failwith
+      @@ sprintf "[tsub_of_opsig] the operation signatures %s and %s"
+           (str_of_opsig ~config opsig)
+           (Term.str_of_opsig s)
 
 and tsub_of_comp ~config sub (c, c') =
   let sub' = tsub_of_val ~config sub (c.val_type, c'.val_type) in
@@ -1536,6 +1583,110 @@ let update_svmap_with_sub ~config dom svmap sub =
            in
            let svmap = (*ToDo*) Map.Poly.empty in
            Option.some @@ val_of_sort ~config ~refine ~svmap dom data)
+
+(* [instantiate_fixpoint_preds pmap] is called by the instantiation of a
+   predicate-polymorphic scheme with the renaming [pmap] of the scheme's bound
+   predicates to their fresh copies, and returns the renaming of every least or
+   greatest fixpoint predicate whose definition mentions one of them, each to a
+   fresh copy defined like the original with [pmap] applied.  A temporal effect
+   of a recursive function is such a fixpoint predicate, defined in terms of
+   the refinement predicates of the function's environment, so the definition
+   is parametric in exactly the predicates the scheme abstracts: an instance
+   of the scheme must use an instance of the definition.  Without it the
+   instance type kept naming the original definition, whose body names the
+   scheme's bound predicates, which no clause of the instance constrains.
+   Contract: the result's keys are fixpoint predicates, its values fresh names,
+   and it is empty whenever no fixpoint predicate exists (every non-temporal
+   problem), so that path is unchanged.  The constraint generator owns the
+   fixpoint definitions and installs the function; the default copies
+   nothing. *)
+let instantiate_fixpoint_preds :
+    ((Ident.pvar, Ident.pvar) Map.Poly.t -> (Ident.pvar, Ident.pvar) Map.Poly.t)
+    ref =
+  ref (fun _ -> Map.Poly.empty)
+
+(* While [Some r], every instantiation of a predicate-polymorphic scheme
+   appends to [r] its renaming of the scheme's bound predicates to their fresh
+   copies (fixpoint copies excluded).  A caller that must know which copy a
+   use made -- RCaml's labelled calls, which a lemma names -- sets it around
+   one instantiation and reads it back; [None] (the default) records nothing.
+   Contract: the recorded pairs are exactly the [pmap]s of the [RForall]
+   instantiations performed while it is set, in the order they complete. *)
+let recorded_renamings : (Ident.pvar * Ident.pvar) list ref option ref =
+  ref None
+
+(* Shared instantiation, for a constraint generation that identifies the
+   copies of a predicate-polymorphic scheme.  While [None] (the default) every
+   instantiation of a scheme [forall P1..Pn. C => T] renames each [Pi] to a
+   fresh copy, as bounded predicate polymorphism asks.  While [Some tbl], the
+   first instantiation of [Pi] at the argument sorts [ss] makes a fresh copy
+   [Pi@k] as usual and records it in [tbl] under [(Pi, ss)], and every later
+   instantiation of [Pi] at [ss] reuses that copy, so all uses of one
+   abstracted predicate at one sort share a single instance predicate.
+
+   Contract and why it is sound: an instance of [forall P. C => T] may choose
+   any predicates for [P] as long as it also emits [C] over them, and
+   choosing the same predicate [Q] at several uses emits the same [C[Q/P]]
+   each time, so the constraints generated this way are those of the copying
+   generation with every copy renamed to the shared one; a solution [s] of
+   them gives a solution of the copying system that interprets each copy as
+   [s] interprets its shared instance (the renaming lemma: satisfaction of a
+   formula under [s] after renaming predicate symbols by [r] is satisfaction
+   under [s o r]).  Kinds are copied from the scheme's predicate, so a shared
+   instance has the kind of every copy it stands for.  The converse fails: a
+   shared instance must hold of the union of all its uses' contexts, so an
+   unsatisfiable shared system says nothing about the copying one.  The
+   sorts are part of the key because a type-polymorphic scheme instantiated
+   at two types must not give one predicate two signatures.  A shared copy
+   occurs in the constraint sets of several definitions, so a caller that
+   eliminates predicates within one definition's set must keep the shared
+   copies ([shared_instance_copies]): eliminating a predicate locally is
+   sound only where no other set mentions it, which fresh copies guarantee
+   and shared ones do not. *)
+let shared_instances :
+    (string, (Sort.t list * Ident.pvar) list) Hashtbl.t option ref =
+  ref None
+
+(* How many instantiations, since [shared_instances] was last set, reused a
+   copy an earlier instantiation had made.  Zero means that no two uses of
+   an abstracted predicate at one sort met, so the shared generation made
+   one fresh copy per use exactly as the copying generation does: the two
+   constraint systems are the same up to the names of the copies (and the
+   shared generation keeps its copies from local elimination, which
+   changes no solution), so the shared one is satisfiable exactly when the
+   copying one is and answers nothing that the copying run cannot. *)
+let shared_instance_reuses = ref 0
+
+(* the shared copies made so far (empty when sharing is off) *)
+let shared_instance_copies () =
+  match !shared_instances with
+  | None -> Set.Poly.empty
+  | Some tbl ->
+      Hashtbl.fold tbl ~init:Set.Poly.empty ~f:(fun ~key:_ ~data acc ->
+          List.fold data ~init:acc ~f:(fun acc (_, pv) -> Set.add acc pv))
+
+(* the copy of the scheme predicate [key] at the argument sorts [sorts] that
+   an instantiation uses: fresh, or the shared one (see [shared_instances]) *)
+let instance_copy key sorts =
+  let fresh () =
+    Ident.mk_fresh_pvar ()
+      ~prefix:(Some (Ident.name_of_pvar key ^ "@"))
+  in
+  match !shared_instances with
+  | None -> fresh ()
+  | Some tbl -> (
+      let name = Ident.name_of_pvar key in
+      let known = Option.value ~default:[] (Hashtbl.find tbl name) in
+      match
+        List.find known ~f:(fun (sorts', _) -> Stdlib.(sorts' = sorts))
+      with
+      | Some (_, pv) ->
+          incr shared_instance_reuses;
+          pv
+      | None ->
+          let pv = fresh () in
+          Hashtbl.set tbl ~key:name ~data:((sorts, pv) :: known);
+          pv)
 
 let rec instantiate_cont ~print ~config dom kind_map (sub, svmap) sort =
   function
@@ -1728,14 +1879,11 @@ and instantiate_val ~print ~config dom kind_map (sub, svmap) = function
             (c.val_type, sort)
         in
         let pmap =
-          Map.Poly.mapi penv ~f:(fun ~key ~data ->
-              ignore data;
-              Ident.mk_fresh_pvar ()
-                ~prefix:
-                  (Some
-                     (Ident.name_of_pvar key
-                    (*^ "[" ^ Term.str_of_sort(* ToDo *) sort ^ "]"*) ^ "@")))
+          Map.Poly.mapi penv ~f:(fun ~key ~data -> instance_copy key data)
         in
+        Option.iter !recorded_renamings ~f:(fun r ->
+            r := !r @ Map.Poly.to_alist pmap);
+        let pmap = Map.force_merge pmap (!instantiate_fixpoint_preds pmap) in
         let constrs'', t' =
           ( Set.Poly.map ~f:(Formula.rename_pvars pmap)
             @@ Set.union constrs constrs',
@@ -2102,6 +2250,44 @@ let binop_of_str = function
   | "Stdlib.||" | "Stdlib.or" -> Formula.Or
   | s -> failwith @@ "unknown binop: " ^ s
 
+(* Library functions given by a refinement type of their own, because they
+   are not functions of their arguments and so have no term to stand for them.
+
+   [Stdlib.Random.int : (n:int) -> {r:int | 0 <= r && r < n}].  OCaml's
+   [Random.int n] returns an integer drawn from [0, n) when [0 < n < 2^30] and
+   raises [Invalid_argument] otherwise; the draw is modelled as a
+   nondeterministic choice, which every run may make, so a property proved
+   holds for every outcome of the generator.  The bounds are an assumption
+   about the result and never an obligation on the argument: for [n <= 0] the
+   range is empty and the type says the call does not return, which is what
+   the raise does to the code after it; for [n >= 2^30] the type admits
+   results the library would not give (it raises instead), an
+   over-approximation of the values that reach the code after the call.  The
+   raise itself is not modelled as an escaping exception.  This is OCaml's
+   meaning: in the dialect of some verifiers' benchmark files, [Random.int 0]
+   stands for an arbitrary integer, and such a file is read here as a call
+   that never returns. *)
+let is_stdlib_model = function "Stdlib.Random.int" -> true | _ -> false
+
+let of_stdlib_model ~config name =
+  match name with
+  | "Stdlib.Random.int" ->
+      let n = mk_fresh_tvar_with "n" in
+      let v = mk_fresh_tvar_with "v" in
+      let vt = Term.mk_var v T_int.SInt in
+      mk_rarrow n
+        (simple_val_of_sort ~config T_int.SInt)
+        (pure_comp_of_val ~config
+        @@ mk_val ~config T_int.SInt
+             ( v,
+               Formula.and_of
+                 [
+                   Formula.geq vt (T_int.zero ());
+                   Formula.lt vt (Term.mk_var n T_int.SInt);
+                 ] ))
+      @@ mk_fresh_trivial_pred ()
+  | _ -> failwith @@ "no refinement type for the library function " ^ name
+
 (** refinement types of constants *)
 let of_term ~print ~config term =
   let sort = Term.sort_of term in
@@ -2118,6 +2304,7 @@ let of_term ~print ~config term =
         sort
     else if is_unop name then of_unop ~config (unop_of_str name)
     else if is_binop name then of_binop ~config (binop_of_str name)
+    else if is_stdlib_model name then of_stdlib_model ~config name
     else
       mk_val ~config sort
       @@
@@ -2151,6 +2338,9 @@ let cgen_config =
       enable_pred_poly_for_constructors = false;
       enable_pred_poly_for_ref_types = false;
       instantiate_svars_to_int = false;
+      fresh_pred_for_cont_composition = true;
+      generic_constructor_instantiation = true;
+      pred_poly_encoding = Copying;
     }
 
 module Assertion = struct

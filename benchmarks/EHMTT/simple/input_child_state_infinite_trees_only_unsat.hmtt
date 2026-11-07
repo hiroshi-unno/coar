@@ -1,0 +1,21 @@
+/* Input trees may be infinite, and qe accepts one: e(e(e(...))), although
+   it accepts no finite tree (its only transition needs another e below).
+   So qlist accepts cons(e(e(...)), nil), on which F takes the cons branch
+   and returns bad, which qo rejects.  A reading of the input automaton
+   over finite trees only drops that list and answers sat. */
+%BEGING
+F xs -> case xs of
+  nil => ok
+| cons y ys => bad.
+%ENDG
+
+%BEGINA
+qlist nil -> .
+qlist cons -> qe qlist.
+qe e -> qe.
+qo ok -> .
+%ENDA
+
+%BEGINT
+F : qlist -> qo.
+%ENDT

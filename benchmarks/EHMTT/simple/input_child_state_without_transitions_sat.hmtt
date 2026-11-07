@@ -1,0 +1,18 @@
+/* qn has no transition, so it accepts no tree, and the only list qlist
+   accepts is nil, on which F returns ok.  A state named only as a child of
+   a transition is a state of the automaton like any other. */
+%BEGING
+F xs -> case xs of
+  nil => ok
+| cons y ys => bad.
+%ENDG
+
+%BEGINA
+qlist nil -> .
+qlist cons -> qn qlist.
+qo ok -> .
+%ENDA
+
+%BEGINT
+F : qlist -> qo.
+%ENDT

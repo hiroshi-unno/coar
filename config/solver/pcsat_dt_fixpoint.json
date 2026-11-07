@@ -7,18 +7,14 @@
     ],
     "coordinator": [
       "Filename",
-      "./config/pcsat/coordinator/dt_eager_fixpoint.json"
+      "./config/pcsat/coordinator/dt_fixpoint.json"
     ],
     "sol_printer": [
       "Filename",
       "./config/pcsat/sol_printer/enable.json"
     ],
     "load_oracle_sol": false,
-    "witness_seed_probe": false,
-    "witness": {"sat": false, "unsat": false, "unsat_substitutions": false},
-    "true_precondition_probe_parallel": false,
-    "least_definition_probe_parallel": false,
-    "rec_fun_graph_after_preprocessing": false,
-    "rec_fun_graph_after_elimination": false
+    "witness": {"sat": false, "unsat": ["Not_recorded"]},
+    "probes": {"least_definition": {"mode": ["Sequential"]}, "true_precondition": {"mode": ["Sequential"]}}
   }
 ]

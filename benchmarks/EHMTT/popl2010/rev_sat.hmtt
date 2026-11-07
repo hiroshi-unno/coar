@@ -1,0 +1,26 @@
+%BEGING
+Rev x -> RevSub x e.
+RevSub x z -> case x of
+	 e => z
+| a x' => RevSub x' (a z)
+| b x' => RevSub x' (b z).
+%ENDG
+
+%BEGINA
+/* a*b* */
+q0 a -> q0.
+q0 e -> .
+q0 b -> q1.
+q1 b -> q1.
+q1 e -> .
+/* b*a* */
+q2 b -> q2.
+q2 e -> .
+q2 a -> q3.
+q3 a -> q3.
+q3 e -> .
+%ENDA
+
+%BEGINT
+Rev : q0 -> q2.
+%ENDT

@@ -19,6 +19,12 @@
      exact forms, so that neither stage waits for the other;
    - [Point_pin]: the point pin alone (one of the three [Early_pins]),
      under a budget of its own, which also reads only a refutation.
+   and, after every other early stage when asked for,
+   - [Unsplit_pins]: the early relation pin's search over the clauses of the
+     problem preprocessed again without the single-constructor split
+     ([early_pins_problem]), which also reads only a refutation; run last so
+     that a problem the exact forms or the sequence instantiation decide does
+     not pay for that second preprocessing and search.
    Each stage is sound on its own, so whichever decides first decides the
    answer the other would have reached, if it reached one: running them in
    either order changes when an answer is reached within the run's time, and
@@ -31,16 +37,85 @@ type early_stage =
   | Point_pin
   | Early_pins
   | Exact_forms
+  | Unsplit_pins
+
+(* What the caller of the verdict reads of its answer.  A probe reads one
+   verdict only and discards the other: the lower-bound probe reads only a
+   refutation ([unsat]), the true-precondition, least-definition, witness-seed
+   and upper-bound probes only a proof ([sat]).  [Refutation_only]: the stages
+   that can only prove (the sequence instantiation, early and late) are not
+   run; [Proof_only]: the stages that can only refute (every pin, early and
+   late) are not run.
+   Contract: each skipped stage has, as its only possible decided answer, the
+   one the caller discards, and every stage is sound on its own, so a run that
+   skips it gives the caller a verdict it reads exactly when one is reachable
+   by the stages left, as the run without the skip does: a skipped proof
+   would have proved a valid problem, which no sound refuter refutes; a
+   skipped refutation would have refuted an invalid one, which no sound proof
+   proves.  What changes is the time to an answer and which questions are
+   asked: a problem the skipped stage would have decided early now runs the
+   stages after it to their budgets.
+   Process-wide; set for the length of one probe's solve by [with_read]. *)
+type read = Both | Proof_only | Refutation_only
+
+let read = ref Both
+
+(* [with_read r f]: [f ()] with [read] set to [r], restored on return and on
+   raise *)
+let with_read r f =
+  let saved = !read in
+  read := r;
+  Exn.protect ~f ~finally:(fun () -> read := saved)
+
+(* Whether the ladder stops after its early stages: the pieces-first and
+   quick sweeps, the early pins and the early exact forms (the early sequence
+   instantiation, a proof only, is left out by [read] = [Refutation_only], with
+   which this is set).  When they leave the problem undecided the ladder runs
+   neither the whole-conjunction and per-clause questions, nor the rewritten
+   ones, nor the late sequence instantiation, nor the late pins, and answers
+   undecided.  Set, through [with_early_only], by the lower-bound probe under
+   [probes.lower_bound.early_stages_only] for the length of its solve.
+   Contract: every answer given with it set is one the ladder gives without
+   it, since it only ends the ladder earlier; a refutation that only a later
+   stage would find is lost.  That is a choice of which questions a refuting
+   caller asks, not an equivalence.  Process-wide, like [read]. *)
+let early_only = ref false
+
+(* [with_early_only f]: [f ()] with [early_only] set and [read] set to
+   [Refutation_only], both restored on return and on raise *)
+let with_early_only f =
+  let saved = !early_only in
+  early_only := true;
+  Exn.protect
+    ~f:(fun () -> with_read Refutation_only f)
+    ~finally:(fun () -> early_only := saved)
+
+(* whether an early stage is run under [r]: the pin stages only when a
+   refutation is read *)
+let stage_read r = function
+  | Raced_pins | Cheap_pins | Point_pin | Early_pins | Unsplit_pins -> (
+      match r with Proof_only -> false | Both | Refutation_only -> true)
+  | Exact_forms -> true
+
+(* whether the sequence instantiation (a proof only) is run under [r] *)
+let seq_instantiation_read = function
+  | Refutation_only -> false
+  | Both | Proof_only -> true
+
+(* whether a late pin (a refutation only) is run under [r] *)
+let late_pins_read = function
+  | Proof_only -> false
+  | Both | Refutation_only -> true
 
 (* [early_order ~pins_after_exact ?cheap_pins_first ?pins_raced
    ?point_pin_first ()] is the order the early stages are run in: the pins
    first (the order before this option existed) unless [pins_after_exact],
    and then, with [cheap_pins_first], the cheap pin question before the exact
    forms, and with [point_pin_first] the point pin alone ([Point_pin],
-   [early_point_pin_first_no_unknown_query]) after it and before the exact
+   [zero_unknown.early_stage.pins (Early_pins point_pin_first)]) after it and before the exact
    forms.  With [pins_after_exact] and [pins_raced], [Raced_pins] comes first
    of all: the stage that starts the early pins in a forked copy racing the
-   rest of the ladder ([early_pins_raced_no_unknown_query]); the
+   rest of the ladder ([zero_unknown.early_stage.pins (Early_pins raced)]); the
    [pins_after_exact] order follows it unchanged, [Early_pins] included, so
    the race adds an earlier chance of the pins' refutation and takes nothing
    from the sequential run.
@@ -51,15 +126,18 @@ type early_stage =
    then [Point_pin], all before [Exact_forms]; the rest is the
    [pins_after_exact] order, [Exact_forms] then [Early_pins].  Every optional
    stage is a part of the pins put earlier, pointless before the pins
-   themselves, so a flag alone changes nothing. *)
+   themselves, so a flag alone changes nothing.
+   [unsplit_last] appends [Unsplit_pins] after all of these, in either order:
+   it occurs exactly when [unsplit_last] holds, and always last. *)
 let early_order ?(cheap_pins_first = false) ?(pins_raced = false)
-    ?(point_pin_first = false) ~pins_after_exact () =
-  if pins_after_exact then
-    (if pins_raced then [ Raced_pins ] else [])
-    @ (if cheap_pins_first then [ Cheap_pins ] else [])
-    @ (if point_pin_first then [ Point_pin ] else [])
-    @ [ Exact_forms; Early_pins ]
-  else [ Early_pins; Exact_forms ]
+    ?(point_pin_first = false) ?(unsplit_last = false) ~pins_after_exact () =
+  (if pins_after_exact then
+     (if pins_raced then [ Raced_pins ] else [])
+     @ (if cheap_pins_first then [ Cheap_pins ] else [])
+     @ (if point_pin_first then [ Point_pin ] else [])
+     @ [ Exact_forms; Early_pins ]
+   else [ Early_pins; Exact_forms ])
+  @ if unsplit_last then [ Unsplit_pins ] else []
 
 (* Whether the point pin, run alone before the exact forms ([Point_pin]),
    searched everything the point pin of the later [Early_pins] stage would
@@ -267,3 +345,40 @@ let quick_sweep ~finish_started_clause ~past_deadline ~pieces_of ~ask
                 | _ -> go false rest))
         in
         go true (pieces_of c))
+
+(* The problem the early relation pin reads after the one the ladder decides,
+   when the preprocessing left one: set by the preprocessor for the length of
+   a solve whose preprocessing split a clause variable of a single-constructor
+   datatype into its fields, under
+   [clauses.split_single_cons (Split_single_cons {outside_early_pins = true})].
+   The function preprocesses the same input again with that split left out and
+   returns the result when it is in clause form and has no unknown, [None]
+   otherwise (or when that second preprocessing raised); it is computed at the
+   first call and remembered.
+   Contract asked of the setter: a model refuting a clause of the problem
+   returned refutes the problem the ladder decides: both are the same input
+   preprocessed by passes each of which keeps every refutation, and the split
+   itself replaces a variable of a single-constructor datatype by the
+   application of its constructor to fresh field variables, an equivalence
+   per clause.  The pin reads only refutations of it, never a proof.
+   Why: the split rewrites a clause over tuples of relation arrays into one
+   over the tuples' fields; the relation pin's shape guesses, read from models
+   of a relaxation, then came out smaller (seven tuples where eleven were
+   needed) and no pinned negation was a countermodel, where the unsplit clause
+   was refuted in one guess.
+   Per domain, as the preprocessor's own flags; a spawned domain or a forked
+   copy starts from its parent's value. *)
+let early_pins_problem_key =
+  Domain.DLS.new_key ~split_from_parent:(fun r -> ref !r) (fun () ->
+      ref (None : (unit -> PCSP.Problem.t option) option))
+
+let early_pins_problem () = Domain.DLS.get early_pins_problem_key
+
+(* a replay scope ([Ast.Ident.with_replayed_fresh_names]) for one search of
+   the early relation pin over the unsplit clauses: a prefix no other name of
+   this process spells, a new one at each call, so that the names of one
+   search never meet another's *)
+let early_unsplit_scope_count = Atomic.make 0
+
+let early_unsplit_scope () =
+  sprintf "#unsplitpin%dr" (Atomic.fetch_and_add early_unsplit_scope_count 1)

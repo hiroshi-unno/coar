@@ -3,6 +3,14 @@ open Common.Ext
 open Ast
 open Ast.LogicOld
 
+(* Minimise the real-valued [obj] subject to [constrs] with the external
+   OptiMathSAT, over the variables the two mention, all of which must be real.
+   [Some (None, None, model)] is a model of [constrs] assigning every one of
+   those variables (OptiMathSAT is asked for an optimum, but with
+   [-opt.abort_interval] its search may stop at a model that is not one, so
+   the caller may rely on feasibility only); [None] is no model: OptiMathSAT
+   answered [unsat] or [unknown].  Any other answer, a non-zero exit, or a
+   model that cannot be read is an exception, never [None] or a model. *)
 let minimize constrs obj =
   let filename =
     (* the process id keeps two concurrent runs in one directory from writing,
@@ -65,6 +73,9 @@ let minimize constrs obj =
               Some (Some entries)
           | _ -> failwith "invalid OMT response")
     | Ok _, Some "unsat" -> Some None
+    (* the solver's own unknown is no optimum, like unsat: the caller reads
+       [None] as the question left unsettled, never as a closest point *)
+    | Ok _, Some "unknown" -> Some None
     | Ok _, Some s -> failwith s
     | Ok _, None -> None
   in
@@ -92,6 +103,7 @@ let minimize constrs obj =
                        SMT.Problem.
                          {
                            decl_reading = SMT.Problem.Synthesize;
+                           lifted_universals = Map.Poly.empty;
                            candidates = Map.Poly.empty;
                            uni_sort = Set.Poly.empty;
                            uni_senv = Map.Poly.empty;

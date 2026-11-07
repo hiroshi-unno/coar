@@ -1,0 +1,8 @@
+# A discrete uniform draw over three values has mean exactly 1, so the lower bound holds.
+# Expected: valid under a configuration whose backend settles a constant bound (the PolyQEnt
+# one); the reduced QFL problem's query function is the constant 1.
+# A sampler that weighted each value by 1/3 at every nesting level instead gave the
+# distribution 4/9, 2/9, 1/3 on 0, 1, 2, whose mean is 8/9, and this bound did not hold.
+x ~ UniformDisc(0, 3);
+return x
+?Ex[x] >= 1

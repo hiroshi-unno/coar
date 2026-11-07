@@ -1,4 +1,6 @@
-;; pcsat answers unsat on this
+;; sat: I(a, N) = forall i. 0 <= i <= N -> a[i] = 0 and
+;; J(a, b, N, k) = forall i. 0 <= i <= N -> a[i] = 42 satisfy every clause.
+;; They still do if either query's comparison is replaced by <, != or >.
 
 (set-logic HORN)
 
@@ -48,7 +50,7 @@
 		  (<= 0 j)
 		  (<= j i)
 		  (I a i)
-		  (< (select a j) 0)) ;; with != or > this is unsat; with < it makes progress
+		  (< (select a j) 0))
 		 false)))
 
 (assert (forall ((a (Array Int Int)) (i Int) (j Int) (k Int))
@@ -57,7 +59,7 @@
 		  (<= 0 j)
 		  (<= j i)
 		  (J a a i k)
-		  (> (select a j) 42)) ;; with != or > this is unsat; with < it makes progress
+		  (> (select a j) 42))
 		 false)))
 
 (check-sat)

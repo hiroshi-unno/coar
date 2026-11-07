@@ -2,9 +2,9 @@ open Core
 open Common.Ext
 
 (* Refuting a problem that still has unknowns by a clause that mentions none
-   of them: the coordinator's [sweep_unknown_free_clauses] (at the start of a
+   of them: the coordinator's [unknown_free_clauses.sweep] (at the start of a
    solve, before the loop) and the preprocessor's
-   [sweep_unknown_free_clauses_before_finite_instances] (after predicate
+   [unknown_free_clauses.sweep_before_finite_instances] (after predicate
    elimination, before the finite instantiation of quantified sorts, whose
    nested solve can spend a whole run before the outer solve starts).
 
@@ -80,3 +80,25 @@ let sweep ~pieces ~expired ~ask formulas =
               match ask p with
               | `Invalid model -> Some (i, p, model)
               | _ -> None))
+
+(** How one sweep question is asked in this process: [here phi], unless
+    [refuse phi], in which case nothing is asked, [on_refused ()] is called and
+    the answer is [`Unknown].
+
+    Why a question may be refused.  The caller's [refuse] is the solver
+    boundary's shape test for questions the solver may not return from (a
+    quantifier binding a sequence: Z3's sequence theory then reads neither its
+    timeout nor its resource limit, and an in-process call has stayed open for
+    over a minute while the process grew to its memory cap).  A caller that
+    asks in a killed copy is bounded by the kill and need not gate.
+
+    Sound for [sweep]: it reads only [`Invalid], and [`Unknown] refutes
+    nothing, so a refused question changes the sweep's result only from a
+    refutation to none -- the problem then goes on as it was.  Exact on every
+    question [refuse] does not hold of: [here] is asked as it would be
+    without the gate. *)
+let ask_gated ~refuse ~on_refused ~here phi =
+  if refuse phi then (
+    on_refused ();
+    `Unknown "a shape the solver may not return on")
+  else here phi

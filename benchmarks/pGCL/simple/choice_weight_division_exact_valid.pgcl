@@ -1,0 +1,14 @@
+# x is a nat variable equal to 1, and the weight x / 2 of the choice is a probability, so /
+# there is exact rational division: the weight is 1/2 and the expectation of c is
+# 1/2 * 1 + 1/2 * 3 = 2.
+# Expected: valid.  Read as integer division, the weight was 0, c was always 3, and the bound
+# was not proved.
+nat x;
+nat c;
+x := 1;
+{
+	c := 1;
+}[x / 2]{
+	c := 3;
+}
+?Ex [c] <= 2

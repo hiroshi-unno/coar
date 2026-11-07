@@ -17,7 +17,7 @@ module Config = struct
   type t = {
     verbose : bool; [@default false]
     classifier : Classifier.Config.t ext_file; [@default Common.Util.ExtFile.Filename "./config/pcsat/classifier/bfsb_nn.json"]
-    wf_classifier : WFClassifier.Config.t ext_file; [@default Common.Util.ExtFile.Filename "./config/pcsat/classifier/wf_dt_eager.json"]
+    wf_classifier : WFClassifier.Config.t ext_file; [@default Common.Util.ExtFile.Filename "./config/pcsat/classifier/wf_dt.json"]
     fn_classifier : FNClassifier.Config.t ext_file; [@default Common.Util.ExtFile.Filename "./config/pcsat/classifier/fn_tb.json"] (*with_lb: bool*)
   }
   [@@deriving yojson]
@@ -34,6 +34,40 @@ module Config = struct
   end
 end
 
+(* A kind is discharged by building candidates only from a family whose every
+   member has it, and validation checks the clauses alone, never the kind.
+   This synthesizer has such a family for [WF] (the well-founded classifier)
+   and [FN] (the functional classifier) only; every other predicate unknown
+   gets the ordinary classifier, whose candidates satisfy the labelled
+   examples and nothing more.  So for any other kind that is an obligation of
+   the problem, a candidate the validator accepts solves the clauses and may
+   break the kind: a predicate declared total over its first argument and
+   occurring only negatively, [P(x,y) => x < y < x+1] over the integers, got
+   the candidate [false], which satisfies the clause and is not total,
+   although no total [P] exists.
+   [guarantees_kind k]: every candidate this synthesizer builds for an
+   unknown of kind [k] has the kind, or [k] states no obligation beyond the
+   clauses.  True of [Ord], [WF], [FN]; of a [Uniq] the clauses entail or the
+   least model gives (it restricts the search and adds no obligation, so a
+   solution of the clauses is a solution of the problem); and of the function
+   kinds, which state no condition on a predicate.  False of [Tot]
+   (non-emptiness included), a declared [Uniq], [DWF], [NWF], [Parity],
+   [Adm] and [Integ].  A [sat] whose solution gives such an unknown a body
+   must have that body's kind re-checked before it is reported.
+   [kind_checkable k]: the obligation of [k] can be asked of a given body
+   (as a first-order validity question, or against a ranking certificate);
+   false of [Adm] and [Integ], for which no question exists. *)
+let guarantees_kind = function
+  | Kind.Ord | Kind.FN | Kind.WF
+  | Kind.Uniq (_, (Kind.Entailed | Kind.LeastModel))
+  | Kind.IntFun | Kind.RealFun | Kind.RegEx ->
+      true
+  | Kind.Tot _ | Kind.Uniq (_, Kind.Declared) | Kind.DWF | Kind.NWF _
+  | Kind.Parity _ | Kind.Adm _ | Kind.Integ ->
+      false
+
+let kind_checkable = function Kind.Adm _ | Kind.Integ -> false | _ -> true
+
 module Make (Cfg : Config.ConfigType) (APCSP : PCSP.Problem.ProblemType) =
 struct
   let config = Cfg.config
@@ -43,6 +77,37 @@ struct
     Debug.Make ((val Debug.Config.(if config.verbose then enable else disable)))
 
   let _ = Debug.set_id id
+
+  (* Refuses, as an unsupported input that the solver reports as [unknown],
+     a problem with an unknown whose kind this synthesizer does not guarantee
+     and no checker can re-verify ([guarantees_kind], [kind_checkable]): its
+     candidate's kind could be wrong and nothing would notice.  It is called
+     when the first candidate is to be built, not when this module is built,
+     since the stages before the first synthesis round can already decide the
+     problem and their answers do not depend on this synthesizer.
+     Assumes: [APCSP.problem] is the problem the loop solves.  Guarantees:
+     after it returns, every unknown of [APCSP.problem] either has a kind
+     every candidate of this synthesizer has, or one whose obligation the
+     solver re-checks on a [sat] before reporting it. *)
+  let refuse_unhonoured_kinds () =
+    let unhonoured =
+      Map.Poly.fold (PCSP.Problem.senv_of APCSP.problem) ~init:[]
+        ~f:(fun ~key ~data:_ acc ->
+          let kind = PCSP.Problem.kind_of APCSP.problem key in
+          if guarantees_kind kind || kind_checkable kind then acc
+          else (key, kind) :: acc)
+    in
+    if not (List.is_empty unhonoured) then
+      raise
+        (PCSP.Problem.NoTemplate
+           (sprintf
+              "the classification-based synthesizer builds candidates of no \
+               kind but ordinary, well-founded and functional, and no checker \
+               re-verifies %s; use a template-based PCSat configuration"
+              (String.concat_map_list ~sep:", " (List.rev unhonoured)
+                 ~f:(fun (v, k) ->
+                   sprintf "%s (%s)" (Ident.name_of_tvar v) (Kind.str_of k)))))
+
   let init () = () (*ToDo*)
 
   let classifier =
@@ -116,6 +181,7 @@ struct
       Classifier.mk_classifier pvar params table labeling (senv, examples)
 
   let run_phase _iters e =
+    refuse_unhonoured_kinds ();
     let open State.Monad_infix in
     Ok (State.lift e) >>=? fun vs _ ->
     let labelings = vs.labelings in

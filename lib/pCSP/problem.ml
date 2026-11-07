@@ -33,10 +33,41 @@ type t =
   | Raw of (sort_env_map * term) Set.Poly.t * Params.t
   | Cnf of ClauseSet.t * Params.t
 
+(* A counterexample of PPDP 2009's procedure (Unno and Kobayashi,
+   "Dependent Type Inference with Interpolants"): the unsatisfiable system
+   unfolded along one derivation.  Each node is a clause instance: its head
+   and body applications and its formula part, with the clause's variables
+   renamed to the instance's own; a node's [i]-th child is the instance
+   whose head derives the node's [i]-th body application, the two argument
+   lists equal under [model].  [model] gives every variable of the
+   derivation a value under which every instance holds, so no assignment of
+   relations to the predicates satisfies the clauses ([counterexample_holds]
+   checks it by evaluation).  [condition] is the refuted goal's body under
+   the least solution, projected onto [vocabulary] (the goal's own
+   variables, or those asked for); [model] restricted to [vocabulary]
+   satisfies it.  [expansion] names the unfolding that was refuted. *)
+type cex_node = {
+  head : (Ident.pvar * LogicOld.Term.t list) option;
+  body : (Ident.pvar * LogicOld.Term.t list) list;
+  constr : LogicOld.Formula.t;
+  sources : string list;
+      (** where the clause was generated, when its producer recorded it *)
+  children : cex_node list;
+}
+
+type counterexample = {
+  condition : LogicOld.Formula.t;
+  vocabulary : LogicOld.sort_env_list;
+  model : (LogicOld.sort_bind * LogicOld.Term.t) list;
+  derivation : cex_node;
+  expansion : string;
+}
+
 type refutation =
   | Formula of LogicOld.Formula.t
   | Proof of Refutation.t
   | External of string
+  | Counterexample of counterexample
 
 type solution =
   | Sat of term_subst_map
@@ -54,6 +85,31 @@ let lts_str_of_solution = function
 
 type bounds = (Ident.tvar, int * (sort_env_map * term)) Map.Poly.t
 
+(* [GroundSeeds]' payload: each seed is a binder's name and its values;
+   each atom a predicate's name and a value (or nothing) per argument, an
+    application the seeds make ground where the binders' names are lost;
+   [choice_values] are the values of every other integer variable;
+   [atom_budget] and [max_combos] bound the instances the receiver builds;
+   [trace] asks the receiver for a stderr line per seed message and per
+   refutation holding seeded examples; [synthesis_reads] says whether the
+   receiver's template synthesis reads the instances and what is derived
+   from them (when false only resolution and labeling do);
+   [refutation_cone] says whether the receiver keeps only the instances a
+   labeling refutation of the message's instances can use;
+   [stop_after_fruitless] ([Some k]) asks the receiver to unfold no further
+   message once [k] consecutive messages kept no instance. *)
+type ground_seeds = {
+  seeds : (string * Ast.Value.t list) list;
+  atoms : (string * Ast.Value.t option list) list;
+  choice_values : Ast.Value.t list;
+  atom_budget : int;
+  max_combos : int;
+  trace : bool;
+  synthesis_reads : bool;
+  refutation_cone : bool;
+  stop_after_fruitless : int option;
+}
+
 type Common.Messenger.info +=
   | CandidateSolution of
       (term_subst_map
@@ -64,6 +120,12 @@ type Common.Messenger.info +=
         option)
   | LowerBounds of bounds
   | UpperBounds of bounds
+  | GroundSeeds of ground_seeds
+      (** values for some of the problem's variables, named by the binders
+          they came from, proposed by another solver (the primal-dual
+          exchange's dual side): the receiver may hold ground instances of
+          its own clauses at those values as examples, and nothing else.  Sent
+          only by a configuration that asks for it. *)
 
 module type ProblemType = sig
   val problem : t
@@ -243,6 +305,11 @@ let is_adm_pred pcsp = Params.is_kind (params_of pcsp) Kind.is_adm
 let is_adm_pred_with_cond pcsp =
   Params.is_kind (params_of pcsp) Kind.is_adm_with_cond
 
+(* the truth-value domain of an admissible unknown; [None] for another kind
+   or an unknown without one *)
+let adm_of pcsp tvar =
+  Option.bind (Map.Poly.find (params_of pcsp).Params.kind_map tvar) ~f:Kind.adm_of
+
 let is_integ_pred pcsp = Params.is_kind (params_of pcsp) Kind.is_integ
 
 let is_int_fun pcsp x =
@@ -252,6 +319,13 @@ let is_int_fun pcsp x =
   match Map.Poly.find (senv_of pcsp) x with
   | None -> false
   | Some s -> IntTerm.is_int_sort @@ Sort.ret_of s
+
+let is_real_fun pcsp x =
+  Params.is_kind (params_of pcsp) Kind.is_real_fun x
+  &&
+  match Map.Poly.find (senv_of pcsp) x with
+  | None -> false
+  | Some s -> ExtTerm.is_real_sort @@ Sort.ret_of s
 
 let is_regex pcsp x =
   Params.is_kind (params_of pcsp) Kind.is_regex x
@@ -332,7 +406,7 @@ let update_params_dtenv pcsp =
   update_params pcsp
     {
       (params_of pcsp) with
-      dtenv = Map.force_merge (dtenv_of pcsp) @@ dtenv_of_def pcsp;
+      dtenv = LogicOld.DTEnv.force_merge (dtenv_of pcsp) @@ dtenv_of_def pcsp;
     }
 
 let set_params_sol_space pcsp sol_space =
@@ -358,6 +432,56 @@ let set_params_sol_space pcsp sol_space =
    solving, by the solver that runs the pass. *)
 let reconstructed_functions : Ident.tvar Set.Poly.t Atomic.t =
   Atomic.make Set.Poly.empty
+
+(* The functions of the environment a reconstruction pass found equal to a
+   function it reconstructed (its [reuse_equal]): already in the environment,
+   so not among [reconstructed_functions] and kept in the hypothesis space
+   whatever [reconstructed_fun_terms] says, but read, like the names there,
+   by the bounded reconstructed-function vocabulary and kept as roots by the
+   pruning below.  Written once, before solving, by the solver that runs the
+   pass. *)
+let reconstruction_aliases : Ident.tvar Set.Poly.t Atomic.t =
+  Atomic.make Set.Poly.empty
+
+(* The functions of [fenv] that [term] reads, and with [~applied_only:true]
+   only those it applies to at least one argument: the names its old-language
+   conversion turns into [FVar] applications (a nullary one becomes a
+   variable).  Read on the term itself, because that conversion resolves a
+   name the unknowns and the universal variables do not bind through the
+   PROCESS-GLOBAL function environment, and so raises on a caller that
+   restored that environment without these definitions (an API caller that
+   parsed under a saved environment), where the problem's own [fenv] still
+   holds them.  [bound] holds the names that shadow a function: the unknowns,
+   the formula's universal variables and the binders above the subterm. *)
+let known_functions_read ~applied_only fenv ~bound term =
+  let known bound var = (not (Set.mem bound var)) && Map.Poly.mem fenv var in
+  let rec aux bound acc = function
+    | Var (var, _) -> if (not applied_only) && known bound var then Set.add acc var else acc
+    | Con _ -> acc
+    | App (t1, t2, _) ->
+        let acc =
+          match t1 with
+          | Var (var, _) when known bound var -> Set.add acc var
+          | _ -> acc
+        in
+        aux bound (aux bound acc t1) t2
+    | Bin (_, var, _, body, _) -> aux (Set.add bound var) acc body
+    | Let (var, _, def, body, _) ->
+        aux bound (aux (Set.add bound var) acc body) def
+    | TyApp (t, _, _) | TyLam (_, t, _) -> aux bound acc t
+  in
+  aux bound Set.Poly.empty term
+
+(* [known_functions_read] over every constraint of [pcsp], stable clauses
+   included, each under its own universal variables and the unknowns *)
+let known_functions_read_by_constraints ~applied_only fenv pcsp =
+  let unknowns = Map.key_set (senv_of pcsp) in
+  Set.Poly.union_list
+  @@ List.map ~f:(fun (uni_senv, phi) ->
+         known_functions_read ~applied_only fenv
+           ~bound:(Set.union unknowns (Map.key_set uni_senv))
+           phi)
+  @@ Set.to_list @@ formulas_of pcsp
 
 let prune_unreached_definitions pcsp =
   let params = params_of pcsp in
@@ -390,11 +514,10 @@ let prune_unreached_definitions pcsp =
              if
                Ident.is_size_fun_var v
                || Set.mem (Atomic.get reconstructed_functions) v
+               || Set.mem (Atomic.get reconstruction_aliases) v
              then Some v
              else None))
-        (Set.Poly.union_list @@ List.map ~f:(fun phi ->
-             called (LogicOld.Formula.funsyms_of phi))
-        @@ Set.to_list @@ old_formulas_of pcsp)
+        (known_functions_read_by_constraints ~applied_only:true fenv pcsp)
     in
     let used = close Set.Poly.empty roots in
     if Set.length used = Map.Poly.length fenv then pcsp
@@ -586,9 +709,11 @@ let map_old ~f pcsp =
   let exi_senv = (params_of pcsp).senv in
   let f =
     (fun (uni_senv, phi) ->
+      Common.PhaseTime.with_phase "to-old" @@ fun () ->
       ( Map.of_set_exn @@ Map.to_set @@ to_old_sort_env_map uni_senv,
         ExtTerm.to_old_fml exi_senv uni_senv phi ))
-    >> f >> ExtTerm.of_old
+    >> f
+    >> fun x -> Common.PhaseTime.with_phase "of-old" (fun () -> ExtTerm.of_old x)
   in
   (* one datatype-conversion scope for the round trip of every formula, so each
      datatype is converted once in each direction rather than once per
@@ -599,6 +724,67 @@ let map_old ~f pcsp =
   if Atomic.get ExtTerm.share_term_conversion_terms then
     ExtTerm.with_shared_term_conversion @@ fun () -> map ~f pcsp
   else map ~f pcsp
+
+(* [map_old_list ~f pcsp]: [map_old] with [f] given the whole list of
+   converted formulas at once, in the order [map_old] visits them (ascending
+   in the problem's set), and returning their images in the same positions.
+   Every formula is converted to the old representation, then [f] runs, then
+   every image is converted back, each step in that order; the result set is
+   built by adding the images in that order, as [Set.Poly.map] builds it, so
+   it has the same tree shape.  Each of the two conversion steps has its own
+   conversion scopes of [map_old]'s kind (a datatype-conversion scope, and a
+   term-conversion scope under [share_term_conversion_terms]): the two
+   directions keep separate tables, so one scope around both shared nothing
+   between them, and a scope that ended with the first step lets its tables,
+   and the old images only they still hold, go before [f] runs.  Contract:
+   [f] returns a list as long as its argument.  With an [f] that maps each
+   element on its own, the result equals [map_old]'s up to the order in which
+   fresh names are drawn (the same when only one step draws any).
+
+   Why: a pipeline of passes run formula by formula keeps, under a memo scope
+   that spans the whole problem, every intermediate formula of every pass for
+   every formula alive until the last formula is done; given the list, the
+   caller can run the passes one at a time over all formulas and let each
+   pass's intermediates go before the next pass starts. *)
+let map_old_list ~f pcsp =
+  let exi_senv = (params_of pcsp).senv in
+  let to_old (uni_senv, phi) =
+    Common.PhaseTime.with_phase "to-old" @@ fun () ->
+    ( Map.of_set_exn @@ Map.to_set @@ to_old_sort_env_map uni_senv,
+      ExtTerm.to_old_fml exi_senv uni_senv phi )
+  in
+  let of_old x =
+    Common.PhaseTime.with_phase "of-old" (fun () -> ExtTerm.of_old x)
+  in
+  (* left to right, whatever [List.map]'s evaluation order *)
+  let in_order g l = List.rev @@ List.fold l ~init:[] ~f:(fun acc x -> g x :: acc) in
+  let scoped g =
+    ExtTerm.with_shared_datatype_conversion @@ fun () ->
+    if Atomic.get ExtTerm.share_term_conversion_terms then
+      ExtTerm.with_shared_term_conversion g
+    else g ()
+  in
+  let run items =
+    let olds = scoped (fun () -> in_order to_old items) in
+    let images = f olds in
+    if List.length images <> List.length olds then
+      failwith "map_old_list: the function changed the number of formulas";
+    scoped (fun () -> in_order of_old images)
+  in
+  match pcsp with
+  | Raw (phis, params) ->
+      let images = run (Set.to_list phis) in
+      Raw (List.fold images ~init:Set.Poly.empty ~f:Set.add, params)
+  | Cnf (cls, params) ->
+      let cls = Set.to_list cls in
+      let images =
+        run (List.map cls ~f:(fun (uni_senv, _, _, phi) -> (uni_senv, phi)))
+      in
+      Cnf
+        ( List.fold2_exn cls images ~init:Set.Poly.empty
+            ~f:(fun acc (_, ps, ns, _) (uni_senv, phi) ->
+              Set.add acc (uni_senv, ps, ns, phi)),
+          params )
 
 (* [map_old_where ~touch ~f] is [map_old ~f] on the formulas [touch] holds of
    and the identity on the others, whose round trip through the other term
@@ -616,6 +802,30 @@ let map_old_where ~touch ~f pcsp =
   in
   ExtTerm.with_shared_datatype_conversion @@ fun () ->
   map pcsp ~f:(fun c -> if touch c then g c else c)
+
+(* [map_old_changed ~f pcsp]: [map_old] for an [f] that returns [None] on a
+   formula it leaves as it is.  Such a formula is kept as it was, without the
+   conversion back, and when [f] changes nothing the problem itself is
+   returned, so a rewrite that rarely applies does not move the
+   representation of every problem it is run on. *)
+let map_old_changed ~f pcsp =
+  let exi_senv = (params_of pcsp).senv in
+  let changed = ref false in
+  let g ((uni_senv, phi) as c) =
+    match
+      f
+        ( Map.of_set_exn @@ Map.to_set @@ to_old_sort_env_map uni_senv,
+          ExtTerm.to_old_fml exi_senv uni_senv phi )
+    with
+    | None -> c
+    | Some x ->
+        changed := true;
+        ExtTerm.of_old x
+  in
+  let pcsp' =
+    ExtTerm.with_shared_datatype_conversion @@ fun () -> map pcsp ~f:g
+  in
+  if !changed then pcsp' else pcsp
 
 (* [alpha_canonical_key phi] is a string such that two formulas get the same
    key only if they are alpha-equivalent (assuming, as the dedup below does,
@@ -646,43 +856,125 @@ let dedup_alpha_equivalent_disjuncts ?(print = fun _ -> ()) pcsp =
   (* the walk costs a round trip through the other term representation, so do
      not pay it for a problem that states no premise with a quantifier, which is
      every ordinary CHC *)
+  let rec has_a_quantifier_in = function
+    | Logic.Bin ((Logic.Forall | Logic.Exists), _, _, _, _) -> true
+    | Logic.Bin (_, _, _, t, _) -> has_a_quantifier_in t
+    | Logic.App (t1, t2, _) -> has_a_quantifier_in t1 || has_a_quantifier_in t2
+    | Logic.Let (_, _, t1, t2, _) ->
+        has_a_quantifier_in t1 || has_a_quantifier_in t2
+    | _ -> false
+  in
   let has_a_quantifier =
-    let rec aux = function
-      | Logic.Bin ((Logic.Forall | Logic.Exists), _, _, _, _) -> true
-      | Logic.Bin (_, _, _, t, _) -> aux t
-      | Logic.App (t1, t2, _) -> aux t1 || aux t2
-      | Logic.Let (_, _, t1, t2, _) -> aux t1 || aux t2
-      | _ -> false
-    in
     match pcsp with
-    | Raw (phis, _) -> Set.exists phis ~f:(snd >> aux)
-    | Cnf (cls, _) -> Set.exists cls ~f:(fun (_, _, _, phi) -> aux phi)
+    | Raw (phis, _) -> Set.exists phis ~f:(snd >> has_a_quantifier_in)
+    | Cnf (cls, _) ->
+        Set.exists cls ~f:(fun (_, _, _, phi) -> has_a_quantifier_in phi)
   in
   if not has_a_quantifier then pcsp
   else
     let canonical_key = alpha_canonical_key in
-    map_old pcsp ~f:(fun (uni_senv, phi) ->
-        let disjuncts = Set.to_list @@ LogicOld.Formula.disjuncts_of phi in
-        if List.length disjuncts <= 1 then (uni_senv, phi)
+    let exi_senv = (params_of pcsp).senv in
+    let check = Option.is_some (Sys.getenv "COAR_CHECK_DEDUP_ROUND_TRIP") in
+    let round_trip uni_senv phi =
+      ExtTerm.of_old
+        ( Map.of_set_exn @@ Map.to_set @@ to_old_sort_env_map uni_senv,
+          ExtTerm.to_old_fml exi_senv uni_senv phi )
+    in
+    (* a formula that loses no disjunct is returned as it came, not as its
+       round trip through the other term representation; on a formula with
+       no quantifier the round trip is not made at all, as for a problem with
+       none above.  [COAR_CHECK_DEDUP_ROUND_TRIP] compares each such formula
+       with its round trip and reports how many differ. *)
+    let unchanged uni_senv phi =
+      if check then
+        Common.PhaseTime.event
+          (let senv', phi' = round_trip uni_senv phi in
+           if
+             Map.Poly.equal Stdlib.( = ) senv' uni_senv
+             && Stdlib.( = ) phi' phi
+           then
+             "dedup-round-trip-identical"
+           else "dedup-round-trip-differs");
+      (uni_senv, phi)
+    in
+    ExtTerm.with_shared_datatype_conversion @@ fun () ->
+    (if Atomic.get ExtTerm.share_term_conversion_terms then
+       ExtTerm.with_shared_term_conversion
+     else fun f -> f ())
+    @@ fun () ->
+    map pcsp ~f:(fun (uni_senv, phi0) ->
+        if not (has_a_quantifier_in phi0) then unchanged uni_senv phi0
         else
-          let kept =
-            List.rev @@ snd
-            @@ List.fold disjuncts ~init:(Set.Poly.empty, [])
-                 ~f:(fun (seen, acc) d ->
-                   let key = canonical_key d in
-                   if Set.mem seen key then (seen, acc)
-                   else (Set.add seen key, d :: acc))
+          let old_senv, phi =
+            Common.PhaseTime.with_phase "to-old" @@ fun () ->
+            ( Map.of_set_exn @@ Map.to_set @@ to_old_sort_env_map uni_senv,
+              ExtTerm.to_old_fml exi_senv uni_senv phi0 )
           in
-          if List.length kept = List.length disjuncts then (uni_senv, phi)
-          else (
-            print
-            @@ lazy
-                 (sprintf
-                    "dropped %d of %d disjuncts that differ only in binder \
-                     names"
-                    (List.length disjuncts - List.length kept)
-                    (List.length disjuncts));
-            (uni_senv, LogicOld.Formula.or_of kept)))
+          let disjuncts = Set.to_list @@ LogicOld.Formula.disjuncts_of phi in
+          if List.length disjuncts <= 1 then unchanged uni_senv phi0
+          else
+            let kept =
+              List.rev @@ snd
+              @@ List.fold disjuncts ~init:(Set.Poly.empty, [])
+                   ~f:(fun (seen, acc) d ->
+                     let key = canonical_key d in
+                     if Set.mem seen key then (seen, acc)
+                     else (Set.add seen key, d :: acc))
+            in
+            if List.length kept = List.length disjuncts then
+              unchanged uni_senv phi0
+            else (
+              print
+              @@ lazy
+                   (sprintf
+                      "dropped %d of %d disjuncts that differ only in binder \
+                       names"
+                      (List.length disjuncts - List.length kept)
+                      (List.length disjuncts));
+              Common.PhaseTime.with_phase "of-old" (fun () ->
+                  ExtTerm.of_old (old_senv, LogicOld.Formula.or_of kept))))
+
+(* [dedup_alpha_equivalent_clauses pcsp] is [(pcsp', n)]: [pcsp] in clausal
+   form with [n] clauses removed, each of which prints, with its sort
+   environment, exactly as a kept clause does once the binders of its formula
+   are renamed by [alpha_canonical_key]; the kept clause of each such class is
+   the first in the set's order.  A [Raw] problem, or one with no two such
+   clauses, is returned as it is with [n = 0].  The stable clauses are not
+   touched.
+   Contract: exact in every model, since two alpha-equivalent clauses state
+   the same constraint and a conjunction does not change when a conjunct is
+   repeated; the unknowns, the parameters and the stable clauses are as
+   before, and every unknown of a removed clause occurs in the clause kept in
+   its place.  Assumes, as [alpha_canonical_key] does, that two formulas
+   printed alike are equal.
+   Why: the predicate elimination and the argument sharing can produce one
+   clause several times along different paths, each copy with its own bound
+   variable names; a clause set compares its elements structurally, so the
+   copies survive, and every phase that asks a question per clause asks it
+   once per copy.  On a Rust-derived loop entry, seven copies of one goal
+   clause made each validation round ask the same undecided quantified
+   question seven times, at the full five-second budget each. *)
+let dedup_alpha_equivalent_clauses pcsp =
+  match pcsp with
+  | Raw _ -> (pcsp, 0)
+  | Cnf (cls, params) ->
+      let key ((uni_senv, _, _, _) as c) =
+        let senv =
+          String.concat ~sep:";"
+          @@ List.map (Map.Poly.to_alist uni_senv) ~f:(fun (x, s) ->
+                 Ident.name_of_tvar x ^ ":" ^ ExtTerm.str_of_sort s)
+        in
+        senv ^ "|" ^ alpha_canonical_key (Clause.to_old_formula params.senv c)
+      in
+      let _, kept, dropped =
+        Set.fold cls ~init:(Set.Poly.empty, [], 0)
+          ~f:(fun (seen, kept, dropped) c ->
+            let k = key c in
+            if Set.mem seen k then (seen, kept, dropped + 1)
+            else (Set.add seen k, c :: kept, dropped))
+      in
+      if dropped = 0 then (pcsp, 0)
+      else (Cnf (ClauseSet.canon (Set.Poly.of_list kept), params), dropped)
 
 let concat_map ~f = function
   | Raw (phis, params) -> Raw (Set.concat_map ~f phis, params)
@@ -765,6 +1057,8 @@ let str_of_solution ?(print_witness = false) = function
         | Some (Formula phi) -> " where\n" ^ LogicOld.Formula.str_of phi
         | Some (Proof r) -> " where\n" ^ Refutation.str_of r
         | Some (External s) -> " where\n(external \"" ^ s ^ "\")"
+        | Some (Counterexample c) ->
+            " where\n" ^ LogicOld.Formula.str_of c.condition
       else ""
   | Unknown -> "unknown"
   | OutSpace pvs ->
@@ -772,26 +1066,113 @@ let str_of_solution ?(print_witness = false) = function
       @@ String.concat_map_list ~sep:"," pvs ~f:Ident.name_of_tvar
   | Timeout -> "timeout"
 
+(* [counterexample_holds c]: every instance of [c.derivation] holds under
+   [c.model] -- its formula part, and each body application's arguments
+   equal to its child's head arguments, with each child's head on the body
+   application's predicate -- and the root is a goal.  Evaluation only (a
+   variable [model] leaves out takes a dummy value of its sort); [false] when
+   evaluation fails. *)
+let counterexample_holds (c : counterexample) =
+  let value t =
+    match t with
+    | LogicOld.Term.Var (x, _, _) -> (
+        match
+          List.find_map c.model ~f:(fun ((y, _), v) ->
+              if Ident.tvar_equal x y then Some v else None)
+        with
+        | Some v -> v
+        | None -> t)
+    | _ -> t
+  in
+  let holds phi =
+    try
+      let env =
+        Map.Poly.of_alist_reduce ~f:(fun a _ -> a)
+          (List.map
+             (Set.to_list (LogicOld.Formula.term_sort_env_of phi))
+             ~f:(fun (x, srt) ->
+               let v = value (LogicOld.Term.mk_var x srt) in
+               let v =
+                 if LogicOld.Term.is_var v then LogicOld.Term.mk_dummy srt else v
+               in
+               (x, Evaluator.eval_term v)))
+      in
+      Evaluator.eval ~env phi
+    with exn when not (Common.Timer.is_async exn) -> false
+  in
+  let rec node (n : cex_node) =
+    holds n.constr
+    && List.length n.body = List.length n.children
+    && List.for_all2_exn n.body n.children ~f:(fun (p, args) child ->
+        match child.head with
+        | Some (q, args') ->
+            Ident.pvar_equal p q
+            && List.length args = List.length args'
+            && List.for_all2_exn args args' ~f:(fun t u ->
+                holds (LogicOld.Formula.eq t u))
+            && node child
+        | None -> false)
+  in
+  Option.is_none c.derivation.head && node c.derivation
+
+(* the counterexample as lines: its condition, the model on the vocabulary,
+   and the derivation, one clause instance per line with its applications
+   at the model's values *)
+let str_of_counterexample (c : counterexample) =
+  let value t =
+    let fvs = LogicOld.Term.term_sort_env_of t in
+    let sub =
+      Map.Poly.of_alist_reduce ~f:(fun a _ -> a)
+        (List.filter_map c.model ~f:(fun ((x, _), v) ->
+             if Set.exists fvs ~f:(fun (y, _) -> Ident.tvar_equal x y) then
+               Some (x, v)
+             else None))
+    in
+    LogicOld.Term.str_of
+      (Evaluator.simplify_term (LogicOld.Term.subst sub t))
+  in
+  let app (p, args) =
+    sprintf "%s(%s)" (Ident.name_of_pvar p)
+      (String.concat ~sep:", " (List.map args ~f:value))
+  in
+  let rec lines indent (n : cex_node) =
+    (sprintf "%s%s <= %s%s" indent
+      (match n.head with Some a -> app a | None -> "goal")
+      (String.concat ~sep:" /\\ " (List.map n.body ~f:app)
+      ^ if List.is_empty n.body then "" else " /\\ ")
+      (LogicOld.Formula.str_of n.constr)
+    ^ (if List.is_empty n.sources then ""
+       else sprintf "   [%s]" (String.concat ~sep:"; " n.sources)))
+    :: List.concat_map n.children ~f:(lines (indent ^ "  "))
+  in
+  let model =
+    List.filter_map c.vocabulary ~f:(fun (x, _) ->
+        List.find_map c.model ~f:(fun ((y, _), v) ->
+            if Ident.tvar_equal x y then
+              Some (Ident.name_of_tvar x ^ " = " ^ LogicOld.Term.str_of v)
+            else None))
+  in
+  [
+    sprintf "counterexample (%s): %s" c.expansion
+      (LogicOld.Formula.str_of c.condition);
+    "  model: " ^ String.concat ~sep:", " model;
+    "  derivation:";
+  ]
+  @ lines "    " c.derivation
+
 let str_of_sol_with_witness = str_of_solution ~print_witness:true
 let str_of_solution = str_of_solution ~print_witness:false
 
-let str_of_sygus_solution = function
-  | Sat sol -> SyGuS.Printer.str_of_solution @@ CandSolOld.of_subst sol
-  | Unsat _ -> SyGuS.Printer.str_of_unsat ()
-  | Unknown -> SyGuS.Printer.str_of_unknown ()
-  | OutSpace pvs ->
-      sprintf "out_space: %s"
-      @@ String.concat_map_list ~sep:"," pvs ~f:Ident.name_of_tvar
-  | Timeout -> "timeout" (*ToDo*)
-
-(* expand existential quantification over boolean variables *)
-let rec qelim xs body =
+(* [expand_bool_exists xs body] is [exists xs. body] for boolean-sorted [xs],
+   written as the disjunction over both values of each variable; asserts
+   that every variable in [xs] is boolean. *)
+let rec expand_bool_exists xs body =
   let open Ast.LogicOld in
   match xs with
   | [] -> body
   | (x, sort) :: xs' ->
       assert (Term.is_bool_sort sort);
-      let body = qelim xs' body in
+      let body = expand_bool_exists xs' body in
       Formula.or_of
         [
           Formula.apply_pred (x, body) @@ T_bool.mk_true ();
@@ -819,7 +1200,7 @@ let add_non_emptiness (pvar, sorts) =
           ( Map.Poly.of_alist_exn @@ of_old_sort_env_list params,
             BoolTerm.elim_imp @@ ExtTerm.of_old_formula @@ Evaluator.simplify
             @@ Formula.mk_imply (Formula.and_of @@ List.map pvs ~f:snd)
-            @@ qelim bool_params @@ Formula.mk_atom
+            @@ expand_bool_exists bool_params @@ Formula.mk_atom
             @@ Atom.mk_pvar_app pvar sorts (Term.of_sort_env params) )
       in
       let p_params =
@@ -1064,16 +1445,104 @@ let extend_sol sol sol' =
           | `Both (v, _) -> Some v))
   | Unsat _ | Unknown | OutSpace _ | Timeout -> sol
 
+(* The answer in the SyGuS output format.
+
+   A [Sat] solution maps the unknowns of the problem the solver finally
+   solved, closed over the definitions of those preprocessing eliminated;
+   that includes auxiliaries the input never declared (a copy of a predicate
+   with its constant arguments dropped, for one), and its entries may be
+   written through each other.  Given the [signature] of the SyGuS input
+   (its [synth-fun]s and [synth-inv]s with their sorts), the answer defines
+   exactly the functions it requests, each by its entry closed under all the
+   others -- so an
+   auxiliary a requested function is written through is substituted in, never
+   printed on its own -- and each must then mention only its own parameters
+   and have the declared arity.  A predicate's body is printed as a formula
+   and any other function's as a term of its declared return sort.  If a
+   requested function has no such definition, or its definition cannot be
+   printed, no solution is printed at all: the reason goes to stderr and the
+   answer is the format's line for no answer, since a partial or
+   foreign-named solution would be a wrong answer.  Without a signature (the
+   problem was not read from a SyGuS file), every entry is printed as a
+   predicate. *)
+let str_of_sygus_solution ?(signature : SyGuS.Printer.signature option)
+    = function
+  | Sat sol -> (
+      match signature with
+      | None -> SyGuS.Printer.str_of_solution @@ CandSolOld.of_subst sol
+      | Some requested -> (
+          let closed = close_subst sol in
+          let definition_of (f, sort) =
+            let name = Ident.name_of_tvar f in
+            match Map.Poly.find closed f with
+            | None -> Error (sprintf "the solution has no definition of %s" name)
+            | Some t ->
+                let params, body = ExtTerm.let_lam t in
+                let ret = Sort.ret_of sort in
+                if List.length params <> List.length (Sort.args_of sort) then
+                  Error
+                    (sprintf "the definition of %s has %d parameters, not %d"
+                       name (List.length params)
+                       (List.length (Sort.args_of sort)))
+                else if
+                  not
+                  @@ Set.is_subset (ExtTerm.fvs_of body)
+                       ~of_:(Set.Poly.of_list @@ List.map ~f:fst params)
+                then
+                  Error
+                    (sprintf "the definition of %s mentions %s" name
+                       (String.concat_set ~sep:", "
+                       @@ Set.Poly.map ~f:Ident.name_of_tvar
+                       @@ Set.diff (ExtTerm.fvs_of body)
+                            (Set.Poly.of_list @@ List.map ~f:fst params)))
+                else if ExtTerm.is_bool_sort ret then
+                  let Ident.Pvar x, (ps, phi) = CandSolOld.of_fundef (f, t) in
+                  Ok (Ident.Tvar x, ps, SyGuS.Printer.Pred phi)
+                else
+                  let x, (ps, term) = CandSolOld.of_term_fundef (f, t) in
+                  Ok (x, ps, SyGuS.Printer.Fun (ExtTerm.to_old_sort ret, term))
+          in
+          let definition_of fs =
+            try definition_of fs
+            with exn_ when not (Common.Timer.is_async exn_) ->
+              Error (Exn.to_string exn_)
+          in
+          match
+            Result.all @@ List.map ~f:definition_of @@ Map.Poly.to_alist requested
+          with
+          | Error msg ->
+              prerr_endline ("[SyGuS printing] no solution printed: " ^ msg);
+              SyGuS.Printer.str_of_unknown ()
+          | Ok defs -> (
+              try SyGuS.Printer.str_of_definitions defs
+              with exn_ when not (Common.Timer.is_async exn_) ->
+                prerr_endline
+                  ("[SyGuS printing] no solution printed: " ^ Exn.to_string exn_);
+                SyGuS.Printer.str_of_unknown ())))
+  | Unsat _ -> SyGuS.Printer.str_of_unsat ()
+  | Unknown -> SyGuS.Printer.str_of_unknown ()
+  | OutSpace pvs ->
+      sprintf "out_space: %s"
+      @@ String.concat_map_list ~sep:"," pvs ~f:Ident.name_of_tvar
+  | Timeout -> "timeout" (*ToDo*)
+
 let svs_of = function
   | Raw (phis, _params) ->
       Set.concat_map phis
         ~f:(snd >> Term.svs_of ExtTerm.svs_of_sym ExtTerm.svs_of_sort)
   | Cnf (cnf, _params) -> ClauseSet.svs_of cnf
 
+(* every sort variable of the clauses becomes [Int], except the universally
+   quantified sorts recorded in the problem's [dq_universals]: those stand for
+   every non-empty type, and instantiating one would solve a special case *)
 let instantiate_svars_to_int pcsp =
+  let keep =
+    Set.Poly.of_list (params_of pcsp).Params.dq_universals.forall_sorts
+  in
   let sub =
     Map.of_set_exn
-    @@ Set.Poly.map (svs_of pcsp) ~f:(fun svar -> (svar, LogicOld.T_int.SInt))
+    @@ Set.Poly.map (Set.diff (svs_of pcsp) keep) ~f:(fun svar ->
+           (svar, LogicOld.T_int.SInt))
   in
   map_old pcsp ~f:(fun (uni_senv, phi) ->
       (uni_senv, LogicOld.Formula.subst_sorts sub phi))
@@ -1165,40 +1634,64 @@ let elim_ite_quant =
 
 let normalize pcsp =
   let unknowns = Map.key_set @@ senv_of pcsp in
-  (* with the normaliser's and the simplifier's memos switched on, one scope
-     of each for the whole problem, so a subformula the formulas share is
-     normalised and simplified once and stays shared; the results are the
-     ones without them (see [Normalizer.with_shared_normalize]) *)
-  Normalizer.with_shared_normalize @@ fun () ->
-  Evaluator.with_shared_simplify @@ fun () ->
-  LogicOld.with_shared_let_passes @@ fun () ->
+  (* The passes run one at a time over all the formulas (stage by stage), and
+     each pass in its own scope of the normaliser's, the simplifier's and the
+     let passes' memos (one scope each per pass, over every formula, so a
+     subformula the formulas share is rebuilt once and stays shared; the
+     results are the ones without them, see [Normalizer.with_shared_normalize]).
+
+     Why stage by stage: the memos keep, until their scope ends, every node they
+     were asked about and its image.  Run formula by formula under one scope
+     for the whole problem, they held the input and image of all six passes
+     for every formula at once: on a 4.7 MB input with 479 formulas, 13 million
+     entries and 2.5 GB live at the end of the scope against 0.55 GB after it.
+     A pass's scope now ends when the pass has seen every formula, so only one
+     pass's input, image and tables are alive at a time.  The values are the
+     same: each pass is a function of the formula (and of environments no pass
+     changes), a memo hit stands for a recomputation, and an image a later pass
+     no longer finds in an earlier pass's table is recomputed to an equal
+     value.  Fresh names are drawn in a different order only when more than one
+     pass draws (formula by formula the draws of different passes interleave);
+     then the result differs only in the names of bound variables. *)
+  let shared f =
+    Normalizer.with_shared_normalize @@ fun () ->
+    Evaluator.with_shared_simplify @@ fun () ->
+    LogicOld.with_shared_let_passes f
+  in
   (* with COAR_SHARE_CENSUS set, every step's outputs over all the formulas
      are kept and counted afterwards (a diagnostic: the values are the same,
      only held longer) *)
   let census = Array.init 7 ~f:(fun _ -> ref []) in
-  let keep i phi =
-    if Common.DagCensus.enabled then census.(i) := phi :: !(census.(i));
-    phi
+  let keep i items =
+    if Common.DagCensus.enabled then
+      census.(i) := List.map items ~f:snd @ !(census.(i));
+    items
+  in
+  let stage name g items =
+    shared @@ fun () ->
+    (* left to right, as formula by formula *)
+    List.rev
+    @@ List.fold items ~init:[] ~f:(fun acc (uni_senv, phi) ->
+        (uni_senv, Common.PhaseTime.with_phase name (fun () -> g phi)) :: acc)
   in
   let pcsp' =
-  map_old pcsp ~f:(fun (uni_senv, phi) ->
-      let phi' =
-        phi |> keep 0
+    map_old_list pcsp ~f:(fun items ->
+        items |> keep 0
         (*|> LogicOld.Formula.elim_pvars unknowns*)
-        |> Normalizer.normalize_let ~rename:true |> keep 1
+        |> stage "normalize-let" (Normalizer.normalize_let ~rename:true)
+        |> keep 1
         (* |> LogicOld.Formula.elim_let_equivalid *)
-        |> LogicOld.Formula.elim_let_with_unknowns unknowns |> keep 2
+        |> stage "elim-let" (LogicOld.Formula.elim_let_with_unknowns unknowns)
+        |> keep 2
         (* |> LogicOld.Formula.elim_let *)
-        |> Normalizer.normalize |> keep 3
-        |> Evaluator.simplify |> keep 4 |> Normalizer.normalize |> keep 5
-        |> Evaluator.simplify |> keep 6
-      in
-      if false then
-        print_endline
-        @@ sprintf "[normalize] \n  before: %s\n  after: %s\n"
-             (LogicOld.Formula.str_of phi)
-             (LogicOld.Formula.str_of phi');
-      (uni_senv, phi'))
+        |> stage "normalize1" Normalizer.normalize
+        |> keep 3
+        |> stage "simplify1" Evaluator.simplify
+        |> keep 4
+        |> stage "normalize2" Normalizer.normalize
+        |> keep 5
+        |> stage "simplify2" Evaluator.simplify
+        |> keep 6)
   in
   if Common.DagCensus.enabled then
     List.iteri
@@ -1308,10 +1801,12 @@ let remove_unused_params pcsp =
     in
     match pcsp with
     | Raw (phis, params) ->
-        (* with [share_unused_params_fvs], the free variables are read once
-           per physical node: the same membership test *)
+        (* with [share_unused_params_fvs], only the parameters' free
+           occurrences are collected, in one walk of each formula with no set
+           built at a node: the same membership test for every parameter *)
         let fvs_of =
-          if Atomic.get share_unused_params_fvs then Term.fvs_of_shared ()
+          if Atomic.get share_unused_params_fvs then
+            Term.fvs_within (Map.Poly.mem params.Params.senv)
           else Term.fvs_of
         in
         let mem =
@@ -1372,6 +1867,25 @@ let recover_elimed_params_of_sol elimed_params_logs =
       if not @@ Map.Poly.mem elimed_params_logs pvar then term
       else
         let arr, args = Map.Poly.find_exn elimed_params_logs pvar in
+        (* Restoring an unused argument adds a lambda binder. Its name must
+           not shadow a retained argument or capture a symbol in the body.
+           Inspect spelled names rather than [fvs_of], which deliberately
+           omits registered background functions and bound/unused names. *)
+        let rec names_of names = function
+          | Var (x, _) -> Set.add names x
+          | Con _ -> names
+          | App (fn, arg, _) -> names_of (names_of names fn) arg
+          | Bin (_, x, _, body, _) -> names_of (Set.add names x) body
+          | Let (x, _, value, body, _) ->
+              names_of (names_of (Set.add names x) value) body
+          | TyApp (body, _, _) | TyLam (_, body, _) -> names_of names body
+        in
+        let taken = ref (names_of Set.Poly.empty term) in
+        let rec fresh_argument () =
+          let x = Ident.mk_fresh_tvar () in
+          if Set.mem !taken x then fresh_argument ()
+          else (taken := Set.add !taken x; x)
+        in
         let senv, term = Term.let_lam term in
         let senv = ref senv in
         let senv' =
@@ -1382,7 +1896,7 @@ let recover_elimed_params_of_sol elimed_params_logs =
                     senv := tl;
                     hd
                 | [] -> assert false
-              else (Ident.mk_fresh_tvar (), arg))
+              else (fresh_argument (), arg))
         in
         Term.mk_lambda senv' term)
 
@@ -1418,6 +1932,23 @@ let sol_of_candidate pcsp (cand : CandSol.t) =
         if open_def ~key ~data then Map.Poly.find_exn closed key else data)
 
 (* assume the codomain of subst is pure *)
+(* A constraint no substituted unknown occurs in is kept as it is, and the
+   others are substituted by [Logic.Term.subst_rename_on_capture], which
+   renames a binder only where it could capture and reduces an
+   application's arguments into a lambda in one traversal.  [Term.subst]
+   renames every binder with a traversal of its body, so a constraint whose
+   binders nest d deep costs about d traversals, and every application of a
+   substituted lambda as many again inside the lambda's body.  The result
+   is [Term.subst]'s up to the names of bound variables wherever the
+   constraints and the substituted terms are beta-normal (the constraints a
+   reader builds are), and beta-equivalent otherwise, so the same
+   constraints.  Why: substituting two witness seeds of 2,500 nodes into
+   the one constraint of a 469-constraint Rust-derived problem that applies
+   them (91,000 nodes) ran for more than 80 s with [Term.subst]. *)
+let subst_formula subst phi =
+  if Set.are_disjoint (Map.key_set subst) (Logic.Term.fvs_of phi) then phi
+  else Logic.Term.subst_rename_on_capture subst phi
+
 let subst ?(bpvs = Set.Poly.empty) ?(elim = true) subst pcsp =
   let phis = formulas_of pcsp in
   let params = params_of pcsp in
@@ -1432,6 +1963,7 @@ let subst ?(bpvs = Set.Poly.empty) ?(elim = true) subst pcsp =
       }
     else { params with Params.sol_for_eliminated = subst }
   in
+
   (*let c = ref 0 in*)
   let phis =
     Set.Poly.map phis ~f:(fun (univ_senv, phi) ->
@@ -1441,7 +1973,7 @@ let subst ?(bpvs = Set.Poly.empty) ?(elim = true) subst pcsp =
           let sub = Map.Poly.filter_keys subst ~f:(Set.mem fvs) in
           if Map.Poly.is_empty sub then (univ_senv, phi)
           else*)
-        (univ_senv, ExtTerm.subst subst phi))
+        (univ_senv, subst_formula subst phi))
   in
   of_formulas phis ~params:params'
   |>
@@ -1597,17 +2129,46 @@ let rec kinded_apps_outside_binders prop_sorts acc t =
   | TyApp (t', _, _) -> kinded_apps_outside_binders prop_sorts acc t'
   | Var _ | Con _ | Bin _ | Let _ | TyLam _ -> acc
 
-(* [t < 0] for each distinct component, the disjuncts that make the clause's
-   premise require every component to be non-negative. *)
-let negative_prop_disjuncts ?(keep = fun _ -> true) prop_sorts apps =
-  List.concat_map apps ~f:(prop_components_of_app prop_sorts)
-  |> List.filter ~f:keep
-  |> List.dedup_and_sort ~compare:Stdlib.compare
-  |> List.map ~f:(fun t -> ExtTerm.mk_apps (ExtTerm.mk_rlt ()) [ t; ExtTerm.rzero () ])
+(* The admissible unknowns whose answer domain is the unit interval [[0, 1]]
+   (the probability and the liberal-probability instances): their answer
+   positions are relativised to [[0, 1]] rather than to the non-negative
+   reals, for the same reason -- the source semantics has no instance with an
+   answer value above 1 there, so a clause read over [Real] would also demand
+   instances it does not have. *)
+let unit_prop_pvs_of pcsp =
+  Map.Poly.key_set
+  @@ Map.Poly.filter (kind_map_of pcsp) ~f:(function
+    | Kind.Adm (Kind.Adm_probability | Kind.Adm_liberal) -> true
+    | _ -> false)
 
-let relativise_prop_clause prop_sorts ((uni_senv, ps, ns, phi) as cl : Clause.t) =
+(* [t < 0] for each distinct component, and also [1 < t] for a component of
+   an application of an unknown in [unit_pvs], the disjuncts that make the
+   clause's premise require every component to lie in its domain. *)
+let negative_prop_disjuncts ?(keep = fun _ -> true) ?(unit_pvs = Set.Poly.empty)
+    prop_sorts apps =
+  let is_unit atm =
+    match Term.let_apps atm with
+    | Var (x, _), _ -> Set.mem unit_pvs x
+    | _ -> false
+  in
+  let comps =
+    List.filter ~f:keep @@ List.concat_map apps ~f:(prop_components_of_app prop_sorts)
+    |> List.dedup_and_sort ~compare:Stdlib.compare
+  in
+  let unit_comps =
+    List.filter ~f:keep
+    @@ List.concat_map (List.filter apps ~f:is_unit)
+         ~f:(prop_components_of_app prop_sorts)
+    |> List.dedup_and_sort ~compare:Stdlib.compare
+  in
+  List.map comps ~f:(fun t -> ExtTerm.mk_apps (ExtTerm.mk_rlt ()) [ t; ExtTerm.rzero () ])
+  @ List.map unit_comps ~f:(fun t ->
+      ExtTerm.mk_apps (ExtTerm.mk_rlt ()) [ ExtTerm.rone (); t ])
+
+let relativise_prop_clause ?unit_pvs prop_sorts
+    ((uni_senv, ps, ns, phi) as cl : Clause.t) =
   let apps = Set.to_list ps @ Set.to_list ns in
-  match negative_prop_disjuncts prop_sorts apps with
+  match negative_prop_disjuncts ?unit_pvs prop_sorts apps with
   | [] -> cl
   | negs -> Clause.canon (uni_senv, ps, ns, BoolTerm.or_of (phi :: negs))
 
@@ -1615,7 +2176,11 @@ let relativise_prop_positions pcsp =
   let prop_sorts = prop_sorts_of pcsp in
   if Map.Poly.is_empty prop_sorts then pcsp
   else
-    let clauses = ClauseSet.canon <<< Set.Poly.map ~f:(relativise_prop_clause prop_sorts) in
+    let unit_pvs = unit_prop_pvs_of pcsp in
+    let clauses =
+      ClauseSet.canon
+      <<< Set.Poly.map ~f:(relativise_prop_clause ~unit_pvs prop_sorts)
+    in
     let params = params_of pcsp in
     let params =
       { params with Params.stable_clauses = clauses params.Params.stable_clauses }
@@ -1629,7 +2194,7 @@ let relativise_prop_positions pcsp =
                 let keep t =
                   Set.is_subset (Term.fvs_of t) ~of_:(Map.key_set uni_senv)
                 in
-                match negative_prop_disjuncts ~keep prop_sorts apps with
+                match negative_prop_disjuncts ~keep ~unit_pvs prop_sorts apps with
                 | [] -> (uni_senv, phi)
                 | negs -> (uni_senv, BoolTerm.or_of (negs @ [ phi ]))),
             params )
@@ -2322,6 +2887,7 @@ let restore_witness_universal_once pcsp =
   (* every clause of the problem, tagged with the formula it came from *)
   let formulas = Set.to_list (formulas_of ~full_clauses:false pcsp) in
   let clauses =
+    Common.PhaseTime.with_phase "rw-cnf" @@ fun () ->
     List.concat_mapi formulas ~f:(fun fi (uni_senv, phi) ->
         List.map
           (Set.to_list
@@ -2333,6 +2899,7 @@ let restore_witness_universal_once pcsp =
      term) disqualifies it *)
   let occs = Hashtbl.Poly.create () in
   let bad = Hash_set.Poly.create () in
+  Common.PhaseTime.with_phase "rw-occs" (fun () ->
   List.iteri clauses ~f:(fun ci (_, _, (ps, ns, phi)) ->
       Set.iter (ExtTerm.fvs_of phi) ~f:(fun v ->
           if Set.mem fns v then Hash_set.add bad v);
@@ -2348,7 +2915,7 @@ let restore_witness_universal_once pcsp =
               Hashtbl.Poly.add_multi occs ~key:pv ~data:(ci, t, ins, out)
           | None ->
               Set.iter (ExtTerm.fvs_of t) ~f:(fun v ->
-                  if Set.mem fns v then Hash_set.add bad v)));
+                  if Set.mem fns v then Hash_set.add bad v))));
   (* an unknown mentioned by a stable clause is left alone: those clauses are
      not rewritten here *)
   Set.iter (ClauseSet.to_formulas (stable_clauses_of pcsp)) ~f:(fun (_, phi) ->
@@ -2382,6 +2949,36 @@ let restore_witness_universal_once pcsp =
                   xs'
                   (List.filteri ys ~f:(fun j _ -> j <> i))))
   in
+  (* A necessary condition for [match_atoms m xs ys] to succeed, checked
+     before its search.  [mtch] succeeds only on two terms of the same shape
+     once every variable is erased (a variable against a variable, an
+     application against an application, a constant against a constant that
+     prints alike), and fails on any other node; a bijection pairs every [x]
+     with a [y] of its shape, so the two lists have the same multiset of
+     shapes, and no node [mtch] refuses.  So when this test fails the search
+     fails too, and when it passes the search runs as before: the answer is
+     the same.  Why: the search backtracks over every pairing, and on clauses
+     with many atoms of one predicate (a clausal product's copies) it spent
+     minutes failing on lists that differ in length or in a predicate. *)
+  let shapes_agree xs ys =
+    let exception Unmatchable in
+    let rec shape = function
+      | Logic.Var _ -> `V
+      | Logic.App (f, a, _) -> `A (shape f, shape a)
+      | Logic.Con _ as c -> `C (ExtTerm.str_of c)
+      | _ -> raise Unmatchable
+    in
+    List.length xs = List.length ys
+    && (List.is_empty xs
+       ||
+       try
+         let sorted l = List.sort ~compare:Stdlib.compare (List.map l ~f:shape) in
+         Stdlib.( = ) (sorted xs) (sorted ys)
+       with Unmatchable -> false)
+  in
+  let match_atoms m xs ys =
+    if shapes_agree xs ys then match_atoms m xs ys else None
+  in
   let candidate pv =
     if Hash_set.mem bad pv then None
     else
@@ -2403,13 +3000,20 @@ let restore_witness_universal_once pcsp =
             let ps0, ns0 = rest ci0 atm0 in
             (* each member's renaming onto the first member *)
             let renamings =
-              List.map os ~f:(fun (ci, atm, _, _) ->
+              (* stops at the first member that does not match, whose [None]
+                 makes the whole [None]; the matching is pure, so the members
+                 after it need not be tried *)
+              List.fold_until os ~init:[]
+                ~f:(fun acc (ci, atm, _, _) ->
                   let ps, ns = rest ci atm in
-                  Option.bind (mtch Map.Poly.empty atm atm0) ~f:(fun m ->
-                      Option.bind (match_atoms m ps ps0) ~f:(fun m ->
-                          match_atoms m ns ns0))
-                  |> Option.map ~f:(fun m -> (ci, m)))
-              |> Option.all
+                  match
+                    Option.bind (mtch Map.Poly.empty atm atm0) ~f:(fun m ->
+                        Option.bind (match_atoms m ps ps0) ~f:(fun m ->
+                            match_atoms m ns ns0))
+                  with
+                  | None -> Stop None
+                  | Some m -> Continue ((ci, m) :: acc))
+                ~finish:(fun acc -> Some (List.rev acc))
             in
             match renamings with
             | None -> None
@@ -2483,7 +3087,11 @@ let restore_witness_universal_once pcsp =
                           (Set.Poly.of_list ps0, Set.Poly.of_list ns0, restored) )
                     else None))
   in
-  match Set.find_map fns ~f:(fun pv -> Option.map (candidate pv) ~f:(fun c -> (pv, c))) with
+  match
+    Common.PhaseTime.with_phase "rw-cand" (fun () ->
+        Set.find_map fns ~f:(fun pv ->
+            Option.map (candidate pv) ~f:(fun c -> (pv, c))))
+  with
   | None -> (pcsp, false)
   | Some (_pv, (cis, senv, (ps0, ns0, restored))) ->
       (* rebuild every formula from its clauses, with the members of the group
@@ -2632,10 +3240,11 @@ let onepoint_constructor_binders = ref true
    on finite terms). *)
 let rec solve_constructor_point x lhs rhs =
   let open LogicOld in
-  match rhs with
+  if Set.mem (Evaluator.scalar_occurrences_of_term lhs) x then None
+  else match rhs with
   | Term.Var (y, _, _) when Ident.tvar_equal x y -> Some (lhs, [])
   | Term.FunApp (T_dt.DTCons (name, _, dt), ts, _) when Datatype.is_dt dt -> (
-      let occurs t = Set.mem (Term.tvs_of t) x in
+      let occurs t = Set.mem (Evaluator.scalar_occurrences_of_term t) x in
       match List.filter_mapi ts ~f:(fun i t -> if occurs t then Some i else None) with
       | [ i ] ->
           let field j = T_dt.mk_sel_by_cons dt name j lhs in
@@ -2678,7 +3287,7 @@ let elim_constructor_points phi =
     match conjunct with
     | Formula.Atom (Atom.App (Predicate.Psym T_bool.Eq, [ t1; t2 ], _), _) ->
         List.find_map xs ~f:(fun (x, _) ->
-            let occurs t = Set.mem (Term.tvs_of t) x in
+            let occurs t = Set.mem (Evaluator.scalar_occurrences_of_term t) x in
             let try_ lhs rhs =
               if occurs lhs then None
               else
@@ -2726,13 +3335,19 @@ let elim_constructor_points phi =
   in
   aux phi
 
+(* Off unless a caller switches it on for the process (PCSat's
+   [reader.skolem_body_variables_only]): a head existential's witness takes only
+   the universals its body mentions, beside the universal functions a dependency
+   set can name ([LogicOld.Formula.skolemize]'s [body_variables_only]). *)
+let skolem_body_variables_only = ref false
+
 let make ?(skolem_pred = false) ?(prefix = None) phis (envs : SMT.Problem.envs)
     =
   let _uni_senv = of_old_sort_env_map envs.uni_senv in
   let exi_senv = of_old_sort_env_map envs.exi_senv in
   let fenv =
     let size_fenv =
-      Map.Poly.of_alist_exn
+      Z3Smt.Z3interface.generated_size_function_map
       @@ List.map ~f:LogicOld.Datatype.size_fun_of
       @@ List.filter (Map.Poly.data envs.dtenv)
            ~f:
@@ -2745,9 +3360,10 @@ let make ?(skolem_pred = false) ?(prefix = None) phis (envs : SMT.Problem.envs)
   in
   Map.Poly.iteri envs.dtenv ~f:(fun ~key ~data ->
       if LogicOld.Datatype.is_undef data then
-        LogicOld.add_dummy_term (*ToDo: unnecessary?*)
-          (Ident.Tvar ("dummy_" ^ key))
-          (LogicOld.T_dt.SUS (key, LogicOld.Datatype.params_of data)));
+        let sort = LogicOld.T_dt.SUS (key, LogicOld.Datatype.params_of data) in
+        (* registers the sort's dummy under the one name every producer of
+           it uses (ToDo: unnecessary?) *)
+        ignore (LogicOld.T_dt.mk_dummy sort : LogicOld.Term.t));
   LogicOld.update_dtenv envs.dtenv;
   LogicOld.update_fenv fenv;
   (* Which universals a head existential's witness may see.  The clause's
@@ -2759,7 +3375,13 @@ let make ?(skolem_pred = false) ?(prefix = None) phis (envs : SMT.Problem.envs)
      else; so a witness chosen as a function of the dependency set always
      exists, and letting it see more solves the problem with the dependency
      enlarged.  That is a different and weaker problem: its [unsat] still
-     transfers back, its [sat] does not.
+     transfers back, its [sat] does not.  The filter decides only for the
+     universals the existential's body does not mention ([Formula.skolemize]
+     keeps every one it does): a body that reads a universal outside the
+     dependency set -- [exists y. P(y) /\ X(y)], or a written body
+     [forall a. X(a) => K(a)], which is [exists a. X(a) /\ not K(a)] here --
+     needs a witness that follows it, and filtering it out was a stronger
+     problem whose [unsat] does not transfer back.
 
      Only the universals a dependency set can name are filtered -- the
      Bool-valued universal functions, which is the same set the parser draws a
@@ -2767,12 +3389,16 @@ let make ?(skolem_pred = false) ?(prefix = None) phis (envs : SMT.Problem.envs)
      universal stay available to every witness.  An unknown with no recorded
      dependency set sees everything, which is what it means to have none, so a
      system that declares none is untouched. *)
+  let candidates =
+    Set.Poly.of_list @@ List.map ~f:fst
+    @@ List.filter (Map.Poly.to_alist envs.uni_senv)
+         ~f:(fst >> Map.Poly.mem envs.kind_map)
+  in
+  (* the universal functions a dependency set can name stay visible to a witness
+     whether or not its body mentions them: which of them a witness may read is
+     [dep_filter]'s decision, made from the unknowns under the existential *)
+  let always_visible = Set.mem candidates in
   let dep_filter =
-    let candidates =
-      Set.Poly.of_list @@ List.map ~f:fst
-      @@ List.filter (Map.Poly.to_alist envs.uni_senv)
-           ~f:(fst >> Map.Poly.mem envs.kind_map)
-    in
     if Map.Poly.is_empty envs.dep_map || Set.is_empty candidates then
       fun _ args -> args
     else fun pvs args ->
@@ -2791,12 +3417,15 @@ let make ?(skolem_pred = false) ?(prefix = None) phis (envs : SMT.Problem.envs)
             (not (Set.mem candidates x)) || Set.mem allowed x)
   in
   let fsenvs, phis =
+    Common.PhaseTime.with_phase "skolemize" @@ fun () ->
     List.unzip
     @@ List.rev_map phis ~f:(fun phi ->
         let phi =
+          Common.PhaseTime.with_phase "aconv" @@ fun () ->
           LogicOld.Formula.aconv_tvar ~prefix @@ LogicOld.Formula.nnf_of phi
         in
         let phi =
+          Common.PhaseTime.with_phase "onepoint" @@ fun () ->
           if !onepoint_constructor_binders then elim_constructor_points phi
           else phi
         in
@@ -2805,11 +3434,13 @@ let make ?(skolem_pred = false) ?(prefix = None) phis (envs : SMT.Problem.envs)
              among them the array-sorted variable a universally quantified
              function is encoded as and any universal constant -- are in scope at
              every existential in it, so a witness may depend on them and they go
-             into the Skolem function's arguments.  Without them the witness is
-             forced uniform in the universals: an input whose witness must depend
-             on one (pick an element of the universal predicate's extension) is
-             then refuted although it is satisfiable. *)
+             (or, with [skolem_body_variables_only], those its body mentions go)
+             into the Skolem function's arguments.  Without
+             them the witness is forced uniform in the universals: an input whose
+             witness must depend on one (pick an element of the universal
+             predicate's extension) is then refuted although it is satisfiable. *)
           let uni_senv =
+            Common.PhaseTime.with_phase "senv" @@ fun () ->
             Map.of_set_exn
             @@ Set.filter ~f:(fst >> Map.Poly.mem exi_senv >> not)
             @@ LogicOld.Formula.term_sort_env_of phi
@@ -2829,11 +3460,15 @@ let make ?(skolem_pred = false) ?(prefix = None) phis (envs : SMT.Problem.envs)
              as it stands, so skolemising it would invent a witness predicate
              for something no one has to witness.  The two cases are identical
              in the syntax and differ only in what [pvs_of] finds. *)
-          LogicOld.Formula.skolemize ~dep_filter ~uni_senv
+          Common.PhaseTime.with_phase "skolem" @@ fun () ->
+          LogicOld.Formula.skolemize ~dep_filter
+            ~body_variables_only:!skolem_body_variables_only ~always_visible
+            ~uni_senv
             ~use_fn_pred:skolem_pred ~only_impure:true phi
         in
         let fsenv = of_old_sort_env_map fsenv in
         let uni_senv =
+          Common.PhaseTime.with_phase "senv2" @@ fun () ->
           let senv =
             Set.filter ~f:(fst >> Map.Poly.mem fsenv >> not)
             @@ Set.filter ~f:(fst >> Map.Poly.mem exi_senv >> not)
@@ -2852,12 +3487,17 @@ let make ?(skolem_pred = false) ?(prefix = None) phis (envs : SMT.Problem.envs)
     List.iter phis ~f:(fun (_, phi) ->
         print_endline ("phi: " ^ LogicOld.Formula.str_of phi));
   let kind_map =
-    Kind.add_kinds
-      (Set.Poly.union_list @@ List.map fsenvs ~f:Map.key_set)
-      (if skolem_pred then Kind.FN else Kind.IntFun (*ToDo*))
-      envs.kind_map
+    List.fold fsenvs ~init:envs.kind_map ~f:(fun kinds fsenv ->
+        Map.Poly.fold fsenv ~init:kinds ~f:(fun ~key ~data kinds ->
+            let kind =
+              if skolem_pred then Kind.FN
+              else if ExtTerm.is_real_sort @@ Sort.ret_of data then Kind.RealFun
+              else Kind.IntFun
+            in
+            Kind.add_kind key kind kinds))
   in
   let params =
+    Common.PhaseTime.with_phase "params" @@ fun () ->
     Params.make ~kind_map ~fenv ~dtenv:envs.dtenv
       ~candidate_atoms:envs.candidates
     @@ Map.force_merge_list (exi_senv :: fsenvs)
@@ -2870,14 +3510,15 @@ let make ?(skolem_pred = false) ?(prefix = None) phis (envs : SMT.Problem.envs)
      function.  The conversion keeps every term's sort and every datatype
      symbol, so both collect the same datatypes. *)
   let dtenv =
-    Map.force_merge envs.dtenv
-    @@ List.fold phis ~init:Map.Poly.empty ~f:(fun ret (_, phi) ->
-        LogicOld.DTEnv.force_merge ret (LogicOld.DTEnv.of_formula phi))
+    Common.PhaseTime.with_phase "dtenv" @@ fun () ->
+    LogicOld.DTEnv.force_merge envs.dtenv
+    @@ LogicOld.DTEnv.of_formulas (List.map phis ~f:snd)
   in
   (* one datatype-conversion scope for all the formulas: each datatype is then
      converted once instead of once per occurrence, and the converted formulas
      share the images *)
   let pcsp =
+    Common.PhaseTime.with_phase "convert" @@ fun () ->
     ExtTerm.with_shared_datatype_conversion @@ fun () ->
     Set.Poly.of_list phis |> of_old_formulas ~params
   in

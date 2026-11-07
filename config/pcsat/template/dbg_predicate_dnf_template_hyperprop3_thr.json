@@ -2,9 +2,17 @@
     "verbose": true,
     "number_of_disj": 3,
     "number_of_conj": 4,
-    "upper_bound_coeff": 2,
-    "upper_bound_const": 1,
-    "bound_each_coeff": 1,
-    "threshold_const": 3,
+    "bounds": {
+        "atom": {
+            "coeff": {
+                "initial": 2,
+                "per_coefficient": 1
+            },
+            "const": {
+                "initial": 1,
+                "unbounded_above": 3
+            }
+        }
+    },
     "add_mod2_quals": false
 }

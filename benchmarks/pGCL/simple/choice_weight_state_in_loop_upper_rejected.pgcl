@@ -1,0 +1,21 @@
+# The weight p of the choice inside the loop is a program variable, never assigned.  Where
+# p >= 2 the first round reaches the weight outside [0, 1]: such a run is an error from which no
+# bound may be proved, worth +oo against an upper bound, so the bound fails there.  With a loop
+# the probability of reaching the error is a fixpoint, and the one-direction certificate of an
+# upper bound can neither state "it is positive" nor be +oo at an error state.
+# Expected: refused.  When an out-of-range weight made the run abort (worth 0) the loop was
+# worth 0 at p >= 2 and the bound could be proved there; the loop itself is the geometric one
+# of geometric_count_bound_valid.pgcl, whose answer needs a backend this refusal precedes.
+nat p;
+nat c;
+nat x;
+c := 0;
+x := 1;
+while (x = 1) {
+	{
+		x := 0;
+	}[p]{
+		c := c + 1;
+	}
+}
+?Ex [c] <= 1

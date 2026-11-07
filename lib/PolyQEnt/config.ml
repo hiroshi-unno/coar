@@ -1,13 +1,16 @@
 (* Configuration of the PolyQEnt wrapper: the path of the external PolyQEnt
-   executable and of its own configuration file (empty for none), and a
-   timeout in milliseconds enforced by running it under [timeout]. *)
+   executable and of its own configuration file ([None] for none), a
+   timeout in milliseconds enforced by running it under [timeout], and a
+   directory into which each query is copied before PolyQEnt runs on it
+   ([None] for none), so that a query can be re-run by hand. *)
 open Core
 open Common.Util
 
 type t = {
   path : string; [@default "./polyqent/PolyQEnt"]
-  config_path : string; [@default ""]
-  timeout : int option; [@default None]
+  config_path : string option; [@default None]
+  timeout_ms : int option; [@default None]
+  query_copy_dir : string option; [@default None]
   verbose : bool; [@default false]
 }
 [@@deriving yojson]

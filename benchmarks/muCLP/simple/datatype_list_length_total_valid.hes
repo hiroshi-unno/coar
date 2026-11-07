@@ -1,0 +1,6 @@
+/* Every list has a length: a least fixpoint over a datatype-sorted
+   argument, which needs a ranking function over the list's size. */
+(declare-datatypes ((L 0)) (((nil) (cons (hd Int) (tl L)))))
+forall (l: L). exists (n: int). Len l n
+s.t.
+Len (l: L) (n: int) : bool =mu (is_nil l /\ n = 0) \/ (is_cons l /\ Len (tl l) (n - 1));

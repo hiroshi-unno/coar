@@ -474,6 +474,102 @@ let universal_array_positions ~pvar ~(params : sort_env_list)
             Some i
         | _ -> None)
 
+(** Whether some clause of [phis] reads or writes an array or a sequence at
+    an index that mentions an out-of-scope variable: one bound inside the clause, or one
+    free in the clause that is neither an argument variable of an application
+    of an unknown in that clause nor fixed by them through the clause's
+    premise equations ([x = t] as a premise, or [x <> t] as a literal of the
+    conclusion, with every variable of [t] already fixed; closed under
+    repetition).
+
+    Why this is the question: a cell is a universally quantified index of the
+    invariant, and it is needed for a fact about an array at an index the
+    predicate's own arguments cannot name.  A clause whose every access index
+    is a function of the arguments -- a transition [I(a, i) /\ a' = store a i v
+    => I(a', i + 1)], a loop guard [a[i] > 0], a pointer read [a[a[p]]] -- asks
+    only for facts at terms over those arguments.  A goal
+    [I(a, n) /\ 0 <= j < n /\ a[j] <> 0 => false] reads at [j], which no
+    argument names: only a cell reaches it.  A program translated to a
+    transition system, every index computed from the state and from
+    nondeterministic inputs that become arguments, has no out-of-scope index.
+
+    A syntactic heuristic, not a theorem: an invariant may still need a
+    universal over an array when every clause reads at argument terms (an
+    inductive strengthening relating cells no clause names), so it is used to
+    order the search, and to remove cells only where a configuration asks for
+    that.  It reads the clauses only, so it cannot bear on the soundness of a
+    verdict.  Placeholder columns count as in scope.
+
+    The accesses read are exactly those through which a cell can be needed,
+    since [array_paths ~sequences:true] gives cells to sequences as well as
+    arrays: [select a i] and [store a i v] (index [i]); [seq.nth s i] and
+    [seq.store s i v] (index [i]); [seq.extract s i n] (offset [i] and length
+    [n], both positions of [s]).  A sequence built or measured whole
+    ([seq.unit], [seq.++], [seq.len]) is read at no index.  Missing the
+    sequence accesses made the test answer "no out-of-scope index" on a goal
+    [I(s, i) /\ 0 <= j <= i /\ seq.nth s j > b => false], whose invariant is a
+    universal over [s] that only a cell reaches.
+
+    Precondition: none on [phis] (any formulas; [let]s are eliminated here).
+    Postcondition: [false] when no formula contains such an access at all. *)
+let has_out_of_scope_index (phis : Formula.t list) : bool =
+  List.exists phis ~f:(fun phi0 ->
+      let phi = Formula.elim_let phi0 in
+      let fvs = Formula.tvs_of phi in
+      let pos, neg = Formula.atoms_of phi in
+      let seeds =
+        Set.fold (Set.union pos neg) ~init:Set.Poly.empty ~f:(fun acc -> function
+          | Atom.App (Predicate.Var _, args, _) ->
+              Set.union acc (Set.Poly.union_list (List.map args ~f:Term.tvs_of))
+          | _ -> acc)
+      in
+      let eqs =
+        (* a premise equation is a negated [=] or a [<>] as it stands *)
+        List.concat_map (Set.to_list neg) ~f:(function
+          | Atom.App (Predicate.Psym T_bool.Eq, [ l; r ], _) -> [ (l, r); (r, l) ]
+          | _ -> [])
+        @ List.concat_map (Set.to_list pos) ~f:(function
+            | Atom.App (Predicate.Psym T_bool.Neq, [ l; r ], _) ->
+                [ (l, r); (r, l) ]
+            | _ -> [])
+      in
+      let rec close det =
+        let det' =
+          List.fold eqs ~init:det ~f:(fun det (l, r) ->
+              match l with
+              | Term.Var (x, _, _)
+                when (not (Set.mem det x))
+                     && Set.is_subset (Term.tvs_of r) ~of_:det ->
+                  Set.add det x
+              | _ -> det)
+        in
+        if Set.length det' = Set.length det then det else close det'
+      in
+      let det = lazy (close seeds) in
+      let found = ref false in
+      Formula.iter_term phi ~f:(fun t ->
+          if not !found then
+            let indices =
+              match t with
+              | Term.FunApp
+                  ( ( T_array.ASelect _ | T_array.AStore _ | T_seq.SqNth _
+                    | T_seq.SqStore _ ),
+                    _ :: idx :: _,
+                    _ ) ->
+                  [ idx ]
+              | Term.FunApp (T_seq.SqExtract _, [ _; off; len ], _) ->
+                  [ off; len ]
+              | _ -> []
+            in
+            if
+              List.exists indices ~f:(fun idx ->
+                  Set.exists (Term.tvs_of idx) ~f:(fun v ->
+                      (not (is_placeholder v))
+                      && ((not (Set.mem fvs v))
+                         || not (Set.mem (Lazy.force det) v))))
+            then found := true);
+      !found)
+
 (** Whether a predicate over argument sorts [sorts] reaches an array that is
     program state rather than a universal relation: some position not in
     [universal] (the result of [universal_array_positions] for that

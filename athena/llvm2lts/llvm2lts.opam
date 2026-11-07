@@ -1,0 +1,21 @@
+opam-version: "2.0"
+name: "llvm2lts"
+version: "0.1"
+maintainer: "Hiroshi Unno <hiroshi.unno@acm.org>"
+authors: "Hiroshi Unno <hiroshi.unno@acm.org>"
+homepage: "https://github.com/hiroshi-unno/coar"
+bug-reports: "https://github.com/hiroshi-unno/coar/issues"
+synopsis: "LLVM IR to labelled transition systems (T2, PLTS)"
+description: """
+Reads LLVM 19 IR produced by clang 19.1.7 and emits a labelled transition
+system for CoAR."""
+# The library and the executable are (optional) in their dune files, so a
+# CoAR build without the LLVM bindings skips them.  The bindings are linked
+# statically, which pins the LLVM the tool runs against to the one it was
+# built with (19.1.7) and keeps libLLVM out of the distributed archive.
+depends: [
+  "ocaml" {>= "5.4.0"}
+  "dune" {>= "3.10"}
+  "llvm" {= "19-static"}
+]
+build: ["dune" "build" "-p" name "-j" jobs]

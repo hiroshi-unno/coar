@@ -1,0 +1,14 @@
+/* The tree f a b is accepted from q0 only through the second transition for
+   (q0, f): the first puts the child a in q1, which has no transition on a.
+   A checker that searches for a counterexample along the first transition
+   alone reports one here, although the property holds. */
+%BEGING
+S -> f a b.
+%ENDG
+
+%BEGINA
+q0 f -> q1 q2.
+q0 f -> q2 q1.
+q1 b -> .
+q2 a -> .
+%ENDA

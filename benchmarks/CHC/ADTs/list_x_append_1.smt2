@@ -8,7 +8,7 @@
 (assert (forall ((l1 (List X)) (l2 (List X)) (_v12 (List X)))
   (=>
     (and
-        (= l1 nil)
+        (= l1 (as nil (List X)))
         (= _v12 l2)
     )
     (append l1 l2 _v12)
@@ -19,7 +19,7 @@
   (=>
     (and
       (append var12 l2 _v41)
-      (not (= l1 nil))
+      (not (= l1 (as nil (List X))))
       (= var12 (tl l1))
       (= _v38 (hd l1))
       (= _v44 (cons _v38 _v41))

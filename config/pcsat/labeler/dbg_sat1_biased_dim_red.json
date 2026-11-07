@@ -1,27 +1,25 @@
 {
     "verbose": true,
     "num_labelings": 1,
-    "strategy": [
+    "labeling": [
         "Mixed",
         [
-            [
-                [
+            {
+                "strategy": [
                     "POS_BIASED_SAT"
-                ],
-                true
-            ],
-            [
-                [
+                ]
+            },
+            {
+                "strategy": [
                     "NEG_BIASED_SAT"
-                ],
-                true
-            ],
-            [
-                [
+                ]
+            },
+            {
+                "strategy": [
                     "SAT"
                 ],
-                false
-            ]
+                "sample_examples": false
+            }
         ]
     ],
     "sat_solver": [

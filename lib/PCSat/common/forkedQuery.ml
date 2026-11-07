@@ -34,7 +34,8 @@ open Core
    [Common.PhaseTime.around_fork] switches it off in the copy);
    interval timers are not inherited by a forked process, so the parent's
    alarm cannot fire in the copy; and the copy leaves through
-   [exit_immediately], so no finaliser or exit hook of the parent runs twice;
+   [Common.ProcessExit.immediately] (an [_exit]), so no finaliser or exit
+   hook of the parent, OCaml or C, runs twice;
    and the copy never outlives this process, whatever kills it
    ([Common.ForkGuard.fork]), so a run stopped mid-question leaves no solver
    running.
@@ -48,22 +49,45 @@ open Core
    also dies with its parent whatever kills the latter ([Common.ForkGuard]) *)
 let kill_live = Common.ForkGuard.kill_live
 
-(* [run_forked ~ms f] is [run] with the two ways of getting nothing told
-   apart: [`Value v] when a forked copy computed [v = f ()] and sent it back
-   within [ms] milliseconds; [`Lost] when a copy was forked and ran out of
-   time, died or raised (it has been killed and reaped); [`Not_forked] when no
-   copy could be made (no pipe, or a fork refused, as OCaml refuses one while
-   other domains run), in which case [f] has not run anywhere and a caller may
-   run it in this process instead. *)
-let run_forked ~ms (f : unit -> 'a) : [ `Value of 'a | `Lost | `Not_forked ] =
+(* [fits_or_count ?growth ()]: [Common.ForkGuard.fits ?growth ()], and when
+   it fails the refusal is counted ([Common.ForkGuard.refused]) and shown in
+   the phase account as the event [fork-refused/memory], so that a question
+   not asked for want of memory is never silent *)
+let fits_or_count ?growth () =
+  Common.ForkGuard.fits ?growth ()
+  || begin
+       Atomic.incr Common.ForkGuard.refused;
+       Common.PhaseTime.event_here "fork-refused/memory";
+       false
+     end
+
+(* [run_forked ?growth ~ms f] is [run] with the two ways of getting nothing
+   told apart: [`Value v] when a forked copy computed [v = f ()] and sent it
+   back within [ms] milliseconds; [`Lost] when a copy was forked and ran out
+   of time, died or raised (it has been killed and reaped); [`Not_forked]
+   when no copy could be made (no pipe, or a fork refused, as OCaml refuses
+   one while other domains run, or a copy that does not fit the memory
+   budget: [Common.ForkGuard.fits ?growth ()] fails, [growth] being the
+   caller's estimate of what the copy allocates beyond its duplicate heap, 0
+   by default), in which case [f] has not run anywhere and a caller may run
+   it in this process instead.  A copy that is forked reserves its expected
+   size in the budget for as long as it lives. *)
+let run_forked ?growth ~ms (f : unit -> 'a) :
+    [ `Value of 'a | `Lost | `Not_forked ] =
   Stdlib.flush_all ();
+  if not (fits_or_count ?growth ()) then `Not_forked
+  else
   match Core_unix.pipe () with
   | exception exn when not (Common.Timer.is_async exn) -> `Not_forked
   | rd, wr -> (
       (* the fork's own cost, charged in the parent only: the child leaves the
          frame open in an account that is off there *)
       let fork_tok = Common.PhaseTime.start "fork" in
-      match Common.PhaseTime.around_fork Common.ForkGuard.fork with
+      let bytes = Common.ForkGuard.copy_need ?growth () in
+      match
+        Common.PhaseTime.around_fork
+          (Common.ForkGuard.fork_reserving ~bytes)
+      with
       | exception exn when not (Common.Timer.is_async exn) ->
           Common.PhaseTime.stop fork_tok;
           Core_unix.close rd;
@@ -79,9 +103,16 @@ let run_forked ~ms (f : unit -> 'a) : [ `Value of 'a | `Lost | `Not_forked ] =
              let oc = Core_unix.out_channel_of_descr wr in
              Stdlib.output_string oc payload;
              Stdlib.flush oc
-           with exn when not (Common.Timer.is_async exn) -> ());
+           with exn when not (Common.Timer.is_async exn) ->
+             (* the parent reads a copy that raised as one that sent nothing
+                (its caller's undecided answer); with [COAR_FORK_EXN] set
+                (instrument only) the exception is named on stderr, so that
+                a question that fails is told apart from one that runs out *)
+             if Option.is_some (Sys.getenv "COAR_FORK_EXN") then (
+               prerr_endline ("forked-query-raised: " ^ Exn.to_string exn);
+               Stdlib.flush stderr));
           Common.PhaseTime.child_line ~started;
-          Core_unix.exit_immediately 0
+          Common.ProcessExit.immediately 0
       | `In_the_parent pid ->
           Common.PhaseTime.stop fork_tok;
           Common.ForkGuard.register (Pid.to_int pid);
@@ -128,14 +159,77 @@ let run_forked ~ms (f : unit -> 'a) : [ `Value of 'a | `Lost | `Not_forked ] =
               in
               quietly (fun () -> Core_unix.close rd);
               if not !reaped then (
+                (* under COAR_COPY_REPORT the copy is first given its grace
+                   to report; nothing otherwise *)
+                Common.ForkGuard.term_first [ Pid.to_int pid ];
                 quietly (fun () -> Signal_unix.send_i Signal.kill (`Pid pid));
                 quietly (fun () ->
                     ignore (Core_unix.waitpid pid : Core_unix.Exit_or_signal.t)));
               Common.ForkGuard.unregister (Pid.to_int pid))
       )
 
-let run ~ms (f : unit -> 'a) : 'a option =
-  match run_forked ~ms f with `Value v -> Some v | `Lost | `Not_forked -> None
+let run ?growth ~ms (f : unit -> 'a) : 'a option =
+  match run_forked ?growth ~ms f with
+  | `Value v -> Some v
+  | `Lost | `Not_forked -> None
+
+(* [first_in_copy ~ms ~event ~ask ~here_for ~label ~lost] answers one solver
+   question [ask], first in a forked copy killed after [ms] milliseconds.
+
+   A WORKAROUND for Z3 5.1.0 (the newest z3 in opam-repository): in a context
+   that has been in a scope (a push, a reset), Z3 can ignore its own
+   [timeout] on a question that reads a sequence under a quantifier and grow
+   without bound in this process; remove it, with the fields that select it
+   ([pins.seq_lengths.fork_unreturning],
+   [preprocessor.elimination.questions.fork.seq_unreturning]), when the
+   reproducer row for
+   [benchmarks/SMT/simple/z3_seq_pin_scoped_timeout_unsat.smt2] in
+   [script/rerun_external_reproducers.sh] reports GONE for the z3 that opam
+   installs.
+
+   [ask ~timeout] is the question asked in process with that Z3 budget; the
+   copy asks [ask ~timeout:copy_timeout] ([None]: no Z3 timer, the kill is the
+   budget).  A caller passes its own budget as [copy_timeout] (and a kill
+   [ms] beyond it) when the question must be the same computation as in
+   process: Z3 chooses its strategy by whether a timeout is set, and an
+   elimination question asked with no timeout ran to its kill in a copy where
+   the same question with its 5 s budget was answered in milliseconds in
+   process.  Z3's timer thread is not copied by [fork], so in the copy the
+   timeout may not fire: the kill bounds it either way.  An answer the copy can send back ([here_for r] false: a
+   verdict, a reason, no model, since a value of extensible variants does not
+   survive marshalling) is returned as it is; an answer with [here_for r] (one
+   carrying a model) is asked again here, [ask ~timeout:(Some ms)], from the
+   state the copy was forked from, so a model is always an in-process one.  A
+   copy that runs out, dies or raises gives [lost], which the caller chooses
+   to be the answer it reads as a timeout; when no copy can be made (another
+   domain runs, or the copy does not fit the memory budget, with the
+   process's peak excess as the copy's growth) the question is asked here as
+   without the copy.  Each outcome is counted as the phase event
+   [<event>/<label r>], [<event>/lost] or [<event>/not-forked].
+   Contract: every answer returned is one [ask] gave, in the copy or here,
+   except [lost]; so a caller that reads [lost] as it reads a timeout decides
+   nothing the in-process call would not have decided before the kill. *)
+let first_in_copy ~copy_timeout ~ms ~event
+    ~(ask : timeout:int option -> 'r) ~(here_for : 'r -> bool)
+    ~(label : 'r -> string) ~(lost : 'r) : 'r =
+  let note s = Common.PhaseTime.event_here (event ^ "/" ^ s) in
+  match
+    run_forked ~growth:(Common.ForkGuard.peak_excess_bytes ()) ~ms (fun () ->
+        let r = ask ~timeout:copy_timeout in
+        if here_for r then `Here (label r) else `Sent r)
+  with
+  | `Value (`Here l) ->
+      note l;
+      ask ~timeout:(Some (Option.value copy_timeout ~default:ms))
+  | `Value (`Sent r) ->
+      note (label r);
+      r
+  | `Lost ->
+      note "lost";
+      lost
+  | `Not_forked ->
+      note "not-forked";
+      ask ~timeout:(Some (Option.value copy_timeout ~default:ms))
 
 (* [kill_ms ~kill_ms ~timeout] is the wall-clock budget after which the
    validator kills a forked copy asking a counterexample query whose own budget
@@ -207,7 +301,13 @@ let valid_within ~ms ask =
 (* [race ~ms ~decisive fs] runs every [f] of [fs] in a forked copy of its own,
    all at once, and returns [Some v] for the first value [v] a copy sends back
    with [decisive v], or [None] when every copy has sent back an undecisive
-   value, died, raised, or not finished within [ms] milliseconds.  Contract:
+   value, died, raised, or not finished within [ms] milliseconds.  Copies
+   share the memory budget ([Common.ForkGuard.fits]): each is forked only if
+   it fits beside the copies already forked; one that does not is asked after
+   the race, in a copy of its own ([run_forked]) within what is left of [ms],
+   once the racing copies are gone, and is not asked at all only when it does
+   not fit then either (counted, [fits_or_count]).  So memory changes only
+   when a question is asked, never which values it may return.  Contract:
    when [race] returns or raises, every copy it forked has been killed and
    reaped -- the losers at the moment a decisive value arrives -- so no copy
    outlives the call; and each copy also dies with this process whatever
@@ -218,6 +318,11 @@ let race ~ms ~decisive (fs : (unit -> 'a) list) : 'a option =
   let started_kids = ref [] in
   let quietly g = try g () with exn when not (Common.Timer.is_async exn) -> () in
   let kill_all () =
+    (* under COAR_COPY_REPORT the copies still running are first given their
+       grace to report, all at once; nothing otherwise *)
+    Common.ForkGuard.term_first
+      (List.filter_map !started_kids ~f:(fun (pid, _, reaped) ->
+           if !reaped then None else Some (Pid.to_int pid)));
     List.iter !started_kids ~f:(fun (pid, rd, reaped) ->
         quietly (fun () -> Core_unix.close rd);
         if not !reaped then (
@@ -227,12 +332,22 @@ let race ~ms ~decisive (fs : (unit -> 'a) list) : 'a option =
           reaped := true);
         Common.ForkGuard.unregister (Pid.to_int pid))
   in
+  let started_at = Common.Clock.now_float () in
+  (* the questions that did not fit beside the copies already racing *)
+  let deferred = ref [] in
+  let raced =
   Exn.protect ~finally:kill_all ~f:(fun () ->
       List.iter fs ~f:(fun f ->
+          if not (Common.ForkGuard.fits ()) then deferred := f :: !deferred
+          else
           match Core_unix.pipe () with
           | exception exn when not (Common.Timer.is_async exn) -> ()
           | rd, wr -> (
-              match Common.PhaseTime.around_fork Common.ForkGuard.fork with
+              let bytes = Common.ForkGuard.copy_need () in
+              match
+                Common.PhaseTime.around_fork
+                  (Common.ForkGuard.fork_reserving ~bytes)
+              with
               | exception exn when not (Common.Timer.is_async exn) ->
                   Core_unix.close rd;
                   Core_unix.close wr
@@ -248,7 +363,7 @@ let race ~ms ~decisive (fs : (unit -> 'a) list) : 'a option =
                      Stdlib.flush oc
                    with exn when not (Common.Timer.is_async exn) -> ());
                   Common.PhaseTime.child_line ~started;
-                  Core_unix.exit_immediately 0
+                  Common.ProcessExit.immediately 0
               | `In_the_parent pid ->
                   Common.ForkGuard.register (Pid.to_int pid);
                   Core_unix.close wr;
@@ -299,3 +414,23 @@ let race ~ms ~decisive (fs : (unit -> 'a) list) : 'a option =
           take open_ ready.read
       in
       Common.PhaseTime.with_phase "race-wait" (fun () -> loop !started_kids))
+  in
+  match raced with
+  | Some _ -> raced
+  | None ->
+      (* one at a time, in their order, each within what is left of [ms] *)
+      List.fold (List.rev !deferred) ~init:None ~f:(fun acc f ->
+          match acc with
+          | Some _ -> acc
+          | None -> (
+              let left =
+                ms
+                - Float.iround_down_exn
+                    (Time_float.Span.to_ms
+                       (Time_float.diff (Common.Clock.now_float ()) started_at))
+              in
+              if left <= 0 then None
+              else
+                match run_forked ~ms:left f with
+                | `Value v when decisive v -> Some v
+                | `Value _ | `Lost | `Not_forked -> None))

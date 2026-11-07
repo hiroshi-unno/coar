@@ -13,7 +13,7 @@ open LogicOld
    the index terms in scope.  A loop over a slice wants exactly those -- the
    invariants such a program needs compare an index with a length and an element
    with a value. *)
-let update_term_map ?(depth = 0) sort
+let update_term_map ?(depth = 0) ?(nth_at_fun_apps = true) sort
     (terms : (Term.t * Formula.t list) Set.Poly.t)
     (term_map : (Sort.t, (Term.t * Formula.t list) Set.Poly.t) Map.Poly.t) =
   if depth = 0 || Set.length terms > 1000 then term_map
@@ -41,10 +41,29 @@ let update_term_map ?(depth = 0) sort
             | Some ts -> ts
             | None -> Set.Poly.empty
           in
+          (* [nth_at_fun_apps = false]: no read at an index that is an
+             application of a function of the input.  A recursive function's
+             result (a count, an occurrence number) is an integer term like
+             any other, so every sequence was read at every one of them: on an
+             input with one counting function per element sort those reads were
+             168 of 180 element terms, and the pairwise equalities over them
+             16 thousand qualifiers that no example ever told apart.  Reads at
+             parameters, lengths and arithmetic over them are kept. *)
+          let index_terms =
+            if nth_at_fun_apps then int_terms
+            else
+              Set.filter int_terms ~f:(fun (i, _) ->
+                  match i with
+                  | Term.FunApp (FVar _, _, _) ->
+                      Common.PhaseTime.event_here ~in_copy:false
+                        "seq-read-at-fun-app-skipped";
+                      false
+                  | _ -> true)
+          in
           Set.union se_terms
           @@ Set.fold terms ~init:Set.Poly.empty ~f:(fun ret (t, conds) ->
               Set.union ret
-              @@ Set.Poly.map int_terms ~f:(fun (i, conds1) ->
+              @@ Set.Poly.map index_terms ~f:(fun (i, conds1) ->
                   (T_seq.mk_nth se t i, conds @ conds1)))
         in
         (* the SUFFIX of each sequence from each index term in scope.  Not

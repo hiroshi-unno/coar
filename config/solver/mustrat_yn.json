@@ -3,11 +3,11 @@
     {
         "optimizer": [
             "Filename",
-            "./config/muval/optimizer/enable_erase_query.json"
+            "./config/muclp/optimizer/enable_erase_query.json"
         ],
         "chc_solver": [
             "Filename",
-            "./config/solver/gspacer_cex.json"
+            "./config/solver/gspacer_cex_noconc.json"
         ],
         "backup_chc_solver": [
             "Filename",
@@ -15,12 +15,19 @@
         ],
         "pcsp_solver": [
             "Filename",
-            "./config/solver/pcsat_wopp_tbq_ar_fixpoint.json"
+            "./config/solver/pcsat_mustrat.json"
         ],
         "pcsp_solver_determ": [
             "Filename",
             "./config/solver/strat_synth_determ_forward.json"
         ],
-        "output_yes_no": true
+        "output_yes_no": true,
+        "name_opponent_decisions": false,
+        "name_term_alternatives": false,
+        "refine_terms": [
+            "Terms_pcsat"
+        ],
+        "select_prefer_bound": false,
+        "miniscope_term_alternatives": false
     }
 ]

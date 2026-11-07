@@ -1,0 +1,7 @@
+# A constant is a name for its value: c is assigned k = 3, so the expectation of c is 3.
+# Expected: valid.  The definition of a constant used to be dropped, so k was read as an
+# arbitrary real and the bound was asked for every k, which does not hold.
+nat c;
+const k := 3;
+c := k;
+?Ex [c] <= 3

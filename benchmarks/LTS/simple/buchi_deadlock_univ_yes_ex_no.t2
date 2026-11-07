@@ -1,0 +1,10 @@
+// Every run deadlocks once x reaches 0, so there is no infinite run (a run is infinite).
+// Expected: YES (-p ltsbuchi, vacuously), NO (-p ltsexbuchi).
+START: 1;
+BUCHI: {};
+PRE: {x>=0};
+
+FROM: 1;
+assume(x>0);
+x := x - 1;
+TO: 1;

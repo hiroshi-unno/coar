@@ -1,0 +1,5 @@
+/* A second-order equation: applying a predicate transformer twice.
+   MuHFL dialect (=> and not). */
+%HES
+Main =v ∀n. n < 0 => Twice (\k x. k (x + 1)) (\r. not (r < n)) n.
+Twice f k x =v f (f k) x.

@@ -1,0 +1,34 @@
+--- a/length-lemma/adtrem_clam_goal2_length_lemma_sat.smt2
++++ b/length-lemma/adtrem_clam_goal2_length_lemma_sat.smt2
+@@ -12,6 +12,14 @@
+ (declare-fun append (listOfInt listOfInt listOfInt) Bool)
+ (declare-fun ff () Bool)
+ 
++(define-fun-rec length ((x listOfInt)) Int (
++     ite ((_ is nil-listOfInt) x) 0 (+ 1 (length (tail-listOfInt x)))
++))
++
++(set-info length (forall ((x listOfInt))
++ (or ((_ is nil-listOfInt) x) (> (length x) 0))
++))
++
+ (assert
+   (forall ( (A Int) )
+     (=>
+--- a/length-lemma/adtrem_clam_goal4_length_lemma_sat.smt2
++++ b/length-lemma/adtrem_clam_goal4_length_lemma_sat.smt2
+@@ -12,6 +12,14 @@
+ (declare-fun append (listOfInt listOfInt listOfInt) Bool)
+ (declare-fun ff () Bool)
+ 
++(define-fun-rec length ((x listOfInt)) Int (
++     ite ((_ is nil-listOfInt) x) 0 (+ 1 (length (tail-listOfInt x)))
++))
++
++(set-info length (forall ((x listOfInt))
++ (or ((_ is nil-listOfInt) x) (> (length x) 0))
++))
++
+ (assert
+     (id_list nil-listOfInt nil-listOfInt)
+ )

@@ -1,0 +1,5 @@
+/* For every n, the sum 0 + 1 + ... + n (0 when n <= 0) is at least n.
+   ReTHFL dialect; Sum is written in continuation-passing style. */
+%HES
+Main =v ∀n. Sum n (\r. r >= n).
+Sum n k =v (n > 0 || k 0) && (n <= 0 || Sum (n - 1) (\r. k (r + n))).

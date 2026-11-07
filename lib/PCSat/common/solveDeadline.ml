@@ -16,10 +16,14 @@ open Core
    [seconds] and restores the previous deadline on every exit, raising
    included.  A nested [within] can only shorten the deadline, never extend
    the enclosing one.  [expired ()] is [false] whenever no deadline is set, so
-   a run that is not nested is untouched.  The deadline is process-wide
-   (one [Atomic.t]), which is safe for the one caller there is -- a nested
-   solve that already holds the process-global environment bracket, so no
-   other solving call runs beside it.
+   a run that is not nested is untouched.  Every piece of state here is per
+   domain: MuVal solves its primal and its dual side at once in two domains,
+   and a probe on one side that set a process-wide deadline stopped the other
+   side's CEGIS loop at its next phase boundary, which then answered
+   [timeout] long before the run's own limit.  A domain spawned while a
+   deadline is set inherits the spawning domain's state, so work a nested
+   solve hands to a fresh domain is bounded as before; a domain that already
+   exists (a pool's worker) keeps its own.
 
    A deadline set with [~strict_budget:true] is also read inside a phase: the
    synthesizer's own retry loop gives up at [expired_strict ()], and each of
@@ -45,33 +49,44 @@ open Core
    inherits only the already active deadline and strictness; returning or
    raising restores the outer pending deadline. *)
 
-let deadline : float option Atomic.t = Atomic.make None
-let strict : bool Atomic.t = Atomic.make false
-let pending : float option Atomic.t = Atomic.make None
+(* one cell per domain, a spawned domain's initialised from its parent's
+   current value *)
+let per_domain init =
+  let key =
+    Domain.DLS.new_key
+      ~split_from_parent:(fun a -> Atomic.make (Atomic.get a))
+      (fun () -> Atomic.make init)
+  in
+  fun () -> Domain.DLS.get key
 
-(* seconds on [Common.Clock]: the time of day, or CLOCK_MONOTONIC when the
-   process's clock switch is on; every deadline here is taken and read on it *)
+let deadline_cell : unit -> float option Atomic.t = per_domain None
+let strict_cell : unit -> bool Atomic.t = per_domain false
+let pending_cell : unit -> float option Atomic.t = per_domain None
+
+(* seconds on [Common.Clock] (CLOCK_MONOTONIC outside tests); every deadline
+   here is taken and read on it, so [expired] holds exactly when the budget's
+   seconds have elapsed since [within] took its reading *)
 let now () = Common.Clock.now_s ()
 
 let expired () =
-  match Atomic.get deadline with None -> false | Some d -> Float.(now () >= d)
+  match Atomic.get (deadline_cell ()) with None -> false | Some d -> Float.(now () >= d)
 
-let expired_strict () = Atomic.get strict && expired ()
+let expired_strict () = Atomic.get (strict_cell ()) && expired ()
 
 (* whether this run is a nested one bounded by a deadline *)
-let active () = Option.is_some (Atomic.get deadline)
+let active () = Option.is_some (Atomic.get (deadline_cell ()))
 
 (* the time left before a strict deadline, at least 1 ms; [None] without one *)
 let remaining_ms_strict () =
-  match Atomic.get deadline with
-  | Some d when Atomic.get strict ->
+  match Atomic.get (deadline_cell ()) with
+  | Some d when Atomic.get (strict_cell ()) ->
       Some (Int.max 1 (Float.iround_down_exn ((d -. now ()) *. 1000.)))
   | _ -> None
 
 (* the time left before any deadline, strict or not, at least 1 ms; [None]
    without one *)
 let remaining_ms () =
-  match Atomic.get deadline with
+  match Atomic.get (deadline_cell ()) with
   | Some d -> Some (Int.max 1 (Float.iround_down_exn ((d -. now ()) *. 1000.)))
   | None -> None
 
@@ -87,13 +102,13 @@ let cap_ms_strict ms =
 (* the end of a CEGIS round that gave no answer: a pending deadline set by
    [within ~after_first_round] takes effect, never extending the current one *)
 let round_ended () =
-  match Atomic.get pending with
+  match Atomic.get (pending_cell ()) with
   | None -> ()
   | Some p ->
-      Atomic.set pending None;
-      Atomic.set deadline
+      Atomic.set (pending_cell ()) None;
+      Atomic.set (deadline_cell ())
         (Some
-           (match Atomic.get deadline with
+           (match Atomic.get (deadline_cell ()) with
            | Some d when Float.(d < p) -> d
            | _ -> p))
 
@@ -107,38 +122,80 @@ let round_ended () =
    that has passed raises [Expired_in_preprocessing].  That exception is not
    asynchronous ([Common.Timer.is_async] is [false] on it), so the probe's own
    handler, which turns any ordinary exception into a discarded answer, catches
-   it; a probe answers only [unsat], so a cut probe loses nothing but its own
-   chance to refute.  Off ([false]), nothing reads it, and with no strict
+   it; a probe reads one verdict of its solve and discards the other (the
+   upper-bound, true-precondition and least-definition probes read only
+   [sat]), so a cut probe loses nothing but the answer it might have read
+   after its own budget, never a verdict of the run.  Off ([false]), nothing reads it, and with no strict
    deadline set it never raises. *)
-let in_preprocessing : bool Atomic.t = Atomic.make false
+let in_preprocessing_cell : unit -> bool Atomic.t = per_domain false
+let in_preprocessing () = Atomic.get (in_preprocessing_cell ())
 
 exception Expired_in_preprocessing
 
+(* The answer-neutral event raised where an enforcing switch ends work that
+   would otherwise have gone on past a strict deadline: a phase report (or a
+   forked copy's child-event line) then shows that the switch changed the run,
+   and a run without it did what it would have done with the switch off. *)
+let cut () = Common.PhaseTime.event_here ~in_copy:true "strict-deadline-cut"
+
 let check_in_preprocessing () =
-  if Atomic.get in_preprocessing && expired_strict () then
-    raise Expired_in_preprocessing
+  if in_preprocessing () && expired_strict () then (
+    cut ();
+    raise Expired_in_preprocessing)
 
 (* [with_preprocessing_check on f] runs [f] with [in_preprocessing] set to
    [on] (or kept, when it is already set) and restores it on every exit *)
 let with_preprocessing_check on f =
-  let saved = Atomic.get in_preprocessing in
-  Atomic.set in_preprocessing (saved || on);
-  Exn.protect ~finally:(fun () -> Atomic.set in_preprocessing saved) ~f
+  let saved = in_preprocessing () in
+  Atomic.set (in_preprocessing_cell ()) (saved || on);
+  Exn.protect ~finally:(fun () -> Atomic.set (in_preprocessing_cell ()) saved) ~f
+
+(* Whether the stage boundaries outside the predicate eliminator read a strict
+   deadline: the boundaries between the preprocessing's passes, the building of
+   the CEGIS loop's phases (template initialisation included) and the
+   qualifier generator's loops over predicates and clauses.  Each of these runs
+   before the loop's first phase boundary, so a probe whose preprocessing ends
+   inside its budget could still spend the rest of a run building its
+   templates.  With this set, [check_at_stage] at such a boundary raises
+   [Expired_at_stage] once a strict deadline has passed; like
+   [Expired_in_preprocessing] it is an ordinary exception, so the probe's
+   handler catches it and discards the probe's answer, which is the only thing
+   that can be lost.  A boundary is a safe point: no solver call is in flight
+   and no shared structure is half updated, so raising there leaves nothing to
+   repair.  A pass that does not return between two boundaries is not cut
+   short.  Off ([false]), nothing reads it, and with no strict deadline set it
+   never raises. *)
+let at_stages_cell : unit -> bool Atomic.t = per_domain false
+let at_stages () = Atomic.get (at_stages_cell ())
+
+exception Expired_at_stage
+
+let check_at_stage () =
+  if at_stages () && expired_strict () then (
+    cut ();
+    raise Expired_at_stage)
+
+(* [with_stage_check on f] runs [f] with [at_stages] set to [on] (or kept, when
+   it is already set) and restores it on every exit *)
+let with_stage_check on f =
+  let saved = at_stages () in
+  Atomic.set (at_stages_cell ()) (saved || on);
+  Exn.protect ~finally:(fun () -> Atomic.set (at_stages_cell ()) saved) ~f
 
 let within ?(strict_budget = false) ?after_first_round ~seconds f =
-  let saved = Atomic.get deadline in
-  let saved_strict = Atomic.get strict in
-  let saved_pending = Atomic.get pending in
+  let saved = Atomic.get (deadline_cell ()) in
+  let saved_strict = Atomic.get (strict_cell ()) in
+  let saved_pending = Atomic.get (pending_cell ()) in
   let start = now () in
   let mine = start +. seconds in
   let d = match saved with Some d' when Float.(d' < mine) -> d' | _ -> mine in
-  Atomic.set deadline (Some d);
-  Atomic.set strict (saved_strict || strict_budget);
-  Atomic.set pending (Option.map after_first_round ~f:(fun s -> start +. s));
+  Atomic.set (deadline_cell ()) (Some d);
+  Atomic.set (strict_cell ()) (saved_strict || strict_budget);
+  Atomic.set (pending_cell ()) (Option.map after_first_round ~f:(fun s -> start +. s));
   let restore () =
-    Atomic.set deadline saved;
-    Atomic.set strict saved_strict;
-    Atomic.set pending saved_pending
+    Atomic.set (deadline_cell ()) saved;
+    Atomic.set (strict_cell ()) saved_strict;
+    Atomic.set (pending_cell ()) saved_pending
   in
   match f () with
   | v ->

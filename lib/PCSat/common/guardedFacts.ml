@@ -338,7 +338,7 @@ let form_valid_forked ?(trace = fun (_ : string lazy_t) -> ()) ~ms psi =
           | Some (psi', q, facts) when phys_equal psi psi' -> (Some q, facts)
           | _ -> (None, [])
         in
-        Fun.protect
+        Common.Timer.protect
           ~finally:(fun () -> Z3Smt.Z3interface.set_int_to_bv_range saved)
           (fun () ->
             Z3Smt.Z3interface.set_int_to_bv_range false;

@@ -44,6 +44,10 @@ rule main = parse
 | "do" { CLtlParser.DO }
 | "for" { CLtlParser.FOR }
 | "break" { CLtlParser.BREAK }
+| "continue" { CLtlParser.CONTINUE }
+| "switch" { CLtlParser.SWITCH }
+| "case" { CLtlParser.CASE }
+| "default" { CLtlParser.DEFAULT }
 | "return" { CLtlParser.RETURN }
 | "goto" { CLtlParser.GOTO }
 | "__VERIFIER_assume" { CLtlParser.ASSUME }

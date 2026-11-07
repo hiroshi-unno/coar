@@ -1,0 +1,46 @@
+/* Filtering a list by a higher-order predicate: Bit keeps zero and one and
+   drops two, so the result holds no two.  The predicate's answer is an output
+   tree, analysed after a coercion; the element is both tested and copied.
+   Made from Example 2 of C.-H. L. Ong and S. J. Ramsay, "Verifying
+   higher-order functional programs with pattern-matching algebraic data
+   types", POPL 2011, which removes the zeros from a list of naturals with
+   the predicate Nz (Main m = Filter Nz m); here the predicate is Bit on
+   zero, one and two, and If takes its condition first. */
+%BEGING
+Main m = Filter Bit m
+.
+Filter p x = case x of
+	  nil => nil
+	| cons y ys => If (coerce qb (p y)) (cons (copy y) (Filter p ys)) (Filter p ys)
+.
+If b t e = case b of
+	  true => t
+	| false => e
+.
+Bit x = case x of
+	  zero => true
+	| one => true
+	| two => false
+.
+%ENDG
+
+%BEGINA
+/* q0 : a list of zero, one and two */
+q0 nil -> .
+q0 cons -> q1 q0.
+q1 zero -> .
+q1 one -> .
+q1 two -> .
+/* q2 : a list of zero and one */
+q2 nil -> .
+q2 cons -> q3 q2.
+q3 zero -> .
+q3 one -> .
+/* qb : a Boolean */
+qb true -> .
+qb false -> .
+%ENDA
+
+%BEGINT
+Main : q0 -> q2.
+%ENDT

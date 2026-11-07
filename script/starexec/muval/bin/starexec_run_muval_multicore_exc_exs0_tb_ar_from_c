@@ -1,7 +1,0 @@
-#! /bin/bash
-
-export LD_LIBRARY_PATH=./
-INPUT=$(basename $1 ".c")
-./clang -c -emit-llvm -O0 $1 -o ${INPUT}.bc 2> /dev/null
-./llvm2kittel --dump-ll --no-slicing --eager-inline --t2 ${INPUT}.bc > ${INPUT}.t2
-./main.exe -c ./config/solver/muval_term_comp_parallel_exc_exs0_tb_ar.json -p ltsterm ${INPUT}.t2 2> /dev/null

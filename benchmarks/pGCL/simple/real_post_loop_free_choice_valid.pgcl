@@ -1,0 +1,14 @@
+# r is a real variable and the post-expectation is r itself, negative at states the program
+# never reaches.  A fair choice between r = 1.5 and r = 0.5 gives
+#   wp(S, r) = 1/2 * 1.5 + 1/2 * 0.5 = 1,
+# so the upper bound 1 is exact.
+# Expected: valid.  The post used to become a function of r of its own, which the checker
+# requires to be non-negative at every real r, so the bound was lost (unknown) although the
+# preexpectation is the constant 1.
+real r;
+{
+	r := 1.5;
+}[1/2]{
+	r := 0.5;
+}
+?Ex [r] <= 1

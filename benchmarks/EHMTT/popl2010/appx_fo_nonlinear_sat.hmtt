@@ -1,0 +1,123 @@
+%BEGING
+S x = Appendix x leaf.
+Appendix x y =
+  case x of
+    doc x1 x2 => Appendix1 x y doc x1 x2
+  | preface x1 x2 => Appendix1 x y preface x1 x2
+  | header x1 x2 => Appendix1 x y header x1 x2
+  | p x1 x2 => Appendix1 x y p x1 x2
+  | div x1 x2 => Appendix1 x y div x1 x2
+  | note x1 x2 => Appendix1 x y note x1 x2
+  | leaf => fail.
+Appendix1 x y l x1 x2 =
+  html
+    (head
+      (title leaf
+      leaf)
+    (body
+      (Body x1
+      (div
+        (h2 leaf
+        (Rest x
+        leaf))
+      leaf))
+    leaf))
+  y.
+Body x y =
+  case x of
+    doc x1 x2 => doc (Body x1 leaf) (Body x2 y)
+  | preface x1 x2 => Body x2 y
+  | header x1 x2 => header (Body x1 leaf) (Body x2 y)
+  | p x1 x2 => p (Body x1 leaf) (Body x2 y)
+  | div x1 x2 => div (Body x1 leaf) (Body x2 y)
+  | note x1 x2 => Body x2 y
+  | leaf => y.
+Rest x y =
+  case x of
+    doc x1 x2 => Rest x1 (Rest x2 y)
+  | preface x1 x2 => Id x1 (Rest x2 y)
+  | header x1 x2 => Rest x1 (Rest x2 y)
+  | p x1 x2 => Rest x1 (Rest x2 y)
+  | div x1 x2 => Rest x1 (Rest x2 y)
+  | note x1 x2 => Id x1 (Rest x2 y)
+  | leaf => y.
+Id x y =
+  case x of
+    doc x1 x2 => doc (Id x1 leaf) (Id x2 y)
+  | preface x1 x2 => preface (Id x1 leaf) (Id x2 y)
+  | header x1 x2 => b (Id x1 leaf) (Id x2 y)
+  | p x1 x2 => p (Id x1 leaf) (Id x2 y)
+  | div x1 x2 => div (Id x1 leaf) (Id x2 y)
+  | note x1 x2 => note (Id x1 leaf) (Id x2 y)
+  | leaf => y.
+%ENDG
+
+%BEGINA
+/*
+Input: Input
+type Input    = doc[Preface, (Div|P|Note)*]
+type Preface  = preface[Header, P*]
+type Header   = header[]
+type P        = p[]
+type Div      = div[(Div|P|Note)*]
+type Note     = note[P*]
+*/
+qi0 doc -> qi9 qi8.
+qi1 preface -> qi10 qi8.
+qi2 header -> qi8 qi8.
+qi3 p -> qi8 qi8.
+qi4 div -> qi6 qi8.
+qi5 note -> qi7 qi8.
+qi6 div -> qi6 qi6.
+qi6 p -> qi8 qi6.
+qi6 note -> qi7 qi6.
+qi6 leaf -> .
+qi7 p -> qi8 qi7.
+qi7 leaf -> .
+qi8 leaf -> .
+qi9 preface -> qi10 qi6.
+qi10 header -> qi8 qi7.
+/*
+Output: Xhtml
+type Xhtml    = html[head[meta[]*,title[],meta[]*],body[Blocks]]
+type Blocks   = (h1[]|h2[]|h3[]|h4[]|h5[]|h6[]|h7[]|h8[]|h9[]|p[]|b[]|div[Blocks])*
+*/
+q0 html -> q5 q4.
+q1 h1 -> q4 q3.
+q1 h2 -> q4 q3.
+q1 h3 -> q4 q3.
+q1 h4 -> q4 q3.
+q1 h5 -> q4 q3.
+q1 h6 -> q4 q3.
+q1 h7 -> q4 q3.
+q1 h8 -> q4 q3.
+q1 h9 -> q4 q3.
+q1 p -> q4 q3.
+q1 b -> q4 q3.
+q1 div -> q1 q3.
+q1 leaf -> .
+q2 meta -> q4 q2.
+q2 leaf -> .
+q3 h1 -> q4 q3.
+q3 h2 -> q4 q3.
+q3 h3 -> q4 q3.
+q3 h4 -> q4 q3.
+q3 h5 -> q4 q3.
+q3 h6 -> q4 q3.
+q3 h7 -> q4 q3.
+q3 h8 -> q4 q3.
+q3 h9 -> q4 q3.
+q3 p -> q4 q3.
+q3 b -> q4 q3.
+q3 div -> q1 q3.
+q3 leaf -> .
+q4 leaf -> .
+q5 head -> q7 q6.
+q6 body -> q1 q4.
+q7 meta -> q4 q7.
+q7 title -> q4 q2.
+%ENDA
+
+%BEGINT
+S : qi0 -> q0.
+%ENDT

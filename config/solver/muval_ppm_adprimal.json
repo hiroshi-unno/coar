@@ -1,0 +1,14 @@
+[
+    "MuVal",
+    {
+        "fixpoint_reduction": [
+            "Parity_progress_measure",
+            {
+                "loop_levels_from": [
+                    "Reduction"
+                ]
+            }
+        ],
+        "alternation_depth_primal": true
+    }
+]

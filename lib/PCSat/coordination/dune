@@ -2,7 +2,7 @@
  (name coordination)
  (public_name CoAR.PCSat.coordination)
  (preprocess
-  (pps ppx_deriving_yojson))
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
  (libraries
   core
   yojson
@@ -11,4 +11,4 @@
   CoAR.PCSat.resolution
   CoAR.PCSat.synthesis
   CoAR.PCSat.labeling)
- (modules coordinator))
+ (modules coordinator zeroUnknownConfig))

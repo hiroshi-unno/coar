@@ -1,0 +1,91 @@
+%BEGING
+S x = F x leaf.
+F x t = case x of
+      a x1 x2 => F x1 (F x2 t)
+    | base x1 x2 => base (F x1 leaf) (F x2 t)
+    | body x1 x2 => body (F x1 leaf) (F x2 t)
+    | brk x1 x2 => brk (F x1 leaf) (F x2 t)
+    | div x1 x2 => div (F x1 leaf) (F x2 t)
+    | h1 x1 x2 => h1 (F x1 leaf) (F x2 t)
+    | h2 x1 x2 => h2 (F x1 leaf) (F x2 t)
+    | h3 x1 x2 => h3 (F x1 leaf) (F x2 t)
+    | h4 x1 x2 => h4 (F x1 leaf) (F x2 t)
+    | h5 x1 x2 => h5 (F x1 leaf) (F x2 t)
+    | h6 x1 x2 => h6 (F x1 leaf) (F x2 t)
+    | head x1 x2 => head (F x1 leaf) (F x2 t)
+    | html x1 x2 => html (F x1 leaf) (F x2 t)
+    | img x1 x2 => img (F x1 leaf) (F x2 t)
+    | leaf => t
+    | link x1 x2 => link (F x1 leaf) (F x2 t)
+    | meta x1 x2 => meta (F x1 leaf) (F x2 t)
+    | p x1 x2 => p (F x1 leaf) (F x2 t)
+    | pc x1 x2 => pc (F x1 leaf) (F x2 t)
+    | script x1 x2 => script (F x1 leaf) (F x2 t)
+    | style x1 x2 => style (F x1 leaf) (F x2 t)
+    | title x1 x2 => title (F x1 leaf) (F x2 t)
+.
+%ENDG
+
+%BEGINA
+/* the XHTML subset of xhtmls_drop-a.hrs, as the input and the output automaton */
+q0 html -> q9 q8.
+q1 body -> q11 q8.
+q2 pc -> q8 q8.
+q3 leaf -> .
+q3 base -> q8 q3.
+q3 link -> q8 q3.
+q3 meta -> q8 q3.
+q3 script -> q2 q3.
+q3 style -> q2 q3.
+q4 leaf -> .
+q4 div -> q6 q4.
+q4 h1 -> q7 q4.
+q4 h2 -> q7 q4.
+q4 h3 -> q7 q4.
+q4 h4 -> q7 q4.
+q4 h5 -> q7 q4.
+q4 h6 -> q7 q4.
+q4 p -> q7 q4.
+q5 leaf -> .
+q5 brk -> q8 q5.
+q5 img -> q8 q5.
+q5 pc -> q8 q5.
+q6 leaf -> .
+q6 a -> q5 q6.
+q6 brk -> q8 q6.
+q6 div -> q6 q6.
+q6 h1 -> q7 q6.
+q6 h2 -> q7 q6.
+q6 h3 -> q7 q6.
+q6 h4 -> q7 q6.
+q6 h5 -> q7 q6.
+q6 h6 -> q7 q6.
+q6 img -> q8 q6.
+q6 p -> q7 q6.
+q6 pc -> q8 q6.
+q7 leaf -> .
+q7 a -> q5 q7.
+q7 brk -> q8 q7.
+q7 img -> q8 q7.
+q7 pc -> q8 q7.
+q8 leaf -> .
+q9 head -> q10 q1.
+q10 base -> q8 q10.
+q10 link -> q8 q10.
+q10 meta -> q8 q10.
+q10 script -> q2 q10.
+q10 style -> q2 q10.
+q10 title -> q2 q3.
+q11 div -> q6 q4.
+q11 h1 -> q7 q4.
+q11 h2 -> q7 q4.
+q11 h3 -> q7 q4.
+q11 h4 -> q7 q4.
+q11 h5 -> q7 q4.
+q11 h6 -> q7 q4.
+q11 p -> q7 q4.
+%ENDA
+
+%BEGINT
+S : q0 -> q0.
+%ENDT

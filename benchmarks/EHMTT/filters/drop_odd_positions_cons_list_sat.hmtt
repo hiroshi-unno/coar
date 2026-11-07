@@ -1,0 +1,25 @@
+%BEGING
+Filter1 x -> case x of
+  nil => nil
+| cons x xs => Filter2 xs.
+Filter2 x -> case x of
+  nil => nil
+| cons x xs => cons (copy x) (Filter1 xs).
+%ENDG
+
+%BEGINA
+/* q0 : (a b)*e */
+qa a -> .
+qb b -> .
+q0 nil -> .
+q0 cons -> qa q1.
+q1 cons -> qb q0.
+/* q2 : b*e */
+q2 nil -> .
+q2 cons -> qb q2.
+%ENDA
+
+%BEGINT
+/* Filter1 : (a b)*e -> b*e */
+Filter1 : q0 -> q2.
+%ENDT

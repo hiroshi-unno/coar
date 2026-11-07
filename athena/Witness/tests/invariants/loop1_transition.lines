@@ -1,0 +1,2 @@
+(transition (loc 11 3) (function "main") (vars (i signed 32)) (and (< (prev i) 100) (< (prev i) i)))
+(invariant (loc 11 3) (function "main") (vars (i signed 32)) (and (>= i 0) (< (prev i) i)))

@@ -1,0 +1,18 @@
+/* Two rules for (q0, f): the tree f a b is accepted from q0 through the
+   second, which sends the child b to q1; the first sends the child a to q1,
+   which has no rule for a.  The rules mean their disjunction. */
+%BEGING
+S -> f a b.
+%ENDG
+
+%BEGINR
+f -> 2.
+a -> 0.
+b -> 0.
+%ENDR
+
+%BEGINATA
+q0 f -> (1,q1).
+q0 f -> (2,q1).
+q1 b -> true.
+%ENDATA

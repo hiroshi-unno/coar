@@ -1,0 +1,7 @@
+/* A safety property whose only counterexample is 75 steps long: counting
+   up from 0 reaches 75.  Invalid.  Spacer needs about 15 seconds for it on
+   one core, so a reduction that gives its clause solver one fixed 10-second
+   budget answers timeout whatever the caller allows. */
+forall (x: int). x != 0 \/ I x
+s.t.
+I (x: int): bool =nu x != 75 /\ I (x + 1);

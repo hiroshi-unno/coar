@@ -1,0 +1,38 @@
+%BEGING
+RevApp x y = RevAcc y (RevAcc x e).
+RevAcc x z =
+ case x of e => z
+   | a y => RevAcc y (a z)
+   | b y => RevAcc y (b z)
+   | c y => RevAcc y (c z).
+%ENDG
+
+%BEGINA
+/* q0 : a*b*e */
+q0 a -> q0.
+q0 e -> .
+q0 b -> q1.
+q1 b -> q1.
+q1 e -> .
+/* q2 : b*c*e */
+q2 b -> q2.
+q2 e -> .
+q2 c -> q3.
+q3 c -> q3.
+q3 e -> .
+/* q4 : c*b*a*e */
+q4 c -> q4.
+q4 e -> .
+q4 b -> q5.
+q4 a -> q6.
+q5 b -> q5.
+q5 e -> .
+q5 a -> q6.
+q6 a -> q6.
+q6 e -> .
+%ENDA
+
+%BEGINT
+/* RevApp: a*b*e -> b*c*e -> c*b*a*e */
+RevApp : q0 -> q2 -> q4.
+%ENDT

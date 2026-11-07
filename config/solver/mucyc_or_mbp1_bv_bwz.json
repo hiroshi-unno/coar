@@ -1,0 +1,37 @@
+[
+    "MuCyc",
+    {
+        "pcsp_solver": [
+            "Filename",
+            "./config/solver/spacer_sol.json"
+        ],
+        "refinement_strategy": [
+            "Refine",
+            [
+                "MBP",
+                1
+            ],
+            [
+                "Or"
+            ]
+        ],
+        "projection_lets": [
+            "Name_subterms",
+            {}
+        ],
+        "interpolant_leaves": [
+            [
+                "Bitwuzla_bv",
+                {
+                    "timeout": 10
+                }
+            ],
+            [
+                "Spacer_chc"
+            ],
+            [
+                "Qe_weakest"
+            ]
+        ]
+    }
+]

@@ -1,0 +1,52 @@
+# benchmarks/muCLP/popl2024, the 47 muCLP inputs of the POPL 2024 artifact of Heim and Dimitrova, Solving
+# Infinite-State Games via Acceleration (Zenodo record 8424953, artifact-popl2024-60.zip, 4,027,641,189 bytes, md5
+# 2b9ba986b1d85edfac6b7e724ccd4b1d; licence "other-open").  The record's zip stores artifact-content.zip uncompressed
+# at bytes 78-70949203, and only that range is downloaded; the files are its benchmarks/hes/.  source <TAB>
+# destination <TAB> sha256; each placed file is upstream's bytes.
+benchmarks/hes/bloem-elevator-signal-3.hes	benchmarks/muCLP/popl2024/bloem-elevator-signal-3.hes	dedf124f248c30c499a6da143eded95bfbed3775c7d9993b5882f79ac6468ceb
+benchmarks/hes/bloem-elevator-signal-4.hes	benchmarks/muCLP/popl2024/bloem-elevator-signal-4.hes	89d5148f67d118dcbe7f281fc458f19f4fa25a621a642cf9f8783887c6ad4c37
+benchmarks/hes/bloem-elevator-signal-5.hes	benchmarks/muCLP/popl2024/bloem-elevator-signal-5.hes	04d16d62158eef59f1eece6ce0b7e55c0a97478d6a5725e7df8d49ebdbc99bf1
+benchmarks/hes/bloem-elevator-simple-10.hes	benchmarks/muCLP/popl2024/bloem-elevator-simple-10.hes	104c0e51ba00e2dd01c2a2a69e4eb7fb0de10da62f7f63afa756acff0b3bc8b7
+benchmarks/hes/bloem-elevator-simple-3.hes	benchmarks/muCLP/popl2024/bloem-elevator-simple-3.hes	e8a1ea101161b0235f5ffd9269bc38ee7b68a7c634d4974b1ad39cb248bd9007
+benchmarks/hes/bloem-elevator-simple-4.hes	benchmarks/muCLP/popl2024/bloem-elevator-simple-4.hes	ab03a4d709da7149b1a46ab8659956be31a8b492a1b6ccc2001f42025855a774
+benchmarks/hes/bloem-elevator-simple-5.hes	benchmarks/muCLP/popl2024/bloem-elevator-simple-5.hes	d2f7c30c5f97d436ac58e01b98a0b17571bb3d36c54976587d71ce75b1e77e83
+benchmarks/hes/bloem-elevator-simple-8.hes	benchmarks/muCLP/popl2024/bloem-elevator-simple-8.hes	cce41800ff8c7b27e6c45fb7b6c229a351aa2ce4fcc4399d6ebef3c4411b0133
+benchmarks/hes/bloem-watertank-double-safety.hes	benchmarks/muCLP/popl2024/bloem-watertank-double-safety.hes	463bb1bbb73b4006ff703b4651d231be8a6a076d5c2c34b1dd3a061604b5b554
+benchmarks/hes/bloem-watertank-single-liveness.hes	benchmarks/muCLP/popl2024/bloem-watertank-single-liveness.hes	148dafc4a1d8c22db9e0e26320a04b2e327cd63d5bcf1592b3961dbdf55c79b1
+benchmarks/hes/cinderella-14.hes	benchmarks/muCLP/popl2024/cinderella-14.hes	1f72063348b0d1ccd8be1d0101d2e917a09e6639241d9178cfc9455855285b4c
+benchmarks/hes/cinderella-15.hes	benchmarks/muCLP/popl2024/cinderella-15.hes	fea165c1fe5d6069cf182ae07de6f99e169fec5e34b5ede8e77f49ceb7586962
+benchmarks/hes/cinderella-16.hes	benchmarks/muCLP/popl2024/cinderella-16.hes	cc905cb48c3c3d424ecc2ed9a9a03c3bc1be69df8b0e35e209e2eb10b3ae4884
+benchmarks/hes/cinderella-18.hes	benchmarks/muCLP/popl2024/cinderella-18.hes	b5f91c2eeb53b48c4f28125a50c25a161ba483f1a608537393c4b03deb5b6377
+benchmarks/hes/cinderella-19.hes	benchmarks/muCLP/popl2024/cinderella-19.hes	11db2dc68af0227b55531f68c34233507f396c4ea0318c48eb616c83ba71ac4f
+benchmarks/hes/cinderella-20.hes	benchmarks/muCLP/popl2024/cinderella-20.hes	40f281cc2169bffdc0f4ba1e9aab077c0c31eda5f392da5f4821d5c52edaf7ec
+benchmarks/hes/cinderella-25.hes	benchmarks/muCLP/popl2024/cinderella-25.hes	15ede61bf09df5ff86c71bc942398245a253c60b11e4f5a08f16ea91b5839fe3
+benchmarks/hes/cinderella-30.hes	benchmarks/muCLP/popl2024/cinderella-30.hes	2f4fb9a6ed1839931a77797b2972ffe7b0b0ed5ead0c54ecbd4962890e7ff4c3
+benchmarks/hes/neider-box-limited.hes	benchmarks/muCLP/popl2024/neider-box-limited.hes	db0c0be7c856ba939a847cf3f81bbd3af59b146e48a6ce18b83ec49c5988b23d
+benchmarks/hes/neider-box.hes	benchmarks/muCLP/popl2024/neider-box.hes	8418147b57d6917d6613c349c4d45dffbf69d6ee18e1ddbf6b6b98d1455b715a
+benchmarks/hes/neider-diagonal.hes	benchmarks/muCLP/popl2024/neider-diagonal.hes	7f8135bf9f2ce832b8edebca7ea6bfc53472c5ab081d61fb308d531b26957073
+benchmarks/hes/neider-evasion.hes	benchmarks/muCLP/popl2024/neider-evasion.hes	1de8f56e0ccef5d3980dc269c9c5364df0e650ed840064057b9110227324c56f
+benchmarks/hes/neider-follow.hes	benchmarks/muCLP/popl2024/neider-follow.hes	37b11559cc120bc3158f957136560c7cabc25dd70e55e8dbee4e9c8404dc0553
+benchmarks/hes/neider-solitary.hes	benchmarks/muCLP/popl2024/neider-solitary.hes	dea75fa0f74f982fde5c38c21778151060fd0229fdda8b6e263598c56ac78fe5
+benchmarks/hes/neider-square-5x5.hes	benchmarks/muCLP/popl2024/neider-square-5x5.hes	a1af7afe98029448c57d865a17f105ce7f77d5444854b3577a4b956cc76397f0
+benchmarks/hes/robot-cat-real-1d.hes	benchmarks/muCLP/popl2024/robot-cat-real-1d.hes	8a85c3fc48c1668471a2de0615d7cec79ae29ab7bc9d9560e827c50ebde06042
+benchmarks/hes/robot-cat-real-2d.hes	benchmarks/muCLP/popl2024/robot-cat-real-2d.hes	ffb40dcf417107deaff07f028282162cdb94a904bdabcdf627072db0119ebd8c
+benchmarks/hes/robot-cat-unreal-1d.hes	benchmarks/muCLP/popl2024/robot-cat-unreal-1d.hes	bcb58c966fae66eb3c648bef8539958defaa5ab246cadab0b8b895713d5ca9f6
+benchmarks/hes/robot-cat-unreal-2d.hes	benchmarks/muCLP/popl2024/robot-cat-unreal-2d.hes	05d3d34c15140f6113ff84aae69595e73b456fa957fb5e1f39f1f33ea873a610
+benchmarks/hes/robot-continuous-comute-1d.hes	benchmarks/muCLP/popl2024/robot-continuous-comute-1d.hes	b141cf8144fc2ecd14189cae5cff41dbf3e93b2a135cf62d96da4767bac212d3
+benchmarks/hes/robot-continuous-comute-2d.hes	benchmarks/muCLP/popl2024/robot-continuous-comute-2d.hes	752f5da35d651e09217e423eb69872f3d2834b44c9399f7610d49b86544b7107
+benchmarks/hes/robot-continuous-reach-1d.hes	benchmarks/muCLP/popl2024/robot-continuous-reach-1d.hes	7b7a8b3371e8f582e74286ee81e63fd5072cc6227d16921a7bacf00616aa37cb
+benchmarks/hes/robot-continuous-reach-2d.hes	benchmarks/muCLP/popl2024/robot-continuous-reach-2d.hes	3571622aae77be94c47f0b5fa46503678a11020b95ac76e7c152a8b88c2dd982
+benchmarks/hes/robot-continuous-reach-unreal-1d.hes	benchmarks/muCLP/popl2024/robot-continuous-reach-unreal-1d.hes	474de78ececde8acd96bb49ac0d3cc21baae927ec158cf66479a00ccd7ccf7bd
+benchmarks/hes/robot-continuous-reach-unreal-2d.hes	benchmarks/muCLP/popl2024/robot-continuous-reach-unreal-2d.hes	b3436d0e7196d1b56f35585307cdb9d5064cb78b2bc1e661c3f0fa3277b6ca00
+benchmarks/hes/robot-grid-comute-1d.hes	benchmarks/muCLP/popl2024/robot-grid-comute-1d.hes	7fc32c9e4e6a07420acee23b737f64378993eb4472d7c6a5958453d3e7b2f56a
+benchmarks/hes/robot-grid-comute-2d.hes	benchmarks/muCLP/popl2024/robot-grid-comute-2d.hes	f87ff78c809ab63df84bcf17969579d3100f42fa5de239002e4e84e8a34c11c7
+benchmarks/hes/robot-grid-reach-1d.hes	benchmarks/muCLP/popl2024/robot-grid-reach-1d.hes	55579e1c0bff82d56edf4cd8470009f0102ea6eed9ba11b919e4c38b949bbbc6
+benchmarks/hes/robot-grid-reach-2d.hes	benchmarks/muCLP/popl2024/robot-grid-reach-2d.hes	59fcaa2bf82d4407d4c8422a0cca3e40c9185d0bc2c33a1f3616821dd04e4767
+benchmarks/hes/robot-resource-1d.hes	benchmarks/muCLP/popl2024/robot-resource-1d.hes	add46d7ac18889f4f9739ebf32711bf87a81f11249d0b9d3f4ccd3ee97fe1515
+benchmarks/hes/robot-resource-2d.hes	benchmarks/muCLP/popl2024/robot-resource-2d.hes	4ded1f455c2bcfa3bd9e253afe841b46d32c9eb05544420dc5ea2d7be275e035
+benchmarks/hes/running-example-buechi.hes	benchmarks/muCLP/popl2024/running-example-buechi.hes	651087f20902f77d067c33b78710e09fff4d16e4d82879b71e131120ff823959
+benchmarks/hes/running-example-double-x.hes	benchmarks/muCLP/popl2024/running-example-double-x.hes	8a403a7f5d5feccf6e247009828b211c4c497e352062faf5457a43d2cbd90d7f
+benchmarks/hes/running-example-normal.hes	benchmarks/muCLP/popl2024/running-example-normal.hes	a183d3177495f12c00df578d249a366484d2f15c13eb75897d789fbd625a3015
+benchmarks/hes/warehouse-clean.hes	benchmarks/muCLP/popl2024/warehouse-clean.hes	ece9104ab5be9c5a5d6bd40d76e565c569e201c205cb3b5ca257c766d3ae91df
+benchmarks/hes/warehouse-empty.hes	benchmarks/muCLP/popl2024/warehouse-empty.hes	5872607682a1c59e0561498732ca080f36721850ea85a8fba1148fdf8f38a1b8
+benchmarks/hes/warehouse-stock.hes	benchmarks/muCLP/popl2024/warehouse-stock.hes	a2323a12aae51fcab28ce7635c7659c25dbbb009b93056562281386f0ba94a8c

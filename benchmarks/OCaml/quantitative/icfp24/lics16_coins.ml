@@ -1,3 +1,5 @@
+[@@@mode "hfl_prop_as_expectation"]
+
 let p1 = 1.0 /. 2.0
 let p2 = 1.0 /. 3.0
 let coins k =

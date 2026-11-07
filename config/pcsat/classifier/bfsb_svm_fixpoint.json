@@ -5,7 +5,7 @@
             "Filename",
             "./config/pcsat/qualifier/svm_fixpoint.json"
         ],
-        "strategy": [
+        "selection": [
             "First"
         ]
     }

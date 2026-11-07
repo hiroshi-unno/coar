@@ -1,0 +1,16 @@
+// The PRE line keeps x non-negative, so every run loops at the BUCHI location 1; without it a run
+// with x < 0 ends at 2.  Expected: YES (-p ltsbuchi), YES (-p ltsexbuchi).
+START: 1;
+BUCHI: {1};
+PRE: {x>=0};
+
+FROM: 1;
+assume(x>=0);
+TO: 1;
+
+FROM: 1;
+assume(x<0);
+TO: 2;
+
+FROM: 2;
+TO: 2;

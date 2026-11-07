@@ -1,0 +1,23 @@
+[
+    "MuVal",
+    {
+        "optimizer": [
+            "Filename",
+            "./config/muclp/optimizer/enable.json"
+        ],
+        "fixpoint_reduction": [
+            "Wf_reduction",
+            {
+                "restrict_ranking_to_cycles": false
+            }
+        ],
+        "pcsp_solver_primal": [
+            "Filename",
+            "./config/solver/pcsat_muval.json"
+        ],
+        "pcsp_solver_dual": [
+            "Filename",
+            "./config/solver/pcsat_muval.json"
+        ]
+    }
+]

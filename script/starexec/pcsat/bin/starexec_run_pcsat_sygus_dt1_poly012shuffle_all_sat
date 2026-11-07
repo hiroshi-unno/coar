@@ -1,4 +1,0 @@
-#! /bin/bash
-
-export LD_LIBRARY_PATH=./
-./main.exe -c ./config/solver/pcsat_sygus_comp_dt1_poly012shuffle_all_sat.json -p sygus $1

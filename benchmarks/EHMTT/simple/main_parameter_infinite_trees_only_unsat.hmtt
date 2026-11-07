@@ -1,0 +1,17 @@
+/* F's parameter ranges over the trees qe accepts, and input trees may be
+   infinite: qe accepts e(e(e(...))), although no finite tree (its only
+   transition needs another e below).  So there is an input, and F ignores
+   it and returns bad, which qo rejects.  A reading of the input automaton
+   over finite trees only finds no input and answers sat vacuously. */
+%BEGING
+F x -> bad.
+%ENDG
+
+%BEGINA
+qe e -> qe.
+qo ok -> .
+%ENDA
+
+%BEGINT
+F : qe -> qo.
+%ENDT

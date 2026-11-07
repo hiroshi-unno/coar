@@ -1,0 +1,9 @@
+[
+    "PCSat",
+    {
+        "sol_printer": [
+            "Filename",
+            "./config/pcsat/sol_printer/wo_iter.json"
+        ]
+    }
+]

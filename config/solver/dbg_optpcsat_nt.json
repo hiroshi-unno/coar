@@ -1,0 +1,17 @@
+[
+    "OptPCSat",
+    {
+        "improve_solver": [
+            "Filename",
+            "./config/solver/dbg_pcsat_d3_nothr.json"
+        ],
+        "opt_check_solver": [
+            "Filename",
+            "./config/solver/dbg_pcsat.json"
+        ],
+        "verbose": true,
+        "side_conditions": [
+            "NonTrivial"
+        ]
+    }
+]

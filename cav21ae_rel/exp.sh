@@ -1,29 +1,14 @@
 #!/bin/bash
-
-cd `dirname $0`; cd ..
-echo -e "DoubleSquareNI_hFT:"; time timeout 1200 _build/default/main.exe -c config/solver/pcsat_tb_hyperprop2.json -p pcsp benchmarks/pfwnCSP/cav2021rel/DoubleSquareNI_hFT.clp
-echo -e "\n\nDoubleSquareNI_hTF:"; time timeout 1200 _build/default/main.exe -c config/solver/pcsat_tb_hyperprop2.json -p pcsp benchmarks/pfwnCSP/cav2021rel/DoubleSquareNI_hTF.clp
-echo -e "\n\nDoubleSquareNI_hFF:"; time timeout 1200 _build/default/main.exe -c config/solver/pcsat_tb_hyperprop2.json -p pcsp benchmarks/pfwnCSP/cav2021rel/DoubleSquareNI_hFF.clp
-echo -e "\n\nDoubleSquareNI_hTT:"; time timeout 1200 _build/default/main.exe -c config/solver/pcsat_tb_hyperprop2.json -p pcsp benchmarks/pfwnCSP/cav2021rel/DoubleSquareNI_hTT.clp
-#echo -e "\n\nCotermIntro:"; time timeout 1200 _build/default/main.exe -c config/solver/pcsat_tb.json -p pcsp benchmarks/pfwnCSP/cav2021rel/CotermIntro.clp
-echo -e "\n\nCotermIntro1:"; time timeout 1200 _build/default/main.exe -c config/solver/pcsat_tb.json -p pcsp benchmarks/pfwnCSP/cav2021rel/CotermIntro1.clp
-echo -e "\n\nCotermIntro2:"; time timeout 1200 _build/default/main.exe -c config/solver/pcsat_tb.json -p pcsp benchmarks/pfwnCSP/cav2021rel/CotermIntro2.clp
-#echo -e "\n\nTS_GNI_hFT:"; time timeout 1200 _build/default/main.exe -c config/solver/pcsat_tb_hyperprop2.json -p pcsp benchmarks/pfwnCSP/cav2021rel/TS_GNI_hFT.clp
-echo -e "\n\nTS_GNI_hFT_hint:"; time timeout 1200 _build/default/main.exe -c config/solver/pcsat_tb_hyperprop2.json -p pcsp benchmarks/pfwnCSP/cav2021rel/TS_GNI_hFT_hint.clp
-echo -e "\n\nTS_GNI_hTF:"; time timeout 1200 _build/default/main.exe -c config/solver/pcsat_tb_hyperprop2.json -p pcsp benchmarks/pfwnCSP/cav2021rel/TS_GNI_hTF.clp
-echo -e "\n\nTS_GNI_hFF:"; time timeout 1200 _build/default/main.exe -c config/solver/pcsat_tb_hyperprop2.json -p pcsp benchmarks/pfwnCSP/cav2021rel/TS_GNI_hFF.clp
-#echo -e "\n\nTS_GNI_hTT:"; time timeout 1200 _build/default/main.exe -c config/solver/pcsat_tb_hyperprop2.json -p pcsp benchmarks/pfwnCSP/cav2021rel/TS_GNI_hTT.clp
-echo -e "\n\nTS_GNI_hTT_hint:"; time timeout 1200 _build/default/main.exe -c config/solver/pcsat_tb_hyperprop2.json -p pcsp benchmarks/pfwnCSP/cav2021rel/TS_GNI_hTT_hint.clp
-echo -e "\n\nHalfSquareNI:"; time timeout 1200 _build/default/main.exe -c config/solver/pcsat_tb_hyperprop2.json -p pcsp benchmarks/pfwnCSP/cav2021rel/HalfSquareNI.clp
-echo -e "\n\nArrayInsert:"; time timeout 1200 _build/default/main.exe -c config/solver/pcsat_tb_hyperprop4.json -p pcsp benchmarks/pfwnCSP/cav2021rel/ArrayInsert.clp
-#echo -e "\n\nSquareSum:"; time timeout 1200 _build/default/main.exe -c config/solver/pcsat_tb_hyperprop3.json -p pcsp benchmarks/pfwnCSP/cav2021rel/SquareSum.clp
-echo -e "\n\nSquareSum_hint:"; time timeout 1200 _build/default/main.exe -c config/solver/pcsat_tb_hyperprop3.json -p pcsp benchmarks/pfwnCSP/cav2021rel/SquareSum_hint.clp
-echo -e "\n\nSimpleTS_GNI1:"; time timeout 1200 _build/default/main.exe -c config/solver/pcsat_tb.json -p pcsp benchmarks/pfwnCSP/cav2021rel/SimpleTS_GNI1.clp
-echo -e "\n\nSimpleTS_GNI2:"; time timeout 1200 _build/default/main.exe -c config/solver/pcsat_tb.json -p pcsp benchmarks/pfwnCSP/cav2021rel/SimpleTS_GNI2.clp
-echo -e "\n\nInfBranchTS_GNI:"; time timeout 1200 _build/default/main.exe -c config/solver/pcsat_tb.json -p pcsp benchmarks/pfwnCSP/cav2021rel/InfBranchTS_GNI.clp
-#echo -e "\n\nTI_GNI_hFT:"; time timeout 1200 _build/default/main.exe -c config/solver/pcsat_tb_hyperprop2.json -p pcsp benchmarks/pfwnCSP/cav2021rel/TI_GNI_hFT.clp
-echo -e "\n\nTI_GNI_hFT_hint:"; time timeout 1200 _build/default/main.exe -c config/solver/pcsat_tb_hyperprop2.json -p pcsp benchmarks/pfwnCSP/cav2021rel/TI_GNI_hFT_hint.clp
-echo -e "\n\nTI_GNI_hTF:"; time timeout 1200 _build/default/main.exe -c config/solver/pcsat_tb_hyperprop2.json -p pcsp benchmarks/pfwnCSP/cav2021rel/TI_GNI_hTF.clp
-echo -e "\n\nTI_GNI_hFF:"; time timeout 1200 _build/default/main.exe -c config/solver/pcsat_tb_hyperprop2.json -p pcsp benchmarks/pfwnCSP/cav2021rel/TI_GNI_hFF.clp
-#echo -e "\n\nTI_GNI_hTT:"; time timeout 1200 _build/default/main.exe -c config/solver/pcsat_tb_hyperprop2.json -p pcsp benchmarks/pfwnCSP/cav2021rel/TI_GNI_hTT.clp
-echo -e "\n\nTI_GNI_hTT_hint:"; time timeout 1200 _build/default/main.exe -c config/solver/pcsat_tb_hyperprop2.json -p pcsp benchmarks/pfwnCSP/cav2021rel/TI_GNI_hTT_hint.clp
+# Runs every file of Table 1 under the default configuration (config/solver/pcsat.json),
+# 1200 s each, one at a time: the plain files, and the *_hint files the paper ran in their
+# place (kept for comparison).  Neither the hints nor hand-chosen template parameters are
+# needed any longer; see README.md.
+#
+# The run is pcsat_1200 of corpus cav21ae_rel in script/bench_runs.txt (the file list, the
+# configuration and the limit), run by script/run_corpus.sh through the shared runner
+# script/run_bench.sh from the repository root.  It prints one CSV row per file,
+# `file,verdict,seconds,iterations`, sorted; progress goes to standard error.  The
+# environment variables `timeout` and `para` override the limit and the parallelism.
+set -u
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." || exit 2
+exec ./script/run_corpus.sh cav21ae_rel pcsat_1200

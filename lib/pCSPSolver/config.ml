@@ -1,6 +1,7 @@
 (* Configuration of the pfwCSP solver front door used by mid-level solvers: one
-   of PCSat, Spacer, HoIce, PolyQEnt, forward propagation, or the Printer (which
-   only prints the problem and answers unknown). *)
+   of PCSat, Spacer, HoIce, PolyQEnt, PolyQEnt behind one-shot templates for
+   the predicate unknowns (PolyQEntTempl), forward propagation, or the Printer
+   (which only prints the problem and answers unknown). *)
 open Core
 open Common.Util
 
@@ -9,6 +10,7 @@ type t =
   | SPACER of SPACER.Config.t
   | Hoice of Hoice.Config.t
   | PolyQEnt of PolyQEnt.Config.t
+  | PolyQEntTempl of PolyQEntTempl.Config.t
   | Forward
   | Printer of Printer.Config.t
 [@@deriving yojson]
@@ -28,6 +30,9 @@ let instantiate_ext_files =
       Hoice.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (Hoice cfg)
   | PolyQEnt cfg ->
       PolyQEnt.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (PolyQEnt cfg)
+  | PolyQEntTempl cfg ->
+      PolyQEntTempl.Config.instantiate_ext_files cfg >>= fun cfg ->
+      Ok (PolyQEntTempl cfg)
   | Forward -> Ok Forward
   | Printer cfg ->
       Printer.Config.instantiate_ext_files cfg >>= fun cfg -> Ok (Printer cfg)

@@ -2,7 +2,7 @@
  (name validation)
  (public_name CoAR.PCSat.validation)
  (preprocess
-  (pps ppx_deriving_yojson))
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
  (libraries
   core
   yojson
@@ -12,5 +12,8 @@
   CoAR.Z3Smt
   CoAR.PCSat.common
   CoAR.PCSat.qualifier
-  CoAR.PCSat.template)
+  CoAR.PCSat.template
+  CoAR.houdini
+  CoAR.PCSat.validation.config
+  CoAR.houdini.config)
  (modules validator))

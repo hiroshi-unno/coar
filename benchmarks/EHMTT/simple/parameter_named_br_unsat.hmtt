@@ -1,0 +1,20 @@
+/* F's first parameter is named br, and F returns bad on the input b, which
+   qo rejects: the property is violated.  The reduction joins the branches
+   of F's case with its choice terminal br, and a scheme in which that
+   terminal sits under a parameter of the same name reads the parameter
+   instead, choosing one branch where both must be accepted. */
+%BEGING
+F br xs -> case xs of
+  a => ok
+| b => bad.
+%ENDG
+
+%BEGINA
+qs a -> .
+qs b -> .
+qo ok -> .
+%ENDA
+
+%BEGINT
+F : qs -> qs -> qo.
+%ENDT

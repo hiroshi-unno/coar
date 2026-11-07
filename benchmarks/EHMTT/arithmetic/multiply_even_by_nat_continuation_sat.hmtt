@@ -1,0 +1,22 @@
+%BEGING
+Sp x y -> I2Nat y Z (Multp x).
+Multp x f -> case x of zero => zero
+    | succ z => f (Multp z f).
+I2Nat x f k -> case x of zero => k f
+    | succ xp => I2Nat xp (Succ f) k.
+Z z -> z.
+Succ k x -> k (succ x).
+%ENDG
+
+%BEGINA
+q0 succ -> q1.
+q0 zero -> .
+q1 succ -> q0.
+/**/
+q2 succ -> q2.
+q2 zero -> .
+%ENDA
+
+%BEGINT
+Sp : q0 -> q2 -> q0.
+%ENDT

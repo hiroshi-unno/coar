@@ -1,0 +1,13 @@
+{
+  "input": { "path": "overflow.c", "sha256": "3a30d8c4e1f8f98f6cc9d8d0033eaf96f1fa8010f88bf0000d77714331e6207f", "frama_c": "33.0 (Arsenic)", "args": [], "machdep": "gcc_x86_64" },
+  "source_map": {
+    "input_file": "overflow.c",
+    "statements": [
+    { "output_line": 18, "output_column": 3, "function": "main", "role": "call", "input": { "line": 4, "column": 3, "function": "main" }, "property": null, "cond_negated": null },
+    { "output_line": 20, "output_column": 3, "function": "main", "role": "branch", "input": { "line": 6, "column": 3, "function": "main" }, "property": null, "cond_negated": false },
+    { "output_line": 21, "output_column": 5, "function": "main", "role": "target", "input": { "line": 7, "column": 5, "function": "main" }, "property": "no-overflow", "cond_negated": null },
+    { "output_line": 22, "output_column": 5, "function": "main", "role": "other", "input": { "line": 7, "column": 5, "function": "main" }, "property": null, "cond_negated": null },
+    { "output_line": 24, "output_column": 3, "function": "main", "role": "other", "input": { "line": 9, "column": 3, "function": "main" }, "property": null, "cond_negated": null }
+    ]
+  }
+}

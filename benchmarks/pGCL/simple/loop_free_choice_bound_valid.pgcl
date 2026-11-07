@@ -1,0 +1,11 @@
+# A loop-free program: a fair choice between c = 1 and c = 3, so the expectation of c is 2.
+# Expected: valid.  The reduction used to require the query's expectation to be a single
+# function application and raised "problem_of: missing predicate for query" on the weighted
+# sum a choice gives.
+nat c;
+{
+	c := 1;
+}[1/2]{
+	c := 3;
+}
+?Ex [c] <= 2

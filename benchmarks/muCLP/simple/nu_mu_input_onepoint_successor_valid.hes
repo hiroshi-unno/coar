@@ -1,0 +1,8 @@
+/* A one-step game: an input i, then the successor x - 1 or x + 1.  Valid: with A true, B x holds
+   for x < 0 and B (x - 1) gives the rest.  The successor of the i < 1 branch is written through a
+   one-point existential; nu_mu_input_direct_successor_valid.hes is the same system with it
+   applied directly. */
+forall (x: int). A x
+s.t.
+A (x: int): bool =nu B x;
+B (x: int): bool =mu forall (i: int). x >= 0 /\ i >= 1 /\ B (x - 1) \/ i < 1 /\ (exists (y: int). y = x + 1 /\ A y) \/ i >= 1 /\ x < 0;

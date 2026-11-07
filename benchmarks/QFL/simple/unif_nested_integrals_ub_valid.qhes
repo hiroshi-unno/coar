@@ -1,0 +1,4 @@
+X 0.0 <= 0.25
+s.t.
+// the double integral of p * r over [0, 1]^2 is 1/4, and x * x is 0 at x = 0
+X (x : real) : real =mu unif p. unif r. p * r + x * x;

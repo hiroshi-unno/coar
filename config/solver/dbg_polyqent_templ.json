@@ -1,0 +1,16 @@
+[
+    "PolyQEntTempl",
+    {
+        "preprocessor": [
+            "Filename",
+            "./config/pcsat/preprocessor/dbg_enable.json"
+        ],
+        "polyqent": [
+            "Instance",
+            {
+                "verbose": true
+            }
+        ],
+        "verbose": true
+    }
+]

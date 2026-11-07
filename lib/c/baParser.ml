@@ -31,9 +31,14 @@ let parse_from_lexbuf lexbuf =
       if not (Hashtbl.Poly.mem strid_to_intid_buf strid) then register strid;
       Hashtbl.find_exn strid_to_intid_buf strid
     in
+    (* every declared state is registered, including one without transitions:
+       the claim of an unsatisfiable formula is `T0_init: false;`, an automaton
+       whose only state is initial and accepts nothing *)
     let transition =
-      List.map graph ~f:(fun (from_strid, to_strid, cond) ->
-          (strid_to_intid from_strid, strid_to_intid to_strid, cond))
+      List.concat_map graph ~f:(fun (from_strid, toes) ->
+          let from_intid = strid_to_intid from_strid in
+          List.map toes ~f:(fun (to_strid, cond) ->
+              (from_intid, strid_to_intid to_strid, cond)))
     in
     if !initial_state < 0 then raise (Err "can't find an initial state");
     Ok

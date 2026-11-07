@@ -4,10 +4,9 @@
 open Core
 open Ast
 
-let find_cycle graph vertiecs =
+let find_cycle graph vertices =
   (* graph must be strongly connected *)
-  let open Graph in
-  let open Pack.Digraph in
+  let open IntDigraph in
   let rec inner stack visited ver =
     if Set.mem visited ver then
       match List.findi stack ~f:(fun _ v -> Stdlib.(v = ver)) with
@@ -16,16 +15,17 @@ let find_cycle graph vertiecs =
     else
       inner (ver :: stack) (Set.add visited ver) (List.hd_exn (succ graph ver))
   in
-  let start = Set.choose_exn vertiecs in
+  let start = Set.choose_exn vertices in
   inner [] Set.Poly.empty start
 
-(* ToDo: implement Johnson algorithm to find all cycle *)
-let find_cycles graph vertiecs = [ find_cycle graph vertiecs ]
+(* One cycle of the strongly connected [graph], as a singleton list: the list
+   is the shape an enumeration of every cycle (Johnson's algorithm) would
+   return, which is not implemented. *)
+let find_cycles graph vertices = [ find_cycle graph vertices ]
 
 let term_map examples =
   (* size of examples is more than 0 *)
-  let open Graph in
-  let open Pack.Digraph in
+  let open IntDigraph in
   let cnt = ref 0 in
   let size =
     match Set.find_exn examples ~f:(fun _ -> true) with
@@ -53,8 +53,7 @@ let term_map examples =
   (map, rmap, !cnt, size)
 
 let gen_graph sample =
-  let open Graph in
-  let open Pack.Digraph in
+  let open IntDigraph in
   let node_map, node_map_rev, n, size = term_map sample in
   let graph = create ~size:n () in
   Set.iter sample ~f:(fun (_, terms) ->
@@ -65,8 +64,7 @@ let gen_graph sample =
   (graph, node_map_rev)
 
 let detect ~print pvar sorts (graph, components, node_map_rev) res =
-  let open Graph in
-  let open Pack.Digraph in
+  let open IntDigraph in
   List.fold ~init:res components ~f:(fun acc component ->
       if List.length component <= 1 then acc
       else

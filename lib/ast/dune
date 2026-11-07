@@ -8,16 +8,20 @@
  (name ast)
  (public_name CoAR.ast)
  (preprocess
-  (pps ppx_deriving.std ppx_deriving_yojson))
+  (pps ppx_deriving.std ppx_deriving_yojson CoAR.ppx_config_full_json))
  (libraries core yojson zarith str ocamlgraph CoAR.common CoAR.grammar)
  (modules
   ident
+  integralPairing
   physMemo
+  intDigraph
   value
   pattern
   propLogic
   logic
   logicOld
+  definitionalCnf
+  subtermOrder
   simpleFormula
   typeinf
   affine
@@ -29,8 +33,13 @@
   arrayAsFun
   arrayPointwise
   seqExistInst
+  seqAxiomEncoding
+  arrayLiteralEq
   normalizer
+  exclusiveGuards
   intBinderSplit
+  rangePin
+  questionRewrites
   mbp
   qelim
   stratSynth
@@ -50,6 +59,7 @@
   relatedPositions
   opaqueShapes
   clauseSet
+  chcCone
   clauseSetOld
   clauseGraph
   exClause

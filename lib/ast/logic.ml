@@ -131,7 +131,7 @@ type info = ..
 type info += Dummy
 (*type info += ID of int*)
 
-type binder = Mu | Nu | Fix | Lambda | Forall | Exists
+type binder = Mu | Nu | MuOrNu | Lambda | Forall | Exists
 
 type term =
   | Var of Ident.tvar * info
@@ -153,20 +153,6 @@ type cand_map = (Ident.tvar, Sort.t * term) Map.Poly.t
 type cand_list = (Ident.tvar * (Sort.t * term)) list
 type model_elem = sort_bind * term option
 type model = model_elem list
-
-(* [first_binding_table model] maps each variable bound in [model] to the
-   first element of [model] that binds it.  Contract: for every [x],
-   [Hashtbl.find (first_binding_table model) x] equals
-   [List.find model ~f:(fun ((y, _), _) -> Stdlib.( = ) y x)] -- [Hashtbl.add]
-   never replaces an existing key, so a later duplicate binding is ignored as
-   [List.find] ignores it, and the table's polymorphic equality on a variable
-   (a string under one constructor) is [Stdlib.( = )].  Built in one pass, so
-   a lookup per variable costs a hash rather than a scan of the model. *)
-let first_binding_table (model : model) : (Ident.tvar, model_elem) Hashtbl.t =
-  let tbl = Hashtbl.Poly.create ~size:(List.length model) () in
-  List.iter model ~f:(fun (((x, _), _) as elem) ->
-      ignore (Hashtbl.add tbl ~key:x ~data:elem : [ `Ok | `Duplicate ]));
-  tbl
 
 module type TermType = sig
   (** Sorts *)
@@ -247,6 +233,11 @@ module type TermType = sig
   val subst :
     ?beta_red:bool -> term_subst_map -> ?next:(term -> term) -> term -> term
 
+  val multi_beta : bool Atomic.t
+  (** [subst]'s reduction of a many-argument application in one traversal;
+      on, and switched off only to compare in a test *)
+
+  val multi_beta_taken : int Atomic.t
   val beta_reduction : ?next:(term -> term) -> term -> term
   val refresh : sort_env_map * term -> sort_env_map * term
   val unify : term -> term -> term_subst_map option
@@ -289,10 +280,14 @@ module type TermType = sig
 
   val occurs_free : Ident.tvar -> term -> bool
   val subst_sharing : (Ident.tvar, term) Map.Poly.t -> term -> term
+  val subst_sharing_linear : (Ident.tvar, term) Map.Poly.t -> term -> term
   val subst_up_to_bound_names : term_subst_map -> term -> term
   val subst_rename_on_capture : term_subst_map -> term -> term
   val subst_up_to_bound_names_linear : term_subst_map -> term -> term
   val fvs_of : term -> Ident.tvar_set
+
+  val fvs_within : (Ident.tvar -> bool) -> term -> Ident.tvar_set
+  (** [fvs_of] cut down to the variables the predicate holds of, in one walk *)
 
   val fvs_of_shared : unit -> term -> Ident.tvar_set
   (** [fvs_of_shared ()] is [fvs_of] remembering each node's set by physical
@@ -385,7 +380,7 @@ module Term : TermType = struct
   let str_of_binder = function
     | Mu -> "Mu"
     | Nu -> "Nu"
-    | Fix -> "Fix"
+    | MuOrNu -> "MuOrNu"
     | Lambda -> "Lam"
     | Forall -> "forall"
     | Exists -> "exists"
@@ -613,6 +608,13 @@ module Term : TermType = struct
         occurs_free x t1 || (Stdlib.(var <> x) && occurs_free x t2)
     | TyApp (t, _, _) | TyLam (_, t, _) -> occurs_free x t
 
+  (* The free term variables of [term]: every [Var] not bound by an enclosing
+     binder of [term], less the dummy terms and the names of the
+     process-global function environment.  A [Bin] binds its variable in its
+     body; a [Let] binds its variable in its body only, its definition being
+     outside the name's scope (as in SMT-LIB's [let], and as [rename], [subst]
+     and [occurs_free] read it), so in [let x = x + 1 in b] the definition's
+     [x] is free.  Guarantees [Set.mem (fvs_of t) x] iff [occurs_free x t]. *)
   let fvs_of term =
     let rec aux ~next = function
       | Var (var, _) ->
@@ -630,7 +632,7 @@ module Term : TermType = struct
       | Let (var, _, t1, t2, _) ->
           aux t1 ~next:(fun fvs1 ->
               aux t2 ~next:(fun fvs2 ->
-                  next @@ Set.remove (Set.union fvs1 fvs2) var))
+                  next @@ Set.union fvs1 (Set.remove fvs2 var)))
       | TyApp (term, _, _) | TyLam (_, term, _) -> aux term ~next
     in
     aux term ~next:Fn.id
@@ -678,10 +680,41 @@ module Term : TermType = struct
               | Let (var, _, t1, t2, _) ->
                   aux t1 ~next:(fun fvs1 ->
                       aux t2 ~next:(fun fvs2 ->
-                          next @@ Set.remove (Set.union fvs1 fvs2) var))
+                          next @@ Set.union fvs1 (Set.remove fvs2 var)))
               | _ -> assert false)
     in
     fun t -> aux t ~next:Fn.id
+
+  (* [fvs_within within t] is [fvs_of t] cut down to the variables [within]
+     holds of: [Set.mem (fvs_within within t) x] iff [within x] and
+     [Set.mem (fvs_of t) x].  One walk of [t] as a tree, keeping the binders
+     passed that [within] holds of (a [let] binds its variable in its body
+     only, as [fvs_of] has it) and building no set but the result,
+     where [fvs_of] builds a set at every node.  For a caller asking about a
+     few names, such as the unknowns of a problem. *)
+  let fvs_within within t =
+    let acc = ref Set.Poly.empty in
+    let rec go bound = function
+      | Var (var, _) ->
+          if
+            within var
+            && (not (List.mem bound var ~equal:Stdlib.( = )))
+            && (not (LogicOld.is_dummy_term var None))
+            && not (Map.Poly.mem (LogicOld.get_fenv ()) var)
+          then acc := Set.add !acc var
+      | Con _ -> ()
+      | App (t1, t2, _) ->
+          go bound t1;
+          go bound t2
+      | Bin (_, var, _, t1, _) ->
+          go (if within var then var :: bound else bound) t1
+      | Let (var, _, t1, t2, _) ->
+          go bound t1;
+          go (if within var then var :: bound else bound) t2
+      | TyApp (t1, _, _) | TyLam (_, t1, _) -> go bound t1
+    in
+    go [] t;
+    !acc
 
   let rec find ~f t =
     if f t then Some t
@@ -759,38 +792,279 @@ module Term : TermType = struct
     | TyApp (term, sort, info) -> TyApp (rename map term, sort, info)
     | TyLam (svar, term, info) -> TyLam (svar, rename map term, info)
 
-  let rec subst ?(beta_red = true) env ?(next = Fn.id) = function
+  (* whether no node on the application spine of [t] is a redex
+     [App (Bin (Lambda, ..), _)]; reads the spine only *)
+  let rec spine_redex_free = function
+    | App (Bin (Lambda, _, _, _, _), _, _) -> false
+    | App (fn, _, _) -> spine_redex_free fn
+    | _ -> true
+
+  (* [subst env t] substitutes [env] in [t] simultaneously, renaming every
+     binder it passes to a fresh name (drawn in the order the binders are met,
+     left to right, a [Let]'s definition before its binder) and reducing the
+     redexes on the application spine of every application it rebuilds.
+     Assumes nothing of [t]; the result is capture-free because every binder
+     it keeps is fresh.
+
+     The renaming of a binder is carried down as a map [ren] from the bound
+     names met so far to their fresh names, applied at each variable, rather
+     than by renaming the binder's whole body before entering it: the result
+     is the same term and the same fresh names are drawn in the same order,
+     since renaming draws no name and a fresh name is never a key of [env];
+     the cost is one traversal of the term instead of one per enclosing
+     binder.  Why: beta-reducing an n-parameter lambda applied to n arguments
+     substitutes, at step k, into a body under n - k binders, and renaming
+     that body at every binder made one application cost about n^2
+     traversals of its body; the Houdini pre-pass builds one such application
+     for every candidate atom of an unknown with dozens of parameters. *)
+  (* [multi_beta] (on; off only to compare against the one-step reduction in a
+     test): [subst] reduces an application of a substituted lambda to several
+     arguments in one traversal of its body where [multi_beta_plan] says the
+     result and the fresh names are those of the one-argument steps. *)
+  let multi_beta = Atomic.make true
+
+  (* how many applications [subst] reduced at once (read by a test) *)
+  let multi_beta_taken = Atomic.make 0
+
+  (* [multi_beta_plan env ren t], for an application spine [t = h c1 .. cm]
+     that [subst_ren env ren] is about to rebuild, whose head [h] is a
+     variable [subst_ren] replaces by [L = \x1 .. \xk. B] from [env]:
+     [Some (xs, R, args, rest, skip)] when the first [j >= 2] arguments can be
+     reduced at once, [xs] being [x1 .. xj], [R] the term [\x(j+1) .. \xk. B]
+     under them, [args] [c1 .. cj], [rest] the other arguments with their
+     nodes' infos, and [skip] the number of fresh names the first [j - 1]
+     one-argument steps draw and then discard; [None] otherwise.
+
+     Why it is exact.  One step [i] substitutes [ci'] (the argument after
+     [subst_ren]) for the lambda's variable in [\x(i+1) .. \xk. B(i-1)],
+     renaming every binder there to a fresh name in preorder (a [Let]'s
+     definition before its binder).  The plan is given only when (a) no
+     argument [c1 .. cj] holds a binder or a variable [env] replaces, so
+     [subst_ren] rebuilds it structurally equal, draws no name and reduces
+     nothing, and a later step passes its copies unchanged (their free
+     variables are never the fresh names that step binds or substitutes); (b)
+     [R] holds no redex [App (Bin (Lambda ..), _)], and none appears, since a
+     substituted argument is never a lambda; (c) [x1 .. xj] are pairwise
+     distinct, so one simultaneous map is the same substitution as the
+     sequence (an inner binder of the same name shadows in both, through
+     [ren]); (d) no fresh-name replay is active, so a fresh name is distinct
+     from every name already present.  Then step [i] draws
+     [binders(R) + (j - i)] names (the binders of [R] and the lambdas
+     [x(i+1) .. xj] still in front of it) and keeps none of them past step
+     [i + 1], and step [j]'s draws, in the same preorder over [R], name the
+     result: so moving the counter on by their sum and substituting
+     [x1 .. xj := c1' .. cj'] into [R] once ([multi_beta_subst], which also
+     copies an earlier argument at each occurrence as the later steps do)
+     gives the same term, node sharing included, and leaves the counter
+     where the steps leave it.  Cost: one traversal of [R] instead of
+     [j]; an application of a candidate definition to a hundred arguments
+     traversed its body a hundred times. *)
+  let multi_beta_plan env ren t =
+    let rec spine t acc =
+      match t with App (f, a, i) -> spine f ((a, i) :: acc) | h -> (h, acc)
+    in
+    let head, cs = spine t [] in
+    match head with
+    | Var (v, _) when not (Map.Poly.mem ren v) -> (
+        match Map.Poly.find env v with
+        | Some (Bin (Lambda, _, _, _, _) as lam)
+          when not (Ident.replaying_fresh_names ()) ->
+            let rec inert = function
+              | Var (x, _) -> Map.Poly.mem ren x || not (Map.Poly.mem env x)
+              | Con _ -> true
+              | App (a, b, _) -> inert a && inert b
+              | TyApp (a, _, _) | TyLam (_, a, _) -> inert a
+              | Bin _ | Let _ -> false
+            in
+            (* the lambdas in front, at most one per argument, while the
+               argument is inert *)
+            let rec take xs lam cs =
+              match (lam, cs) with
+              | Bin (Lambda, x, _, body, _), (c, _) :: cs' when inert c ->
+                  take (x :: xs) body cs'
+              | _ -> (List.rev xs, lam, cs)
+            in
+            let xs, rest_lam, rest = take [] lam cs in
+            let j = List.length xs in
+            if j < 2 then None
+            else if
+              List.contains_dup xs
+                ~compare:(fun (Ident.Tvar a) (Ident.Tvar b) ->
+                  String.compare a b)
+            then None
+            else
+              let exception Redex in
+              let rec binders acc = function
+                | Var _ | Con _ -> acc
+                | App (Bin (Lambda, _, _, _, _), _, _) -> raise Redex
+                | App (a, b, _) -> binders (binders acc a) b
+                | Bin (_, _, _, a, _) -> binders (acc + 1) a
+                | Let (_, _, a, b, _) -> binders (binders (acc + 1) a) b
+                | TyApp (a, _, _) | TyLam (_, a, _) -> binders acc a
+              in
+              (match binders 0 rest_lam with
+              | exception Redex -> None
+              | nb ->
+                  let skip = ((j - 1) * nb) + ((j - 1) * j / 2) in
+                  Some
+                    ( xs,
+                      rest_lam,
+                      List.map (List.take cs j) ~f:fst,
+                      rest,
+                      skip ))
+        | _ -> None)
+    | _ -> None
+
+  (* [multi_beta_subst [x1 .. xj] [c1 .. cj] r] is the last of the [j]
+     one-argument steps of [multi_beta_plan] taken alone: [r] with every
+     binder renamed to a fresh name in preorder and [x1 .. xj] replaced, under
+     the plan's conditions (no redex in [r], the [ci] without binders).  It is
+     node for node the term the steps build, sharing included: an argument
+     substituted at an earlier step was rebuilt by every later step, so each
+     of its occurrences is a fresh copy (a variable or application node
+     rebuilt, a constant node kept), while the last argument is put in as it
+     is, as the last step puts it; and an application is built without the
+     spine reduction, which the steps would have found redex-free. *)
+  let multi_beta_subst xs cs r ~next =
+    let rec copy = function
+      | Var (v, info) -> Var (v, info)
+      | App (a, b, info) -> App (copy a, copy b, info)
+      | TyApp (a, s, info) -> TyApp (copy a, s, info)
+      | TyLam (sv, a, info) -> TyLam (sv, copy a, info)
+      | (Con _ | Bin _ | Let _) as t -> t
+    in
+    let last = List.last_exn xs in
+    let env = Map.Poly.of_alist_exn (List.zip_exn xs cs) in
+    let rec go ren t ~next =
+      match t with
+      | Var (var, info) -> (
+          next
+          @@
+          match Map.Poly.find ren var with
+          | Some var' -> mk_var var'
+          | None -> (
+              match Map.Poly.find env var with
+              | None -> Var (var, info)
+              | Some c -> if Ident.tvar_equal var last then c else copy c))
+      | Bin (bind, var, sort, body, info) ->
+          let var' = Ident.mk_fresh_tvar () in
+          go (Map.Poly.set ren ~key:var ~data:var') body ~next:(fun t ->
+              next @@ Bin (bind, var', sort, t, info))
+      | Let (var, sort, t1, t2, info) ->
+          go ren t1 ~next:(fun t1 ->
+              let var' = Ident.mk_fresh_tvar () in
+              go (Map.Poly.set ren ~key:var ~data:var') t2 ~next:(fun t2 ->
+                  next @@ Let (var', sort, t1, t2, info)))
+      | App (t1, t2, info) ->
+          go ren t1 ~next:(fun t1 ->
+              go ren t2 ~next:(fun t2 -> next @@ App (t1, t2, info)))
+      | TyApp (term, sort, info) ->
+          go ren term ~next:(fun t -> next @@ TyApp (t, sort, info))
+      | TyLam (svar, term, info) ->
+          go ren term ~next:(fun t -> next @@ TyLam (svar, t, info))
+      | Con _ -> next t
+    in
+    go Map.Poly.empty r ~next
+
+  let rec subst ?(beta_red = true) env ?(next = Fn.id) t =
+    subst_ren ~beta_red env Map.Poly.empty ~next t
+
+  and subst_ren ~beta_red env ren ~next = function
     | Var (var, info) -> (
         next
         @@
-        match Map.Poly.find env var with
-        | None -> Var (var, info)
-        | Some t -> t)
+        match Map.Poly.find ren var with
+        | None -> (
+            match Map.Poly.find env var with
+            | None -> Var (var, info)
+            | Some t -> t)
+        | Some var' -> (
+            match Map.Poly.find env var' with
+            | None -> mk_var var'
+            | Some t -> t))
     | Bin (bind, var, sort, term, info) ->
         let var' = Ident.mk_fresh_tvar () in
-        subst ~beta_red env
-          (rename (Map.Poly.singleton var var') term)
+        subst_ren ~beta_red env (Map.Poly.set ren ~key:var ~data:var') term
           ~next:(fun t -> next @@ Bin (bind, var', sort, t, info))
     | Let (var, sort, t1, t2, info) ->
-        subst ~beta_red env t1 ~next:(fun t1 ->
+        subst_ren ~beta_red env ren t1 ~next:(fun t1 ->
             let var' = Ident.mk_fresh_tvar () in
-            subst ~beta_red env
-              (rename (Map.Poly.singleton var var') t2)
+            subst_ren ~beta_red env (Map.Poly.set ren ~key:var ~data:var') t2
               ~next:(fun t2 -> next @@ Let (var', sort, t1, t2, info)))
-    | App (t1, t2, info) ->
-        subst ~beta_red env t1 ~next:(fun t1 ->
-            subst ~beta_red env t2 ~next:(fun t2 ->
-                (if beta_red then beta_reduction ~next else next)
-                @@ App (t1, t2, info)))
+    | App (t1, t2, info) as t -> (
+        match
+          if beta_red && Atomic.get multi_beta then multi_beta_plan env ren t
+          else None
+        with
+        | None -> subst_app ~beta_red env ren t1 t2 info ~next
+        | Some (xs, rest_lam, args, rest, skip) ->
+            Atomic.incr multi_beta_taken;
+            subst_list ~beta_red env ren args ~next:(fun args' ->
+                Ident.skip_fresh_tvars skip;
+                multi_beta_subst xs args' rest_lam ~next:(fun r ->
+                    continue_spine ~beta_red env ren r rest ~next)))
     | TyApp (term, sort, info) ->
-        subst ~beta_red env term ~next:(fun t -> next @@ TyApp (t, sort, info))
+        subst_ren ~beta_red env ren term ~next:(fun t ->
+            next @@ TyApp (t, sort, info))
     | TyLam (svar, term, info) ->
-        subst ~beta_red env term ~next:(fun t -> next @@ TyLam (svar, t, info))
+        subst_ren ~beta_red env ren term ~next:(fun t ->
+            next @@ TyLam (svar, t, info))
     | t -> next t
 
-  and beta_reduction ?(next = Fn.id) = function
+  (* the application case of [subst_ren] as it is without the many-argument
+     reduction below: the function part, then the argument, then the
+     reduction of the spine.  An inner node of the spine is entered here
+     directly rather than through [subst_ren]: the plan was asked of the
+     outermost node, and an inner node's plan has the same head and a prefix
+     of its arguments, so it could only reduce fewer of them *)
+  and subst_app ~beta_red env ren t1 t2 info ~next =
+    let k1 ~next =
+      match t1 with
+      | App (a, b, i) -> subst_app ~beta_red env ren a b i ~next
+      | _ -> subst_ren ~beta_red env ren t1 ~next
+    in
+    k1 ~next:(fun t1 ->
+        subst_ren ~beta_red env ren t2 ~next:(fun t2 ->
+            (if beta_red then beta_reduction ~next else next)
+            @@ App (t1, t2, info)))
+
+  and subst_list ~beta_red env ren ts ~next =
+    match ts with
+    | [] -> next []
+    | t :: ts ->
+        subst_ren ~beta_red env ren t ~next:(fun t' ->
+            subst_list ~beta_red env ren ts ~next:(fun ts' -> next (t' :: ts')))
+
+  (* the arguments of a spine left after the many-argument reduction (which
+     runs only with [beta_red]), applied one at a time exactly as [subst_app]
+     applies them *)
+  and continue_spine ~beta_red env ren r rest ~next =
+    match rest with
+    | [] -> next r
+    | (c, info) :: rest ->
+        subst_ren ~beta_red env ren c ~next:(fun c' ->
+            beta_reduction
+              ~next:(fun t -> continue_spine ~beta_red env ren t rest ~next)
+              (App (r, c', info)))
+
+  (* [beta_reduction t] reduces the redexes along the application spine of
+     [t] (the chain of function positions from [t] down to its head).  Where
+     that spine holds no redex -- no node [App (Bin (Lambda, ..), _)] -- the
+     reduction would rebuild the spine node by node into a term structurally
+     equal to [t] and draw no fresh name, so [t] itself is handed to [next].
+
+     Why: the substitutions call this at every application node they rebuild,
+     and an application of an unknown to n arguments is a spine of n nodes, so
+     rebuilding it at every node allocated about n^2/2 nodes per application;
+     on Rust-derived clauses, whose unknowns take a hundred arguments and
+     more, quantifier elimination's one-point rounds spent minutes there.
+     The test reads the spine without allocating. *)
+  and beta_reduction ?(next = Fn.id) t =
+    if spine_redex_free t then next t else beta_reduce_spine ~next t
+
+  and beta_reduce_spine ~next = function
     | App (fn, arg, info) ->
-        beta_reduction fn ~next:(function
+        beta_reduce_spine fn ~next:(function
           | Bin (Lambda, var, _sort, term', _) ->
               subst (Map.Poly.singleton var arg) term' ~next
           | t -> next @@ App (t, arg, info))
@@ -822,6 +1096,105 @@ module Term : TermType = struct
            is built, and it is built once for the whole subtree rather than at
            every node of it *)
         if Set.are_disjoint (Map.key_set env) (fvs_of t) then t else subst env t
+
+  (* [subst_sharing] without handing a binder to [subst]: a binder is entered
+     like any other node, and renamed (to a fresh name) only when its name is
+     free in a term of [env]'s range, which is the only case where keeping it
+     could capture.
+
+     Contract: where [t] is beta-normal, the result is alpha-equivalent to
+     [subst_sharing env t] (and to [subst env t]); a subtree in which no
+     variable of [env] occurs free, and none is renamed, is returned
+     physically.  A redex already present in a subtree [subst_sharing] would
+     have handed to [subst] is not reduced here, so on a term that is not
+     beta-normal the two agree only up to beta-reduction.
+
+     Why: [subst] renames every binder it passes with a traversal of the
+     binder's body, so under binders nested d deep a substitution costs about
+     d traversals of the subtree; quantifier elimination's one-point rounds
+     substitute a variable into disjuncts whose binders Rust-derived clauses
+     nest deep, one variable per round, and on a 4.7 MB input those rounds
+     spent 15 s and more in the substitution alone. *)
+  let subst_sharing_linear env t =
+    let avoid =
+      Map.Poly.fold env ~init:Set.Poly.empty ~f:(fun ~key:_ ~data acc ->
+          Set.union acc (fvs_of data))
+    in
+    (* whether a variable of [env] occurs free in [t]: a binder that could
+       capture is renamed only then, so a subtree the substitution does not
+       reach comes back physically *)
+    let reaches env t = Map.Poly.existsi env ~f:(fun ~key ~data:_ -> occurs_free key t) in
+    let rec go env t =
+      if Map.Poly.is_empty env then t
+      else
+        match t with
+        | Var (var, _) -> (
+            match Map.Poly.find env var with Some u -> u | None -> t)
+        | Con _ -> t
+        | App _ -> fst (go_app env t)
+        | Bin (b, v, srt, body, info) ->
+            let env = Map.Poly.remove env v in
+            if Map.Poly.is_empty env then t
+            else if Set.mem avoid v && reaches env body then
+              let v' = Ident.mk_fresh_tvar () in
+              Bin (b, v', srt, go (Map.Poly.set env ~key:v ~data:(mk_var v')) body, info)
+            else
+              let body' = go env body in
+              if phys_equal body body' then t else Bin (b, v, srt, body', info)
+        | Let (v, srt, t1, t2, info) ->
+            let t1' = go env t1 in
+            let env2 = Map.Poly.remove env v in
+            if Map.Poly.is_empty env2 then
+              if phys_equal t1 t1' then t else Let (v, srt, t1', t2, info)
+            else if Set.mem avoid v && reaches env2 t2 then
+              let v' = Ident.mk_fresh_tvar () in
+              Let
+                ( v',
+                  srt,
+                  t1',
+                  go (Map.Poly.set env2 ~key:v ~data:(mk_var v')) t2,
+                  info )
+            else
+              let t2' = go env2 t2 in
+              if phys_equal t1 t1' && phys_equal t2 t2' then t
+              else Let (v, srt, t1', t2', info)
+        | TyApp (t1, srt, info) ->
+            let t1' = go env t1 in
+            if phys_equal t1 t1' then t else TyApp (t1', srt, info)
+        | TyLam (sv, t1, info) ->
+            let t1' = go env t1 in
+            if phys_equal t1 t1' then t else TyLam (sv, t1', info)
+    (* an application node, with whether its result's spine is known to hold
+       no redex.  The result is what [beta_reduction (App (go t1, go t2))]
+       gives (and [t] itself when neither part changed); a result built here
+       from a part whose spine is redex-free and whose head is not a lambda is
+       that reduction's result without the rebuild, and is itself redex-free,
+       so a spine whose arguments change is read once, at its lowest changed
+       node, rather than once per node above it *)
+    and go_app env t =
+      match t with
+      | App (t1, t2, info) ->
+          let t1', clean1 =
+            match t1 with
+            | App _ -> go_app env t1
+            | _ ->
+                (* a variable may be replaced by an application, whose spine
+                   is then unknown *)
+                let u = go env t1 in
+                (u, match u with App _ -> false | _ -> true)
+          in
+          let t2' = go env t2 in
+          if phys_equal t1 t1' && phys_equal t2 t2' then (t, false)
+          else
+            let is_lambda =
+              match t1' with Bin (Lambda, _, _, _, _) -> true | _ -> false
+            in
+            if (not is_lambda) && (clean1 || spine_redex_free t1') then
+              (App (t1', t2', info), true)
+            else (beta_reduction @@ App (t1', t2', info), false)
+      | _ -> (go env t, false)
+    in
+    go env t
 
   (* [subst env t] up to the names of bound variables, for an [env] of
      lambda terms substituted into a beta-normal [t] -- the shape a template
@@ -905,7 +1278,13 @@ module Term : TermType = struct
      into one constraint took a minute.  Here all of an application's
      arguments are substituted into the body in one traversal, and a binder
      is renamed only when its name is free in a term that may be substituted
-     under it, which is the only case where keeping it could capture. *)
+     under it, which is the only case where keeping it could capture.
+
+     Partially applied to [env] it computes the variables free in [env]'s
+     range, a traversal of every term there, and returns the substitution;
+     a caller substituting one [env] into many terms applies it once and
+     reuses the function, which converts each term exactly as a fresh
+     application would (the set is all it keeps, and it draws no name). *)
   let subst_rename_on_capture env =
     let fvs_of_terms ts =
       List.fold ts ~init:Set.Poly.empty ~f:(fun acc t ->
@@ -1102,6 +1481,46 @@ module Term : TermType = struct
     (Map.Poly.filter_keys senv ~f:(Set.mem @@ fvs_of t), t)
 end
 
+(* What the function-reconstruction pre-check asks of a problem's clausal
+   form, kept per set of clauses [S] whose clauses are read as pairs
+   [(P(c), N(c))] of sets of unknowns, each unknown named by an int (the
+   unknowns its positive and its negative atoms apply).  Every field is a
+   function of [S] alone; [BoolTerm.cnf_name_facts_union] and
+   [BoolTerm.cnf_name_facts_product] compute the fields of a union and of
+   the pairwise union [{c1 + c2 | c1 in S1, c2 in S2}] from the operands'
+   fields, which is what lets [BoolTerm.cnf_pvar_name_facts_of] answer for
+   the clausal form without building it.  Why not the set of pairs itself:
+   on a dual termination problem that set held 259,638 distinct pairs
+   (about 320 MB) after a few hundred of the walk's disjunctions and its
+   computation did not finish in 110 s, while the fields below are bounded by
+   the square of the number of unknowns.  The fields:
+   - [nonempty]: [S] has a clause;
+   - [pos], [neg]: the unknowns in [P(c)], resp. [N(c)], of some [c];
+   - [always_pos]: the intersection of every [P(c)] (meaningful only when
+     [nonempty]);
+   - [co_pos]: [p] to the intersection of the [P(c)] with [p] in [P(c)], for
+     [p] in [pos];
+   - [neg_only]: the [r] with [r] in [N(c)] and not in [P(c)] for some [c];
+   - [accompanied]: the [g] in [N(c)] of some [c] other than the clause
+     [({}, {g})];
+   - [pos_with]: [a] to the [x <> a] with [a] in [P(c)] and [x] in
+     [P(c) + N(c)] for some [c];
+   - [neg_only_with_pos]: [r] to the [p] with [r] in [N(c)], [r] not in
+     [P(c)] and [p] in [P(c)] for some [c].
+   A map holds no key whose set is empty, and an empty [S] has every field
+   empty. *)
+type cnf_name_facts = {
+  nonempty : bool;
+  pos : Int.Set.t;
+  neg : Int.Set.t;
+  always_pos : Int.Set.t;
+  co_pos : Int.Set.t Int.Map.t;
+  neg_only : Int.Set.t;
+  accompanied : Int.Set.t;
+  pos_with : Int.Set.t Int.Map.t;
+  neg_only_with_pos : Int.Set.t Int.Map.t;
+}
+
 module type BoolTermType = sig
   include TermType
 
@@ -1180,6 +1599,84 @@ module type BoolTermType = sig
     sort_env_map ->
     term ->
     (term Set.Poly.t * term Set.Poly.t * term) Set.Poly.t
+
+  val neg_atom_pure_contexts :
+    sort_env_map ->
+    sort_env_map ->
+    term ->
+    empty:'a ->
+    union:('a -> 'a -> 'a) ->
+    f:(term -> 'a) ->
+    (term * 'a) list option
+  (** [neg_atom_pure_contexts exi_senv uni_senv t ~empty ~union ~f] reads,
+      without building it, what [cnf_of exi_senv uni_senv t] says about its
+      negated unknown applications.  Assumes [t] is in NNF, [union] is
+      associative, commutative and idempotent with unit [empty], and [f] is
+      disjunctive: [f (or_of l)] is the [union] of [f] over [l] (so
+      [f (or_of []) = f false = empty]).  [Some l]: for every atom [a] in the
+      negative part of some clause of [cnf_of], [l] has an entry for [a], and
+      the [union] of [a]'s entries is the [union], over the clauses [(ps, ns,
+      pure)] of [cnf_of] with [a] in [ns], of [f pure]; every atom of [l] is in
+      the negative part of some clause.  [None] when [t] holds a [let] (whose
+      clauses rename atoms).  The cost is linear in [t] times the cost of
+      [union] and of [f] on each pure part [cnf_of] builds outside a
+      disjunction, where [cnf_of] builds the product of the clause sets of a
+      disjunction's operands. *)
+  val cnf_pvar_names_of :
+    sort_env_map ->
+    sort_env_map ->
+    term ->
+    (Ident.tvar Set.Poly.t * Ident.tvar Set.Poly.t) Set.Poly.t
+  (** the image of [cnf_of] under the map from a clause to the names of the
+      unknowns its positive and its negative atoms apply, computed without
+      the clauses *)
+
+  val cnf_pvar_name_ids_of :
+    (Ident.tvar -> int) ->
+    sort_env_map ->
+    sort_env_map ->
+    term ->
+    (int list * int list) Set.Poly.t
+  (** [cnf_pvar_name_ids_of id_of]: [cnf_pvar_names_of] with each name set
+      given as the strictly increasing list of [id_of] of its names; [id_of]
+      must be injective on the names met *)
+
+  val cnf_name_facts_empty : cnf_name_facts
+  (** the facts of the empty set of clauses *)
+
+  val cnf_name_facts_unit : cnf_name_facts
+  (** the facts of the set holding one clause without atoms *)
+
+  val cnf_name_facts_pos : int -> cnf_name_facts
+  (** the facts of [{({a}, {})}] *)
+
+  val cnf_name_facts_neg : int -> cnf_name_facts
+  (** the facts of [{({}, {g})}] *)
+
+  val cnf_name_facts_union : cnf_name_facts -> cnf_name_facts -> cnf_name_facts
+  (** the facts of [S1 union S2] from those of [S1] and [S2] *)
+
+  val cnf_name_facts_product :
+    cnf_name_facts -> cnf_name_facts -> cnf_name_facts
+  (** the facts of [{c1 + c2 | c1 in S1, c2 in S2}] from those of [S1] and
+      [S2] *)
+
+  val cnf_name_facts_of_pairs : (int list * int list) list -> cnf_name_facts
+  (** the facts of a set of clauses given as its pairs, directly from the
+      definitions (the reference the algebra is tested against) *)
+
+  val cnf_pvar_name_facts_of :
+    (Ident.tvar -> int) ->
+    sort_env_map ->
+    sort_env_map ->
+    term ->
+    cnf_name_facts
+  (** [cnf_pvar_name_facts_of id_of exi_senv uni_senv t]: the
+      [cnf_name_facts] of [cnf_pvar_name_ids_of id_of exi_senv uni_senv t],
+      computed without that set; raises where it raises.  The cost is the
+      walk of [t] times a union or product of facts at each node, each
+      polynomial in the number of unknowns met, where the set of pairs can
+      grow exponentially in the number of disjunctions *)
 
   val nnf_of : term -> term
   val elim_imp : term -> term
@@ -1556,8 +2053,46 @@ module BoolTerm : BoolTermType = struct
 
   (** Transformation *)
 
+  (* [Set.mem (fvs_of term) x] without building the set, stopping at the first
+     occurrence.  As in [fvs_of] (and unlike [occurs_free]), a [Let] binds its
+     variable in its definition as well as in its body. *)
+  let rec mem_fvs_of x = function
+    | Var (var, _) ->
+        Stdlib.(var = x)
+        && (not (LogicOld.is_dummy_term var None))
+        && (not @@ Map.Poly.mem (LogicOld.get_fenv ()) var)
+    | Con (_, _) -> false
+    | App (t1, t2, _) -> mem_fvs_of x t1 || mem_fvs_of x t2
+    | Bin (_, var, _, t, _) -> Stdlib.(var <> x) && mem_fvs_of x t
+    | Let (var, _, t1, t2, _) ->
+        Stdlib.(var <> x) && (mem_fvs_of x t1 || mem_fvs_of x t2)
+    | TyApp (t, _, _) | TyLam (_, t, _) -> mem_fvs_of x t
+
+  (* With [COAR_CHECK_CNF_LET_CHAIN=1], [insert_let] also builds the
+     free-variable set and [aux_let_chain] also asks each level's test as [aux]
+     asked it before; after each chain the running counts (levels, their
+     disagreements, occurrence tests, their disagreements) are printed to
+     stderr.  A nonzero second or fourth count refutes the argument at
+     [aux_let_chain] or [mem_fvs_of]. *)
+  let check_cnf_let_chain =
+    lazy
+      (match Sys.getenv "COAR_CHECK_CNF_LET_CHAIN" with
+      | Some ("1" | "true" | "yes") -> true
+      | _ -> false)
+
+  let cnf_let_chain_counts = Array.init 6 ~f:(fun _ -> Atomic.make 0)
+
+  (* [cnf_of] calls this once per [let] level per literal and argument, so the
+     occurrence test is [mem_fvs_of]: the same answer as the free-variable set,
+     without building one per call *)
   let insert_let var sort def info term =
-    if Set.mem (fvs_of term) var then
+    let occurs = mem_fvs_of var term in
+    if Lazy.force check_cnf_let_chain then (
+      Atomic.incr cnf_let_chain_counts.(2);
+      let in_set = Set.mem (fvs_of term) var in
+      if Bool.(in_set <> occurs) then
+        Atomic.incr cnf_let_chain_counts.(3));
+    if occurs then
       let var' = Ident.mk_fresh_tvar () in
       Let (var', sort, def, rename (Map.Poly.singleton var var') term, info)
     else term
@@ -1691,9 +2226,10 @@ module BoolTerm : BoolTermType = struct
      of the recursion below, where on the great majority of nodes the subterm
      mentions no unknown at all.  Asked directly, the question stops at the
      first unknown met and allocates nothing on the way.  The exclusions are
-     [fvs_of]'s: a variable bound inside [t] (a [Let] binds its variable in the
-     definition as well as in the body there), a dummy variable, and a name of
-     the process-global function environment; the cheap membership test comes
+     [fvs_of]'s: a variable bound inside [t] (a [Let] binds its variable in its
+     body only, its definition being outside the name's scope), a dummy
+     variable, and a name of the process-global function environment; the
+     cheap membership test comes
      first so that the two lookups are paid only for a variable that is an
      unknown. *)
   let rec mentions_none_of unknowns bound = function
@@ -1707,8 +2243,8 @@ module BoolTerm : BoolTermType = struct
         mentions_none_of unknowns bound t1 && mentions_none_of unknowns bound t2
     | Bin (_, var, _, t1, _) -> mentions_none_of unknowns (Set.add bound var) t1
     | Let (var, _, t1, t2, _) ->
-        let bound = Set.add bound var in
-        mentions_none_of unknowns bound t1 && mentions_none_of unknowns bound t2
+        mentions_none_of unknowns bound t1
+        && mentions_none_of unknowns (Set.add bound var) t2
     | TyApp (t, _, _) | TyLam (_, t, _) -> mentions_none_of unknowns bound t
 
   (* [mentions_none_of unknowns Set.Poly.empty t], remembered in a scope of
@@ -1730,84 +2266,170 @@ module BoolTerm : BoolTermType = struct
             b)
     | _ -> mentions_none_of unknowns Set.Poly.empty t
 
-  let rec aux ~guarded exi_senv unknowns senv t k =
-    match t with
-    | Con (True, _) | App (Con (Not, _), Con (False, _), _) -> k Set.Poly.empty
-    | Con (False, _) | App (Con (Not, _), Con (True, _), _) ->
-        k @@ Set.Poly.singleton (Set.Poly.empty, Set.Poly.empty, Set.Poly.empty)
-    | t when mentions_none_of_closed unknowns t ->
-        k
-        @@ Set.Poly.singleton
-             (Set.Poly.empty, Set.Poly.empty, Set.Poly.singleton t)
-    | App (Con (Not, _), t, _) ->
-        if is_pvar_app exi_senv senv t then
-          k
-          @@ Set.Poly.singleton
-               (Set.Poly.empty, Set.Poly.singleton t, Set.Poly.empty)
-        else
-          (* not reachable? *)
-          k
-          @@ Set.Poly.singleton
-               (Set.Poly.empty, Set.Poly.empty, Set.Poly.singleton (neg_of t))
-    | App (App (Con (And, _), t1, _), t2, _) ->
-        aux ~guarded exi_senv unknowns senv t1 (fun res1 ->
-            aux ~guarded exi_senv unknowns senv t2 (fun res2 ->
-                let phis, cls =
-                  Set.union res1 res2
-                  |> Set.partition_tf ~f:(fun (ps, ns, _) ->
-                      Set.is_empty ps && Set.is_empty ns)
-                  |> Tuple2.map_both
-                       ~f1:(Set.Poly.map ~f:(trd3 >> Set.to_list >> or_of))
-                       ~f2:Fn.id
+  let wrap_let_level var sort def info res =
+    Set.Poly.map res ~f:(fun (ps, ns, phis) ->
+        ( Set.Poly.map ~f:(insert_let_var_app var sort def info) ps,
+          Set.Poly.map ~f:(insert_let_var_app var sort def info) ns,
+          Set.Poly.singleton @@ insert_let var sort def info @@ or_of
+          @@ Set.to_list phis ))
+
+  let wrap_let_levels_one levels (ps, ns, phis) =
+        let phi = or_of @@ Set.to_list phis in
+        let fvs = ref (fvs_of phi) in
+        let outer_first = ref [] in
+        let wrap_pure var sort def info =
+          if Set.mem !fvs var then (
+            let var' = Ident.mk_fresh_tvar () in
+            fvs := Set.union (fvs_of def) (Set.remove !fvs var);
+            outer_first := (var, var', sort, def, info) :: !outer_first)
+        in
+        (* the free variables of the literals' arguments, kept as [fvs] is
+           for the pure part: a level whose variable is not among them
+           leaves every argument as it is ([insert_let] returns its term and
+           draws no name), so the literals are not rebuilt for it (4,279
+           levels over a literal of about 3,000 arguments, none of them
+           mentioning a bound variable, took longer than 30 s of one
+           HWMCC'25 bit-vector input).  The names are drawn in an explicit
+           order, pure part, then [ns], then [ps]: the order in which the
+           native compiler evaluates [wrap_let_level]'s tuple.  A tuple here
+           would leave the order to the compiler, and it was found to differ
+           between the two functions. *)
+        let arg_fvs =
+          ref
+            (Set.Poly.union_list
+            @@ List.concat_map (Set.to_list ps @ Set.to_list ns)
+                 ~f:(fun atom -> List.map (snd (let_var_app atom)) ~f:fvs_of)
+            )
+        in
+        let ps, ns =
+          List.fold levels ~init:(ps, ns)
+            ~f:(fun (ps, ns) (var, sort, def, info) ->
+              if Set.mem !arg_fvs var then (
+                wrap_pure var sort def info;
+                let ns =
+                  Set.Poly.map ~f:(insert_let_var_app var sort def info) ns
                 in
-                if Set.is_empty phis then k cls
-                else
-                  let pure = and_of @@ Set.to_list phis in
-                  let cls =
-                    if guarded && not (Set.is_empty cls) then
-                      let guard = nnf_of @@ neg_of pure in
-                      Set.Poly.map cls ~f:(fun (ps, ns, phis') ->
-                          (ps, ns, Set.add phis' guard))
-                    else cls
-                  in
-                  k
-                  @@ Set.add cls
-                       (Set.Poly.empty, Set.Poly.empty, Set.Poly.singleton pure)))
+                let ps =
+                  Set.Poly.map ~f:(insert_let_var_app var sort def info) ps
+                in
+                arg_fvs := Set.union (fvs_of def) (Set.remove !arg_fvs var);
+                (ps, ns))
+              else (
+                wrap_pure var sort def info;
+                (ps, ns)))
+        in
+        let rec build map = function
+          | [] -> rename map phi
+          | (var, var', sort, def, info) :: inner ->
+              Let
+                ( var',
+                  sort,
+                  rename map def,
+                  build (Map.Poly.set map ~key:var ~data:var') inner,
+                  info )
+        in
+        Set.Poly.singleton
+          (ps, ns, Set.Poly.singleton @@ build Map.Poly.empty !outer_first)
+
+  (* [wrap_let_level] for each of [levels] (innermost first) in turn.  On a
+     single clause, the pure part is wrapped in one pass at the end instead
+     of once per level: [insert_let] renames the whole wrapped term at every
+     level whose variable occurs in it, so a chain of n levels cost n walks of
+     the growing term (823 levels, 12.7 s of one HWMCC'25 bit-vector input).
+     The result is the same term with the same fresh names:
+     - the occurrence test reads a free-variable set kept alongside, updated
+       as [fvs_of] gives it for the wrapped term:
+       [fvs_of (let x' = d in rename {x |-> x'} p)] is
+       [fvs_of d + (fvs_of p - x)] when [x] occurs and [x'] is fresh;
+     - the renamings commute into one: [rename {x |-> x'}] passes under a
+       binder of the fresh [x'] unchanged, so the result is
+       [let x1' = d1 in let x2' = rho1 d2 in ... rhok p] with [rhoi] the
+       renamings of the levels outside level [i+1], an inner level overriding
+       an outer one of the same variable, and [rename] with a map is the
+       composition of [rename] with its entries;
+     - every fresh name is drawn at the point [wrap_let_level] draws it,
+       inside the same tuple, so the names and their order are the same.
+     Several clauses are wrapped level by level as before: [Set.Poly.map]
+     visits them in their order, which the wrapped terms decide. *)
+  let wrap_let_levels levels res =
+    let level_by_level res =
+      List.fold levels ~init:res ~f:(fun res (var, sort, def, info) ->
+          wrap_let_level var sort def info res)
+    in
+    match Set.to_list res with
+    | [ clause ] ->
+        if Lazy.force check_cnf_let_chain then (
+          (* both ways from the same fresh-name state *)
+          let scope = Ident.fresh_replay_scope () in
+          let replay f = Ident.with_replayed_fresh_names ~scope f in
+          let one = replay (fun () -> wrap_let_levels_one levels clause) in
+          let each = replay (fun () -> level_by_level res) in
+          Atomic.incr cnf_let_chain_counts.(4);
+          let same =
+            match (Set.to_list one, Set.to_list each) with
+            | [ (ps1, ns1, phis1) ], [ (ps2, ns2, phis2) ] ->
+                Set.equal ps1 ps2 && Set.equal ns1 ns2
+                && Set.equal phis1 phis2
+            | _ -> false
+          in
+          if not same then Atomic.incr cnf_let_chain_counts.(5));
+        wrap_let_levels_one levels clause
+    | _ -> level_by_level res
+
+  (* The clausal form's case analysis, over any algebra of clause sets
+     [ops].  [cnf_of] is its instance on concrete clauses
+     (positive atoms, negative atoms, pure disjuncts); [cnf_pvar_names_of]
+     its instance on each clause's names of unknowns.  One walker for both,
+     so that the names form is the image of the concrete form by
+     construction: every decision (which subterm is an atom, which is pure,
+     which equivalence is expanded) is taken by the same code on the same
+     term, and the algebras differ only in what they record.  Requirements on
+     an instance, for the image property: [top] is the empty set (a true
+     disjunct), [bot] the one empty clause, [conj] a union, [disj] the
+     pairwise union of the two sides' clauses, [let_] a map over the clauses,
+     [let_levels levels] the same result as [let_] applied for each of
+     [levels] in turn (innermost first; it exists so that the concrete
+     instance can wrap a long [let] chain in one pass), and none of them drops
+     or merges two clauses whose recorded parts differ. *)
+  type 'r cnf_ops = {
+    top : 'r;
+    bot : 'r;
+    pure : term -> 'r;
+    pos : term -> 'r;
+    neg : term -> 'r;
+    conj : 'r -> 'r -> 'r;
+    disj : 'r -> 'r -> 'r;
+    let_ : Ident.tvar -> Sort.t -> term -> info -> 'r -> 'r;
+    let_levels : (Ident.tvar * Sort.t * term * info) list -> 'r -> 'r;
+  }
+
+  let rec aux ops exi_senv unknowns senv t k =
+    match t with
+    | Con (True, _) | App (Con (Not, _), Con (False, _), _) -> k ops.top
+    | Con (False, _) | App (Con (Not, _), Con (True, _), _) -> k ops.bot
+    | Let _ -> aux_let_chain ops exi_senv unknowns senv t k
+    | t when mentions_none_of_closed unknowns t -> k (ops.pure t)
+    | App (Con (Not, _), t, _) ->
+        if is_pvar_app exi_senv senv t then k (ops.neg t)
+        else (* not reachable? *) k (ops.pure (neg_of t))
+    | App (App (Con (And, _), t1, _), t2, _) ->
+        aux ops exi_senv unknowns senv t1 (fun res1 ->
+            aux ops exi_senv unknowns senv t2 (fun res2 ->
+                k (ops.conj res1 res2)))
     | App (App (Con (Or, _), t1, _), t2, _) ->
-        aux ~guarded exi_senv unknowns senv t1 (fun res1 ->
-            aux ~guarded exi_senv unknowns senv t2 (fun res2 ->
-                k
-                @@ Set.cartesian_map res1 res2
-                     ~f:(fun (ps1, ns1, phis1) (ps2, ns2, phis2) ->
-                       ( Set.union ps1 ps2,
-                         Set.union ns1 ns2,
-                         Set.union phis1 phis2 ))))
-    | Let (var, sort, def, body, info) ->
-        aux ~guarded exi_senv unknowns (Map.Poly.set senv ~key:var ~data:sort) body
-          (fun res ->
-            k
-            @@ Set.Poly.map res ~f:(fun (ps, ns, phis) ->
-                ( Set.Poly.map ~f:(insert_let_var_app var sort def info) ps,
-                  Set.Poly.map ~f:(insert_let_var_app var sort def info) ns,
-                  Set.Poly.singleton
-                  @@ insert_let var sort def info
-                  @@ or_of @@ Set.to_list phis )))
+        aux ops exi_senv unknowns senv t1 (fun res1 ->
+            aux ops exi_senv unknowns senv t2 (fun res2 ->
+                k (ops.disj res1 res2)))
     | t -> (
-        if is_pvar_app exi_senv senv t then
-          k
-          @@ Set.Poly.singleton
-               (Set.Poly.singleton t, Set.Poly.empty, Set.Poly.empty)
-        else if mentions_none_of_closed unknowns t then
-          k
-          @@ Set.Poly.singleton
-               (Set.Poly.empty, Set.Poly.empty, Set.Poly.singleton t)
+        if is_pvar_app exi_senv senv t then k (ops.pos t)
+        else if mentions_none_of_closed unknowns t then k (ops.pure t)
         else
           let fenv = LogicOld.get_fenv () in
           match let_apps t with
           | TyApp (Con (Eq, _), SBool, _), [ t1; t2 ]
             when (not (is_fvar_app fenv t1)) && not (is_fvar_app fenv t2) ->
               (* t1 = t2 -> (not t1 or t2) and (t1 or not t2) *)
-              aux ~guarded exi_senv unknowns senv
+              aux ops exi_senv unknowns senv
                 (mk_apps (mk_and ())
                    [
                      mk_apps (mk_or ()) [ nnf_of @@ neg_of t1; nnf_of t2 ];
@@ -1817,7 +2439,7 @@ module BoolTerm : BoolTermType = struct
           | TyApp (Con (Neq, _), SBool, _), [ t1; t2 ]
             when (not (is_fvar_app fenv t1)) && not (is_fvar_app fenv t2) ->
               (* t1 <> t2 -> (t1 or t2) and (not t1 or not t2) *)
-              aux ~guarded exi_senv unknowns senv
+              aux ops exi_senv unknowns senv
                 (mk_apps (mk_and ())
                    [
                      mk_apps (mk_or ()) [ nnf_of t1; nnf_of t2 ];
@@ -1825,16 +2447,471 @@ module BoolTerm : BoolTermType = struct
                        [ nnf_of @@ neg_of t1; nnf_of @@ neg_of t2 ];
                    ])
                 k
-          | _ ->
-              (* not reachable *)
-              k
-              @@ Set.Poly.singleton
-                   (Set.Poly.empty, Set.Poly.empty, Set.Poly.singleton t))
+          | _ -> (* not reachable *) k (ops.pure t))
+
+  (* [aux] on a chain [let x1 = d1 in ... let xn = dn in b] ([b] not a [let]):
+     the same continuations, sets and order as reading it one [let] at a time
+     (a level whose suffix mentions no unknown is one pure literal; otherwise
+     the body's clauses are wrapped in the level's binding), but the unknown
+     test of every suffix is taken from one pass.  Asked per level, each test
+     walked the whole rest of the chain, so a chain of n [let]s over a body of
+     size m cost n * (m + the definitions) (351 levels, 67 million nodes on a
+     CHC-COMP 2025 bit-vector input).
+     Exact when no [xj] names an unknown: [mentions_none_of] consults its bound
+     set only for a variable that is an unknown, so binding [xj] changes none
+     of its answers, and the test of the suffix from [j] is the conjunction of
+     the tests of [dj], ..., [dn] and [b], each with nothing bound.  Otherwise
+     the chain is read one level at a time as before. *)
+  and aux_let_chain ops exi_senv unknowns senv t k =
+    let rec chain levels = function
+      | Let (var, sort, def, body, info) as t ->
+          chain ((t, var, sort, def, info) :: levels) body
+      | body -> (levels, body)
+    in
+    let inner_first, body = chain [] t in
+    if
+      List.exists inner_first ~f:(fun (_, var, _, _, _) ->
+          Set.mem unknowns var)
+    then
+      match t with
+      | Let (var, sort, def, body, info)
+        when not (mentions_none_of_closed unknowns t) ->
+          aux ops exi_senv unknowns
+            (Map.Poly.set senv ~key:var ~data:sort)
+            body
+            (fun res -> k (ops.let_ var sort def info res))
+      | t ->
+          k (ops.pure t)
+    else
+      let _, levels =
+        List.fold inner_first
+          ~init:(mentions_none_of_closed unknowns body, [])
+          ~f:(fun (none_rest, levels) (t, var, sort, def, info) ->
+            let none = mentions_none_of_closed unknowns def && none_rest in
+            (none, (t, var, sort, def, info, none) :: levels))
+      in
+      if Lazy.force check_cnf_let_chain then (
+        List.iter levels ~f:(fun (t, _, _, _, _, none) ->
+            Atomic.incr cnf_let_chain_counts.(0);
+            let asked = mentions_none_of unknowns Set.Poly.empty t in
+            if Bool.(asked <> none) then
+              Atomic.incr cnf_let_chain_counts.(1)));
+      (* [wrapped] holds the levels read so far, innermost first, which is
+         the order their bindings are wrapped around the result in *)
+      let rec go senv wrapped = function
+        | (t, _, _, _, _, true) :: _ ->
+            k (ops.let_levels wrapped (ops.pure t))
+        | (_, var, sort, def, info, false) :: levels ->
+            go
+              (Map.Poly.set senv ~key:var ~data:sort)
+              ((var, sort, def, info) :: wrapped)
+              levels
+        | [] ->
+            aux ops exi_senv unknowns senv body (fun res ->
+                k (ops.let_levels wrapped res))
+      in
+      let res = go senv [] levels in
+      if Lazy.force check_cnf_let_chain then
+        Stdlib.Printf.eprintf
+          "[cnf-let-chain] levels=%d disagreeing=%d occurrence-tests=%d \
+           disagreeing=%d one-pass-wraps=%d disagreeing=%d\n\
+           %!"
+          (Atomic.get cnf_let_chain_counts.(0))
+          (Atomic.get cnf_let_chain_counts.(1))
+          (Atomic.get cnf_let_chain_counts.(2))
+          (Atomic.get cnf_let_chain_counts.(3))
+          (Atomic.get cnf_let_chain_counts.(4))
+          (Atomic.get cnf_let_chain_counts.(5));
+      res
+
+  let concrete_cnf_ops ~guarded =
+    {
+      top = Set.Poly.empty;
+      bot = Set.Poly.singleton (Set.Poly.empty, Set.Poly.empty, Set.Poly.empty);
+      pure =
+        (fun t ->
+          Set.Poly.singleton
+            (Set.Poly.empty, Set.Poly.empty, Set.Poly.singleton t));
+      pos =
+        (fun t ->
+          Set.Poly.singleton
+            (Set.Poly.singleton t, Set.Poly.empty, Set.Poly.empty));
+      neg =
+        (fun t ->
+          Set.Poly.singleton
+            (Set.Poly.empty, Set.Poly.singleton t, Set.Poly.empty));
+      conj =
+        (fun res1 res2 ->
+          let phis, cls =
+            Set.union res1 res2
+            |> Set.partition_tf ~f:(fun (ps, ns, _) ->
+                Set.is_empty ps && Set.is_empty ns)
+            |> Tuple2.map_both
+                 ~f1:(Set.Poly.map ~f:(trd3 >> Set.to_list >> or_of))
+                 ~f2:Fn.id
+          in
+          if Set.is_empty phis then cls
+          else
+            let pure = and_of @@ Set.to_list phis in
+            let cls =
+              if guarded && not (Set.is_empty cls) then
+                let guard = nnf_of @@ neg_of pure in
+                Set.Poly.map cls ~f:(fun (ps, ns, phis') ->
+                    (ps, ns, Set.add phis' guard))
+              else cls
+            in
+            Set.add cls
+              (Set.Poly.empty, Set.Poly.empty, Set.Poly.singleton pure));
+      disj =
+        (fun res1 res2 ->
+          Set.cartesian_map res1 res2
+            ~f:(fun (ps1, ns1, phis1) (ps2, ns2, phis2) ->
+              (Set.union ps1 ps2, Set.union ns1 ns2, Set.union phis1 phis2)));
+      let_ = wrap_let_level;
+      let_levels = wrap_let_levels;
+    }
+
+  let concrete_cnf_ops_plain = concrete_cnf_ops ~guarded:false
+  let concrete_cnf_ops_guarded = concrete_cnf_ops ~guarded:true
 
   let cnf_with ~guarded exi_senv uni_senv t =
     Set.Poly.map ~f:(fun (pos, neg, phis) ->
         (pos, neg, or_of @@ Set.to_list phis))
-    @@ aux ~guarded exi_senv (Map.key_set exi_senv) uni_senv t Fn.id
+    @@ aux
+         (if guarded then concrete_cnf_ops_guarded else concrete_cnf_ops_plain)
+         exi_senv (Map.key_set exi_senv) uni_senv t Fn.id
+
+  (* the unknown an atom [is_pvar_app] accepted applies *)
+  let rec pvar_head_of = function
+    | Var (x, _) -> x
+    | App (t, _, _) -> pvar_head_of t
+    | _ -> assert false
+
+  (* [cnf_pvar_names_of exi_senv uni_senv t] is the image of
+     [cnf_of exi_senv uni_senv t] under the map taking a clause
+     [(ps, ns, phi)] to the pair of the names of the unknowns its atoms apply,
+     [(names ps, names ns)], each name set in canonical shape.
+     Contract: exactly that set, raising where [cnf_of] raises; computed
+     without building any clause.  Why exact: the same walker takes every
+     decision of [cnf_of] on the same terms ([aux]), and the map commutes
+     with each of [cnf_of]'s operations -- a true disjunct gives the empty
+     set in both, a false one the one empty clause; a conjunction is a union
+     (where [cnf_of] merges its atom-free clauses into one, the image of each
+     is the pair of empty sets); a disjunction is the pairwise union of the
+     two sides' clauses, and the names of a union of atom sets are the union
+     of their names; a [let] rewrites an atom's arguments but not the unknown
+     it applies.  Why: the image is small (it has at most one element per
+     pair of name sets) where the clausal form can multiply into tens of
+     thousands of clauses, and some questions about a problem -- which
+     unknowns share a clause, and in which positions -- are answered by the
+     image alone. *)
+  (* The walk itself, with each unknown named by an int: a name set is the
+     strictly increasing list of its unknowns' ints, so equal name sets are
+     equal lists and the set of pairs holds one member per distinct pair, as
+     a set of pairs of canonical name sets would, while comparing and uniting
+     them touches ints rather than names in trees of sets.  On a dual
+     termination problem with 12,617 distinct pairs, building and comparing
+     the pairs as sets of names was most of the walk's time. *)
+  let cnf_pvar_name_ids_of id_of exi_senv uni_senv t =
+    (* the union of two strictly increasing lists, strictly increasing *)
+    let rec merge l1 l2 =
+      match (l1, l2) with
+      | [], l | l, [] -> l
+      | x1 :: r1, x2 :: r2 ->
+          if x1 < x2 then x1 :: merge r1 l2
+          else if x2 < x1 then x2 :: merge l1 r2
+          else x1 :: merge r1 r2
+    in
+    let empty : int list * int list = ([], []) in
+    let ops =
+      {
+        top = Set.Poly.empty;
+        bot = Set.Poly.singleton empty;
+        pure = (fun _ -> Set.Poly.singleton empty);
+        pos = (fun t -> Set.Poly.singleton ([ id_of (pvar_head_of t) ], []));
+        neg = (fun t -> Set.Poly.singleton ([], [ id_of (pvar_head_of t) ]));
+        conj = Set.union;
+        disj =
+          (fun res1 res2 ->
+            Set.cartesian_map res1 res2 ~f:(fun (ps1, ns1) (ps2, ns2) ->
+                (merge ps1 ps2, merge ns1 ns2)));
+        let_ = (fun _ _ _ _ res -> res);
+        let_levels = (fun _ res -> res);
+      }
+    in
+    aux ops exi_senv (Map.key_set exi_senv) uni_senv t Fn.id
+
+  let cnf_pvar_names_of exi_senv uni_senv t =
+    let ids = Hashtbl.Poly.create () in
+    let names = ref [||] and n = ref 0 in
+    let id_of x =
+      match Hashtbl.Poly.find ids x with
+      | Some i -> i
+      | None ->
+          let i = !n in
+          incr n;
+          if i = Array.length !names then (
+            let a = Array.create ~len:(Int.max 16 (2 * i)) x in
+            Array.blit ~src:!names ~src_pos:0 ~dst:a ~dst_pos:0 ~len:i;
+            names := a);
+          !names.(i) <- x;
+          Hashtbl.Poly.set ids ~key:x ~data:i;
+          i
+    in
+    let to_names l =
+      Set.canon (Set.Poly.of_list (List.map l ~f:(fun i -> !names.(i))))
+    in
+    Set.Poly.map (cnf_pvar_name_ids_of id_of exi_senv uni_senv t)
+      ~f:(fun (ps, ns) -> (to_names ps, to_names ns))
+
+  (* The facts algebra ([cnf_name_facts], defined with its fields at the
+     type).  Contract of each operation: it returns the facts of the set of
+     clauses it names (see the signature), given its operands' facts.  The
+     two compound ones, for nonempty [S1] and [S2] (an empty operand gives
+     the operand's facts for a union and the empty facts for a product,
+     since the product is then empty):
+     - union: every existential field is the union of the operands'; a
+       clause of the union is a clause of one side, so [always_pos] is the
+       intersection, and [co_pos p] the intersection of the sides' [co_pos p]
+       where [p] is in both [pos], else the one side's.
+     - product, clause [c = c1 + c2] ([P(c) = P(c1) + P(c2)], likewise [N]),
+       where [c1] and [c2] range independently over [S1] and [S2], so an
+       existential over [c] splits into one over [c1] and one over [c2]:
+       [pos], [neg] and [always_pos] are unions; [co_pos p] is
+       [(co_pos1 p + always_pos2) inter (always_pos1 + co_pos2 p)], a side
+       left out where [p] is not in its [pos], by the distributive law
+       [inter_(i,j) (A_i + B_j) = inter_i A_i + inter_j B_j];
+       [r] is not in [P(c)] iff it is in neither [P(c1)] nor [P(c2)], and
+       some [c2] has [r] outside [P(c2)] iff [r] is not in [always_pos2]
+       ([np2 r]); so [neg_only] is [{r in neg_only1 | np2 r}] and the
+       symmetric; [g] in [N(c)] is accompanied iff [c1] or [c2] has an atom
+       besides [g]'s negative one, so [accompanied] is the sides' plus the
+       [g] in [neg1] with [S2] holding a clause with an atom other than
+       [not g] ([pos2] nonempty or [neg2] holding a name other than [g]), and
+       the symmetric; [pos_with a] is the sides' plus [all2 - {a}] for [a] in
+       [pos1] ([all] is [pos + neg]) and the symmetric; [neg_only_with_pos r]
+       holds [p] iff [r]'s negative occurrence and [p]'s positive one come
+       from the same side or from different sides: from side 1 both,
+       [neg_only_with_pos1 r] with [np2 r]; [r] from side 1 and [p] from
+       side 2, [r] in [neg_only1] and some [c2] with [p] in [P(c2)] and [r]
+       not, that is [p] in [pos2] and [r] not in [co_pos2 p]; and the
+       symmetric two. *)
+  let cnf_name_facts_empty : cnf_name_facts =
+    {
+      nonempty = false;
+      pos = Int.Set.empty;
+      neg = Int.Set.empty;
+      always_pos = Int.Set.empty;
+      co_pos = Int.Map.empty;
+      neg_only = Int.Set.empty;
+      accompanied = Int.Set.empty;
+      pos_with = Int.Map.empty;
+      neg_only_with_pos = Int.Map.empty;
+    }
+
+  let cnf_name_facts_unit : cnf_name_facts =
+    { cnf_name_facts_empty with nonempty = true }
+
+  let cnf_name_facts_pos a : cnf_name_facts =
+    {
+      cnf_name_facts_unit with
+      pos = Int.Set.singleton a;
+      always_pos = Int.Set.singleton a;
+      co_pos = Int.Map.singleton a (Int.Set.singleton a);
+    }
+
+  let cnf_name_facts_neg g : cnf_name_facts =
+    {
+      cnf_name_facts_unit with
+      neg = Int.Set.singleton g;
+      neg_only = Int.Set.singleton g;
+    }
+
+  (* the union of two maps to sets, keyed by the union of their keys *)
+  let union_rel m1 m2 =
+    Map.merge m1 m2 ~f:(fun ~key:_ -> function
+      | `Both (s1, s2) -> Some (Set.union s1 s2)
+      | `Left s | `Right s -> Some s)
+
+  (* a map's binding for [k], dropped when the set is empty *)
+  let add_rel m k s =
+    if Set.is_empty s then m
+    else Map.update m k ~f:(function None -> s | Some s0 -> Set.union s0 s)
+
+  let cnf_name_facts_union (f1 : cnf_name_facts) (f2 : cnf_name_facts) =
+    if not f1.nonempty then f2
+    else if not f2.nonempty then f1
+    else
+      {
+        nonempty = true;
+        pos = Set.union f1.pos f2.pos;
+        neg = Set.union f1.neg f2.neg;
+        always_pos = Set.inter f1.always_pos f2.always_pos;
+        co_pos =
+          Map.merge f1.co_pos f2.co_pos ~f:(fun ~key:_ -> function
+            | `Both (s1, s2) -> Some (Set.inter s1 s2)
+            | `Left s | `Right s -> Some s);
+        neg_only = Set.union f1.neg_only f2.neg_only;
+        accompanied = Set.union f1.accompanied f2.accompanied;
+        pos_with = union_rel f1.pos_with f2.pos_with;
+        neg_only_with_pos = union_rel f1.neg_only_with_pos f2.neg_only_with_pos;
+      }
+
+  let cnf_name_facts_product (f1 : cnf_name_facts) (f2 : cnf_name_facts) =
+    if not (f1.nonempty && f2.nonempty) then cnf_name_facts_empty
+    else
+      let np (f : cnf_name_facts) r = not (Set.mem f.always_pos r) in
+      let all (f : cnf_name_facts) = Set.union f.pos f.neg in
+      let has_other (f : cnf_name_facts) g =
+        (not (Set.is_empty f.pos))
+        || Set.exists f.neg ~f:(fun x -> not (Int.equal x g))
+      in
+      (* [p] in [pos] of [f] with some clause holding [p] positively and [r]
+         not positively *)
+      let pos_without (f : cnf_name_facts) r =
+        Map.fold f.co_pos ~init:Int.Set.empty ~f:(fun ~key:p ~data:cp acc ->
+            if Set.mem cp r then acc else Set.add acc p)
+      in
+      let co_pos =
+        Set.fold (Set.union f1.pos f2.pos) ~init:Int.Map.empty ~f:(fun acc p ->
+            let side1 =
+              Option.map (Map.find f1.co_pos p) ~f:(fun cp ->
+                  Set.union cp f2.always_pos)
+            and side2 =
+              Option.map (Map.find f2.co_pos p) ~f:(fun cp ->
+                  Set.union f1.always_pos cp)
+            in
+            match (side1, side2) with
+            | Some s1, Some s2 -> Map.set acc ~key:p ~data:(Set.inter s1 s2)
+            | Some s, None | None, Some s -> Map.set acc ~key:p ~data:s
+            | None, None -> acc)
+      in
+      let neg_only =
+        Set.union
+          (Set.filter f1.neg_only ~f:(np f2))
+          (Set.filter f2.neg_only ~f:(np f1))
+      in
+      let accompanied =
+        Set.union_list
+          (module Int)
+          [
+            f1.accompanied;
+            f2.accompanied;
+            Set.filter f1.neg ~f:(has_other f2);
+            Set.filter f2.neg ~f:(has_other f1);
+          ]
+      in
+      let pos_with =
+        let all1 = all f1 and all2 = all f2 in
+        let cross =
+          Set.fold f1.pos ~init:Int.Map.empty ~f:(fun acc a ->
+              add_rel acc a (Set.remove all2 a))
+        in
+        let cross =
+          Set.fold f2.pos ~init:cross ~f:(fun acc a ->
+              add_rel acc a (Set.remove all1 a))
+        in
+        union_rel (union_rel f1.pos_with f2.pos_with) cross
+      in
+      let neg_only_with_pos =
+        let find m r = Option.value (Map.find m r) ~default:Int.Set.empty in
+        Set.fold
+          (Set.union f1.neg_only f2.neg_only)
+          ~init:Int.Map.empty
+          ~f:(fun acc r ->
+            let same1 =
+              if np f2 r then find f1.neg_only_with_pos r else Int.Set.empty
+            and same2 =
+              if np f1 r then find f2.neg_only_with_pos r else Int.Set.empty
+            and cross12 =
+              if Set.mem f1.neg_only r then pos_without f2 r
+              else Int.Set.empty
+            and cross21 =
+              if Set.mem f2.neg_only r then pos_without f1 r
+              else Int.Set.empty
+            in
+            add_rel acc r
+              (Set.union_list (module Int) [ same1; same2; cross12; cross21 ]))
+      in
+      {
+        nonempty = true;
+        pos = Set.union f1.pos f2.pos;
+        neg = Set.union f1.neg f2.neg;
+        always_pos = Set.union f1.always_pos f2.always_pos;
+        co_pos;
+        neg_only;
+        accompanied;
+        pos_with;
+        neg_only_with_pos;
+      }
+
+  let cnf_name_facts_of_pairs pairs : cnf_name_facts =
+    match pairs with
+    | [] -> cnf_name_facts_empty
+    | _ ->
+        let pairs =
+          List.map pairs ~f:(fun (ps, ns) ->
+              (Int.Set.of_list ps, Int.Set.of_list ns))
+        in
+        let union_all f = Set.union_list (module Int) (List.map pairs ~f) in
+        let inter_all = function
+          | [] -> Int.Set.empty
+          | s :: ss -> List.fold ss ~init:s ~f:Set.inter
+        in
+        let names = union_all (fun (ps, ns) -> Set.union ps ns) in
+        let rel f =
+          Set.fold names ~init:Int.Map.empty ~f:(fun acc k ->
+              add_rel acc k
+                (union_all (fun (ps, ns) -> f k ps ns)))
+        in
+        {
+          nonempty = true;
+          pos = union_all fst;
+          neg = union_all snd;
+          always_pos = inter_all (List.map pairs ~f:fst);
+          co_pos =
+            Set.fold (union_all fst) ~init:Int.Map.empty ~f:(fun acc p ->
+                Map.set acc ~key:p
+                  ~data:
+                    (inter_all
+                       (List.filter_map pairs ~f:(fun (ps, _) ->
+                            if Set.mem ps p then Some ps else None))));
+          neg_only = union_all (fun (ps, ns) -> Set.diff ns ps);
+          accompanied =
+            union_all (fun (ps, ns) ->
+                if Set.is_empty ps && Set.length ns = 1 then Int.Set.empty
+                else ns);
+          pos_with =
+            rel (fun a ps ns ->
+                if Set.mem ps a then Set.remove (Set.union ps ns) a
+                else Int.Set.empty);
+          neg_only_with_pos =
+            rel (fun r ps ns ->
+                if Set.mem ns r && not (Set.mem ps r) then ps
+                else Int.Set.empty);
+        }
+
+  (* The walk of [cnf_pvar_name_ids_of] over the facts algebra: the same
+     walker ([aux]), so the same decisions on the same terms, and each
+     operation the facts of the operation [cnf_pvar_name_ids_of]'s algebra
+     performs ([top] the empty set, [bot] and [pure] the one clause without
+     atoms, [conj] a union, [disj] a product, [let_] and [let_levels] the identity), so the
+     result is the facts of that set by induction on the walk. *)
+  let cnf_pvar_name_facts_of id_of exi_senv uni_senv t =
+    let ops =
+      {
+        top = cnf_name_facts_empty;
+        bot = cnf_name_facts_unit;
+        pure = (fun _ -> cnf_name_facts_unit);
+        pos = (fun t -> cnf_name_facts_pos (id_of (pvar_head_of t)));
+        neg = (fun t -> cnf_name_facts_neg (id_of (pvar_head_of t)));
+        conj = cnf_name_facts_union;
+        disj = cnf_name_facts_product;
+        let_ = (fun _ _ _ _ res -> res);
+        let_levels = (fun _ res -> res);
+      }
+    in
+    aux ops exi_senv (Map.key_set exi_senv) uni_senv t Fn.id
 
   (* assume that [term] is in NNF *)
   let cnf_of exi_senv uni_senv t = cnf_with ~guarded:false exi_senv uni_senv t
@@ -1860,6 +2937,129 @@ module BoolTerm : BoolTermType = struct
      takes is one the formula allows at that state. *)
   let cnf_of_guarded exi_senv uni_senv t =
     cnf_with ~guarded:true exi_senv uni_senv t
+
+  (* Each subterm [t] is summarised by what the clauses [aux] gives it hold:
+     whether a clause with an unknown (a non-pure clause) exists, the [union]
+     of [f] over the non-pure clauses' pure parts, and the pure-only clause
+     (empty unknown parts), of which there is at most one: a leaf gives at
+     most one, a conjunction merges its operands' into one, and a
+     disjunction's are the products of its operands' (at most one times at
+     most one).  That one clause is kept as the very set of pure parts [aux]
+     builds, so the merged pure part at a conjunction is the same term.
+
+     A clause of a disjunction is the union of one clause of each operand, and
+     a non-pure clause of a conjunction is a clause of one operand unchanged.
+     So a clause holding a negated atom [a] is [a]'s leaf clause joined, at
+     each disjunction on the path from the root to [a], with any clause of the
+     other operand; it exists iff each of those operands has a clause, and the
+     [union] of [f] over such clauses' pure parts is the [union] over those
+     operands of [f] over all their clauses' pure parts ([f] being
+     disjunctive, and the pure part of a clause the disjunction of its
+     parts).  No part [aux] builds is the literal [true] ([true] gives no
+     clause; [and_of] of parts none of which is [true] is not [true]), so
+     [or_of] drops no part and [f] of a clause's pure part is the [union] of
+     [f] over its parts. *)
+  let neg_atom_pure_contexts exi_senv uni_senv t ~empty ~union ~f =
+    let unknowns = Map.key_set exi_senv in
+    let f_parts phis =
+      Set.fold phis ~init:empty ~f:(fun acc phi -> union acc (f phi))
+    in
+    (* the summary of all clauses: whether one exists, and the [union] *)
+    let all (ne_np, y_np, po) =
+      match po with
+      | None -> (ne_np, y_np)
+      | Some phis -> (true, union y_np (f_parts phis))
+    in
+    let exception Has_let in
+    (* [aux]'s merge of the pure-only clauses at a conjunction, on the
+       operands' pure-only clauses *)
+    let merge po1 po2 =
+      let pures =
+        Set.Poly.of_list
+        @@ List.filter_map [ po1; po2 ]
+             ~f:(Option.map ~f:(fun phis ->
+                 (Set.Poly.empty, Set.Poly.empty, phis)))
+      in
+      if Set.is_empty pures then None
+      else
+        let phis = Set.Poly.map pures ~f:(trd3 >> Set.to_list >> or_of) in
+        Some (Set.Poly.singleton (and_of @@ Set.to_list phis))
+    in
+    (* the summary of [t] and its negated atoms, each with whether its
+       clauses exist within [t] and the [union] over the clauses of the
+       disjunctions' other operands within [t]; the cases are [aux]'s, in
+       its order *)
+    let rec go t =
+      match t with
+      | Con (True, _) | App (Con (Not, _), Con (False, _), _) ->
+          ((false, empty, None), [])
+      | Con (False, _) | App (Con (Not, _), Con (True, _), _) ->
+          ((false, empty, Some Set.Poly.empty), [])
+      | t when mentions_none_of_closed unknowns t ->
+          ((false, empty, Some (Set.Poly.singleton t)), [])
+      | App (Con (Not, _), t', _) ->
+          if is_pvar_app exi_senv uni_senv t' then
+            ((true, empty, None), [ (t', true, empty) ])
+          else ((false, empty, Some (Set.Poly.singleton (neg_of t'))), [])
+      | App (App (Con (And, _), t1, _), t2, _) ->
+          let (n1, y1, p1), a1 = go t1 in
+          let (n2, y2, p2), a2 = go t2 in
+          ((n1 || n2, union y1 y2, merge p1 p2), a1 @ a2)
+      | App (App (Con (Or, _), t1, _), t2, _) ->
+          let ((n1, y1, p1) as s1), a1 = go t1 in
+          let ((n2, y2, p2) as s2), a2 = go t2 in
+          let ne1, all1 = all s1 in
+          let ne2, all2 = all s2 in
+          let ne_np = (n1 && ne2) || (Option.is_some p1 && n2) in
+          let y_np =
+            union
+              (if n1 && ne2 then union y1 all2 else empty)
+              (match p1 with
+              | Some phis when n2 -> union (f_parts phis) y2
+              | _ -> empty)
+          in
+          let po =
+            match (p1, p2) with
+            | Some phis1, Some phis2 -> Some (Set.union phis1 phis2)
+            | _ -> None
+          in
+          let lift ne y =
+            List.map ~f:(fun (a, ne', y') -> (a, ne' && ne, union y' y))
+          in
+          ((ne_np, y_np, po), lift ne2 all2 a1 @ lift ne1 all1 a2)
+      | Let _ -> raise Has_let
+      | t -> (
+          if is_pvar_app exi_senv uni_senv t then ((true, empty, None), [])
+          else if mentions_none_of_closed unknowns t then
+            ((false, empty, Some (Set.Poly.singleton t)), [])
+          else
+            let fenv = LogicOld.get_fenv () in
+            match let_apps t with
+            | TyApp (Con (Eq, _), SBool, _), [ t1; t2 ]
+              when (not (is_fvar_app fenv t1)) && not (is_fvar_app fenv t2) ->
+                go
+                  (mk_apps (mk_and ())
+                     [
+                       mk_apps (mk_or ()) [ nnf_of @@ neg_of t1; nnf_of t2 ];
+                       mk_apps (mk_or ()) [ nnf_of t1; nnf_of @@ neg_of t2 ];
+                     ])
+            | TyApp (Con (Neq, _), SBool, _), [ t1; t2 ]
+              when (not (is_fvar_app fenv t1)) && not (is_fvar_app fenv t2) ->
+                go
+                  (mk_apps (mk_and ())
+                     [
+                       mk_apps (mk_or ()) [ nnf_of t1; nnf_of t2 ];
+                       mk_apps (mk_or ())
+                         [ nnf_of @@ neg_of t1; nnf_of @@ neg_of t2 ];
+                     ])
+            | _ -> ((false, empty, Some (Set.Poly.singleton t)), []))
+    in
+    match go t with
+    | exception Has_let -> None
+    | _, atoms ->
+        Some
+          (List.filter_map atoms ~f:(fun (a, ne, y) ->
+               if ne then Some (a, y) else None))
 
   let rec elim_imp = function
     | App (App (Con (Imply, _), t1, _), t2, _) ->
@@ -2110,7 +3310,19 @@ end
 module type RealTermType = sig
   include TermType
 
-  type sym += Real of Q.t | RNeg | RAbs | RAdd | RSub | RMul | RDiv | RPower
+  type sym +=
+    | Real of Q.t
+    | Alge of LogicOld.Term.t * int
+        (** the real algebraic number [LogicOld.T_real.Alge]: the [n]-th real
+            root of a univariate polynomial in [x], a constant whose polynomial
+            is data of the symbol *)
+    | RNeg
+    | RAbs
+    | RAdd
+    | RSub
+    | RMul
+    | RDiv
+    | RPower
   type Sort.t += SReal
   type termlit += RealLit of Q.t
 
@@ -2141,7 +3353,19 @@ end
 module RealTerm : RealTermType = struct
   include Term
 
-  type sym += Real of Q.t | RNeg | RAbs | RAdd | RSub | RMul | RDiv | RPower
+  type sym +=
+    | Real of Q.t
+    | Alge of LogicOld.Term.t * int
+        (** the real algebraic number [LogicOld.T_real.Alge]: the [n]-th real
+            root of a univariate polynomial in [x], a constant whose polynomial
+            is data of the symbol *)
+    | RNeg
+    | RAbs
+    | RAdd
+    | RSub
+    | RMul
+    | RDiv
+    | RPower
   type Sort.t += SReal
   type termlit += RealLit of Q.t
 
@@ -2163,7 +3387,7 @@ module RealTerm : RealTermType = struct
       ]
 
   let sort_of_sym = function
-    | Real _ -> SReal
+    | Real _ | Alge _ -> SReal
     | sym -> Map.Poly.find_exn sym_sort_map sym
 
   let arity_of_sym = Term.open_arity_of_sym sort_of_sym
@@ -2172,6 +3396,7 @@ module RealTerm : RealTermType = struct
 
   let str_of_sym = function
     | Real r -> sprintf "Real %s" @@ Q.to_string r
+    | Alge (t, n) -> sprintf "Alge(%s, %d)" (LogicOld.Term.str_of t) n
     | RNeg -> "Neg"
     | RAbs -> "Abs"
     | RAdd -> "Add"
@@ -3232,16 +4457,17 @@ and DatatypeTerm :
             @@ List.map ~f
             @@ Datatype.sorts_of_cons_args dt cons
         | None -> assert false)
-    | SUS (name, _) as sort ->
-        let name = "dummy_" ^ name in
-        LogicOld.add_dummy_term (Ident.Tvar name) @@ to_old_sort sort;
-        mk_var @@ Ident.Tvar name
+    | SUS _ as sort ->
+        let (tvar, _), _ =
+          LogicOld.Term.let_var (LogicOld.Term.mk_dummy (to_old_sort sort))
+        in
+        mk_var tvar
     | sort -> f sort
 
   (** Observation *)
 
   let is_dt = function SDT dt -> Datatype.is_dt dt | _ -> false
-  let is_codt = function SDT dt -> Datatype.is_dt dt | _ -> false
+  let is_codt = function SDT dt -> Datatype.is_codt dt | _ -> false
   let is_undef = function SUS (_, _) -> true | _ -> false
 
   let rec is_finite_dt ?(his = []) sort =
@@ -3718,6 +4944,13 @@ module type ExtTermType = sig
       name: the conversions then give, inside a scope, the values and the
       fresh-name draws they give outside one *)
 
+  val with_exact_term_conversion : (unit -> 'a) -> 'a
+  (** [with_exact_term_conversion f] runs [f] in a scope of
+      [with_shared_term_conversion] that behaves as under
+      [share_term_conversion_terms] whatever the two switches say (inside an
+      open scope it only runs [f]): every conversion gives the value and the
+      fresh-name draws it gives outside a scope, more shared *)
+
   val with_shared_term_conversion : (unit -> 'a) -> 'a
   (** [with_shared_term_conversion f] runs [f] with tables, local to this
       domain and dropped when [f] returns or raises, in which [of_old_formula]
@@ -3732,6 +4965,15 @@ module type ExtTermType = sig
       [of_old_sort] and [to_old_sort] shared across every conversion [f]
       makes in this domain, so a datatype value met again is not converted
       again; the tables are dropped when [f] returns or raises. *)
+
+  val without_shared_term_conversion : (unit -> 'a) -> 'a
+  (** [without_shared_term_conversion f] runs [f] with this domain's scope of
+      [with_shared_term_conversion] closed (the datatype scope stays open) and
+      reopens it afterwards, its tables as they were.  The conversions give
+      inside [f] the values and draws they give in the scope (its tables
+      change only sharing), and nothing converted during [f] is kept alive by
+      the tables. *)
+
   val to_old_sort_bind : sort_bind -> Ident.tvar * LogicOld.Sort.t
   val of_old_term : LogicOld.Term.t -> term
   val of_old_atom : LogicOld.Atom.t -> term
@@ -3963,6 +5205,52 @@ module ExtTerm :
 
   (** Printing *)
 
+  (* defined before [str_of_sym], which prints the sorts of [IsTuple] and
+     [NotIsTuple]: a later definition would leave the stub of the generic term
+     module, which raises, in scope there *)
+  let rec str_of_sort_theory = function
+    | Sort.SVar (Ident.Svar svar) -> sprintf "'%s" svar
+    | Sort.SArrow (s, c) ->
+        sprintf "%s -> %s%s%s"
+          ((if Sort.is_arrow s || ArrayTerm.is_array_sort s then String.paren
+            else Fn.id)
+          @@ str_of_sort_theory s)
+          (if Sort.is_empty_opsig c.op_sig then "" else "_ |> ")
+          (str_of_sort_theory c.val_type)
+          (if Sort.is_pure c.cont_eff then "" else " / _")
+    | Sort.SForAll (Ident.Svar v, s) ->
+        String.paren @@ sprintf "forall %s. %s" v (str_of_sort_theory s)
+    | SBool -> "bool"
+    | SInt -> "int"
+    | SReal -> "real"
+    | SBV size -> sprintf "bv%s" (BVTerm.str_of_size size)
+    | SString -> "string"
+    | STrace true -> "fin_trace"
+    | STrace false -> "inf_trace"
+    | SRegEx -> "regex"
+    | SSeq se -> sprintf "seq(%s)" (str_of_sort_theory se)
+    | SArray (s1, s2) ->
+        sprintf "%s ->> %s"
+          ((if Sort.is_arrow s1 || ArrayTerm.is_array_sort s1 then String.paren
+            else Fn.id)
+          @@ str_of_sort_theory s1)
+          (str_of_sort_theory s2)
+    | STuple sorts ->
+        String.paren
+        @@ String.concat_map_list ~sep:" * " sorts ~f:str_of_sort_theory
+    | SDT dt -> Datatype.full_name_of str_of_sort_theory dt
+    | SUS (name, params) ->
+        if List.is_empty params then name
+        else
+          sprintf "%s %s"
+            (String.paren
+            @@ String.concat_map_list ~sep:", " params ~f:str_of_sort_theory)
+            name
+    | SRef sort -> sprintf "%s ref" (String.paren @@ str_of_sort_theory sort)
+    | _ -> failwith "[ExtTerm.str_of_sort_theory] unknown sort"
+
+  let str_of_sort = (*open_str_of_sort*) str_of_sort_theory
+
   let str_of_sym = function
     | Leq -> "Leq"
     | Geq -> "Geq"
@@ -4023,48 +5311,6 @@ module ExtTerm :
     | RealLit r -> Q.to_string r
     | _ -> assert false
 
-  let rec str_of_sort_theory = function
-    | Sort.SVar (Ident.Svar svar) -> sprintf "'%s" svar
-    | Sort.SArrow (s, c) ->
-        sprintf "%s -> %s%s%s"
-          ((if Sort.is_arrow s || ArrayTerm.is_array_sort s then String.paren
-            else Fn.id)
-          @@ str_of_sort_theory s)
-          (if Sort.is_empty_opsig c.op_sig then "" else "_ |> ")
-          (str_of_sort_theory c.val_type)
-          (if Sort.is_pure c.cont_eff then "" else " / _")
-    | Sort.SForAll (Ident.Svar v, s) ->
-        String.paren @@ sprintf "forall %s. %s" v (str_of_sort s)
-    | SBool -> "bool"
-    | SInt -> "int"
-    | SReal -> "real"
-    | SBV size -> sprintf "bv%s" (BVTerm.str_of_size size)
-    | SString -> "string"
-    | STrace true -> "fin_trace"
-    | STrace false -> "inf_trace"
-    | SRegEx -> "regex"
-    | SSeq se -> sprintf "seq(%s)" (str_of_sort_theory se)
-    | SArray (s1, s2) ->
-        sprintf "%s ->> %s"
-          ((if Sort.is_arrow s1 || ArrayTerm.is_array_sort s1 then String.paren
-            else Fn.id)
-          @@ str_of_sort_theory s1)
-          (str_of_sort_theory s2)
-    | STuple sorts ->
-        String.paren
-        @@ String.concat_map_list ~sep:" * " sorts ~f:str_of_sort_theory
-    | SDT dt -> Datatype.full_name_of str_of_sort_theory dt
-    | SUS (name, params) ->
-        if List.is_empty params then name
-        else
-          sprintf "%s %s"
-            (String.paren
-            @@ String.concat_map_list ~sep:", " params ~f:str_of_sort_theory)
-            name
-    | SRef sort -> sprintf "%s ref" (String.paren @@ str_of_sort_theory sort)
-    | _ -> failwith "[ExtTerm.str_of_sort_theory] unknown sort"
-
-  let str_of_sort = (*open_str_of_sort*) str_of_sort_theory
   let str_of = open_str_of str_of_sort str_of_sym
 
   (** Evaluation *)
@@ -4217,17 +5463,15 @@ module ExtTerm :
 
   (** Conversion *)
 
-  (* Old datatype values compared by physical identity (the name is only the
-     hash, since two values of one name may differ after a substitution). *)
-  (* Keyed by structure, not by physical identity: type inference instantiates
-     a parametric datatype afresh at every occurrence, so an input's formulas
-     hold many physically distinct but equal copies of one instance, and a
-     table that tells them apart converts each copy again and keeps them all
-     in one bucket of their common name, which a shared scope then walks at
-     every lookup.  [Stdlib.compare] skips the physically shared parts of two
-     copies, which is most of them; the hash reads a bounded prefix of the
-     value, so equal values hash alike and a lookup costs no walk of the whole
-     datatype. *)
+  (* Old datatype values keyed by structure, not by physical identity: type
+     inference instantiates a parametric datatype afresh at every occurrence,
+     so an input's formulas hold many physically distinct but equal copies of
+     one instance, and a table that tells them apart converts each copy again
+     and keeps them all in one bucket of their common name, which a shared
+     scope then walks at every lookup.  [Stdlib.compare] skips the physically
+     shared parts of two copies, which is most of them; the hash reads a
+     bounded prefix of the value, so equal values hash alike and a lookup
+     costs no walk of the whole datatype. *)
   module OldDtPhysTbl = Stdlib.Hashtbl.Make (struct
     type t = LogicOld.Datatype.t
 
@@ -4264,11 +5508,11 @@ module ExtTerm :
   (* [sort_reaches_svar keys s] is [true] when a sort variable satisfying
      [keys] occurs in [s], datatype declarations included: every member of a
      datatype's group, its parameters, every selector's sort, an alias's sort,
-     and the datatypes those contain, each datatype value visited once (by
-     physical identity).  It over-approximates: a variable bound by [SForAll]
-     counts, and a sort constructor this walk does not know answers [true].
-     So [false] licenses reading a substitution of those variables as the
-     identity on [s]. *)
+     and the datatypes those contain, each datatype value visited once
+     (structurally equal copies count as one).  It over-approximates: a
+     variable bound by [SForAll] counts, and a sort constructor this walk
+     does not know answers [true].  So [false] licenses reading a
+     substitution of those variables as the identity on [s]. *)
   let sort_reaches_svar keys root =
     let visited = NewDtPhysTbl.create 16 in
     let exception Found in
@@ -4447,6 +5691,9 @@ module ExtTerm :
     vars_tbl : Ident.tvar Set.Poly.t TermPhysTbl.t;
     of_old_term_tbl : term OldTermPhysTbl.t;
     to_old_term_tbl : to_old_term_entry list TermPhysTbl.t;
+    exact_terms : bool;
+        (* this scope behaves as under [share_term_conversion_terms] whatever
+           that flag says: it was opened by [with_exact_term_conversion] *)
   }
 
   let share_term_conversion : bool Atomic.t = Atomic.make false
@@ -4469,10 +5716,50 @@ module ExtTerm :
                  vars_tbl = TermPhysTbl.create 1024;
                  of_old_term_tbl = OldTermPhysTbl.create 1024;
                  to_old_term_tbl = TermPhysTbl.create 1024;
+                 exact_terms = false;
                });
           Exn.protect
             ~f:(fun () -> with_shared_datatype_conversion f)
             ~finally:(fun () -> Domain.DLS.set term_conversion_scope None)
+
+  let without_shared_term_conversion f =
+    match Domain.DLS.get term_conversion_scope with
+    | None -> f ()
+    | Some _ as scope ->
+        Domain.DLS.set term_conversion_scope None;
+        Exn.protect ~f ~finally:(fun () ->
+            Domain.DLS.set term_conversion_scope scope)
+
+  (* whether a scope remembers term images and remembers an image only when
+     computing it drew no fresh name (the exact discipline) *)
+  let terms_shared tbls =
+    tbls.exact_terms || Atomic.get share_term_conversion_terms
+
+  (* [with_exact_term_conversion f] runs [f] in a term-conversion scope with
+     the exact discipline of [share_term_conversion_terms], whatever the two
+     process-global switches say, so that only this caller's conversions are
+     shared.  Inside an already open scope it only runs [f], which converts
+     as it did before this function existed.
+     Contract: every conversion [f] makes gives the value, and draws the
+     fresh names, that it gives outside a scope; only physical sharing
+     differs (see [share_term_conversion_terms]). *)
+  let with_exact_term_conversion f =
+    match Domain.DLS.get term_conversion_scope with
+    | Some _ -> f ()
+    | None ->
+        Domain.DLS.set term_conversion_scope
+          (Some
+             {
+               of_old_fml_tbl = OldFmlPhysTbl.create 1024;
+               to_old_fml_tbl = TermPhysTbl.create 1024;
+               vars_tbl = TermPhysTbl.create 1024;
+               of_old_term_tbl = OldTermPhysTbl.create 1024;
+               to_old_term_tbl = TermPhysTbl.create 1024;
+               exact_terms = true;
+             });
+        Exn.protect
+          ~f:(fun () -> with_shared_datatype_conversion f)
+          ~finally:(fun () -> Domain.DLS.set term_conversion_scope None)
 
   (* every variable name occurring in [t], bound or free, remembered by
      physical identity at application nodes so that a shared subterm is read
@@ -4603,6 +5890,7 @@ module ExtTerm :
     | LogicOld.T_int.Power, [ _; _ ] -> mk_power ()
     | LogicOld.T_int.Case n, _ :: sort :: _ -> mk_case n sort
     | LogicOld.T_real.Real r, [] -> mk_real r
+    | LogicOld.T_real.Alge (t, n), [] -> mk_con (Alge (t, n))
     | LogicOld.T_real.RNeg, [ _ ] -> mk_rneg ()
     | LogicOld.T_real.RAbs, [ _ ] -> mk_rabs ()
     | LogicOld.T_real.RAdd, [ _; _ ] -> mk_radd ()
@@ -4744,7 +6032,7 @@ module ExtTerm :
 
   and of_old_term t =
     match Domain.DLS.get term_conversion_scope with
-    | Some tbls when Atomic.get share_term_conversion_terms -> (
+    | Some tbls when terms_shared tbls -> (
         match OldTermPhysTbl.find_opt tbls.of_old_term_tbl t with
         | Some t' -> t'
         | None ->
@@ -4898,6 +6186,7 @@ module ExtTerm :
     | Rem m -> LogicOld.T_int.Rem m |> Option.some
     | Power -> LogicOld.T_int.Power |> Option.some
     | Real r -> LogicOld.T_real.Real r |> Option.some
+    | Alge (t, n) -> LogicOld.T_real.Alge (t, n) |> Option.some
     | RNeg -> LogicOld.T_real.RNeg |> Option.some
     | RAbs -> LogicOld.T_real.RAbs |> Option.some
     | RAdd -> LogicOld.T_real.RAdd |> Option.some
@@ -5277,7 +6566,7 @@ module ExtTerm :
 
   and to_old_trm exi_senv uni_senv term =
     match (term, Domain.DLS.get term_conversion_scope) with
-    | App _, Some tbls when Atomic.get share_term_conversion_terms -> (
+    | App _, Some tbls when terms_shared tbls -> (
         let entries =
           Option.value ~default:[]
             (TermPhysTbl.find_opt tbls.to_old_term_tbl term)
@@ -5471,7 +6760,7 @@ module ExtTerm :
                 let stamp = Ident.fresh_stamp () in
                 let img = aux_node uni_senv term [] ~next:Fn.id in
                 if
-                  (not (Atomic.get share_term_conversion_terms))
+                  (not (terms_shared tbls))
                   || Ident.fresh_stamp () = stamp
                 then
                   TermPhysTbl.replace tbls.to_old_fml_tbl term
@@ -5573,27 +6862,18 @@ module ExtTerm :
   (** Construction *)
 
   let rec mk_dummy = function
-    | Sort.SVar (Ident.Svar name) as sort ->
-        let name =
-          "dummy_" ^ name
-          (*ToDo*)
-        in
-        LogicOld.add_dummy_term (Ident.Tvar name) @@ to_old_sort sort;
-        mk_var (Ident.Tvar name)
-    | Sort.SArrow _ as sort ->
-        let name =
-          sprintf "dummy_arrow(%s)"
-            (LogicOld.Term.str_of_sort @@ to_old_sort sort)
-        in
-        LogicOld.add_dummy_term (Ident.Tvar name) @@ to_old_sort sort;
-        mk_var (Ident.Tvar name)
+    | (Sort.SVar _ | Sort.SArrow _) as sort ->
+        of_old_term (LogicOld.Term.mk_dummy (to_old_sort sort))
     | SBool -> BoolTerm.mk_bool false
     | SInt -> IntTerm.zero ()
     | SReal -> RealTerm.rzero ()
     | SBV size -> BVTerm.mk_bvnum ~size Z.zero
     | SString -> mk_con @@ StrConst ""
     | STrace true -> mk_con TrEpsilon
-    | STrace false -> failwith "STrace false"
+    | STrace false as sort ->
+        (* the registered dummy constant of the first-order term language,
+           since no constant denotes an infinite trace *)
+        of_old_term (LogicOld.Term.mk_dummy (to_old_sort sort))
     | SRegEx -> mk_con RegEmpty
     | SArray (s1, s2) -> mk_app (mk_const_array s1 s2) (mk_dummy s2)
     | SSeq se -> mk_empty se
@@ -5636,8 +6916,11 @@ module ExtTerm :
       let uni_senv =
         Map.force_merge uni_senv (Map.Poly.of_alist_exn param_senv)
       in
-      to_old_fml exi_senv uni_senv phi
-      |> Evaluator.simplify |> of_old_formula |> mk_lambda param_senv
+      let ph = Common.PhaseTime.with_phase in
+      ph "sf-to-old" (fun () -> to_old_fml exi_senv uni_senv phi)
+      |> (fun x -> ph "sf-simplify" (fun () -> Evaluator.simplify x))
+      |> (fun x -> ph "sf-of-old" (fun () -> of_old_formula x))
+      |> mk_lambda param_senv
     with e when not (Common.Timer.is_async e) -> (
       (* [let_lam] peeling is a heuristic; if the plain conversion fails as
          well, report the first failure, not the retry's *)
@@ -5723,3 +7006,38 @@ let select_constant_cases =
     | [] -> assert false
   in
   go
+
+(* READING A MODEL OF THE NEW TERM LANGUAGE: by name AND sort, as
+   [LogicOld.model_find] (whose comment states why: a pooled solver context
+   holds one name at several sorts, and an entry at another sort is not
+   evidence about the variable asked for).  Sorts are compared as printed.
+
+   [model_find model (x, s)]: [None] when no entry binds [x] at a sort printing
+   as [s]; otherwise [Some v] for the first such entry ([v = None]: declared,
+   unassigned). *)
+let model_find (model : model) ((x, s) : sort_bind) : term option option =
+  let want = lazy (ExtTerm.str_of_sort s) in
+  List.find_map model ~f:(fun ((y, s'), v) ->
+      if
+        Stdlib.(x = y)
+        && (phys_equal s s' || String.(ExtTerm.str_of_sort s' = Lazy.force want))
+      then Some v
+      else None)
+
+(* [model_table model]: [model_find] precomputed for many lookups.  Keyed by
+   the variable and its printed sort; [Hashtbl.add] never replaces a key, so a
+   later duplicate is ignored as [model_find] ignores it, and
+   [model_table_find (model_table model) b] equals [model_find model b] for
+   every [b].  Built in one pass, so a lookup per variable costs a hash rather
+   than a scan of the model. *)
+let model_table (model : model) :
+    (Ident.tvar * string, term option) Hashtbl.t =
+  let tbl = Hashtbl.Poly.create ~size:(List.length model) () in
+  List.iter model ~f:(fun ((x, s), v) ->
+      ignore
+        (Hashtbl.add tbl ~key:(x, ExtTerm.str_of_sort s) ~data:v
+          : [ `Ok | `Duplicate ]));
+  tbl
+
+let model_table_find tbl ((x, s) : sort_bind) =
+  Hashtbl.find tbl (x, ExtTerm.str_of_sort s)

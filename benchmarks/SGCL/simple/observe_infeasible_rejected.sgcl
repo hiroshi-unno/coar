@@ -1,0 +1,8 @@
+# Every run is blocked by the observation, so the program is infeasible: wlp(S, 1) = 0 and
+# the conditional expectation is undefined.
+# Expected: refused as infeasible, never answered.  The reduced query wp_1(S, x) <= 1 holds
+# vacuously (1 <= 1).
+x := 1;
+observe x = 0;
+return x
+?Ex[x] <= 1

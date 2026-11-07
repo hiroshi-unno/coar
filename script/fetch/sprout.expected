@@ -1,0 +1,43 @@
+# SPROUT (CAV 2025) Table 2 protocols: the file under benchmarks/sprout/examples/sprout/, its Table 2 row name,
+# the number of participants |P| and the ground truth Impl. (Y implementable, N not), all four read from
+# examples/create_table2.sh and examples/table2_empty.txt of nyu-acsys/sprout at the pinned commit.
+# Exception: Impl. of symbolic-two-bidder-no2 (N) and higher-lower-ultimate (Y) is the CAV 2025 paper's Table 2;
+# table2_empty.txt has the two entries swapped (checked against the protocols by the paper's definition, 2026-10-22).
+# Columns are separated by one TAB.
+calculator	Calculator	2	Y
+fibonacci	Fibonacci	2	Y
+higher-lower	HigherLower	3	Y
+http	HTTP	2	Y
+negotiation	Negotiation	2	Y
+online-wallet	OnlineWallet	3	Y
+sh	SH	3	Y
+ticket	Ticket	2	Y
+travel-agency	TravelAgency	2	Y
+two-buyer	TwoBuyer	3	Y
+double-buffering	DoubleBuffering	3	Y
+oauth	OAuth	3	Y
+plus-minus	PlusMinus	3	Y
+ring-max	RingMax	7	Y
+simple-auth	SimpleAuth	2	Y
+travel-agency2	TravelAgency2	2	Y
+send-validity-yes	send-validity-yes	4	Y
+send-validity-no	send-validity-no	4	N
+receive-validity-yes	receive-validity-yes	3	Y
+receive-validity-no	receive-validity-no	3	N
+symbolic-two-bidder-yes	symbolic-two-bidder-yes	3	Y
+symbolic-two-bidder-no1	symbolic-two-bidder-no1	3	N
+figure12-yes	figure12-yes	3	Y
+figure12-no	figure12-no	3	N
+symbolic-send-validity-yes	symbolic-send-validity-yes	4	Y
+symbolic-send-validity-no	symbolic-send-validity-no	4	N
+symbolic-receive-validity-yes	symbolic-receive-validity-yes	3	Y
+symbolic-receive-validity-no	symbolic-receive-validity-no	3	N
+fwd-auth-yes	fwd-auth-yes	3	Y
+fwd-auth-no	fwd-auth-no	3	N
+symbolic-two-bidder-no2	symbolic-two-bidder-no2	3	N
+higher-lower-ultimate	higher-lower-ultimate	3	Y
+higher-lower-winning	higher-lower-winning	3	Y
+higher-lower-no	higher-lower-no	3	N
+higher-lower-encrypt-yes	higher-lower-encrypt-yes	4	Y
+higher-lower-encrypt-no	higher-lower-encrypt-no	4	N
+higher-lower-mixed	higher-lower-mixed	3	N

@@ -1,0 +1,8 @@
+/* Valid: P holds at every non-negative x (its greatest fixpoint is x >= 0),
+   so x = 121 is a witness.  Every witness lies beyond 120, so an elimination
+   of the existential that searches for a witness in [-100, 100] only finds
+   none, and the problem it leaves behind is refutable although this one is
+   not: that refutation must not be printed as invalid. */
+exists (x: int). x > 120 /\ P x
+s.t.
+P (x: int): bool =nu x >= 0 /\ P (x + 1);

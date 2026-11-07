@@ -8,9 +8,11 @@
      ite ((_ is nil) x) 0 (+ 1 (length (tl x)))
 ))
 
-(set-info length (forall ((x (List X)))
- (or ((_ is nil) x) (> (length x) 0))
-))
+; A law of length: on a cons it is at least 1 (by induction on x, since length is never
+; negative).  Written as a lemma CoAR proves before it uses it; other solvers skip
+; (set-info :lemma ...), so the problem is the same for them.
+(define-fun length_pos_on_cons ((x (List X))) Bool (or ((_ is nil) x) (> (length x) 0)))
+(set-info :lemma length_pos_on_cons)
 (assert (forall ((l1 (List X)) (l2 (List X)) (_v12 (List X)))
   (=>
     (and
@@ -39,7 +41,7 @@
   (=>
     (and 
         (append l1 l2 r)
-        (= l1 (cons x nil))
+        (= l1 (cons x (as nil (List X))))
     )
     (= r (cons x l2))
   )

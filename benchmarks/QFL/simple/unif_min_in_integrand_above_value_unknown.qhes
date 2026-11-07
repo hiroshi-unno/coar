@@ -1,0 +1,4 @@
+X 0.0 >= 0.26
+s.t.
+// the integral of min(r, 1 - r) over r in [0, 1] is 1/4, below the bound
+X (x : real) : real =mu unif r. min r (1.0 - r) + x * x;

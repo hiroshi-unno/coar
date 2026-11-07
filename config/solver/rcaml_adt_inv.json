@@ -1,0 +1,9 @@
+[
+    "RCaml",
+    {
+        "cgen_config": {
+            "gen_ref_type_temp_for_constructors": true
+        },
+        "verbose": false
+    }
+]

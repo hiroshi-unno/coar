@@ -1,0 +1,50 @@
+%BEGING
+RemoveB x = F x G.
+F x g = case x of
+	  doc y => doc (F y g)
+	| a x y => a (g x) (F y g)
+	| b x y => b (F x g) (F y g)
+	| pc => pc
+	| e => e
+.
+G x = case x of
+	  doc y => doc(G y)
+	| b x y => G y
+	| a x y => a (G x) (G y)
+	| pc => pc
+	| e => e
+.
+%ENDG
+
+%BEGINA
+/*
+Input:
+type Doc = doc[(A | B)*]
+type A = a[(A | B)*]
+type B = b[Pc]
+type Pc = pc[]
+*/
+qi0 doc -> qi1.
+qi1 a -> qi1 qi1.
+qi1 b -> qi2 qi1.
+qi1 e -> .
+qi2 pc -> .
+/*
+Output:
+type Doc = doc[(A | B)*]
+type A = a[A*]
+type B = b[Pc]
+type Pc = pc[]
+*/
+q0 doc -> q1.
+q1 a -> q3 q1.
+q1 b -> q2 q1.
+q1 e -> .
+q2 pc -> .
+q3 a -> q3 q3.
+q3 e -> .
+%ENDA
+
+%BEGINT
+RemoveB : qi0 -> q0.
+%ENDT

@@ -1,0 +1,39 @@
+%BEGING
+Merge x y = case x of
+	  e => Copy y
+	| a x' => Merge_a x' y
+	| b x' => Merge_b x' y
+.
+Merge_a x y = case y of
+	  e => a(Copy x)
+	| a y' => a(a(Merge x y'))
+	| b y' => a(Merge_b y' x)
+.
+Merge_b x y = case y of
+	  e => b(Copy x)
+	| a y' => b(Merge_a y' x)
+	| b y' => b(b(Merge x y'))
+.
+Copy x = case x of
+	  e => e
+	| a x' => a(Copy x')
+	| b x' => b(Copy x')
+.
+%ENDG
+
+%BEGINA
+/* qi0 : a*b*, qi1 : b* */
+qi0 a -> qi0.
+qi0 b -> qi1.
+qi0 e -> .
+qi1 b -> qi1.
+qi1 e -> .
+/* q0 : (a|b)* */
+q0 a -> q0.
+q0 b -> q0.
+q0 e -> .
+%ENDA
+
+%BEGINT
+Merge : qi0 -> qi1 -> q0.
+%ENDT

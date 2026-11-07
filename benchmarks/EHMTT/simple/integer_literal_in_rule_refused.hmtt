@@ -1,0 +1,19 @@
+/* The EHMTT language has no integer terms: 0 names no tree and no state of
+   the automaton.  The program is refused rather than given the meaning of
+   whatever the reduction's internal numbering of states makes of it. */
+%BEGING
+F x -> G 0.
+G y -> case y of
+  a => ok
+| b => bad.
+%ENDG
+
+%BEGINA
+qs a -> .
+qs b -> .
+qo ok -> .
+%ENDA
+
+%BEGINT
+F : qs -> qo.
+%ENDT

@@ -1,0 +1,6 @@
+/* The query mentions a term variable x that no binder binds; a free query
+   variable is universally quantified, so this reads as forall x. P x.
+   Invalid: from x = -1 counting down never reaches 0. */
+P x
+s.t.
+P (x: int): bool =mu x = 0 \/ P (x - 1);

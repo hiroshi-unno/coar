@@ -1,0 +1,11 @@
+; (_ rotate_left i) and (_ rotate_right i) of the QF_BV logic, by i mod width
+(set-logic QF_BV)
+(declare-const x (_ BitVec 4))
+(assert (= x #b1001))
+(assert (not (and (= ((_ rotate_left 1) x) #b0011)
+                  (= ((_ rotate_right 1) x) #b1100)
+                  (= ((_ rotate_left 4) x) x)
+                  (= ((_ rotate_left 0) x) x)
+                  (= ((_ rotate_left 5) #b1001) #b0011)
+                  (= ((_ rotate_right 7) #b1001) #b0011))))
+(check-sat)

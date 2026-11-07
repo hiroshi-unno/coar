@@ -1,0 +1,183 @@
+%BEGING
+
+G x -> case x of
+    unit => unit
+  | bool => int
+  | int => int
+  | float => float
+  | not e => G (coerce qSyn (if (copy e) bool bool))
+  | neg e => Insert_let (G e) neg
+  | add e1 e2 => Insert_let (G e1) (KBinOp add e2)
+  | sub e1 e2 => Insert_let (G e1) (KBinOp sub e2)
+  | fneg e => Insert_let (G e) fneg
+  | fadd e1 e2 => Insert_let (G e1) (KBinOp fadd e2)
+  | fsub e1 e2 => Insert_let (G e1) (KBinOp fsub e2)
+  | fmul e1 e2 => Insert_let (G e1) (KBinOp fmul e2)
+  | fdiv e1 e2 => Insert_let (G e1) (KBinOp fdiv e2)
+  | eq e1 e2 => G (coerce qSyn (if (copy x) bool bool))
+  | le e1 e2 => G (coerce qSyn (if (copy x) bool bool))
+  | if e1 e2 e3 => (
+
+    case e1 of
+      not e4 => G (coerce qSyn (if (copy e4) (copy e3) (copy e2)))
+    | eq e4 e5 => Insert_let (G e4) (KIf ifeq e5 e2 e3)
+    | le e4 e5 => Insert_let (G e4) (KIf ifle e5 e2 e3)
+    | unit => G (coerce qSyn (if (eq (copy e1) bool) (copy e3) (copy e2)))
+    | bool => G (coerce qSyn (if (eq (copy e1) bool) (copy e3) (copy e2)))
+    | int => G (coerce qSyn (if (eq (copy e1) bool) (copy e3) (copy e2)))
+    | float => G (coerce qSyn (if (eq (copy e1) bool) (copy e3) (copy e2)))
+    | not e => G (coerce qSyn (if (eq (copy e1) bool) (copy e3) (copy e2)))
+    | neg e => G (coerce qSyn (if (eq (copy e1) bool) (copy e3) (copy e2)))
+    | add e4 e5 => G (coerce qSyn (if (eq (copy e1) bool) (copy e3) (copy e2)))
+    | sub e4 e5 => G (coerce qSyn (if (eq (copy e1) bool) (copy e3) (copy e2)))
+    | fneg e => G (coerce qSyn (if (eq (copy e1) bool) (copy e3) (copy e2)))
+    | fadd e4 e5 => G (coerce qSyn (if (eq (copy e1) bool) (copy e3) (copy e2)))
+    | fsub e4 e5 => G (coerce qSyn (if (eq (copy e1) bool) (copy e3) (copy e2)))
+    | fmul e4 e5 => G (coerce qSyn (if (eq (copy e1) bool) (copy e3) (copy e2)))
+    | fdiv e4 e5 => G (coerce qSyn (if (eq (copy e1) bool) (copy e3) (copy e2)))
+    | if e4 e5 e6 => G (coerce qSyn (if (eq (copy e1) bool) (copy e3) (copy e2)))
+    | let x e4 e5 => G (coerce qSyn (if (eq (copy e1) bool) (copy e3) (copy e2)))
+    | var => G (coerce qSyn (if (eq (copy e1) bool) (copy e3) (copy e2)))
+    | letrec f xs e4 e5 => G (coerce qSyn (if (eq (copy e1) bool) (copy e3) (copy e2)))
+    | app e4 e5s => G (coerce qSyn (if (eq (copy e1) bool) (copy e3) (copy e2)))
+    | tuple es => G (coerce qSyn (if (eq (copy e1) bool) (copy e3) (copy e2)))
+    | lettuple xts e4 e5 => G (coerce qSyn (if (eq (copy e1) bool) (copy e3) (copy e2)))
+    | array e4 e5 => G (coerce qSyn (if (eq (copy e1) bool) (copy e3) (copy e2)))
+    | get e4 e5 => G (coerce qSyn (if (eq (copy e1) bool) (copy e3) (copy e2)))
+    | put e4 e5 e6 => G (coerce qSyn (if (eq (copy e1) bool) (copy e3) (copy e2)))
+
+  )
+  | let x e1 e2 => let (copy x) (G e1) (G e2)
+  | var => var
+  | letrec f xs e1 e2 => letrec (copy f) (copy xs) (G e1) (G e2)
+  | app e1 e2s => Insert_let (G e1) (KApp e2s)
+  | tuple es => BindT nil es
+  | lettuple xts e1 e2 => Insert_let (G e1) (KLetTuple xts e2)
+  | array e1 e2 => Insert_let (G e1) (KArray e2)
+  | get e1 e2 => Insert_let (G e1) (KBinOp get e2)
+  | put e1 e2 e3 => Insert_let (G e1) (KPut e2 e3)
+.
+
+KBinOp op e x -> Insert_let (G e) (op x).
+
+KIf op e2 e3 e4 x -> Insert_let (G e2) (KIf2 op e3 e4 x).
+KIf2 op e3 e4 x y-> op x y (G e3) (G e4).
+
+KApp e2s f -> Bind f nil e2s.
+
+Bind f xs e2s -> case e2s of
+    nil => app f xs
+  | cons e2 e2s => Insert_let (G e2) (KBind f xs e2s)
+.
+KBind f xs e2s x -> Bind f  (Append (coerce qVars xs) x) e2s.
+
+BindT xs es ->
+  case es of
+    nil => tuple xs
+  | cons e es => Insert_let (G e) (KBindT xs es)
+.
+KBindT xs es x -> BindT (Append (coerce qVars xs) x) es.
+
+KLetTuple xts e2 y -> lettuple (copy xts) y (G e2).
+
+KArray e2 x -> Insert_let (G e2) (KArray2 x).
+KArray2 x y -> app var (cons x (cons y nil)).
+
+KPut e2 e3 x -> Insert_let (G e2) (KPut2 e3 x).
+KPut2 e3 x y -> Insert_let (G e3) (put x y).
+
+Insert_let exp k -> Insert_let2 (coerce qK exp) k.
+Insert_let2 exp k ->
+  case exp of
+    var => k var
+  | unit => let var (copy exp) (k var)
+  | int => let var (copy exp) (k var)
+  | float => let var (copy exp) (k var)
+  | neg e => let var (copy exp) (k var)
+  | add e1 e2 => let var (copy exp) (k var)
+  | sub e1 e2 => let var (copy exp) (k var)
+  | fneg e => let var (copy exp) (k var)
+  | fadd e1 e2 => let var (copy exp) (k var)
+  | fsub e1 e2 => let var (copy exp) (k var)
+  | fmul e1 e2 => let var (copy exp) (k var)
+  | fdiv e1 e2 => let var (copy exp) (k var)
+  | ifeq e1 e2 e3 e4 => let var (copy exp) (k var)
+  | ifle e1 e2 e3 e4 => let var (copy exp) (k var)
+  | let x e1 e2 => let var (copy exp) (k var)
+  | letrec f xs e1 e2 => let var (copy exp) (k var)
+  | app e1 e2s => let var (copy exp) (k var)
+  | tuple es => let var (copy exp) (k var)
+  | lettuple xts e1 e2 => let var (copy exp) (k var)
+  | get e1 e2 => let var (copy exp) (k var)
+  | put e1 e2 e3 => let var (copy exp) (k var)
+.
+
+Append xs x -> 
+  case xs of
+    nil => cons x nil
+  | cons y ys => cons (copy y) (Append ys x)
+.
+%ENDG
+
+
+
+%BEGINA
+qSyn unit -> .
+qSyn bool -> .
+qSyn int -> .
+qSyn float -> .
+qSyn not -> qSyn.
+qSyn neg -> qSyn.
+qSyn add -> qSyn qSyn.
+qSyn sub -> qSyn qSyn.
+qSyn fneg -> qSyn.
+qSyn fadd -> qSyn qSyn.
+qSyn fsub -> qSyn qSyn.
+qSyn fmul -> qSyn qSyn.
+qSyn fdiv -> qSyn qSyn.
+qSyn eq -> qSyn qSyn.
+qSyn le -> qSyn qSyn.
+qSyn if -> qSyn qSyn qSyn.
+qSyn let -> qVar qSyn qSyn.
+qSyn var -> .
+qSyn letrec -> qVar qVars qSyn qSyn.
+qSyn app -> qSyn qSyns.
+qSyn tuple -> qSyns.
+qSyn lettuple -> qVars qSyn qSyn.
+qSyn array -> qSyn qSyn.
+qSyn get -> qSyn qSyn.
+qSyn put -> qSyn qSyn qSyn.
+
+qVar var -> .
+qVars nil -> .
+qVars cons -> qVar qVars.
+qSyns nil -> .
+qSyns cons -> qSyn qSyns.
+
+qK unit -> .
+qK int -> .
+qK float -> .
+qK neg -> qVar.
+qK add -> qVar qVar.
+qK sub -> qVar qVar.
+qK fneg -> qVar.
+qK fadd -> qVar qVar.
+qK fsub -> qVar qVar.
+qK fmul -> qVar qVar.
+qK fdiv -> qVar qVar.
+qK ifeq -> qVar qVar qK qK.
+qK ifle -> qVar qVar qK qK.
+qK let -> qVar qK qK.
+qK var -> .
+qK letrec -> qVar qVars qK qK.
+qK app -> qVar qVars.
+qK tuple -> qVars.
+qK lettuple -> qVars qVar qK.
+qK get -> qVar qVar.
+qK put -> qVar qVar qVar.
+%ENDA
+
+
+%BEGINT
+G : qSyn -> qK.
+%ENDT

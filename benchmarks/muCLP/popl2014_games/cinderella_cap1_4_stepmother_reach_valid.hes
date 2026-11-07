@@ -1,0 +1,20 @@
+/* Game G3 of Beyene, Chaudhuri, Popeea, Rybalchenko, "A constraint-based approach to solving games on
+infinite graphs", POPL 2014, pp. 221-233, https://doi.org/10.1145/2535838.2535860
+(Table 1; Section 5.2), as the paper defines it.
+Cinderella-Stepmother game, Section 2 of the paper: five buckets b1..b5 on a circle, all empty
+initially.  stepmother(v,v') = (b1'+..+b5' = b1+..+b5+1 /\ bi' >= bi): she pours one unit, split as she
+likes.  cinderella(v,v') = some i with bi' = 0 /\ b(i+1 mod 5)' = 0, the other buckets unchanged.
+overflow(v) = some bi > c.  The game is turn-based with Adam moving first (Section 3.1), Eve's
+deadlock losing and Adam's deadlock leaving no play; the game does not stop at an overflow.
+Bucket contents are reals (the paper's capacities 1.4 and its strategy's 0.8, 0.1 are not integers).
+Here: capacity c = 1.4, Eve = Stepmother, Adam = Cinderella (Adam moves first), objective
+F overflow for Stepmother.  R(v): Cinderella to move; Q(v): Stepmother to move; both least
+fixpoints (the attractor).  Cinderella's five moves are a conjunction (she is the universal player),
+Stepmother's pour an existential.
+Expected verdict from the paper's Table 1 (Stepmother wins at c = 1.4; Section 2: she wins for every c < 1.5).
+expected: valid */
+R (0.0) (0.0) (0.0) (0.0) (0.0)
+s.t.
+R (b1: real) (b2: real) (b3: real) (b4: real) (b5: real): bool =mu (b1 > 1.4 \/ b2 > 1.4 \/ b3 > 1.4 \/ b4 > 1.4 \/ b5 > 1.4) \/ (Q (0.0) (0.0) (b3) (b4) (b5) /\ Q (b1) (0.0) (0.0) (b4) (b5) /\ Q (b1) (b2) (0.0) (0.0) (b5) /\ Q (b1) (b2) (b3) (0.0) (0.0) /\ Q (0.0) (b2) (b3) (b4) (0.0));
+Q (b1: real) (b2: real) (b3: real) (b4: real) (b5: real): bool =mu (b1 > 1.4 \/ b2 > 1.4 \/ b3 > 1.4 \/ b4 > 1.4 \/ b5 > 1.4) \/ (exists (d1: real) (d2: real) (d3: real) (d4: real) (d5: real). (d1 >= 0.0 /\ d2 >= 0.0 /\ d3 >= 0.0 /\ d4 >= 0.0 /\ d5 >= 0.0 /\ d1 + d2 + d3 + d4 + d5 = 1.0) /\
+  ((b1 + d1 > 1.4 \/ b2 + d2 > 1.4 \/ b3 + d3 > 1.4 \/ b4 + d4 > 1.4 \/ b5 + d5 > 1.4) \/ R (b1 + d1) (b2 + d2) (b3 + d3) (b4 + d4) (b5 + d5)));

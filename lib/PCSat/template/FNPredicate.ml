@@ -7,7 +7,7 @@
    [number_of_cond_conj] conjuncts, ending in an unguarded branch, the
    expressions affine over the arguments and the hypothesis space's terms
    with bounded coefficients (or, for a sequence result with
-   [seq_result_function_template], a choice among bounded constructions).
+   [seq_result = Candidates _], a choice among bounded constructions).
    Since the term denotes a value everywhere, every instance is single-valued
    and total by construction, which is what makes the kind sound without a
    separate check.  Shape, depth and bounds
@@ -21,44 +21,101 @@ open Ast.LogicOld
 open Function
 
 module Config = struct
+  (** The bounds of the candidate results of a sequence-valued unknown's
+      template (see [Templ.seq_candidates]). *)
+  type seq_candidates = {
+    concat_depth : int; [@default 1]
+        (** concatenations a candidate result may contain *)
+    max_candidates : int; [@default 24]
+        (** length of each part of the candidate result list: the atoms, and
+            the concatenations *)
+    selector_depth : int; [@default 2]
+        (** selector chains through single-constructor datatype arguments *)
+    prefixes : bool; [@default false]
+        (** also offer [seq.extract s 0 n] at integer arguments [n] *)
+    length_cuts : bool; [@default false]
+        (** also offer the prefix and the suffix of each sequence atom of the
+            length of another sequence argument *)
+  }
+  [@@deriving yojson]
+
+  (** Whether an unknown whose result sort is a sequence gets a template:
+      [Off], the template is refused (answered [unknown]); [Candidates], an
+      [ite] chain choosing among candidate results built from the arguments
+      under learned conditions. *)
+  type seq_result = Off | Candidates of seq_candidates [@@deriving yojson]
+
+  (** Which argument tuples a function a reconstruction pass added is applied
+      to in the hypothesis space of a functional unknown: [All_tuples], every
+      tuple of reached terms of its argument sorts (a product, about 24^3
+      terms for a function of three integers over two dozen arguments);
+      [Clause_call_sites], only the tuples the clauses that mention the
+      unknown pass to the function's own unknown (see
+      [call_site_tuples]). *)
+  type reconstructed_fun_apps = All_tuples | Clause_call_sites
+  [@@deriving yojson]
+
+  (* the coefficient bounds of the synthesized templates, by role *)
+  type coeff_bound = {
+    initial : int option; [@default Some 1]
+        (** the starting bound on the sum of the absolute values of the coefficients
+            ([None]: unbounded); a failure can raise it *)
+    lower : int option; [@default None]
+        (** a lower bound on the sum of the absolute values of the coefficients *)
+    per_coefficient : int option; [@default None]
+        (** a bound on the absolute value of each coefficient *)
+    unbounded_above : int option; [@default None]
+        (** once the coefficient bound has reached this value, raising it drops it
+            altogether ([None]: it is raised by one each time) *)
+  }
+  [@@deriving yojson]
+
+  type const_bound = {
+    initial : int option; [@default Some 0]
+        (** the starting bound on the sum of the absolute values of the constants
+            ([None]: unbounded); a failure can raise it *)
+    unbounded_above : int option; [@default None]
+        (** once the constant bound has reached this value, raising it drops it
+            altogether ([None]: it is raised by one each time) *)
+    seeds : int list option; [@default None]
+        (** the seed constants of the template ([None]: zero alone) *)
+  }
+  [@@deriving yojson]
+
+  type role_bounds = {
+    coeff : coeff_bound; [@default Common.Util.config_default coeff_bound_of_yojson "{}"]
+    const : const_bound; [@default Common.Util.config_default const_bound_of_yojson "{}"]
+  }
+  [@@deriving yojson]
+
+  type bounds = {
+    expr : role_bounds; [@default Common.Util.config_default role_bounds_of_yojson "{}"]
+        (** the bounds on the result expressions' coefficients and constants *)
+    cond : role_bounds; [@default Common.Util.config_default role_bounds_of_yojson "{}"]
+        (** the bounds on the branch conditions' coefficients and constants *)
+  }
+  [@@deriving yojson]
+
   type t = {
     verbose : bool; [@default true]
     number_of_expr : int; [@default 1]
     number_of_cond_conj : int; [@default 1]
-    depth : int; [@default 0]
-    ext : int; [@default 0]
-    upper_bound_expr_coeff : int option; [@default Some 1]
-    upper_bound_expr_const : int option; [@default Some 0]
-    expr_seeds : int list option; [@default None]
-    upper_bound_cond_coeff : int option; [@default Some 1]
-    upper_bound_cond_const : int option; [@default Some 0]
-    cond_seeds : int list option; [@default None]
+    term_depth : int; [@default 0]
+    extra_terms : int; [@default 0]
+    bounds : bounds; [@default Common.Util.config_default bounds_of_yojson "{}"]
+        (** the coefficient bounds of the synthesized templates *)
     max_number_of_cond_conj : int option; [@default None]
-    lower_bound_expr_coeff : int option; [@default None]
-    lower_bound_cond_coeff : int option; [@default None]
-    bound_each_expr_coeff : int option; [@default None]
-    bound_each_cond_coeff : int option; [@default None]
-    threshold_expr_coeff : int option; [@default None]
-    threshold_expr_const : int option; [@default None]
-    threshold_cond_coeff : int option; [@default None]
-    threshold_cond_const : int option; [@default None]
-    ignore_bool : bool; [@default true]
+    branch_on_bool_args : bool; [@default false]
+        (** offer the boolean parameters as branch conditions of the
+            template ([Templ.gen_fun_bool_branch]) *)
     fix_shape : bool; [@default true]
     fix_depth_ext : bool; [@default false]
     fix_upper_bound : bool; [@default false]
-    seq_result_function_template : bool; [@default false]
-        (** Build a template for an unknown whose result sort is a sequence
-            (otherwise refused, answered [unknown]): an [ite] chain choosing
-            among candidate results built from the arguments (see
-            [Templ.seq_candidates]) under learned conditions. *)
-    seq_result_concat_depth : int; [@default 1]
-        (** concatenations a candidate result may contain *)
-    seq_result_max_candidates : int; [@default 24]
-        (** length of the candidate result list *)
-    seq_result_selector_depth : int; [@default 2]
-        (** selector chains through single-constructor datatype arguments *)
-    seq_result_prefixes : bool; [@default false]
-        (** also offer [seq.extract s 0 n] at integer arguments [n] *)
+    seq_result : seq_result; [@default Off]
+        (** the template for an unknown whose result sort is a sequence (see
+            [seq_result]) *)
+    reconstructed_fun_apps : reconstructed_fun_apps; [@default All_tuples]
+        (** see [reconstructed_fun_apps] *)
     skip_non_numeric_result_qelim : bool; [@default false]
         (** a qualifier that mentions the result, when the result sort is
             not an integer, a real or a bit-vector, is dropped from the
@@ -76,6 +133,28 @@ module Config = struct
             absolute values made the synthesis query undecidable by Z3 within
             its budget once there are thousands of terms.  A restriction of
             the candidates only, so not a soundness matter. *)
+    record_result_leaf_depth : int option; [@default None]
+        (** [Some d]: when the result sort is a record of integers -- built
+            only from single-constructor datatypes, at most [d] constructors
+            deep, over integer leaves (a tuple, a mutable reference's pair of
+            current and final values, nestings of these) -- also offer as a
+            candidate result that record with every leaf an affine expression
+            over the integer arguments and the integer leaves of the
+            arguments reached through at most [d] selectors
+            ([Templ.gen_dt_fun]).  Without it a datatype-sorted result is
+            chosen among the arguments and constructor terms over them, which
+            cannot express a modified copy of an argument, such as the state
+            of a closure after one more call.  [None]: not offered.  A
+            widening of the candidates only, so not a soundness matter. *)
+    exact_affine_coefficient : bool; [@default false]
+        (** when a qualifier is solved for the unknown's result to give a
+            candidate result term, read the result's coefficient exactly
+            ([AffineTerm.exact_coeff_of]).  Off, the coefficient is taken to
+            be 1 whatever it is, so a qualifier [-1 + y - r = 0] offers
+            [1 - y] (not a root) and one with coefficient 2 or more offers a
+            term too; on, only roots are offered and a qualifier whose
+            coefficient is not 1 or -1 offers none.  Changes the candidate
+            terms, so the search, on every path that reads qualifiers. *)
   }
   [@@deriving yojson]
 
@@ -101,6 +180,9 @@ module type ArgType = sig
   val fenv : LogicOld.FunEnv.t
   val sol_space : SolSpace.t
   val id : int option
+
+  val problem_clauses : ClauseOld.t list Lazy.t
+  (** the problem's clauses, read only under [Clause_call_sites] *)
 end
 
 (*
@@ -177,6 +259,43 @@ let state_of param labels : state =
    ([Templ.gen_tot_fun_predicate], which says why every member is total).  The
    shape parameters, their bounds and the labels that move them are the
    functional template's in both cases. *)
+(* The template of a functional predicate [FN(x, r)]: the graph [r = f(x)] of
+   [Templ.gen_fun]'s guarded piecewise term, as [Templ.gen_fn_predicate]
+   builds it, except that when the result [r] is [Real] each affine part's
+   constant is a [Real]-sorted parameter ([Templ.gen_fun ~real_const]) rather
+   than [int_to_real] of an integer one.  Without that, and with integer
+   coefficients over the arguments, every member denotes an integer
+   combination of the arguments and the integer-valued terms, so a witness
+   that has to be a non-integer rational -- the skolem of [exists r:real.
+   r + r = 1 /\ ..], whose only witness is 1/2 -- lies outside the hypothesis
+   space at every bound: the template refutes a satisfiable problem, or the
+   loop searches forever.  The constant's bound is the integer one's,
+   [|c - s| <= ubed] for a seed [s], so at [ubed = 0] the space is unchanged
+   and every later bound only adds members.  The argument coefficients stay
+   integers, so [r = x / 2] is still outside; a real-sorted field of a
+   datatype or tuple result is not covered either ([gen_dt_fun] does not take
+   [real_const]).  Single-valuedness and totality are [gen_fun]'s and do not
+   depend on the constant's sort. *)
+let gen_fn_predicate ?linear_own_args_only ?record_leaf_depth ~print
+    ~ignore_bool ?seq_result tf_params tf_sub_params params :
+    Templ.templ_func_pred =
+  let args, (xret, sret) = List.rest_last params in
+  let templ =
+    Templ.gen_fun ?linear_own_args_only ?record_leaf_depth
+      ~real_const:(Term.is_real_sort sret) ~print ~ignore_bool ?seq_result
+      tf_params tf_sub_params args (Some xret, sret)
+  in
+  {
+    templ_params = templ.templ_params;
+    hole_quals_map = templ.hole_quals_map;
+    pred = Formula.eq (Term.mk_var xret sret) templ.func;
+    expr_selectors_bounds = templ.expr_selectors_bounds;
+    expr_coeffs_bounds = templ.expr_coeffs_bounds;
+    expr_const_bounds = templ.expr_const_bounds;
+    cond_coeffs_bounds = templ.cond_coeffs_bounds;
+    cond_const_bounds = templ.cond_const_bounds;
+  }
+
 module type WitnessType = sig
   val kind : Kind.t
   val total : (int list * bool) option
@@ -197,18 +316,18 @@ module MakeGen (Cfg : Config.ConfigType) (Arg : ArgType) (W : WitnessType) :
       {
         nd = config.number_of_expr;
         nc = config.number_of_cond_conj;
-        depth = config.depth;
-        ext = config.ext;
-        ubec = Option.map config.upper_bound_expr_coeff ~f:Z.of_int;
-        ubed = Option.map config.upper_bound_expr_const ~f:Z.of_int;
+        depth = config.term_depth;
+        ext = config.extra_terms;
+        ubec = Option.map config.bounds.expr.coeff.initial ~f:Z.of_int;
+        ubed = Option.map config.bounds.expr.const.initial ~f:Z.of_int;
         es =
-          (match config.expr_seeds with
+          (match config.bounds.expr.const.seeds with
           | None -> Set.Poly.singleton Z.zero
           | Some ds -> Set.Poly.of_list @@ List.map ds ~f:Z.of_int);
-        ubcc = Option.map config.upper_bound_cond_coeff ~f:Z.of_int;
-        ubcd = Option.map config.upper_bound_cond_const ~f:Z.of_int;
+        ubcc = Option.map config.bounds.cond.coeff.initial ~f:Z.of_int;
+        ubcd = Option.map config.bounds.cond.const.initial ~f:Z.of_int;
         cs =
-          (match config.cond_seeds with
+          (match config.bounds.cond.const.seeds with
           | None -> Set.Poly.singleton Z.zero
           | Some ds -> Set.Poly.of_list @@ List.map ds ~f:Z.of_int);
       }
@@ -217,24 +336,24 @@ module MakeGen (Cfg : Config.ConfigType) (Arg : ArgType) (W : WitnessType) :
     {
       nd = (if config.fix_shape then config.number_of_expr else 1);
       nc = (if config.fix_shape then config.number_of_cond_conj else 1);
-      depth = (if config.fix_depth_ext then config.depth else 0);
-      ext = (if config.fix_depth_ext then config.ext else 0);
+      depth = (if config.fix_depth_ext then config.term_depth else 0);
+      ext = (if config.fix_depth_ext then config.extra_terms else 0);
       ubec =
         (if config.fix_upper_bound then
-           Option.map ~f:Z.of_int config.upper_bound_expr_coeff
+           Option.map ~f:Z.of_int config.bounds.expr.coeff.initial
          else Some Z.one);
       ubed =
         (if config.fix_upper_bound then
-           Option.map ~f:Z.of_int config.upper_bound_expr_const
+           Option.map ~f:Z.of_int config.bounds.expr.const.initial
          else Some Z.zero);
       es = Set.Poly.singleton Z.zero;
       ubcc =
         (if config.fix_upper_bound then
-           Option.map ~f:Z.of_int config.upper_bound_cond_coeff
+           Option.map ~f:Z.of_int config.bounds.cond.coeff.initial
          else Some Z.one);
       ubcd =
         (if config.fix_upper_bound then
-           Option.map ~f:Z.of_int config.upper_bound_cond_const
+           Option.map ~f:Z.of_int config.bounds.cond.const.initial
          else Some Z.zero);
       cs = Set.Poly.singleton Z.zero;
     }
@@ -288,6 +407,7 @@ module MakeGen (Cfg : Config.ConfigType) (Arg : ArgType) (W : WitnessType) :
     let quals', terms' =
       Qual.extract_terms_from_quals
         ~skip_non_numeric:config.skip_non_numeric_result_qelim
+        ~exact_affine_coeff:config.exact_affine_coefficient
         ~qelim:(Z3Smt.Z3interface.qelim ~id ~fenv:Arg.fenv)
         params quals
     in
@@ -300,8 +420,72 @@ module MakeGen (Cfg : Config.ConfigType) (Arg : ArgType) (W : WitnessType) :
            (if Option.is_none W.total then List.drop_last_exn params
             else params)) )
 
+  (* [call_site_tuples params] maps each function [f] a reconstruction pass
+     added for an unknown [rho] (named [recon_<rho>_...]) to the argument
+     tuples, over [params], at which a clause mentioning this unknown applies
+     [rho]: in each clause with an atom [this(a_1 .. a_n)], every argument
+     [a_j] that is a variable is renamed to the parameter [params_j], and each
+     atom [rho(u_1 .. u_k, ..)] of that clause gives the tuple
+     [(u_1 .. u_k)] renamed, provided every variable of it was renamed (a
+     tuple over the clause's other variables says nothing about the
+     arguments).  [f]'s first [k] arguments are [rho]'s, its result [rho]'s
+     last.  Every other function maps to [None] (all tuples).  The tuples are
+     well-sorted: renaming keeps sorts and [rho]'s argument sorts are [f]'s. *)
+  let call_site_tuples params =
+    let reconstructed = Atomic.get PCSP.Problem.reconstructed_functions in
+    let fun_of_rho =
+      Map.Poly.filter_keys Arg.fenv ~f:(Set.mem reconstructed)
+      |> Map.Poly.to_alist
+    in
+    let me = Ident.name_of_tvar Arg.name in
+    let found = Hashtbl.Poly.create () in
+    List.iter (Lazy.force Arg.problem_clauses) ~f:(fun (_, ps, ns, _) ->
+        let atoms = Set.to_list (Set.union ps ns) in
+        let apps =
+          List.filter_map atoms ~f:(function
+            | Atom.App (Predicate.Var (p, _), args, _) ->
+                Some (Ident.name_of_pvar p, args)
+            | _ -> None)
+        in
+        List.iter apps ~f:(fun (p, args) ->
+            if String.equal p me && List.length args = List.length params then
+              let ren =
+                Map.Poly.of_alist_reduce ~f:(fun a _ -> a)
+                @@ List.filter_map (List.zip_exn args params)
+                     ~f:(fun (a, (x, s)) ->
+                       match a with
+                       | Term.Var (v, _, _) -> Some (v, Term.mk_var x s)
+                       | _ -> None)
+              in
+              List.iter apps ~f:(fun (rho, rargs) ->
+                  List.iter fun_of_rho ~f:(fun (f, (fargs, _, _, _, _)) ->
+                      let k = List.length fargs in
+                      if
+                        String.is_prefix (Ident.name_of_tvar f)
+                          ~prefix:("recon_" ^ rho ^ "_")
+                        && List.length rargs > k
+                      then
+                        let us = List.take rargs k in
+                        if
+                          List.for_all us ~f:(fun u ->
+                              Set.for_all (Term.tvs_of u) ~f:(Map.Poly.mem ren))
+                        then
+                          Hashtbl.add_multi found ~key:f
+                            ~data:(List.map us ~f:(Term.subst ren))))));
+    fun f ->
+      if List.Assoc.mem fun_of_rho ~equal:Stdlib.( = ) f then
+        Some
+          (List.dedup_and_sort ~compare:Stdlib.compare
+             (Hashtbl.find_multi found f))
+      else None
+
   let update_hspace hspace =
-    HypSpace.qualifiers_of ~fenv:Arg.fenv !param.depth hspace
+    let func_app_tuples =
+      match config.reconstructed_fun_apps with
+      | All_tuples -> None
+      | Clause_call_sites -> Some (call_site_tuples (params_of ()))
+    in
+    HypSpace.qualifiers_of ?func_app_tuples ~fenv:Arg.fenv !param.depth hspace
 
   let kind_cert_template () = None
 
@@ -309,28 +493,32 @@ module MakeGen (Cfg : Config.ConfigType) (Arg : ArgType) (W : WitnessType) :
     let template =
       Function.refuse_without_template @@ fun () ->
       let seq_result =
-        if config.seq_result_function_template then
-          Some
-            Templ.
-              {
-                seq_concat_depth = config.seq_result_concat_depth;
-                seq_max_candidates = config.seq_result_max_candidates;
-                seq_selector_depth = config.seq_result_selector_depth;
-                seq_prefixes = config.seq_result_prefixes;
-              }
-        else None
+        match config.seq_result with
+        | Off -> None
+        | Candidates c ->
+            Some
+              Templ.
+                {
+                  seq_concat_depth = c.concat_depth;
+                  seq_max_candidates = c.max_candidates;
+                  seq_selector_depth = c.selector_depth;
+                  seq_prefixes = c.prefixes;
+                  seq_length_cuts = c.length_cuts;
+                }
       in
       (fun ~print ~ignore_bool tfp tfsp params ->
         match W.total with
         | None ->
-            Templ.gen_fn_predicate
-              ~linear_own_args_only:config.fn_linear_part_own_args_only ~print
+            gen_fn_predicate
+              ~linear_own_args_only:config.fn_linear_part_own_args_only
+              ?record_leaf_depth:config.record_result_leaf_depth ~print
               ~ignore_bool ?seq_result tfp tfsp params
         | Some (universal, relation) ->
             Templ.gen_tot_fun_predicate
-              ~linear_own_args_only:config.fn_linear_part_own_args_only ~print
+              ~linear_own_args_only:config.fn_linear_part_own_args_only
+              ?record_leaf_depth:config.record_result_leaf_depth ~print
               ~ignore_bool ~universal ~relation ?seq_result tfp tfsp params)
-        ~print:Debug.print ~ignore_bool:config.ignore_bool
+        ~print:Debug.print ~ignore_bool:(not config.branch_on_bool_args)
         {
           consts = Set.to_list hspace.consts;
           terms = Set.to_list hspace.terms;
@@ -346,10 +534,10 @@ module MakeGen (Cfg : Config.ConfigType) (Arg : ArgType) (W : WitnessType) :
           cs = !param.cs;
         }
         {
-          lbec = Option.map config.lower_bound_expr_coeff ~f:Z.of_int;
-          lbcc = Option.map config.lower_bound_cond_coeff ~f:Z.of_int;
-          beec = Option.map config.bound_each_expr_coeff ~f:Z.of_int;
-          becc = Option.map config.bound_each_cond_coeff ~f:Z.of_int;
+          lbec = Option.map config.bounds.expr.coeff.lower ~f:Z.of_int;
+          lbcc = Option.map config.bounds.cond.coeff.lower ~f:Z.of_int;
+          beec = Option.map config.bounds.expr.coeff.per_coefficient ~f:Z.of_int;
+          becc = Option.map config.bounds.cond.coeff.per_coefficient ~f:Z.of_int;
         }
         hspace.params
     in
@@ -747,26 +935,32 @@ module MakeGen (Cfg : Config.ConfigType) (Arg : ArgType) (W : WitnessType) :
     | ExprCoeff :: labels ->
         inner
           (if config.fix_upper_bound then param_actions
-           else increase_expr_coeff config.threshold_expr_coeff param_actions)
+           else increase_expr_coeff config.bounds.expr.coeff.unbounded_above param_actions)
           labels
     | ExprConst :: labels ->
         inner
           (if config.fix_upper_bound then param_actions
-           else increase_expr_const config.threshold_expr_const param_actions)
+           else increase_expr_const config.bounds.expr.const.unbounded_above param_actions)
           labels
     | CondCoeff :: labels ->
         inner
           (if config.fix_upper_bound then param_actions
-           else increase_cond_coeff config.threshold_cond_coeff param_actions)
+           else increase_cond_coeff config.bounds.cond.coeff.unbounded_above param_actions)
           labels
     | CondConst :: labels ->
         inner
           (if config.fix_upper_bound then param_actions
-           else increase_cond_const config.threshold_cond_const param_actions)
+           else increase_cond_const config.bounds.cond.const.unbounded_above param_actions)
           labels
     | QualDep :: labels -> inner param_actions labels
     | TimeOut :: _labels -> param_actions (* z3 may unexpectedly time out*)
-    | _ -> assert false
+    | _ ->
+        (* another template module's label: excluded by the contract of
+           [Function.Type.update_with_labels] *)
+        assert false
+
+  let coeff_labels = [ ExprCoeff; CondCoeff ]
+  let const_labels = [ ExprConst; CondConst ]
 
   let actions_of labels =
     (snd @@ inner (!param, []) @@ Set.to_list labels) @ [ "end" ]

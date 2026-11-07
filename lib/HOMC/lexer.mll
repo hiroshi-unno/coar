@@ -35,6 +35,21 @@ rule token = parse
     { BEGINT }
 | "%ENDT"
     { ENDT }
+| "%BEGINX"
+    (* A section of regular tree expression type definitions is not tokenised
+       here: its text up to [%ENDX] is returned whole, with the position where
+       it begins, for the type-definition reader, so that reader's errors
+       name this file's lines and columns.  A [/* ... */] comment inside it is
+       replaced by blanks of the same length (newlines kept), so the section
+       takes this file's comments as well as the type language's [(* ... *)].
+       The token's start position is reset to the [%BEGINX] keyword, which
+       the sub-lexers below would otherwise have moved. *)
+    { let start = Lexing.lexeme_start_p lexbuf in
+      let body = lexbuf.Lexing.lex_curr_p in
+      let buf = Buffer.create 1024 in
+      xtypes buf lexbuf;
+      lexbuf.Lexing.lex_start_p <- start;
+      XTYPES (Buffer.contents buf, body) }
 (*| "fail"
     { FAIL }*)
 | "case"
@@ -83,6 +98,38 @@ rule token = parse
     { EOF }
 | _
     { failwith ("unknown token: " ^ Lexing.lexeme lexbuf) }
+and xtypes buf = parse
+| "%ENDX"
+    { () }
+| '\n'
+    { Lexing.new_line lexbuf;
+      Buffer.add_char buf '\n';
+      xtypes buf lexbuf }
+| "/*"
+    { Buffer.add_string buf "  ";
+      xcomment buf lexbuf;
+      xtypes buf lexbuf }
+| eof
+    { failwith "unterminated %BEGINX section (no %ENDX)" }
+| _
+    { Buffer.add_string buf (Lexing.lexeme lexbuf);
+      xtypes buf lexbuf }
+and xcomment buf = parse
+| '\n'
+    { Lexing.new_line lexbuf;
+      Buffer.add_char buf '\n';
+      xcomment buf lexbuf }
+| "*/"
+    { Buffer.add_string buf "  " }
+| "/*"
+    { Buffer.add_string buf "  ";
+      xcomment buf lexbuf;
+      xcomment buf lexbuf }
+| eof
+    { failwith "unterminated comment" }
+| _
+    { Buffer.add_char buf ' ';
+      xcomment buf lexbuf }
 and comment = parse
 | '\n'
     { Lexing.new_line lexbuf;

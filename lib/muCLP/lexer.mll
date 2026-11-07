@@ -8,8 +8,11 @@
 rule main = parse
   (* ignore spacing and newline characters *)
   [' ' '\t' '\r']+ { main lexbuf }
-| '\n'
-| "//"[^'\n']*?'\n' { Lexing.new_line lexbuf; main lexbuf }
+| '\n' { Lexing.new_line lexbuf; main lexbuf }
+(* a line comment ends before its newline, which the rule above counts, or at
+   the end of the input: a file whose last line is a comment without a final
+   newline was refused when the comment had to end in one *)
+| "//"[^'\n']* { main lexbuf }
 | "/*" { comment (Lexing.lexeme_start_p lexbuf) lexbuf; main lexbuf }
 
 | "tt" { Parser.TT }
@@ -53,9 +56,25 @@ rule main = parse
 | "-" { Parser.MINUS }
 | "+" { Parser.ADD }
 | "*" { Parser.MULT }
-| "/" | "div" { Parser.DIV }
-| "%" { Parser.MOD }
-| "mod" { Parser.MOD }
+(* Integer division and remainder are SMT-LIB's: [/], [div], [%] and [mod]
+   are the Euclidean pair (the remainder is never negative, and
+   [a = b * (a div b) + a mod b]), as Z3 and every SMT-LIB reader take them.
+   Both members change together, so a file's quotient and remainder stay one
+   consistent pair.  The other rounding modes have spellings of their own,
+   which are what this format's printer writes for a term a frontend built
+   with them (a C or T2 program's [/] and [%] are truncated): [tdiv]/[rem]
+   (also [trem]) truncated, [fdiv]/[frem] flooring, [cdiv]/[crem] ceiling,
+   and [ediv]/[erem] the printer's own spelling of the Euclidean pair.  So
+   the printed form of every integer division reads back as the same
+   operation. *)
+| "/" | "div" | "ediv" { Parser.DIV Ast.Value.Euclidean }
+| "%" | "mod" | "erem" { Parser.MOD Ast.Value.Euclidean }
+| "tdiv" { Parser.DIV Ast.Value.Truncated }
+| "rem" | "trem" { Parser.MOD Ast.Value.Truncated }
+| "fdiv" { Parser.DIV Ast.Value.Flooring }
+| "frem" { Parser.MOD Ast.Value.Flooring }
+| "cdiv" { Parser.DIV Ast.Value.Ceiling }
+| "crem" { Parser.MOD Ast.Value.Ceiling }
 | ">=" { Parser.PREDSYM (T_num.NGeq (Ast.Ident.mk_fresh_svar ())) }
 | ">" { Parser.PREDSYM (T_num.NGt (Ast.Ident.mk_fresh_svar ())) }
 | "<=" { Parser.PREDSYM (T_num.NLeq (Ast.Ident.mk_fresh_svar ())) }
@@ -85,7 +104,11 @@ rule main = parse
    [#tvar<n>] would be one variable, and a substitution that relies on its
    own names being fresh would capture.  On an input spelling no such name
    the counter is untouched. *)
-| ['a'-'z''A'-'Z''#''_']['a'-'z''A'-'Z''0'-'9'''''_''#']*
+(* '@' may follow the first character: the transition-system translation
+   names a location's predicate [state_<function>@<label>], and the printer
+   writes that name back as it is, so a printed problem reads again only if
+   the reader takes it.  '@' is no token of this grammar. *)
+| ['a'-'z''A'-'Z''#''_']['a'-'z''A'-'Z''0'-'9'''''_''#''@']*
     {
       let str = Lexing.lexeme lexbuf in
       Ast.Ident.avoid_tvar (Ast.Ident.Tvar str);
@@ -98,10 +121,12 @@ rule main = parse
       Parser.REALL str
     }
 
+(* an integer literal is unbounded, as in SMT-LIB: it is passed on as its
+   digits and read by Zarith, since a native [int] overflows past 2^62 *)
 | ('0'|['1'-'9']['0'-'9']*)
     {
       let str = Lexing.lexeme lexbuf in
-      Parser.INTL (int_of_string str)
+      Parser.INTL str
     }
 
 | eof { Parser.EOF }

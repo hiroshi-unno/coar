@@ -8,6 +8,14 @@ type tvar = Tvar of string
 let tvar_count = Atomic.make 0
 let default_tvar_prefix = "#tvar"
 
+(* Source names can move this counter straight to its numeric boundary. Never
+   wrap into negative names: those are outside the reader's reservation rule. *)
+let rec fresh_tvar_id () =
+  let id = Atomic.get tvar_count in
+  if id = Int.max_value then failwith "Ident: fresh term-variable counter exhausted"
+  else if Atomic.compare_and_set tvar_count id (id + 1) then id
+  else fresh_tvar_id ()
+
 (* This domain's replay of fresh names, set only inside
    [with_replayed_fresh_names]: the prefix of the names drawn there and the
    counter they are numbered by. *)
@@ -21,7 +29,7 @@ let mk_fresh_tvar ?(prefix = None) () =
       incr n;
       Tvar (rp ^ string_of_int id)
   | _ ->
-      let id = Atomic.fetch_and_add tvar_count 1 in
+      let id = fresh_tvar_id () in
       let prefix = match prefix with None -> default_tvar_prefix | Some n -> n in
       Tvar (prefix ^ string_of_int id)
 
@@ -76,7 +84,7 @@ let skip_replayed_fresh_names k =
    spells: the default prefix's draw is unique, and the trailing [r] keeps it
    apart from [is_generated_tvar]'s names *)
 let fresh_replay_scope () =
-  sprintf "%s%dr" default_tvar_prefix (Atomic.fetch_and_add tvar_count 1)
+  sprintf "%s%dr" default_tvar_prefix (fresh_tvar_id ())
 
 (* [mk_fresh_tvar_avoiding ~prefix ~taken ()] is [mk_fresh_tvar ~prefix ()]
    drawn again for as long as [taken] holds of the result.
@@ -96,6 +104,19 @@ let mk_fresh_tvar_avoiding ~prefix ~taken () =
     if taken v then draw () else v
   in
   draw ()
+
+(* [skip_fresh_tvars k] moves the process-global counter on as [k] unprefixed
+   [mk_fresh_tvar] calls outside a replay would, without building the names,
+   so that the next draw gives the name it would have given after them.  For
+   a computation that stands in for one which draws [k] names and then
+   discards every one of them.  Raises inside a replay, where an unprefixed
+   draw does not move this counter. *)
+let skip_fresh_tvars k =
+  if replaying_fresh_names () then
+    invalid_arg "Ident.skip_fresh_tvars: inside a replay";
+  for _ = 1 to k do
+    ignore (fresh_tvar_id () : int)
+  done
 
 let name_of_tvar (Tvar name) = name
 let str_of_tvar x = (*if is_dontcare x then "_" else*) name_of_tvar x
@@ -148,6 +169,8 @@ let avoid_tvar x =
       @@ String.subo name ~pos:(String.length default_tvar_prefix)
     with
     | Some n ->
+        if n = Int.max_value then
+          failwith "Ident: cannot reserve exhausted term-variable name counter";
         let rec bump () =
           let cur = Atomic.get tvar_count in
           if cur > n then ()

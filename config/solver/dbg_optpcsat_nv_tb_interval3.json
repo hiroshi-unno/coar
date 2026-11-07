@@ -10,7 +10,7 @@
             "./config/solver/dbg_pcsat_tb_interval3.json"
         ],
         "verbose": true,
-        "mode": [
+        "side_conditions": [
             "NonVacuous"
         ]
     }

@@ -1,0 +1,3 @@
+; athena/Witness is a project of its own, built with
+; `dune build --root athena/Witness`; a build of the repository leaves it out.
+(data_only_dirs Witness)

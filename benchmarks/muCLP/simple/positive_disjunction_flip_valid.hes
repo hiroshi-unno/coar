@@ -1,0 +1,7 @@
+/* A closed query with two positive predicate occurrences and no negative
+   one, so MuCyc solves the negated query [not P 0 /\ not P 1] (CHC-shaped)
+   and flips its verdict.  Valid: P holds at every even non-negative
+   integer, so P 0 holds.  Twin: positive_disjunction_flip_invalid.hes. */
+P 0 \/ P 1
+s.t.
+P (x: int): bool =mu x = 0 \/ (x > 0 /\ P (x - 2));

@@ -1,0 +1,31 @@
+/* G coerces a copy of its argument, a list of a and b, to q1 (lists of c
+   and d), which fails, but only as the argument of H, which discards it; G
+   is passed to the unknown function f of the main type.  The language is
+   call-by-name, so the coercion is never checked, and every output is
+   c (d e), in q1: sat.  The reduction's coercion problem checks the
+   coercion where it is written and refutes, so the answer is unknown,
+   never unsat. */
+%BEGING
+F f g x -> f G x.
+G y -> c (H (coerce q1 (Copy y))).
+H z -> d e.
+Copy x -> case x of
+	 e => e
+| a x' => a (Copy x')
+| b x' => b (Copy x')
+| c x' => c (Copy x')
+| d x' => d (Copy x').
+%ENDG
+
+%BEGINA
+q0 a -> q0.
+q0 b -> q0.
+q0 e -> .
+q1 c -> q1.
+q1 d -> q1.
+q1 e -> .
+%ENDA
+
+%BEGINT
+F : ((q0 -> q1) -> q0 -> q1) -> (q0 -> q1) -> q0 -> q1.
+%ENDT

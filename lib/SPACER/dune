@@ -2,14 +2,16 @@
  (name SPACER)
  (public_name CoAR.SPACER)
  (preprocess
-  (pps ppx_deriving_yojson))
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
  (libraries
   core
   yojson
   z3
+  core_unix
   CoAR.common
   CoAR.Z3Smt
+  CoAR.Z3Released
   ;CoAR.Printer
   CoAR.pCSP
-  CoAR.PCSat.preprocessing)
+  CoAR.preprocessing)
  (modules config solver))

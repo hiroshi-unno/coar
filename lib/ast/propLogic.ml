@@ -44,6 +44,11 @@ module Formula : sig
   val eval : t -> bool
   val subst : (string, bool) Map.Poly.t -> t -> t
   val cnf_of : t -> (string list * string list) list
+  val cnf_of_appending : t -> (string list * string list) list
+  val merge_sorted : (t * 'a) list -> (t * 'a) list -> (t * 'a) list
+  val crosscheck : bool
+  val crosscheck_count : int Stdlib.Atomic.t
+  val crosscheck_tick : unit -> unit
   val nnf_of : t -> t
   val tseitinize : t -> (string Set.Poly.t * string Set.Poly.t) Set.Poly.t
 end = struct
@@ -153,17 +158,94 @@ end = struct
     | BinaryOp (op, phi1, phi2, info) ->
         BinaryOp (op, subst map phi1, subst map phi2, info)
 
-  let rec cnf_of = function
+  (* The clauses of an NNF-like formula (negation only on atoms, constants
+     and double negations), each a pair of the negated atoms' names and the
+     positive ones', in the order of the formula's leaves; a disjunction
+     distributes.  Built onto an accumulator: [and_of] nests its conjunction
+     to the left, and appending at every [And] made the conversion quadratic
+     in the number of clauses.  [go phi acc] is the clauses of [phi] followed
+     by [acc], and its subformulas are visited in the order the appending
+     form evaluated them (the right operand first), so the result and the
+     first unsupported subformula reported are the same. *)
+  (* the appending form [cnf_of] replaced, kept as the reference the property
+     test compares it with and as the path [COAR_PROP_CNF_APPEND] selects *)
+  let rec cnf_of_appending = function
     | True _ | UnaryOp (Neg, False _, _) -> []
     | False _ | UnaryOp (Neg, True _, _) -> [ ([], []) ]
     | Atom (name, _) -> [ ([], [ name ]) ]
     | UnaryOp (Neg, Atom (name, _), _) -> [ ([ name ], []) ]
-    | UnaryOp (Neg, UnaryOp (Neg, phi, _), _) -> cnf_of phi
-    | BinaryOp (And, phi1, phi2, _) -> cnf_of phi1 @ cnf_of phi2
+    | UnaryOp (Neg, UnaryOp (Neg, phi, _), _) -> cnf_of_appending phi
+    | BinaryOp (And, phi1, phi2, _) ->
+        cnf_of_appending phi1 @ cnf_of_appending phi2
     | BinaryOp (Or, phi1, phi2, _) ->
-        List.cartesian_product (cnf_of phi1) (cnf_of phi2)
+        List.cartesian_product (cnf_of_appending phi1) (cnf_of_appending phi2)
         |> List.map ~f:(fun ((ns1, ps1), (ns2, ps2)) -> (ns1 @ ns2, ps1 @ ps2))
     | phi -> failwith @@ sprintf "fail @ cnf_of %s " @@ str_of phi
+
+  let cnf_appending = Option.is_some (Sys.getenv "COAR_PROP_CNF_APPEND")
+
+  (* COAR_EXACT_CROSSCHECK set: every conversion is also made the appending
+     way and a difference is reported on stderr (a check of exactness on real
+     inputs; the result is the accumulating form's either way) *)
+  let crosscheck = Option.is_some (Sys.getenv "COAR_EXACT_CROSSCHECK")
+  let crosscheck_count = Stdlib.Atomic.make 0
+
+  (* counts one comparison; every thousandth is reported, since a run killed
+     at its budget runs no exit handler *)
+  let crosscheck_tick () =
+    let n = 1 + Stdlib.Atomic.fetch_and_add crosscheck_count 1 in
+    if n mod 1000 = 0 then
+      Stdlib.Printf.eprintf "exact-crosscheck: %d comparisons\n%!" n
+
+  let () =
+    if crosscheck then
+      Stdlib.at_exit (fun () ->
+          Stdlib.Printf.eprintf "exact-crosscheck: %d comparisons\n%!"
+            (Stdlib.Atomic.get crosscheck_count))
+
+  let rec cnf_of phi =
+    if crosscheck && not cnf_appending then (
+      let r = cnf_of_accumulating phi in
+      crosscheck_tick ();
+      if not (Stdlib.( = ) r (cnf_of_appending phi)) then
+        Stdlib.prerr_endline "exact-crosscheck: PropLogic.cnf_of DIFFERS";
+      r)
+    else if cnf_appending then cnf_of_appending phi
+    else cnf_of_accumulating phi
+
+  and cnf_of_accumulating phi =
+    let rec go phi acc =
+      match phi with
+      | True _ | UnaryOp (Neg, False _, _) -> acc
+      | False _ | UnaryOp (Neg, True _, _) -> ([], []) :: acc
+      | Atom (name, _) -> ([], [ name ]) :: acc
+      | UnaryOp (Neg, Atom (name, _), _) -> ([ name ], []) :: acc
+      | UnaryOp (Neg, UnaryOp (Neg, phi, _), _) -> go phi acc
+      | BinaryOp (And, phi1, phi2, _) -> go phi1 (go phi2 acc)
+      | BinaryOp (Or, phi1, phi2, _) ->
+          (List.cartesian_product (go phi1 []) (go phi2 [])
+          |> List.map ~f:(fun ((ns1, ps1), (ns2, ps2)) ->
+              (ns1 @ ns2, ps1 @ ps2)))
+          @ acc
+      | phi -> failwith @@ sprintf "fail @ cnf_of %s " @@ str_of phi
+    in
+    go phi []
+
+  (* Given two lists ascending in [Stdlib.compare] of their formulas, each
+     formula once, the ascending list of the formulas of either, each once:
+     [List.dedup_and_sort ~compare:Stdlib.compare] of the formulas of
+     [xs @ ys].  A formula both hold keeps [xs]'s pair.  Tail-recursive. *)
+  let merge_sorted xs ys =
+    let rec go acc xs ys =
+      match (xs, ys) with
+      | [], rest | rest, [] -> List.rev_append acc rest
+      | ((x, _) as px) :: xs', ((y, _) as py) :: ys' ->
+          let c = Stdlib.compare x y in
+          if c < 0 then go (px :: acc) xs' ys
+          else if c > 0 then go (py :: acc) xs ys'
+          else go (px :: acc) xs' ys'
+    in
+    go [] xs ys
 
   let rec nnf_of = function
     | UnaryOp (Neg, True Dummy, _) -> False Dummy

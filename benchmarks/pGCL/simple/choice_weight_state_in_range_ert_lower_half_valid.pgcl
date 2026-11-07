@@ -1,0 +1,22 @@
+# The weight p of the choice is a nat program variable, never assigned, and so is q, so the
+# bound is asked for every initial p, q >= 0; the choice is reached only where p + q <= 1, where
+# p is 0 or 1, a probability, so the guard that makes a run abort at an out-of-range weight never
+# fires.  Every run pays tick(1) once, so ert(S, 0) = 1 at every p, q and the lower bound 0.5
+# holds.
+# Expected: valid.  A run reaching an out-of-range weight is given a value that fails a lower
+# bound on an expected runtime; this pins the other direction: where no run reaches one, that
+# value must not cost the bound.  The twin of choice_weight_state_above_one_ert_lower_half_unknown.pgcl.
+nat p;
+nat q;
+nat c;
+tick(1);
+if (p + q <= 1) {
+	{
+		c := 1;
+	}[p]{
+		c := 0;
+	}
+} else {
+	c := 0;
+}
+?Ert[0] >= 0.5

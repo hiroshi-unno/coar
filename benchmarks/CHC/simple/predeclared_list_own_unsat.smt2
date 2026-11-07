@@ -7,6 +7,6 @@
 (set-logic HORN)
 (declare-datatypes ((List 1)) ((par (T) ((nil) (cons (hd T) (tl (List T)))))))
 (declare-fun P ((List Int)) Bool)
-(assert (P nil))
-(assert (forall ((l (List Int))) (=> (P l) (not (= l nil)))))
+(assert (P (as nil (List Int))))
+(assert (forall ((l (List Int))) (=> (P l) (not (= l (as nil (List Int)))))))
 (check-sat)

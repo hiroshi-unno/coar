@@ -36,7 +36,12 @@ let target_of_string = function "stdout" -> Stdout | path -> File path
 let var_at prefix id t = Ident.Tvar (sprintf "%s%d_%d" prefix id t)
 
 (* the copy of a formula of the system at time [t]: [s<id>] at [t], [sn<id>] at [t + 1] and
-   [i<id>] at [t] *)
+   [i<id>] at [t].  Requires [phi]'s free variables to be among the cone's [s<id>], [sn<id>] and
+   [i<id>] (the shared subterms [l<id>] are bound by the [let]s each formula carries): a free
+   variable this map does not rename would be one variable at every time of the unrolling, and
+   the trace found would be one in which that value never changes.  The targets [s<id>_<t>] and
+   [i<id>_<t>] contain an underscore, which no source name does, so the substitution captures
+   nothing. *)
 let at (ts : ts) (sys : Chc.system) t phi =
   let ssort id = Chc.sort_of_btor (sort_of ts.model id) in
   let ren name prefix id t' =

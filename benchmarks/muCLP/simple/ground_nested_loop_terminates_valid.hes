@@ -1,0 +1,6 @@
+/* a closed nested loop, i and j from 0 to 3: it terminates, so the least
+   fixpoint holds at the start */
+L (0)
+s.t.
+L (i: int): bool =mu i >= 3 \/ M i 0;
+M (i: int) (j: int): bool =mu (j >= 3 /\ L (i + 1)) \/ (j < 3 /\ M i (j + 1));

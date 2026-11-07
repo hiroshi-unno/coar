@@ -33,7 +33,7 @@
   (=>
     (and 
         (append l1 l2 r)
-        (= r nil)
+        (= r (as nil (List X)))
     )
     (and 
       ((_ is nil) l1)

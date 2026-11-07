@@ -36,17 +36,13 @@ open Ast
     tuple of a predicate in [svpvs] to be longer than [j]; guarantees the result
     mentions only atoms of [pos]. *)
 
-(* the tuple without position [j], and the element at [j] *)
-let split_at j args = (List.take args j @ List.drop args (j + 1), List.nth_exn args j)
-let insert_at j rest x = List.take rest j @ (x :: List.drop rest j)
-
 let rec learn pos res = function
   | [] -> res
   | (pvar, sorts, j) :: svpvs ->
       let sample = Set.filter pos ~f:(fst >> fst >> Stdlib.( = ) pvar) in
       if Set.is_empty sample then learn pos res svpvs
       else
-        Set.Poly.map sample ~f:(snd >> split_at j)
+        Set.Poly.map sample ~f:(snd >> List.remove_at j)
         |> Set.to_list |> Map.Poly.of_alist_multi
         |> Map.Poly.fold ~init:res ~f:(fun ~key:args ~data:rets res ->
                Set.fold_distinct_pairs (Set.Poly.of_list rets) ~init:res
@@ -64,8 +60,10 @@ let rec learn pos res = function
                           negative =
                             Set.Poly.of_list
                               [
-                                ExAtom.PApp ((pvar, sorts), insert_at j args r1);
-                                ExAtom.PApp ((pvar, sorts), insert_at j args r2);
+                                ExAtom.PApp
+                                  ((pvar, sorts), List.insert_at j args r1);
+                                ExAtom.PApp
+                                  ((pvar, sorts), List.insert_at j args r2);
                               ];
                         }))
         |> Fn.flip (learn pos) svpvs

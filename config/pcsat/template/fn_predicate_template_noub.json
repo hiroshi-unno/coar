@@ -1,8 +1,22 @@
 {
     "verbose": false,
-    "upper_bound_expr_coeff": null,
-    "upper_bound_expr_const": null,
-    "upper_bound_cond_coeff": null,
-    "upper_bound_cond_const": null,
+    "bounds": {
+        "expr": {
+            "coeff": {
+                "initial": null
+            },
+            "const": {
+                "initial": null
+            }
+        },
+        "cond": {
+            "coeff": {
+                "initial": null
+            },
+            "const": {
+                "initial": null
+            }
+        }
+    },
     "fix_shape": false
 }

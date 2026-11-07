@@ -103,13 +103,53 @@ let offset_from x t =
   | Term.FunApp (T_int.Add, [ n; a ], _) when is_var_named x a -> num n
   | _ -> None
 
+(* [Some c'] when [phi] is [x >= c'] for an integer numeral [c'], spelled
+   [x >= c'], [x > c' - 1], [c' <= x] or [c' - 1 < x] *)
+let counter_lower_bound x phi =
+  match phi with
+  | Formula.Atom (Atom.App (Predicate.Psym psym, [ t1; t2 ], _), _) -> (
+      match psym with
+      | T_int.Geq when is_var_named x t1 -> num t2
+      | T_int.Gt when is_var_named x t1 -> Option.map (num t2) ~f:Z.succ
+      | T_int.Leq when is_var_named x t2 -> num t1
+      | T_int.Lt when is_var_named x t2 -> Option.map (num t1) ~f:Z.succ
+      | _ -> None)
+  | _ -> None
+
+(* GUARDED SHAPE.  [ite (x_p >= c') (ite (x_p <= c) base step) base'] with
+   [c' <= c + 1] and [base'] the same term as [base] is the function
+   [ite (x_p <= c) base step]: below [c'] the counter is at most [c], where
+   the inner [ite] would give [base] too.  A front end that states a
+   termination measure (a [:decreases] clause) emits this guard around the
+   counted body.  [Some (x_p, inner)] for that inner [ite], at any integer
+   parameter [x_p] for which the shape holds; [None] otherwise.  The equality of
+   [base] and [base'] is syntactic, so it never accepts two different
+   functions. *)
+let guarded_body params body =
+  match body with
+  | Term.FunApp (T_bool.IfThenElse, [ cond; inner; base' ], _)
+    when T_bool.is_formula cond -> (
+      match inner with
+      | Term.FunApp (T_bool.IfThenElse, [ cond2; base; _ ], _)
+        when T_bool.is_formula cond2
+             && (try Stdlib.(base = base') with Invalid_argument _ -> false) ->
+          let phi = T_bool.let_formula cond and phi2 = T_bool.let_formula cond2 in
+          List.find_map params ~f:(fun (x, s) ->
+              if not (Term.is_int_sort s) then None
+              else
+                match (counter_lower_bound x phi, counter_bound x phi2) with
+                | Some c', Some c when Z.leq c' (Z.succ c) -> Some inner
+                | _ -> None)
+      | _ -> None)
+  | _ -> None
+
 (* [Some] exactly for a definition of the COUNTED shape stated above whose body
    is closed: every variable it mentions is a parameter or a function of
    [fenv].  The encoding substitutes the body at new arguments into clauses
    whose variables are the arguments' variables, so a variable free in the
    body would enter a clause unbound -- a universal the definition shares with
    the clauses, which only the clause's own copy of it may stand for. *)
-let counted_of ~(fenv : FunEnv.t) name (params, sret, body, is_rec, _) =
+let counted_of ?(guarded_counter = false) ~(fenv : FunEnv.t) name (params, sret, body, is_rec, _) =
   let closed () =
     Set.for_all (Term.tvs_of body) ~f:(fun x ->
         List.exists params ~f:(fun (y, _) -> Ident.tvar_equal x y)
@@ -117,6 +157,11 @@ let counted_of ~(fenv : FunEnv.t) name (params, sret, body, is_rec, _) =
   in
   if not (is_rec && closed ()) then None
   else
+    let body =
+      if guarded_counter then
+        Option.value (guarded_body params body) ~default:body
+      else body
+    in
     match body with
     | Term.FunApp (T_bool.IfThenElse, [ cond; base; step ], _)
       when T_bool.is_formula cond ->
@@ -153,8 +198,13 @@ let counted_of ~(fenv : FunEnv.t) name (params, sret, body, is_rec, _) =
                     | _ -> None))
     | _ -> None
 
-let counted_defs (fenv : FunEnv.t) =
-  Map.Poly.filter_mapi fenv ~f:(fun ~key ~data -> counted_of ~fenv key data)
+(* [guarded_counter]: a body of the GUARDED SHAPE ([guarded_body]) counts as
+   its inner counted body; [false] (the default) recognises the COUNTED shape
+   alone.  The same value is passed by every entry point below, so one run
+   recognises one set of definitions throughout. *)
+let counted_defs ?guarded_counter (fenv : FunEnv.t) =
+  Map.Poly.filter_mapi fenv ~f:(fun ~key ~data ->
+      counted_of ?guarded_counter ~fenv key data)
 
 let has_rec_call (fenv : FunEnv.t) t =
   Set.exists (Term.fvar_apps_of t) ~f:(function
@@ -182,6 +232,162 @@ let candidate_apps ~fenv ~defs ~scope phi =
   List.rev !found
 
 let str_key = Term.str_of
+
+(* BINDER INSTANCES.  [binder_instances ~fenv ~defs ~scope c] for a conjunct
+   [c] (a disjunction, in negation normal form): the instances [psi[a / xs]]
+   of each top-level disjunct [exists xs. psi] of [c] at the arguments of a
+   counted application of [c] outside every binder ([candidate_apps]) that
+   matches an application [f(.., x, ..)] in [psi] (outside [psi]'s own
+   binders): at each position where the pattern's argument is a variable of
+   [xs] the outside argument is taken for it, every other argument is the
+   same term in both, and every variable of [xs] gets exactly one value.
+   Distinct instances, in order of discovery; empty when there is none.
+
+   Why.  A lemma a clause uses -- a callee's postcondition such as
+   [forall s. (forall j. 64 j < n -> s[j] = 0) -> ones(s, n) = 0] -- sits in
+   the clause's body as a universal, so in the clause as an existential
+   disjunct, and the counted function applied under it is out of the
+   encoding's reach (an application under a binder is never replaced).  The
+   same clause applies the function at its own sequence, [ones(x0, n)], and
+   that application alone is replaced by the graph unknown's result [r].
+   The lemma and [r] then share nothing: the goal clause holds only if the
+   graph unknown itself states the lemma, an invariant over every cell of the
+   sequence that no quantifier-free candidate expresses, while the clause
+   needed nothing but the lemma at [x0].  Its instance, a disjunct outside
+   every binder, puts [ones(x0, n)] in the same replaced group, so [r] is
+   bound by the lemma in the goal itself.
+
+   Exact: [exists xs. psi] holds wherever [psi[a / xs]] does, so [c] and
+   [c \/ psi[a / xs]] are equivalent in every model.  [Formula.subst] is
+   capture-avoiding, so [psi]'s own binders do not capture [a]'s
+   variables. *)
+let binder_instances ~fenv ~defs ~scope c =
+  let outside = candidate_apps ~fenv ~defs ~scope c in
+  if List.is_empty outside then []
+  else
+    let seen = Hash_set.Poly.create () in
+    List.concat_map (Formula.disjuncts_list_of c) ~f:(function
+      | Formula.Bind (Formula.Exists, bounds, psi, _) ->
+          let bound x = List.exists bounds ~f:(fun (y, _) -> Ident.tvar_equal x y) in
+          let patterns = ref [] in
+          ignore
+          @@ Formula.map_term_no_binders psi ~f:(fun t ->
+              (match t with
+              | Term.FunApp (FVar (g, _, _), _, _) when Map.Poly.mem defs g ->
+                  patterns := t :: !patterns
+              | _ -> ());
+              t);
+          List.filter_map (List.rev !patterns) ~f:(fun pat ->
+              List.find_map outside ~f:(fun app ->
+                  match (pat, app) with
+                  | ( Term.FunApp (FVar (g, _, _), pargs, _),
+                      Term.FunApp (FVar (h, _, _), aargs, _) )
+                    when Ident.tvar_equal g h
+                         && List.length pargs = List.length aargs -> (
+                      let ok, map =
+                        List.fold2_exn pargs aargs ~init:(true, Map.Poly.empty)
+                          ~f:(fun (ok, map) p a ->
+                            if not ok then (false, map)
+                            else
+                              match p with
+                              | Term.Var (x, _, _) when bound x -> (
+                                  match Map.Poly.find map x with
+                                  | None -> (true, Map.Poly.set map ~key:x ~data:a)
+                                  | Some a' ->
+                                      (String.equal (str_key a) (str_key a'), map))
+                              | _ ->
+                                  ( Set.for_all (Term.tvs_of p) ~f:(Fn.non bound)
+                                    && String.equal (str_key p) (str_key a),
+                                    map ))
+                      in
+                      if
+                        ok
+                        && List.for_all bounds ~f:(fun (x, _) -> Map.Poly.mem map x)
+                      then
+                        let inst = Formula.subst map psi in
+                        let key = Formula.str_of inst in
+                        if Hash_set.mem seen key then None
+                        else (
+                          Hash_set.add seen key;
+                          Some inst)
+                      else None)
+                  | _ -> None))
+      | _ -> [])
+
+(* [with_binder_instances ~fenv ~defs ~scope phi]: [phi] (in negation normal
+   form) with each conjunct extended by its [binder_instances]; [phi] itself,
+   as the same value, when no conjunct has one.  Equivalent to [phi] in every
+   model, by the argument at [binder_instances]. *)
+let binder_instances_added = Atomic.make 0
+
+let with_binder_instances ~fenv ~defs ~scope phi =
+  let changed = ref false in
+  let cs =
+    List.map (Formula.conjuncts_list_of phi) ~f:(fun c ->
+        match binder_instances ~fenv ~defs ~scope c with
+        | [] -> c
+        | insts ->
+            changed := true;
+            Atomic.incr binder_instances_added;
+            Formula.or_of (c :: insts))
+  in
+  if !changed then Formula.and_of cs else phi
+
+(* [abstracted_weakening ~defs ~keep phi]: a formula implied by the
+   negation of [phi] in which no counted function is applied, or [None] when
+   nothing would be left.  The conjuncts of [nnf (not phi)] that [keep]
+   rejects are dropped; in the others every application of a counted function
+   outside every binder is replaced by a fresh variable (one per distinct
+   application, by its printed form); a conjunct that still applies a counted
+   function (under a binder) is dropped too.
+
+   Contract.  If the result is unsatisfiable, [phi] is valid: the kept
+   conjuncts are implied by [nnf (not phi)], and a model of them is a model
+   of their abstraction once each fresh variable takes the value of the
+   application it replaced, which the model fixes, since an application
+   outside every binder has only free variables in its arguments.  Nothing
+   else may be read from the result: a model of it need not satisfy what was
+   dropped or abstracted.  Why: a constraint whose quantified lemma premise
+   was instantiated at its own application ([binder_instances]) is decided
+   by that instance and the rest without the definition, and Z3 asked the
+   rest with the recursive definition in context did not answer it within
+   2 s (the definition is unfolded while the instance already decides). *)
+let abstracted_weakening ~defs ~keep phi =
+  let applies_counted psi =
+    Set.exists (Formula.fvar_apps_of psi) ~f:(function
+      | Term.FunApp (FVar (g, _, _), _, _) -> Map.Poly.mem defs g
+      | _ -> false)
+  in
+  let taken = ref (Formula.tvs_of phi) in
+  let fresh = Hashtbl.Poly.create () in
+  let abstract psi =
+    Formula.map_term_no_binders psi ~f:(fun t ->
+        match t with
+        | Term.FunApp (FVar (g, _, _), _, _) when Map.Poly.mem defs g -> (
+            let key = str_key t in
+            match Hashtbl.find fresh key with
+            | Some v -> v
+            | None ->
+                let x =
+                  Ident.mk_fresh_tvar_avoiding ~prefix:"rfg_abs"
+                    ~taken:(Set.mem !taken) ()
+                in
+                taken := Set.add !taken x;
+                let v = Term.mk_var x (Term.sort_of t) in
+                Hashtbl.set fresh ~key ~data:v;
+                v)
+        | _ -> t)
+  in
+  let kept =
+    List.filter_map
+      (Formula.conjuncts_list_of (Formula.nnf_of (Formula.negate phi)))
+      ~f:(fun c ->
+        if not (keep c) then None
+        else
+          let c' = abstract c in
+          if applies_counted c' then None else Some c')
+  in
+  if List.is_empty kept then None else Some (Formula.and_of kept)
 
 let instantiate d ~args ~counter t =
   let map =
@@ -449,6 +655,9 @@ let encode_constraints (params : Params.t) defs phis =
   let encode_formula (uni_senv, t) =
     let old_senv = Map.Poly.map uni_senv ~f:Logic.ExtTerm.to_old_sort in
     let phi = Formula.nnf_of @@ Logic.ExtTerm.to_old_fml exi_senv uni_senv t in
+    let phi =
+      with_binder_instances ~fenv ~defs ~scope:(Map.key_set old_senv) phi
+    in
     let outs =
       List.map (Formula.conjuncts_list_of phi) ~f:(fun c ->
           match encode_conjunct ~fenv ~defs ~uni_senv:old_senv ~taken_pred c with
@@ -563,12 +772,12 @@ let encoded_params ~graph_candidates ~keep_functions (params : Params.t)
    graph unknown is recursive, elimination stops at it, and the synthesiser
    has to find an invariant for what needed no induction.
    [keep_functions]: as for [encode_clauses]. *)
-let encode ?(unknown_free_only = false) ?(graph_candidates = false)
+let encode ?guarded_counter ?(unknown_free_only = false) ?(graph_candidates = false)
     ?(keep_functions = false) (pcsp : Problem.t) =
   if not (Problem.is_raw pcsp) then (pcsp, [])
   else
     let params = Problem.params_of pcsp in
-    let defs = counted_defs params.Params.fenv in
+    let defs = counted_defs ?guarded_counter params.Params.fenv in
     if Map.Poly.is_empty defs then (pcsp, [])
     else
       let phis =
@@ -604,22 +813,73 @@ let encode ?(unknown_free_only = false) ?(graph_candidates = false)
    negation normal form holds a candidate application in the sense of the
    top of this file).  [encodable_clauses] is the same test over a set, with
    the counted definitions of [params]'s environment read once. *)
-let encodable_clauses (params : Params.t) clauses =
+let encodable_formula ~fenv ~defs (params : Params.t) (uni_senv, t) =
+  let old_senv = Map.Poly.map uni_senv ~f:Logic.ExtTerm.to_old_sort in
+  let phi =
+    Formula.nnf_of @@ Logic.ExtTerm.to_old_fml params.Params.senv uni_senv t
+  in
+  List.exists (Formula.conjuncts_list_of phi) ~f:(fun c ->
+      not
+        (List.is_empty
+           (candidate_apps ~fenv ~defs ~scope:(Map.key_set old_senv) c)))
+
+let encodable_clauses ?guarded_counter (params : Params.t) clauses =
   let fenv = params.Params.fenv in
-  let defs = counted_defs fenv in
+  let defs = counted_defs ?guarded_counter fenv in
   if Map.Poly.is_empty defs then Set.Poly.empty
   else
     Set.filter clauses ~f:(fun cl ->
-        let uni_senv, t = Clause.to_senv_formula cl in
-        let old_senv = Map.Poly.map uni_senv ~f:Logic.ExtTerm.to_old_sort in
-        let phi =
-          Formula.nnf_of
-          @@ Logic.ExtTerm.to_old_fml params.Params.senv uni_senv t
+        encodable_formula ~fenv ~defs params (Clause.to_senv_formula cl))
+
+(* [drop_valid_encodable ~valid p]: [p] without each constraint that mentions
+   no unknown of [p], that an encoding would rewrite (it holds a candidate
+   application of a counted function, as [encodable_clauses] tests), and that
+   [valid] proves valid; with the number dropped.  [valid] is given the
+   constraint as a first-order formula whose free variables are read
+   universally, and must answer [true] only for a formula valid in every
+   model.  Contract: the result has the solutions of [p] (a valid constraint
+   constrains no unknown), the same signature, parameters and function
+   environment, and the same form (clauses or formulas); [p] itself, as the
+   same value, when nothing is dropped.  Why: such a constraint, once encoded,
+   turns into a graph unknown whose invariant the loop has to find, although
+   it may need no induction at all (a property of the function the clauses
+   only carry, or unfold once). *)
+let drop_valid_encodable ?guarded_counter ~valid (pcsp : Problem.t) =
+  let params = Problem.params_of pcsp in
+  let fenv = params.Params.fenv in
+  let defs = counted_defs ?guarded_counter fenv in
+  if Map.Poly.is_empty defs then (pcsp, 0)
+  else
+    let droppable ((uni_senv, t) as phi) =
+      (not (mentions_unknown params.Params.senv t))
+      && encodable_formula ~fenv ~defs params phi
+      &&
+      (* asked with the binder instances of [with_binder_instances], an
+         equivalent formula: a lemma premise quantified over the sequence the
+         constraint also applies the function at is then usable without
+         instantiating a quantifier *)
+      let phi = Logic.ExtTerm.to_old_fml params.Params.senv uni_senv t in
+      let nnf = Formula.nnf_of phi in
+      let phi' =
+        with_binder_instances ~fenv ~defs ~scope:(Map.key_set uni_senv) nnf
+      in
+      valid (if phys_equal phi' nnf then phi else phi')
+    in
+    match Problem.clauses_of_opt ~full_clauses:false pcsp with
+    | Some clauses ->
+        let dropped, kept =
+          Set.partition_tf clauses ~f:(fun cl ->
+              droppable (Clause.to_senv_formula cl))
         in
-        List.exists (Formula.conjuncts_list_of phi) ~f:(fun c ->
-            not
-              (List.is_empty
-                 (candidate_apps ~fenv ~defs ~scope:(Map.key_set old_senv) c))))
+        if Set.is_empty dropped then (pcsp, 0)
+        else (Problem.of_clauses ~params kept, Set.length dropped)
+    | None ->
+        if not (Problem.is_raw pcsp) then (pcsp, 0)
+        else
+          let phis = Problem.formulas_of ~full_clauses:false pcsp in
+          let dropped, kept = Set.partition_tf phis ~f:droppable in
+          if Set.is_empty dropped then (pcsp, 0)
+          else (Problem.of_formulas ~params kept, Set.length dropped)
 
 (* The entry point for a problem in CLAUSE form, which is the form the
    preprocessor hands the CEGIS loop.  Contract: the result is the problem
@@ -641,13 +901,13 @@ let encodable_clauses (params : Params.t) clauses =
    mentioning a function must keep its definition: an example over [f]'s
    terms is a statement in every model only while [f] denotes its
    definition). *)
-let encode_clauses ?(unknown_free_only = false) ?(only = fun _ -> true)
+let encode_clauses ?guarded_counter ?(unknown_free_only = false) ?(only = fun _ -> true)
     ?(graph_candidates = false) ?(keep_functions = false) (pcsp : Problem.t) =
   match Problem.clauses_of_opt ~full_clauses:false pcsp with
   | None -> (pcsp, [])
   | Some clauses ->
       let params = Problem.params_of pcsp in
-      let defs = counted_defs params.Params.fenv in
+      let defs = counted_defs ?guarded_counter params.Params.fenv in
       if Map.Poly.is_empty defs then (pcsp, [])
       else
         let cls = Set.to_list clauses in

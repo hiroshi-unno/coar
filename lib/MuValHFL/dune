@@ -1,0 +1,10 @@
+(library
+ (name MuValHFL)
+ (public_name CoAR.MuValHFL)
+ (preprocess
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
+ (libraries core CoAR.common CoAR.ast CoAR.muCLP CoAR.Z3Smt CoAR.HFL
+  CoAR.RCaml CoAR.MuVal CoAR.pCSP)
+ (modules config solver)
+ (synopsis
+  "HFL(Z) validity checking by RCaml's Boolean HFL mode, with an order-1 route to MuVal"))

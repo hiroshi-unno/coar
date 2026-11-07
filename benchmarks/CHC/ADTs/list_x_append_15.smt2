@@ -1,12 +1,12 @@
 (set-logic HORN)
 
 (declare-sort X 0)
-(declare-datatypes () ((X_List nil (cons (hd X) (tl (X_List))))))
+(declare-datatypes ((X_List 0)) (((nil) (cons (hd X) (tl X_List)))))
 
-(declare-fun append ((X_List) (X_List) (X_List)) Bool)
+(declare-fun append (X_List X_List X_List) Bool)
 
 
-(assert (forall ((l1 (X_List)) (l2 (X_List)) (_v12 (X_List)))
+(assert (forall ((l1 X_List) (l2 X_List) (_v12 X_List))
   (=>
     (and
         ((_ is nil) l1)
@@ -16,7 +16,7 @@
   )
 ))
 
-(assert (forall ((l1 (X_List)) (l2 (X_List)) (_v44 (X_List)) (_v41 (X_List)) (var12 (X_List)) (_v38 X) )
+(assert (forall ((l1 X_List) (l2 X_List) (_v44 X_List) (_v41 X_List) (var12 X_List) (_v38 X) )
   (=>
     (and
       (append var12 l2 _v41)
@@ -29,7 +29,7 @@
     (append l1 l2 _v44)
   )
 ))
-(assert (forall ((l1 (X_List)) (l2 (X_List)) (l3 (X_List)) (l4 (X_List)) (l5 (X_List)) (l6 (X_List)) (l7 (X_List)) ) 
+(assert (forall ((l1 X_List) (l2 X_List) (l3 X_List) (l4 X_List) (l5 X_List) (l6 X_List) (l7 X_List) ) 
   (=>
     (and 
         (append l1 l2 l3)

@@ -1,6 +1,5 @@
 (set-logic HORN)
 
-(declare-sort Int 0)
 (declare-datatypes ((List 1)) ((par (T) ((nil) (cons (hd T) (tl (List T)))))))
 
 (declare-fun exists$ ((List Int) Bool) Bool)
@@ -11,7 +10,7 @@
 (assert (forall ((l (List Int)) (var73 Bool))
     (=>
         (and
-            (= l nil)
+            (= l (as nil (List Int)))
             (not var73)
         )
         (exists$ l var73)
@@ -57,7 +56,7 @@
 (assert (forall ((l1 (List Int)) )
     (=>
         (and
-            (not (= l1 nil))
+            (not (= l1 (as nil (List Int))))
             (exists$ l1 false)
         )   
         (p (hd l1))

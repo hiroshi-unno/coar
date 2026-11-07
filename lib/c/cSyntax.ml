@@ -39,9 +39,10 @@ let formula_of_term term = Formula.neq term (T_int.zero ())
 let term_of_string str =
   Term.mk_var (Ident.Tvar (sprintf "\"%s\"" str)) T_int.SRefInt ~info:Dummy
 
-(* set by the parsers when a declaration or cast says [unsigned]; the frontend
-   models C integers as mathematical integers, so wrap-around modulo 2^w is
-   not represented *)
+(* set by the parsers when a declaration or cast says [unsigned] of an
+   int-ranked type; the frontend models those as mathematical integers, so
+   wrap-around modulo 2^w is not represented (a cast to [unsigned char] or
+   [unsigned short] is reduced: see [convert_to_narrow]) *)
 let unsigned_seen = ref false
 
 (* The constraint a [__VERIFIER_nondet_*] result satisfies.  Types of at most 16
@@ -100,6 +101,59 @@ let type_of_nondet term =
     else None
   else None
 
+(* [convert_to_narrow bits signed t] is C's conversion of the int value [t] to
+   the [bits]-wide type [char] or [short] ([signed] tells which half): the value
+   reduced modulo 2^bits into the type's range.  C11 6.3.1.3 defines this for an
+   unsigned target; for a signed one the result is implementation-defined, and
+   GCC and Clang document the same reduction.  Without it a cast was the
+   identity: [(char)300] was 300 where every C compiler gives 44.
+
+   The types of rank [int] and above stay mathematical integers in this
+   frontend (no wrap-around for [int], [long] or [unsigned]); [char] and
+   [short] are the types whose nondeterministic values it already bounds by
+   their width, and a conversion into them is not an overflow but a defined
+   (or implementation-defined) reduction, so it is modelled.
+
+   Guarantees: the result lies in the target's range, and equals [t] whenever
+   [t] does.  A constant is folded, and a nondeterministic draw of a type whose
+   range is contained in the target's is returned unchanged (it is already in
+   range, and the lifting of calls out of expressions keeps its pattern). *)
+let convert_to_narrow bits signed t =
+  let m = Z.shift_left Z.one bits in
+  let off = if signed then Z.shift_left Z.one (bits - 1) else Z.zero in
+  let fits =
+    match type_of_nondet t with
+    | Some (T_int.SInt, b, s) ->
+        if Bool.(s = signed) then b <= bits else (not s) && b < bits
+    | _ -> false
+  in
+  if fits then t
+  else if T_int.is_int t then
+    T_int.mk_int Z.(erem (T_int.let_int t + off) m - off) ~info:Dummy
+  else if signed then
+    T_int.mk_sub
+      (T_int.mk_rem Value.Euclidean
+         (T_int.mk_add t (T_int.mk_int off) ~info:Dummy)
+         (T_int.mk_int m) ~info:Dummy)
+      (T_int.mk_int off) ~info:Dummy
+  else T_int.mk_rem Value.Euclidean t (T_int.mk_int m) ~info:Dummy
+
+(* A declaration whose type is [char] or [short] (signed or not, or a pointer
+   to one) is refused: every assignment to such a variable converts its value
+   modulo 2^bits, and the frontend reads the variable as an unbounded integer,
+   so [char c; c = 300;] would hold 300 instead of 44 and a property could be
+   decided wrongly.  [bits] is [None] for the int-ranked types. *)
+let refuse_narrow_decl = function
+  | None -> ()
+  | Some bits ->
+      raise
+        (SemanticError
+           (sprintf
+              "a %s-typed declaration is not supported: the conversion of an \
+               assigned value modulo 2^%d is not modelled"
+              (if bits = 8 then "char" else "short")
+              bits))
+
 module Define = struct
   type t = DEF of (string * int)
 
@@ -156,6 +210,11 @@ module rec Ctl : sig
   val let_ap : t -> Formula.t
   val string_of : t -> string
   val get_fv : t -> Variables.t
+
+  val subst : (Ident.tvar, Term.t) Map.Poly.t -> t -> t
+  (** [subst sub phi] applies [sub] to every atom of [phi]; a CTL formula
+      binds no term variable, so this is [Formula.subst] at each atom. *)
+
   val unwrap : t -> unwrap_result
   val let_unop : t -> t
   val let_binop : t -> Formula.binop * t * t
@@ -221,6 +280,16 @@ end = struct
     | OR (phi1, phi2) | AND (phi1, phi2) | IMP (phi1, phi2) ->
         Variables.union (get_fv phi1) (get_fv phi2)
     | AP fml -> Formula.term_sort_env_of fml |> Variables.of_tvarset
+
+  let rec subst sub = function
+    | AF phi -> AF (subst sub phi)
+    | EF phi -> EF (subst sub phi)
+    | AG phi -> AG (subst sub phi)
+    | EG phi -> EG (subst sub phi)
+    | OR (phi1, phi2) -> OR (subst sub phi1, subst sub phi2)
+    | AND (phi1, phi2) -> AND (subst sub phi1, subst sub phi2)
+    | IMP (phi1, phi2) -> IMP (subst sub phi1, subst sub phi2)
+    | AP fml -> AP (Formula.subst sub fml)
 
   let unwrap = function
     | AF phi | EF phi | AG phi | EG phi -> PHI phi
@@ -313,6 +382,11 @@ module rec Ltl : sig
   val let_p : t -> Formula.t
   val string_of : ?priority:int -> t -> string
   val get_fv : t -> Variables.t
+
+  val subst : (Ident.tvar, Term.t) Map.Poly.t -> t -> t
+  (** [subst sub phi] applies [sub] to every atom of [phi]; an LTL formula
+      binds no term variable, so this is [Formula.subst] at each atom. *)
+
   val let_unop : t -> t
   val let_binop : t -> Formula.binop * t * t
   val simplify : t -> t
@@ -415,6 +489,16 @@ end = struct
     | U (phi1, phi2) | OR (phi1, phi2) | AND (phi1, phi2) ->
         Variables.union (get_fv phi1) (get_fv phi2)
     | P fml -> Formula.term_sort_env_of fml |> Variables.of_tvarset
+
+  let rec subst sub = function
+    | F phi -> F (subst sub phi)
+    | G phi -> G (subst sub phi)
+    | X phi -> X (subst sub phi)
+    | NEG phi -> NEG (subst sub phi)
+    | U (phi1, phi2) -> U (subst sub phi1, subst sub phi2)
+    | OR (phi1, phi2) -> OR (subst sub phi1, subst sub phi2)
+    | AND (phi1, phi2) -> AND (subst sub phi1, subst sub phi2)
+    | P fml -> P (Formula.subst sub fml)
 
   let let_unop = function F phi | G phi | X phi -> phi | _ -> assert false
 
@@ -860,6 +944,30 @@ module rec Statement : sig
   (* val get_label_references: t -> (string, t) Hashtbl.t *)
   val get_all_labels : t -> (string * Sort.t) list
   val of_statements : t list -> t
+
+  val mk_continue : unit -> t
+  (** [mk_continue ()] is a [continue;] not yet attached to its loop: a jump to
+      a reserved label that only [close_continue] gives a target. *)
+
+  val close_continue : t -> t * t option
+  (** [close_continue body] attaches the [continue]s of a loop body: each one
+      in [body] and outside any loop nested in it becomes a jump to a fresh
+      label, returned beside the rewritten body for the loop builder to place
+      where C's [continue] goes -- after the body and before a [for] loop's
+      update or a [do] loop's test.  [None] when [body] holds no such
+      [continue], and then [body] is returned unchanged.  A [continue] inside a
+      nested loop belongs to that loop, which was closed when it was built. *)
+
+  type switch_item = Case of Term.t | Default | Stmt of t
+
+  val mk_switch : Term.t -> switch_item list -> t
+  (** [mk_switch e items] is [switch (e) { items }] for an [e] that is a
+      variable or a constant (the caller evaluates any other scrutinee once,
+      into a temporary): a dispatch jumping to the first [case] whose value
+      [e] equals, else to [default], else past the switch, followed by the
+      items in order, so control falls through from one case into the next;
+      a [break] outside any loop nested in [items] leaves the switch, and a
+      [continue] stays one of the enclosing loop. *)
 end = struct
   type t =
     | IF of Formula.t * t * t
@@ -1211,6 +1319,68 @@ end = struct
     | [] -> mk_nop ()
     | stmt :: [] -> stmt
     | stmt :: tail -> mk_compound stmt (of_statements tail)
+
+  (* No C identifier contains '#', so neither the marker nor the labels it is
+     resolved to can be a label of the program, and the labels of an inlined
+     body, these included, are renamed apart at each call. *)
+  let continue_marker = "#continue"
+  let mk_continue () = GOTO continue_marker
+  let continue_count = ref 0
+
+  (* [retarget is_jump target body] replaces each statement of [body] that
+     [is_jump] selects, outside any nested [LOOP], by [GOTO target] *)
+  let rec retarget is_jump target = function
+    | stmt when is_jump stmt -> GOTO (Lazy.force target)
+    | IF (cond, stmt1, stmt2) ->
+        IF (cond, retarget is_jump target stmt1, retarget is_jump target stmt2)
+    | NONDET (stmt1, stmt2) ->
+        NONDET (retarget is_jump target stmt1, retarget is_jump target stmt2)
+    | COMPOUND (stmt1, stmt2) ->
+        COMPOUND (retarget is_jump target stmt1, retarget is_jump target stmt2)
+    | stmt -> stmt (* a nested [LOOP]'s jumps are its own *)
+
+  let close_continue body =
+    let label =
+      lazy
+        (incr continue_count;
+         sprintf "#continue%d" !continue_count)
+    in
+    let is_continue = function
+      | GOTO lab -> String.equal lab continue_marker
+      | _ -> false
+    in
+    let body = retarget is_continue label body in
+    (body, if Lazy.is_val label then Some (LABEL (Lazy.force label)) else None)
+
+  type switch_item = Case of Term.t | Default | Stmt of t
+
+  let switch_count = ref 0
+
+  let mk_switch scrutinee items =
+    incr switch_count;
+    let n = !switch_count in
+    let end_label = lazy (sprintf "#switch%d_end" n) in
+    let labelled =
+      List.mapi items ~f:(fun i item -> (sprintf "#switch%d_%d" n i, item))
+    in
+    let default =
+      match List.find labelled ~f:(function _, Default -> true | _ -> false) with
+      | Some (lab, _) -> lab
+      | None -> Lazy.force end_label
+    in
+    let dispatch =
+      List.fold_right labelled ~init:(GOTO default) ~f:(fun (lab, item) rest ->
+          match item with
+          | Case value -> IF (Formula.eq scrutinee value, GOTO lab, rest)
+          | Default | Stmt _ -> rest)
+    in
+    let body =
+      List.map labelled ~f:(fun (lab, item) ->
+          match item with
+          | Case _ | Default -> LABEL lab
+          | Stmt stmt -> retarget is_break end_label stmt)
+    in
+    of_statements ((dispatch :: body) @ [ LABEL (Lazy.force end_label) ])
 end
 
 module rec Init : sig
@@ -1238,7 +1408,20 @@ module rec Init : sig
   val update_formula_E : Formula.t -> t -> Formula.t
   val subst : TermSubst.t -> t -> t
   val update_varname : string -> t -> t
-  val of_stmt : t list -> Statement.t -> t list * Statement.t option
+  val of_stmt :
+    ?declared:(string -> bool) ->
+    t list ->
+    Statement.t ->
+    t list * Statement.t option
+  (** [of_stmt ~declared inits stmt] moves the leading straight-line
+      assignments, draws and assumptions of [stmt] into [inits]: they make the
+      initial state, which is observed once, after all of them.  An assignment
+      to a variable [inits] already assigns ends the prefix and stays a step,
+      except that a variable for which [declared] holds -- a local declared
+      once, whose first draw is only its indeterminate value at the
+      declaration -- may have that draw overwritten by its initialiser while
+      nothing in [inits] has read it, since no state shows the draw. *)
+
   val of_stmt_exn : t list -> Statement.t -> t list
 end = struct
   type t =
@@ -1322,32 +1505,66 @@ end = struct
           String.equal varname' varname
       | ASSUME _ -> false)
 
-  let rec of_stmt_rep stmt inits_rev =
+  (* [varname]'s only entry in [inits] is a draw and no entry reads it: the
+     draw is dead if [varname] is assigned next *)
+  let only_unread_draw inits varname =
+    let tvar = Ident.Tvar varname in
+    List.count inits ~f:(function
+      | NONDET_INT_ASSIGN v | NONDET_REAL_ASSIGN v -> String.equal v varname
+      | ASSIGN _ | ASSUME _ -> false)
+    = 1
+    && List.for_all inits ~f:(function
+         | NONDET_INT_ASSIGN _ | NONDET_REAL_ASSIGN _ -> true
+         | ASSIGN (v, t) ->
+             (not (String.equal v varname))
+             && not (Set.mem (Term.tvs_of t) tvar)
+         | ASSUME fml -> not (Set.mem (Formula.tvs_of fml) tvar))
+
+  let drop_draw inits varname =
+    List.filter inits ~f:(function
+      | NONDET_INT_ASSIGN v | NONDET_REAL_ASSIGN v -> not (String.equal v varname)
+      | ASSIGN _ | ASSUME _ -> true)
+
+  let rec of_stmt_rep declared stmt inits_rev =
+    let overwritable varname =
+      declared varname && only_unread_draw inits_rev varname
+    in
     if Statement.is_compound stmt then
       let stmt1, stmt2 = Statement.let_compound stmt in
-      let inits_rev, nxt_stmt = of_stmt_rep stmt1 inits_rev in
+      let inits_rev, nxt_stmt = of_stmt_rep declared stmt1 inits_rev in
       match nxt_stmt with
-      | None -> of_stmt_rep stmt2 inits_rev
+      | None -> of_stmt_rep declared stmt2 inits_rev
       | Some nxt_stmt -> (inits_rev, Some (Statement.mk_compound nxt_stmt stmt2))
     else if Statement.is_assign stmt then
       let varname, term = Statement.let_assign stmt in
-      if is_already_assigned inits_rev varname then (inits_rev, Some stmt)
-      else (ASSIGN (varname, term) :: inits_rev, None)
+      if not (is_already_assigned inits_rev varname) then
+        (ASSIGN (varname, term) :: inits_rev, None)
+      else if
+        overwritable varname
+        && not (Set.mem (Term.tvs_of term) (Ident.Tvar varname))
+      then
+        (* the declaration's draw is dead: the initialiser replaces it *)
+        (ASSIGN (varname, term) :: drop_draw inits_rev varname, None)
+      else (inits_rev, Some stmt)
     else if Statement.is_nondet_int_assign stmt then
       let varname = Statement.let_nondet_int_assign stmt in
-      if is_already_assigned inits_rev varname then (inits_rev, Some stmt)
-      else (NONDET_INT_ASSIGN varname :: inits_rev, None)
+      if not (is_already_assigned inits_rev varname) then
+        (NONDET_INT_ASSIGN varname :: inits_rev, None)
+      else if overwritable varname then (inits_rev, None) (* a second draw *)
+      else (inits_rev, Some stmt)
     else if Statement.is_nondet_real_assign stmt then
       let varname = Statement.let_nondet_real_assign stmt in
-      if is_already_assigned inits_rev varname then (inits_rev, Some stmt)
-      else (NONDET_REAL_ASSIGN varname :: inits_rev, None)
+      if not (is_already_assigned inits_rev varname) then
+        (NONDET_REAL_ASSIGN varname :: inits_rev, None)
+      else if overwritable varname then (inits_rev, None) (* a second draw *)
+      else (inits_rev, Some stmt)
     else if Statement.is_assume stmt then
       let fml = Statement.let_assume stmt in
       (ASSUME fml :: inits_rev, None)
     else (inits_rev, Some stmt)
 
-  let of_stmt inits stmt =
-    let inits_rev, stmt = of_stmt_rep stmt (List.rev inits) in
+  let of_stmt ?(declared = fun _ -> false) inits stmt =
+    let inits_rev, stmt = of_stmt_rep declared stmt (List.rev inits) in
     (List.rev inits_rev, stmt)
 
   let of_stmt_exn inits stmt =
@@ -1551,15 +1768,20 @@ end = struct
     let body = get_funbody fundecl in
     get_next_funnames_rep body Variables.empty |> Variables.to_list
 
+  (* A depth-first search of the call graph from [fundecl]: a call to a function
+     on the current path ([ancestors]) closes a cycle, so inlining from
+     [fundecl] would not terminate; a call to one already searched off the path
+     ([used]) cannot.  Answering [true] at a call to an ancestor let a
+     recursive function through to the inliner, which unfolded it forever. *)
   let rec is_non_recursive_rep fundecls fundecl ancestors used =
     get_next_funnames fundecl
     |> List.fold_left ~init:(true, used) ~f:(fun (res, used) funname' ->
-        let fundecl' = find_fundecl funname' fundecls in
         if not res then (false, used)
-        else if Variables.is_mem ancestors funname' then (true, used)
+        else if Variables.is_mem ancestors funname' then (false, used)
         else if Variables.is_mem used funname' then (true, used)
         else
-          is_non_recursive_rep fundecls fundecl'
+          is_non_recursive_rep fundecls
+            (find_fundecl funname' fundecls)
             (Variables.add funname' ancestors)
             (Variables.add funname' used))
 

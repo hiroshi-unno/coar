@@ -1,0 +1,22 @@
+%BEGING
+S x y -> Mult y x.
+Mult x y -> case x of z => z | s z => Add y (Mult z y).
+Add x y -> case x of z => y | s z => s (Add z y).
+%ENDG
+
+%BEGINA
+q0 z -> .
+q1 s -> q0.
+q2 s -> q1.
+q02 s -> q11.
+q02 z -> .
+q11 s -> q02.
+
+qEven z -> .
+qEven s -> qOdd.
+qOdd s -> qEven.
+%ENDA
+
+%BEGINT
+S: q2 -> q02 -> qEven.
+%ENDT

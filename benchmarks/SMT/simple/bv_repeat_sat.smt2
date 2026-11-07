@@ -1,0 +1,5 @@
+; the 2-bit x with three copies equal to #b101010 exists (x = #b10)
+(set-logic QF_BV)
+(declare-const x (_ BitVec 2))
+(assert (= ((_ repeat 3) x) #b101010))
+(check-sat)

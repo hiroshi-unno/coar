@@ -114,22 +114,24 @@ let new_case_nt () =
   "CASE" ^ string_of_int i
 
 (* Note: this function must be applied after the "reduce" function *)
-let rec externalize_large_cases = function
+let rec externalize_large_cases ~fresh = function
   | (Fd _ | Nonterm _ | Var _ | Term _) as t -> (t, [])
   | App (t1, t2) ->
-      let t1', f1 = externalize_large_cases t1 in
-      let t2', f2 = externalize_large_cases t2 in
+      let t1', f1 = externalize_large_cases ~fresh t1 in
+      let t2', f2 = externalize_large_cases ~fresh t2 in
       (App (t1', t2'), f1 @ f2)
   | Case (id, ts) as t ->
       if sizeof_term t >= !case_size_th then
-        let ts, fs = List.unzip @@ List.map ~f:externalize_large_cases ts in
+        let ts, fs =
+          List.unzip @@ List.map ~f:(externalize_large_cases ~fresh) ts
+        in
         let fs = List.concat fs in
         let _n = List.length ts in
         let externalize t =
           if sizeof_term t >= !case_size_th then
             let fvs = fv [] t in
             let vars = List.map ~f:(fun x -> Var x) fvs in
-            let nt = new_case_nt () in
+            let nt = fresh () in
             let t' = apps (Nonterm (Ident.Tvar nt)) vars in
             (t', [ (Ident.Tvar nt, (fvs, t)) ])
           else (t, [])
@@ -139,11 +141,14 @@ let rec externalize_large_cases = function
       else (t, [])
   | CaseFd (_id, _ts) -> failwith "externalize_large_cases"
 
-let optimize_case (rules : t) =
+(* [optimize_case ?fresh rules] moves each large branch of a case into a
+   non-terminal of its own, named by [fresh] ([CASE<n>] by default), which
+   must give names no rule, parameter or terminal of [rules] has. *)
+let optimize_case ?(fresh = new_case_nt) (rules : t) =
   let rules, fs =
     List.unzip
     @@ List.map rules ~f:(fun (id, (ids, t)) ->
-           let t', fs = externalize_large_cases t in
+           let t', fs = externalize_large_cases ~fresh t in
            ((id, (ids, t')), fs))
   in
   rules @ List.concat fs
@@ -194,6 +199,10 @@ let pr_rules (trs : TTA.trs) ppf (rules : t) =
 
 let verbose_fail = ref false
 
-let fail id =
-  if !verbose_fail then Term (Ident.Tvar ("fail_" ^ Ident.name_of_tvar id))
-  else Term (Ident.Tvar "fail")
+(* [fail ~name a] is the terminal of a case analysis that met the constructor
+   [a], for which it has no branch: [name], or [name ^ "_" ^ a] when
+   [verbose_fail] is set.  The caller draws [name] so that both spellings
+   are terminals no automaton state reads. *)
+let fail ~name id =
+  if !verbose_fail then Term (Ident.Tvar (name ^ "_" ^ Ident.name_of_tvar id))
+  else Term (Ident.Tvar name)

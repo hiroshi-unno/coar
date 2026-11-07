@@ -1,0 +1,10 @@
+# x and y are int variables, and / between integers inside the program truncates toward
+# zero: y := x / 2 at x = -3 makes y = -1 (flooring would give -2), so y = -1 holds with
+# probability 1.  The file ending _unknown beside this one pins the other side.  (The post is
+# an indicator because an expectation must be non-negative in every state.)
+# Expected: valid.  Before pGCL had an int declaration this file did not parse.
+int x;
+int y;
+x := 0 - 3;
+y := x / 2;
+?Ex [[y = 0 - 1]] >= 1

@@ -1,0 +1,11 @@
+# A geometric loop that pays one tick per iteration and stops with probability 1/2 at
+# each.  ?Ex keeps wp's meaning, which ignores ticks: the expected value of 0 is 0 at every
+# initial state, whatever the ticks cost (the expected runtime, ?Ert[0], is 2 at x = 0).
+nat x;
+
+while (x = 0) {
+	tick(1);
+	{x := 1}[1/2]{skip}
+}
+
+?Ex[0] <= 0

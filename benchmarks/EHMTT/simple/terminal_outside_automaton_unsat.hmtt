@@ -1,0 +1,28 @@
+/* A rule builds the terminal ok, for which the automaton has no transition,
+   and the program also has a coercion, so its coercion problem needs a copy
+   of every terminal the rules use. On the empty input Main returns ok, which
+   q0 does not accept, so the answer is unsat. */
+%BEGING
+Copy x -> case x of
+	 e => e
+| a x' => a (Copy x')
+| b x' => b (Copy x').
+Main x -> case x of
+  e => ok
+| a x' => a (Copy (coerce q0 (Copy x')))
+| b x' => Main x'.
+%ENDG
+
+%BEGINA
+/* (a | b)* */
+q0 a -> q0.
+q0 b -> q0.
+q0 e -> .
+/* a* */
+q1 a -> q1.
+q1 e -> .
+%ENDA
+
+%BEGINT
+Main : q0 -> q0.
+%ENDT

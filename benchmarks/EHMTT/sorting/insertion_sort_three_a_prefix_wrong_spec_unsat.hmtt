@@ -1,0 +1,33 @@
+%BEGING
+Inserta x -> a x.
+Insertb x -> case x of
+	 e => b e
+| a x' => a (Insertb x')
+| b x' => b (b (copy x')).
+Isort x -> case x of
+  e => e
+| a x' => Inserta (Isort x')
+| b x' => Insertb (coerce q6 (Isort x')).
+%ENDG
+
+%BEGINA
+q3 a -> q4.
+q4 a -> q0.
+/* (a | b)* */
+q0 a -> q0.
+q0 b -> q0.
+q0 e -> .
+q5 a -> q6.
+q6 a -> q7.
+q7 a -> q1.
+/* a*b* */
+q1 a -> q1.
+q1 e -> .
+q1 b -> q2.
+q2 b -> q2.
+q2 e -> .
+%ENDA
+
+%BEGINT
+Isort : q3 -> q5.
+%ENDT

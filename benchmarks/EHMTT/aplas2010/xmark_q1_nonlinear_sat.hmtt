@@ -1,0 +1,192 @@
+%BEGING
+Start x -> PickItem x (FilterItem Ret nil).
+PickItem x k -> case x of site r lf => P1 r k.
+P1 r k ->  case r of regions r1 cts => P2 r1 k.
+P2 r1 k -> case r1 of africa is sib => P3 sib k.
+P3 sib k -> case sib of asia is sib => P4 sib k.
+P4 sib k -> case sib of australia is sib => P5 sib k.
+P5 sib k -> case sib of europe is na => P6 na k.
+P6 na k -> case na of namerica is sib => k is.
+FilterItem k z x -> case x of
+    item c sib => 
+      br (FilterItem k z sib) 
+/*         (FilterItem k (cons (item (copy c) leaf) z) sib) */
+         (FilterItem k (Append (coerce qIL z) (item (copy c) leaf)) sib) 
+  | leaf => k z
+.
+Append l x -> case l of
+    nil => cons x nil
+  | cons y ys => cons (copy y) (Append ys x)
+.
+Ret x -> x.
+%ENDG
+
+%BEGINA
+q0 site -> q25 q24.
+q1 description -> q29 q24.
+q2 leaf -> .
+q2 bold -> q2 q2.
+q2 emph -> q2 q2.
+q2 keyword -> q2 q2.
+q2 text -> q24 q2.
+q3 samerica -> q15 q24.
+q4 to -> q28 q24.
+q5 zipcode -> q28 q24.
+q6 increase -> q28 q24.
+q7 interval -> q43 q24.
+q8 end -> q28 q24.
+q9 closed_auctions -> q20 q24.
+q10 hapiness -> q28 q24.
+q11 leaf -> .
+q11 category -> q27 q11.
+q12 leaf -> .
+q12 listitem -> q13 q12.
+q13 leaf -> .
+q13 bold -> q2 q13.
+q13 emph -> q2 q13.
+q13 keyword -> q2 q13.
+q13 parlist -> q12 q13.
+q13 text -> q24 q13.
+q14 leaf -> .
+q14 edge -> q30 q14.
+q15 leaf -> .
+q15 item -> q32 q15.
+q16 leaf -> .
+q16 mail -> q34 q16.
+q17 leaf -> .
+q17 person -> q37 q17.
+q18 leaf -> .
+q18 watch -> q40 q18.
+q19 leaf -> .
+q19 open_auction -> q41 q19.
+q20 leaf -> .
+q20 closed_auction -> q44 q20.
+q21 leaf -> .
+q21 watches -> q18 q24.
+q22 leaf -> .
+q22 age -> q28 q24.
+q23 leaf -> .
+q23 annoatation -> q45 q24.
+q24 leaf -> .
+q25 regions -> q31 q46.
+q26 category -> q27 q11.
+q27 id -> q28 q47.
+q28 text -> q24 q24.
+q29 leaf -> .
+q29 bold -> q2 q2.
+q29 emph -> q2 q2.
+q29 keyword -> q2 q2.
+q29 parlist -> q12 q24.
+q29 text -> q24 q2.
+q30 from -> q28 q4.
+q31 africa -> q15 q48.
+q32 id -> q28 q49.
+q33 category -> q28 q24.
+q34 from -> q28 q50.
+q35 item -> q28 q24.
+q36 person -> q28 q24.
+q37 id -> q28 q51.
+q38 street -> q28 q52.
+q39 business -> q28 q22.
+q39 education -> q28 q54.
+q39 gender -> q28 q55.
+q39 income -> q28 q53.
+q39 interest -> q33 q53.
+q40 open_auction -> q28 q24.
+q41 id -> q28 q56.
+q42 date -> q28 q57.
+q43 start -> q28 q8.
+q44 seller -> q36 q58.
+q45 author -> q36 q59.
+q46 categories -> q26 q60.
+q47 name -> q28 q1.
+q48 asia -> q15 q61.
+q49 featured -> q28 q62.
+q49 location -> q28 q63.
+q50 to -> q28 q64.
+q51 name -> q28 q65.
+q52 city -> q28 q66.
+q53 business -> q28 q22.
+q53 education -> q28 q54.
+q53 gender -> q28 q55.
+q53 interest -> q33 q53.
+q54 business -> q28 q22.
+q54 gender -> q28 q55.
+q55 business -> q28 q22.
+q56 initial -> q28 q67.
+q57 time -> q28 q68.
+q58 buyer -> q36 q69.
+q59 description -> q29 q10.
+q59 hapiness -> q28 q24.
+q60 catgraph -> q14 q70.
+q61 australia -> q15 q71.
+q62 location -> q28 q63.
+q63 quantity -> q28 q72.
+q64 date -> q28 q2.
+q65 emailaddress -> q28 q73.
+q66 country -> q28 q74.
+q67 bidder -> q42 q75.
+q67 current -> q28 q76.
+q67 reserve -> q28 q75.
+q68 presonref -> q36 q6.
+q69 itemref -> q35 q77.
+q70 people -> q17 q78.
+q71 europe -> q15 q79.
+q72 name -> q28 q80.
+q73 leaf -> .
+q73 address -> q38 q82.
+q73 creditcard -> q28 q84.
+q73 homepage -> q28 q83.
+q73 phone -> q28 q81.
+q73 profile -> q39 q21.
+q73 watches -> q18 q24.
+q74 province -> q28 q5.
+q74 zipcode -> q28 q24.
+q75 bidder -> q42 q75.
+q75 current -> q28 q76.
+q76 itemref -> q35 q86.
+q76 privacy -> q28 q85.
+q77 price -> q28 q87.
+q78 open_auctions -> q19 q9.
+q79 namerica -> q15 q3.
+q80 payment -> q28 q88.
+q81 leaf -> .
+q81 address -> q38 q82.
+q81 creditcard -> q28 q84.
+q81 homepage -> q28 q83.
+q81 profile -> q39 q21.
+q81 watches -> q18 q24.
+q82 leaf -> .
+q82 creditcard -> q28 q84.
+q82 homepage -> q28 q83.
+q82 profile -> q39 q21.
+q82 watches -> q18 q24.
+q83 leaf -> .
+q83 creditcard -> q28 q84.
+q83 profile -> q39 q21.
+q83 watches -> q18 q24.
+q84 leaf -> .
+q84 profile -> q39 q21.
+q84 watches -> q18 q24.
+q85 itemref -> q35 q86.
+q86 seller -> q36 q89.
+q87 date -> q28 q90.
+q88 description -> q29 q91.
+q89 annoatation -> q45 q92.
+q90 quantity -> q28 q93.
+q91 shipping -> q28 q94.
+q92 quantity -> q28 q95.
+q93 typ -> q28 q23.
+q94 incategory -> q33 q96.
+q95 typ -> q28 q7.
+q96 incategory -> q33 q96.
+q96 mailbox -> q16 q24.
+
+qIL nil -> .
+qIL cons -> qI qIL.
+qI item -> q32 q24.
+%ENDA
+
+%BEGINT
+Start : q0 -> qIL.
+%ENDT

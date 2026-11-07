@@ -1,0 +1,9 @@
+// An unsigned nondet as wide as its bv(32) variable, BV mode: it can be any 32-bit pattern, and
+// the values from 2^31 up are the patterns with the sign bit set, which the plain (signed)
+// comparison reads as negative.  So ERROR is reachable.  Expected: NO (-p ltssafebv).
+START: 0;
+TYPE x: bv(32);
+ERROR: err;
+FROM: 0; x := nondet_uint(); TO: 1;
+FROM: 1; assume(x < 0); TO: err;
+FROM: 1; assume(x >= 0); TO: 2;

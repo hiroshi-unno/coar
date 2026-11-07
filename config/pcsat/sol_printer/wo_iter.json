@@ -1,3 +1,5 @@
 {
-    "output_iteration": false
+    "format": [
+        "Verdict"
+    ]
 }

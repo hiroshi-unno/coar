@@ -1,0 +1,38 @@
+/* Game G9 (Synth-Synchronization) of Beyene, Chaudhuri, Popeea, Rybalchenko, "A constraint-based approach to solving games on
+infinite graphs", POPL 2014, pp. 221-233, https://doi.org/10.1145/2535838.2535860
+(Table 1; Section 6.3, the program of Figure 1 of Vechev, Yahav, Yorsh, POPL 2010, as the paper
+restates it).  v = (x, y1, y2, z, pc1, pc2, pc3), init = (x = 0 /\ z = 0 /\ all pc = l1); thread 1 does
+x := x + z twice, thread 2 z := z + 1 twice, thread 3 y1 := f(x) (f(1) = 3, f(2) = 6, else 5), then
+y2 := x, then passes l3 only if y1 != y2; error = (pc3 = l3 /\ y1 = y2).  The controller fixes, once
+at the start, the auxiliary variables c11, c21, c31, c32 (cij = l: thread i flows from lj to l, a
+single step or an atomic section), the paper's mid(w, t) with init(w) -> exists t. mid(w, t).
+Modelling choices: (1) the paper shows only thread 1's instrumentation and says the others are
+"instrumented similarly"; threads 2 and 3 are instrumented here as in the authors' ConSynth input
+(thread 2: l1 -> l3 does z := z + 2; thread 3: l1 -> l3 does both assignments, l1 -> l4 and l2 -> l4
+also take the l3 test, which blocks when it fails); the cost variable of that input is dropped.
+(2) The interleaving is the environment's (the paper's literal eve = next would let the controller
+schedule and win trivially).  With the c's left to the environment the assertion fails; many choices
+win, among them the paper's (c11, c21, c31, c32) = (3, 3, 4, 3) (explicit-state check).
+expected: valid */
+forall (y1: int) (y2: int). exists (c11: int) (c21: int) (c31: int) (c32: int). ((2 <= c11) /\ (c11 <= 3) /\ (2 <= c21) /\ (c21 <= 3) /\ (2 <= c31) /\ (c31 <= 4) /\ (3 <= c32) /\ (c32 <= 4)) /\ S 0 y1 y2 0 1 1 1 c11 c21 c31 c32
+s.t.
+S (x: int) (y1: int) (y2: int) (z: int) (pc1: int) (pc2: int) (pc3: int) (c11: int) (c21: int) (c31: int) (c32: int): bool =nu
+  (not ((pc3 = 3) /\ (y1 = y2))) /\
+  (((pc1 = 1) /\ (c11 = 2)) => S ((x + z)) (y1) (y2) (z) (2) (pc2) (pc3) (c11) (c21) (c31) (c32)) /\
+  (((pc1 = 1) /\ (c11 = 3)) => S ((x + (2 * z))) (y1) (y2) (z) (3) (pc2) (pc3) (c11) (c21) (c31) (c32)) /\
+  ((pc1 = 2) => S ((x + z)) (y1) (y2) (z) (3) (pc2) (pc3) (c11) (c21) (c31) (c32)) /\
+  (((pc2 = 1) /\ (c21 = 2)) => S (x) (y1) (y2) ((z + 1)) (pc1) (2) (pc3) (c11) (c21) (c31) (c32)) /\
+  (((pc2 = 1) /\ (c21 = 3)) => S (x) (y1) (y2) ((z + 2)) (pc1) (3) (pc3) (c11) (c21) (c31) (c32)) /\
+  ((pc2 = 2) => S (x) (y1) (y2) ((z + 1)) (pc1) (3) (pc3) (c11) (c21) (c31) (c32)) /\
+  (((pc3 = 1) /\ (c31 = 2) /\ (x = 1)) => S (x) (3) (y2) (z) (pc1) (pc2) (2) (c11) (c21) (c31) (c32)) /\
+  (((pc3 = 1) /\ (c31 = 3) /\ (x = 1)) => S (x) (3) (x) (z) (pc1) (pc2) (3) (c11) (c21) (c31) (c32)) /\
+  (((pc3 = 1) /\ (c31 = 4) /\ (x = 1) /\ (3 != x)) => S (x) (3) (x) (z) (pc1) (pc2) (4) (c11) (c21) (c31) (c32)) /\
+  (((pc3 = 1) /\ (c31 = 2) /\ (x = 2)) => S (x) (6) (y2) (z) (pc1) (pc2) (2) (c11) (c21) (c31) (c32)) /\
+  (((pc3 = 1) /\ (c31 = 3) /\ (x = 2)) => S (x) (6) (x) (z) (pc1) (pc2) (3) (c11) (c21) (c31) (c32)) /\
+  (((pc3 = 1) /\ (c31 = 4) /\ (x = 2) /\ (6 != x)) => S (x) (6) (x) (z) (pc1) (pc2) (4) (c11) (c21) (c31) (c32)) /\
+  (((pc3 = 1) /\ (c31 = 2) /\ ((x <= 0) \/ (x >= 3))) => S (x) (5) (y2) (z) (pc1) (pc2) (2) (c11) (c21) (c31) (c32)) /\
+  (((pc3 = 1) /\ (c31 = 3) /\ ((x <= 0) \/ (x >= 3))) => S (x) (5) (x) (z) (pc1) (pc2) (3) (c11) (c21) (c31) (c32)) /\
+  (((pc3 = 1) /\ (c31 = 4) /\ ((x <= 0) \/ (x >= 3)) /\ (5 != x)) => S (x) (5) (x) (z) (pc1) (pc2) (4) (c11) (c21) (c31) (c32)) /\
+  (((pc3 = 2) /\ (c32 = 3)) => S (x) (y1) (x) (z) (pc1) (pc2) (3) (c11) (c21) (c31) (c32)) /\
+  (((pc3 = 2) /\ (c32 = 4) /\ (y1 != x)) => S (x) (y1) (x) (z) (pc1) (pc2) (4) (c11) (c21) (c31) (c32)) /\
+  (((pc3 = 3) /\ (y1 != y2)) => S (x) (y1) (y2) (z) (pc1) (pc2) (4) (c11) (c21) (c31) (c32));

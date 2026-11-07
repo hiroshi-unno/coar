@@ -1,0 +1,19 @@
+/* g ranges over the functions from the trees qa accepts to the trees qe
+   accepts, and input trees may be infinite: qe accepts e(e(e(...))),
+   although no finite tree (its only transition needs another e below).
+   So g x may be that tree, and F's output starts with e, which qo
+   rejects.  A reading of the input automaton over finite trees only
+   leaves g no result and answers sat. */
+%BEGING
+F x g -> g x.
+%ENDG
+
+%BEGINA
+qa a -> .
+qe e -> qe.
+qo ok -> .
+%ENDA
+
+%BEGINT
+F : qa -> (qa -> qe) -> qo.
+%ENDT

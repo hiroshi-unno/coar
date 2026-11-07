@@ -1,2 +1,0 @@
-SCRIPT_DIR=$(cd $(dirname $0)/..; pwd)
-timeout=300 options='-c ./config/solver/mucyc_progress_c.json -p smt' para=3 $SCRIPT_DIR/run_bench.sh benchmarks/QSMT/LRA/*/*.smt2 benchmarks/QSMT/LRA/*/*/*.smt2 | LC_ALL=C sort

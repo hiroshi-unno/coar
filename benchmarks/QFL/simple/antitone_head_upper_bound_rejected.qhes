@@ -1,0 +1,4 @@
+F 1.0 <= 0.5
+s.t.
+F (x : real) : real =mu 1.0 - G x;
+G (x : real) : real =mu if x >= 0.0 then 0.5 * G x else 0.0;

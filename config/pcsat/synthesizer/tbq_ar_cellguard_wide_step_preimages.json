@@ -1,0 +1,88 @@
+{
+  "synthesizer": [
+    "Template",
+    {
+      "solution_template": {
+        "update_strategy": [
+          "UnsatCore"
+        ],
+        "compute_ucores": true,
+        "learn_quals_from_ucores": true,
+        "qualifier_generator": [
+          "Filename",
+          "./config/pcsat/qualifier/tb_cell_step_preimages.json"
+        ],
+        "pex_strategy": [
+          "InstDefault"
+        ],
+        "predicate_template": [
+          "Arrays",
+          [
+            "Instance",
+            {
+              "cells": {
+                "number_of_cells_per_array": 1,
+                "boundary_quals": true,
+                "guard_reachable_bounds": 2,
+                "guard_max_index_columns": 2
+              },
+              "cell_guard_disjuncts": true,
+              "plain_first": ["Sort_var_only", {"failures": 3}],
+              "extra_quals": {
+                "func_apps_at_reached_sorts_only": true,
+                "seq_reads_at_fun_apps": false,
+                "opaque_clause_shapes_only": true
+              }
+            }
+          ]
+        ],
+        "wf_predicate_template": [
+          "WF",
+          [
+            "Filename",
+            "./config/pcsat/template/wf_predicate_template.json"
+          ]
+        ],
+        "fn_predicate_template": [
+          "FN",
+          [
+            "Filename",
+            "./config/pcsat/template/fn_predicate_template.json"
+          ]
+        ],
+        "ne_predicate_template": [
+          "Filename",
+          "./config/pcsat/template/ne_predicate_template.json"
+        ],
+        "adm_predicate_template": [
+          "Filename",
+          "./config/pcsat/template/adm_predicate_template.json"
+        ],
+        "integ_predicate_template": [
+          "Filename",
+          "./config/pcsat/template/integ_predicate_template.json"
+        ],
+        "int_function_template": [
+          "IntFun",
+          [
+            "Filename",
+            "./config/pcsat/template/int_function_template.json"
+          ]
+        ],
+        "regex_template": [
+          "RegEx",
+          [
+            "Filename",
+            "./config/pcsat/template/regex_template.json"
+          ]
+        ],
+        "celled_examples": 1,
+        "celled_negative_exhaustive": true,
+        "cells": {
+          "positive_exhaustive": true,
+          "varying_array_instances": true
+        }
+      }
+    }
+  ]
+}

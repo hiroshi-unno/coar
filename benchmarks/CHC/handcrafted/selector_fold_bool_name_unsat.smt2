@@ -1,0 +1,7 @@
+(set-logic HORN)
+(declare-datatypes ((D 0)) (((C (sel Bool)))))
+(declare-fun |#inline_read0| () Bool)
+(define-fun f ((v D)) Bool (and (sel v) |#inline_read0|))
+(assert (not |#inline_read0|))
+(assert (f (C true)))
+(check-sat)

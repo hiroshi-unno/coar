@@ -1,0 +1,5 @@
+c QDIMACS quantifies a variable at most once; this file binds 1 twice.
+p cnf 1 1
+a 1 0
+e 1 0
+1 0

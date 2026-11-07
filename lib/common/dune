@@ -2,7 +2,7 @@
  (name common)
  (public_name CoAR.common)
  (preprocess
-  (pps ppx_deriving_yojson))
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
  (libraries unix threads.posix core core_unix core_unix.sys_unix zarith domainslib yojson)
  (foreign_stubs
   (language c)
@@ -16,6 +16,7 @@
   phaseTime
   forkGuard
   processExit
+  sequentialPortfolio
   debug
   messenger
   contFrac
@@ -24,6 +25,9 @@
   verdict
   refusal
   smtlib
+  smtlibRecursive
   lazyList
   zipper
-  dagCensus))
+  dagCensus
+  dagShare
+  actCensus))

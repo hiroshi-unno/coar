@@ -39,8 +39,11 @@
    [lambda k. ite (k < c) (g[k]) (h[k - c] + d)] of two such free maps, [c]
    the length of a proper prefix of another closed concatenation of the
    body and [d] of [p ++ q] -- the index map of a filter's visited items over
-   the concatenation of two runs.  Every instance is an instance, so the
-   choice affects only which are tried.  At most [max_instances] per
+   the concatenation of two runs.  With [offer_read_maps], an index map
+   binder is then also offered, after those, every free variable of its sort
+   that the facts read ([select g _]) and that was not offered already, one
+   candidate per such variable ([read_map_candidates]).  Every instance is an
+   instance, so the choice affects only which are tried.  At most [max_instances] per
    hypothesis and round, [max_rounds] rounds, [max_questions] questions in
    all.
 
@@ -123,6 +126,51 @@ let question_cap () =
   match !question_cap_override with
   | Some n -> n
   | None -> if !extended then max_questions_extended else max_questions
+
+(* Whether an index map binder is also offered the free maps the facts read
+   ([read_map_candidates]); set by the coordinator from its configuration,
+   process-wide as [extended] is.  It adds instances only, so it changes
+   which questions are asked, never what a proof is. *)
+let offer_read_maps = ref false
+
+(* how many such maps were offered beyond the paired ones, read by the
+   trace and the census *)
+let read_map_offers = ref 0
+
+(* Whether an integer binder of a hypothesis that also binds an index map is
+   offered, beside its matched terms, the lengths [seq.len v] that the facts
+   reading the map's term bound its reads by ([map_length_candidates]); set
+   by the coordinator, process-wide.  It adds instances only (at most
+   [max_instances] more per hypothesis and round, tried before the matched
+   ones), so it changes which questions are asked, never what a proof is. *)
+let offer_map_lengths = ref false
+
+let max_map_lengths = 4
+
+(* how many such instances were offered, read by the trace and the census *)
+let map_length_offers = ref 0
+
+(* Whether a disjunct the facts leave undecided is asked again, once per
+   candidate, beside one partial instance of a hypothesis that binds exactly
+   one sequence ([law_instances]); set by the coordinator, process-wide.  A
+   partial instance is a consequence of the negation as every instance is,
+   so only which questions are asked changes. *)
+let retry_with_laws = ref false
+
+let max_law_retries = 2
+
+(* Whether the plain route keeps a hypothesis one of whose instances left a
+   fact for the next round, as the extended route does, instead of dropping
+   it; an instance tried before is then not asked again.  Set by the
+   coordinator, process-wide.  It changes only which questions are asked.
+   Why: a lemma's first instance that left a fact ended its turn for good,
+   so its later instances -- among them the one whose conclusion the
+   negated goal's fact refutes -- were never asked; the instances of one
+   hypothesis feed each other only across rounds. *)
+let keep_after_fact = ref false
+
+(* how many such questions were asked, read by the trace and the census *)
+let law_retries = ref 0
 
 (* whether the trace prints each disjunct the facts do not refute (a
    census's diagnosis; off in the solver) *)
@@ -250,6 +298,61 @@ let map_candidates ~free ~fact_reads f sort body =
   (if List.exists own ~f:is_concat then joins @ paired else paired @ joins)
   @ shifts
 
+(** the free variables [g] of sort [sort] (an index map's, [Int -> _]) that
+    [fact_phi] reads as [select g _], entering binders, in [Ident] order, each
+    once.  What they are for: a lemma whose map binder is read through
+    another sequence than the facts read the witness map through (the lemma
+    [selects(keys, .., f, ..)] over a container's keys, the facts' witness
+    [f] of [produces_at(.., u, f)] read over the consumed sequence [u], the
+    two related only by a quantified fact) is offered no map by the pairing
+    of [map_candidates], although the instance a proof needs is at that
+    witness, a term the question already holds.  Offering it is exact: an
+    instance of a universal hypothesis at any term follows from it, and only
+    proofs are read. *)
+let read_map_candidates ~free ~fact_phi sort =
+  Set.to_list
+    (Formula.filtered_terms_of fact_phi ~f:(function
+      | Term.FunApp (T_array.ASelect _, [ Term.Var (g, s, _); _ ], _) ->
+          free g && Stdlib.( = ) s sort
+      | _ -> false))
+  |> List.filter_map ~f:(function
+    | Term.FunApp (T_array.ASelect _, [ Term.Var (g, _, _); _ ], _) -> Some g
+    | _ -> None)
+  |> List.dedup_and_sort ~compare:Ident.tvar_compare
+  |> List.map ~f:(fun g -> Term.mk_var g sort)
+
+(** the lengths offered to an integer binder of a hypothesis whose index
+    map binder an instance gives the free map [g]: the terms [seq.len v], [v]
+    a free variable ([free]), that occur in a fact of [facts] reading [g]
+    ([select g _], entering binders), first occurrences in the facts' order,
+    at most [max_map_lengths].  What they are for: a lemma over a map and a
+    count ([selects(keys, .., f, n, ..)], every [f k] for [k < n] a selected
+    position) is needed at the length of the sequence a witness map is
+    defined over ([produces_at(.., u, f)] with [f] read for [k < len s]),
+    and the ground matching offers the count only the integers the piece's
+    ground atoms hold, never that length when no ground atom pairs it with
+    the lemma's other arguments; the facts that read [g] are where its domain
+    is stated.  Contract: each candidate is an integer term all of whose
+    variables are free in the piece; nothing is claimed of it, since an
+    instance at any term follows from the hypothesis. *)
+let map_length_candidates ~free ~facts g =
+  let reads_g phi =
+    not
+      (Set.is_empty
+         (Formula.filtered_terms_of phi ~f:(function
+           | Term.FunApp (T_array.ASelect _, [ Term.Var (h, _, _); _ ], _) ->
+               Ident.tvar_equal h g
+           | _ -> false)))
+  in
+  List.filter facts ~f:reads_g
+  |> List.concat_map ~f:(fun phi ->
+      Set.to_list
+        (Formula.filtered_terms_of phi ~f:(function
+          | Term.FunApp (T_seq.SqLen _, [ Term.Var (v, _, _) ], _) -> free v
+          | _ -> false)))
+  |> SeqInstantiation.dedup_terms
+  |> fun ts -> List.take ts max_map_lengths
+
 (** the one-step extensions offered to the sequence binder [x] (element
     sort [se]) of [body]: [g ++ [e]] for every sequence [g] of sort [Seq se]
     free in [fact_phi] and every closed term [e] that [body] compares, by [=]
@@ -340,6 +443,16 @@ let instances ~free ~facts senv body =
   let fact_phi = Formula.and_of facts in
   let ground = SeqInstantiation.ground_funapps fact_phi in
   let fact_reads = nth_select_reads fact_phi in
+  let read_maps =
+    let memo = ref [] in
+    fun sort ->
+      match List.Assoc.find !memo sort ~equal:Stdlib.( = ) with
+      | Some ts -> ts
+      | None ->
+          let ts = read_map_candidates ~free ~fact_phi sort in
+          memo := (sort, ts) :: !memo;
+          ts
+  in
   let maps, others =
     List.partition_tf senv ~f:(fun (_, s) -> is_index_map_sort s)
   in
@@ -371,12 +484,94 @@ let instances ~free ~facts senv body =
       let rec go acc = function
         | [] -> [ acc ]
         | (f, sort) :: rest ->
-            List.concat_map
-              (List.take (map_candidates ~free ~fact_reads f sort body1) 4)
-              ~f:(fun t -> go (Map.Poly.set acc ~key:f ~data:t) rest)
+            let paired =
+              List.take (map_candidates ~free ~fact_reads f sort body1) 4
+            in
+            (* the read maps after the paired ones, those not offered already:
+               bounded by the free maps the facts read, one each *)
+            let read =
+              if not !offer_read_maps then []
+              else
+                List.filter (read_maps sort) ~f:(fun t ->
+                    not (List.mem paired t ~equal:Stdlib.( = )))
+            in
+            if not (List.is_empty read) then (
+              read_map_offers := !read_map_offers + List.length read;
+              List.iter read ~f:(fun _ ->
+                  Common.PhaseTime.event_here "lemma-read-map-offer"));
+            List.concat_map (paired @ read) ~f:(fun t ->
+                go (Map.Poly.set acc ~key:f ~data:t) rest)
       in
       go sub maps)
-  |> fun subs -> List.take subs max_instances
+  |> fun subs ->
+  let main = List.take subs max_instances in
+  (* with [offer_map_lengths], before those: each substitution with one
+     integer binder moved to a length of the domain the facts state for one
+     of its maps' terms, those not offered already, at most [max_instances].
+     First, because the plain route's question budget is shared by every
+     hypothesis of the piece: offered after the matched instances, the one a
+     Rust-derived collect's postcondition needs was reached only after the
+     budget had run out *)
+  let ints = List.filter others ~f:(fun (_, s) -> Stdlib.( = ) s T_int.SInt) in
+  if (not !offer_map_lengths) || List.is_empty ints || List.is_empty maps then
+    main
+  else
+    let lengths_of =
+      let memo = ref [] in
+      fun g ->
+        match List.Assoc.find !memo g ~equal:Ident.tvar_equal with
+        | Some ts -> ts
+        | None ->
+            let ts = map_length_candidates ~free ~facts g in
+            memo := (g, ts) :: !memo;
+            ts
+    in
+    let equal_sub = Map.Poly.equal Stdlib.( = ) in
+    (* how many of [sub]'s values are a sequence the facts read one of its
+       maps' terms over *)
+    let paired_score sub =
+      let gs =
+        List.filter_map maps ~f:(fun (f, _) ->
+            match Map.Poly.find sub f with
+            | Some (Term.Var (g, _, _)) -> Some g
+            | _ -> None)
+      in
+      Map.Poly.count sub ~f:(fun t ->
+          List.exists fact_reads ~f:(fun (s', g) ->
+              Stdlib.( = ) s' t && List.mem gs g ~equal:Ident.tvar_equal))
+    in
+    let variants =
+      List.concat_map subs ~f:(fun sub ->
+          let lens =
+            SeqInstantiation.dedup_terms
+            @@ List.concat_map maps ~f:(fun (f, _) ->
+                match Map.Poly.find sub f with
+                | Some (Term.Var (g, _, _)) -> lengths_of g
+                | _ -> [])
+          in
+          List.concat_map ints ~f:(fun (n, _) ->
+              List.filter_map lens ~f:(fun t ->
+                  match Map.Poly.find sub n with
+                  | Some t' when Stdlib.( = ) t t' -> None
+                  | _ -> Some (Map.Poly.set sub ~key:n ~data:t))))
+      |> List.fold ~init:[] ~f:(fun acc s ->
+          if List.exists acc ~f:(equal_sub s) || List.exists subs ~f:(equal_sub s)
+          then acc
+          else s :: acc)
+      |> List.rev
+      (* those whose sequence binders hold the sequences the facts read
+         their maps' terms over ([nth s (select g _)]) first, stably: the
+         lemma is about the map's own sequence, and the other sequences of
+         its sort only share the instance's length by accident *)
+      |> List.stable_sort ~compare:(fun a b ->
+          Int.compare (paired_score b) (paired_score a))
+      |> fun vs -> List.take vs max_instances
+    in
+    if not (List.is_empty variants) then (
+      map_length_offers := !map_length_offers + List.length variants;
+      List.iter variants ~f:(fun _ ->
+          Common.PhaseTime.event_here "lemma-map-length-offer"));
+    variants @ main
 
 (** [conjuncts] with every selector application [sel x] that a conjunct
     [sel x = c(..)] equates to a constructor application replaced, in every
@@ -697,7 +892,7 @@ let index_cases ~fresh e =
     split nothing, the piece's last top-level witness-goal disjunct; its
     negation is tried first among the hypotheses.  [goal] changes only that
     order. *)
-let prove_one ~trace ~skolemize ~goal ~usable ~valid ~outcome phi =
+let prove_one ~trace ~skolemize ~goal ~usable ~valid ~outcome ~law_outcome phi =
   let n = Formula.nnf_of (Formula.negate phi) in
   let conjuncts =
     subst_projection_definitions
@@ -750,7 +945,7 @@ let prove_one ~trace ~skolemize ~goal ~usable ~valid ~outcome phi =
   let free x = Set.mem free_vars x in
   let asked = ref 0 in
   (* [facts /\ e] unsatisfiable, asked as the validity of its negation *)
-  let ask facts e =
+  let ask ?(o = outcome) facts e =
     if !asked >= question_cap () then `Unknown
     else (
       incr asked;
@@ -758,7 +953,7 @@ let prove_one ~trace ~skolemize ~goal ~usable ~valid ~outcome phi =
       let fs = List.filter facts ~f:usable in
       let q = Formula.negate (Formula.and_of (e :: fs)) in
       let r =
-        match outcome with
+        match o with
         | Some o -> o q
         | None -> if valid q then `Valid else `Unknown
       in
@@ -777,7 +972,8 @@ let prove_one ~trace ~skolemize ~goal ~usable ~valid ~outcome phi =
                 | `Unknown -> "open")));
       r)
   in
-  let refuted facts e = match ask facts e with `Valid -> true | _ -> false
+  let refuted ?o facts e =
+    match ask ?o facts e with `Valid -> true | _ -> false
   in
   (* [`Proved], [`Fact e] (the one disjunct left), or [`Nothing] *)
   (* with the extended route, a disjunct the facts do not refute whole is
@@ -811,6 +1007,81 @@ let prove_one ~trace ~skolemize ~goal ~usable ~valid ~outcome phi =
             trace (lazy "lemma application: case asked by index cases");
             List.for_all ics ~f:(refuted_tiered ~focus ~skip_all:false facts)))
   in
+  (* the hypotheses binding exactly one sequence, every other binder of a
+     sort that is neither an array nor a sequence: their instance at that
+     sequence alone binds no collection, so it is a fact *)
+  let laws =
+    List.filter_map hyps ~f:(function
+      | Formula.Bind (Formula.Forall, senv, body, _) -> (
+          let coll, rest =
+            List.partition_tf senv ~f:(fun (_, s) ->
+                Term.is_array_sort s || SeqInstantiation.is_seq_sort s)
+          in
+          match coll with
+          | [ (x, s) ] when SeqInstantiation.is_seq_sort s -> Some (x, s, rest, body)
+          | _ -> None)
+      | _ -> None)
+  in
+  (* [e] refuted beside one partial instance of a law, at a free sequence
+     [e] reads ([seq.nth v _]) of the law's binder sort; at most
+     [max_law_retries] questions.  Exact: [N] implies the law, so the
+     partial instance [forall rest. body[x := v]] too, and a refutation of
+     [e] beside it and the facts is one beside [N].  What it is for: a lemma
+     instance whose premise needs the definition of a closure's meaning at
+     the positions of a sequence the disjunct reads (a filter predicate's
+     law [forall s j. j < len s -> pred(s[j]) = (key = class(s[j]))]); the
+     law as a hypothesis is only ever instantiated at ground matches, and
+     the read is under the disjunct's own existential, so no ground term
+     names it, while the solver instantiates the integer quantifier of the
+     partial instance itself.  Each question carries one partial instance
+     only: on a Rust-derived filter's count lemma, z3 refuted the disjunct
+     beside either of two such instances in about a second and left it
+     undecided at 20 s beside both. *)
+  let refuted_with_laws facts e =
+    !retry_with_laws
+    && (not (List.is_empty laws))
+    &&
+    (* only reads at an index that mentions a variable [e] binds itself: a
+       read at a closed index is one the ground matching of the law as a
+       hypothesis can already reach *)
+    let e_free = Formula.tvs_of e in
+    let seqs =
+      Set.to_list
+        (Formula.filtered_terms_of e ~f:(function
+          | Term.FunApp (T_seq.SqNth _, [ Term.Var _; i ], _) ->
+              Set.exists (Term.tvs_of i) ~f:(fun y -> not (Set.mem e_free y))
+          | _ -> false))
+      |> List.filter_map ~f:(function
+        | Term.FunApp (T_seq.SqNth _, [ (Term.Var (_, s, _) as v); _ ], _) ->
+            Some (v, s)
+        | _ -> None)
+      |> List.dedup_and_sort ~compare:Stdlib.compare
+    in
+    let partials =
+      List.concat_map laws ~f:(fun (x, s, rest, body) ->
+          List.filter_map seqs ~f:(fun (v, s') ->
+              if Stdlib.( = ) s s' then
+                Some
+                  (Formula.mk_forall_if_bounded rest
+                     (Formula.subst (Map.Poly.singleton x v) body))
+              else None))
+      |> fun ps -> List.take ps max_law_retries
+    in
+    List.exists partials ~f:(fun p ->
+        incr law_retries;
+        Common.PhaseTime.event_here "lemma-law-retry";
+        (* under the law question's own budget when the caller gave one *)
+        let r =
+          refuted
+            ~o:(match law_outcome with Some _ -> law_outcome | None -> outcome)
+            (p :: facts) e
+        in
+        trace
+          (lazy
+            (sprintf "lemma application: disjunct asked beside a law instance, %s"
+               (if r then "refuted" else "not refuted")));
+        r)
+  in
   let apply ?(focus = Set.Poly.empty) facts inst =
     let rec go left = function
       | [] -> (
@@ -823,7 +1094,8 @@ let prove_one ~trace ~skolemize ~goal ~usable ~valid ~outcome phi =
             match ask facts e with
             | `Valid -> true
             | `Invalid -> false
-            | `Unknown -> refuted_by_cases ~focus facts e
+            | `Unknown ->
+                refuted_by_cases ~focus facts e || refuted_with_laws facts e
           in
           trace
             (lazy
@@ -942,10 +1214,16 @@ let prove_one ~trace ~skolemize ~goal ~usable ~valid ~outcome phi =
                          @@ List.map (Map.Poly.to_alist sub) ~f:(fun (x, t) ->
                              Ident.name_of_tvar x ^ " := " ^ Term.str_of t))));
                   let inst = instance_of body sub in
-                  match apply facts inst with
-                  | `Proved -> `Proved
-                  | `Fact e -> `Fact e
-                  | `Nothing -> try_insts more)
+                  if
+                    !keep_after_fact
+                    && List.mem !tried inst ~equal:Stdlib.( = )
+                  then try_insts more
+                  else (
+                    if !keep_after_fact then tried := inst :: !tried;
+                    match apply facts inst with
+                    | `Proved -> `Proved
+                    | `Fact e -> `Fact e
+                    | `Nothing -> try_insts more))
             in
             match
               if !extended then try_insts_ext facts false insts
@@ -959,7 +1237,13 @@ let prove_one ~trace ~skolemize ~goal ~usable ~valid ~outcome phi =
                 progress := true;
                 trace
                   (lazy "lemma application: one disjunct left, kept as a fact");
-                over_hyps (facts @ Formula.conjuncts_list_of e) kept rest
+                (* with [keep_after_fact], the hypothesis stays for the next
+                   round, as in the extended route, its instances tried
+                   there not asked again *)
+                over_hyps
+                  (facts @ Formula.conjuncts_list_of e)
+                  (if !keep_after_fact then h :: kept else kept)
+                  rest
             | `Keep -> over_hyps facts (h :: kept) rest)
         | h :: rest -> over_hyps facts (h :: kept) rest
       in
@@ -992,9 +1276,11 @@ let prove_one ~trace ~skolemize ~goal ~usable ~valid ~outcome phi =
     given, is used in place of [valid]: [`Valid] only when [psi] is valid
     (as [valid] promises), [`Invalid] when a countermodel was found, and
     [`Unknown] otherwise; the extended route asks a disjunct again by cases
-    only after [`Unknown]. *)
+    only after [`Unknown]. [law_outcome], when given, is used in place of [outcome] for
+    the questions asked beside a law instance ([retry_with_laws]), with the
+    same promise. *)
 let prove ?(trace = fun (_ : string lazy_t) -> ()) ?(skolemize = !extended)
-    ?outcome ~usable ~valid phi =
+    ?outcome ?law_outcome ~usable ~valid phi =
   incr pieces_tried;
   trace
     (lazy
@@ -1003,7 +1289,7 @@ let prove ?(trace = fun (_ : string lazy_t) -> ()) ?(skolemize = !extended)
          (String.prefix (Formula.str_of phi) 600)));
   let plain () =
     Ref.set_temporarily extended false ~f:(fun () ->
-        prove_one ~trace ~skolemize:false ~goal:None ~usable ~valid ~outcome phi)
+        prove_one ~trace ~skolemize:false ~goal:None ~usable ~valid ~outcome ~law_outcome phi)
   in
   (* the goal pieces of the extended route, each with its goal and whether
      that goal was found by the last-witness-disjunct rule *)
@@ -1082,7 +1368,7 @@ let prove ?(trace = fun (_ : string lazy_t) -> ()) ?(skolemize = !extended)
                 List.for_all gps ~f:(fun (p, goal, _) ->
                     let ok =
                       prove_one ~trace ~skolemize ~goal ~usable ~valid
-                        ~outcome p
+                        ~outcome ~law_outcome p
                     in
                     if ok then probe_proved := p :: !probe_proved;
                     ok))
@@ -1106,8 +1392,8 @@ let prove ?(trace = fun (_ : string lazy_t) -> ()) ?(skolemize = !extended)
          hands over a coarse piece that is a conjunction of its sub-pieces *)
       List.for_all (goal_pieces_of ()) ~f:(fun (p, goal, _) ->
           List.mem !probe_proved p ~equal:phys_equal
-          || prove_one ~trace ~skolemize ~goal ~usable ~valid ~outcome p)
-    else prove_one ~trace ~skolemize ~goal:None ~usable ~valid ~outcome phi
+          || prove_one ~trace ~skolemize ~goal ~usable ~valid ~outcome ~law_outcome p)
+    else prove_one ~trace ~skolemize ~goal:None ~usable ~valid ~outcome ~law_outcome phi
   in
   if proved then incr pieces_proved;
   proved

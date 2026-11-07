@@ -1,0 +1,23 @@
+{
+  "input": {"path": "loop1.c", "sha256": "34c04c6a3f314971566a6d2ed33418a78ee3dc61bb56153c411b5aabb111dde6", "frama_c": "33.0 (Arsenic)", "args": [], "machdep": "gcc_x86_64"},
+  "names": [
+    {"name": "main", "original": "main", "kind": "function", "role": "program"},
+    {"name": "n", "original": "n", "kind": "local", "role": "program", "function": "main", "type": {"kind": "int", "width": 32, "signed": false}},
+    {"name": "i", "original": "i", "kind": "local", "role": "program", "function": "main", "type": {"kind": "int", "width": 32, "signed": true}},
+    {"name": "__retres", "original": "__retres", "kind": "local", "role": "program", "function": "main", "type": {"kind": "int", "width": 32, "signed": true}}
+  ],
+  "source_map": {
+    "input_file": "loop1.c",
+    "statements": [
+    {"output_line": 9, "output_column": 3, "function": "main", "role": "call", "input": {"line": 5, "column": 3, "function": "main"}, "property": null, "cond_negated": null},
+    {"output_line": 10, "output_column": 3, "function": "main", "role": "other", "input": {"line": 6, "column": 3, "function": "main"}, "property": null, "cond_negated": null},
+    {"output_line": 11, "output_column": 3, "function": "main", "role": "loop-head", "input": {"line": 7, "column": 3, "function": "main"}, "property": null, "cond_negated": null},
+    {"output_line": 11, "output_column": 3, "function": "main", "role": "branch", "input": {"line": 7, "column": 3, "function": "main"}, "property": null, "cond_negated": false},
+    {"output_line": 11, "output_column": 19, "function": "main", "role": "other", "input": {"line": 8, "column": 5, "function": "main"}, "property": null, "cond_negated": null},
+    {"output_line": 12, "output_column": 3, "function": "main", "role": "branch", "input": {"line": 10, "column": 3, "function": "main"}, "property": null, "cond_negated": false},
+    {"output_line": 12, "output_column": 17, "function": "main", "role": "target", "input": {"line": 10, "column": 17, "function": "main"}, "property": "unreach-call", "cond_negated": null},
+    {"output_line": 13, "output_column": 3, "function": "main", "role": "other", "input": {"line": 11, "column": 3, "function": "main"}, "property": null, "cond_negated": null},
+    {"output_line": 14, "output_column": 3, "function": "main", "role": "other", "input": {"line": 11, "column": 3, "function": "main"}, "property": null, "cond_negated": null}
+    ]
+  }
+}

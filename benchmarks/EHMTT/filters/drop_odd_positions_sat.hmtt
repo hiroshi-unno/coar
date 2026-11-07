@@ -1,0 +1,25 @@
+%BEGING
+Filter1 x -> case x of
+  e => e
+| a x' => Filter2 x'
+| b x' => Filter2 x'.
+Filter2 x -> case x of
+  e => e
+| a x' => a (Filter1 x')
+| b x' => b (Filter1 x').
+%ENDG
+
+%BEGINA
+/* q0 : (a b)*e */
+q0 a -> q1.
+q0 e -> .
+q1 b -> q0.
+/* q2 : b*e */
+q2 b -> q2.
+q2 e -> .
+%ENDA
+
+%BEGINT
+/* Filter1 : (a b)*e -> b*e */
+Filter1 : q0 -> q2.
+%ENDT

@@ -1,0 +1,145 @@
+%BEGING
+Specialize e env -> case e of
+  terr => terr
+| var x =>
+    Lookup x env
+| let x e1 e2 =>
+    Specialize e2 (Extend x (Specialize e1 env) env)
+| abs x e1 =>
+    vclosure (copy x) (copy e1)
+| app e1 e2 =>
+    F1 e2 env (coerce q0p (Specialize e1 env))
+| fix x e1 =>
+    Specialize e1 (Extend x (fix (copy x) (copy e1)) env)
+| const c =>
+    (case c of true => vtrue | false => vfalse)
+| if e1 e2 e3 =>
+    F2 e2 e3 env (coerce q0p (Specialize e1 env))
+| ulet x e1 e2 =>
+    let (copy x) (Specialize e1 env) (Specialize e2 env)
+| uabs x e1 =>
+    abs (copy x/*???*/) (Specialize e1 env)
+| uapp e1 e2 =>
+    app (Specialize e1 env) (Specialize e2 env)
+| ufix x e1 =>
+    fix (copy x) (Specialize e1 env)
+| uconst c =>
+    const (copy c)
+| uif e1 e2 e3 =>
+    if (Specialize e1 env) (Specialize e2 env) (Specialize e3 env)
+| lift e1 =>
+    F3 (coerce q0p (Specialize e1 env))
+.
+F1 e env w -> case w of
+  terr => terr
+| vclosure x e1 => Specialize e1 (Extend x (Specialize e env) env)
+| vtrue => terr
+| vfalse => terr
+| var x => terr
+| let x e1 e2 => terr
+| abs x e1 => terr
+| app e1 e2 => terr
+| fix x e1 => terr
+| const c => terr
+| if e1 e2 e3 => terr
+| ulet x e1 e2 => terr
+| uabs x e1 => terr
+| uapp e1 e2 => terr
+| ufix x e1 => terr
+| uconst c => terr
+| uif e1 e2 e3 => terr
+| lift e1 => terr
+.
+F2 et ef env w -> case w of
+  terr => terr
+| vclosure x e1 => terr
+| vtrue => Specialize et env
+| vfalse => Specialize ef env
+| var x => terr
+| let x e1 e2 => terr
+| abs x e1 => terr
+| app e1 e2 => terr
+| fix x e1 => terr
+| const c => terr
+| if e1 e2 e3 => terr
+| ulet x e1 e2 => terr
+| uabs x e1 => terr
+| uapp e1 e2 => terr
+| ufix x e1 => terr
+| uconst c => terr
+| uif e1 e2 e3 => terr
+| lift e1 => terr
+.
+F3 e -> case e of
+  terr => terr
+| vclosure x e1 => terr
+| vtrue => const true
+| vfalse => const false
+| var x => terr
+| let x e1 e2 => terr
+| abs x e1 => terr
+| app e1 e2 => terr
+| fix x e1 => terr
+| const c => terr
+| if e1 e2 e3 => terr
+| ulet x e1 e2 => terr
+| uabs x e1 => terr
+| uapp e1 e2 => terr
+| ufix x e1 => terr
+| uconst c => terr
+| uif e1 e2 e3 => terr
+| lift e1 => terr
+.
+Empty y -> terr.
+Extend x v env y -> Eq x y v (env y).
+Eq x y t f ->
+ case x of
+    z => (case y of z => t | s y1 => f)
+  | s x1 => (case y of z => f | s y1 => Eq x1 y1 t f).
+Lookup x env -> env x.
+S e -> Specialize e Empty.
+%ENDG
+
+%BEGINA
+q0 var -> q1.
+q0 let -> q1 q0 q0.
+q0 abs -> q1 q0.
+q0 app -> q0 q0.
+q0 fix -> q1 q0.
+q0 const -> q2.
+q0 if -> q0 q0 q0.
+q0 ulet -> q1 q0 q0.
+q0 uabs -> q1 q0.
+q0 uapp -> q0 q0.
+q0 ufix -> q1 q0.
+q0 uconst -> q2.
+q0 uif -> q0 q0 q0.
+q0 lift -> q0.
+q1 z -> .
+q1 s -> q1.
+q2 true -> .
+q2 false -> .
+
+q0p terr -> .
+q0p vclosure -> q1 q0.
+q0p vtrue -> .
+q0p vfalse -> .
+q0p var -> q1.
+q0p let -> q1 q0p q0p.
+q0p abs -> q1 q0p.
+q0p app -> q0p q0p.
+q0p fix -> q1 q0p.
+q0p const -> q2.
+q0p if -> q0p q0p q0p.
+q0p ulet -> q1 q0p q0p.
+q0p uabs -> q1 q0p.
+q0p uapp -> q0p q0p.
+q0p ufix -> q1 q0p.
+q0p uconst -> q2.
+q0p uif -> q0p q0p q0p.
+q0p lift -> q0p.
+%ENDA
+
+%BEGINT
+S : q0 -> q0p.
+%ENDT

@@ -256,6 +256,37 @@ let ask_by_pieces ?(refine = false) ?max ?unproved ~enabled ~note ~ask c =
         in
         go 1 false [] ps
 
+(** [of_clause ?max c]'s pieces asked with [ask], in order, and the whole
+    clause never: [`Unsplit] when [c] has at most one piece (nothing is
+    asked); [`Invalid m] at the first piece [ask] refutes, [m] being its
+    model of the piece's negation, hence of [c]'s; [`Valid] when [ask] shows
+    every piece valid; otherwise [`Rest (r, proved, total)], where [r] is
+    the conjunction of the pieces left undecided, in their order, [proved]
+    the number shown valid and [total] the number of pieces.  [r] is valid
+    exactly when [c] is, since [c] is the conjunction of its pieces in every
+    model and the pieces left out of [r] are valid; so is a model of [r]'s
+    negation one of [c]'s.  Every piece is asked once, and only [ask]'s
+    [`Valid] and [`Invalid _] are read.
+
+    What it is for: a clause whose negation is a case split of hundreds of
+    shared premise disjuncts, which a solver leaves undecided whole while it
+    proves each case in a fraction of a second. *)
+let prove_pieces ?max ~ask c =
+  match of_clause ?max c with
+  | [] | [ _ ] -> `Unsplit
+  | ps ->
+      let total = List.length ps in
+      let rec go proved left = function
+        | [] when List.is_empty left -> `Valid
+        | [] -> `Rest (Formula.and_of (List.rev left), proved, total)
+        | p :: rest -> (
+            match ask p with
+            | `Valid -> go (proved + 1) left rest
+            | `Invalid m -> `Invalid m
+            | _ -> go proved (p :: left) rest)
+      in
+      go 0 [] ps
+
 (** The early rewritten pass's treatment of one clause, given the bound
     [max_pieces] on the questions it may ask of it ([leaf_count ?max]).
     Within the bound (or with no bound), [ask_pieces c] is asked and its
@@ -276,12 +307,48 @@ let ask_by_pieces ?(refine = false) ?max ?unproved ~enabled ~note ~ask c =
     stage proves with far fewer questions, but an invalid such clause was
     refuted by the pass at once and, skipped, waited for the late stages,
     which the time limit did not reach. *)
-let early_question ?max ~max_pieces ~refute_skipped ~ask_whole ~ask_pieces c =
-  match max_pieces with
-  | Some n when leaf_count ?max c > n ->
+let refinement_budget = max_pieces
+
+(** the sub-pieces [ask_by_pieces ~refine:true ?max] asks of [c] when it
+    refines every piece of [of_clause ?max c] that splits: the sum of
+    [List.length (pieces p)] over those pieces.  Every such piece is refined,
+    whatever the answers, exactly when this is at most [refinement_budget]:
+    the refinement takes a piece's sub-pieces out of that budget and refines
+    no piece whose sub-pieces exceed what is left, so with the sum within it
+    no piece is refused, and past it the refined ones cannot all have been
+    paid for.  At most [leaf_count ?max c]. *)
+let refinement_size ?max c =
+  List.sum (module Int) (of_clause ?max c) ~f:(fun p ->
+      match pieces p with [] | [ _ ] -> 0 | sub -> List.length sub)
+
+(** [within_refinement]: also skip a clause whose [refinement_size ?max]
+    exceeds [refinement_budget], the number of sub-pieces
+    [ask_by_pieces ~refine:true] may ask over one clause.  Such a clause
+    cannot have every undecided piece refined: the budget runs out after the
+    first few, the pieces after them are asked only coarse, and the
+    undecided pieces it hands on under [unproved] mix sub-pieces with whole
+    coarse pieces, cut differently from the clause's own split by a later
+    stage.  Within the budget the pass can always refine every piece, so the
+    skip changes nothing there.  Not exact: a skipped clause is first asked
+    by the later stage instead.  Why: on a Rust-derived loop-body clause of
+    four coarse pieces of 32 sub-pieces each the pass asked 69 questions
+    (each refused natively for a quantifier over a sequence and asked of
+    the sequence-axiom fallback, 20-30 s), proved 39, refined two of the four
+    coarse pieces and handed on the rest; the sequence instantiation then
+    left a grouped question of that remainder undecided and asked its members
+    one by one, and under a concurrent batch the input answered in none of
+    five runs against three of five with the clause skipped. *)
+let early_question ?max ?(within_refinement = false) ~max_pieces
+    ~refute_skipped ~ask_whole ~ask_pieces c =
+  let skip =
+    (match max_pieces with Some n -> leaf_count ?max c > n | None -> false)
+    || (within_refinement && refinement_size ?max c > refinement_budget)
+  in
+  match skip with
+  | true ->
       if not refute_skipped then `Skipped None
       else (
         match ask_whole c with
         | `Invalid model -> `Skipped (Some model)
         | _ -> `Skipped None)
-  | _ -> `Asked (ask_pieces c)
+  | false -> `Asked (ask_pieces c)

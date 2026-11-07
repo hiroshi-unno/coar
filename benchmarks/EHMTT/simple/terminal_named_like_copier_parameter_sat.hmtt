@@ -1,0 +1,15 @@
+/* The terminals are named x and x1, as a generated rule might name its
+   parameters.  F copies its input, a list of x ended by x1, which q
+   accepts: the property holds. */
+%BEGING
+F t -> copy t.
+%ENDG
+
+%BEGINA
+q x -> q.
+q x1 -> .
+%ENDA
+
+%BEGINT
+F : q -> q.
+%ENDT

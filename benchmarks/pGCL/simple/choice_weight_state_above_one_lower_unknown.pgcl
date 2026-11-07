@@ -1,0 +1,20 @@
+# The weight p of the choice is a program variable, never assigned, so the bound is asked for
+# every initial p >= 0.  Where p >= 2 the choice sets c to 1 or 0, so whatever distribution the
+# choice is given, E[c] <= 1 there; elsewhere c = 2.  The lower bound 1.5 is therefore false
+# at every p >= 2.  A weight outside [0, 1] makes the run abort (it contributes 0), so the
+# preexpectation is 2 for p < 2 and 0 for p >= 2, and the bound fails at p = 2.
+# Expected: unknown.  The choice rule p * wp(S1, f) + (1 - p) * wp(S2, f) applied at p >= 2
+# gives p * 1 + (1 - p) * 0 = p >= 1.5, and the false bound was proved (valid).
+nat p;
+nat c;
+c := 0;
+if (p >= 2) {
+	{
+		c := 1;
+	}[p]{
+		c := 0;
+	}
+} else {
+	c := 2;
+}
+?Ex [c] >= 1.5

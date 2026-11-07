@@ -14,18 +14,12 @@ sudo docker load -i muval_pldi26ae_omega.tar
 ```
 
 ### Option 2: Building Docker Image
-Run the following commands:
+From this repository (the image is built from the current source; the version the paper used is the Zenodo archive,
+whose source zip is built the same way after `unzip muval_pldi26ae_omega_src.zip && cd muval_pldi26ae_omega_src`, with the
+experiment script copied to the top directory first, `cp script/prob_omega_reg/run.sh .`):
 ```bash
-# Unzip the source code
-unzip muval_pldi26ae_omega_src.zip
-
-# Go to the the source code directory
-cd muval_pldi26ae_omega_src
-
-# Copy the experiment script to the top directory
-cp script/prob_omega_reg/run.sh .
-
-# Build the Docker image
+# Build the Docker image (BuildKit, the default since Docker 23.0, reads
+# pldi26ae_omega/Dockerfile.dockerignore, which keeps this directory and the runner in the context)
 cd pldi26ae_omega
 sudo docker build -f Dockerfile -t muval_pldi26ae_omega ../
 ```
@@ -48,7 +42,7 @@ Then run the following commands inside the container:
 source .venv/bin/activate
 
 # Run the experiment script
-./run.sh
+./pldi26ae_omega/run.sh
 ```
 This command reproduces the results in Table 1 in the paper.
 
@@ -60,19 +54,19 @@ If you want to run the tool on an individual benchmark file, use the following c
 source .venv/bin/activate
 
 # with debug output
-./_build/default/main.exe -c ./config/solver/dbg_muval_quant_omega_lexpmsm_polyqent_deg1.json -p qfl benchmarks/QFL/omega_regular/ex3_9.qhes
+./_build/default/main.exe -c ./config/solver/dbg_muval_qfl_omega_lexpmsm_polyqent_deg1.json -p qfl benchmarks/QFL/omega_regular/ex3_9.qhes
 
 # without debug output
-./_build/default/main.exe -c ./config/solver/muval_quant_omega_lexpmsm_polyqent_deg1.json -p qfl benchmarks/QFL/omega_regular/ex3_9.qhes
+./_build/default/main.exe -c ./config/solver/muval_qfl_omega_lexpmsm_polyqent_deg1.json -p qfl benchmarks/QFL/omega_regular/ex3_9.qhes
 ```
-Here, `./config/solver/muval_quant_polyqent_deg1.json` is a configuration file.
+Here, `./config/solver/muval_qfl_polyqent_deg1.json` is a configuration file.
 
 We provide five types of configurations for different kinds of certificates.
-- LexPMSM: `./config/solver/muval_quant_omega_lexpmsm_polyqent_deg1.json`
-- LexGSSM: `./config/solver/muval_quant_omega_lexgssm_polyqent_deg1.json`
-- PSSM: `./config/solver/muval_quant_omega_pmsm_polyqent_deg1.json`
-- GSSM: `./config/solver/muval_quant_omega_gssm_polyqent_deg1.json`
-- SSM: `./config/solver/muval_quant_omega_ssm_polyqent_deg1.json`
+- LexPMSM: `./config/solver/muval_qfl_omega_lexpmsm_polyqent_deg1.json`
+- LexGSSM: `./config/solver/muval_qfl_omega_lexgssm_polyqent_deg1.json`
+- PSSM: `./config/solver/muval_qfl_omega_pmsm_polyqent_deg1.json`
+- GSSM: `./config/solver/muval_qfl_omega_gssm_polyqent_deg1.json`
+- SSM: `./config/solver/muval_qfl_omega_ssm_polyqent_deg1.json`
 
 
 Synthesized certificates can be found in the debug output.
@@ -88,22 +82,23 @@ For lexicographic certificates (LexPMSM and LexGSSM), certificates are synthesiz
 
 ## Expected Results
 
-The output of `run.sh` consists of five sections for LexPMSM, LexGSSM, PMSM, GSSM, and SSM.
-
-For each benchmark file, `run.sh` prints output of the following form.
+The output of `run.sh` consists of five sections for LexPMSM, LexGSSM, PMSM, GSSM, and SSM, each a heading and one
+CSV row per benchmark (180 seconds each, one at a time), for example
 ```
-./benchmarks/QFL/omega_regular/EvenOrNegative.qhes
-sat
-
-real	0m0.881s
-user	0m4.262s
-sys	0m0.101s
+=============== LexPMSM ===============
+./benchmarks/QFL/omega_regular/EvenOrNegative.qhes,sat,0.881,
 ```
+The rows are also written to `results/pldi26ae_omega/<kind>.csv`, and each run's full output is kept in
+`results/pldi26ae_omega/logs/<kind>/<benchmark>.log`.
 
 The correspondence to Table 1 in the paper is as follows.
-- The first line shows the name of the benchmark file.
-- The second line shows the result (`sat` or `unknown`).
-- The remaining lines are produced by the `time` command. The `real` time corresponds to the "time (sec)" column in Table 1.
+- The first field is the benchmark file.
+- The second field is the result (`sat` or `unknown`; `timeout` when the limit was reached).
+- The third field is the wall-clock time in seconds, the "time (sec)" column in Table 1.
+
+Each kind is a run of corpus `pldi26ae_omega` in the repository's table of runs, `script/bench_runs.txt`, run by
+`script/run_corpus.sh` through the shared runner `script/run_bench.sh`; `script/run_corpus.sh pldi26ae_omega` lists
+the five runs, and `timeout=60 ./pldi26ae_omega/run.sh` shortens the limit.
 
 ## Additional Description
 

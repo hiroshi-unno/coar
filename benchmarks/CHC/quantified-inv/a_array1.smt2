@@ -1,4 +1,5 @@
-;; pcsat answers unsat on this
+;; sat: I(a, N) = forall i. 0 <= i <= N -> a[i] = 0 satisfies all three clauses.
+;; It still does if the query's (< (select a j) 0) is replaced by != or >.
 
 (set-logic HORN)
 
@@ -33,7 +34,7 @@
 		  (<= 0 j)
 		  (<= j i)
 		  (I a i)
-		  (< (select a j) 0)) ;; with != or > this is unsat; with < it makes progress
+		  (< (select a j) 0))
 		 false)))
 
 (check-sat)

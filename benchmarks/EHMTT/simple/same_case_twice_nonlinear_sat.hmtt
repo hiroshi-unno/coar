@@ -1,0 +1,14 @@
+%BEGING
+Main x -> case x of
+  a => (case x of a => ok | b => ng)
+| b => (case x of a => ng | b => ok).
+%ENDG
+
+%BEGINA
+q0 a -> . q0 b -> .
+q1 ok -> .
+%ENDA
+
+%BEGINT
+Main : q0 -> q1.
+%ENDT

@@ -86,13 +86,18 @@ let bitvec lineno what = function
   | Bitvec w -> w
   | Array _ -> err lineno "expected a bit-vector sort for %s" what
 
+(* Every operand of every line goes through here. A negative id denotes the bitwise negation of
+   its node, which only a bit-vector has, so a negated array is refused: it has no value, and the
+   translation, which negates by [bvnot] at the operand's width, would fail on it. *)
 let arg_node st lineno a =
   match Hashtbl.find st.nodes (Int.abs a) with
   | None -> err lineno "undefined argument id %d" a
   | Some m -> (
-      match m.tag with
-      | Sort_decl | Init | Next | Bad | Constraint | Fair | Justice | Output ->
+      match (m.tag, m.nsort) with
+      | (Sort_decl | Init | Next | Bad | Constraint | Fair | Justice | Output), _ ->
           err lineno "'%s' cannot be used as argument" (string_of_tag m.tag)
+      | _, Some (Array _) when a < 0 ->
+          err lineno "negated argument %d is an array, which has no bitwise negation" a
       | _ -> m)
 
 let arg_sort st lineno a =

@@ -1,0 +1,6 @@
+/* An existential inside a greatest fixed point: valid, but refused, since the
+   existential is not continuous in the order of a greatest fixed point and
+   no sound typing rule covers it.  MuHFL dialect. */
+%HES
+Main =v Q 0.
+Q y =v (∃x. x > y) && Q (y + 1).

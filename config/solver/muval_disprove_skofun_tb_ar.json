@@ -3,7 +3,7 @@
     {
         "optimizer": [
             "Filename",
-            "./config/muval/optimizer/enable.json"
+            "./config/muclp/optimizer/enable.json"
         ],
         "pcsp_solver_primal": [
             "Filename",
@@ -14,11 +14,11 @@
             "./config/solver/pcsat_tb_ar_fixpoint.json"
         ],
         "qelim": {
-            "mode": [
+            "elimination": [
                 "SkolemFun"
             ]
         },
-        "mode": [
+        "task": [
             "Disprove"
         ]
     }

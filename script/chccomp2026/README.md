@@ -22,8 +22,8 @@ docker build -f script/chccomp2026/test_zip.Dockerfile -t coar:chccomp2026-zip-t
 
 ```bash
 # Test before zip compression
-docker run --rm -v $(pwd)/benchmarks:/benchmarks coar:chccomp2026-zip ./coar.sh -c ./config/solver/dbg_pcsat_tbq_ar.json -p pcsp /benchmarks/CHC/simple/sum.smt2
+docker run --rm -v $(pwd)/benchmarks:/benchmarks coar:chccomp2026-zip ./coar.sh -c ./config/solver/dbg_pcsat.json -p pcsp /benchmarks/CHC/simple/sum.smt2
 
 # Test after zip extraction
-docker run --rm -v $(pwd)/benchmarks:/benchmarks coar:chccomp2026-zip-tester ./coar.sh -c ./config/solver/dbg_pcsat_tbq_ar.json -p pcsp /benchmarks/CHC/simple/sum.smt2
+docker run --rm -v $(pwd)/benchmarks:/benchmarks coar:chccomp2026-zip-tester ./coar.sh -c ./config/solver/dbg_pcsat.json -p pcsp /benchmarks/CHC/simple/sum.smt2
 ```

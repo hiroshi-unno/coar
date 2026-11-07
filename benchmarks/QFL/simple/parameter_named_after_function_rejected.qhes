@@ -1,0 +1,4 @@
+Z 0.0 0.0 >= 0.0
+s.t.
+X (x:real) (y:real): real =mu if (x > 0.0) then X (x - 1.0) (y + 1.0) else y;
+Z (X:real) (Y:real): real =mu 1.0 / 2.0 * Z (x + 1.0) y + 1.0 / 2.0 * X x 0.0;

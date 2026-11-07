@@ -2,6 +2,6 @@
  (name DQSAT)
  (public_name CoAR.DQSAT)
  (preprocess
-  (pps ppx_deriving_yojson))
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
  (libraries core yojson CoAR.common CoAR.ast CoAR.SAT)
  (modules problem))

@@ -1,4 +1,6 @@
 {
-    "resolution_threshold": 4,
-    "num_elim_bool_vars": 0
+    "elimination": {
+        "resolution_threshold": 4,
+        "bool_vars": 0
+    }
 }

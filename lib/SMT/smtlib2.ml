@@ -33,7 +33,7 @@ let str_of_fsym = function
   | FVar (x, _, _) -> Ident.name_of_tvar x
   | T_int.Int n -> Z.to_string n
   | T_int.Neg -> "-"
-  (*| T_int.Abs -> "abs"*)
+  | T_int.Abs -> "abs"
   | T_int.Add -> "+"
   | T_int.Sub -> "-"
   | T_int.Mul -> "*"
@@ -163,7 +163,7 @@ let sort_aliases () = Stdlib.Domain.DLS.get sort_aliases_key
 let with_sort_alias_scope f =
   let saved = sort_aliases () in
   Stdlib.Domain.DLS.set sort_aliases_key (Hashtbl.Poly.create ());
-  Fun.protect
+  Common.Timer.protect
     ~finally:(fun () -> Stdlib.Domain.DLS.set sort_aliases_key saved)
     f
 
@@ -274,13 +274,14 @@ let rec sort_of_sexp ~print uni_sort dtenv params = function
                    unknown name to a sort variable (as this parser once did)
                    let a datatype used before its declare-datatypes be read
                    as an uninterpreted sort and fail later inside Z3 with a
-                   sort mismatch. *)
-                failwith
-                @@ sprintf
-                     "[sort_of_sexp] undeclared sort \"%s\": declare it \
-                      (declare-sort/declare-datatypes, or declare-forall-sort \
-                      for a sort variable) before its first use"
-                     name
+                   sort mismatch.  An ill-formed input (z3 and cvc5 reject it
+                   too), so refused in one line rather than raised as an
+                   internal failure printed with a backtrace. *)
+                Common.Refusal.refuse
+                  "[sort_of_sexp] undeclared sort \"%s\": declare it \
+                   (declare-sort/declare-datatypes, or declare-forall-sort for \
+                   a sort variable) before its first use"
+                  name
             | Some _ -> failwith @@ sprintf "%s is not defined" name))
   | sexp ->
       failwith
@@ -390,7 +391,72 @@ let bind_of_sexp ~print uni_sort dtenv = function
    copied from an earlier definition, which belong to its definition site.
    Sorts, indexed identifiers and attributes are not term-variable occurrences;
    nested binders hide their names, and parallel let RHSs use the outer scope. *)
-let rec rename_bound_occurrences renaming sexp =
+(* Source-only ranks for deciding whether an atom pattern is a constructor
+   of this scrutinee, rather than a variable.  Unknown ranks stay unknown;
+   constructor names from other datatypes do not determine this decision. *)
+let match_source_sort (envs : Problem.envs) renaming = function
+  | Sexp.Atom name -> (
+      let var = Ident.Tvar name in
+      let var = Option.value ~default:var (Map.Poly.find renaming var) in
+      match Map.Poly.find envs.uni_senv var with
+      | Some sort -> Some sort
+      | None -> (
+          match Map.Poly.find envs.fenv var with
+          | Some ([], sort, _, _, _) -> Some sort
+          | _ -> (
+              match Map.Poly.find envs.exi_senv var with
+              | Some sort -> (
+                  match Sort.args_ret_of sort with
+                  | [], result -> Some result
+                  | _ -> None)
+              | None -> (
+                  match DTEnv.look_up_func envs.dtenv name with
+                  | Some (dt, Datatype.FCons _) -> Some (T_dt.SDT dt)
+                  | _ -> None))))
+  | Sexp.List [ Sexp.Atom "as"; _; sort ] ->
+      Some
+        (sort_of_sexp ~print:(fun _ -> ()) envs.uni_sort envs.dtenv None sort)
+  | Sexp.List (Sexp.Atom name :: _)
+    when not (Map.Poly.mem envs.uni_senv (Ident.Tvar name)) -> (
+      match DTEnv.look_up_func envs.dtenv name with
+      | Some (dt, Datatype.FCons _) -> Some (T_dt.SDT dt)
+      | _ -> None)
+  | _ -> None
+
+let match_scope_params (envs : Problem.envs) params =
+  let uni_senv =
+    List.fold params ~init:envs.uni_senv ~f:(fun senv param ->
+        let var, sort =
+          bind_of_sexp ~print:(fun _ -> ()) envs.uni_sort envs.dtenv param
+        in
+        Map.Poly.set senv ~key:var ~data:sort)
+  in
+  { envs with uni_senv }
+
+let match_scope_bindings (envs : Problem.envs) renaming bindings =
+  let uni_senv =
+    List.fold bindings ~init:envs.uni_senv ~f:(fun senv -> function
+      | Sexp.List [ Sexp.Atom name; rhs ] ->
+          let sort =
+            Option.value
+              (match_source_sort envs renaming rhs)
+              ~default:(Sort.mk_fresh_svar ())
+          in
+          Map.Poly.set senv ~key:(Ident.Tvar name) ~data:sort
+      | _ -> senv)
+  in
+  { envs with uni_senv }
+
+let match_scope_names (envs : Problem.envs) names =
+  let uni_senv =
+    List.fold names ~init:envs.uni_senv ~f:(fun senv -> function
+      | Sexp.List [ Sexp.Atom name ] ->
+          Map.Poly.set senv ~key:(Ident.Tvar name) ~data:(Sort.mk_fresh_svar ())
+      | _ -> senv)
+  in
+  { envs with uni_senv }
+
+let rec rename_bound_occurrences (envs : Problem.envs) renaming sexp =
   let without_bound_names bindings =
     List.fold bindings ~init:renaming ~f:(fun renaming -> function
       | Sexp.List (Sexp.Atom name :: _) ->
@@ -414,7 +480,10 @@ let rec rename_bound_occurrences renaming sexp =
           [
             Sexp.Atom binder;
             Sexp.List params;
-            rename_bound_occurrences (without_bound_names params) body;
+            rename_bound_occurrences
+              (match_scope_params envs params)
+              (without_bound_names params)
+              body;
           ]
     | Sexp.List
         [ Sexp.Atom (("let" | "random") as binder); Sexp.List bindings; body ]
@@ -422,24 +491,70 @@ let rec rename_bound_occurrences renaming sexp =
         let bindings' =
           List.map bindings ~f:(function
             | Sexp.List [ name; rhs ] ->
-                Sexp.List [ name; rename_bound_occurrences renaming rhs ]
+                Sexp.List [ name; rename_bound_occurrences envs renaming rhs ]
             | binding -> binding)
         in
         Sexp.List
           [
             Sexp.Atom binder;
             Sexp.List bindings';
-            rename_bound_occurrences (without_bound_names bindings) body;
+            rename_bound_occurrences
+              (match_scope_bindings envs renaming bindings)
+              (without_bound_names bindings)
+              body;
+          ]
+    | Sexp.List [ Sexp.Atom "match"; scrut; Sexp.List cases ] ->
+        (* a case's pattern variables are binders of its body; the pattern
+           itself names a constructor and its fields and is left as written *)
+        let pattern_names = function
+          | Sexp.Atom "_" -> []
+          | Sexp.Atom name when Map.Poly.mem renaming (Ident.Tvar name) -> (
+              match match_source_sort envs renaming scrut with
+              | Some (T_dt.SDT dt) -> (
+                  match Datatype.look_up_cons dt name with
+                  | Some _ -> []
+                  | None -> [ Sexp.List [ Sexp.Atom name ] ])
+              | Some (Sort.SVar _) | None ->
+                  Common.Refusal.refuse
+                    "[match] cannot resolve a shadowed atom pattern's datatype"
+              | Some _ -> [ Sexp.List [ Sexp.Atom name ] ])
+          | Sexp.Atom name -> [ Sexp.List [ Sexp.Atom name ] ]
+          | Sexp.List (_ :: fields) ->
+              List.map fields ~f:(fun field -> Sexp.List [ field ])
+          | Sexp.List [] -> []
+        in
+        Sexp.List
+          [
+            Sexp.Atom "match";
+            rename_bound_occurrences envs renaming scrut;
+            Sexp.List
+              (List.map cases ~f:(function
+                | Sexp.List [ pattern; body ] ->
+                    Sexp.List
+                      [
+                        pattern;
+                        rename_bound_occurrences
+                          (match_scope_names envs (pattern_names pattern))
+                          (without_bound_names (pattern_names pattern))
+                          body;
+                      ]
+                | case -> case));
           ]
     | Sexp.List [ Sexp.Atom "as"; identifier; sort ] ->
         Sexp.List
-          [ Sexp.Atom "as"; rename_bound_occurrences renaming identifier; sort ]
+          [
+            Sexp.Atom "as";
+            rename_bound_occurrences envs renaming identifier;
+            sort;
+          ]
     | Sexp.List (Sexp.Atom "_" :: _) -> sexp
     | Sexp.List (Sexp.Atom "!" :: term :: attributes) ->
         Sexp.List
-          (Sexp.Atom "!" :: rename_bound_occurrences renaming term :: attributes)
+          (Sexp.Atom "!"
+          :: rename_bound_occurrences envs renaming term
+          :: attributes)
     | Sexp.List terms ->
-        Sexp.List (List.map terms ~f:(rename_bound_occurrences renaming))
+        Sexp.List (List.map terms ~f:(rename_bound_occurrences envs renaming))
 
 let is_function_name_bound (envs : Problem.envs) v =
   Map.Poly.mem envs.exi_senv v || Map.Poly.mem envs.fenv v
@@ -541,10 +656,16 @@ let fun_sym1_table : (string * (?info:info -> Term.t -> Term.t)) list =
   in
   [
     ("-", T_num.mk_nneg);
+    (* the Ints theory declares [(abs Int Int)]; the Reals theory has no [abs],
+       so this is the integer one and a Real operand is a sort error (z3 also
+       accepts a Real operand, which the standard does not declare) *)
+    ("abs", T_int.mk_abs);
     ("to_real", T_irb.mk_int_to_real);
     ("to_int", T_irb.mk_real_to_int);
     ("bv_to_uint", T_irb.mk_bv_to_int ~size:None ~signed:(Some false));
     ("ubv_to_int", T_irb.mk_bv_to_int ~size:None ~signed:(Some false));
+    (* [bv2nat] is z3's and cvc5's older name for [ubv_to_int] *)
+    ("bv2nat", T_irb.mk_bv_to_int ~size:None ~signed:(Some false));
     ("bv_to_sint", T_irb.mk_bv_to_int ~size:None ~signed:(Some true));
     ("sbv_to_int", T_irb.mk_bv_to_int ~size:None ~signed:(Some true));
     ("bvnot", bv_of_arg T_bv.mk_bvnot);
@@ -694,8 +815,10 @@ let fun_sym2_table : (string * (arity * (Term.t -> Term.t -> Term.t))) list =
             m (T_int.mk_neg m) ) );
     ("^", (Binary, T_num.mk_npower ~info:Dummy));
     ("re.++", (LeftAssoc, T_regex.mk_concat ~info:Dummy));
-    ("re.union", (Binary, T_regex.mk_union ~info:Dummy));
-    ("re.inter", (Binary, T_regex.mk_inter ~info:Dummy));
+    (* the Unicode Strings theory declares both [:left-assoc], so
+       [(re.union r1 r2 r3)] is standard *)
+    ("re.union", (LeftAssoc, T_regex.mk_union ~info:Dummy));
+    ("re.inter", (LeftAssoc, T_regex.mk_inter ~info:Dummy));
     ("bvand", (LeftAssoc, bv T_bv.mk_bvand));
     ("bvor", (LeftAssoc, bv T_bv.mk_bvor));
     ("bvxor", (LeftAssoc, bv T_bv.mk_bvxor));
@@ -779,6 +902,109 @@ let refresh_binders_formula phi =
 
 let refresh_binders_term t = Term.aconv_tvar @@ Term.alpha_rename_let t
 
+(* Whether inlining a [define-fun] call reads the fields of a constructor-application argument
+   directly: where the body applies a selector to a formal whose actual argument is an
+   application of that selector's constructor ([(mut_current v)] with [v := (mut a b)]), the
+   inlined body has the field ([a]) in place of the read ([(mut_current (mut a b))]).  Process-wide,
+   off by default (today's reading); PCSat's [reader.fold_inlined_selector_reads] turns it on before
+   the input is read, and nothing turns it off again in the same process.
+
+   Why: a definition whose body reads its formal several times and passes a constructor
+   application built from those reads to the next definition doubles with every level when the
+   argument is copied whole into each read.  A Rust front end's per-adaptor [completed] predicate
+   does exactly this ([completed_j(x) = ... /\ completed_{j+1}(mut(proj (cur x), proj (fin x)))],
+   [x] read four times per level): at sixteen levels the reading alone took 100 s and 3.3 GB to
+   build definitions nothing applied, while with each read folded every level stays linear.
+
+   Exact: [sel_i(C(t1, ..., tn)) = t_i] holds in every model of the datatype theory when [sel_i] is
+   a selector of [C] (SMT-LIB 2.6, the datatype theory's selector axiom); a selector of another
+   constructor is left as it is, since its value there is unspecified.  Only reads the
+   substitution creates are folded -- a read the definition or its caller wrote out stays -- so the
+   inlined body is the one read today with those redexes contracted, and nothing else changes. *)
+let fold_inlined_selector_reads = ref false
+
+(* the number of reads [fold_inlined_selector_reads] has folded in this process, for a test or a
+   census asking where the switch acts without the phase-time account *)
+let folded_reads = Atomic.make 0
+
+(* the field a selector [fsym] reads of [arg], when [arg] is an application of the selector's
+   own constructor; [None] for any other pair, a selector of another constructor included *)
+let constructor_field fsym arg =
+  match (fsym, arg) with
+  | T_dt.DTSel (sel, dt, _), Term.FunApp (T_dt.DTCons (cons_name, _, _), ts, _)
+    -> (
+      match Datatype.look_up_cons dt cons_name with
+      | None -> None
+      | Some cons -> (
+          match List.zip (Datatype.sels_of_cons cons) ts with
+          | Ok pairs ->
+              List.find_map pairs ~f:(fun (s, t) ->
+                  if String.(Datatype.name_of_sel s = sel) then Some t else None)
+          | Unequal_lengths -> None))
+  | T_tuple.TupleSel (_, i), Term.FunApp (T_tuple.TupleCons _, ts, _) ->
+      List.nth ts i
+  | _ -> None
+
+let is_constructor_app = function
+  | Term.FunApp ((T_dt.DTCons _ | T_tuple.TupleCons _), _, _) -> true
+  | _ -> false
+
+(* [inline_with_reads_folded ~map_term ~names_of ~subst sub body] is [subst sub body] with every read
+   [sel(x)] of a formal [x] whose actual [sub(x)] is an application of [sel]'s constructor replaced
+   by that field, and reads of such a field folded in turn ([sel2(sel1(x))]), bottom-up.
+
+   Assumes: [body]'s binders are fresh ([refresh_binders_*] ran), so a variable [x] in the domain of
+   [sub] met inside [body] is the formal and never a bound variable spelt the same.  Guarantees: with
+   [fold_inlined_selector_reads] off or no actual a constructor application, exactly [subst sub
+   body]; otherwise [subst sub body] with only the redexes the substitution created contracted.  A
+   folded read becomes a stand-in variable mapped to its field in the same simultaneous substitution,
+   so the field -- a term of the caller, whose variables may be spelt like this definition's
+   formals -- is never substituted into again. *)
+let inline_with_reads_folded ~map_term ~names_of ~subst sub body =
+  if
+    (not !fold_inlined_selector_reads)
+    || not (Map.Poly.exists sub ~f:is_constructor_app)
+  then subst sub body
+  else
+    let extra = ref Map.Poly.empty in
+    (* the stand-ins are named here rather than drawn from [Ident.mk_fresh_tvar], so that the
+       names drawn after this reading are the ones today's reading draws: a stand-in never
+       survives this call, and the name is kept apart from every name in the body and the
+       formals. Nullary predicate names matter too: the final substitution can replace a
+       Boolean predicate when a Boolean stand-in has the same spelling. *)
+    let taken = lazy (Set.union (Map.key_set sub) (names_of body)) in
+    let rec stand_in n =
+      let z = Ident.Tvar (sprintf "#inline_read%d" n) in
+      if Set.mem (Lazy.force taken) z || Map.Poly.mem !extra z then stand_in (n + 1)
+      else z
+    in
+    let actual x =
+      match Map.Poly.find sub x with
+      | Some t -> Some t
+      | None -> Map.Poly.find !extra x
+    in
+    let folded =
+      map_term body ~f:(function
+        | Term.FunApp (fsym, [ Term.Var (x, _, _) ], _) as t0 -> (
+            match Option.bind (actual x) ~f:(constructor_field fsym) with
+            | None -> t0
+            | Some field ->
+                let z = stand_in (Map.Poly.length !extra) in
+                extra := Map.Poly.add_exn !extra ~key:z ~data:field;
+                Term.mk_var z (Term.sort_of t0))
+        | t -> t)
+    in
+    (* nothing folded: the body as given, not [map_term]'s rebuilding of it *)
+    if Map.Poly.is_empty !extra then subst sub body
+    else (
+      (* the reads folded, as a row of the phase-time report: the trace of where it acts *)
+      Common.PhaseTime.add_here "fold-selector-read" ~secs:0.
+        ~count:(Map.Poly.length !extra);
+      ignore (Atomic.fetch_and_add folded_reads (Map.Poly.length !extra) : int);
+      subst
+        (Map.Poly.merge_skewed sub !extra ~combine:(fun ~key:_ v _ -> v))
+        folded)
+
 (* An argument of a call that is about to be INLINED has to be reconciled with the
    formal parameter's sort.  A numeric literal is parsed as a value carrying a fresh
    sort variable and is settled by the whole-formula type inference that runs at the
@@ -844,10 +1070,9 @@ let with_formal_sort ~print ~rigid senv (_, formal) arg =
 
 (* The universal term variables (a [declare-forall-fun], a [declare-var]) that a recursive
    definition's body mentions, keyed by the definition's name, made explicit trailing parameters
-   of the definition by [lift_universals].  Process-global, written only while a file is read,
-   which happens before any solver domain exists; every [define-fun-rec] and [define-funs-rec]
-   read sets or removes its names' entries, so an entry never outlives a definition it was
-   computed for.
+   of the definition by [lift_universals]. The metadata belongs to the same
+   reader environment as the definition, so a later independent read cannot
+   change how an application in a retained environment is completed.
 
    Why: a universal is universal in every clause, and a clause's universals are renamed,
    quantified and instantiated clause by clause.  A recursive definition is kept in the function
@@ -857,13 +1082,10 @@ let with_formal_sort ~print ~rigid senv (_, formal) arg =
    recursive count over [f] was refuted by a model choosing the constant apart from the clause's
    [f].  Passing the universal as an argument at every application is closure conversion; it
    makes the definition closed and keeps the application's meaning in every model. *)
-let lifted_universals : (string, sort_env_list) Hashtbl.t =
-  Hashtbl.create (module String)
-
 (* [args] completed with the lifted universals of [name] when it has some and [args] supplies
    exactly the parameters the definition was written with; [args] unchanged otherwise. *)
-let with_lifted_args name (fargs : sort_env_list) args =
-  match Hashtbl.find lifted_universals name with
+let with_lifted_args (envs : Problem.envs) name (fargs : sort_env_list) args =
+  match Map.Poly.find envs.lifted_universals (Ident.Tvar name) with
   | Some extra
     when List.length args + List.length extra = List.length fargs ->
       args @ List.map extra ~f:(Tuple2.uncurry Term.mk_var)
@@ -877,9 +1099,14 @@ let with_lifted_args name (fargs : sort_env_list) args =
    as the universal itself, so its occurrences in the bodies need no renaming.  An application
    of an earlier lifted definition already carries its universals (see [with_lifted_args]), so
    they are free here and lifted again: the closure is transitive.  Records the result in
-   [lifted_universals].  Refuses a group in which a member's own parameter is spelled like a
+   the returned metadata map. Refuses a group in which a member's own parameter is spelled like a
    universal another member mentions free, since the added parameter would collide with it. *)
-let lift_universals ~(uni_senv : sort_env_map) group =
+let lift_universals (envs : Problem.envs) group =
+  let uni_senv = envs.uni_senv in
+  let lifted_universals =
+    List.fold group ~init:envs.lifted_universals ~f:(fun map (n, _, _, _) ->
+        Map.Poly.remove map (Ident.Tvar n))
+  in
   let names =
     Set.Poly.of_list (List.map group ~f:(fun (n, _, _, _) -> Ident.Tvar n))
   in
@@ -892,9 +1119,7 @@ let lift_universals ~(uni_senv : sort_env_map) group =
     |> List.dedup_and_sort ~compare:(fun (x, _) (y, _) ->
            Ident.tvar_compare x y)
   in
-  if List.is_empty extra then (
-    List.iter group ~f:(fun (n, _, _, _) -> Hashtbl.remove lifted_universals n);
-    group)
+  if List.is_empty extra then (group, lifted_universals)
   else (
     List.iter group ~f:(fun (n, (fargs : sort_env_list), _, _) ->
         match
@@ -904,7 +1129,7 @@ let lift_universals ~(uni_senv : sort_env_map) group =
         | Some (x, _) ->
             failwith
             @@ sprintf
-                 "[define-fun-rec %s] a parameter is named like the universal %s                   another definition of its group mentions"
+                 "[define-fun-rec %s] a parameter is named like the universal %s another definition of its group mentions"
                  n (Ident.name_of_tvar x)
         | None -> ());
     let arity =
@@ -921,9 +1146,13 @@ let lift_universals ~(uni_senv : sort_env_map) group =
             Term.mk_fvar_app n (sargs @ extra_sorts) sret (args @ extra_args)
         | t -> t)
     in
-    List.map group ~f:(fun (n, fargs, sort, body) ->
-        Hashtbl.set lifted_universals ~key:n ~data:extra;
-        (n, fargs @ extra, sort, close body)))
+    let lifted_universals =
+      List.fold group ~init:lifted_universals ~f:(fun map (n, _, _, _) ->
+          Map.Poly.set map ~key:(Ident.Tvar n) ~data:extra)
+    in
+    ( List.map group ~f:(fun (n, fargs, sort, body) ->
+          (n, fargs @ extra, sort, close body)),
+      lifted_universals ))
 
 (* Infer only a rank already forced by the operand, without defaulting a
    generic numeral. A compound Int expression otherwise still looks like a
@@ -955,7 +1184,7 @@ let source_numeric_scope_key :
 let with_source_numeric_reader_scope f =
   let saved = Stdlib.Domain.DLS.get source_numeric_scope_key in
   Stdlib.Domain.DLS.set source_numeric_scope_key None;
-  Fun.protect
+  Common.Timer.protect
     ~finally:(fun () -> Stdlib.Domain.DLS.set source_numeric_scope_key saved)
     f
 
@@ -966,7 +1195,7 @@ let with_source_numeric_scope ~print (envs : Problem.envs) ~constrs_of
   | None ->
       let pending = ref Set.Poly.empty in
       Stdlib.Domain.DLS.set source_numeric_scope_key (Some pending);
-      Fun.protect
+      Common.Timer.protect
         ~finally:(fun () -> Stdlib.Domain.DLS.set source_numeric_scope_key None)
         (fun () ->
           let root = f () in
@@ -1053,6 +1282,289 @@ let source_fun_sym2 ~print envs op t1 t2 =
   let t1, t2 = source_numeric_pair ~print envs op t1 t2 in
   of_fun_sym2 op t1 t2
 
+(* SMT-LIB 2.6 [match] (the standard's term syntax, section 3.6.1):
+   [(match t ((p_1 b_1) ... (p_n b_n)))] denotes [b_i] for the FIRST case whose
+   pattern matches [t].  A pattern is a nullary constructor [C], a constructor
+   applied to distinct variables [(C x_1 ... x_k)], which binds each [x_j] to the
+   j-th field of [t], or a variable [x], which matches everything and binds the
+   whole of [t].  The cases must be exhaustive; the standard requires it of the
+   input, and both z3 and cvc5 reject a match that is not.
+
+   The term language here has no match, so it is read as the testers and
+   selectors it abbreviates: case [(C x_1 ... x_k) b] becomes [is-C t] guarding
+   [b] with each [x_j] let-bound to [sel_j t].  That is exact because a selector
+   is only read under the tester of its own constructor, where its value is
+   fixed by the theory -- no selector is applied off its constructor, so no
+   interpretation-dependent term is introduced.  Distinct constructors' testers
+   are mutually exclusive, so only a variable case needs the earlier testers
+   negated; a later case for a constructor already seen, and every case after a
+   variable case, can never apply and is dropped.
+
+   What is refused rather than guessed: a match with no exhaustive coverage
+   (inventing a value for the missing constructors would decide what the
+   standard leaves an error), a nested pattern, a repeated pattern variable, a
+   constructor applied to the wrong number of fields, a constructor of another
+   datatype, and a scrutinee of a non-datatype sort under a constructor
+   pattern.  [_] as a pattern or a field is z3's wildcard (cvc5 rejects it); it
+   is read as a variable that is never mentioned.
+
+   [scrut] must already be a variable or a term that may be duplicated without
+   changing the meaning: the caller let-binds anything else.  The result lists
+   the reachable cases in order, each with its guard, the source names it binds
+   and the terms they denote, and its body as source. *)
+type match_guard =
+  | Match_cons of string  (** [is-C] of the scrutinee *)
+  | Match_default of string list
+      (** every scrutinee not built by these (earlier) constructors *)
+
+let match_cases (envs : Problem.envs) scrut cases =
+  let refuse fmt = Common.Refusal.refuse ("[match] " ^^ fmt) in
+  let dt =
+    match Term.sort_of scrut with
+    | T_dt.SDT dt -> Some dt
+    | Sort.SVar _ ->
+        (* a scrutinee whose sort is not yet inferred: a constructor named by
+           a pattern fixes the datatype, with fresh sort parameters as every
+           other constructor occurrence gets *)
+        List.find_map cases ~f:(function
+          | Sexp.List [ (Sexp.Atom name | Sexp.List (Sexp.Atom name :: _)); _ ]
+            -> (
+              match DTEnv.look_up_func envs.dtenv name with
+              | Some (dt, Datatype.FCons _) -> Some (Datatype.fresh_of dt)
+              | _ -> None)
+          | _ -> None)
+    | _ -> refuse "the matched term must have a datatype sort"
+  in
+  if Option.is_none dt then
+    refuse "the matched term's datatype sort could not be established";
+  let cons_of name =
+    match dt with
+    | Some dt -> Datatype.look_up_cons dt name
+    | None -> None
+  in
+  let rec go seen acc = function
+    | [] ->
+        let covered =
+          match dt with
+          | Some dt ->
+              List.for_all (Datatype.conses_of dt) ~f:(fun cons ->
+                  List.mem seen (Datatype.name_of_cons cons) ~equal:String.equal)
+          | None -> false
+        in
+        if not covered then
+          refuse "the cases are not exhaustive: %s"
+            (Sexp.to_string_hum (Sexp.List cases));
+        List.rev acc
+    | Sexp.List [ pattern; body ] :: rest -> (
+        match pattern with
+        | Sexp.Atom "_" -> List.rev ((Match_default seen, [], body) :: acc)
+        | Sexp.Atom name -> (
+            match cons_of name with
+            | Some cons ->
+                if not (List.is_empty (Datatype.sels_of_cons cons)) then
+                  refuse "constructor %s has fields, which its pattern must name"
+                    name;
+                if List.mem seen name ~equal:String.equal then go seen acc rest
+                else go (name :: seen) ((Match_cons name, [], body) :: acc) rest
+            | None ->
+                List.rev
+                  ((Match_default seen, [ (Ident.Tvar name, scrut) ], body)
+                  :: acc))
+        | Sexp.List (Sexp.Atom name :: (_ :: _ as fields)) ->
+            let dt, cons =
+              match (dt, cons_of name) with
+              | Some dt, Some cons -> (dt, cons)
+              | _ ->
+                  refuse "%s is not a constructor of the matched term's sort"
+                    name
+            in
+            let sels = Datatype.sels_of_cons cons in
+            if List.length fields <> List.length sels then
+              refuse "constructor %s has %d field(s), its pattern names %d" name
+                (List.length sels) (List.length fields);
+            let fields =
+              List.map fields ~f:(function
+                | Sexp.Atom field -> field
+                | field ->
+                    refuse "a pattern field must be a variable, not %s"
+                      (Sexp.to_string_hum field))
+            in
+            let named =
+              List.filter fields ~f:(Fn.non (String.equal "_"))
+            in
+            if List.contains_dup named ~compare:String.compare then
+              refuse "a variable is repeated in the pattern %s"
+                (Sexp.to_string_hum pattern);
+            if List.mem seen name ~equal:String.equal then go seen acc rest
+            else
+              let binds =
+                List.filter_map (List.zip_exn fields sels) ~f:(fun (field, sel) ->
+                    if String.equal field "_" then None
+                    else
+                      Some
+                        ( Ident.Tvar field,
+                          T_dt.mk_sel dt (Datatype.name_of_sel sel) scrut ))
+              in
+              go (name :: seen) ((Match_cons name, binds, body) :: acc) rest
+        | _ ->
+            refuse "unsupported pattern %s (patterns are not nested)"
+              (Sexp.to_string_hum pattern))
+    | case :: _ -> refuse "malformed case %s" (Sexp.to_string_hum case)
+  in
+  if List.is_empty cases then refuse "a match needs at least one case";
+  let cases = go [] [] cases in
+  (dt, cases)
+
+(* The guard of one reachable case, as an atom set over the scrutinee. *)
+let match_guard dt scrut = function
+  | Match_cons name -> (
+      match dt with
+      | Some dt -> Formula.mk_atom (T_dt.mk_is_cons dt name scrut)
+      | None -> assert false (* a constructor case fixes [dt] *))
+  | Match_default seen -> (
+      match dt with
+      | Some dt ->
+          Formula.and_of
+          @@ List.map seen ~f:(fun name ->
+              Formula.mk_atom (T_dt.mk_is_not_cons dt name scrut))
+      | None -> Formula.mk_true ())
+
+(* Bind one case's pattern variables around its body, as [let] does: a name
+   that shadows an enclosing binder or a function is renamed apart in the
+   source, keeping the result alpha-converted. *)
+let match_case_scope (envs : Problem.envs) binds body =
+  let renaming =
+    Map.Poly.of_alist_exn
+    @@ List.filter_map binds ~f:(fun (v, _) ->
+        if Map.Poly.mem envs.uni_senv v || is_function_name_bound envs v then
+          Some (v, fresh_binding_variable envs)
+        else None)
+  in
+  let bound_name v = Option.value ~default:v (Map.Poly.find renaming v) in
+  let binds =
+    List.map binds ~f:(fun (v, def) -> (bound_name v, Term.sort_of def, def))
+  in
+  let uni_senv =
+    List.fold binds ~init:envs.uni_senv ~f:(fun uni_senv (v, sort, _) ->
+        Map.Poly.add_exn uni_senv ~key:v ~data:sort)
+  in
+  ({ envs with uni_senv }, binds,
+   rename_bound_occurrences { envs with uni_senv } renaming body)
+
+(* A scrutinee that is not a variable is let-bound to a fresh one, so the
+   guards and selectors read it without copying it. *)
+let match_scrutinee ~print (envs : Problem.envs) scrut =
+  let scrut =
+    let _, root_sort, constrs = Typeinf.cgen_term ~print envs.uni_senv scrut in
+    let nums, substitution =
+      Typeinf.solve ~print ~rigid:(rigid_of envs.uni_sort) constrs
+    in
+    (* A numeric rank can remain a sort variable without defaulting.  It is
+       already known not to be a datatype, unlike an unconstrained rank. *)
+    (match Term.subst_sorts_sort substitution root_sort with
+    | Sort.SVar v when Set.mem nums v ->
+        Common.Refusal.refuse
+          "[match] the matched term must have a datatype sort"
+    | _ -> ());
+    Term.subst_sorts
+      (Typeinf.elim_nums ~to_sus:true ~default:None nums substitution)
+      scrut
+  in
+  match scrut with
+  | Term.Var _ -> (scrut, None)
+  | _ ->
+      let v = fresh_binding_variable envs in
+      let sort = Term.sort_of scrut in
+      (Term.mk_var v sort, Some (v, sort, scrut))
+
+(* Keep the datatype constraint even when the sole/last branch needs no
+   tester and reads no fields.  Otherwise desugaring can erase the only
+   constraint on a scrutinee whose source rank is still a sort variable. *)
+let match_sort_binding envs scrut bound dt =
+  match dt with
+  | None -> assert false (* [match_cases] establishes the datatype *)
+  | Some dt ->
+      let sort = T_dt.SDT dt in
+      Some
+        (match bound with
+        | Some (v, _, def) -> (v, sort, def)
+        | None -> (fresh_binding_variable envs, sort, scrut))
+
+(* A symbol that no declaration, definition, binder or datatype in scope names.
+   z3 and cvc5 reject such an input ("unknown constant"), so it is refused as an
+   ill-formed input in one sentence rather than raised as an internal failure,
+   which the command-line entry would print as a backtrace.  The refusal is an
+   ordinary exception: the reader's fallbacks that try another reading on any
+   failure still catch it. *)
+let refuse_unbound name =
+  Common.Refusal.refuse
+    "%s is not bound: no declaration or definition of this symbol is in scope"
+    name
+
+(* [-] directly followed by a digit starts a numeral or a decimal for z3 5.1.0
+   and cvc5 1.4.2 ([-1], [-1.5]), so neither takes such a spelling for a
+   symbol: declaring or binding it is an error ("symbol expected"), and the
+   atom always denotes the negative number.  This reader does the same,
+   although the SMT-LIB 2.6 grammar makes [-1] a simple symbol: the files
+   written for those solvers, and the in-house CHC files writing [(> x -1)],
+   mean the number.  A quoted [|-1|] is a symbol for both solvers; the lexer
+   keeps its bars, so it never meets this test. *)
+let is_negative_numeral_spelling name =
+  String.length name >= 2 && Char.equal name.[0] '-' && Char.is_digit name.[1]
+
+let refuse_numeral_symbol ~what name =
+  Common.Refusal.refuse "[%s] symbol expected, but %s is a numeral" what name
+
+(* What may be declared as a function or sort symbol: not a numeral spelling
+   (above), and not a symbol beginning with [.] or [@], which SMT-LIB 2.6
+   reserves for solver-generated names (cvc5 1.4.2 refuses their declaration,
+   also when quoted; z3 5.1.0 accepts it).  [|@x|] and [@x] are one symbol in
+   SMT-LIB 2.6, and the lexer strips the bars of such a quoted symbol, so both
+   spellings are refused here. *)
+let ensure_declarable_symbol ~what name =
+  if is_negative_numeral_spelling name then refuse_numeral_symbol ~what name;
+  if String.is_prefix name ~prefix:"." || String.is_prefix name ~prefix:"@"
+  then
+    Common.Refusal.refuse
+      "[%s] cannot declare %s: symbols beginning with . or @ are reserved for \
+       solvers in SMT-LIB"
+      what name
+
+(* Whether [name] is a term variable, a declared symbol or a defined function
+   in scope: the three bindings [bound_symbol_term] reads. *)
+let is_term_symbol_bound (envs : Problem.envs) name =
+  let v = Ident.Tvar name in
+  Map.Poly.mem envs.uni_senv v || Map.Poly.mem envs.exi_senv v
+  || Map.Poly.mem envs.fenv v
+
+(* The term a bare symbol denotes through its binding: a bound or universal
+   variable, a declared constant, or a nullary definition (inlined when
+   [inline]); a recursive definition applied to no written argument takes its
+   lifted universals.  The innermost binding wins: variables before
+   declarations before definitions.  [None] when no such binding exists;
+   raises on a definition that takes arguments. *)
+let bound_symbol_term ~inline (envs : Problem.envs) name =
+  let v = Ident.Tvar name in
+  match Map.Poly.find envs.uni_senv v with
+  | Some sort -> Some (Term.mk_var v sort)
+  | None -> (
+      match Map.Poly.find envs.exi_senv v with
+      | Some sort -> Some (Term.mk_var v sort)
+      | None -> (
+          match Map.Poly.find envs.fenv v with
+          | Some ([], sret, t, false, _) ->
+              Some (if inline then t else Term.mk_fvar_app v [] sret [])
+          | Some (fargs, sret, _, true, _)
+            when List.length (with_lifted_args envs name fargs [])
+                 = List.length fargs ->
+              Some
+                (Term.mk_fvar_app v (List.map ~f:snd fargs) sret
+                   (with_lifted_args envs name fargs []))
+          | Some _ ->
+              failwith
+              @@ sprintf "[term] %s takes arguments and is applied to none" name
+          | None -> None))
+
 let rec of_formula ~print ~inline (envs : Problem.envs) phi =
   with_source_numeric_scope ~print envs
     ~constrs_of:(fun phi ->
@@ -1098,11 +1610,16 @@ and of_formula_raw ~print ~inline (envs : Problem.envs) phi =
           | None -> (
               (* no arguments function *)
               match Map.Poly.find envs.fenv (Ident.Tvar name) with
-              | Some ([], T_bool.SBool, _, true, _) ->
-                  (* Recursive placeholders do not contain a formula body.
-                     Keep the call symbolic, as in the term and applied paths. *)
+              | Some (fargs, T_bool.SBool, _, true, _)
+                when List.length (with_lifted_args envs name fargs [])
+                     = List.length fargs ->
+                  (* A source-nullary recursive definition may carry captured
+                     universals internally. Complete only those arguments;
+                     written parameters still require an application. *)
+                  let args = with_lifted_args envs name fargs [] in
                   Formula.of_bool_term
-                  @@ Term.mk_fvar_app (Ident.Tvar name) [] T_bool.SBool []
+                  @@ Term.mk_fvar_app (Ident.Tvar name) (List.map ~f:snd fargs)
+                       T_bool.SBool args
               | Some
                   ( [],
                     T_bool.SBool,
@@ -1113,7 +1630,7 @@ and of_formula_raw ~print ~inline (envs : Problem.envs) phi =
                   else
                     Formula.of_bool_term
                     @@ Term.mk_fvar_app (Ident.Tvar name) [] T_bool.SBool []
-              | _ -> failwith @@ sprintf "%s is not bound" name)))
+              | _ -> refuse_unbound name)))
   (* logical operation *)
   | Sexp.List [ Sexp.Atom "not"; phi ] ->
       mk_neg @@ of_formula ~print ~inline envs phi
@@ -1160,8 +1677,9 @@ and of_formula_raw ~print ~inline (envs : Problem.envs) phi =
       mk_exists (Map.Poly.to_alist params)
       @@ of_binder_body ~print ~inline envs uni_senv renaming phi
   | Sexp.List [ Sexp.Atom "random"; Sexp.List params; phi ] ->
-      let uni_senv, params = of_random_params ~print ~inline envs params in
-      mk_randoms params @@ of_formula ~print ~inline { envs with uni_senv } phi
+      let uni_senv, params, renaming = of_random_params ~print ~inline envs params in
+      mk_randoms params
+      @@ of_binder_body ~print ~inline envs uni_senv renaming phi
   (* let *)
   | Sexp.List [ Sexp.Atom "let"; Sexp.List bounds; phi ] ->
       let bounds =
@@ -1184,10 +1702,17 @@ and of_formula_raw ~print ~inline (envs : Problem.envs) phi =
          the nesting is built; the others are left alone, because a fresh name
          drawn here moves the whole search afterwards. *)
       let renaming =
-        let mentioned_by_others v =
-          List.exists bounds ~f:(fun (v', _, def) ->
-              Stdlib.(v' <> v) && Set.mem (Term.tvs_of def) v)
+        (* [v] is mentioned by another binding iff it occurs free in the
+           right-hand side of a binding whose own name is not [v]; the union of
+           those occurrences is computed once, since asking it per name costs
+           the square of the number of bindings (thousands in one [let] of a
+           translated circuit) *)
+        let mentioned =
+          Set.Poly.union_list
+          @@ List.map bounds ~f:(fun (v', _, def) ->
+              Set.remove (Term.tvs_of def) v')
         in
+        let mentioned_by_others v = Set.mem mentioned v in
         (* A binder whose name the enclosing scope already holds is renamed for
            the second reason: SMT-LIB lets an inner binding shadow an outer one,
            the occurrence referring to the inner, and inserting it into the
@@ -1213,11 +1738,32 @@ and of_formula_raw ~print ~inline (envs : Problem.envs) phi =
       let envs = { envs with uni_senv } in
       let body =
         of_formula ~print ~inline envs
-          (rename_bound_occurrences (Map.Poly.map renaming ~f:fst) phi)
+          (rename_bound_occurrences envs (Map.Poly.map renaming ~f:fst) phi)
       in
       List.rev bounds
       |> List.fold ~init:body ~f:(fun body (var, sort, def) ->
           Formula.mk_let_formula (bound_name var) sort def body)
+  (* match *)
+  | Sexp.List [ Sexp.Atom "match"; scrut; Sexp.List cases ] ->
+      let scrut, bound =
+        match_scrutinee ~print envs (source_numeric_rank ~print envs (of_term ~print ~inline envs scrut))
+      in
+      let dt, cases = match_cases envs scrut cases in
+      let bound = match_sort_binding envs scrut bound dt in
+      let body =
+        Formula.or_of
+        @@ List.map cases ~f:(fun (guard, binds, body) ->
+            let envs, binds, body = match_case_scope envs binds body in
+            let body = of_formula ~print ~inline envs body in
+            Formula.and_of
+              [
+                match_guard dt scrut guard;
+                List.fold_right binds ~init:body ~f:(fun (v, sort, def) body ->
+                    Formula.mk_let_formula v sort def body);
+              ])
+      in
+      Option.value_map bound ~default:body ~f:(fun (v, sort, def) ->
+          Formula.mk_let_formula v sort def body)
   (* ite *)
   | Sexp.List [ Sexp.Atom "ite"; cond; then_; else_ ] ->
       let t =
@@ -1320,7 +1866,9 @@ and of_formula_raw ~print ~inline (envs : Problem.envs) phi =
               | Some (fargs, T_bool.SBool, t, false, _) ->
                   if inline then (
                     assert (List.length args = List.length fargs);
-                    Formula.subst
+                    inline_with_reads_folded
+                      ~map_term:(fun phi ~f -> Formula.map_term ~f phi)
+                      ~names_of:Formula.names_spelled_in ~subst:Formula.subst
                       (Map.Poly.of_alist_exn
                       @@ List.zip_exn (List.map ~f:fst fargs)
                       @@ List.map2_exn fargs args
@@ -1331,7 +1879,7 @@ and of_formula_raw ~print ~inline (envs : Problem.envs) phi =
                     @@ Term.mk_fvar_app (Ident.Tvar name)
                          (List.map ~f:snd fargs) T_bool.SBool args
               | Some (fargs, T_bool.SBool, _, true, _) ->
-                  let args = with_lifted_args name fargs args in
+                  let args = with_lifted_args envs name fargs args in
                   assert (List.length args = List.length fargs);
                   Formula.of_bool_term
                   @@ Term.mk_fvar_app (Tvar name) (List.map ~f:snd fargs)
@@ -1343,7 +1891,7 @@ and of_formula_raw ~print ~inline (envs : Problem.envs) phi =
                       (* A Boolean selector is a formula as well as a term.
                          Preserve the enclosing term/function bindings above. *)
                       Formula.of_bool_term @@ of_term ~print ~inline envs phi
-                  | _ -> failwith @@ sprintf "%s is not bound" name))))
+                  | _ -> refuse_unbound name))))
   | sexp -> failwith @@ "parse error : " ^ Sexp.to_string_hum sexp
 
 and is_included_pvars ~print ~inline envs = function
@@ -1361,8 +1909,9 @@ and is_included_pvars ~print ~inline envs = function
 (* Rename the source before expansion. Free names copied from an earlier
    definition keep their identity, instead of becoming this binder's variables. *)
 and of_binder_body ~print ~inline envs uni_senv renaming phi =
-  of_formula ~print ~inline { envs with uni_senv }
-    (rename_bound_occurrences (Map.Poly.map renaming ~f:fst) phi)
+  let envs = { envs with uni_senv } in
+  of_formula ~print ~inline envs
+    (rename_bound_occurrences envs (Map.Poly.map renaming ~f:fst) phi)
 
 and of_term ~print ~inline (envs : Problem.envs) term =
   with_source_numeric_scope ~print envs
@@ -1397,10 +1946,12 @@ and of_term_raw ~print ~inline envs =
            outside the binding, so nesting them makes a right-hand side that
            mentions a sibling's name capture it. *)
         let renaming =
-          let mentioned_by_others v =
-            List.exists def ~f:(fun (v', t) ->
-                Stdlib.(v' <> v) && Set.mem (Term.tvs_of t) v)
+          (* computed once, as for the formula-position [let] above *)
+          let mentioned =
+            Set.Poly.union_list
+            @@ List.map def ~f:(fun (v', t) -> Set.remove (Term.tvs_of t) v')
           in
+          let mentioned_by_others v = Set.mem mentioned v in
           (* and the second reason, as above: an inner binding may shadow an
              outer one, which used to be refused *)
           let shadows_an_outer v =
@@ -1423,7 +1974,7 @@ and of_term_raw ~print ~inline envs =
         let envs = { envs with uni_senv } in
         let body =
           of_term ~print ~inline envs
-            (rename_bound_occurrences (Map.Poly.map renaming ~f:fst) body)
+            (rename_bound_occurrences envs (Map.Poly.map renaming ~f:fst) body)
         in
         List.fold def ~init:body ~f:(fun acc (tvar, t) ->
             Term.mk_let_term (bound_name tvar) (Term.sort_of t) t acc)
@@ -1435,6 +1986,31 @@ and of_term_raw ~print ~inline envs =
              binding predicate applications into some name.)"
         else aux def body
       with exn_ when not (Common.Timer.is_async exn_) -> aux def body)
+  (* match: the cases as an [ite] chain on the testers; the last reachable
+     case needs no test, since the cases are exhaustive *)
+  | Sexp.List [ Sexp.Atom "match"; scrut; Sexp.List cases ] ->
+      let scrut, bound =
+        match_scrutinee ~print envs (source_numeric_rank ~print envs (of_term ~print ~inline envs scrut))
+      in
+      let dt, cases = match_cases envs scrut cases in
+      let bound = match_sort_binding envs scrut bound dt in
+      let rec chain = function
+        | [] -> assert false (* [match_cases] refuses an empty match *)
+        | (guard, binds, body) :: rest ->
+            let envs, binds, body = match_case_scope envs binds body in
+            let body =
+              List.fold_right binds ~init:(of_term ~print ~inline envs body)
+                ~f:(fun (v, sort, def) body -> Term.mk_let_term v sort def body)
+            in
+            if List.is_empty rest then body
+            else
+              T_bool.mk_if_then_else
+                (T_bool.of_formula (match_guard dt scrut guard))
+                body (chain rest)
+      in
+      let body = chain cases in
+      Option.value_map bound ~default:body ~f:(fun (v, sort, def) ->
+          Term.mk_let_term v sort def body)
   (* lambda (a Z3 extension, not SMT-LIB: it denotes an array value) *)
   | Sexp.List [ Sexp.Atom "lambda"; Sexp.List params; body ] -> (
       match params with
@@ -1461,7 +2037,8 @@ and of_term_raw ~print ~inline envs =
           let uni_senv = Map.Poly.set envs.uni_senv ~key:x' ~data:si in
           let body =
             of_term ~print ~inline { envs with uni_senv }
-              (rename_bound_occurrences (Map.Poly.singleton x x') body)
+              (rename_bound_occurrences { envs with uni_senv }
+                 (Map.Poly.singleton x x') body)
           in
           T_array.mk_lambda (x', si) (Term.sort_of body) body
       | _ ->
@@ -1474,6 +2051,22 @@ and of_term_raw ~print ~inline envs =
           @@ List.length params)
   (* constant *)
   | Sexp.Atom op when is_con op -> of_con op
+  (* A symbol in scope denotes its binding, before any reading of its spelling
+     as a literal.  [+2], [.5], [inf] and [nan] are symbols (a declared [+2] is
+     not the number 2), while a NUMERAL or DECIMAL starts with a digit and a
+     negative one with [-] and a digit ([is_negative_numeral_spelling]), and
+     those are never symbols, so they skip the lookup; a binder of a negative
+     numeral spelling, which no declaration can introduce, is refused when the
+     body uses it. *)
+  | Sexp.Atom name
+    when (not (String.is_empty name))
+         && (not (Char.is_digit name.[0]))
+         && is_term_symbol_bound envs name -> (
+      if is_negative_numeral_spelling name then
+        refuse_numeral_symbol ~what:"binder" name;
+      match bound_symbol_term ~inline envs name with
+      | Some t -> t
+      | None -> assert false (* [is_term_symbol_bound] *))
   (* constant variable *)
   | Sexp.Atom name -> (
       if
@@ -1517,6 +2110,17 @@ and of_term_raw ~print ~inline envs =
                 (Z.of_string ("0b" ^ bin_part))
             with exn_ when not (Common.Timer.is_async exn_) -> (
               try
+                (* [T_num.mk_value] also reads [inf], [nan], [infinity],
+                   [+2] and [.5], which are symbols here and never numbers:
+                   only an atom spelled as a numeral or decimal, or as a
+                   negative one, is a literal; an undeclared [+2] is unbound,
+                   as z3 and cvc5 report it *)
+                if
+                  String.is_empty name
+                  || not
+                       (Char.is_digit name.[0]
+                       || is_negative_numeral_spelling name)
+                then invalid_arg "Not a numeral";
                 let numeral = T_num.mk_value name in
                 (* DECIMAL has Real rank even when its value is integral.
                    Preserve that source rank before any defaulting, or the
@@ -1529,35 +2133,18 @@ and of_term_raw ~print ~inline envs =
                 else numeral
               with exn_ when not (Common.Timer.is_async exn_) -> (
                 (* other cases *)
-                match Map.Poly.find envs.uni_senv (Ident.Tvar name) with
-                | Some sort -> mk_var (Ident.Tvar name) sort
+                match bound_symbol_term ~inline envs name with
+                | Some t -> t
                 | None -> (
-                    match Map.Poly.find envs.exi_senv (Ident.Tvar name) with
-                    | Some sort -> mk_var (Ident.Tvar name) sort
-                    | None -> (
-                        match Map.Poly.find envs.fenv (Ident.Tvar name) with
-                        | Some ([], sret, t, false, _) ->
-                            if inline then t
-                            else Term.mk_fvar_app (Ident.Tvar name) [] sret []
-                        | Some (fargs, sret, _, true, _)
-                          when List.length (with_lifted_args name fargs [])
-                               = List.length fargs ->
-                            Term.mk_fvar_app (Ident.Tvar name)
-                              (List.map ~f:snd fargs) sret
-                              (with_lifted_args name fargs [])
-                        | Some _ -> failwith ""
-                        | None -> (
-                            match DTEnv.look_up_func envs.dtenv name with
-                            | Some (dt, Datatype.FCons cons)
-                              when List.is_empty @@ Datatype.sels_of_cons cons
-                              ->
-                                (* fresh sort parameters per occurrence, as
-                                   [sort_of_sexp] does: two instantiations of
-                                   a parametric datatype in one file used to
-                                   share the parameters and fail type
-                                   inference *)
-                                T_dt.mk_cons (Datatype.fresh_of dt) name []
-                            | _ -> failwith @@ sprintf "%s is not bound" name)))))))
+                    match DTEnv.look_up_func envs.dtenv name with
+                    | Some (dt, Datatype.FCons cons)
+                      when List.is_empty @@ Datatype.sels_of_cons cons ->
+                        (* fresh sort parameters per occurrence, as
+                           [sort_of_sexp] does: two instantiations of a
+                           parametric datatype in one file used to share the
+                           parameters and fail type inference *)
+                        T_dt.mk_cons (Datatype.fresh_of dt) name []
+                    | _ -> refuse_unbound name)))))
       )
   (* unary function symbol application *)
   | Sexp.List [ Sexp.Atom op; t ] when is_fun_sym1 op ->
@@ -1693,9 +2280,14 @@ and of_term_raw ~print ~inline envs =
         ~term_of_sexp:(of_term ~print ~inline envs)
         envs name sort args
   (* bitvector function application *)
+  (* [int2bv] is z3's and cvc5's older name for [int_to_bv]: both take the
+     integer modulo 2^n *)
   | Sexp.List
-      [ Sexp.List [ Sexp.Atom "_"; Sexp.Atom "int_to_bv"; Sexp.Atom bits ]; t1 ]
-    ->
+      [
+        Sexp.List
+          [ Sexp.Atom "_"; Sexp.Atom ("int_to_bv" | "int2bv"); Sexp.Atom bits ];
+        t1;
+      ] ->
       let t1 = of_term ~print ~inline envs t1 in
       T_irb.mk_int_to_bv
         ~size:(Some (index_numeral ~what:"(_ int_to_bv n)" bits))
@@ -1725,6 +2317,60 @@ and of_term_raw ~print ~inline envs =
       let t1 = of_term ~print ~inline envs t1 in
       let size = match Term.sort_of t1 with T_bv.SBV s -> s | _ -> None in
       T_bv.mk_bvzext ~size (index_numeral ~what:"(_ zero_extend n)" ext) t1
+  (* [repeat], [rotate_left] and [rotate_right] are declared by the QF_BV logic
+     rather than the theory, which defines them by [concat] and [extract]:
+     [(repeat 1 t)] is [t] and [(repeat i+1 t)] is [(concat t (repeat i t))];
+     rotating an [n]-bit [t] left by [i] is rotating it by [i mod n], and by
+     [k] in [1, n-1] is [(concat (extract n-1-k 0 t) (extract n-1 n-k t))];
+     rotating right by [k] is rotating left by [n - k].  The width [n] is the
+     operand's, so it must be known here; every bit-vector term this reader
+     builds from a declared symbol or a literal carries it.  Without these arms
+     the application fell through to the catch-all and was an uncaught parse
+     error. *)
+  | Sexp.List
+      [ Sexp.List [ Sexp.Atom "_"; Sexp.Atom "repeat"; Sexp.Atom i ]; t1 ] -> (
+      let t1 = of_term ~print ~inline envs t1 in
+      match (index_numeral ~what:"(_ repeat i)" i, Term.sort_of t1) with
+      | i, _ when i < 1 ->
+          failwith "(_ repeat i) needs i >= 1 (the QF_BV logic declaration)"
+      | i, T_bv.SBV (Some n) ->
+          List.fold (List.init (i - 1) ~f:Fn.id) ~init:(t1, n)
+            ~f:(fun (acc, size) _ ->
+              ( T_bv.mk_bvconcat ~size1:(Some n) ~size2:(Some size) t1 acc,
+                size + n ))
+          |> fst
+      | _ ->
+          failwith
+            "(_ repeat i) is supported only on an operand whose width is known \
+             where it is read")
+  | Sexp.List
+      [
+        Sexp.List
+          [
+            Sexp.Atom "_";
+            Sexp.Atom (("rotate_left" | "rotate_right") as dir);
+            Sexp.Atom i;
+          ];
+        t1;
+      ] -> (
+      let t1 = of_term ~print ~inline envs t1 in
+      let i = index_numeral ~what:(sprintf "(_ %s i)" dir) i in
+      match Term.sort_of t1 with
+      | T_bv.SBV (Some n) ->
+          let k = i % n in
+          let k = if String.equal dir "rotate_left" then k else (n - k) % n in
+          if k = 0 then t1
+          else
+            let size = Some n in
+            T_bv.mk_bvconcat ~size1:(Some (n - k)) ~size2:(Some k)
+              (T_bv.mk_bvextract ~size (n - 1 - k) 0 t1)
+              (T_bv.mk_bvextract ~size (n - 1) (n - k) t1)
+      | _ ->
+          failwith
+            (sprintf
+               "(_ %s i) is supported only on an operand whose width is known \
+                where it is read"
+               dir))
   (* an [(_ bvN w)] arm stood here too, from the branch this was merged from.
      The one above subsumes it and additionally checks that what follows "bv"
      is a numeral, so `(_ bvfoo 8)` is not read as a literal; this one could
@@ -1750,13 +2396,17 @@ and of_term_raw ~print ~inline envs =
                    (List.map args ~f:(of_term ~print ~inline envs))
                    ~f:(with_formal_sort ~print ~rigid:(rigid_of envs.uni_sort) envs.uni_senv)
             in
-            Term.subst sub @@ refresh_binders_term term
+            inline_with_reads_folded
+              ~map_term:(fun t ~f -> Term.map_term true ~f t)
+              ~names_of:(fun t -> Formula.names_spelled_in (Formula.eq t t))
+              ~subst:Term.subst sub
+            @@ refresh_binders_term term
           else
             Term.mk_fvar_app (Ident.Tvar name) (List.map ~f:snd fargs) sret
             @@ List.map args ~f:(of_term ~print ~inline envs)
       | Some (fargs, sret, _, true, _) ->
           Term.mk_fvar_app (Ident.Tvar name) (List.map ~f:snd fargs) sret
-          @@ with_lifted_args name fargs
+          @@ with_lifted_args envs name fargs
           @@ List.map args ~f:(of_term ~print ~inline envs)
       | _ -> (
           match Map.Poly.find envs.exi_senv (Ident.Tvar name) with
@@ -1787,14 +2437,30 @@ and dist_of_sexp ~print ~inline envs = function
   | _ -> assert false
 
 and of_random_params ~print ~inline envs sexp =
-  List.fold (List.rev sexp) ~init:(envs.uni_senv, [])
-    ~f:(fun (uni_senv, params) -> function
+  (* Distributions have parallel outer scope. Parse each once before extending
+     the environment, and never rename their copied outer references. Only the
+     source body is renamed before definition expansion. *)
+  let params = List.map sexp ~f:(function
     | Sexp.List [ Sexp.Atom name; dist ] ->
-        let rand = dist_of_sexp ~print ~inline envs dist in
-        ( Map.Poly.add_exn uni_senv ~key:(Ident.Tvar name)
-            ~data:(Rand.sort_of rand),
-          (Ident.Tvar name, rand) :: params )
+        (Ident.Tvar name, dist_of_sexp ~print ~inline envs dist)
     | sexp -> failwith @@ "error of " ^ Sexp.to_string sexp)
+  in
+  let typed_params = List.map params ~f:(fun (name, rand) ->
+      let sort = match Rand.sort_of rand with
+        | T_real.SReal -> "Real"
+        | T_int.SInt -> "Int"
+        | _ -> assert false
+      in
+      Sexp.List [Sexp.Atom (Ident.name_of_tvar name); Sexp.Atom sort])
+  in
+  let uni_senv, _, renaming =
+    of_params ~is_taken:(is_function_name_bound envs) ~print envs.uni_senv
+      typed_params envs.uni_sort envs.dtenv
+  in
+  (uni_senv,
+   List.map params ~f:(fun (name, rand) ->
+       (Option.value_map (Map.Poly.find renaming name) ~default:name ~f:fst, rand)),
+   renaming)
 
 (*let restrict_head bounds args fml =
   List.fold args ~init:(bounds, [], fml)
@@ -1808,7 +2474,13 @@ and of_random_params ~print ~inline envs sexp =
 (* Rename shadowing formals before reading the source body. Free names in an
    expanded older definition belong to its definition site. Validate duplicates
    before drawing names, and leave non-shadowing formals unchanged. *)
-let definition_scope (envs : Problem.envs) name fargs body =
+let rec definition_scope (envs : Problem.envs) name fargs body =
+  let fargs, envs, body, _ = definition_scope_with envs name fargs body [] in
+  (fargs, envs, body)
+
+(* [definition_scope] that applies the same renaming of shadowing formals to
+   [extras], further expressions over the formals (a declared measure). *)
+and definition_scope_with (envs : Problem.envs) name fargs body extras =
   ignore (Map.Poly.of_alist_exn fargs);
   let renaming =
     Map.Poly.of_alist_exn
@@ -1828,7 +2500,40 @@ let definition_scope (envs : Problem.envs) name fargs body =
     List.fold fargs ~init:envs.uni_senv ~f:(fun env (v, sort) ->
         Map.Poly.add_exn env ~key:v ~data:sort)
   in
-  (fargs, { envs with uni_senv }, rename_bound_occurrences renaming body)
+  ( fargs,
+    { envs with uni_senv },
+    rename_bound_occurrences { envs with uni_senv } renaming body,
+    List.map extras ~f:(rename_bound_occurrences { envs with uni_senv } renaming) )
+
+(* A recursive definition's body may carry the attribute [:decreases m] in an
+   annotation [(! body ... :decreases m ...)], the standard syntax for a term
+   attribute, which other solvers read and ignore.  Returns the body with that
+   attribute removed (the annotation dropped when nothing else remains) and
+   [m].  Only the outermost annotation of the body is read. *)
+let split_decreases body =
+  match body with
+  | Sexp.List (Sexp.Atom "!" :: term :: attributes) ->
+      let rec split kept = function
+        | Sexp.Atom ":decreases" :: measure :: rest ->
+            let rest, _ = split [] rest in
+            (List.rev_append kept rest, Some measure)
+        | attr :: rest -> split (attr :: kept) rest
+        | [] -> (List.rev kept, None)
+      in
+      let attributes, measure = split [] attributes in
+      let body =
+        if List.is_empty attributes then term
+        else Sexp.List (Sexp.Atom "!" :: term :: attributes)
+      in
+      (body, measure)
+  | _ -> (body, None)
+
+(* The declared measure of a recursive definition, read at [Int] over the
+   (renamed) formals, and registered under the function's name; nothing is
+   registered when the body declares none. *)
+let register_measure ~read name = function
+  | None -> ()
+  | Some measure -> add_declared_measure (Ident.Tvar name) (read measure)
 
 (* A function definition promises its declared result sort even if no later
    assertion calls it. Infer the body against that sort before storing it or
@@ -1863,60 +2568,67 @@ let definition_body ~print ~inline (envs : Problem.envs) sort body =
     ~constrs_opt:(Some !literal_constraints) body
 
 
-let is_available str =
-  let logiclist =
-    [
-      "ALL";
-      "HORN";
-      "QHORN";
-      "DQHORN";
-      "SYGUS";
-      "QF_LIA";
-      "QF_NRA";
-      "QF_LIA";
-      "QF_LRA";
-      "QF_LIRA";
-      "QF_NIA";
-      "QF_NRA";
-      "QF_NIRA";
-      "LIA";
-      "LRA";
-      "NIA";
-      "NRA";
-      "SAT";
-      "QF_DT";
-      "QF_UF";
-      "QF_BV";
-      "BV";
-      "QF_ABV";
-      "QF_UFBV";
-      "QF_AUFBV";
-      "QF_ALIA";
-      "ALL_SUPPORTED";
-      "AUFLIA";
-      (* The rest of the logics named on the SMT-LIB site's own logics page.  Every
-         name that is not one of HORN/QHORN/DQHORN/SYGUS takes the same branch below
-         -- declared symbols are read as uninterpreted, to be interpreted by a model --
-         so this list decides nothing but whether the file is read at all, and omitting
-         a standard name buys nothing and loses the file.  A file naming a logic this
-         reader does not implement in full is still better read and refused later, by
-         the operator it actually uses, than refused by its header. *)
-      "AUFLIRA";
-      "AUFNIRA";
-      "UFLRA";
-      "UFNIA";
-      "QF_AUFLIA";
-      "QF_AX";
-      "QF_EIA";
-      "QF_IDL";
-      "QF_RDL";
-      "QF_UFIDL";
-      "QF_UFLIA";
-      "QF_UFLRA";
-      "QF_UFNRA";
-    ]
+(* What a [set-logic] name decides here.  [Synthesize] for the Horn and SyGuS
+   names (a declared symbol is an unknown to solve for), [Any] for [ALL] and
+   [ALL_SUPPORTED] (no theory restriction; the caller's reading stands),
+   [Interpreted] for every other accepted name (a declared symbol is
+   uninterpreted, to be interpreted by a model), and [Refused reason] for a
+   name this reader cannot read, with the reason. *)
+type logic_reading =
+  | Synthesize
+  | Any
+  | Interpreted
+  | Refused of string
+
+(* Whether [name] is spelled as an SMT-LIB logic, by the naming convention of
+   the SMT-LIB logics page: an optional [QF_], then the letter groups in this
+   order -- [A] or [AX] (ArraysEx), [UF] (free sort and function symbols), [BV]
+   (FixedSizeBitVectors), [FP] (FloatingPoint), [DT] (datatypes), [S]
+   (strings), then at most one arithmetic: [IDL], [RDL], [EIA], or [L] / [N]
+   before [IA], [RA] or [IRA] -- with at least one group.  The page formally
+   defines only some of these names (UFLIA, QF_SLIA, ANIA are not among them),
+   but the benchmark library and both z3 and cvc5 use the rest by the same
+   convention, so recognising the grammar rather than a list reads every one of
+   them.  Returns the letter groups found, or [None] for a name the convention
+   does not produce. *)
+let smtlib_logic_groups name =
+  let n = String.length name in
+  let rest_from i = String.sub name ~pos:i ~len:(n - i) in
+  let starts i p = String.is_prefix (rest_from i) ~prefix:p in
+  let i = if starts 0 "QF_" then 3 else 0 in
+  let take i groups opts =
+    match List.find opts ~f:(starts i) with
+    | Some p -> (i + String.length p, p :: groups)
+    | None -> (i, groups)
   in
-  List.exists logiclist ~f:(String.( = ) str)
+  let i, gs = take i [] [ "AX"; "A" ] in
+  let i, gs = take i gs [ "UF" ] in
+  let i, gs = take i gs [ "BV" ] in
+  let i, gs = take i gs [ "FP" ] in
+  let i, gs = take i gs [ "DT" ] in
+  let i, gs = take i gs [ "S" ] in
+  let i, gs =
+    take i gs
+      [ "IDL"; "RDL"; "EIA"; "LIRA"; "NIRA"; "LIA"; "NIA"; "LRA"; "NRA" ]
+  in
+  if i = n && not (List.is_empty gs) then Some (List.rev gs) else None
+
+let logic_reading = function
+  | "HORN" | "QHORN" | "DQHORN" | "SYGUS" -> Synthesize
+  | "ALL" | "ALL_SUPPORTED" -> Any
+  (* Pure propositional logic, not an SMT-LIB name but one some inputs use. *)
+  | "SAT" -> Interpreted
+  | name -> (
+      match smtlib_logic_groups name with
+      | Some groups when List.mem groups "FP" ~equal:String.equal ->
+          Refused
+            "it includes the floating-point theory (FP), which this reader \
+             does not implement"
+      | Some _ -> Interpreted
+      | None ->
+          Refused
+            "it is not an SMT-LIB logic name (nor HORN, QHORN, DQHORN, \
+             SYGUS, ALL, ALL_SUPPORTED or SAT)")
 
 let mk_dt_sel ?(implicit_params = false) ~print uni_sort dtenv params dt dts =
   let recursive name target args =
@@ -2281,8 +2993,11 @@ let names_reaching names es =
   fix names
 
 (* Whether a [:law] premise also reaches the assertions that apply an unknown whose dependency set
-   contains the law's function.  Off by default.  Process-wide, and only ever read while a file
-   is being read, which happens before any solver domain exists.
+   contains the law's function.  On, for every reader of an [.smt2] file whatever the backend: it is
+   the reading the laws state, and the reading without it is unsound for [unsat] (it demands a
+   dependent clause for unlawful interpretations too, so a problem the laws make satisfiable can
+   read as unsatisfiable).  [false] only in a test comparing the two readings.  Process-wide, and
+   only ever read while a file is being read, which happens before any solver domain exists.
 
    Why: an unknown that depends on a universal function [f] is, after reading, applied to [f]
    as an argument, so an assertion that applies it speaks of [f] as surely as one that writes
@@ -2293,7 +3008,7 @@ let names_reaching names es =
    it can do, and argument filtering then erases [f] from the unknown altogether, since nothing
    constrains it there.  Inserting the premise is sound for the reason given at the [:law]
    expansion: more premises move the expanded problem toward the stated one, never past it. *)
-let law_reaches_dependents = ref false
+let law_reaches_dependents = ref true
 
 (* The unknowns among [es] that depend on [name], [es] being the commands after [name]'s
    declaration.
@@ -2335,8 +3050,7 @@ let dependents_of ~bool_valued ~synthesize name es =
 
 (* Whether a [:law] premise inserted into an assertion leaves out the conjuncts the assertion
    already has as an antecedent.  On by default (an exact rewrite); PCSat's [law_dedup_premises =
-   false] turns it off and re-reads the input.  Set, like [law_reaches_dependents], only before a
-   file is read.
+   false] turns it off and re-reads the input.  Set only before a file is read.
 
    Why: one law is often attached to several functions (a trait's laws to each of its methods, at
    each type instance), and the expansion inserts it once per function reaching the assertion, so
@@ -2378,38 +3092,77 @@ let fresh_premise ~premise phi =
       if List.length cs = List.length (sexp_conjuncts premise) then Some premise
       else Some (Sexp.List (Sexp.Atom "and" :: cs))
 
+(* [sexp] with [premise] added, as [assert_with_premise] adds it to an assertion that mentions
+   one of its names, and the premise actually inserted ([None] when nothing is inserted: the
+   command is not an assertion, or every conjunct is already assumed) *)
+let insert_premise ~premise sexp =
+  let imply premise phi =
+    if not !law_dedup_premises then
+      (Sexp.List [ Sexp.Atom "=>"; premise; phi ], Some premise)
+    else
+      match fresh_premise ~premise phi with
+      | None -> (phi, None)
+      | Some p -> (Sexp.List [ Sexp.Atom "=>"; p; phi ], Some p)
+  in
+  match sexp with
+  | Sexp.List [ Sexp.Atom "assert"; Sexp.List [ Sexp.Atom "forall"; bs; body ] ]
+    ->
+      let body, inserted = imply premise body in
+      ( Sexp.List
+          [
+            Sexp.Atom "assert"; Sexp.List [ Sexp.Atom "forall"; bs; body ];
+          ],
+        inserted )
+  | Sexp.List [ Sexp.Atom "assert"; phi ] ->
+      let phi, inserted = imply premise phi in
+      (Sexp.List [ Sexp.Atom "assert"; phi ], inserted)
+  | e -> (e, None)
+
 (* add [premise] to an assertion, under its own [forall] when it has one, so that a law written
    with the clause's variable names is instantiated at them rather than nested; with
    [law_dedup_premises], only the conjuncts it does not already assume *)
 let assert_with_premise ~names ~premise =
   let mentions = sexp_mentions names in
-  fun sexp ->
-  if not (mentions sexp) then sexp
-  else
-    let imply premise phi =
-      if not !law_dedup_premises then
-        Sexp.List [ Sexp.Atom "=>"; premise; phi ]
-      else
-        match fresh_premise ~premise phi with
-        | None -> phi
-        | Some p -> Sexp.List [ Sexp.Atom "=>"; p; phi ]
-    in
-    match sexp with
-    | Sexp.List
-        [ Sexp.Atom "assert"; Sexp.List [ Sexp.Atom "forall"; bs; body ] ] ->
-        Sexp.List
-          [
-            Sexp.Atom "assert";
-            Sexp.List
-              [
-                Sexp.Atom "forall";
-                bs;
-                imply premise body;
-              ];
-          ]
-    | Sexp.List [ Sexp.Atom "assert"; phi ] ->
-        Sexp.List [ Sexp.Atom "assert"; imply premise phi ]
-    | e -> e
+  fun sexp -> if not (mentions sexp) then sexp else fst (insert_premise ~premise sexp)
+
+(* every atom of an s-expression, into [set] *)
+let rec add_sexp_atoms set = function
+  | Sexp.Atom a -> Hash_set.add set a
+  | Sexp.List es -> List.iter es ~f:(add_sexp_atoms set)
+
+(* [List.fold laws ~init:es ~f:(fun es (names, premise) -> List.map es ~f:(assert_with_premise
+   ~names ~premise))], the expansion of a run of [:law] declarations one after another, with
+   each assertion scanned once instead of once per law: an assertion's atoms are collected
+   once and grown by the atoms of each premise inserted into it, which are exactly the atoms
+   the rewritten assertion gains ([=>] and the premise), so "mentions one of [names]" is
+   answered from the set as [sexp_mentions] answers it from the text.  A command other than an
+   assertion is never rewritten, so it is passed over.  On a generated input with 58 laws in
+   front of a thousand commands of 4.7 MB, the per-law rescans were the larger half of the
+   reading. *)
+let assert_with_premises laws es =
+  match laws with
+  | [] -> es
+  | [ (names, premise) ] -> List.map es ~f:(assert_with_premise ~names ~premise)
+  | _ ->
+      let laws =
+        List.map laws ~f:(fun (names, premise) ->
+            (List.dedup_and_sort ~compare:String.compare names, premise))
+      in
+      List.map es ~f:(function
+        | Sexp.List (Sexp.Atom "assert" :: _) as sexp ->
+            let atoms = Hash_set.create (module String) in
+            add_sexp_atoms atoms sexp;
+            List.fold laws ~init:sexp ~f:(fun sexp (names, premise) ->
+                if not (List.exists names ~f:(Hash_set.mem atoms)) then sexp
+                else
+                  let sexp, inserted = insert_premise ~premise sexp in
+                  (match inserted with
+                  | None -> ()
+                  | Some p ->
+                      Hash_set.add atoms "=>";
+                      add_sexp_atoms atoms p);
+                  sexp)
+        | e -> e)
 
 let kind_of_synthesis_target ~fun_sort ~args_sort sret =
   if Term.is_bool_sort sret then Kind.Ord
@@ -2417,9 +3170,11 @@ let kind_of_synthesis_target ~fun_sort ~args_sort sret =
   else if Term.is_real_sort sret then Kind.RealFun
   else if Term.is_regex_sort sret && List.is_empty args_sort then Kind.RegEx
   else
-    failwith
-      ("synthesis of a function of the sort " ^ Term.str_of_sort fun_sort
-     ^ " is not supported")
+    (* a sort this tool cannot synthesise a function of: an honest limit of
+       coverage, refused in one line rather than raised as an internal failure
+       that the command line would print with a backtrace *)
+    Common.Refusal.refuse "synthesis of a function of the sort %s is not supported"
+      (Term.str_of_sort fun_sort)
 
 (* Predicate kinds in this reader's extended syntax.  A kind is a condition on
    one solution rather than a constraint, so plain SMT-LIB has nowhere to put
@@ -2488,8 +3243,10 @@ let simple_kind_of_command = function
   | "declare-nep" -> Some (Kind.Tot [])
   | "declare-dwfp" -> Some Kind.DWF
   | "declare-integp" -> Some Kind.Integ
-  | "declare-admp" -> Some (Kind.Adm false)
-  | "declare-admcp" -> Some (Kind.Adm true)
+  | "declare-admp" -> Some (Kind.Adm Kind.Adm_expectation)
+  | "declare-admcp" -> Some (Kind.Adm Kind.Adm_conditional)
+  | "declare-admpp" -> Some (Kind.Adm Kind.Adm_probability)
+  | "declare-admlp" -> Some (Kind.Adm Kind.Adm_liberal)
   | _ -> None
 
 let halve_truncation i = if i mod 2 = 0 then i / 2 else (i + 1) / 2
@@ -2601,6 +3358,7 @@ let nwf_of_sexp ~print ~parity uni_sort dtenv = function
           sigma;
           trunc;
           acc_set;
+          priority_switch = None;
         }
   | e -> failwithf "%s is not a family (name fields...)" (Sexp.to_string e) ()
 
@@ -2732,27 +3490,36 @@ let candidate_atoms_of_sexp ~print ~inline (envs : Problem.envs) decl =
 
 (* Function declarations and definitions share a source namespace even
    though their internal bindings live in different maps. This is a top-level
-   introduction check; formal parameters and sort names are separate. *)
+   introduction check; formal parameters and sort names are separate.  A
+   redeclaration is an ill-formed input (z3 and cvc5 both reject it), so it is
+   refused as an input this tool does not handle rather than raised as an
+   internal failure: the command-line entry prints a refusal as one [error:]
+   line, and an uncaught [Failure] as a backtrace. *)
 let ensure_function_name_fresh ~what (envs : Problem.envs) name =
+  ensure_declarable_symbol ~what name;
   let key = Ident.Tvar name in
   if Map.Poly.mem envs.fenv key then
-    failwith @@ sprintf "[%s] function %s is already defined" what name;
+    Common.Refusal.refuse "[%s] function %s is already defined" what name;
   if Map.Poly.mem envs.exi_senv key then
-    failwith @@ sprintf "[%s] function %s is already declared" what name
+    Common.Refusal.refuse "[%s] function %s is already declared" what name
 
 (* Aliases and datatype/uninterpreted declarations introduce sort symbols in
    one source namespace. Check the whole group before resolving any bodies;
-   local par parameters and term names occupy separate binding contexts. *)
+   local par parameters and term names occupy separate binding contexts.  A
+   theory sort counts as declared: [(declare-sort Int 0)] is rejected by z3
+   ("sort already defined") and by cvc5 ("previously declared as a type"), and
+   is refused here the same way as a function redeclaration above. *)
 let ensure_sort_names_fresh ~what (envs : Problem.envs) names =
   ignore
   @@ List.fold names ~init:Set.Poly.empty ~f:(fun seen name ->
+      ensure_declarable_symbol ~what name;
       if
         Set.mem seen name
         || List.mem theory_sort_names name ~equal:String.equal
         || Hashtbl.mem (sort_aliases ()) name
         || Option.is_some (DTEnv.look_up_dt envs.dtenv name)
         || Set.mem envs.uni_sort (Sort.SVar (Ident.Svar name))
-      then failwith @@ sprintf "[%s] sort %s is already declared" what name;
+      then Common.Refusal.refuse "[%s] sort %s is already declared" what name;
       Set.add seen name)
 
 let ensure_datatype_sort_names_fresh ~what envs declarations =
@@ -2764,8 +3531,429 @@ let ensure_datatype_sort_names_fresh ~what envs declarations =
         @@ sprintf "[%s] invalid datatype declaration: %s" what
              (Sexp.to_string_hum sexp))
 
+(* The SMT-LIB 2.6 assertion stack (the standard's section 4.1.4), as far as a
+   reader that hands its caller ONE problem can keep it.
+
+   What the standard says: [(push n)] adds n levels; [(pop n)] removes the n
+   most recent ones and with them every assertion, declaration and definition
+   made since -- the declarations survive only under
+   [(set-option :global-declarations true)]; [(reset-assertions)] empties the
+   stack, keeping only global declarations; [(reset)] returns to the state at
+   start-up; [(check-sat-assuming (l ...))] checks the current assertions
+   together with the literals, which are NOT asserted and are gone after the
+   check; commands after [(exit)] are not executed.  Each [check-sat] asks
+   about the assertions in scope at that point, and only there.
+
+   What the caller gets: the assertions and the environment in scope at ONE
+   check, its literals included.  With [stop_at = Some k] that is the [k]-th
+   [check-sat] or [check-sat-assuming] (counted from 1, as [count_checks]
+   counts them), and nothing after it is read, as a solver answering the
+   checks in order has read nothing after the one it answers; with [None] it
+   is the LAST check, or the end of the input when there is none.  A caller
+   that answers every check reads the input once per check with [Some k]
+   ([-p smt] does, each in a process of its own, because solving sets
+   process-global environments); a caller that answers one problem reads it
+   with [None].  Reading the whole file as one conjunction, as this reader
+   once did, answers no check at all as soon as one is retracted: a [pop]
+   that removes [x < 0] before asserting [x > 0], or two [check-sat-assuming]
+   with opposite literals, was read as [unsat] where every check is [sat].
+
+   [frames] holds, innermost first, what a [pop] restores: the assertions, the
+   environment and the sort aliases at the matching [push].  Process state
+   outside the environment -- the lemma and measure registries -- is not
+   scoped. *)
+type command_frame = {
+  saved_acc : Formula.t list;
+  saved_envs : Problem.envs;
+  saved_aliases : (string, Ident.svar list * Sort.t) Hashtbl.t;
+}
+
+type command_state = {
+  initial_envs : Problem.envs;
+  mutable frames : command_frame list;
+  mutable global_declarations : bool;
+  mutable checked : (Formula.t list * Problem.envs) option;
+  stop_at : int option;  (** the check to answer; [None] for the last *)
+  mutable checks_seen : int;  (** the checks read so far *)
+}
+
+let command_state_key : command_state option Stdlib.Domain.DLS.key =
+  Stdlib.Domain.DLS.new_key (fun () -> None)
+
+let with_command_state ?stop_at (envs : Problem.envs) f =
+  let saved = Stdlib.Domain.DLS.get command_state_key in
+  Stdlib.Domain.DLS.set command_state_key
+    (Some
+       {
+         initial_envs = envs;
+         frames = [];
+         global_declarations = false;
+         checked = None;
+         stop_at;
+         checks_seen = 0;
+       });
+  Common.Timer.protect
+    ~finally:(fun () -> Stdlib.Domain.DLS.set command_state_key saved)
+    f
+
+let command_state () =
+  match Stdlib.Domain.DLS.get command_state_key with
+  | Some st -> st
+  | None -> failwith "[toplevel] the command state is not initialised"
+
+(* the level count of [push]/[pop]: a numeral, and 1 when omitted (z3 and cvc5
+   accept the bare form) *)
+let scope_levels ~what = function
+  | [] -> 1
+  | [ Sexp.Atom n ] -> index_numeral ~what n
+  | args ->
+      Common.Refusal.refuse "[%s] expects one numeral, got %s" what
+        (Sexp.to_string_hum (Sexp.List args))
+
+(* A check has been read with [state] in scope: record it, and return the
+   commands still to read [es] -- none once it is the check asked for. *)
+let check_reached state es =
+  let st = command_state () in
+  st.checks_seen <- st.checks_seen + 1;
+  st.checked <- Some state;
+  match st.stop_at with Some k when st.checks_seen >= k -> [] | _ -> es
+
+(* The number of [check-sat] and [check-sat-assuming] commands before the
+   first [(exit)], counted as [toplevel] counts them for [stop_at]. *)
+let count_checks sexps =
+  let rec go n = function
+    | [] | Sexp.List [ Sexp.Atom "exit" ] :: _ -> n
+    | Sexp.List [ Sexp.Atom "check-sat" ] :: es
+    | Sexp.List [ Sexp.Atom "check-sat-assuming"; Sexp.List _ ] :: es ->
+        go (n + 1) es
+    | _ :: es -> go n es
+  in
+  go 0 sexps
+
+(* A reader that answers ONE problem per input -- the constraint-solving entry,
+   whose HORN logic has one check by convention -- answers the last check of a
+   file with several (see [command_state]).  It says so on standard error, once
+   per file and process however often the file is read again, so that stdout
+   keeps only the answer. *)
+let several_checks_warned : string list Atomic.t = Atomic.make []
+
+let warn_if_several_checks ~filename sexps =
+  let n = count_checks sexps in
+  let warned = Atomic.get several_checks_warned in
+  if n > 1 && not (List.mem warned filename ~equal:String.equal) then
+    if Atomic.compare_and_set several_checks_warned warned (filename :: warned)
+    then
+      eprintf
+        "[warning] %s has %d checks; only the last one is answered (one answer \
+         per check is -p smt's)\n\
+         %!"
+        filename n
+
+(* [(! t :named n)] names [t]: SMT-LIB 2.6 (section 3.6.5) gives it the effect
+   of [(define-fun n () s t)] for the sort [s] of [t], and requires [t] to be
+   closed, so [n] may be used by any later command -- typically
+   [(check-sat-assuming (n))] or a later assertion.  The annotation itself
+   denotes [t], which the term readers keep; what they cannot do is extend the
+   scope, so the names of one command are defined here, before the command is
+   read, innermost first so that a named term may contain a named term.  A
+   term that cannot be read in the command's scope (it is not closed, which
+   the standard forbids) defines nothing, as before. *)
+let define_named_terms ~print ~inline (envs : Problem.envs) sexp =
+  let rec named acc = function
+    | Sexp.List (Sexp.Atom "!" :: t :: attrs) ->
+        let acc = named acc t in
+        let rec names acc = function
+          | Sexp.Atom ":named" :: Sexp.Atom n :: rest -> names ((n, t) :: acc) rest
+          | _ :: rest -> names acc rest
+          | [] -> acc
+        in
+        names acc attrs
+    | Sexp.List es -> List.fold es ~init:acc ~f:named
+    | Sexp.Atom _ -> acc
+  in
+  List.fold (List.rev (named [] sexp)) ~init:envs ~f:(fun envs (n, t) ->
+      (* a name already in use is an ill-formed input; the annotation is then
+         read as before, as the term it wraps, and the name keeps its binding *)
+      if is_term_symbol_bound envs n then envs
+      else
+      match
+        Typeinf.typeinf_term ~print ~default:None ~to_sus:true
+          ~rigid:(rigid_of envs.uni_sort)
+          (of_term ~print ~inline envs t)
+      with
+      | exception exn_ when not (Common.Timer.is_async exn_) -> envs
+      | term ->
+          let sort = Term.sort_of term in
+          let body =
+            if Term.is_bool_sort sort then
+              T_bool.of_formula (Formula.of_bool_term term)
+            else term
+          in
+          {
+            envs with
+            fenv =
+              Map.Poly.add_exn envs.fenv ~key:(Ident.Tvar n)
+                ~data:([], sort, body, false, Formula.mk_true ());
+          })
+
+(* Whether each assertion's positive existentials are offered a witness drawn from the
+   clause's own premises before the assertion is read ([premise_witness_disjuncts]).
+   Process-wide, off by default, and only ever read while a file is being read, which happens
+   before any solver domain exists. *)
+let premise_witness_disjuncts = ref false
+
+(* the most witness disjuncts one existential is given *)
+let max_premise_witnesses = 4
+
+(** [premise_witness_disjuncts_of ~is_def phi] is [(phi', n)]: the assertion [phi] with each
+    existential [exists xs. B] at positive polarity replaced by
+    [(exists ys1. B s1) \/ ... \/ (exists ysk. B sk) \/ exists xs. B], and [n] the number of
+    disjuncts added (at most [max_premise_witnesses] per existential).  Each [si] maps some
+    of [xs] to terms; [ysi] are the [xs] it leaves.
+
+    Exact, in every model for well-sorted, capture-avoiding [si]: [B si] implies [exists xs. B]
+    (take each bound variable to its image), so the added disjuncts are implied by the one
+    kept, and the disjunction is equivalent to it.  Both verdicts of the problem read are
+    therefore verdicts of the problem written.  The substitution is capture-avoiding because
+    an [si] is used only when no variable of its terms is bound inside [B] or among [xs], and
+    it stops at an inner binder that rebinds a variable it maps. Parallel let
+    RHSs use the outer mapping; declarations, sorts and indices are preserved.
+    Bodies with match, annotations or extension binders are left unchanged.
+    [prepare_argument f i sort rhs] certifies a replacement at the bound sort
+    using the definition's formal rank, and returns its rank-preserving syntax;
+    without that certificate the candidate is declined. A Real formal can
+    accept an Int actual, so matching application positions alone is not enough.
+
+    Which [si].  [B]'s conjuncts that apply a defined function [P] ([is_def]) at some of [xs]
+    are matched against the applications of the same [P] in the clause's premises (atoms at
+    negative polarity, reached from the root through [not], [and], [or], [=>] and the
+    outermost [forall]s only, so their terms are in scope at the existential): [x := a] for
+    each bound [x] written as the argument at a position where the premise writes [a].  The
+    other arguments are not compared.  The shape this is for: a loop's postcondition
+    [exists s last fin. produces(it, s, last) /\ completed(last, fin) /\ r = len s] whose
+    witness is the loop invariant's own [produces(it0, hist, cur)] in the premise, [s := hist]
+    and [last := cur].  Once the definitions are inlined, the bodies of the two applications
+    no longer share a term the witness can be read from, and the instantiation search the
+    solver is then left with took tens of seconds where the instance alone is proved at
+    once.  Only the existentials reached from the root through the same connectives are
+    rewritten; the rest of the assertion, a [let] or an annotation included, is kept as
+    written. *)
+let premise_witness_disjuncts_of
+    ?(prepare_argument = fun _ _ _ _ -> None) ~is_def phi =
+  let atoms_of =
+    let rec go acc = function
+      | Sexp.Atom a -> Set.add acc a
+      | Sexp.List l -> List.fold l ~init:acc ~f:go
+    in
+    go String.Set.empty
+  in
+  (* every name an inner binder ([forall], [exists], [let]) of [e] binds *)
+  let rec binders_of acc = function
+    | Sexp.Atom _ -> acc
+    | Sexp.List
+        ((Sexp.Atom ("forall" | "exists" | "let") :: Sexp.List bs :: _) as l) ->
+        let acc =
+          List.fold bs ~init:acc ~f:(fun acc -> function
+            | Sexp.List (Sexp.Atom x :: _) -> Set.add acc x
+            | _ -> acc)
+        in
+        List.fold l ~init:acc ~f:binders_of
+    | Sexp.List l -> List.fold l ~init:acc ~f:binders_of
+  in
+  (* Only descend through term syntax whose scopes are handled below. Match
+     patterns need datatype ranks; annotations may contain scoped patterns,
+     and extension binders have their own rules. Keep their original formula
+     rather than manufacture an instance with an unverified substitution. *)
+  let rec supported = function
+    | Sexp.Atom _ -> true
+    | Sexp.List (Sexp.Atom ("match" | "lambda" | "random" | "!") :: _) -> false
+    | Sexp.List es -> List.for_all es ~f:supported
+  in
+  let without_bindings m bs =
+    List.fold bs ~init:m ~f:(fun m -> function
+      | Sexp.List (Sexp.Atom x :: _) -> Map.remove m x
+      | _ -> m)
+  in
+  (* The reader also accepts an array variable in application-head position.
+     Its substitution would require a sort-directed select, not a renamed
+     function head. Decline such mappings until that extension is handled. *)
+  let rec supported_mapping m = function
+    | Sexp.Atom _ -> true
+    | Sexp.List [ Sexp.Atom ("forall" | "exists"); Sexp.List bs; body ] ->
+        supported_mapping (without_bindings m bs) body
+    | Sexp.List [ Sexp.Atom "let"; Sexp.List bs; body ] ->
+        List.for_all bs ~f:(function
+          | Sexp.List [ _; rhs ] -> supported_mapping m rhs
+          | _ -> false)
+        && supported_mapping (without_bindings m bs) body
+    | Sexp.List (Sexp.Atom "_" :: _)
+    | Sexp.List [ Sexp.Atom "as"; _; _ ] -> true
+    | Sexp.List (head :: args) ->
+        let mapped_head =
+          match head with
+          | Sexp.Atom name
+          | Sexp.List [ Sexp.Atom "as"; Sexp.Atom name; _ ] -> Map.mem m name
+          | _ -> false
+        in
+        not mapped_head && List.for_all args ~f:(supported_mapping m)
+    | Sexp.List [] -> true
+  in
+  let rec subst m = function
+    | Sexp.Atom a as e -> Option.value (Map.find m a) ~default:e
+    | Sexp.List
+        [ (Sexp.Atom ("forall" | "exists") as q); (Sexp.List bs as binds); body ] ->
+        Sexp.List [ q; binds; subst (without_bindings m bs) body ]
+    | Sexp.List [ (Sexp.Atom "let" as q); Sexp.List bs; body ] ->
+        (* Let bindings are parallel: each RHS sees the outer mapping, while
+           the body hides every bound name. Names themselves never change. *)
+        let bs' =
+          List.map bs ~f:(function
+            | Sexp.List [ name; rhs ] -> Sexp.List [ name; subst m rhs ]
+            | binding -> binding)
+        in
+        Sexp.List [ q; Sexp.List bs'; subst (without_bindings m bs) body ]
+    | Sexp.List [ Sexp.Atom "as"; Sexp.Atom name; _ ] as e ->
+        (* Qualification's sort is a different namespace. A mapped term
+           already has that rank, so its qualifier is no longer needed. *)
+        Option.value (Map.find m name) ~default:e
+    | Sexp.List (Sexp.Atom "_" :: _) as e -> e
+    | Sexp.List (head :: args) ->
+        Sexp.List (head :: List.map args ~f:(subst m))
+    | Sexp.List [] as e -> e
+  in
+  let is_app = function
+    | Sexp.List (Sexp.Atom f :: _ :: _) -> is_def f
+    | _ -> false
+  in
+  (* the defined-function applications at negative polarity *)
+  let rec premises pos acc = function
+    | Sexp.List [ Sexp.Atom "not"; e ] -> premises (not pos) acc e
+    | Sexp.List (Sexp.Atom ("and" | "or") :: es) ->
+        List.fold es ~init:acc ~f:(premises pos)
+    | Sexp.List (Sexp.Atom "=>" :: (_ :: _ :: _ as es)) ->
+        let hyps, concl = List.split_n es (List.length es - 1) in
+        let acc = List.fold hyps ~init:acc ~f:(premises (not pos)) in
+        List.fold concl ~init:acc ~f:(premises pos)
+    | e when (not pos) && is_app e -> e :: acc
+    | _ -> acc
+  in
+  let rec conj_apps = function
+    | Sexp.List (Sexp.Atom "and" :: es) -> List.concat_map es ~f:conj_apps
+    | e when is_app e -> [ e ]
+    | _ -> []
+  in
+  let added = ref 0 in
+  let witnesses prems binds body =
+    let xs =
+      List.filter_map binds ~f:(function
+        | Sexp.List [ Sexp.Atom x; _ ] -> Some x
+        | _ -> None)
+    in
+    if List.length xs <> List.length binds || not (supported body) then []
+    else
+      let blocked = Set.union (binders_of String.Set.empty body) (String.Set.of_list xs) in
+      let subs =
+        List.concat_map (conj_apps body) ~f:(function
+          | Sexp.List (Sexp.Atom f :: args) ->
+              List.filter_map prems ~f:(function
+                | Sexp.List (Sexp.Atom g :: pargs)
+                  when String.equal f g && List.length pargs = List.length args -> (
+                    let m =
+                      List.foldi (List.zip_exn args pargs)
+                        ~init:(Some String.Map.empty)
+                        ~f:(fun position m (a, p) ->
+                          match (m, a) with
+                          | Some m, Sexp.Atom x when List.mem xs x ~equal:String.equal -> (
+                              let prepared =
+                                List.find_map binds ~f:(function
+                                  | Sexp.List [ Sexp.Atom name; sort ]
+                                    when String.equal name x ->
+                                      prepare_argument f position sort p
+                                  | _ -> None)
+                              in
+                              match prepared with
+                              | None -> None
+                              | Some p -> (
+                                  match Map.find m x with
+                                  | None -> Some (Map.set m ~key:x ~data:p)
+                                  | Some p' when Sexp.equal p p' -> Some m
+                                  | Some _ -> None))
+                          | _ -> m)
+                    in
+                    match m with
+                    | Some m
+                      when (not (Map.is_empty m))
+                           && supported_mapping m body
+                           && Map.for_all m ~f:(fun t ->
+                                  Set.is_empty (Set.inter (atoms_of t) blocked)) ->
+                        Some m
+                    | _ -> None)
+                | _ -> None)
+          | _ -> [])
+      in
+      let subs =
+        List.take
+          (List.dedup_and_sort subs ~compare:(Map.compare_direct Sexp.compare))
+          max_premise_witnesses
+      in
+      List.map subs ~f:(fun m ->
+          let rest =
+            List.filter binds ~f:(function
+              | Sexp.List [ Sexp.Atom x; _ ] -> not (Map.mem m x)
+              | _ -> true)
+          in
+          let inst = subst m body in
+          if List.is_empty rest then inst
+          else Sexp.List [ Sexp.Atom "exists"; Sexp.List rest; inst ])
+  in
+  let rec rw prems pos = function
+    | Sexp.List [ (Sexp.Atom "not" as n); e ] ->
+        Sexp.List [ n; rw prems (not pos) e ]
+    | Sexp.List ((Sexp.Atom ("and" | "or") as c) :: es) ->
+        Sexp.List (c :: List.map es ~f:(rw prems pos))
+    | Sexp.List ((Sexp.Atom "=>" as c) :: (_ :: _ :: _ as es)) ->
+        let hyps, concl = List.split_n es (List.length es - 1) in
+        Sexp.List
+          ((c :: List.map hyps ~f:(rw prems (not pos)))
+          @ List.map concl ~f:(rw prems pos))
+    | Sexp.List [ Sexp.Atom "exists"; Sexp.List binds; body ] as e when pos -> (
+        match witnesses prems binds body with
+        | [] -> e
+        | ws ->
+            added := !added + List.length ws;
+            Sexp.List ((Sexp.Atom "or" :: ws) @ [ e ]))
+    | e -> e
+  in
+  let rec top = function
+    | Sexp.List [ (Sexp.Atom "forall" as q); Sexp.List bs; body ] as original ->
+        (* A bound array may occupy application-head position and shadow a
+           global definition. Its rank is not the global function's rank. *)
+        if List.exists bs ~f:(function
+             | Sexp.List [ Sexp.Atom name; _ ] -> is_def name
+             | _ -> true)
+        then original
+        else Sexp.List [ q; Sexp.List bs; top body ]
+    | e -> rw (premises true [] e) true e
+  in
+  let phi' = top phi in
+  (phi', !added)
+
 let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
   | [] ->
+      (* what is answered is the state at the check asked for, see
+         [command_state] *)
+      let st = command_state () in
+      (match st.stop_at with
+      | Some k when st.checks_seen < k ->
+          (* the caller counted a check this reading did not meet; answering
+             another check's state instead would print one answer twice *)
+          failwith
+          @@ sprintf "[toplevel] check %d asked for, but the input has %d" k
+               st.checks_seen
+      | _ -> ());
+      let acc, envs =
+        match st.checked with Some state -> state | None -> (acc, envs)
+      in
       let acc' =
         (* A [let] whose definition mentions a symbol to be *synthesized* has to
            be substituted away: the clause conversion and the predicate
@@ -2784,11 +3972,13 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
         let synthesis_targets =
           Set.inter (Map.key_set envs.exi_senv) (Map.key_set envs.kind_map)
         in
+        Common.PhaseTime.with_phase "finish" @@ fun () ->
+        let ph name f x = Common.PhaseTime.with_phase name (fun () -> f x) in
         List.map acc
           ~f:
-            (Normalizer.normalize_let ~rename:true
-            >> Formula.elim_let_with_unknowns synthesis_targets
-            >> Normalizer.normalize)
+            (ph "normalize-let" (Normalizer.normalize_let ~rename:true)
+            >> ph "elim-let" (Formula.elim_let_with_unknowns synthesis_targets)
+            >> ph "normalize" Normalizer.normalize)
       in
       LogicOld.set_inlined_defs
       @@ Map.Poly.filter envs.fenv ~f:(Quintuple.fth >> not);
@@ -2802,23 +3992,20 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
       check_forward_referenced_sorts ~print envs;
       (acc', envs)
   | Sexp.List [ Sexp.Atom "set-logic"; Sexp.Atom logic ] :: es ->
-      if not (is_available logic) then
-        failwith
-        @@ sprintf
-             "[set-logic] unsupported logic \"%s\" (accepted: see \
-              Smtlib2.is_available)"
-             logic;
       (* The logic says how a declared symbol is meant, when it says anything at all: a Horn or
          SyGuS problem declares the symbols it wants solved for, an ordinary SMT-LIB logic
          declares symbols a model interprets.  [ALL] and [ALL_SUPPORTED] name no theory
          restriction and are used by both kinds of file, so they leave the caller's choice
-         alone. *)
+         alone.  A logic this reader cannot read is a refusal, one line naming the logic and
+         the reason, never an exception the entry point prints as a crash. *)
       let envs =
-        match logic with
-        | "HORN" | "QHORN" | "DQHORN" | "SYGUS" ->
-            { envs with Problem.decl_reading = Problem.Synthesize }
-        | "ALL" | "ALL_SUPPORTED" -> envs
-        | _ -> { envs with Problem.decl_reading = Problem.Uninterpreted }
+        match logic_reading logic with
+        | Synthesize -> { envs with Problem.decl_reading = Problem.Synthesize }
+        | Any -> envs
+        | Interpreted -> { envs with Problem.decl_reading = Problem.Uninterpreted }
+        | Refused why ->
+            Common.Refusal.refuse "[set-logic] logic %s is not supported: %s"
+              logic why
       in
       toplevel ~print ~inline acc envs es
   | Sexp.List [ Sexp.Atom "set-info"; Sexp.Atom ":candidates"; decl ] :: es ->
@@ -2836,26 +4023,169 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
          silence; z3 reports an error line for the value and goes on). *)
       let envs = candidate_atoms_of_sexp ~print ~inline envs decl in
       toplevel ~print ~inline acc envs es
+  | Sexp.List [ Sexp.Atom "set-info"; Sexp.Atom ":coar-lemma"; Sexp.Atom name ]
+    :: es ->
+      (* The same lemma by name:
+
+           (define-fun L ((x Int) (y Int) (r Int)) Bool
+             (=> (mult x y r) (mult (- x 1) y (- r y))))
+           (set-info :coar-lemma L)
+
+         read as [forall x y r. body].  A [define-fun] is a conservative
+         definition and a symbol value is accepted silently by z3 and cvc5,
+         where z3 reports an error line (and goes on) for the s-expression
+         value of the form below; the meaning is the same. *)
+      (match Map.Poly.find envs.fenv (Tvar name) with
+      | Some (fargs, sret, body, false, _) when Term.is_bool_sort sret ->
+          add_pred_lemma (Formula.forall fargs (Formula.of_bool_term body))
+      | _ ->
+          print
+          @@ lazy
+               (sprintf
+                  "[set-info :coar-lemma] %s is not a Boolean define-fun; \
+                   skipped"
+                  name));
+      toplevel ~print ~inline acc envs es
+  | Sexp.List [ Sexp.Atom "set-info"; Sexp.Atom ":coar-lemma"; phi ] :: es ->
+      (* A lemma about the predicates of a CHC problem, written
+
+           (set-info :coar-lemma
+             (forall ((x Int) (y Int) (r Int))
+               (=> (mult x y r) (mult (- x 1) y (- r y)))))
+
+         after the [declare-fun]s of the predicates it names: a closed
+         formula, read like an assertion, whose predicates are the declared
+         unknowns.  It is a claim about the least solution, never a clause:
+         only the relational proof search of MuCyc reads it, proves it by its
+         own rules before using it, and drops it unproved; every other solver
+         ignores it, so the file's meaning is its assertions alone.  [set-info]
+         with a keyword the standard does not define and an s-expression value
+         is standard SMT-LIB ([attribute_value ::= ( s_expr* )]), so other
+         solvers may skip it; the [coar-] prefix marks the keyword as this
+         tool's, so it cannot be taken for another tool's lemma syntax. *)
+      let phi =
+        Typeinf.typeinf_formula ~print ~default:None ~to_sus:true
+          ~rigid:(rigid_of envs.uni_sort)
+        @@ of_formula ~print ~inline envs phi
+      in
+      add_pred_lemma phi;
+      toplevel ~print ~inline acc envs es
+  | Sexp.List [ Sexp.Atom "set-info"; Sexp.Atom ":lemma"; Sexp.Atom name ]
+    :: es ->
+      (* A lemma about recursive functions, written
+
+           (define-fun L ((y1 S1) ... (yn Sn)) Bool phi)
+           (set-info :lemma L)
+
+         and read as the claim [forall y1 .. yn. phi].  Both commands are
+         standard SMT-LIB and leave the problem's meaning unchanged for any
+         solver: a [define-fun] is a conservative definition, and [set-info]
+         with a keyword the standard does not define and a symbol value is
+         skipped (z3 and cvc5 accept it silently, also in their strict
+         modes).  Here the claim is registered as a candidate lemma, which
+         is used only once proved: it is never the function's property by
+         being written.  Anything else after [:lemma] is skipped with a
+         diagnostic. *)
+      (match Map.Poly.find envs.fenv (Tvar name) with
+      | Some (fargs, sret, body, false, _) when Term.is_bool_sort sret ->
+          add_user_lemma (fargs, Formula.of_bool_term body)
+      | _ ->
+          print
+          @@ lazy
+               (sprintf
+                  "[set-info :lemma] %s is not a Boolean define-fun; skipped"
+                  name));
+      toplevel ~print ~inline acc envs es
   | Sexp.List (Sexp.Atom "set-info" :: Sexp.Atom name :: t :: _) :: es -> (
+      (* The older, non-standard form [(set-info f (forall ys. phi))] that some
+         copied benchmarks carry ([set-info] takes a keyword in SMT-LIB, so z3
+         and cvc5 refuse it).  It was once stored as [f]'s property, which
+         every query reaching [f] then assumed whether or not it was true; it
+         is now a candidate lemma like the standard form above, used only once
+         proved. *)
       match Map.Poly.find envs.fenv (Tvar name) with
-      | Some (fargs, sret, body, is_rec, _ (* ToDo *)) ->
-          let fenv =
-            (* ToDo *)
-            let phi =
-              Typeinf.typeinf_formula ~print ~default:None ~to_sus:true
-                ~rigid:(rigid_of envs.uni_sort)
-              @@ of_formula ~print ~inline envs t
-            in
-            Map.Poly.set envs.fenv ~key:(Tvar name)
-              ~data:(fargs, sret, body, is_rec, phi)
+      | Some _ ->
+          let phi =
+            Typeinf.typeinf_formula ~print ~default:None ~to_sus:true
+              ~rigid:(rigid_of envs.uni_sort)
+            @@ of_formula ~print ~inline envs t
           in
-          toplevel ~print ~inline acc { envs with fenv } es
+          (if Formula.is_forall phi then
+             let _, env, body, _ = Formula.let_bind phi in
+             add_user_lemma (env, body)
+           else add_user_lemma ([], phi));
+          toplevel ~print ~inline acc envs es
       | None -> toplevel ~print ~inline acc envs es (* ToDo: ignored? *))
+  | Sexp.List
+      [ Sexp.Atom "set-option"; Sexp.Atom ":global-declarations"; Sexp.Atom b ]
+    :: es ->
+      (command_state ()).global_declarations <- String.equal b "true";
+      toplevel ~print ~inline acc envs es
+  (* a check asks about the assertions in scope now; see [command_state] *)
+  | Sexp.List [ Sexp.Atom "check-sat" ] :: es ->
+      toplevel ~print ~inline acc envs (check_reached (acc, envs) es)
+  | Sexp.List [ Sexp.Atom "check-sat-assuming"; Sexp.List lits ] :: es ->
+      (* the literals take part in this check only and are not asserted *)
+      let assumed =
+        List.map lits ~f:(fun l ->
+            Common.PhaseTime.with_phase "assert" @@ fun () ->
+            of_formula ~print ~inline envs l)
+      in
+      toplevel ~print ~inline acc envs
+        (check_reached (List.rev_append assumed acc, envs) es)
+  (* nothing after [exit] is executed *)
+  | Sexp.List [ Sexp.Atom "exit" ] :: _ -> toplevel ~print ~inline acc envs []
+  | Sexp.List (Sexp.Atom "push" :: args) :: es ->
+      let st = command_state () in
+      for _level = 1 to scope_levels ~what:"push" args do
+        st.frames <-
+          {
+            saved_acc = acc;
+            saved_envs = envs;
+            saved_aliases = Hashtbl.copy (sort_aliases ());
+          }
+          :: st.frames
+      done;
+      toplevel ~print ~inline acc envs es
+  | Sexp.List (Sexp.Atom "pop" :: args) :: es ->
+      let st = command_state () in
+      let n = scope_levels ~what:"pop" args in
+      if n = 0 then toplevel ~print ~inline acc envs es
+      else if n > List.length st.frames then
+        (* z3 and cvc5 both report an error for popping more levels than were
+           pushed *)
+        Common.Refusal.refuse "[pop] %d level(s) popped but only %d pushed" n
+          (List.length st.frames)
+      else
+        let frame = List.nth_exn st.frames (n - 1) in
+        st.frames <- List.drop st.frames n;
+        if st.global_declarations then
+          toplevel ~print ~inline frame.saved_acc envs es
+        else (
+          Stdlib.Domain.DLS.set sort_aliases_key frame.saved_aliases;
+          toplevel ~print ~inline frame.saved_acc frame.saved_envs es)
+  | Sexp.List [ Sexp.Atom "reset-assertions" ] :: es ->
+      let st = command_state () in
+      st.frames <- [];
+      if st.global_declarations then toplevel ~print ~inline [] envs es
+      else (
+        Stdlib.Domain.DLS.set sort_aliases_key (Hashtbl.Poly.create ());
+        (* the logic is not part of the assertion stack and stays set *)
+        toplevel ~print ~inline []
+          { st.initial_envs with Problem.decl_reading = envs.decl_reading }
+          es)
+  | Sexp.List [ Sexp.Atom "reset" ] :: es ->
+      let st = command_state () in
+      st.frames <- [];
+      st.global_declarations <- false;
+      Stdlib.Domain.DLS.set sort_aliases_key (Hashtbl.Poly.create ());
+      toplevel ~print ~inline [] st.initial_envs es
   | Sexp.List (Sexp.Atom ("set-info" | "set-option") :: _) :: es
-  | Sexp.List [ Sexp.Atom ("get-model" | "check-sat" | "exit") ] :: es
+  | Sexp.List [ Sexp.Atom "get-model" ] :: es
   | Sexp.List (Sexp.Atom "check-sat-using" :: _) :: es ->
       toplevel ~print ~inline acc envs es (* ToDo: ignored? *)
   | Sexp.List [ Sexp.Atom "declare-forall-sort"; Sexp.Atom name ] :: es ->
+      ensure_declarable_symbol ~what:"declare-forall-sort" name;
       let uni_sort' = Set.add envs.uni_sort (Sort.SVar (Ident.Svar name)) in
       toplevel ~print ~inline acc { envs with uni_sort = uni_sort' } es
   | Sexp.List
@@ -3362,27 +4692,74 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
          then hold for that one.  Leaving out an assertion that reaches the function through a
          definition, as the direct-mention test did, demanded the clause also for the unlawful
          interpretations, a problem stronger than the one stated. *)
-      let names =
-        names_reaching
-          (name
-          ::
-          (if !law_reaches_dependents then
-             dependents_of
-               ~bool_valued:(match ret with Sexp.Atom "Bool" -> true | _ -> false)
-               ~synthesize:
-                 (match envs.decl_reading with
-                 | Problem.Synthesize -> true
-                 | Problem.Uninterpreted -> false)
-               name es
-           else []))
-          es
+      (* The run of [declare-forall-fun] commands this one starts is expanded at once, which is
+         what expanding its laws one after another gives: a law rewrites only assertions, so
+         the definitions and declarations each law's [names_reaching] and [dependents_of] read
+         are the same before and after the earlier laws of the run, and each assertion is
+         rewritten by the run's laws in their order ([assert_with_premises]). *)
+      let law_of = function
+        | Sexp.List
+            [
+              Sexp.Atom "declare-forall-fun";
+              Sexp.Atom name;
+              Sexp.List args;
+              ret;
+              Sexp.Atom ":law";
+              law;
+            ] ->
+            Some (name, args, ret, law)
+        | _ -> None
       in
+      let rec split_run acc = function
+        | (Sexp.List (Sexp.Atom "declare-forall-fun" :: _) as c) :: rest ->
+            split_run (c :: acc) rest
+        | rest -> (List.rev acc, rest)
+      in
+      let run, rest =
+        split_run [] (Sexp.List
+            [
+              Sexp.Atom "declare-forall-fun"; Sexp.Atom name; Sexp.List args;
+              ret; Sexp.Atom ":law"; law;
+            ] :: es)
+      in
+      let rec expand plain laws = function
+        | [] -> (List.rev plain, List.rev laws)
+        | c :: later -> (
+            match law_of c with
+            | None -> expand (c :: plain) laws later
+            | Some (name, args, ret, law) ->
+                let es = later @ rest in
+                let names =
+                  Common.PhaseTime.with_phase "law-reach" @@ fun () ->
+                  names_reaching
+                    (name
+                    ::
+                    (if !law_reaches_dependents then
+                       dependents_of
+                         ~bool_valued:
+                           (match ret with Sexp.Atom "Bool" -> true | _ -> false)
+                         ~synthesize:
+                           (match envs.decl_reading with
+                           | Problem.Synthesize -> true
+                           | Problem.Uninterpreted -> false)
+                         name es
+                     else []))
+                    es
+                in
+                expand
+                  (Sexp.List
+                     [
+                       Sexp.Atom "declare-forall-fun"; Sexp.Atom name;
+                       Sexp.List args; ret;
+                     ]
+                  :: plain)
+                  ((names, law) :: laws) later)
+      in
+      let plain, laws = expand [] [] run in
       toplevel ~print ~inline acc envs
-        (Sexp.List
-           [
-             Sexp.Atom "declare-forall-fun"; Sexp.Atom name; Sexp.List args; ret;
-           ]
-        :: List.map es ~f:(assert_with_premise ~names ~premise:law))
+        (plain
+        @ Common.PhaseTime.with_phase "law-premise" (fun () ->
+              assert_with_premises laws rest))
   | Sexp.List
       [ Sexp.Atom "declare-forall-fun"; Sexp.Atom name; Sexp.List args; ret ]
     :: es ->
@@ -3452,7 +4829,10 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
         in
         let sort = sort_of_sexp ~print envs.uni_sort envs.dtenv None ty in
         let fargs', body_env, body = definition_scope envs name fargs' body in
-        let body = definition_body ~print ~inline body_env sort body in
+        let body =
+          Common.PhaseTime.with_phase "define-fun" @@ fun () ->
+          definition_body ~print ~inline body_env sort body
+        in
         Map.Poly.add_exn envs.fenv ~key:(Tvar name)
           ~data:(fargs', sort, body, false, Formula.mk_true ())
       in
@@ -3461,12 +4841,22 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
       [ Sexp.Atom "define-fun-rec"; Sexp.Atom name; Sexp.List fargs; ty; body ]
     :: es ->
       ensure_function_name_fresh ~what:"define-fun-rec" envs name;
-      let fenv' =
+      let envs =
+        { envs with
+          lifted_universals =
+            Map.Poly.remove envs.lifted_universals (Tvar name) }
+      in
+      let fenv', lifted_universals =
         let fargs' =
           List.map fargs ~f:(bind_of_sexp ~print envs.uni_sort envs.dtenv)
         in
         let sort = sort_of_sexp ~print envs.uni_sort envs.dtenv None ty in
-        let fargs', body_env, body = definition_scope envs name fargs' body in
+        let body, measure = split_decreases body in
+        let fargs', body_env, body, measure =
+          definition_scope_with envs name fargs' body (Option.to_list measure)
+        in
+        register_measure name (List.hd measure)
+          ~read:(definition_body ~print ~inline body_env T_int.SInt);
         let body =
           let fenv' =
             let body_rec =
@@ -3479,23 +4869,70 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
           let envs = { body_env with fenv = fenv' } in
           definition_body ~print ~inline envs sort body
         in
+        let group, lifted_universals =
+          lift_universals envs [ (name, fargs', sort, body) ]
+        in
         let fargs', body =
-          match
-            lift_universals ~uni_senv:envs.uni_senv [ (name, fargs', sort, body) ]
-          with
+          match group with
           | [ (_, fargs', _, body) ] -> (fargs', body)
           | _ -> assert false
         in
-        Map.Poly.add_exn envs.fenv ~key:(Tvar name)
-          ~data:(fargs', sort, body, true, Formula.mk_true ())
+        ( Map.Poly.add_exn envs.fenv ~key:(Tvar name)
+            ~data:(fargs', sort, body, true, Formula.mk_true ()),
+          lifted_universals )
       in
-      toplevel ~print ~inline acc { envs with fenv = fenv' } es
+      toplevel ~print ~inline acc { envs with fenv = fenv'; lifted_universals } es
   | Sexp.List [ Sexp.Atom "assert"; phi ] :: es ->
+      let phi =
+        if not !premise_witness_disjuncts then phi
+        else
+          let phi', n =
+            premise_witness_disjuncts_of
+              ~is_def:(fun f -> Map.Poly.mem envs.fenv (Ident.Tvar f))
+              ~prepare_argument:(fun f position declared rhs ->
+                match Map.Poly.find envs.fenv (Ident.Tvar f) with
+                | None -> None
+                | Some (params, _, _, _, _) -> (
+                    match List.nth params position with
+                    | None -> None
+                    | Some (_, formal) -> (
+                        try
+                          let actual =
+                            sort_of_sexp ~print:(fun _ -> ()) envs.uni_sort
+                              envs.dtenv None declared
+                          in
+                          if not
+                               (Sexp.equal (Datatype.structural_sort_key actual)
+                                  (Datatype.structural_sort_key formal))
+                          then None
+                          else
+                            match actual with
+                            | T_real.SReal ->
+                                (* The premise's Real slot may have accepted
+                                   an Int term; retain the Real rank explicitly. *)
+                                Some (Sexp.List [ Sexp.Atom "+"; Sexp.Atom "0.0"; rhs ])
+                            | _ -> Some rhs
+                        with exn when not (Common.Timer.is_async exn) -> None)))
+              phi
+          in
+          for _ = 1 to n do
+            Common.PhaseTime.event "reader-premise-witness"
+          done;
+          if n > 0 then
+            print
+            @@ lazy
+                 (sprintf "[premise witness] %d witness disjunct(s) added" n);
+          phi'
+      in
+      let envs = define_named_terms ~print ~inline envs phi in
       toplevel ~print ~inline
-        (of_formula ~print ~inline envs phi :: acc)
+        ((Common.PhaseTime.with_phase "assert" @@ fun () ->
+          of_formula ~print ~inline envs phi)
+        :: acc)
         envs es
   (* extensions for CHCs *)
   | Sexp.List [ Sexp.Atom "declare-var"; Sexp.Atom name; sort ] :: es ->
+      ensure_declarable_symbol ~what:"declare-var" name;
       let uni_senv' =
         Map.Poly.add_exn envs.uni_senv ~key:(Ident.Tvar name)
           ~data:(sort_of_sexp ~print envs.uni_sort envs.dtenv None sort)
@@ -3534,22 +4971,17 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
             | Some s -> Some (v, s))
       in
       toplevel ~print ~inline (Formula.mk_forall bounds phi :: acc) envs es
-  (* ordinary SMT-LIB commands.  Those that carry no constraint are
-     skipped -- (push)/(pop)/(reset) scopes are not modelled, the file is
-     read as one problem; check-sat-assuming's literals become assertions. *)
+  (* ordinary SMT-LIB commands that carry no constraint and change no scope
+     are skipped; the scope commands are read above *)
   | Sexp.List
       (Sexp.Atom
-         (( "push" | "pop" | "reset" | "reset-assertions" | "echo" | "get-info"
-          | "get-option" | "get-value" | "get-assertions" | "get-assignment"
-          | "get-proof" | "get-unsat-core" | "get-unsat-assumptions"
-          | "get-objectives" ) as cmd)
+         (( "echo" | "get-info" | "get-option" | "get-value" | "get-assertions"
+          | "get-assignment" | "get-proof" | "get-unsat-core"
+          | "get-unsat-assumptions" | "get-objectives" ) as cmd)
       :: _)
     :: es ->
       print @@ lazy (sprintf "[toplevel] (%s ...) ignored" cmd);
       toplevel ~print ~inline acc envs es
-  | Sexp.List [ Sexp.Atom "check-sat-assuming"; Sexp.List lits ] :: es ->
-      toplevel ~print ~inline acc envs
-        (List.map lits ~f:(fun l -> Sexp.List [ Sexp.Atom "assert"; l ]) @ es)
   | Sexp.List [ Sexp.Atom "define-sort"; Sexp.Atom name; Sexp.List ps; body ]
     :: es ->
       ensure_sort_names_fresh ~what:"define-sort" envs [ name ];
@@ -3599,6 +5031,12 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
       in
       if List.is_empty decls then
         failwith "[define-funs-rec] expected at least one declaration";
+      let envs =
+        { envs with
+          lifted_universals =
+            List.fold decls ~init:envs.lifted_universals
+              ~f:(fun map (name, _, _) -> Map.Poly.remove map (Tvar name)) }
+      in
       let fenv_placeholders =
         List.fold decls ~init:envs.fenv ~f:(fun fenv (name, fargs', sort) ->
             (* Check parsed names before reading any body. Only the completion
@@ -3622,22 +5060,27 @@ let rec toplevel ~print ~inline acc (envs : Problem.envs) = function
       in
       let group =
         List.map pairs ~f:(fun ((name, fargs', sort), body) ->
-            let fargs', envs, body =
-              definition_scope { envs with fenv = fenv_placeholders }
-                name fargs' body
+            let body, measure = split_decreases body in
+            let fargs', envs, body, measure =
+              definition_scope_with { envs with fenv = fenv_placeholders }
+                name fargs' body (Option.to_list measure)
             in
+            register_measure name (List.hd measure)
+              ~read:(definition_body ~print ~inline envs T_int.SInt);
             let body =
               definition_body ~print ~inline envs sort body
             in
             (name, fargs', sort, body))
       in
+      let group, lifted_universals = lift_universals envs group in
       let fenv' =
-        List.fold (lift_universals ~uni_senv:envs.uni_senv group)
+        List.fold group
           ~init:fenv_placeholders ~f:(fun fenv (name, fargs', sort, body) ->
             Map.Poly.set fenv ~key:(Tvar name)
               ~data:(fargs', sort, body, true, Formula.mk_true ()))
       in
-      toplevel ~print ~inline acc { envs with fenv = fenv' } es
+      toplevel ~print ~inline acc
+        { envs with fenv = fenv'; lifted_universals } es
   | sexps ->
       failwith @@ "parse error : " ^ Sexp.to_string_hum @@ Sexp.List sexps
 
@@ -3744,33 +5187,69 @@ let rec avoid_generated_names = function
    term/formula APIs start independent scopes, including on nested calls. *)
 let of_formula ~print ~inline envs phi =
   with_source_numeric_reader_scope @@ fun () ->
+  avoid_generated_names phi;
   of_formula ~print ~inline envs phi
 
 let of_term ~print ~inline envs term =
-  with_source_numeric_reader_scope @@ fun () -> of_term ~print ~inline envs term
+  with_source_numeric_reader_scope @@ fun () ->
+  avoid_generated_names term;
+  of_term ~print ~inline envs term
 
-let toplevel ~print ~inline acc envs sexps =
+let toplevel ~print ~inline ?stop_at acc envs sexps =
   with_source_numeric_reader_scope @@ fun () ->
   with_sort_alias_scope @@ fun () ->
   List.iter sexps ~f:avoid_generated_names;
-  toplevel ~print ~inline acc (seed_builtin_datatypes ~print envs sexps) sexps
+  let envs = seed_builtin_datatypes ~print envs sexps in
+  with_command_state ?stop_at envs @@ fun () ->
+  toplevel ~print ~inline acc envs sexps
+
+(* Refuse a file that declares an unknown of a predicate kind other than the ordinary one.
+
+   The plain-SMT entry point returns one formula, and a formula has no place for a kind: a
+   [declare-wfp], [declare-fnp], [declare-nep], [declare-totp], [declare-uniqp], [declare-dwfp],
+   [declare-nwfp], [declare-parityp], [declare-admp]/[declare-admcp] or [declare-integp] would be
+   read as an ordinary uninterpreted predicate, and every consumer of that formula (the Z3 SMT
+   solver, MuCyc's and MuStrat's SMT routes, the SMT printer) would answer a different problem.
+   That is unsound, not incomplete: [(declare-wfp P (Int Int) Bool) (assert (P 0 0))] is
+   unsatisfiable, since a well-founded relation relates no element to itself, and the dropped
+   kind made it [sat].  No kind can be honoured exactly by one SMT query in general -- totality
+   and non-emptiness are existence demands over every argument, well-foundedness is not
+   first-order -- so the input is refused as unsupported, with the constraint solver named as the
+   route that carries kinds.
+
+   Only kinds of declared unknowns count: the reader also registers kinds for names that are not
+   unknowns (the tag pairs of a non-well-founded family, the ordinary kind of a Bool universal),
+   so the kind map is restricted to [exi_senv]. *)
+let refuse_kinded_unknowns (envs : Problem.envs) =
+  let kinded =
+    Map.Poly.to_alist
+    @@ Map.Poly.filteri envs.kind_map ~f:(fun ~key ~data ->
+           (not (Kind.is_ord data)) && Map.Poly.mem envs.exi_senv key)
+  in
+  if not (List.is_empty kinded) then
+    Common.Refusal.refuse
+      "the plain SMT route reads a single formula, which carries no predicate \
+       kinds, but this input declares %d unknown(s) of another kind: %s.  Use \
+       the constraint solver (-p pcsp with a PCSat configuration)."
+      (List.length kinded)
+      (String.concat_map_list ~sep:", " kinded ~f:(fun (v, k) ->
+           sprintf "%s (%s)" (Ident.name_of_tvar v) (Kind.str_of k)))
 
 (* the plain-SMT entry point: a declared symbol is uninterpreted unless the file's [set-logic]
-   asks for synthesis *)
-let from_smt2_file ~print ~inline ?(decl_reading = Problem.Uninterpreted)
+   asks for synthesis; an unknown of a predicate kind other than the ordinary one is refused
+   (see [refuse_kinded_unknowns]).  [check] is the check whose problem is returned, counted
+   from 1 as [count_checks] counts; the last one when omitted (see [command_state]). *)
+let of_smt2_sexps ~print ~inline ?check ?(decl_reading = Problem.Uninterpreted)
     ?(uni_sort = Set.Poly.empty) ?(uni_senv = Map.Poly.empty)
     ?(exi_senv = Map.Poly.empty) ?(dep_map = Map.Poly.empty)
     ?(kind_map = Map.Poly.empty) ?(fenv = Map.Poly.empty)
-    ?(dtenv = Map.Poly.empty) filename =
-  let sexps =
-    In_channel.with_file filename ~f:(fun channel ->
-        Parser.program Lexer.token (Lexing.from_channel channel))
-  in
+    ?(dtenv = Map.Poly.empty) ?(lifted_universals = Map.Poly.empty) sexps =
   let phis, _envs =
-    toplevel ~print ~inline []
+    toplevel ~print ~inline ?stop_at:check []
       {
         decl_reading;
         candidates = Map.Poly.empty;
+        lifted_universals;
         uni_sort;
         uni_senv;
         exi_senv;
@@ -3781,6 +5260,7 @@ let from_smt2_file ~print ~inline ?(decl_reading = Problem.Uninterpreted)
       }
       sexps
   in
+  refuse_kinded_unknowns _envs;
   let phi = Formula.and_of phis in
   print @@ lazy (sprintf "before typeinf: %s" @@ Formula.str_of phi);
   let phi' =
@@ -3790,18 +5270,102 @@ let from_smt2_file ~print ~inline ?(decl_reading = Problem.Uninterpreted)
   print @@ lazy (sprintf "after typeinf: %s" @@ Formula.str_of phi');
   phi'
 
+let read_smt2_sexps filename =
+  In_channel.with_file filename ~f:(fun channel ->
+      Parser.program Lexer.token (Lexing.from_channel channel))
+
+let from_smt2_file ~print ~inline ?decl_reading ?uni_sort ?uni_senv ?exi_senv
+    ?dep_map ?kind_map ?fenv ?dtenv ?lifted_universals filename =
+  of_smt2_sexps ~print ~inline ?decl_reading ?uni_sort ?uni_senv ?exi_senv
+    ?dep_map ?kind_map ?fenv ?dtenv ?lifted_universals
+  @@ read_smt2_sexps filename
+
+(* The probability threshold of a stochastic-SMT problem, written
+
+     (set-info :threshold q)
+
+   where [q] is a non-negative rational written as a numeral ([1]), a decimal
+   ([0.5]), a fraction atom ([1/2]) or the term [(/ 1 2)].  A [(random ...)]
+   quantifier gives a formula a probability, and the problem then asks whether
+   that probability exceeds [q]; how strictly is the solver's contract, stated
+   where the threshold is used.  [None] when the file states none: the caller's
+   default applies.  A value that is not such a rational, a value outside
+   [0, 1], or a second [:threshold] is refused with a one-line error rather
+   than read as something else.  [set-info] with a keyword the standard does
+   not define is standard SMT-LIB, so other solvers skip the line. *)
+let threshold_of_sexps sexps =
+  let numeral s =
+    if (not (String.is_empty s)) && String.for_all s ~f:Char.is_digit then
+      Some (Z.of_string s)
+    else None
+  in
+  let rational_of_atom s =
+    match String.lsplit2 s ~on:'/' with
+    | Some (p, q) -> (
+        match (numeral p, numeral q) with
+        | Some p, Some q when not (Z.equal q Z.zero) -> Some (Q.make p q)
+        | _ -> None)
+    | None -> (
+        match String.lsplit2 s ~on:'.' with
+        | Some (i, f) -> (
+            match (numeral i, numeral f) with
+            | Some _, Some _ ->
+                Some
+                  (Q.make (Z.of_string (i ^ f))
+                     (Z.pow (Z.of_int 10) (String.length f)))
+            | _ -> None)
+        | None -> Option.map (numeral s) ~f:Q.of_bigint)
+  in
+  let value_of = function
+    | Sexp.Atom s -> rational_of_atom s
+    | Sexp.List [ Sexp.Atom "/"; Sexp.Atom p; Sexp.Atom q ] -> (
+        match (rational_of_atom p, rational_of_atom q) with
+        | Some p, Some q when not (Q.equal q Q.zero) -> Some (Q.div p q)
+        | _ -> None)
+    | _ -> None
+  in
+  List.fold sexps ~init:None ~f:(fun acc -> function
+    | Sexp.List [ Sexp.Atom "set-info"; Sexp.Atom ":threshold"; v ] -> (
+        match (value_of v, acc) with
+        | Some _, Some _ ->
+            Common.Refusal.refuse "[set-info :threshold] is given twice"
+        | Some q, None when Q.geq q Q.zero && Q.leq q Q.one -> Some q
+        | Some q, None ->
+            Common.Refusal.refuse
+              "[set-info :threshold] %s is outside [0, 1]: a probability \
+               threshold must lie between zero and one"
+              (Q.to_string q)
+        | None, _ ->
+            Common.Refusal.refuse
+              "[set-info :threshold] %s is not a rational number (write a \
+               numeral, a decimal, p/q or (/ p q))"
+              (Sexp.to_string v))
+    | Sexp.List (Sexp.Atom "set-info" :: Sexp.Atom ":threshold" :: rest) ->
+        Common.Refusal.refuse
+          "[set-info :threshold] takes exactly one value, got %d"
+          (List.length rest)
+    | _ -> acc)
+
+(* [from_smt2_file] together with the file's [(set-info :threshold q)], read
+   from the same parse (see [threshold_of_sexps]). *)
+let from_smt2_file_with_threshold ~print ~inline filename =
+  let sexps = read_smt2_sexps filename in
+  let threshold = threshold_of_sexps sexps in
+  (of_smt2_sexps ~print ~inline sexps, threshold)
+
 (* used for constraints embedded in an OCaml source, where the declared symbols are the
    predicates to infer *)
 let from_string ~print ~inline ?(decl_reading = Problem.Synthesize)
     ?(uni_sort = Set.Poly.empty) ?(uni_senv = Map.Poly.empty)
     ?(exi_senv = Map.Poly.empty) ?(dep_map = Map.Poly.empty)
     ?(kind_map = Map.Poly.empty) ?(fenv = Map.Poly.empty)
-    ?(dtenv = Map.Poly.empty) =
+    ?(dtenv = Map.Poly.empty) ?(lifted_universals = Map.Poly.empty) =
   Lexing.from_string >> Parser.program Lexer.token
   >> toplevel ~print ~inline []
        {
          decl_reading;
          candidates = Map.Poly.empty;
+         lifted_universals;
          uni_sort;
          uni_senv;
          exi_senv;

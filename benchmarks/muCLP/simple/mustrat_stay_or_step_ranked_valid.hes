@@ -1,0 +1,20 @@
+/* Stay or step down: forall x. P x, where from x the prover either stops
+   (x <= 0) or moves to y = x - 1 or to y = x.  Valid: the prover's winning
+   strategy is y := x - 1, ranked by x.
+
+   It separates two ways a strategy-iteration refinement may pick the
+   prover's move after a lost check.  The counter-play to refine is a
+   derivation of a few P steps; its chain pairs (x before a step, x after
+   it) are decreasing when every step takes y = x - 1, so the ranking x fits
+   them.  A refinement that picks the move from a model of the derivation's
+   constraints taken apart from those pairs may pick a model that stays
+   once (y = x), and term selection on that model offers y := x, the only
+   term over the move's argument the atom y = x gives.  With y := x the
+   play from any x >= 1 is x, x, x, ... and never decreases, so the move
+   and the ranking, each fitting its own question, make no winning
+   strategy together.  A refinement that asks for the move and the
+   decrease of the ranking in one formula excludes y := x at the selection
+   point, since every model of that formula decreases x on every step. */
+forall (x: int). P x
+s.t.
+P (x: int): bool =mu x <= 0 \/ (exists (y: int). (y = x - 1 \/ y = x) /\ P y);

@@ -1,0 +1,11 @@
+; Z3 calls that run long, with the OCaml runtime lock released (the bindings
+; release it around Solver.check and simplify only).  Depends on the bindings
+; alone, so that every backend can use it.
+(library
+ (name Z3Released)
+ (public_name CoAR.Z3Released)
+ (libraries z3)
+ (foreign_stubs
+  (language c)
+  (names z3Released_stubs))
+ (modules z3Released))

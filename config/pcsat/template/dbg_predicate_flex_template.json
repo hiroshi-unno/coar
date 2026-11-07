@@ -1,17 +1,23 @@
 {
     "verbose": true,
-
-    "shape": [1],
-    "depth": 0,
-
-    "upper_bound_coeff": 1,
-    "upper_bound_const": 0,
-    "seeds": null,
-
-    "bound_each_coeff": null,
-    "threshold_coeff": null,
-    "threshold_const": null,
-
+    "shape": [
+        1
+    ],
+    "term_depth": 0,
+    "bounds": {
+        "atom": {
+            "coeff": {
+                "initial": 1,
+                "per_coefficient": null,
+                "unbounded_above": null
+            },
+            "const": {
+                "initial": 0,
+                "unbounded_above": null,
+                "seeds": null
+            }
+        }
+    },
     "disj_first": true,
     "fix_shape": false,
     "eq_atom": false,

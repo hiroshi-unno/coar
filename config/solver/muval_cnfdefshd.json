@@ -1,0 +1,9 @@
+[
+    "MuVal",
+    {
+        "pcsp_solver_dual": [
+            "Filename",
+            "./config/solver/pcsat_fixpoint_cnfdefsh.json"
+        ]
+    }
+]

@@ -18,6 +18,7 @@ depends: [
   "domainslib"
   "menhir"
   "ppx_deriving_yojson"
+  "ppxlib" {build}
   "ocaml-compiler-libs"
   "ocamlgraph"
   "zarith"
@@ -26,5 +27,15 @@ depends: [
   "libsvm" {= "0.10.0~modified"}
   "camlzip"
   "apronext"
+]
+# Only lib/MIP, lib/MIPSolver and lib/MIPSolver/gurobi need these, and
+# lp-gurobi binds a commercial solver, so they cannot be hard dependencies.
+# The libraries are marked (optional) in their dune files: without the packages
+# `dune build` skips them instead of failing.  lp and lp-glpk (GLPK, free) are
+# enough for MIP and MIPSolver; only CoAR.MIPGurobi needs lp-gurobi.
+depopts: [
+  "lp"
+  "lp-glpk"
+  "lp-gurobi"
 ]
 build: ["dune" "build"]

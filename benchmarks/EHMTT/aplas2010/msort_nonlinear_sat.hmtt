@@ -1,0 +1,69 @@
+%BEGING
+I x -> x.
+C x y z -> x (y z).
+
+Split x z1 z2 -> 
+	case x of e => K (z1 e) (z2 e) 
+	| a y => (
+		case y of e => K (z1 (a e)) (z2 e) 
+		| a z => Split z (C z1 a) (C z2 a) 
+		| b z => Split z (C z1 a) (C z2 b) 
+	)
+	| b y => (
+		case y of e => K (z1 (b e)) (z2 e) 
+		| a z => Split z (C z1 b) (C z2 a) 
+		| b z => Split z (C z1 b) (C z2 b) 
+	)
+.
+K x y -> K2 (MergeSort (coerce qStr x)) (MergeSort (coerce qStr y)).
+K2 x y -> Merge (coerce qAB x) (coerce qAB y).
+
+Merge x y ->
+	case x of e => (
+		case y of e => e
+		| a ys => a e
+		| b ys => b e
+	)
+	| a xs => (
+		case y of e => a e
+		| a ys => a (a (Merge xs ys))
+		| b ys => a (Merge xs y)
+	)
+	| b xs => (
+		case y of e => b e
+		| a ys => a (Merge x ys)
+		| b ys => b (b (Merge xs ys))
+	)
+.
+
+MergeSort x -> 
+	case x of e => e
+	| a y => (
+		case y of e => a e
+		| a z => Split x I I
+		| b z => Split x I I
+	)
+	| b y => (
+		case y of e => b e
+		| a z => Split x I I
+		| b z => Split x I I
+	)
+.
+%ENDG 
+
+%BEGINA
+
+qStr e -> .
+qStr a -> qStr.
+qStr b -> qStr.
+
+qAB e -> .
+qAB a -> qAB.
+qAB b -> qB.
+qB e -> .
+qB b -> qB.
+%ENDA
+
+%BEGINT
+MergeSort : qStr -> qAB.
+%ENDT

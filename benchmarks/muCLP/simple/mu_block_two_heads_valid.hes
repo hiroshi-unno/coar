@@ -1,0 +1,5 @@
+forall (n: int). A n 0 s.t.
+A (x: int) (z: int): bool =mu x <= 0 \/ (x > 0 /\ A (x - 1) z /\ M x z);
+B (y: int): bool =mu y <= 0 \/ (y > 0 /\ B (y - 1) /\ N y);
+M (x: int) (z: int): bool =nu A (x - 1) z /\ B z /\ M x (z + 1);
+N (y: int): bool =nu B (y - 1) /\ N (y - 1);

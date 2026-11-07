@@ -1,7 +1,7 @@
 open Core
 open Common.Ext
 
-(* The true-precondition probe ([true_precondition_probe] of the PCSat
+(* The true-precondition probe ([probes.true_precondition] of the PCSat
    configuration): the input is read again with some unknowns defined as
    [true] ([PCSP.Parser.define_true]), solved, and a [sat] of it, extended
    with the [true]s ([true_subst]), is the answer.
@@ -18,7 +18,7 @@ open Common.Ext
    [true] answers in 41 s.
 
    Which unknowns qualify: those NAMED by the configuration and, when
-   [true_precondition_probe_witness_causing] is set, those that occur beneath
+   [probes.true_precondition.witness_causing] is set, those that occur beneath
    a quantifier existential in effect in the input -- a written [exists] at a
    positive position, a written [forall] at a negative one -- which are the
    unknowns that make the reader skolemise the quantifier into a functional
@@ -82,7 +82,7 @@ let true_subst pcsp ps = true_subst_senv (PCSP.Problem.senv_of pcsp) ps
     [`Discarded] when its outcome was dropped and the problem solved as given *)
 let last_probe : [ `Not_tried | `Answered | `Discarded ] ref = ref `Not_tried
 
-(** what the last lower-bound probe did ([lower_bound_probe] of the PCSat
+(** what the last lower-bound probe did ([probes.lower_bound] of the PCSat
     configuration), for the tests: as [last_probe], [`Answered] when its
     [unsat] was the answer *)
 let last_lower_bound_probe : [ `Not_tried | `Answered | `Discarded ] ref =

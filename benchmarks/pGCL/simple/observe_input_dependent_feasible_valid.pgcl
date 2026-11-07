@@ -1,0 +1,8 @@
+# The observation depends on the input: the program is feasible exactly where x >= 1, and
+# there its conditional expectation of x is x >= 1 > 1/2.
+# Expected: valid, the bound being checked at the feasible initial states (the reduction says
+# so on stderr).  Without the antecedent "the normaliser is positive" the reduced query
+# wp_q(S, x) > q fails at x = 0, where every run is blocked and its value is q itself.
+nat x;
+observe(x >= 1);
+?Ex [x] > 0.5

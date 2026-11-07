@@ -1,0 +1,38 @@
+%BEGING
+Replace sa sb x = Conv sa (C1 sb x).
+C1 sb x u = Conv sb (Repl x u).
+Repl x u v = case x of
+	  a y => u(Repl y u v)
+	| b y => v(Repl y u v)
+	| e => e
+.
+Conv x k = case x of
+	  a y => Conv y (C2 k a)
+	| b y => Conv y (C2 k b)
+	| e => k I
+.
+C2 k y z = k(Concat y z).
+Concat x y z = x(y z).
+I x = x.
+%ENDG
+
+%BEGINA
+/* qi0 : a*b*, qi1 : b*, qi2 : a* */
+qi0 a -> qi0.
+qi0 b -> qi1.
+qi0 e -> .
+qi1 b -> qi1.
+qi1 e -> .
+qi2 a -> qi2.
+qi2 e -> .
+/* q0 : b*a* */
+q0 a -> q1.
+q0 b -> q0.
+q0 e -> .
+q1 a -> q1.
+q1 e -> .
+%ENDA
+
+%BEGINT
+Replace : qi1 -> qi2 -> qi0 -> q0.
+%ENDT

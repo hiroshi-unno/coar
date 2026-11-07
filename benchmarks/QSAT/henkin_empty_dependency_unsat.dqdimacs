@@ -1,0 +1,6 @@
+c y2 depends on nothing, so it is a constant, and it must equal the universal x1
+p cnf 2 2
+a 1 0
+d 2 0
+-2 1 0
+2 -1 0

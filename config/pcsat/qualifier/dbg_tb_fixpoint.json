@@ -4,8 +4,10 @@
     "add_bool": true,
     "add_homogeneous": false,
     "filter_out_quantified": true,
-    "add_arg_transpositions": false,
-    "add_reflections": false,
-    "instantiate_quantified_quals": false,
+    "families": {
+        "arg_transpositions": [
+            "Off"
+        ]
+    },
     "dedup_alpha_equivalent_disjuncts": false
 }

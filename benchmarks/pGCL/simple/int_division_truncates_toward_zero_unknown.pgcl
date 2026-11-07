@@ -1,0 +1,11 @@
+# x and y are int variables, and / between integers inside the program truncates toward
+# zero: y := x / 2 at x = -3 makes y = -1, so y = -2 (what flooring would give) holds with
+# probability 0 and the lower bound 1 on it is false.  (The post is an indicator because an
+# expectation must be non-negative in every state.)
+# Expected: unknown (the bound is false).  Before pGCL had an int declaration this file did
+# not parse.
+int x;
+int y;
+x := 0 - 3;
+y := x / 2;
+?Ex [[y = 0 - 2]] >= 1

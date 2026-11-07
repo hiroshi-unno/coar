@@ -1,0 +1,82 @@
+{
+       "phase_list": [
+              [
+                     "S",
+                     [
+                            "Filename",
+                            "./config/pcsat/synthesizer/tbq_ar_cellguard_wide_step_preimages.json"
+                     ]
+              ],
+              [
+                     "V",
+                     [
+                            "Filename",
+                            "./config/pcsat/validator/nce_thrust.json"
+                     ]
+              ],
+              [
+                     "L",
+                     [
+                            "Filename",
+                            "./config/pcsat/labeler/sat1.json"
+                     ]
+              ],
+              [
+                     "R",
+                     [
+                            "Filename",
+                            "./config/pcsat/resolver/smt.json"
+                     ]
+              ],
+              [
+                     "L",
+                     [
+                            "Filename",
+                            "./config/pcsat/labeler/sat1.json"
+                     ]
+              ]
+       ],
+       "rl_config": [
+              "Filename",
+              "./config/pcsat/rl/disable.json"
+       ],
+       "zero_unknown": {
+              "lemmas": [
+                     "Lemmas",
+                     {
+                            "read_maps": true,
+                            "map_lengths": true,
+                            "law_retry": true,
+                            "keep_hypotheses": true
+                     }
+              ],
+              "budgets": {
+                     "quick_sweep": {
+                            "plain_retry": true
+                     }
+              },
+              "external": {
+                     "fork_seqinst": [
+                            "Killed_after_budget",
+                            {
+                                   "margin_ms": 1000,
+                                   "read_as_in_process": true,
+                                   "quantified_only": true
+                            }
+                     ]
+              },
+              "pins": {
+                     "relation_attempts_per_piece": true
+              },
+              "early_stage": {
+                     "pins": [
+                            "Early_pins",
+                            {
+                                   "relation": {
+                                          "unsplit_after_exact_forms": true
+                                   }
+                            }
+                     ]
+              }
+       }
+}

@@ -48,10 +48,19 @@ let rec nt_of_pat = function
   | Pattern.PCons (dt, n, pats) ->
       Pattern.PCons (dt (*ToDo*), n, List.map ~f:nt_of_pat pats)
 
+(* [replace_any_tvar x] is the rule-parameter name of the program variable
+   [x]: a name beginning with [_] is not an identifier of HorSat2's input
+   language, so it is prefixed.  The renaming is a function of the name, and
+   it must be: it is applied at the binder and again at every use
+   ([var_term]).  A fresh name per binder left every use of a variable such
+   as [_b] in [fun _b -> _b] unbound in the rule, where the model checker
+   read it as an undeclared terminal and refuted a safe program.  A program
+   that also names a variable [underscore_b] and lets the two shadow each
+   other is the residual collision; drawn names (a prefix and a counter)
+   never take this form. *)
 let replace_any_tvar x =
   let name = Ident.name_of_tvar x in
-  if String.is_prefix name ~prefix:"_" then
-    Ident.mk_fresh_tvar ~prefix:(Some ("any" ^ name)) () (*ToDo*)
+  if String.is_prefix name ~prefix:"_" then Ident.Tvar ("underscore" ^ name)
   else x
 
 let rec replace_any_pat = function
@@ -67,13 +76,19 @@ module Make (Config : Config.ConfigType) = struct
   module MBcgen = RCaml.MBcgen.Make (
     struct
       let config =
-        RCaml.MBcgen.Config.{ verbose = config.verbose; for_cps_trans = true }
+        RCaml.MBcgen.Config.
+          {
+            verbose = config.verbose;
+            for_cps_trans = true;
+            (* EffCaml reads each [perform_atp] call as ATP itself *)
+            atp_operations = Off;
+          }
     end :
       RCaml.MBcgen.Config.ConfigType)
 
   module MBcsol = RCaml.MBcsol.Make (
     struct
-      let config = RCaml.MBcsol.Config.{ verbose = config.verbose }
+      let config = { config.mbcsol with verbose = config.verbose }
     end :
       RCaml.MBcsol.Config.ConfigType)
 
@@ -184,7 +199,36 @@ module Make (Config : Config.ConfigType) = struct
       | _ -> [ term_unit ]
   (*ToDo*)
 
-  let tl_handlers_of eff_map op_sig =
+  (* [tl_handlers_of ~op_results eff_map op_sig] builds the top-level handler
+     of each operation: a rule [TopOp [x] k -> opOp [x] (k v1) ... (k vn)]
+     that turns an operation reaching the top level into a tree node, with
+     the operation's parameter [x] (if any) as its first child and one child
+     per value [vi] the operation can return.
+
+     Contract: the node's arity is a function of the operation's declaration
+     alone, never of the program's typing, because the ranked alphabet of the
+     specification gives one rank per operation.  So the values enumerated
+     are those of the result type the [eff] declaration gives the operation
+     (its GADT index, [op_results]); an operation whose declared result is a
+     type variable ([Raise : 'a eff]) gets one child, applied to [unit].  The
+     inferred signature [op_sig] supplies only the calling convention (with
+     or without a parameter, answer-type-modifying or not).  The inferred
+     result type of an operation polymorphic in its result is the instance at
+     which this program performs it, which varies with the typing: when the
+     operation re-performed by a handler clause reached the top level at the
+     clause's state-passing answer type [unit * bool], enumerating that
+     instance gave the node two children where the alphabet declares one, and
+     HorSat2 rejected the rules as ill-sorted.  An operation an OCaml program
+     performs at the top level is never resumed (it raises [Unhandled]), so
+     the children stand for no behaviour of the program and the placeholder
+     [unit] loses none. *)
+  let tl_handlers_of ~op_results eff_map op_sig =
+    let enum_result op s_arity =
+      enum_values
+        (match List.Assoc.find op_results ~equal:String.equal op with
+        | Some s -> s
+        | None -> s_arity)
+    in
     let map =
       match op_sig with
       | Sort.OpSig (map, _) -> map
@@ -212,7 +256,7 @@ module Make (Config : Config.ConfigType) = struct
                   @@ List.map ~f:(fun v ->
                       EHMTT.apps (EHMTT.mk_var k)
                         (v :: List.map ps ~f:EHMTT.mk_var))
-                  @@ enum_values s_arity ) )
+                  @@ enum_result op s_arity ) )
           | _s_param :: Sort.SArrow (s_arity, _) :: sargs, _ ->
               let x = Ident.Tvar "x" in
               let ps =
@@ -226,7 +270,7 @@ module Make (Config : Config.ConfigType) = struct
                      :: (List.map ~f:(fun v ->
                              EHMTT.apps (EHMTT.mk_var k)
                                (v :: List.map ps ~f:EHMTT.mk_var))
-                        @@ enum_values s_arity) ) )
+                        @@ enum_result op s_arity) ) )
           (*ToDo*)
           | [], s_arity ->
               (* ATP handlers *)
@@ -234,7 +278,7 @@ module Make (Config : Config.ConfigType) = struct
                 ( [ k ],
                   EHMTT.apps t
                   @@ List.map ~f:(EHMTT.app (EHMTT.mk_var k))
-                  @@ enum_values s_arity ) )
+                  @@ enum_result op s_arity ) )
           | _ ->
               failwith
                 (sprintf "[tl_handlers_of] %s not supported"
@@ -267,7 +311,75 @@ module Make (Config : Config.ConfigType) = struct
         || List.mem ~equal:Ident.tvar_equal also v)
       ()
 
-  let cgen_let eff_map tl_hs_nts (tl_nt, tl_args) _fenv _dtenv ntenv is_rec pats
+  (* [var_term ctx x] is the rule term of an occurrence of the program
+     variable [x]: the nonterminal [ctx.ntenv] gives a top-level binding or a
+     builtin, otherwise the parameter of the rule being built that binds [x]
+     (every binder the translation passes adds its variable to [ctx.args]).
+     A name that is neither -- an [external] other than the effect primitives
+     this translation interprets, or a library function such as
+     [Random.bool] -- has no meaning in the scheme: written as it is, it is a
+     free name, which the model checker either cannot read or reads as an
+     undeclared terminal no automaton state accepts, refuting a safe program
+     ([let b = choose () in assert (b || not b)]).  So it is refused. *)
+  let var_term ctx x =
+    match Map.Poly.find ctx.ntenv x with
+    | Some nt -> nt
+    | None ->
+        let x' = replace_any_tvar x in
+        if List.mem ~equal:Ident.tvar_equal ctx.args x' then EHMTT.mk_var x'
+        else
+          Common.Refusal.refuse
+            "%s is neither a function of the program nor a variable in scope \
+             (an external or library function EffCaml does not model)"
+            (Ident.name_of_tvar x)
+
+  (* [disambiguate_params rules] gives every parameter of a rule its own name.
+     The translation lifts each binder into the parameters of the rules below
+     it ([ctx.args], outermost first) under the program's own name, so a
+     program variable that shadows another gives a rule two parameters of one
+     name: [let f x = (fun x -> x) (not x)] gave
+     [Lam10 x h1 h2 k3 arg4 x h7 h8 k9 -> k9 x], and which [x] the body
+     denotes was the checker's reading (taking the first refutes this safe
+     program).  By OCaml's scoping an occurrence denotes the innermost
+     binder, the last parameter of that name, and no occurrence can denote a
+     shadowed one; so each earlier parameter of a repeated name is renamed to
+     a name no parameter has, which leaves the body's meaning the program's.
+     A caller passes arguments by position, so the renaming changes nothing
+     outside the rule. *)
+  let disambiguate_params (rules : RSFD.t) : RSFD.t =
+    List.map rules ~f:(fun (nt, (params, body)) ->
+        let rec go = function
+          | [] -> []
+          | x :: rest ->
+              let x =
+                if List.mem rest x ~equal:Ident.tvar_equal then
+                  Ident.mk_fresh_tvar_avoiding
+                    ~prefix:("shadowed_" ^ Ident.name_of_tvar x)
+                    ~taken:(List.mem params ~equal:Ident.tvar_equal)
+                    ()
+                else x
+              in
+              x :: go rest
+        in
+        (nt, (go params, body)))
+
+  (* [check_generated_rules rules] refuses a scheme with a rule that mentions
+     a variable it does not bind: the checker reads such a name as an
+     undeclared terminal, which no automaton state accepts, so a safe program
+     can be refuted.  [var_term] keeps the translation from writing one; this
+     is the check that the scheme as a whole is closed. *)
+  let check_generated_rules (rules : RSFD.t) =
+    List.iter rules ~f:(fun (nt, (params, body)) ->
+        match RSFD.fv params body with
+        | [] -> ()
+        | x :: _ ->
+            Common.Refusal.refuse
+              "the rule %s generated for this program mentions %s, which it \
+               does not bind"
+              (Ident.name_of_tvar nt) (Ident.name_of_tvar x))
+
+  let cgen_let ~op_results eff_map tl_hs_nts (tl_nt, tl_args) _fenv _dtenv
+    ntenv is_rec pats
       (is_pures, next1s, c1s) maps senv =
     let pats = List.map pats ~f:replace_any_pat in
     let pat_senvs, tl_pat_senvs, cs =
@@ -338,7 +450,9 @@ module Make (Config : Config.ConfigType) = struct
                 @@ lazy
                      ("generating a top level handler of "
                     ^ Ident.name_of_tvar x ^ " : " ^ Term.str_of_triple c);
-                let hs, tl_hs_rules = tl_handlers_of eff_map c.op_sig in
+                let hs, tl_hs_rules =
+                  tl_handlers_of ~op_results eff_map c.op_sig
+                in
                 let term, rules =
                   next
                     {
@@ -404,14 +518,11 @@ module Make (Config : Config.ConfigType) = struct
     | None -> term (*ToDo*)
     | Some (_hs, k) -> EHMTT.app k term
 
-  let lookup ntenv x =
-    match Map.Poly.find ntenv x with None -> EHMTT.mk_var x | Some nt -> nt
-
   (*let cgen_either maps args senv ntenv ty ctx = function
     | First (_pure, next, _) -> next maps args senv ty ctx
     | Second (x, sort) -> (
         match Map.Poly.find senv x with
-        | Some _ -> apply_cont_if_any ctx (lookup ntenv x)
+        | Some _ -> apply_cont_if_any ctx (var_term ctx x)
         | None ->
             failwith
             @@ sprintf "[cgen_either] unbound variable: %s : %s\nsenv = %s"
@@ -450,12 +561,25 @@ module Make (Config : Config.ConfigType) = struct
              ignore (attrs, next, ctx);
              failwith "[effcaml:annot] annotation not supported"
 
+           (* a call's [[@copy lbl]] label names a refinement copy, which
+              EffCaml does not make: the call is translated as unlabelled *)
+           method f_copy_label (_lbl : string) next = next
+
+           (* effect schemes of top-level bindings are RCaml's: EffCaml
+              types every occurrence with the binding's stored sort *)
+           method has_scheme (_ : Path.t) = false
+
+           method f_scheme_instance (p : Path.t) =
+             failwith
+             @@ sprintf "[effcaml:scheme] no effect scheme for %s"
+                  (Path.name p)
+
            method f_unif (next, sort) ctx =
              ignore (next, sort, ctx);
              failwith "[effcaml:unif] uniform distribution not supported"
 
            method f_var (is_handled, rec_vars) (x, sort) ctx =
-             let xt = lookup ctx.ntenv x in
+             let xt = var_term ctx x in
              let sort = Term.subst_sort ctx.maps sort in
              (* *)
              let is_rec = Set.mem rec_vars x in
@@ -594,7 +718,7 @@ module Make (Config : Config.ConfigType) = struct
                      else
                        let x = fresh_in ctx "arg" in
                        (Some ((x, ty.val_type), ty.cont_eff), EHMTT.mk_var x, [])
-                 | Second (x, _sort) -> (None, lookup ctx.ntenv x, []))
+                 | Second (x, _sort) -> (None, var_term ctx x, []))
              in
              let term, rules =
                match ctx.conts_opt with
@@ -745,7 +869,7 @@ module Make (Config : Config.ConfigType) = struct
                      else
                        let x = fresh_in ctx "elem" in
                        (Some (x, ty.Sort.val_type), EHMTT.mk_var x, [])
-                 | Second (x, _sort) -> (None, lookup ctx.ntenv x, []))
+                 | Second (x, _sort) -> (None, var_term ctx x, []))
              in
              snd
              @@ List.fold_right2_exn xs nexts_either
@@ -1169,7 +1293,7 @@ module Make (Config : Config.ConfigType) = struct
                      else
                        let x = fresh_in ctx "elem" in
                        (Some (x, ty.val_type), EHMTT.mk_var x, [])
-                 | Second (x, _sort) -> (None, lookup ctx.ntenv x, []))
+                 | Second (x, _sort) -> (None, var_term ctx x, []))
              in
              let rules = List.concat ruless in
              let term, rules =
@@ -1420,6 +1544,10 @@ module Make (Config : Config.ConfigType) = struct
     dtenv : DTEnv.t;
     ntenv : (Ident.tvar, EHMTT.term) Map.Poly.t;
     senv : sort_env_map;
+    op_results : (string * Sort.t) list;
+        (** each operation of the [eff] declaration with the result type its
+            GADT index declares ([Get : bool eff] gives [bool], [Raise : 'a
+            eff] a sort variable) *)
   }
 
   let of_struct_item (envs : envs) item =
@@ -1439,6 +1567,21 @@ module Make (Config : Config.ConfigType) = struct
               print_load_info @@ "let " ^ defs;
               false
         in
+        (* A reference to a function of this [let rec] inside a handled body
+           is translated by a coercion that runs the callee with the handlers
+           outside the enclosing handler ([f_var]); it is exact only when that
+           handler forwards unchanged every operation the callee can let
+           escape.  Otherwise the translation would check a different program
+           (one that skips a clause), which can answer [sat] for a program
+           violating its property, so the program is refused instead. *)
+        (if is_rec then
+           match RecCallGuard.check vbs with
+           | Ok () -> ()
+           | Error reason ->
+               Common.Refusal.refuse
+                 "EffCaml does not translate this recursive definition \
+                  soundly: %s"
+                 reason);
         let is_pures, pats, defs =
           List.unzip3
           @@ List.map vbs ~f:(fun vb ->
@@ -1534,7 +1677,22 @@ module Make (Config : Config.ConfigType) = struct
             Set.iter opsig_constrs ~f:(fun (o1, o2) ->
                 Debug.print
                 @@ lazy (Term.str_of_opsig o1 ^ " <: " ^ Term.str_of_opsig o2));
-            let sol = MBcsol.solve eff_constrs opsig_constrs in
+            (* [MBcsol.solve] either returns a substitution under which every
+               effect and operation-signature constraint holds or raises
+               [Solve_failure]; its search is heuristic, so a failure says
+               that it found no typing, not that none exists.  No CPS
+               translation and so no verdict follows for this binding, and
+               the input is refused in words rather than crashing. *)
+            let sol =
+              try MBcsol.solve eff_constrs opsig_constrs
+              with MBcsol.Solve_failure reason ->
+                Common.Refusal.refuse
+                  "the effects of %s are not supported: EffCaml's effect \
+                   type inference found no typing (%s); it is incomplete, so \
+                   this is not a proof that the program is ill-typed"
+                  (String.concat_map_list ~sep:", " pats ~f:Pattern.str_of)
+                  reason
+            in
             let stheta =
               let stheta =
                 Map.Poly.map sol.stheta
@@ -1579,7 +1737,7 @@ module Make (Config : Config.ConfigType) = struct
         (* *)
         Debug.print @@ lazy "";
         let (ntenv, tl_rules, tl_nt, tl_args), rules, senv_body =
-          cgen_let eff_map
+          cgen_let ~op_results:envs.op_results eff_map
             (List.map envs.tl_rules ~f:fst)
             (envs.tl_nt, envs.tl_args) envs.fenv envs.dtenv envs.ntenv is_rec
             pats
@@ -1688,7 +1846,20 @@ module Make (Config : Config.ConfigType) = struct
              (sprintf "[of_struct_item] datatype env:\n%s"
              @@ DTEnv.str_of dtenv');
         update_dtenv dtenv';
-        ({ envs with dtenv = dtenv' }, Skip)
+        let op_results =
+          List.fold dttypes ~init:envs.op_results ~f:(fun acc ty ->
+              match (ty.typ_name.txt, ty.typ_kind) with
+              | "eff", Ttype_variant tds ->
+                  List.filter_map tds ~f:(fun cd ->
+                      match cd.cd_res with
+                      | Some { ctyp_desc = Ttyp_constr (_, _, [ index ]); _ } ->
+                          Some
+                            ( cd.cd_name.txt,
+                              MBcgen.sort_of_core_type dtenv' index )
+                      | _ -> None)
+              | _ -> acc)
+        in
+        ({ envs with dtenv = dtenv'; op_results }, Skip)
     | Tstr_typext _ -> failwith "type extension not supported"
     | Tstr_exception _ -> failwith "exception not supported"
     | Tstr_module _ -> failwith "module not supported"
@@ -1825,11 +1996,18 @@ module Make (Config : Config.ConfigType) = struct
               let nt_implyP = Ident.Tvar "ImplyP" in
               let nt_iff = Ident.Tvar "Iff" in
               let nt_iffP = Ident.Tvar "IffP" in
+              (* no input automaton, so no case is turned into a branch and
+                 none of the names the EHMTT reduction adds is used *)
+              let generated =
+                disambiguate_params
+                @@ EHMTT.rsfd_of ~names:(EHMTT.names_for []) [] envs.tl_rules
+                @ (envs.tl_nt, (List.map ~f:fst envs.tl_args, rterm_unit))
+                  :: EHMTT.rsfd_of ~names:(EHMTT.names_for []) [] envs.rules
+              in
+              check_generated_rules generated;
               Problem.RSFD
                 ( [],
-                  EHMTT.rsfd_of [] envs.tl_rules
-                  @ (envs.tl_nt, (List.map ~f:fst envs.tl_args, rterm_unit))
-                    :: EHMTT.rsfd_of [] envs.rules
+                  generated
                   @ [
                       ( nt_not,
                         ( [ x ] @ hs @ [ k ],
@@ -1885,6 +2063,7 @@ module Make (Config : Config.ConfigType) = struct
           dtenv = get_dtenv ();
           ntenv = Map.Poly.empty;
           senv = Map.Poly.empty;
+          op_results = [];
         }
       in
       Result.return @@ top_level_aux envs ts.str_items
@@ -1911,5 +2090,5 @@ module Make (Config : Config.ConfigType) = struct
             LexingHelper.print_error_information lexbuf;
             raise e)
     in
-    top_level res
+    top_level (RCaml.EffectSyntax.desugar ~print:Debug.print res)
 end

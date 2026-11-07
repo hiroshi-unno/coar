@@ -1,0 +1,13 @@
+# x is a nat variable equal to 3.  The loop guard x / 2 > 0 is inside the program, so / is
+# integer division: the loop runs while x >= 2 and stops at x = 1, so the expectation of x is
+# 1 and the lower bound 1 holds.
+# Expected: valid.  No backend answers it yet: the bound checker relaxes integer states to
+# the reals and declines a problem with integer division (the halving loop beside it is
+# declined the same way), so every configuration answers unknown.  Read as exact division,
+# the guard held at x = 1 too, the loop stopped at x = 0, and the bound was false.
+nat x;
+x := 3;
+while (x / 2 > 0) {
+	x := x - 1;
+}
+?Ex [x] >= 1

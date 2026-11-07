@@ -1,0 +1,22 @@
+%BEGING
+Keep xs -> case xs of
+  nil => nil
+| cons y ys => case y of
+    c => cons c (Keep ys)
+  | d => cons d (Keep ys).
+%ENDG
+
+%BEGINA
+qCD nil -> .
+qCD cons -> qcd qCD.
+qcd c -> .
+qcd d -> .
+
+qC nil -> .
+qC cons -> qc qC.
+qc c -> .
+%ENDA
+
+%BEGINT
+Keep : qCD -> qC.
+%ENDT

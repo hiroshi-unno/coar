@@ -48,6 +48,17 @@ let to_formula (e : t) =
 *)
 
 let guard atm = (atm, Set.Poly.empty)
+
+(** [equal_gatom (a1, g1) (a2, g2)]: the same atom under the same guard, the
+    atoms compared structurally and the guards as sets.  A guard is an
+    [int Set.Poly.t], whose first field is its comparator closure, so
+    polymorphic equality on a guarded atom (or on a list or tuple holding one)
+    raises [Invalid_argument "compare: functional value"] as soon as it gets
+    past the atom; every comparison of guarded atoms goes through this. *)
+let equal_gatom (a1, g1) (a2, g2) = Stdlib.( = ) a1 a2 && Set.equal g1 g2
+
+(** [mem_gatom l x]: [x] occurs in [l] by [equal_gatom]. *)
+let mem_gatom l x = List.mem l x ~equal:equal_gatom
 let ext_guard (atm, guard) i = (atm, Set.add guard i)
 let ext_guard_list atms i = List.map ~f:(Fn.flip ext_guard i) atms
 
@@ -117,9 +128,9 @@ let map_atm ~f = List.map ~f:(fun (atm, m) -> (f atm, m))
 let simplify (sequent : t) =
   {
     eqvars = sequent.eqvars;
-    left_atms = List.dedup_keep_last @@ sequent.left_atms;
+    left_atms = List.dedup_keep_last ~equal:equal_gatom @@ sequent.left_atms;
     left_phi = Evaluator.simplify @@ sequent.left_phi;
-    right_atms = List.dedup_keep_last @@ sequent.right_atms;
+    right_atms = List.dedup_keep_last ~equal:equal_gatom @@ sequent.right_atms;
     right_phi = Evaluator.simplify @@ sequent.right_phi;
   }
 
@@ -270,17 +281,16 @@ let equal_light e1 e2 =
   let e1 = simplify e1 in
   let e2 = simplify e2 in
   Map.Poly.equal Stdlib.( = ) e1.eqvars e2.eqvars
-  && Stdlib.(
-       e1.left_atms = e2.left_atms
-       && e1.left_phi = e2.left_phi
-       && e1.right_atms = e2.right_atms
-       && e1.right_phi = e2.right_phi)
+  && List.equal equal_gatom e1.left_atms e2.left_atms
+  && Stdlib.( = ) e1.left_phi e2.left_phi
+  && List.equal equal_gatom e1.right_atms e2.right_atms
+  && Stdlib.( = ) e1.right_phi e2.right_phi
 
 (** more precise than [equal_light] *)
 let equal e1 e2 =
   Map.Poly.equal Stdlib.( = ) e1.eqvars e2.eqvars
-  && List.equal Stdlib.( = ) e1.left_atms e2.left_atms
-  && List.equal Stdlib.( = ) e1.right_atms e2.right_atms
+  && List.equal equal_gatom e1.left_atms e2.left_atms
+  && List.equal equal_gatom e1.right_atms e2.right_atms
   && Z3Smt.Z3interface.is_valid ~id:None (FunEnv.mk_empty ())
        (Formula.mk_iff e1.left_phi e2.left_phi)
   && Z3Smt.Z3interface.is_valid ~id:None (FunEnv.mk_empty ())

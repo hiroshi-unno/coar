@@ -1,0 +1,14 @@
+# x is a nat variable, so x := x - 1 is truncated subtraction (monus): from x = 1 two
+# iterations leave x at max(1 - 1 - 1, 0) = 0, and the lower bound 0 on its expectation holds.
+# The loop guard does not bound x below, so the subtraction becomes a case split in the loop
+# body.
+# Expected: valid.  Read as ordinary subtraction, x ended at -1 and the bound was not proved.
+nat x;
+nat c;
+x := 1;
+c := 0;
+while (c < 2) {
+	x := x - 1;
+	c := c + 1;
+}
+?Ex [x] >= 0

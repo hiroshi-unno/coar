@@ -1,0 +1,28 @@
+%BEGING
+I x -> x.
+C x y z -> x (y z).
+
+QSort x -> QS x I I.
+QS x z1 z2 -> 
+	case x of e => z1 (z2 e)
+	| a y => QS y (C z1 a) z2
+	| b y => QS y z1 (C z2 b)
+.
+%ENDG
+
+%BEGINA
+
+qStr e -> .
+qStr a -> qStr.
+qStr b -> qStr.
+
+qAB e -> .
+qAB a -> qAB.
+qAB b -> qB.
+qB e -> .
+qB b -> qB.
+%ENDA
+
+%BEGINT
+QSort : qStr -> qAB.
+%ENDT

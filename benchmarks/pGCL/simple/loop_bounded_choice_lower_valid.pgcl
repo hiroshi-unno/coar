@@ -1,0 +1,17 @@
+# Two rounds of a fair coin that increments c on heads:
+#   wp({c := c + 1}[1/2]{skip}, c) = 1/2 (c + 1) + 1/2 c = c + 1/2,
+# so two rounds give c + 1 and, from c = 0, the expectation of c is 1.  The lower bound 1 is
+# exact.  The choice inside the bounded loop is unrolled with it, giving a weighted sum of
+# applications of the post-expectation, which no loop function wraps.
+# Expected: valid.  Before the bounded loop was unrolled the run stopped with an assertion
+# failure.
+nat c;
+c := 0;
+loop(2) {
+	{
+		c := c + 1;
+	}[1/2]{
+		skip
+	}
+}
+?Ex [c] >= 1

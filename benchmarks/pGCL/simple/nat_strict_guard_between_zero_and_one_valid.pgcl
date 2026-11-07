@@ -1,0 +1,12 @@
+# x is a nat variable, so no state satisfies 0 < x & x < 1 and c stays 0 for every x.
+# Expected: valid.  Read with x a real, the guard held at x = 1/2, the bound failed there, and
+# the answer was unknown.
+nat x;
+nat c;
+c := 0;
+if (0 < x & x < 1) {
+	c := 1;
+} else {
+	skip
+}
+?Ex [c] <= 0

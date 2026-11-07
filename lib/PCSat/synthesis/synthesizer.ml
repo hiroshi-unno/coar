@@ -15,7 +15,8 @@ module Config = struct
 
   type t = {
     verbose : bool; [@default false]
-    strategy : strategy; [@default Common.Util.config_default strategy_of_yojson {|["Template", {}]|}]
+    synthesizer : strategy; [@default Common.Util.config_default strategy_of_yojson {|["Template", {}]|}]
+        (** which synthesizer builds the candidates *)
     check_candidates : bool; [@default false]
         (** check whether candidates satisfy the examples *)
     refine_candidates : bool; [@default false]
@@ -25,18 +26,18 @@ module Config = struct
 
   let instantiate_ext_files cfg =
     let open Or_error in
-    match cfg.strategy with
+    match cfg.synthesizer with
     | Template strategy_cfg ->
         TBSynthesizer.Config.instantiate_ext_files strategy_cfg
-        >>= fun strategy_cfg -> Ok { cfg with strategy = Template strategy_cfg }
+        >>= fun strategy_cfg -> Ok { cfg with synthesizer = Template strategy_cfg }
     | Classification strategy_cfg ->
         CBSynthesizer.Config.instantiate_ext_files strategy_cfg
         >>= fun strategy_cfg ->
-        Ok { cfg with strategy = Classification strategy_cfg }
+        Ok { cfg with synthesizer = Classification strategy_cfg }
     | PredicateAbstraction strategy_cfg ->
         PASynthesizer.Config.instantiate_ext_files strategy_cfg
         >>= fun strategy_cfg ->
-        Ok { cfg with strategy = PredicateAbstraction strategy_cfg }
+        Ok { cfg with synthesizer = PredicateAbstraction strategy_cfg }
 
   include MakeExtFile (struct
     type nonrec t = t
@@ -75,7 +76,7 @@ module Make
   let _ = Debug.set_id id
 
   module Synthesizer =
-    (val match config.strategy with
+    (val match config.synthesizer with
          | Config.Template cfg ->
              (module TBSynthesizer.Make
                        (RLCfg)
@@ -136,8 +137,41 @@ module Make
                 LogicOld.Formula.forall (LogicOld.get_dummy_term_senv ()) phi
               in
               if Set.is_subset (LogicOld.Formula.fvs_of phi) ~of_:psenv then
-                not
-                @@ Evaluator.is_valid (Z3Smt.Z3interface.is_valid ~id fenv) phi
+                (* [phi] is universally closed over the dummy terms (and over
+                   the example's variables when [inst] is false), so Z3 may
+                   not decide it.  It is asked within what is left of the
+                   run's armed budget, and not at all when its shape is one
+                   Z3's budget does not hold over.  Only a decided [`Invalid]
+                   is a violation: an undecided question is reported as such
+                   and raised past [Evaluator.is_valid], which would
+                   otherwise record a "not valid" for [phi] in the table it
+                   shares with every other validity question. *)
+                let exception Undecided of string in
+                let decide phi =
+                  if Z3Smt.Z3interface.may_not_return phi then
+                    raise
+                      (Undecided
+                         "a quantified sort Z3's budget does not hold over")
+                  else
+                    match
+                      Z3Smt.Z3interface.decide_valid
+                        ~timeout:(Z3Smt.Z3interface.armed_budget_ms ())
+                        ~id fenv phi
+                    with
+                    | `Valid -> true
+                    | `Invalid -> false
+                    | `Undecided reason -> raise (Undecided reason)
+                in
+                match Evaluator.is_valid decide phi with
+                | valid -> not valid
+                | exception Undecided reason ->
+                    Debug.print
+                    @@ lazy
+                         (sprintf
+                            "whether a candidate satisfies an example was \
+                             not decided (%s): not reported as a violation"
+                            reason);
+                    false
               else failwith @@ "Invalid formula: " ^ LogicOld.Formula.str_of phi)
         in
         match cex with
@@ -153,7 +187,7 @@ module Make
       match
         check_candidates ~id ~inst:true vs.fenv
           (PCSP.Problem.senv_of APCSP.problem)
-          (VersionSpace.examples_of vs)
+          (VersionSpace.synthesis_examples_of vs)
           (List.map ~f:fst cands)
       with
       | None -> Ok e

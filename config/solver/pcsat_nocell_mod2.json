@@ -1,0 +1,13 @@
+[
+    "PCSat",
+    {
+        "preprocessor": [
+            "Filename",
+            "./config/pcsat/preprocessor/enable_inst_quant.json"
+        ],
+        "coordinator": [
+            "Filename",
+            "./config/pcsat/coordinator/tbq_ar_nocell_mod2.json"
+        ]
+    }
+]

@@ -1,0 +1,11 @@
+# x is a nat variable equal to 1 and y a real one.  In y := x / 2 + 0.5 the operands of / are
+# integers, so the quotient is integer division, 0, and y is 0.5: the probability that
+# y <= 0.5 is 1.  (The post is an indicator because an expectation must be non-negative in
+# every state, which the real y is not.)
+# Expected: valid.  When the mixed sum was read over the reals, x was converted to a real
+# before the division, y was 1, and the bound was not proved.
+nat x;
+real y;
+x := 1;
+y := x / 2 + 0.5;
+?Ex [[y <= 0.5]] >= 1

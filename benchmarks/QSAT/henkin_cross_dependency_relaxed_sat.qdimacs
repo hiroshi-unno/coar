@@ -1,0 +1,8 @@
+c the QBF relaxation of henkin_cross_dependency_unsat: y3 and y4 see both universals
+p cnf 4 4
+a 1 2 0
+e 3 4 0
+-3 2 0
+3 -2 0
+-4 1 0
+4 -1 0

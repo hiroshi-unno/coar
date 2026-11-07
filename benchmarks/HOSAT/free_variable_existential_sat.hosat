@@ -1,0 +1,1 @@
+_forall x : bool. (x () || y () || not (y ()))

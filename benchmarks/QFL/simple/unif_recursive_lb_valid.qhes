@@ -1,0 +1,4 @@
+X 0.0 >= 2.0
+s.t.
+// X = 1 + X / 2 since the integral of r over [0, 1] is 1/2, so X = 2
+X (x : real) : real =mu 1.0 + (unif r. r * X x);

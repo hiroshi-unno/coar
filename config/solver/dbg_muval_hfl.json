@@ -1,0 +1,16 @@
+[
+    "MuValHFL",
+    {
+        "verbose": true,
+        "rcaml": {
+            "solver": [
+                "Filename",
+                "./config/solver/dbg_pcsat.json"
+            ],
+            "chc_optimizer": [
+                "Filename",
+                "./config/solver/dbg_optpcsat_nc_pcsat_improver.json"
+            ]
+        }
+    }
+]

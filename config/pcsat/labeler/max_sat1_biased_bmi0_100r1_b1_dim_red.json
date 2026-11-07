@@ -1,40 +1,30 @@
 {
     "num_labelings": 1,
-    "strategy": [
+    "labeling": [
         "Mixed",
         [
-            [
-                [
+            {
+                "strategy": [
                     "POS_BIASED_MAX_SAT",
-                    true,
-                    4
-                ],
-                true
-            ],
-            [
-                [
+                    {}
+                ]
+            },
+            {
+                "strategy": [
                     "NEG_BIASED_MAX_SAT",
-                    true,
-                    4
-                ],
-                true
-            ],
-            [
-                [
+                    {}
+                ]
+            },
+            {
+                "strategy": [
                     "BMI_MAX_SAT",
-                    100,
-                    200,
-                    1.0,
-                    [
-                        "None"
-                    ],
-                    0.0,
-                    0.0,
-                    1.0,
-                    false
+                    {
+                        "enc_bool_to_float": 1.0,
+                        "ignore_bool_args_variance": false
+                    }
                 ],
-                false
-            ]
+                "sample_examples": false
+            }
         ]
     ],
     "sat_solver": [

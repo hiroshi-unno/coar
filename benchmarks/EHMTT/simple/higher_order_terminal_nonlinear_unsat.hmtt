@@ -1,0 +1,17 @@
+%BEGING
+Main x -> H wrap x.
+H f x -> f (Dup x).
+Dup x -> case x of
+  a => (case x of a => ok | b => ng)
+| b => (case x of a => ng | b => ng).
+%ENDG
+
+%BEGINA
+q0 a -> . q0 b -> .
+q1 wrap -> q1.
+q1 ok -> .
+%ENDA
+
+%BEGINT
+Main : q0 -> q1.
+%ENDT

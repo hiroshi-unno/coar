@@ -89,22 +89,19 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
     Hashtbl.Poly.map nwf.sorts_map ~f:(List.map ~f:Logic.ExtTerm.to_old_sort)
 
   let (param, last_non_timeout_param), (templ, qual_term_map) =
-    match Hashtbl.Poly.find shared_info (id, nwf.name) with
-    | Some m -> m
-    | _ ->
-        let m =
+    find_or_add_shared_info (id, nwf.name) ~create:(fun () ->
           let param =
             {
               np = config.number_of_rfun_pieces;
               ndc = config.number_of_disc_conj;
               nl = config.number_of_rfun_lexicos;
-              depth = config.depth;
-              ubrc = Option.map config.upper_bound_rfun_coeff ~f:Z.of_int;
-              ubrd = Option.map config.upper_bound_rfun_const ~f:Z.of_int;
-              ubdc = Option.map config.upper_bound_disc_coeff ~f:Z.of_int;
-              ubdd = Option.map config.upper_bound_disc_const ~f:Z.of_int;
+              depth = config.term_depth;
+              ubrc = Option.map config.bounds.rfun.coeff.initial ~f:Z.of_int;
+              ubrd = Option.map config.bounds.rfun.const.initial ~f:Z.of_int;
+              ubdc = Option.map config.bounds.disc.coeff.initial ~f:Z.of_int;
+              ubdd = Option.map config.bounds.disc.const.initial ~f:Z.of_int;
               ds =
-                (match config.disc_seeds with
+                (match config.bounds.disc.const.seeds with
                 | None -> Set.Poly.singleton Z.zero
                 | Some ds -> Set.Poly.of_list @@ List.map ds ~f:Z.of_int);
             }
@@ -114,9 +111,7 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
               ( NWF (create (), create (), create ()),
                 Hashtbl.Poly.map sorts_map ~f:(fun _ ->
                     (Set.Poly.empty, Set.Poly.empty)) ) )
-        in
-        Hashtbl.Poly.add_exn shared_info ~key:(id, nwf.name) ~data:m;
-        m
+    )
 
   let rcs, dcs, qds =
     match templ with
@@ -199,7 +194,7 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
     HypSpace.qualifiers_of ~fenv:Arg.fenv !param.depth hspace
 
   let last_cert : Templ.kind_cert_templ option ref = ref None
-  let kind_cert_template () = !last_cert
+  let kind_cert_template () = Option.map !last_cert ~f:List.return
 
   let gen_template ~ucore:_ (hspace : HypSpace.hspace) =
     let template =
@@ -237,11 +232,12 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
           ds = !param.ds;
         }
         {
+          extra_terms = config.ranking_extra_terms;
           norm_type = config.norm_type;
-          lbrc = Option.map config.lower_bound_rfun_coeff ~f:Z.of_int;
-          lbdc = Option.map config.lower_bound_disc_coeff ~f:Z.of_int;
-          berc = Option.map config.bound_each_rfun_coeff ~f:Z.of_int;
-          bedc = Option.map config.bound_each_disc_coeff ~f:Z.of_int;
+          lbrc = Option.map config.bounds.rfun.coeff.lower ~f:Z.of_int;
+          lbdc = Option.map config.bounds.disc.coeff.lower ~f:Z.of_int;
+          berc = Option.map config.bounds.rfun.coeff.per_coefficient ~f:Z.of_int;
+          bedc = Option.map config.bounds.disc.coeff.per_coefficient ~f:Z.of_int;
         }
         (params_shared, tag_l, params_left, tag_r, params_right)
         (quals_x, terms_x) (quals_y, terms_y)
@@ -594,7 +590,7 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
          ^ "***************");
     ({ param with ubdd = init.ubdd }, actions @ [ "init_disc_const" ])
 
-  let increase_lexico_piece_conj (param, actions) =
+  let diagonal_step (param, actions) =
     if param.nl <= 1 && param.np <= 1 then
       increase_disc_conj @@ increase_rfun_pieces
       @@ increase_rfun_lexicos (param, actions)
@@ -605,6 +601,55 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
           else Fn.id)
       @@ increase_rfun_lexicos (param, actions)
 
+  (* moves to the shape [(nl, np, ndc, depth)] by single-step actions *)
+  let move_shape (nl, np, ndc, depth) ((param, _) as pa) =
+    let open WFPredicate.ShapeGrowth in
+    pa
+    |> move ~inc:increase_rfun_lexicos ~dec:decrease_rfun_lexicos param.nl nl
+    |> move ~inc:increase_rfun_pieces ~dec:decrease_rfun_pieces param.np np
+    |> move ~inc:increase_disc_conj ~dec:decrease_disc_conj param.ndc ndc
+    |> move ~inc:increase_depth ~dec:decrease_depth param.depth depth
+
+  let cost_step ~lexicos_first ((param, _) as pa) =
+    let nl, np =
+      WFPredicate.ShapeGrowth.next_by_cost ~lexicos_first
+        ~nl0:config.number_of_rfun_lexicos ~np0:config.number_of_rfun_pieces
+        (param.nl, param.np)
+    in
+    move_shape
+      ( nl,
+        np,
+        WFPredicate.ShapeGrowth.disc_conj_for ~ndc0:config.number_of_disc_conj
+          ~np0:config.number_of_rfun_pieces np,
+        WFPredicate.ShapeGrowth.depth_for ~depth0:config.term_depth
+          ~cur_depth:param.depth nl )
+      pa
+
+  (* one shape for the whole family: the most real-sorted coordinates any
+     of its heads has *)
+  let orthant_pieces =
+    Hashtbl.Poly.fold sorts_map ~init:None ~f:(fun ~key:_ ~data acc ->
+        match (WFPredicate.ShapeGrowth.orthant_pieces data, acc) with
+        | Some n, Some m -> Some (Int.max n m)
+        | Some n, None | None, Some n -> Some n
+        | None, None -> None)
+
+  let increase_lexico_piece_conj ((param, _) as pa) =
+    match config.shape_growth with
+    | Diagonal -> diagonal_step pa
+    | Cost_ordered_lexicos_first -> cost_step ~lexicos_first:true pa
+    | Cost_ordered_pieces_first -> cost_step ~lexicos_first:false pa
+    | Orthant_pieces -> (
+        match orthant_pieces with
+        | Some n when param.nl <= 1 && param.np <= 1 && n > param.np ->
+            Debug.print
+            @@ lazy
+                 (sprintf "************* orthant pieces for %s: %d pieces"
+                    (Ident.name_of_tvar Arg.name)
+                    n);
+            move_shape (param.nl, n, param.ndc, param.depth) pa
+        | _ -> diagonal_step pa)
+
   let rec inner param_actions = function
     | [] -> param_actions
     | (LexicoPieceConj | Shape) :: labels ->
@@ -614,23 +659,29 @@ module Make (Cfg : WFPredicate.Config.ConfigType) (Arg : ArgType) :
           labels
     | RFunCoeff :: labels ->
         inner
-          (increase_rfun_coeff config.threshold_rfun_coeff param_actions)
+          (increase_rfun_coeff config.bounds.rfun.coeff.unbounded_above param_actions)
           labels
     | RFunConst :: labels ->
         inner
-          (increase_rfun_const config.threshold_rfun_const param_actions)
+          (increase_rfun_const config.bounds.rfun.const.unbounded_above param_actions)
           labels
     | DiscCoeff :: labels ->
         inner
-          (increase_disc_coeff config.threshold_disc_coeff param_actions)
+          (increase_disc_coeff config.bounds.disc.coeff.unbounded_above param_actions)
           labels
     | DiscConst :: labels ->
         inner
-          (increase_disc_const config.threshold_disc_const param_actions)
+          (increase_disc_const config.bounds.disc.const.unbounded_above param_actions)
           labels
     | TimeOut :: _labels -> param_actions (* z3 may unexpectedly time out*)
     | QualDep :: labels -> inner param_actions labels
-    | _ -> assert false
+    | _ ->
+        (* another template module's label: excluded by the contract of
+           [Function.Type.update_with_labels] *)
+        assert false
+
+  let coeff_labels = [ RFunCoeff; DiscCoeff ]
+  let const_labels = [ RFunConst; DiscConst ]
 
   let actions_of labels =
     (snd @@ inner (!param, []) @@ Set.to_list labels) @ [ "end" ]

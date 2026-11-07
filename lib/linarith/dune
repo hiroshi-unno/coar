@@ -1,0 +1,9 @@
+(library
+ (name Linarith)
+ (public_name CoAR.linarith)
+ (preprocess
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
+ (libraries core yojson CoAR.ast CoAR.common CoAR.Z3Smt)
+ (modules rows farkas coeffSolver template rankingCheck separate)
+ (synopsis
+  "Linear-arithmetic synthesis pieces shared by the solvers: Farkas rows, linear ranking constructions, separating guards, coefficient solving"))

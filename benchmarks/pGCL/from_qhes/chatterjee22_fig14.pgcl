@@ -1,6 +1,6 @@
-nat x;
-nat y;
-nat z; 
+int x;
+int y;
+int z; 
 
 while (0 <= x+y+z){
 	{

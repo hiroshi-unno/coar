@@ -34,7 +34,7 @@ module Config = struct
     verbose : bool; [@default false]
     qualifier_generator : Qualifier.Generator.Config.t ext_file; [@default Common.Util.ExtFile.Filename "./config/pcsat/qualifier/polyhedron012.json"]
     qual_order : order; [@default Rank]  (** priority order for qualifiers *)
-    strategy : strategy; [@default All]
+    selection : strategy; [@default All]
     bfsynth : BFSynthesizer.Config.t ext_file; [@default Common.Util.config_default (Common.Util.ext_file_of_yojson BFSynthesizer.Config.of_yojson) {|["Instance", ["DTBF", {"verbose": false}]]|}]
   }
   [@@deriving yojson]
@@ -84,7 +84,8 @@ struct
   let qdeps = Map.Poly.empty (* TODO: generate qdeps *)
   let fenv = Map.Poly.empty (*TODO : generate fenv*)
 
-  let compare (x1, x2) (y1, y2) =
+  (* lexicographic order on pairs of ints *)
+  let compare_int_pair (x1, x2) (y1, y2) =
     if x1 < y1 then -1
     else if x1 > y1 then 1
     else if x2 < y2 then -1
@@ -93,7 +94,7 @@ struct
 
   (*val needs_to_refine_bf: BoolFunction.t -> bool*)
   let needs_to_refine_bf =
-    match config.strategy with
+    match config.selection with
     | First -> fun _ -> false
     | All -> fun _ -> true
     | MinHeightSize None -> fun _ -> true
@@ -102,20 +103,22 @@ struct
     | MinSizeHeight (Some th) -> fun phi -> BoolFunction.size phi >= th
 
   let select =
-    match config.strategy with
+    match config.selection with
     | First -> fun qbs -> [ List.hd_exn qbs ]
     | All -> fun qbs -> qbs
     | MinHeightSize _ ->
         fun qbs ->
           List.map qbs ~f:(fun qb ->
               ((BoolFunction.height qb, BoolFunction.size qb), qb))
-          |> List.sort ~compare:(fun (r1, _) (r2, _) -> compare r1 r2)
+          |> List.sort ~compare:(fun (r1, _) (r2, _) ->
+                 compare_int_pair r1 r2)
           |> List.map ~f:snd
     | MinSizeHeight _ ->
         fun qbs ->
           List.map qbs ~f:(fun qb ->
               ((BoolFunction.size qb, BoolFunction.height qb), qb))
-          |> List.sort ~compare:(fun (r1, _) (r2, _) -> compare r1 r2)
+          |> List.sort ~compare:(fun (r1, _) (r2, _) ->
+                 compare_int_pair r1 r2)
           |> List.map ~f:snd
 
   let print_log = false

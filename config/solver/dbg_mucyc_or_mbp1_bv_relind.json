@@ -1,0 +1,25 @@
+[
+    "MuCyc",
+    {
+        "verbose": true,
+        "pcsp_solver": [
+            "Filename",
+            "./config/solver/spacer_sol.json"
+        ],
+        "refinement_strategy": [
+            "Refine",
+            [
+                "MBP",
+                1
+            ],
+            [
+                "Or"
+            ]
+        ],
+        "projection_lets": [
+            "Name_subterms",
+            {}
+        ],
+        "relative_induction_interpolant": 2000
+    }
+]

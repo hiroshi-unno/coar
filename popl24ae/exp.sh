@@ -1,38 +1,44 @@
 #!/bin/bash
+set -euo pipefail
 
 timeout=600 # time limit in seconds
 para=4 # the number of parallel executions
 memlimit=256 # memory limit in GB
 
-cd $(dirname $0)/..
+if [[ ! "$timeout" =~ ^[+]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?[smhd]?$ ]] ||
+        [[ ! "$para" =~ ^[0-9]+$ ]]; then
+    echo "invalid timeout or parallelism setting" >&2
+    exit 2
+fi
 
-# Table 1. Spacer
-outfile="./popl24ae/results_spacer.csv"
-memusage="./popl24ae/memusage_spacer.csv"
-benchmarks=$(awk -F, -v memlimit="$memlimit" '$2 <= memlimit*1024*1024 { print $1 }' $memusage)
-timeout=$timeout options="-c ./config/solver/rcaml_wopp_spacer.json -p ml" para=$para \
-    ./script/run_bench.sh $benchmarks \
-    1> $outfile
-# add the lines of the excluded benchmarks
-awk -F, -v memlimit="$memlimit" '$2 > memlimit*1024*1024 { OFS=","; print $1,"(excluded)" }' $memusage >> $outfile
+artifact_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+cd -- "$artifact_dir/.."
+staging=$(mktemp -d "$artifact_dir/.evaluation.XXXXXX")
+trap 'status=$?; if [ "$status" -ne 0 ]; then echo "evaluation failed; unpublished results retained in $staging" >&2; fi' EXIT
+python3 "$artifact_dir/evaluation_inputs.py" prepare "$artifact_dir" "$staging" "$memlimit"
 
-# Table 1. PCSat
-outfile="./popl24ae/results_pcsat.csv"
-memusage="./popl24ae/memusage_pcsat.csv"
-benchmarks=$(awk -F, -v memlimit="$memlimit" '$2 <= memlimit*1024*1024 { print $1 }' $memusage)
-timeout=$timeout options="-c ./config/solver/rcaml_pcsat_tbq_ar.json -p ml" para=$para \
-    ./script/run_bench.sh $benchmarks \
-    1> $outfile
-# add the lines of the excluded benchmarks
-awk -F, -v memlimit="$memlimit" '$2 > memlimit*1024*1024 { OFS=","; print $1,"(excluded)" }' $memusage >> $outfile
+for arm in spacer pcsat cps; do
+    paths=()
+    while IFS= read -r -d '' path; do paths+=("$path"); done < "$staging/$arm.paths"
+    output="$staging/results_$arm.csv"
+    if [ "$arm" = pcsat ]; then
+        config=./config/solver/rcaml.json
+    else
+        config=./config/solver/rcaml_wopp_spacer.json
+    fi
+    if [ "${#paths[@]}" -gt 0 ]; then
+        timeout=$timeout options="-c $config -p ml" para=$para \
+            ./script/run_bench.sh "${paths[@]}" > "$output"
+    else
+        : > "$output"
+    fi
+    cat "$staging/$arm.excluded" >> "$output"
+done
 
-
-# # Table 2.
-outfile="./popl24ae/results_cps.csv"
-memusage="./popl24ae/memusage_cps.csv"
-benchmarks=$(awk -F, -v memlimit="$memlimit" '$2 <= memlimit*1024*1024 { print $1 }' $memusage)
-timeout=$timeout options="-c ./config/solver/rcaml_wopp_spacer.json -p ml" para=$para \
-    ./script/run_bench.sh $benchmarks \
-    1> $outfile
-# add the lines of the excluded benchmarks
-awk -F, -v memlimit="$memlimit" '$2 > memlimit*1024*1024 { OFS=","; print $1,"(excluded)" }' $memusage >> $outfile
+python3 "$artifact_dir/evaluation_inputs.py" validate "$artifact_dir" "$staging"
+# All families validate before any publication. Each rename is atomic; the
+# three replacements together are not a filesystem transaction.
+for arm in spacer pcsat cps; do
+    mv -f -- "$staging/results_$arm.csv" "$artifact_dir/results_$arm.csv"
+done
+rm -rf -- "$staging"

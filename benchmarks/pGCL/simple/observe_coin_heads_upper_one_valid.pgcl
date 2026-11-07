@@ -1,0 +1,12 @@
+# A fair coin conditioned on heads: the conditional expectation of c (cwp, the default) is
+# wp(S, c) / wlp(S, 1) = (1/2) / (1/2) = 1, so the upper bound 1 holds.
+# Expected: valid.  The reduction asks wp_1(S, c) <= 1, where a run blocked by the
+# observation is worth the bound 1: 1/2 * 1 + 1/2 * 1 = 1.
+nat c;
+{
+	c := 1;
+}[1/2]{
+	c := 0;
+}
+observe(c = 1);
+?Ex [c] <= 1

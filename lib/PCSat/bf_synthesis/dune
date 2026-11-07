@@ -2,7 +2,7 @@
  (name bf_synthesis)
  (public_name CoAR.PCSat.bf_synthesis)
  (preprocess
-  (pps ppx_deriving_yojson))
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
  (libraries core yojson CoAR.SMT CoAR.pCSP CoAR.Z3Smt CoAR.PCSat.common)
  (modules
   BFSynthesizer

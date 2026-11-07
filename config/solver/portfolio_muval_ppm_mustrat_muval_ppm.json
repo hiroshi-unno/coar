@@ -1,0 +1,27 @@
+[
+    "Portfolio",
+    {
+        "stages": [
+            {
+                "solver": [
+                    "Filename",
+                    "./config/solver/muval_ppm.json"
+                ],
+                "time_limit_s": 10.0
+            },
+            {
+                "solver": [
+                    "Filename",
+                    "./config/solver/mustrat.json"
+                ],
+                "time_limit_s": 60.0
+            },
+            {
+                "solver": [
+                    "Filename",
+                    "./config/solver/muval_ppm.json"
+                ]
+            }
+        ]
+    }
+]

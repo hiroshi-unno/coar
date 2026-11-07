@@ -1,0 +1,5 @@
+c A comment line is any line whose first character is c; no blank need follow it.
+p cnf 1 2
+1 0
+c-----this line is a comment, not the literals of a clause
+-1 0

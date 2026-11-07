@@ -1,3 +1,9 @@
 {
-    "upper_bound_expr_const": null
+    "bounds": {
+        "expr": {
+            "const": {
+                "initial": null
+            }
+        }
+    }
 }

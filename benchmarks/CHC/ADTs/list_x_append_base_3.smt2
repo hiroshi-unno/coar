@@ -33,10 +33,10 @@
   (=>
     (and 
         (append l1 l2 r)
-        (= l2 nil)
-        (= l1 nil)
+        (= l2 (as nil (List X)))
+        (= l1 (as nil (List X)))
     )
-    (= r nil)
+    (= r (as nil (List X)))
   )
 ))
 

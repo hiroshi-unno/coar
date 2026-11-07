@@ -1,0 +1,24 @@
+%BEGING
+Main x -> IsEven x (IsEven x ok ng) ok.
+IsEven x t f -> case x of
+  z => t
+| s x' => IsEven x' f t.
+%ENDG
+
+%BEGINA
+q0 z -> . q0 s -> q0.
+q1 ok -> .
+%ENDA
+
+%BEGINT
+Main : q0 -> q1.
+%ENDT
+
+/*
+%BEGINA
+q0 = qe | qo.
+qe z -> . qe s -> qo.
+qo s -> qe.
+q1 ok -> .
+%ENDA
+*/

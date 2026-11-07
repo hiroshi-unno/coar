@@ -1,4 +1,5 @@
 {
-    "output_iteration": false,
-    "sygus_comp": true
+    "format": [
+        "Sygus_solution"
+    ]
 }

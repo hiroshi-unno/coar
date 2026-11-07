@@ -1,0 +1,7 @@
+c exists x1 forall x2 exists x3: x3 = not x2
+p cnf 3 2
+e 1 0
+a 2 0
+e 3 0
+2 3 0
+-2 -3 0

@@ -1,0 +1,4 @@
+c The universal 01 is the variable 1 of the matrix, so the formula is forall x1. x1.
+p cnf 1 1
+a 01 0
+1 0

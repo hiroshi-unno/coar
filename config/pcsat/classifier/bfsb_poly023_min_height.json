@@ -5,7 +5,7 @@
             "Filename",
             "./config/pcsat/qualifier/polyhedron023.json"
         ],
-        "strategy": [
+        "selection": [
             "MinHeightSize",
             null
         ]

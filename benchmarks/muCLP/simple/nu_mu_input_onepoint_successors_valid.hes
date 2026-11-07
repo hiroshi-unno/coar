@@ -1,0 +1,6 @@
+/* nu_mu_input_onepoint_successor_valid.hes with both successors written through a one-point
+   existential.  Valid. */
+forall (x: int). A x
+s.t.
+A (x: int): bool =nu B x;
+B (x: int): bool =mu forall (i: int). x >= 0 /\ i >= 1 /\ (exists (y: int). y = x - 1 /\ B y) \/ i < 1 /\ (exists (y: int). y = x + 1 /\ A y) \/ i >= 1 /\ x < 0;

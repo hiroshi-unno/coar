@@ -5,6 +5,7 @@
 
 - Artifact URL: The artifact is available at [https://doi.org/10.5281/zenodo.11499237](https://doi.org/10.5281/zenodo.11499237)
 - Paper: Satoshi Kura and Hiroshi Unno. Automated Verification of Higher-Order Probabilistic Programs via a Dependent Refinement Type System. ICFP 2024.
+- The paper-time configuration and tool are in the Zenodo archive ([https://doi.org/10.5281/zenodo.11499237](https://doi.org/10.5281/zenodo.11499237)); this directory is kept current: it runs today's strongest version of the paper's own method, the dependent refinement type system for quantitative properties, run through MuValQHFL on RCaml's default settings (`config/solver/rcaml.json`), and follows CoAR's current defaults in everything that is not that method.
 
 ## Instructions for Artifact Evaluation
 
@@ -60,10 +61,28 @@ cd ~/coar
 ```
 
 This script runs our tool against benchmarks in `benchmarks/OCaml/quantitative/icfp24/`.
-After executing the script, you will find the output in `result.txt` at the top directory.
+Every benchmark is in an expectation mode (see "Input File Format" below) and is run as a quantitative HFL problem,
+`-c ./config/solver/muval_qhfl.json -p qhfl`, which types it with RCaml's default settings
+(`rcaml.json`; the paper's run used `rcaml_pcsat_tb_ar.json`, deleted on 2026-11-03) and reports a verified assertion as `valid` (`sat` in the reference result below, recorded
+when the script ran `-p ml`).
+After executing the script, you will find the results in `result.csv` at the top directory, one row
+`file,verdict,seconds,iterations` per benchmark, and each run's full output, including the inferred types,
+in `result_logs/<benchmark>.log`. The run is `muval_qhfl_300` of corpus `icfp24ae` in the repository's table of
+runs, `script/bench_runs.txt` (the 14 files, the configuration, the 300-second limit, one at a time), which
+`script/run_corpus.sh` runs through the shared runner `script/run_bench.sh`;
+`script/run_corpus.sh --dry-run icfp24ae muval_qhfl_300` prints the command, and `timeout=60 ./icfp24ae/run.sh`
+shortens the limit. A run that reaches the limit is a `timeout` row whose time is the limit; one that crashes is
+retried once and then recorded as `abort` (a refusal as `refused`), and the script still exits 0, so a zero
+status does not mean that every benchmark was verified: inspect the verdicts. The script exits nonzero when the
+runner itself fails, and `result.csv` is then left as it was. The runner's contracts are checked with mock
+processes, not solvers, by `python3 script/check_cav26ae_runner.py`, and this package's run by
+`python3 script/check_icfp24ae_runner.py`.
 
 
-As a reference, we got the following result in approximately 20 minutes:
+
+As a reference, the paper's run printed the following text log (the script wrote it before 2026-11-03; today's
+`result.csv` carries the same verdict and time per file, and `result_logs/` the type lines), in approximately 20
+minutes:
 
 ```
 lics16_rec3.ml
@@ -128,17 +147,16 @@ sat,6   	@assert type_of(f) <: unit -> (unit -> {$v1046: real * real | t_sel.0 $
 
 ### Comparing Results
 
-We explain how to compare the output of our artifact (`result.txt`) and the experimental result shown in our paper (Table 2).
+We explain how to compare the output of our artifact (`result.csv`) and the experimental result shown in our paper (Table 2).
 
-`result.txt` contains the following information for all benchmarks.
-- A benchmark file name. (1 line)
-- The result of type inference. (1 or 2 lines)
-  + If the benchmark is successfully verified, then each line corresponds to a function in the benchmark and consists of
-    * "sat" (meaning "satisfied"),
-    * the number of CEGIS iterations, and
-    * a type of the function inferred by our tool.
-  + The timeout is set to 300 seconds.
-- Runtime. (1 line)
+`result.csv` contains one row per benchmark with four fields:
+- the benchmark file;
+- the verdict: `valid` (`sat` in the reference result above, recorded with `-p ml`), meaning that every assertion is
+  verified, or `timeout` (the limit is 300 seconds);
+- the runtime in seconds (the limit itself for a timeout);
+- the number of CEGIS iterations of the first assertion.
+
+The type of each function inferred by our tool, one line per assertion, is in `result_logs/<benchmark>.log`.
 
 This should correspond to Table 2 in our paper.
 In Table 2, each row contains (1) a benchmark name and (2) runtime if successfully verified within the time limit, and "timeout" otherwise.
@@ -176,7 +194,13 @@ You can find more examples in `benchmarks/OCaml/quantitative/icfp24/*.ml`.
 
 ### Running the Type Checker
 
-To type check an input file `input.ml`, run the following command:
+To type check an input file `input.ml` in an expectation mode, run the following command:
 ```bash
-dune exec main -- -c ./config/solver/rcaml_pcsat_tb_ar.json -p ml input.ml
+dune exec main -- -c ./config/solver/muval_qhfl.json -p qhfl input.ml
+```
+It prints `valid` for an assertion the type system proves and `unknown` otherwise. The same file can be type
+checked by RCaml directly, which prints `sat` where the former prints `valid`, and is the command for a file
+without an expectation mode:
+```bash
+dune exec main -- -c ./config/solver/rcaml.json -p ml input.ml
 ```

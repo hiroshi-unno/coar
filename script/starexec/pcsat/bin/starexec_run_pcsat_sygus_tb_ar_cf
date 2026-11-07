@@ -1,4 +1,0 @@
-#! /bin/bash
-
-export LD_LIBRARY_PATH=./
-./main.exe -c ./config/solver/pcsat_sygus_comp_tb_ar_cf.json -p sygus $1

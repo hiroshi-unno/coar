@@ -1,0 +1,8 @@
+--- a/recursion/Incorrect_Return_2_NT.cpp
++++ b/recursion/Incorrect_Return_2_NT.cpp
+@@ -0,0 +1 @@
++extern char __VERIFIER_nondet_char(void);
+--- a/recursion/Incorrect_Return_2_T.cpp
++++ b/recursion/Incorrect_Return_2_T.cpp
+@@ -0,0 +1 @@
++extern char __VERIFIER_nondet_char(void);

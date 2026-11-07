@@ -1,0 +1,12 @@
+# A geometric loop from x = 0 that stops with probability 1/2 per round and pays one tick
+# only on a round that continues: its expected runtime is 1/2 * (1 + 1/2 * (1 + ...)) = 1
+# (ert of Kaminski et al., ESOP 2016).  1.5 exceeds it: the bound is false and must not be
+# valid.
+nat x;
+
+x := 0;
+while (x = 0) {
+	{x := 1}[1/2]{tick(1)}
+}
+
+?Ert[0] >= 1.5

@@ -1,0 +1,16 @@
+[
+    "MuCyc",
+    {
+        "pcsp_solver": [
+            "Filename",
+            "./config/solver/spacer_sol.json"
+        ],
+        "refinement_strategy": [
+            "Solve"
+        ],
+        "proof_search": [
+            "Relational"
+        ],
+        "induct_threshold": 3
+    }
+]

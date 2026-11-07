@@ -1,0 +1,8 @@
+/* Invalid: r = 0.5 satisfies the premise and P 0.5 is false (P holds only
+   below zero).  The only counterexample is not an integer, so on the dual
+   side, where this universal becomes an existential, a search for its
+   witness among the integers finds none, and that refutation of the dual
+   must not be flipped into valid. */
+forall (r: real). r + r = 1.0 => P r
+s.t.
+P (x: real): bool =mu x < 0.0;

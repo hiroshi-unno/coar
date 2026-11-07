@@ -2,7 +2,7 @@
  (name RCaml)
  (public_name CoAR.RCaml)
  (preprocess
-  (pps ppx_deriving_yojson))
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
  (libraries
   core
   yojson
@@ -13,5 +13,10 @@
   CoAR.SMT
   CoAR.CHCOpt
   CoAR.CHCOptSolver
-  CoAR.PCSPSolver)
- (modules solver config problem MBcgen MBcsol cgen))
+  CoAR.PCSPSolver
+  CoAR.MuVal
+  CoAR.MuCyc
+  CoAR.PCSat.common
+  CoAR.Z3Smt)
+ (modules solver config problem effectSyntax guardSyntax toplevelHandler
+  MBcgen MBcsol cgen))

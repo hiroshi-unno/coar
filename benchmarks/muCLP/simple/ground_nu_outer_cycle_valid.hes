@@ -1,0 +1,6 @@
+/* the mirror of ground_mu_outer_cycle_invalid: the outer fixpoint of the
+   one cycle is now the greatest, so the query is true */
+X 0
+s.t.
+X (x: int): bool =nu Y x;
+Y (x: int): bool =mu (x >= 2 /\ X 0) \/ (x < 2 /\ X (x + 1));

@@ -1,0 +1,6 @@
+/* As datatype_list_of_every_length_valid.hes without n >= 0: no list
+   has a negative length. */
+(declare-datatypes ((L 0)) (((nil) (cons (hd Int) (tl L)))))
+forall (n: int). exists (l: L). Len l n
+s.t.
+Len (l: L) (n: int) : bool =mu (is_nil l /\ n = 0) \/ (is_cons l /\ Len (tl l) (n - 1));

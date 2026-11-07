@@ -1,0 +1,5 @@
+(set-logic HORN)
+(declare-fun P (Int) Bool)
+(define-fun-rec f ((x Int)) Int (ite (= (div 1 0) 0) (ite (P x) (+ (f x) 1) 0) 0))
+(assert (forall ((x Int)) (P x)))
+(check-sat)

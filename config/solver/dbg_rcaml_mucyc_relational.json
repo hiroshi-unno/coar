@@ -1,0 +1,8 @@
+[
+    "RCaml",
+    {
+        "mucyc_solver": "./config/solver/dbg_mucyc_relational.json",
+        "check_main_asserts": true,
+        "enable_pvar_elim": false
+    }
+]

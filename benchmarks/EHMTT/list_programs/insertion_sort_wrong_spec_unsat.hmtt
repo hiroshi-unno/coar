@@ -1,0 +1,25 @@
+%BEGING
+Inserta x = a x.
+Insertb x = case x of
+  e => b e
+| a x' => a (Insertb x')
+| b x' => b (b (copy x')).
+Isort x = case x of
+  e => e
+| a x' => Inserta (Isort x')
+| b x' => Insertb (coerce q1 (Isort x')).
+%ENDG
+
+%BEGINA
+/* (a | b)*e */
+q0 a -> q0. q0 b -> q0. q0 e -> .
+/* a*b*e */
+q1 a -> q1. q1 e -> . q1 b -> q2.
+/* b*e */
+q2 b -> q2. q2 e -> .
+%ENDA
+
+%BEGINT
+/* Isort : (a | b)*e -> b*e */
+Isort : q0 -> q2.
+%ENDT

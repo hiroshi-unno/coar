@@ -19,4 +19,4 @@
   DT_WFClassifier
   RGB_FNClassifier)
  (preprocess
-  (pps ppx_deriving_yojson)))
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json)))

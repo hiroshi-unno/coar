@@ -1,0 +1,6 @@
+/* A first-order greatest fixed point that holds everywhere: Par x holds for
+   every x, at once for x <= 1 and through Par (x - 2) otherwise.  Order 1,
+   so it is also a muCLP. */
+%HES
+Main x =v x < 0 || Par x.
+Par x =v (x = 0 || x = 1) || (x <= 1 || Par (x - 2)).

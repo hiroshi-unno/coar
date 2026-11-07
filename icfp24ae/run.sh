@@ -1,48 +1,23 @@
 #!/bin/bash
-
-
-TIMELIMIT=300
-OUTPUTFILE="result.txt"
-BENCHMARKPATH="./benchmarks/OCaml/quantitative/icfp24"
-BENCHMARKS=(
-	"lics16_rec3.ml"
-	"lics16_rec3_ghost.ml"
-	"lics16_coins.ml"
-	"random_walk.ml"
-	"random_walk_unif.ml"
-	"coin_flip.ml"
-	"coin_flip_unif.ml"
-	"icfp21_walk.ml"
-	"icfp21_coupons.ml"
-	"lics16_fact.ml"
-	"coin_flip_ord2.ml"
-	"coin_flip_ord3.ml"
-	"toplas18_ex4.4.ml"
-	"two_coin_conditioning.ml"
-)
-
-# Ctrl-C
-trap signalExit 2
-
-function signalExit() {
-	echo "Interrupted"
-	exit 2
-}
-
-# VERIFIER="dune exec main --"
-VERIFIER="./_build/default/main.exe"
-
-function run_benchmark() {
-	basename $1
-	timeout $TIMELIMIT $VERIFIER -c ./config/solver/rcaml_pcsat_tb_ar.json -p ml $1
-	if [ $? -eq 124 ]; then
-		echo "TIMEOUT"
-	fi
-}
-
-export TIMEFORMAT="%Es"
-for bench in "${BENCHMARKS[@]}"
-do
-	(time run_benchmark $BENCHMARKPATH/$bench) 2>&1
-	echo
-done | tee $OUTPUTFILE
+# Runs the 14 programs of Table 2, 300 s each, one at a time, and writes the CSV
+# `file,verdict,seconds,iterations` (sorted) to result.csv at the repository root, as well as to
+# standard output; each run's full output (the inferred types) is kept in result_logs/NAME.log.
+#
+# Every program here is in an expectation mode, i.e. a quantitative lambda-HFL problem, and
+# goes through MuValQHFL (-p qhfl), which types it with RCaml's default configuration and
+# prints `valid` where RCaml prints `sat`.  MuValQHFL refuses a file without an expectation
+# mode, so a program added to the run must carry one.
+#
+# The run is muval_qhfl_300 of corpus icfp24ae in script/bench_runs.txt (the file list, the
+# configuration and the limit), run by script/run_corpus.sh through the shared runner
+# script/run_bench.sh from the repository root.  The environment variables `timeout` and
+# `para` override the limit and the parallelism.  Exit status: the run's (nonzero when the
+# runner fails); result.csv is replaced only when the run completed.
+set -u
+set -o pipefail
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." || exit 2
+export logdir=result_logs
+./script/run_corpus.sh icfp24ae muval_qhfl_300 | tee result.csv.tmp
+status=$?
+[ "$status" -eq 0 ] && mv -f -- result.csv.tmp result.csv
+exit "$status"

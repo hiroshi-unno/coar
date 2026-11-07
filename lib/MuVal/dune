@@ -2,7 +2,7 @@
  (name MuVal)
  (public_name CoAR.MuVal)
  (preprocess
-  (pps ppx_deriving.std ppx_deriving_yojson))
+  (pps ppx_deriving.std ppx_deriving_yojson CoAR.ppx_config_full_json))
  (libraries
   core
   CoAR.ast
@@ -12,6 +12,6 @@
   CoAR.PCSPSolver
   CoAR.MuCyc
   CoAR.OptiMathSAT)
- (modules config solver qflSolver)
+ (modules qflConfig config witness violation nontermination certificate solver qflReachInv qflSolver)
  (synopsis
   "A fixpoint logic validity checker based on predicate constraint solving"))

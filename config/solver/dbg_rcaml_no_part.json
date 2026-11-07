@@ -1,0 +1,16 @@
+[
+    "RCaml",
+    {
+        "solver": [
+            "Filename",
+            "./config/solver/dbg_pcsat.json"
+        ],
+        "chc_optimizer": [
+            "Filename",
+            "./config/solver/dbg_optpcsat_nc_pcsat_improver.json"
+        ],
+        "cgen_config": {
+            "can_fail_only_at_total_apps": true
+        }
+    }
+]

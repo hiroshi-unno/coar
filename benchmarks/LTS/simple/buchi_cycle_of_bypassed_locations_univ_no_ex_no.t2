@@ -1,0 +1,28 @@
+START: s;
+BUCHI: {exitb};
+
+FROM: s;
+skip;
+TO: a;
+
+FROM: a;
+u := nondet();
+TO: b;
+
+FROM: b;
+v := nondet();
+TO: c;
+
+FROM: b;
+w := nondet();
+assume(x < 0);
+TO: exitb;
+
+FROM: c;
+skip;
+TO: a;
+
+FROM: c;
+w := nondet();
+assume(x < 0);
+TO: exitc;

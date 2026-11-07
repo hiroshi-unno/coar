@@ -1,9 +1,10 @@
 (* Configuration of the TRecS wrapper.  The external [trecs] executable takes no
-   options from here; only this tree's tracing is configurable. *)
+   options from here; configurable is this tree's tracing. *)
 open Core
 open Common.Util
 
-type t = { verbose : bool [@default false] } [@@deriving yojson]
+type t = { verbose : bool [@default false] }
+[@@deriving yojson]
 
 module type ConfigType = sig
   val config : t

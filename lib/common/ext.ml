@@ -478,6 +478,20 @@ end
 module List = struct
   include List
 
+  (* Base's [zip_exn] zips inside [try ... with _ ->] and reports whatever was
+     raised there as a length mismatch.  The zipping allocates, so a signal
+     handler can run inside it, and a [Timer.Timeout] (or a break) delivered
+     there came out as [Invalid_argument "length mismatch in zip_exn: 2 <> 2"]
+     -- equal lengths in the message -- which the enclosing budget's handler
+     does not recognise, so a timed-out solver call ended the whole run.  This
+     one compares the lengths before zipping and lets anything raised while
+     zipping through unchanged. *)
+  let zip_exn l1 l2 =
+    let n1 = List.length l1 and n2 = List.length l2 in
+    if n1 <> n2 then
+      Printf.invalid_argf "length mismatch in zip_exn: %d <> %d" n1 n2 ();
+    List.map2_exn l1 l2 ~f:(fun a b -> (a, b))
+
   let is_singleton l = List.length l = 1
 
   let rec subsets = function
@@ -1054,6 +1068,14 @@ module List = struct
     match split_n i xs with l, x :: r -> l @ (f x :: r) | _ -> failwith ""
 
   let replace_at i x = apply_at i (fun _ -> x)
+
+  (** [remove_at j xs] is [xs] without the element at position [j], and that
+      element; raises when [xs] has no position [j]. *)
+  let remove_at j xs = (List.take xs j @ List.drop xs (j + 1), List.nth_exn xs j)
+
+  (** [insert_at j xs x] puts [x] at position [j] of [xs], so that
+      [insert_at j rest x] undoes [remove_at j] returning [(rest, x)]. *)
+  let insert_at j xs x = List.take xs j @ (x :: List.drop xs j)
 
   (** {6 Operators for list contexts} *)
 
@@ -1724,6 +1746,14 @@ module Hashtbl = struct
   let phys_hash (x : 'a) : int =
     let a : int = Stdlib.Obj.magic (Stdlib.Obj.repr x) in
     Stdlib.Hashtbl.hash (a lsr 3)
+
+  (* [mem_lazy t key] is [mem t (Lazy.force key)], and forces [key] only when
+     [t] is nonempty.  For a key that is costly to build and a table that is
+     usually empty: a key that prints a whole clause and digests the text,
+     built for every question of every round only to be looked up in a table
+     that stays empty on most problems, made a string as large as the clause
+     each time. *)
+  let mem_lazy t key = (not (Hashtbl.is_empty t)) && Hashtbl.mem t (Lazy.force key)
 end
 
 (** Arrays *)

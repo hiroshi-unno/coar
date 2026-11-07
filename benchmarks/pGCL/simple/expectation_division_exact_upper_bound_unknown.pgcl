@@ -1,0 +1,7 @@
+# x is a nat variable, but / inside an expectation is exact rational division: the
+# expectation of x / 2 at x = 5 is 5/2, so the upper bound 2 is false.
+# Expected: unknown (the bound is false).  Read as integer division, the expectation was 2
+# and the bound was proved.
+nat x;
+x := 5;
+?Ex [x / 2] <= 2

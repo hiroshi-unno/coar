@@ -1,0 +1,4 @@
+# pCSP/rethfl: ReTHFL (hopv/rethfl) scripts/ack/ack.in at 5ed9d34ebd, the file the maintainer received as
+# benchmarks/pCSP/ack.smt2 on 2019-12-27; placed under its earlier name.
+# source	destination	sha256
+scripts/ack/ack.in	benchmarks/pCSP/rethfl/ack.smt2	afe68b8362679f9c92719edcc73f0bc67ef207aff4d39289a1eafee7d61a2792

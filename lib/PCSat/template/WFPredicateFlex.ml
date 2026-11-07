@@ -12,27 +12,83 @@ open Ast.LogicOld
 open Function
 
 module Config = struct
+  (* the coefficient bounds of the synthesized templates, by role *)
+  type coeff_bound = {
+    initial : int option; [@default Some 1]
+        (** the starting bound on the sum of the absolute values of the coefficients
+            ([None]: unbounded); a failure can raise it *)
+    lower : int option; [@default None]
+        (** a lower bound on the sum of the absolute values of the coefficients *)
+    per_coefficient : int option; [@default None]
+        (** a bound on the absolute value of each coefficient *)
+    unbounded_above : int option; [@default Some 3]
+        (** once the coefficient bound has reached this value, raising it drops it
+            altogether ([None]: it is raised by one each time) *)
+  }
+  [@@deriving yojson]
+
+  type rfun_const_bound = {
+    initial : int option; [@default Some 0]
+        (** the starting bound on the sum of the absolute values of the constants
+            ([None]: unbounded); a failure can raise it *)
+    unbounded_above : int option; [@default Some 3]
+        (** once the constant bound has reached this value, raising it drops it
+            altogether ([None]: it is raised by one each time) *)
+  }
+  [@@deriving yojson]
+
+  type disc_const_bound = {
+    initial : int option; [@default Some 0]
+        (** the starting bound on the sum of the absolute values of the constants
+            ([None]: unbounded); a failure can raise it *)
+    unbounded_above : int option; [@default Some 3]
+        (** once the constant bound has reached this value, raising it drops it
+            altogether ([None]: it is raised by one each time) *)
+    seeds : int list option; [@default None]
+        (** the seed constants of the template ([None]: zero alone) *)
+  }
+  [@@deriving yojson]
+
+  type rfun_bounds = {
+    coeff : coeff_bound; [@default Common.Util.config_default coeff_bound_of_yojson "{}"]
+    const : rfun_const_bound; [@default Common.Util.config_default rfun_const_bound_of_yojson "{}"]
+  }
+  [@@deriving yojson]
+
+  type disc_bounds = {
+    coeff : coeff_bound; [@default Common.Util.config_default coeff_bound_of_yojson "{}"]
+    const : disc_const_bound; [@default Common.Util.config_default disc_const_bound_of_yojson "{}"]
+  }
+  [@@deriving yojson]
+
+  type bounds = {
+    rfun : rfun_bounds; [@default Common.Util.config_default rfun_bounds_of_yojson "{}"]
+        (** the bounds on the ranking functions' coefficients and constants *)
+    disc : disc_bounds; [@default Common.Util.config_default disc_bounds_of_yojson "{}"]
+        (** the bounds on the discriminators' coefficients and constants *)
+  }
+  [@@deriving yojson]
+
   type t = {
     verbose : bool; [@default false]
     shape : int list; [@default [ 0 ]]
     number_of_rfun_lexicos : int; [@default 1]
-    depth : int; [@default 0]
-    upper_bound_rfun_coeff : int option; [@default Some 1]
-    upper_bound_rfun_const : int option; [@default Some 0]
-    upper_bound_disc_coeff : int option; [@default Some 1]
-    upper_bound_disc_const : int option; [@default Some 0]
-    disc_seeds : int list option; [@default None]
-    norm_type : int; [@default 1]
+    term_depth : int; [@default 0]
+    bounds : bounds; [@default Common.Util.config_default bounds_of_yojson "{}"]
+        (** the coefficient bounds of the synthesized templates *)
+    ranking_extra_terms : Ast.Templ.ranking_extra_terms;
+        [@default
+          Common.Util.config_default Ast.Templ.ranking_extra_terms_of_yojson
+            "{}"]
+        (** the terms the simplified ranking-function templates are offered
+            beyond the parameters (absolute differences, the wrap-around
+            distance, constants); the default is the measured selection *)
+    norm_type : Ast.Templ.norm_type; [@default Ast.Templ.L1]
+        (** the norm the ranking functions' coefficient bounds constrain *)
     use_ifte : bool; [@default false]
-    lower_bound_rfun_coeff : int option; [@default None]
-    lower_bound_disc_coeff : int option; [@default None]
-    bound_each_rfun_coeff : int option; [@default None]
-    bound_each_disc_coeff : int option; [@default None]
-    threshold_rfun_coeff : int option; [@default Some 3]
-    threshold_rfun_const : int option; [@default Some 3]
-    threshold_disc_coeff : int option; [@default Some 3]
-    threshold_disc_const : int option; [@default Some 3]
-    ignore_bool : bool; [@default true]
+    branch_on_bool_args : bool; [@default false]
+        (** read by nothing here: the ranking-function template builds no
+            boolean branch (the field keeps the term templates' spelling) *)
     fix_shape : bool; [@default false]
   }
   [@@deriving yojson]
@@ -126,13 +182,13 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
       {
         shp = config.shape;
         nl = config.number_of_rfun_lexicos;
-        depth = config.depth;
-        ubrc = Option.map config.upper_bound_rfun_coeff ~f:Z.of_int;
-        ubrd = Option.map config.upper_bound_rfun_const ~f:Z.of_int;
-        ubdc = Option.map config.upper_bound_disc_coeff ~f:Z.of_int;
-        ubdd = Option.map config.upper_bound_disc_const ~f:Z.of_int;
+        depth = config.term_depth;
+        ubrc = Option.map config.bounds.rfun.coeff.initial ~f:Z.of_int;
+        ubrd = Option.map config.bounds.rfun.const.initial ~f:Z.of_int;
+        ubdc = Option.map config.bounds.disc.coeff.initial ~f:Z.of_int;
+        ubdd = Option.map config.bounds.disc.const.initial ~f:Z.of_int;
         ds =
-          (match config.disc_seeds with
+          (match config.bounds.disc.const.seeds with
           | None -> Set.Poly.singleton Z.zero
           | Some ds -> Set.Poly.of_list @@ List.map ds ~f:Z.of_int);
       }
@@ -195,7 +251,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     HypSpace.qualifiers_of ~fenv:Arg.fenv !param.depth hspace
 
   let last_cert : Templ.kind_cert_templ option ref = ref None
-  let kind_cert_template () = !last_cert
+  let kind_cert_template () = Option.map !last_cert ~f:List.return
 
   let gen_template ~ucore:_ (hspace : HypSpace.hspace) =
     assert (List.length hspace.params mod 2 = 0);
@@ -215,11 +271,12 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
           ds = !param.ds;
         }
         {
+          extra_terms = config.ranking_extra_terms;
           norm_type = config.norm_type;
-          lbrc = Option.map config.lower_bound_rfun_coeff ~f:Z.of_int;
-          lbdc = Option.map config.lower_bound_disc_coeff ~f:Z.of_int;
-          berc = Option.map config.bound_each_rfun_coeff ~f:Z.of_int;
-          bedc = Option.map config.bound_each_disc_coeff ~f:Z.of_int;
+          lbrc = Option.map config.bounds.rfun.coeff.lower ~f:Z.of_int;
+          lbdc = Option.map config.bounds.disc.coeff.lower ~f:Z.of_int;
+          berc = Option.map config.bounds.rfun.coeff.per_coefficient ~f:Z.of_int;
+          bedc = Option.map config.bounds.disc.coeff.per_coefficient ~f:Z.of_int;
         }
         hspace.params
     in
@@ -597,23 +654,29 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
           labels
     | RFunCoeff :: labels ->
         inner
-          (increase_rfun_coeff config.threshold_rfun_coeff param_actions)
+          (increase_rfun_coeff config.bounds.rfun.coeff.unbounded_above param_actions)
           labels
     | RFunConst :: labels ->
         inner
-          (increase_rfun_const config.threshold_rfun_const param_actions)
+          (increase_rfun_const config.bounds.rfun.const.unbounded_above param_actions)
           labels
     | DiscCoeff :: labels ->
         inner
-          (increase_disc_coeff config.threshold_disc_coeff param_actions)
+          (increase_disc_coeff config.bounds.disc.coeff.unbounded_above param_actions)
           labels
     | DiscConst :: labels ->
         inner
-          (increase_disc_const config.threshold_disc_const param_actions)
+          (increase_disc_const config.bounds.disc.const.unbounded_above param_actions)
           labels
     | TimeOut :: _labels -> param_actions (* z3 may unexpectedly time out*)
     | QualDep :: labels -> inner param_actions labels
-    | _ -> assert false
+    | _ ->
+        (* another template module's label: excluded by the contract of
+           [Function.Type.update_with_labels] *)
+        assert false
+
+  let coeff_labels = [ RFunCoeff; DiscCoeff ]
+  let const_labels = [ RFunConst; DiscConst ]
 
   let actions_of labels =
     (snd @@ inner (!param, []) @@ Set.to_list labels) @ [ "end" ]

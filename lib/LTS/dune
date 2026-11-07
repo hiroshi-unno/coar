@@ -7,6 +7,8 @@
 (library
  (name LTS)
  (public_name CoAR.LTS)
+ (preprocess
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
  (libraries ocamlgraph CoAR.ast CoAR.Z3Smt)
  (modules T2Parser T2Lexer parser problem)
  (synopsis "Labeled Transition Systems"))

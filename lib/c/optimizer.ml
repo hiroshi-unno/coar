@@ -10,7 +10,7 @@
    [RemoveTrailingNoValueChanged] cuts to the exit every statement after which
    no assumption and no write to a specification variable can follow.
 
-   The graph is mutable and cyclic: [Util.replace_stmt] assigns to successor
+   The graph is mutable and cyclic: [StmtGraph.replace_stmt] assigns to successor
    references in place.  Every map over statements is therefore keyed by
    physical equality ([StatementEnv], an association list) or by the
    statement's identity ([LinkedStatementHashtbl]), never by its contents. *)
@@ -113,7 +113,9 @@ module StatementEnv = struct
         if List.is_empty extra then ENV (init, l1) else ENV (init, extra @ l1)
 end
 
-module Util : sig
+(* Surgery on the statement graph: the predecessor relation, and replacing or
+   removing statements by assigning through successor references in place. *)
+module StmtGraph : sig
   val get_prev_env : LinkedStatement.t -> LinkedStatement.t list StatementEnv.t
 
   val remove_nobranch :
@@ -459,18 +461,29 @@ module ReadGraph = struct
 
   let is_updated old_rs new_rs = Stdlib.(old_rs <> new_rs)
 
+  (* How many times [varname] occurs in a term, added to [res].  A formula
+     embedded in a term -- an [ite]'s condition, which is a [T_bool.Formula]
+     node with no arguments -- is a read like any other: skipping it counted
+     the read in `ite(x == 0, 1, 0)` as none, so a draw of [x] read there and
+     once more elsewhere looked read once, its assignment was removed, and [x]
+     was left unbound (a crash) for that read. *)
   let rec rc_of_term_rep varname term res =
     if Term.is_var term then
       let (tvar, _), _ = Term.let_var term in
       if String.equal (Ident.name_of_tvar tvar) varname then res + 1 else res
     else if Term.is_app term then
-      let _, args, _ = Term.let_app term in
+      let fsym, args, _ = Term.let_app term in
+      let res =
+        match fsym with
+        | T_bool.Formula phi -> rc_of_formula_rep varname phi res
+        | _ -> res
+      in
       List.fold
         ~f:(fun res term -> rc_of_term_rep varname term res)
         ~init:res args
     else failwith "rc_of_term_rep: not implemented"
 
-  let rc_of_atom_rep varname atom res =
+  and rc_of_atom_rep varname atom res =
     if Atom.is_app atom then
       let _, args, _ = Atom.let_app atom in
       List.fold
@@ -481,19 +494,20 @@ module ReadGraph = struct
       failwith
       @@ sprintf "rc_of_atom_rep: not implemented for: %s" (Atom.str_of atom)
 
-  let rec rc_of_formula_rep varname fml res =
+  and rc_of_formula_rep varname fml res =
     match fml with
     | Formula.Atom (atom, _) -> rc_of_atom_rep varname atom res
     | Formula.UnaryOp (_, phi, _) -> rc_of_formula_rep varname phi res
     | Formula.BinaryOp (_, phi1, phi2, _) ->
         rc_of_formula_rep varname phi1 res |> rc_of_formula_rep varname phi2
     | Formula.Bind (_, bounds, phi', _) ->
-        (* <varname> is in <bounds> *)
+        (* an occurrence under a binder of the same name is not a read of the
+           variable, but the reads counted before this subformula still are *)
         if
           List.exists
             ~f:(fun (tvar, _) -> String.equal (Ident.name_of_tvar tvar) varname)
             bounds
-        then 0 (* <varname> is not in <bounds> *)
+        then res
         else rc_of_formula_rep varname phi' res
     | LetRec (_funcs, _phi, _info) ->
         failwith "rc_of_formula_rep: not implemented"
@@ -785,7 +799,7 @@ end = struct
     | [ next_stmt_key ] ->
         if not @@ phys_equal stmt_key next_stmt_key then
           let query_stmt_key =
-            Util.remove_nobranch ~query:query_stmt_key stmt_key stmt_keys
+            StmtGraph.remove_nobranch ~query:query_stmt_key stmt_key stmt_keys
           in
           let new_stmts = StatementEnv.remove stmt_key new_stmts in
           (query_stmt_key, new_stmts)
@@ -804,11 +818,53 @@ end = struct
       StatementEnv.update using_stmt_key using_stmt new_stmts
     else new_stmts
 
-  let is_nondet_term nondet_tvar term =
-    (*ToDo*) Set.mem (Term.tvs_of term) nondet_tvar
+  (* The single read of a variable that holds an unconstrained draw may be
+     replaced by a fresh draw only where that does not enlarge the set of
+     values the reader can produce.  [is_nondet_term v t] holds when, with
+     every other variable fixed, [fun v -> t] is onto the integers (or reals):
+     [t] is [v] under additions, subtractions and negations of terms not
+     mentioning [v].  Then [x = t] can become [x = nondet()].  Mentioning [v] is
+     not enough: [x = 2 * y] became [x = nondet()] and [x] could be odd, and
+     [y % 2] or [y * y] are no better. *)
+  let rec is_nondet_term nondet_tvar term =
+    match term with
+    | Term.Var (tvar, _, _) -> Stdlib.( = ) tvar nondet_tvar
+    | Term.FunApp ((T_int.Neg | T_real.RNeg), [ t ], _) ->
+        is_nondet_term nondet_tvar t
+    | Term.FunApp ((T_int.(Add | Sub) | T_real.(RAdd | RSub)), [ t1; t2 ], _)
+      -> (
+        match
+          ( Set.mem (Term.tvs_of t1) nondet_tvar,
+            Set.mem (Term.tvs_of t2) nondet_tvar )
+        with
+        | true, false -> is_nondet_term nondet_tvar t1
+        | false, true -> is_nondet_term nondet_tvar t2
+        | _ -> false)
+    | _ -> false
 
+  (* An [if] on the variable may become a nondeterministic branch only when
+     both outcomes are possible whatever the other variables hold: a
+     comparison between a side onto in the variable (above) and a side not
+     mentioning it.  [if (2 * y == 1)] can never be taken, and making it a free
+     choice made its branch reachable. *)
   let rec is_nondet_formula nondet_tvar = function
-    | Formula.Atom (atom, _) -> (*ToDo*) Set.mem (Atom.tvs_of atom) nondet_tvar
+    | Formula.Atom (Atom.App (Predicate.Psym psym, [ t1; t2 ], _), _) -> (
+        (match psym with
+        | T_bool.Eq | T_bool.Neq
+        | T_int.(Leq | Lt | Geq | Gt)
+        | T_real.(RLeq | RLt | RGeq | RGt)
+        | T_num.(NLeq _ | NLt _ | NGeq _ | NGt _) ->
+            true
+        | _ -> false)
+        &&
+        match
+          ( Set.mem (Term.tvs_of t1) nondet_tvar,
+            Set.mem (Term.tvs_of t2) nondet_tvar )
+        with
+        | true, false -> is_nondet_term nondet_tvar t1
+        | false, true -> is_nondet_term nondet_tvar t2
+        | _ -> false)
+    | Formula.Atom _ -> false
     | UnaryOp (_, phi, _) -> is_nondet_formula nondet_tvar phi
     | BinaryOp (_, phi1, phi2, _) ->
         is_nondet_formula nondet_tvar phi1 && is_nondet_formula nondet_tvar phi2
@@ -1183,7 +1239,7 @@ end = struct
       (query_stmt_key, new_stmts)
 
   (* The read graph is a function of the statement graph, and the graph is
-     unchanged by a pass that reports no change: [Util.replace_stmt] assigns
+     unchanged by a pass that reports no change: [StmtGraph.replace_stmt] assigns
      through the next-statement cells of statements that are themselves mutable
      and cyclic, so an identity replacement leaves every statement the same
      object -- which matters here because the read graph is indexed by physical
@@ -1195,8 +1251,8 @@ end = struct
 
   let sub_assign ~print ?rgenv is_print_for_debug stmts inits spec_fv query_stmt
       =
-    let new_stmts = Util.mk_replacer stmts in
-    let prev_env = Util.get_prev_env query_stmt in
+    let new_stmts = StmtGraph.mk_replacer stmts in
+    let prev_env = StmtGraph.get_prev_env query_stmt in
     let rgenv =
       rg_of ~reuse:rgenv (fun () ->
           ReadGraph.get_rgenv spec_fv prev_env query_stmt)
@@ -1235,14 +1291,14 @@ end = struct
       StatementEnv.length new_stmts <> List.length stmts
       || not (StatementEnv.is_identity new_stmts)
     in
-    (Util.replace_stmt ~query:query_stmt new_stmts, changed, rgenv)
+    (StmtGraph.replace_stmt ~query:query_stmt new_stmts, changed, rgenv)
 
   (* This pass asks only whether the value reaching a statement is read at all,
      which the backward pass answers by itself, so the forward pass that
      computes reaching definitions is skipped here. *)
   let remove_unused_assign ?rgenv stmts spec_fv query_stmt =
-    let new_stmts = Util.mk_replacer stmts in
-    let prev_env = Util.get_prev_env query_stmt in
+    let new_stmts = StmtGraph.mk_replacer stmts in
+    let prev_env = StmtGraph.get_prev_env query_stmt in
     let rgenv =
       rg_of ~reuse:rgenv (fun () ->
           ReadGraph.get_rgenv ~defs:false spec_fv prev_env query_stmt)
@@ -1256,7 +1312,7 @@ end = struct
       StatementEnv.length new_stmts <> List.length stmts
       || not (StatementEnv.is_identity new_stmts)
     in
-    (Util.replace_stmt ~query:query_stmt new_stmts, changed, rgenv)
+    (StmtGraph.replace_stmt ~query:query_stmt new_stmts, changed, rgenv)
 
   let optimize_stmt ~print inits spec_fv stmt =
     (* Each round is a function of the graph it is given, so once a round leaves
@@ -1299,7 +1355,7 @@ end = struct
   let optimize_stmt query_stmt =
     let stmts = get_all_statements query_stmt in
     List.fold ~init:query_stmt stmts ~f:(fun query_stmt stmt ->
-        if is_nop stmt then Util.remove_nobranch ~query:query_stmt stmt stmts
+        if is_nop stmt then StmtGraph.remove_nobranch ~query:query_stmt stmt stmts
         else query_stmt)
 
   let optimize (spec_fv, decls, inits, stmt) =
@@ -1322,7 +1378,7 @@ end = struct
 
   let optimize_stmt spec_fv query_stmt =
     let stmts = get_all_statements query_stmt in
-    let prev_env = Util.get_prev_env query_stmt in
+    let prev_env = StmtGraph.get_prev_env query_stmt in
     let noreplace_stmts =
       List.fold ~init:(StatementEnv.mk_empty ()) stmts ~f:(fun used stmt ->
           if
@@ -1332,11 +1388,11 @@ end = struct
           then dfs prev_env stmt used
           else used)
     in
-    let new_stmts = Util.mk_replacer stmts in
+    let new_stmts = StmtGraph.mk_replacer stmts in
     List.fold ~init:new_stmts stmts ~f:(fun new_stmts stmt ->
         if StatementEnv.exists stmt noreplace_stmts then new_stmts
         else StatementEnv.update stmt (mk_exit ()) new_stmts)
-    |> Util.replace_stmt ~query:query_stmt
+    |> StmtGraph.replace_stmt ~query:query_stmt
 
   let optimize (spec_fv, decls, inits, stmt) =
     (spec_fv, decls, inits, optimize_stmt spec_fv stmt)

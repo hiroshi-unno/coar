@@ -1,3 +1,10 @@
+(* [nondet_int ()] is an arbitrary integer.  The program as published wrote
+   [Random.int(0)] for it, the convention of the MoCHi-style benchmarks; in
+   OCaml (and in RCaml) [Random.int 0] returns no value, under which
+   [randpos] would never return. *)
+external nondet_int : unit -> int = "unknown"
+[@@@rtype "nondet_int::unit -> int"]
+
 exception DivisionByZero
 
 let rec fold_left f acc xs =
@@ -6,7 +13,7 @@ let rec fold_left f acc xs =
     | x::xs' -> fold_left f (f acc x) xs'
 
 let rec randpos() =
- let n = Random.int(0) in
+ let n = nondet_int () in
   if n>0 then n else randpos()
 
 let rec make_list n =
@@ -16,7 +23,7 @@ let rec make_list n =
 
 let div x y =
   if y=0 then raise DivisionByZero
-  else Random.int(0) (* "/" is not supported *)
+  else nondet_int () (* "/" is not supported *)
 
 let main n m =
   let xs = make_list n in

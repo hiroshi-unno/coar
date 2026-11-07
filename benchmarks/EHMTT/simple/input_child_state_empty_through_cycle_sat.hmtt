@@ -1,0 +1,22 @@
+/* qx accepts no tree, finite or infinite: its only transition needs a
+   child in qn, which has no transition.  qx has a transition, though, so
+   only emptiness over possibly infinite trees (the greatest set of states
+   each with a transition whose children are all in the set) sees that the
+   cons branch is reached by no input.  The only list qlist accepts is nil,
+   on which F returns ok. */
+%BEGING
+F xs -> case xs of
+  nil => ok
+| cons y ys => bad.
+%ENDG
+
+%BEGINA
+qlist nil -> .
+qlist cons -> qx qlist.
+qx f -> qx qn.
+qo ok -> .
+%ENDA
+
+%BEGINT
+F : qlist -> qo.
+%ENDT

@@ -55,13 +55,21 @@ let qualifiers_of ?(add_mod2_quals = false) ?(add_bv_quals = false)
     ?(guarded_partial_selector_quals = false)
     ?(guarded_partial_selector_offset = 0) ?(selector_path_quals = false)
     ?(selector_path_consts = []) ?curried_leaf_reads ?keep_generated
-    ?keep_opaque_term ?on_family ~fenv depth hspace =
+    ?keep_opaque_term ?on_family ?func_app_tuples
+    ?(func_apps_at_reached_sorts_only = false) ?(seq_nth_at_fun_apps = true)
+    ~fenv depth hspace =
   (* [keep_generated]: a test every qualifier of the families generated below
      over combinations of reached terms must pass to be offered (the
      qualifiers given in [hspace.quals] are not tested); absent, every one is
      offered.  [keep_opaque_term]: a test every reached term of an opaque
      sort (the sorts of the catch-all case below) must pass to enter the
      pairwise equalities over its sort; absent, every one does.
+     [func_app_tuples f]: when [Some ts], the argument tuples the
+     environment's function [f] is applied to (see
+     [Qual.mk_func_app_terms]); absent or [None], every tuple of reached
+     terms of its argument sorts.  [func_apps_at_reached_sorts_only]: no
+     function is applied at a default instance of a non-scalar argument sort
+     no term reaches ([Qual.mk_func_app_terms]'s [reached_sorts_only]).
      [on_family name before after] reports each family as generated
      and as kept, before the normal form, for a census and a test; it changes
      nothing. *)
@@ -104,7 +112,9 @@ let qualifiers_of ?(add_mod2_quals = false) ?(add_bv_quals = false)
                  | T_array.SArray _ ->
                      QualArr.update_term_map ~depth:d ?curried_leaf_reads sort
                        terms
-                 | T_seq.SSeq _ -> QualSeq.update_term_map ~depth:d sort terms
+                 | T_seq.SSeq _ ->
+                     QualSeq.update_term_map ~depth:d
+                       ~nth_at_fun_apps:seq_nth_at_fun_apps sort terms
                  | T_dt.SDT _ -> QualDT.update_term_map ~depth:d sort terms
                  | _ -> Fn.id)
       in
@@ -113,7 +123,8 @@ let qualifiers_of ?(add_mod2_quals = false) ?(add_bv_quals = false)
           ~init:(Qual.split_params_by_theory hspace.params)
           ~f:add_term_map
       in
-      Qual.mk_func_app_terms term_map fenv
+      Qual.mk_func_app_terms ?tuples:func_app_tuples
+        ~reached_sorts_only:func_apps_at_reached_sorts_only term_map fenv
       |> Set.fold ~init:term_map ~f:add_term_map
       |> aux 0
     in
@@ -267,7 +278,15 @@ let qualifiers_of ?(add_mod2_quals = false) ?(add_bv_quals = false)
               let terms =
                 match keep_opaque_term with
                 | None -> terms
-                | Some keep -> List.filter terms ~f:keep
+                | Some keep ->
+                    let kept = List.filter terms ~f:keep in
+                    (* counted in the phase report, so that where the filter
+                       acts can be read from a run *)
+                    let dropped = List.length terms - List.length kept in
+                    if dropped > 0 then
+                      Common.PhaseTime.add_here "opaque-shape-terms-dropped"
+                        ~secs:0. ~count:dropped;
+                    kept
               in
               let quals' =
                 filter_family "other" @@ Set.Poly.of_list @@ Formula.eqs terms

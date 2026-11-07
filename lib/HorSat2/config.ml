@@ -1,6 +1,9 @@
 (* Configuration of the HorSat2 wrapper: each Boolean field switches on the
    command-line flag of the same name ([-noce]: no counterexample is printed,
-   [-merge], [-gfp]) of the external [horsat2] executable. *)
+   [-merge], [-gfp]) of the external [horsat2] executable.  [-gfp] is not in
+   HorSat2's documentation, only in its source (version 0.95), where it sets
+   [Flags.negate_automaton := false]; no other line of that source reads the
+   flag, so the switch changes nothing in that version. *)
 open Core
 open Common.Util
 

@@ -1,7 +1,7 @@
 [
     "RCaml",
     {
-        "optimizer": [
+        "chc_optimizer": [
             "Filename",
             "./config/solver/optpcsat_nc_tb_ar.json"
         ],

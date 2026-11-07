@@ -1,0 +1,182 @@
+%BEGING
+S x = F x leaf.
+F x t = case x of
+      a x1 x2 => a (F x1 leaf) (F x2 t)
+    | base x1 x2 => base (F x1 leaf) (F x2 t)
+    | body x1 x2 => body (F x1 leaf) (F x2 t)
+    | brk x1 x2 => brk (F x1 leaf) (F x2 t)
+    | dd x1 x2 => dd (F x1 leaf) (F x2 t)
+    | div x1 x2 => F x1 (F x2 t)
+    | dl x1 x2 => dl (F x1 leaf) (F x2 t)
+    | dt x1 x2 => dt (F x1 leaf) (F x2 t)
+    | form x1 x2 => form (F x1 leaf) (F x2 t)
+    | h1 x1 x2 => h1 (F x1 leaf) (F x2 t)
+    | h2 x1 x2 => h2 (F x1 leaf) (F x2 t)
+    | h3 x1 x2 => h3 (F x1 leaf) (F x2 t)
+    | h4 x1 x2 => h4 (F x1 leaf) (F x2 t)
+    | h5 x1 x2 => h5 (F x1 leaf) (F x2 t)
+    | h6 x1 x2 => h6 (F x1 leaf) (F x2 t)
+    | head x1 x2 => head (F x1 leaf) (F x2 t)
+    | html x1 x2 => html (F x1 leaf) (F x2 t)
+    | img x1 x2 => img (F x1 leaf) (F x2 t)
+    | leaf => t
+    | li x1 x2 => li (F x1 leaf) (F x2 t)
+    | link x1 x2 => link (F x1 leaf) (F x2 t)
+    | meta x1 x2 => meta (F x1 leaf) (F x2 t)
+    | ol x1 x2 => ol (F x1 leaf) (F x2 t)
+    | p x1 x2 => p (F x1 leaf) (F x2 t)
+    | script x1 x2 => script (F x1 leaf) (F x2 t)
+    | style x1 x2 => style (F x1 leaf) (F x2 t)
+    | table x1 x2 => table (F x1 leaf) (F x2 t)
+    | tbody x1 x2 => tbody (F x1 leaf) (F x2 t)
+    | td x1 x2 => td (F x1 leaf) (F x2 t)
+    | text x1 x2 => text (F x1 leaf) (F x2 t)
+    | title x1 x2 => title (F x1 leaf) (F x2 t)
+    | tr x1 x2 => tr (F x1 leaf) (F x2 t)
+    | ul x1 x2 => ul (F x1 leaf) (F x2 t)
+.
+%ENDG
+
+%BEGINA
+/* the XHTML subset of xhtmlm_drop-div.hrs, as the input and the output automaton */
+q0 html -> q19 q18.
+q1 body -> q21 q18.
+q2 text -> q18 q18.
+q3 leaf -> .
+q3 base -> q18 q3.
+q3 link -> q18 q3.
+q3 meta -> q18 q3.
+q3 script -> q2 q3.
+q3 style -> q2 q3.
+q4 leaf -> .
+q4 div -> q6 q4.
+q4 dl -> q24 q4.
+q4 form -> q12 q4.
+q4 h1 -> q7 q4.
+q4 h2 -> q7 q4.
+q4 h3 -> q7 q4.
+q4 h4 -> q7 q4.
+q4 h5 -> q7 q4.
+q4 h6 -> q7 q4.
+q4 ol -> q23 q4.
+q4 p -> q7 q4.
+q4 table -> q22 q4.
+q4 ul -> q23 q4.
+q5 leaf -> .
+q5 brk -> q18 q5.
+q5 img -> q18 q5.
+q5 text -> q18 q5.
+q6 leaf -> .
+q6 a -> q5 q6.
+q6 brk -> q18 q6.
+q6 div -> q6 q6.
+q6 dl -> q24 q6.
+q6 form -> q12 q6.
+q6 h1 -> q7 q6.
+q6 h2 -> q7 q6.
+q6 h3 -> q7 q6.
+q6 h4 -> q7 q6.
+q6 h5 -> q7 q6.
+q6 h6 -> q7 q6.
+q6 img -> q18 q6.
+q6 ol -> q23 q6.
+q6 p -> q7 q6.
+q6 table -> q22 q6.
+q6 text -> q18 q6.
+q6 ul -> q23 q6.
+q7 leaf -> .
+q7 a -> q5 q7.
+q7 brk -> q18 q7.
+q7 img -> q18 q7.
+q7 text -> q18 q7.
+q8 leaf -> .
+q8 dd -> q6 q8.
+q8 dt -> q7 q8.
+q9 leaf -> .
+q9 tbody -> q25 q9.
+q9 tr -> q26 q9.
+q10 leaf -> .
+q10 tr -> q26 q10.
+q11 leaf -> .
+q11 td -> q6 q11.
+q12 leaf -> .
+q12 div -> q13 q12.
+q12 dl -> q29 q12.
+q12 h1 -> q7 q12.
+q12 h2 -> q7 q12.
+q12 h3 -> q7 q12.
+q12 h4 -> q7 q12.
+q12 h5 -> q7 q12.
+q12 h6 -> q7 q12.
+q12 ol -> q28 q12.
+q12 p -> q7 q12.
+q12 script -> q2 q12.
+q12 table -> q27 q12.
+q12 ul -> q28 q12.
+q13 leaf -> .
+q13 a -> q5 q13.
+q13 brk -> q18 q13.
+q13 div -> q13 q13.
+q13 dl -> q29 q13.
+q13 h1 -> q7 q13.
+q13 h2 -> q7 q13.
+q13 h3 -> q7 q13.
+q13 h4 -> q7 q13.
+q13 h5 -> q7 q13.
+q13 h6 -> q7 q13.
+q13 img -> q18 q13.
+q13 ol -> q28 q13.
+q13 p -> q7 q13.
+q13 table -> q27 q13.
+q13 text -> q18 q13.
+q13 ul -> q28 q13.
+q14 leaf -> .
+q14 dd -> q13 q14.
+q14 dt -> q7 q14.
+q15 leaf -> .
+q15 tbody -> q30 q15.
+q15 tr -> q31 q15.
+q16 leaf -> .
+q16 tr -> q31 q16.
+q17 leaf -> .
+q17 td -> q13 q17.
+q18 leaf -> .
+q19 head -> q20 q1.
+q20 base -> q18 q20.
+q20 link -> q18 q20.
+q20 meta -> q18 q20.
+q20 script -> q2 q20.
+q20 style -> q2 q20.
+q20 title -> q2 q3.
+q21 div -> q6 q4.
+q21 dl -> q24 q4.
+q21 form -> q12 q4.
+q21 h1 -> q7 q4.
+q21 h2 -> q7 q4.
+q21 h3 -> q7 q4.
+q21 h4 -> q7 q4.
+q21 h5 -> q7 q4.
+q21 h6 -> q7 q4.
+q21 ol -> q23 q4.
+q21 p -> q7 q4.
+q21 table -> q22 q4.
+q21 ul -> q23 q4.
+q22 tbody -> q25 q9.
+q22 tr -> q26 q9.
+q23 li -> q6 q18.
+q24 dd -> q6 q8.
+q24 dt -> q7 q8.
+q25 tr -> q26 q10.
+q26 td -> q6 q11.
+q27 tbody -> q30 q15.
+q27 tr -> q31 q15.
+q28 li -> q13 q18.
+q29 dd -> q13 q14.
+q29 dt -> q7 q14.
+q30 tr -> q31 q16.
+q31 td -> q13 q17.
+%ENDA
+
+%BEGINT
+S : q0 -> q0.
+%ENDT

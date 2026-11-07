@@ -1,0 +1,10 @@
+c forall x1 x2. exists y3(x1) y4(x2). y3 <=> x2 and y4 <=> x1
+c each Henkin variable must copy the universal it does not see: false
+p cnf 4 4
+a 1 2 0
+d 3 1 0
+d 4 2 0
+-3 2 0
+3 -2 0
+-4 1 0
+4 -1 0

@@ -1,8 +1,16 @@
 {
     "verbose": true,
-
-    "threshold_expr_const": 3,
-    "threshold_cond_const": 3,
-
+    "bounds": {
+        "expr": {
+            "const": {
+                "unbounded_above": 3
+            }
+        },
+        "cond": {
+            "const": {
+                "unbounded_above": 3
+            }
+        }
+    },
     "fix_shape": false
 }

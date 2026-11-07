@@ -1,0 +1,27 @@
+/* A program with a coercion, a non-terminal T_c and a terminal c_2.  The
+   reduction's coercion problem has a rule per terminal, named from the
+   terminal, and two copies of each rule, named by suffixes; when those
+   were T_<terminal> and <name>_2, the rule for the terminal c_2 and the
+   second copy of T_c were both named T_c_2 and the checkers failed on the
+   problem.  The program is true: the coercion holds (a copy of the input,
+   a list of a, coerced to q0) and the output is a list of c_2. */
+%BEGING
+Main x -> T_c (coerce q0 (Copy x)).
+T_c y -> case y of
+  a y' => c_2 (T_c y')
+| e => e.
+Copy x -> case x of
+  a x' => a (Copy x')
+| e => e.
+%ENDG
+
+%BEGINA
+q0 a -> q0.
+q0 e -> .
+q1 c_2 -> q1.
+q1 e -> .
+%ENDA
+
+%BEGINT
+Main : q0 -> q1.
+%ENDT

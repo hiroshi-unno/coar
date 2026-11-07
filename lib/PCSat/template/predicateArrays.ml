@@ -27,56 +27,26 @@ open Function
 open PCSatCommon
 
 module Config = struct
-  type t = {
-    verbose : bool; [@default false]
-    number_of_disj : int; [@default 1]
-    (* "Number of quantifiers per array" is what this was *meant* to be, and
-       that feature is still wanted: a template that quantifies over an array's
-       indices.  It was never built, and the field came to carry something else
-       -- the depth handed to the qualifier term map -- so today the name states
-       an intention rather than the field's content.  Both halves are open work:
-       implement quantifiers per array, and rename this once it no longer has to
-       stand for two things.  Renaming is not free, because the field appears in
-       more than a thousand configuration files.
+  (* Which functions a reconstruction pass added (the solver's
+     [recursive_functions.reconstruction]) the hypothesis space may apply to
+     the terms a predicate's parameters reach; see [reconstructed_fun_terms]
+     below. *)
+  type reconstructed_fun_terms =
+    | All  (** every one, as every other function of the environment *)
+    | Scalar_result_only
+        (** only those whose result is [Int], [Real] or [Bool] *)
+    | Excluded  (** none *)
+  [@@deriving yojson]
 
-       Since the quantified template below exists, the feature half of that is
-       done and lives under [number_of_quantifiers_per_array]; what is left is
-       to decide whether the two fields become one, which is a corpus-wide
-       rename and a change of meaning for every configuration that sets this
-       one, so it is not done in passing. *)
-    number_of_qpa : int; [@default 1]
-    (* Whether the qualifier term map's depth is the shape parameter that the
-       template's growth moves ([increase_qpa] / [decrease_qpa]) rather than
-       the fixed [number_of_qpa] above.  Off, the growth action changes the
-       recorded parameter and nothing that reads it -- the depth stays at its
-       configured value for the whole run -- so a leaf reached through more
-       selectors than that never becomes a term, however long the search
-       grows the template.  The field above only sets the starting depth when
-       this is on. *)
-    term_depth_follows_shape : bool; [@default false]
-    (* Whether growing the term depth also raises the constant bound to at
-       least the new depth.  The constant bound otherwise climbs only when an
-       unsat core names it, which it cannot do before terms that can use a
-       constant exist, so deeper terms arrive with the bound still at its
-       starting value.  Only an increase of the depth raises it; a decrease
-       leaves it where it is.  It acts whenever the growth action raises the
-       shape parameter, with or without [term_depth_follows_shape]; without
-       that field the terms do not deepen, so the raised bound meets no new
-       term. *)
-    const_bound_follows_depth : bool; [@default false]
-    (* How many universally quantified index variables the template gets *per
-       array-sorted parameter*.  Zero, the default, is the template this module
-       always generated.  Above zero the predicate becomes
+  (* see the field [cells.without_out_of_scope_index] *)
+  type cells_without_out_of_scope_index =
+    | Cells_regardless
+    | Defer_cells
+    | Withhold_cells
+  [@@deriving yojson]
 
-         \\ params. forall i_1 .. i_n. <DNF over params and i_1 .. i_n>
-
-       with n = this field times the number of array-sorted parameters, so a
-       solution may say something about every index rather than about the
-       finitely many a quantifier-free body can name.  The quantified form is
-       strictly more expressive and strictly more expensive -- the synthesis
-       query grows with the number of bound variables -- which is why it is off
-       until an input is measured to need it. *)
-    number_of_quantifiers_per_array : int; [@default 0]
+  (** the cell route's settings of the array template *)
+  type cells = {
     (* Index/value cells per array-sorted parameter.  Where
        [number_of_quantifiers_per_array] lets the predicate *say*
        [forall i. ...], this lets the hypothesis space *see* a read: the
@@ -97,7 +67,7 @@ module Config = struct
        each extra term is another coefficient in every affine atom of every
        disjunct.  Switching this on drops every term and qualifier mentioning
        an array parameter, leaving the cells to stand for it. *)
-    cells_replace_array_terms : bool; [@default false]
+    replace_array_terms : bool; [@default false]
     (* Offer, from the parameters alone, the comparisons that bound a cell:
        each column against each of the predicate's own integer parameters and
        against zero.  The clause-driven lifting produces the same shapes where
@@ -111,7 +81,7 @@ module Config = struct
        on the constant term -- an atom with no constant cannot say [j >= 0]
        against a bound of zero -- while a qualifier is a formula and carries
        its own. *)
-    cell_boundary_quals : bool; [@default false]
+    boundary_quals : bool; [@default false]
     (* The comparisons that relate two cells of one array: their indices, their
        values, and each pairing of the two.  A predicate whose solution needs
        this is one of cell width two -- [a[i] <= a[j]], the shape sortedness is
@@ -119,7 +89,7 @@ module Config = struct
        vacuous with a single cell per array and quadratic in the cell count, so
        it is the family to switch on for an input whose invariant compares two
        elements and to leave off otherwise. *)
-    cell_pair_quals : bool; [@default false]
+    pair_quals : bool; [@default false]
     (* Keep only the qualifiers that mention a cell column.  With cells, what
        the predicate is supposed to say is a statement about (index, value)
        pairs, and everything else in the space is a statement about the other
@@ -132,7 +102,7 @@ module Config = struct
        blame.  It is a measurement switch rather than a shipping default: a
        predicate whose invariant needs one of its scalar arguments outside a
        cell comparison cannot be expressed with this on. *)
-    cell_quals_only : bool; [@default false]
+    quals_only : bool; [@default false]
     (* Relate the cells of DIFFERENT arrays, with their indices offset by one
        of the predicate's own integer parameters: for each pair of arrays,
        [j_1 = j_2 + p] and [v_1 = v_2] for every integer parameter [p] and for
@@ -150,7 +120,7 @@ module Config = struct
        It is quadratic in the arrays and linear in the integer parameters, so
        it is a switch rather than a default, and with one array it produces
        nothing. *)
-    cell_cross_array_quals : bool; [@default false]
+    cross_array_quals : bool; [@default false]
     (* Relate an integer index of one array's cell to the integer VALUE of
        another array's cell: [j_1 = v_2 + p] for every pair of distinct arrays
        (both orders), every integer index column [j_1] of the first, every
@@ -160,45 +130,30 @@ module Config = struct
        [forall k. 0 <= k < len v => q_produces(x, v[k])] over a sequence [v]
        and a curried universal [q_produces] is, over one cell of each,
        [c /= x \/ j /= w \/ b] with [(k, w)] the sequence's cell and
-       [(c, j, b)] the universal's -- which [cell_cross_array_quals] cannot
+       [(c, j, b)] the universal's -- which [cells.cross_array_quals] cannot
        state, since it relates indices to indices and values to values only.
        Linear in the pairs of arrays, the cells and the integer parameters;
        changes the hypothesis space only, so it cannot bear on the soundness
        of a verdict.  Nothing is produced with a single array, or when no
        array holds integers. *)
-    cell_cross_index_value_quals : bool; [@default false]
+    cross_index_value_quals : bool; [@default false]
     (* Offer, for two cells of ONE array, the equality of their integer
-       indices of the same level, [j_1 = j_2].  [cell_pair_quals] offers the
+       indices of the same level, [j_1 = j_2].  [cells.pair_quals] offers the
        two orders [j_1 <= j_2] and [j_2 <= j_1] and no equality, so an
        invariant relating an array's contents at two points at the same
        index -- [forall i. q(cur it, i) => q(cur entry, i)], two cells of the
        universal [q] -- needs both orders in one disjunct and their
        negations in two, where a qualifier hole over the equality states the
-       disequality in one.  Independent of [cell_pair_quals]; vacuous with a
+       disequality in one.  Independent of [cells.pair_quals]; vacuous with a
        single cell per array.  Changes the hypothesis space only. *)
-    cell_pair_index_equalities : bool; [@default false]
-    (* Two extra disjuncts per integer cell index column [j], on top of the
-       [number_of_disj] base disjuncts, each a qualifier hole over only the
-       comparisons of [j] with zero and with the predicate's own integer
-       parameters, beside the qualifiers that mention no cell column (the
-       facts about the scalar arguments, which such an invariant conjoins into
-       every disjunct).  The typical quantified invariant is
-       [forall j. low <= j /\ j <= high => phi], which over a cell reads
-       [j < low \/ j > high \/ phi]: the two guards are meant to take the
-       first two disjuncts, so the base shape is left for [phi].  A predicate
-       with no integer cell index column gets no guard, so its template is
-       the one it gets without this field.  The guards are fixed rather than
-       counted into the shape: growing the template grows the base disjuncts
-       only.  This changes the hypothesis space and nothing else, so it
-       cannot bear on the soundness of a verdict. *)
-    cell_guard_disjuncts : bool; [@default false]
+    pair_index_equalities : bool; [@default false]
     (* With [cell_guard_disjuncts], also let a guard compare its index column
        with the integer-sorted terms of the hypothesis space that mention no
        cell column (a tuple projection, a sequence length), not only with the
        predicate's own integer parameters.  A loop counter carried inside a
        tuple argument is such a term, and without this the guard can state no
        bound on it.  Changes the hypothesis space only. *)
-    cell_guard_bound_terms : bool; [@default false]
+    guard_bound_terms : bool; [@default false]
     (* With [cell_guard_disjuncts], also let a guard compare its index column
        with at most this many integer terms that the predicate's own
        parameters REACH through the selectors of single-constructor datatypes
@@ -208,13 +163,13 @@ module Config = struct
        inside a tuple argument is: an invariant [forall k. 0 <= k < t.2 =>
        t.1[k] = 0] over a tuple [t] needs the guard [k >= t.2], and the
        predicate's integer parameters do not include [t.2].  Unlike
-       [cell_guard_bound_terms], which offers every term of the hypothesis
+       [cells.guard_bound_terms], which offers every term of the hypothesis
        space (affine combinations and sequence lengths among them, so the
        guard grows with the space), the offer is fixed by the predicate's
        signature and bounded, so the guard stays two qualifiers per term.
        Changes the hypothesis space only, so it cannot bear on the soundness
        of a verdict. *)
-    cell_guard_reachable_bounds : int; [@default 0]
+    guard_reachable_bounds : int; [@default 0]
     (* With [cell_guard_disjuncts], give the guards only to a predicate with at
        most this many integer cell index columns; a predicate with more gets
        the template it gets without guards.  0, the default, sets no bound.
@@ -232,7 +187,7 @@ module Config = struct
        template it had.  Like the guards themselves it changes the hypothesis
        space and nothing else, so it cannot bear on the soundness of a
        verdict. *)
-    cell_guard_max_index_columns : int; [@default 0]
+    guard_max_index_columns : int; [@default 0]
     (* With [cell_guard_disjuncts], give a predicate its guards only after
        its celled template without guards has been regenerated this many
        times.  The synthesizer regenerates a template when the space it was
@@ -257,13 +212,13 @@ module Config = struct
        guard at zero, so the space only grows, and the switch is never
        undone.  It changes the hypothesis space and its order only, so it
        cannot bear on the soundness of a verdict. *)
-    cell_guard_after_failures : int; [@default 0]
+    guard_after_failures : int; [@default 0]
     (* Relate a cell's value to its index shifted by an integer term: for
        every cell of an array or sequence indexed by one integer and holding
        integers, the qualifiers [v = j + t] and [v = t], where [t] ranges over
        zero, the predicate's own integer parameters and at most this many
        integer terms the parameters reach through the selectors of
-       single-constructor datatypes (the terms [cell_guard_reachable_bounds]
+       single-constructor datatypes (the terms [cells.guard_reachable_bounds]
        takes, in the same order); 0, the default, adds none.  This is the
        vocabulary of a range's contents: [forall k. 0 <= k < len v => v[k] =
        r.start + k] over a range [r] carried inside a tuple is, over a cell,
@@ -273,7 +228,7 @@ module Config = struct
        selectors.  Linear in the cells and in the terms; changes the
        hypothesis space only, so it cannot bear on the soundness of a
        verdict. *)
-    cell_affine_value_terms : int; [@default 0]
+    affine_value_terms : int; [@default 0]
     (* Compare a cell's integer index with the positions the problem WRITES
        to: for every array write [store A t v] in a clause that also applies
        this predicate to arguments over which [t] can be written -- each
@@ -290,13 +245,13 @@ module Config = struct
        template's affine atoms start with coefficients bounded by one.  An
        array is matched to a write by its sort alone, so over two arrays of
        one sort both get the qualifiers.  At most
-       [cell_store_index_quals_max] distinct index terms are taken per
+       [cells.store_index_quals_max] distinct index terms are taken per
        predicate, in the order the clauses give them.  It changes the
        hypothesis space only, so it cannot bear on the soundness of a
        verdict; a predicate without an integer-indexed cell gets nothing. *)
-    cell_store_index_quals : bool; [@default true]
-    cell_store_index_quals_max : int; [@default 8]
-    (* Together with [cell_store_index_quals] (alone it does nothing), also
+    store_index_quals : bool; [@default true]
+    store_index_quals_max : int; [@default 8]
+    (* Together with [cells.store_index_quals] (alone it does nothing), also
        compare a cell's integer index column with every write index taken at
        the predicate's starting state: for a fact clause of the predicate
        (one applying it positively and no predicate variable negatively) that
@@ -307,14 +262,14 @@ module Config = struct
        bound [kS - 1] is stated by no atom of any clause, while an invariant
        of the form [forall j. ... \/ (j > kS - 1 /\ j <= (k+1)S - i - 1)]
        needs it and no atom over another direction can replace it.  At most
-       [cell_store_index_quals_max] anchors, counted apart from the writes,
+       [cells.store_index_quals_max] anchors, counted apart from the writes,
        and none equal to a write.  It changes the hypothesis space only, so
        it cannot bear on the soundness of a verdict. *)
-    cell_store_index_anchor_quals : bool; [@default true]
-    (* Together with [cell_store_index_quals] and [cell_guard_disjuncts]
+    store_index_anchor_quals : bool; [@default true]
+    (* Together with [cells.store_index_quals] and [cell_guard_disjuncts]
        (alone it does nothing), also let each guard disjunct compare its
        integer index column with the write indices (and, with
-       [cell_store_index_anchor_quals], the anchors) that
+       [cells.store_index_anchor_quals], the anchors) that
        [cell_store_index_quals] computes for the predicate: the guard may then
        select [j >= t] or [j <= t] for a write index [t], not only for zero
        and the predicate's integer parameters.  An invariant [C /\ forall j.
@@ -323,10 +278,10 @@ module Config = struct
        indices only among the base-hole qualifiers it needs a second base
        disjunct for [j >= 3i - 3].  Only integer-sorted terms that mention no
        cell column are offered, each once, and no more of them than
-       [cell_store_index_quals_max] writes and anchors already allow.  It
+       [cells.store_index_quals_max] writes and anchors already allow.  It
        changes the hypothesis space only, so it cannot bear on the soundness
        of a verdict. *)
-    cell_guard_store_index_bounds : bool; [@default true]
+    guard_store_index_bounds : bool; [@default true]
     (* Remove from a template that has cell columns every qualifier that
        equates (or distinguishes) two whole arrays -- [a = b], [a = store b i
        v], their negations -- so that no hole of that template can select one;
@@ -340,107 +295,547 @@ module Config = struct
        an answer whose invariant needs the atom can be lost.  It changes the
        hypothesis space only, so it cannot bear on the soundness of a
        verdict. *)
-    celled_drop_array_equality_quals : bool; [@default false]
-    (* Search the template without cells first, and give it its cells (and,
-       with [cell_guard_disjuncts], its guards) only after that template has
-       failed [plain_template_failures] times.  A failure is a call of
-       [update_with_labels] whose labels ask for the template to grow (a shape,
-       coefficient or constant label); a label that only reports a timeout or
-       a qualifier dependency is not one.  Until then the predicate's template
-       binds only its own parameters, so the example expansion, the extended
-       truth table and the read-back all treat it as a predicate without
-       cells: it is the template the cell-free configuration builds from the
-       same hypothesis space.  From the switch on it is the celled template at
-       whatever shape the growth has reached, and the switch is never undone,
-       not even by a restart of the shape.
+    drop_array_equality_quals : bool; [@default false]
+    cut_keeps_seq_store_quals : bool; [@default false]
+        (** Under [cells.quals_only], keep a qualifier [x = seq.store s i v]
+            between two sequence parameters although it mentions no cell
+            column.  It relates two whole sequences by one write, which no cell
+            qualifier can state (a cell is one position of one sequence), so
+            the cut would otherwise remove every such qualifier from a
+            predicate that has cells.  Only such equalities are kept, and only
+            where some path is a sequence. *)
+    cut_keeps_seq_equalities : bool; [@default true]
+        (** Under [cells.quals_only], keep every equality between two
+            sequence-sorted terms that reads no position ([x = y],
+            [x = seq.extract y i n], [x = seq.store y i v]), where some path is
+            a sequence.  The cut removes every qualifier that names no cell
+            column, and with sequences as paths that includes the relations
+            between whole sequences: a predicate with no cells keeps them, the
+            same predicate with its sequences celled loses them, and no cell
+            qualifier can say [x = seq.extract y i n] instead -- so turning
+            sequence cells on could remove the one fact the plain template
+            would have used.  This field subsumes
+            [cells.cut_keeps_seq_store_quals]. *)
+    (* What to do with the cells of every predicate that has a cell path when
+       no clause of the problem reads or writes an array or a sequence at an
+       out-of-scope index ([CellQual.has_out_of_scope_index]): every access
+       index a function of the arguments of the clause's unknowns, as in every
+       program translated to a transition system.  A predicate with no cell
+       path is left exactly as under [Cells_regardless] by both other
+       settings.  [Cells_regardless] (the default): nothing changes.  [Defer_cells]: start from the cell-free template and get the
+       cells after [plain_first]'s [failures] growth failures (1 under
+       [Off]), as [plain_first = All] does for every predicate.  [Withhold_cells]: the
+       cell-free template throughout.
 
-       Why: cell columns enter every affine atom and every hole as extra
-       parameters, the guards add two holes per index column, and the example
-       expansion multiplies every example clause by its candidate cells.  A
-       predicate whose invariant needs no cell -- a point fact about a nested
-       read such as [a[b[i] + i] = i] -- then searches a larger space for a
-       solution the cell-free template states at its first shapes, and was
-       measured answering in about a second without cells and in 8 to 74 s, or
-       not at all, with them.
+       Why: on a C program translated to a transition system over a memory
+       array, a termination proof needs no fact about the array's contents,
+       yet with cells every round of the loop expands each example into its
+       candidate cells and the space has extra parameters per atom; the
+       synthesis rounds were measured several times as long and more numerous
+       (an answer in 4 s without cells took 38 s with them, one in 16 s took
+       197 s).  Both settings change only the hypothesis space and its order,
+       so neither can bear on the soundness of a verdict; [Withhold_cells] can
+       lose an answer that needs a universal although no clause reads at an
+       out-of-scope index. *)
+    without_out_of_scope_index : cells_without_out_of_scope_index;
+        [@default Cells_regardless]
+  }
+  [@@deriving yojson]
 
-       The space only grows: before the switch it is the cell-free template of
-       the current shape, after it the celled template of the current shape,
-       which contains that one with every cell coefficient and guard at zero.
-       It changes the hypothesis space and the order it is searched in and
-       nothing else, so it cannot bear on the soundness of a verdict. *)
+  (* the coefficient bounds of the synthesized templates, by role *)
+  type coeff_bound = {
+    initial : int option; [@default Some 1]
+        (** the starting bound on the sum of the absolute values of the coefficients
+            ([None]: unbounded); a failure can raise it *)
+    per_coefficient : int option; [@default None]
+        (** a bound on the absolute value of each coefficient *)
+    unbounded_above : int option; [@default None]
+        (** once the coefficient bound has reached this value, raising it drops it
+            altogether ([None]: it is raised by one each time) *)
+  }
+  [@@deriving yojson]
+
+  type const_bound = {
+    initial : int option; [@default Some 0]
+        (** the starting bound on the sum of the absolute values of the constants
+            ([None]: unbounded); a failure can raise it *)
+    unbounded_above : int option; [@default Some 3]
+        (** once the constant bound has reached this value, raising it drops it
+            altogether ([None]: it is raised by one each time) *)
+    seeds : int list option; [@default None]
+        (** the seed constants of the template ([None]: zero alone) *)
+  }
+  [@@deriving yojson]
+
+  type role_bounds = {
+    coeff : coeff_bound; [@default Common.Util.config_default coeff_bound_of_yojson "{}"]
+    const : const_bound; [@default Common.Util.config_default const_bound_of_yojson "{}"]
+  }
+  [@@deriving yojson]
+
+  type bounds = {
+    atom : role_bounds; [@default Common.Util.config_default role_bounds_of_yojson "{}"]
+        (** the bounds on the affine atoms' coefficients and constants *)
+  }
+  [@@deriving yojson]
+
+  (** Which predicates search the template without cells first and get
+      their cells (and, with [cell_guard_disjuncts], their guards) only after
+      that template has failed [failures] times.  A failure is a call of
+      [update_with_labels] whose labels ask for the template to grow (a shape,
+      coefficient or constant label); a label that only reports a timeout or a
+      qualifier dependency is not one.  Until then the predicate's template
+      binds only its own parameters, so the example expansion, the extended
+      truth table and the read-back all treat it as a predicate without cells:
+      it is the template the cell-free configuration builds from the same
+      hypothesis space.  From the switch on it is the celled template at
+      whatever shape the growth has reached, and the switch is never undone,
+      not even by a restart of the shape.
+
+      Why: cell columns enter every affine atom and every hole as extra
+      parameters, the guards add two holes per index column, and the example
+      expansion multiplies every example clause by its candidate cells.  A
+      predicate whose invariant needs no cell -- a point fact about a nested
+      read such as [a[b[i] + i] = i] -- then searches a larger space for a
+      solution the cell-free template states at its first shapes, and was
+      measured answering in about a second without cells and in 8 to 74 s, or
+      not at all, with them.
+
+      The space only grows: before the switch it is the cell-free template of
+      the current shape, after it the celled template of the current shape,
+      which contains that one with every cell coefficient and guard at zero.
+      It changes the hypothesis space and the order it is searched in and
+      nothing else, so it cannot bear on the soundness of a verdict.
+
+      [failures] and [new_shapes_only] are read whenever this predicate's cells
+      are deferred; under [Off] the only deferral left is
+      [cells.without_out_of_scope_index = Defer_cells], which then counts with
+      [failures = 1] and [new_shapes_only = false]. *)
+  type plain_first =
+    | Off  (** every predicate gets its cells at once *)
+    | Sort_var_only of {
+        universal_arrays : bool; [@default true]
+            (** also count as a reason to defer the cells an array parameter
+                with [Bool] elements that every clause passes on unchanged
+                (the same variable at every application of the predicate
+                within a clause).  That is the shape a dependency set gives: a
+                universally quantified relation the witness may see (a trait
+                invariant [Int -> Bool] over a quantified sort, say) is an
+                array-sorted free variable of the clauses and is passed to the
+                predicate as an extra argument, unchanged, everywhere.  Such an
+                array is a parameter of the contract rather than program
+                state, and a Rust-derived generic program whose only templated
+                predicate reached an array this way answered in about 1.7 s of
+                user CPU without cells and in 10 to 12 s with them.  Why the
+                criterion is syntactic is at [universal_array_positions]. *)
+        failures : int; [@default 1]
+        new_shapes_only : bool; [@default false]
+            (** as under [All] *)
+      }
+        (** defer the cells only of a predicate that reaches an array indexed
+            by a sort variable or an uninterpreted sort: a predicate whose
+            arrays are all indexed by integers, enumerations or sequence
+            positions gets them at once.  Why the split: a trait or closure
+            contract over a quantified sort is an array over that sort, and
+            cells over it gave a Rust-derived counting loop that declares no
+            array or sequence cell columns on every predicate -- 180 thousand
+            trace lines in a minute and no answer, against an answer in 11 s
+            without cells -- while the inputs that need cells at once (a
+            bounded prefix over an integer array or a sequence) lost their
+            answers when every predicate started without them.
+
+            The enumeration that the finite instantiation of a quantified sort
+            substitutes for the sort variable counts as the sort variable
+            here.  That pass hands each size's instance to a nested constraint
+            solve and takes only a refutation from it, so on a satisfiable
+            input the nested solve runs until it finds a solution or the whole
+            run's budget is gone.  With the stand-in read as an ordinary
+            enumeration, every predicate of the instance got its cells at once
+            -- the case this exists to avoid -- and a two-loop Rust program
+            whose run answers in about 13 s with the nested solve switched off
+            spent all of 120 s in the nested solve at size 1. *)
+    | All of {
+        failures : int; [@default 1]
+        new_shapes_only : bool; [@default false]
+            (** count a growth failure toward [failures] only when the shape
+                it happened at is not contained in a shape at which a failure
+                was already counted.  The cell-free space at a shape contains
+                the space at every smaller shape (fewer disjuncts, quantifiers,
+                coefficient or constant bounds, a subset of the seeds), and the
+                examples only grow, so a failure at a contained shape follows
+                from the one already counted and says nothing new about whether
+                the cell-free template can succeed.  Such repeats come from a
+                restart, which returns the shape to its start while the counter
+                stays: a Rust-derived generic loop whose invariant needs two
+                disjuncts and no cells failed at one disjunct, grew, restarted
+                after twenty rounds without an update, failed again at one
+                disjunct and once at two, and so got its cells on its third
+                failure; with cells each round took seconds and it never
+                answered within 120 s, where the runs that kept the cell-free
+                template answered in 15 to 50 s.  [false]: every growth failure
+                counts. *)
+      }  (** every predicate starts cell-free *)
+  [@@deriving yojson]
+
+  (* the failure count and the new-shapes rule a deferral of the cells reads *)
+  let plain_first_counting = function
+    | Off -> (1, false)
+    | Sort_var_only { failures; new_shapes_only; _ } | All { failures; new_shapes_only } ->
+        (failures, new_shapes_only)
+
+  (** The array template's optional qualifier and term families, and the
+      bounds on the vocabulary they build; each member says what it adds or
+      narrows.  Qualifiers and terms only change the hypothesis space, so no
+      member can bear on the soundness of a verdict. *)
+  type guarded_partial_selectors = {
+    quals : bool; [@default true]
+        (** Add qualifiers comparing the integer payload of a constructor of a
+            multi-constructor datatype, each conjoined with that constructor's
+            tester ([HypSpace.qualifiers_of], [QualDT.guarded_payload_quals]).
+            Without them a predicate over, say, a [Result] can distinguish its
+            argument by constructor only, and two values of one constructor
+            with different payloads are the same row of the truth table
+            whatever the template's shape. On by default; it enlarges the
+            vocabulary of every predicate that reaches such a datatype. *)
+    offsets : bool; [@default true]
+        (** With [quals], also compare the payload
+            with each comparand plus or minus [1 .. k] for
+            [k = bounds.atom.const.unbounded_above] (1 when it is unset), so
+            that payloads differing by a small
+            amount from a term of the predicate can be told apart without a
+            constant between them.  A separate switch because it multiplies
+            those qualifiers by [2 * k + 1]. *)
+  }
+  [@@deriving yojson]
+
+  (** Reading a curried array argument [x : S1 -> ... -> Sk -> L] ([k >= 2],
+      [L] Boolean or integer) to its leaf in one step of the qualifier term
+      map. *)
+  type curried_leaf_reads =
+    | No_leaf_reads  (** one index level per step, as the term map does *)
+    | Leaf_reads of {
+        limit : int; [@default 1000]
+            (** the largest number of leaf reads added
+                for one array sort (array terms times the product of the
+                index-term sets); above it that sort gets none. *)
+      }
+          (** Read a curried array argument [x : S1 -> ... -> Sk -> L] ([k >= 2],
+              [L] Boolean or integer) to its leaf in one step of the qualifier
+              term map: every [x[t1]...[tk]] with each [ti] one of the
+              predicate's terms of sort [Si], filed as a Boolean qualifier or an
+              integer term, and none of the intermediate arrays.  The term map
+              otherwise adds one index level per step, so at depth 1 such an
+              argument (a Rust iterator's [produces] relation, for instance) has
+              no read of its value in the hypothesis space.  It also stops giving
+              a sort-variable or arrow index sort its default instance, which is
+              a variable no parameter binds and whose every qualifier the
+              template drops.  Off by default: it enlarges the vocabulary of
+              every predicate with a curried array argument. *)
+  [@@deriving yojson]
+
+  (** Over which sets of parameter positions the qualifiers the hypothesis
+      space generates over combinations of reached terms are offered. *)
+  type related_positions =
+    | All_positions  (** every combination, as generated *)
+    | Related_only of {
+        whole_clause : bool; [@default false]
+            (** also relate every two variables of
+                one clause's pure part (rule (d) of [RelatedPositions]), which
+                keeps the relations a pure part states only jointly, through two
+                atoms. *)
+      }
+          (** Offer the qualifiers the hypothesis space generates over
+              combinations of reached terms (equalities and testers over
+              datatype, sequence, array and opaque-sort terms, the guarded
+              payload and selector-path comparisons, the sequence suffix
+              equations) only over sets of parameter positions the problem's
+              clauses relate, as [RelatedPositions] defines it: a qualifier
+              mentioning parameters [S] is kept when [|S| <= 1] or [S] is
+              connected under the related pairs.  The extracted qualifiers and
+              the integer part of the template are untouched.  Only narrows the
+              hypothesis space, so it bears on which solutions are expressible
+              and never on the soundness of a verdict. *)
+  [@@deriving yojson]
+
+  type extra_quals = {
+    guarded_partial_selectors : guarded_partial_selectors;
+        [@default Common.Util.config_default guarded_partial_selectors_of_yojson "{}"]
+        (** the guarded payload comparisons of multi-constructor datatypes *)
+    selector_paths : bool; [@default true]
+        (** Add qualifiers over the integer fields reached through selectors
+            of single-constructor datatypes ([QualDT.selector_path_quals]):
+            one field compared across two parameters of one sort ([<=], [>=],
+            [=]), and every such field compared with the predicate's constants
+            and with every integer literal of the problem.  Without them a
+            predicate over the value a loop started from and the value it has
+            now cannot say that a field is unchanged, and a bound set far from
+            the loop is not a constant of the loop predicate at all.  On by
+            default; it enlarges the vocabulary of every predicate over a
+            struct. *)
+    curried_leaf_reads : curried_leaf_reads; [@default No_leaf_reads]
+    seq_length_sums : int; [@default 0]
+        (** Relate a sequence parameter's length to an integer parameter and
+            an integer term: the qualifiers [len s + x = t] for [s] a
+            sequence-sorted parameter, [x] zero or an integer parameter, and
+            [t] an integer parameter other than [x] or one of the integer
+            terms the parameters reach through the selectors of
+            single-constructor datatypes (the terms
+            [cells.guard_reachable_bounds] takes, in the same order).  At most
+            this many qualifiers are added, taken in that order (sequences,
+            then [x] with the parameters before zero, then [t] with the
+            parameters before the reached terms); 0, the default, adds none.
+            This is the vocabulary of a loop that consumes a sequence while a
+            counter moves: [len rest + n = t.1] over a tuple [t] carrying the
+            total, which the hypothesis space does not otherwise contain --
+            the integer part of the term map offers no qualifier of its own,
+            the template without an unsat core has no affine atoms, the
+            unsat-core template's affine atoms bound the sum of the absolute
+            coefficients by [bounds.atom.coeff.initial] (a three-term equation needs
+            three), and
+            [selector_paths] compares a field with one other term at a
+            time.  Qualifiers only enlarge the hypothesis space, so this
+            cannot bear on the soundness of a verdict. *)
+    related_positions : related_positions; [@default All_positions]
+    opaque_clause_shapes_only : bool; [@default false]
+        (** Offer the pairwise equalities over a reached term of an opaque
+            sort (the hypothesis space's catch-all case: an uninterpreted
+            sort, which a type parameter of the source program becomes) only
+            between terms that are parameters or whose shape -- variables
+            abstracted, selectors of single-constructor datatypes erased --
+            is the shape of some term of that sort the problem's clauses
+            write ([OpaqueShapes]).  The term map reads every sequence at
+            every integer term in scope, lengths included, and those reads,
+            which no clause writes and which are mostly out of range, carry
+            most of the pairwise equalities; the reads at the shapes the
+            clauses use, a parameter-indexed read [s[i]] or [s[i][j]] and the
+            fields of the parameters, are kept.  Only narrows the hypothesis
+            space, so it bears on which solutions are expressible and never on
+            the soundness of a verdict. *)
+    func_apps_at_reached_sorts_only : bool; [@default false]
+        (** Apply a function of the input to reached terms only: a function
+            with an argument of a non-scalar sort that no term of the
+            predicate reaches (a sequence, datatype or uninterpreted sort the
+            predicate's parameters never mention) is left out of the term map,
+            instead of being applied to that sort's default instance at every
+            tuple of the other arguments ([Qual.mk_func_app_terms]).  An input
+            that defines one counting function per element sort had 22 of 23
+            such functions applied to an empty sequence, and those integer
+            terms then became every sequence's read indices, about 250
+            thousand pairwise element equalities in one predicate.  Off by
+            default.  Only narrows the hypothesis space, so it bears on which
+            solutions are expressible and never on the soundness of a
+            verdict. *)
+    seq_reads_at_fun_apps : bool; [@default true]
+        (** Read each sequence in scope at the integer terms that are
+            applications of a function of the input, as at every other integer
+            term ([QualSeq.update_term_map]).  [false] keeps the reads at
+            parameters, lengths and arithmetic only.  A count or an occurrence
+            number computed by a recursive function is rarely an index of a
+            sequence, and on an input with counting functions those reads were
+            168 of 180 element terms of one predicate and their pairwise
+            equalities 16 thousand qualifiers, none of which took two values
+            over the examples.  Only narrows the hypothesis space: an
+            invariant that reads a sequence at a function's result (the
+            element at a counted position) is no longer expressible; it never
+            bears on the soundness of a verdict. *)
+    max_per_predicate : int option; [@default None]
+        (** At most this many qualifiers in one template of a predicate,
+            counted over everything its holes may choose from (the ordinary
+            qualifiers, the cell families and the lifted cell qualifiers,
+            after [cells.quals_only]'s cut); every hole of the template shares
+            that one list.  Above it the smallest qualifiers by [ast_size]
+            are kept, ties in the set's own order.  [None], the default,
+            keeps them all.  The term map multiplies: a sequence of sequences
+            read at every integer term and every suffix gives a hundred
+            element terms, and the pairwise equalities over them alone are
+            4950 qualifiers, which is where one predicate reached 10,411 and
+            a synthesis query exhausted memory.  Fewer qualifiers only narrow
+            the hypothesis space, so this cannot bear on the soundness of a
+            verdict: a candidate is still validated against the clauses, and
+            a synthesis failure is never read as a refutation. *)
+    defined_body : int; [@default 0]
+        (** Instantiate each non-recursive Bool-valued definition of the
+            input ([define-fun]) at the terms the predicate's own parameters
+            reach, and add the quantifier-free atoms of the instantiated body
+            as qualifiers: at most this many per predicate, 0 (the default)
+            adding none (the function [defined_body_quals] states the enumeration).
+            A contract predicate an input defines -- an iterator's [produces]
+            relating a start state, a produced sequence and an end state --
+            is inlined by the reader, and where the clauses apply it only at
+            variables a binder introduces, qualifier extraction drops every
+            atom of it, since none is over the unknown's parameters; this
+            puts those atoms back at the unknown's arguments.  Qualifiers only
+            enlarge the hypothesis space, so this cannot bear on the
+            soundness of a verdict. *)
+    loop_rate_terms : int; [@default 8]
+    (* With [n > 0] (8 by default), add to the terms the template's affine
+       atoms range over at most [n] linear combinations [a * xk + b * xl] of
+       two integer parameters that the predicate's self-loop clauses never
+       decrease (the function [loop_rate_terms]), keeping only those with a
+       coefficient of absolute value two or more.  Why: an affine atom's
+       coefficients are bounded by the sum of their absolute values, which
+       starts at one and grows by one per failure while a restart puts it
+       back, so a loop whose counter [i] advances by one while [v] advances by
+       at most three, and whose invariant is therefore [v <= x + 3 * i], needs
+       a sum of five and the bound never got there; raising the bound for
+       every predicate makes every template larger.  As a term, [3 * i - v] is
+       one coefficient of one, and only predicates with such a loop get it.
+       Over 315 inputs terms appeared in 10, and the questions cost at most a
+       quarter of a second per predicate.  [0]: off.  Only enlarges the
+       hypothesis space, so it cannot bear on the soundness of a verdict. *)
+    rec_fun_apps : int; [@default 0]
+        (** Apply each recursive definition of the input
+            ([define-fun-rec], kept unexpanded in the function environment)
+            at the terms the predicate's parameters reach, and add the
+            atoms [x = f(t1, ..., tn)] for an integer- or real-valued [f]
+            and [x] a parameter of [f]'s result sort not occurring in the
+            [ti], and [f(t1, ..., tn)] itself for a Bool-valued one: at most
+            this many per predicate, 0 (the default) adding none
+            (the function [rec_fun_app_quals] states the enumeration).  A loop that
+            accumulates what a recursive function computes keeps
+            [c = cnt s i] at its head, while the clauses apply [cnt] only at
+            the loop's bound, so neither extraction nor any arithmetic family
+            puts [cnt] at the loop counter.  Qualifiers only enlarge the
+            hypothesis space -- a candidate built from them is validated
+            against the clauses like any other, and the synthesis phase
+            failing to fit is never read as a refutation -- so this cannot
+            bear on the soundness of a verdict. *)
+    non_ucore_affine_atoms : int; [@default 0]
+    (** Affine atoms per disjunct in the arm the trace labels [non-ucore] -- the main synthesis,
+        as against the unsat-core arms.  At 0, which is every shipped
+        configuration, that arm is a disjunction of the qualifiers it is handed
+        and nothing else: no term, no coefficient, no bound, so an array
+        predicate's whole expressiveness rests on a vocabulary and the
+        coefficient and constant labels that would widen the shape are never
+        produced.  A positive value gives each disjunct that many affine atoms
+        over the hypothesis space's terms and constants, with the same bounds
+        the unsat-core arms use.  It exists to answer whether that arm should
+        have affine atoms at all.  Measured: one atom per disjunct answers 18
+        of 43 cell-route inputs against 23 at zero, one gained and six lost,
+        so the arm stays without them. *)
+    non_ucore_affine_atoms_without_arrays : int; [@default 0]
+    (** [non_ucore_affine_atoms] for a predicate none of whose parameters is
+        array-sorted, where it applies when larger; [0] (the default) leaves
+        such a predicate to [non_ucore_affine_atoms].  The measurement that
+        kept that field at zero was taken on array inputs; over a predicate
+        with no array the main arm at zero can only disjoin the qualifiers it
+        is handed, so an invariant needing an atom outside that vocabulary --
+        [y = x] beside [x < 50] in a two-phase loop, or [x < 0] for a Skolem
+        refutation -- is out of reach until a growth step happens to supply
+        it, where the DNF template's affine conjuncts find it in a few rounds.
+        Only enlarges the hypothesis space, so it cannot bear on the soundness
+        of a verdict. *)
+    reconstructed_fun_terms : reconstructed_fun_terms; [@default Scalar_result_only]
+        (** Which reconstructed functions (the names in
+            [PCSP.Problem.reconstructed_functions]) stay in the function
+            environment the hypothesis space is built from.  That builder
+            applies every function of the environment to every tuple of
+            reached terms of its argument sorts, with no bound, and the
+            datatype families then range over the new terms; a reconstructed
+            function over lists thus took one predicate's space from 18
+            qualifiers and 3 terms to 117 and 21, and candidates applying the
+            recursive function to free list variables made validation
+            questions Z3 answers only by unfolding the definition, in 4-40 s
+            where the space without them answered in under a second.  [All]
+            keeps them all; [Scalar_result_only] (the default) keeps those
+            with an [Int], [Real] or [Bool] result (the sorts the bounded
+            reconstructed-function vocabulary also covers); [Excluded] keeps
+            none, so the space is the one the problem gets with no
+            reconstruction.  Only the vocabulary changes: the functions stay
+            in the problem and in every question, and a smaller hypothesis
+            space cannot bear on the soundness of a verdict. *)
+  }
+  [@@deriving yojson]
+
+  type t = {
+    verbose : bool; [@default false]
+    number_of_disj : int; [@default 1]
+    (* "Number of quantifiers per array" is what this was *meant* to be, and
+       that feature is still wanted: a template that quantifies over an array's
+       indices.  It was never built, and the field came to carry something else
+       -- the depth handed to the qualifier term map -- so today the name states
+       an intention rather than the field's content.  Both halves are open work:
+       implement quantifiers per array, and rename this once it no longer has to
+       stand for two things.  Renaming is not free, because the field appears in
+       more than a thousand configuration files.
+
+       Since the quantified template below exists, the feature half of that is
+       done and lives under [number_of_quantifiers_per_array]; what is left is
+       to decide whether the two fields become one, which is a corpus-wide
+       rename and a change of meaning for every configuration that sets this
+       one, so it is not done in passing. *)
+    number_of_qpa : int; [@default 1]
+    (* Whether the qualifier term map's depth is the shape parameter that the
+       template's growth moves ([increase_qpa] / [decrease_qpa]) rather than
+       the fixed [number_of_qpa] above, which is then only the starting depth.
+       Off, the depth stays at its configured value for the whole run, so a
+       leaf reached through more selectors than that never becomes a term.
+       Off is not a dead growth step: with nothing else reading the parameter
+       it is inert ([nq_inert]), and under [grow_disj_when_qpa_inert] (on by
+       default) every growth step then adds a disjunct instead of moving it.
+       On makes the steps alternate between a disjunct and a deeper term map,
+       so it changes the order in which the hypothesis space widens -- a
+       search-policy choice with a cost in qualifiers, not the repair of a
+       defect. *)
+    term_depth_follows_shape : bool; [@default false]
+    (* Whether growing the term depth also raises the constant bound to at
+       least the new depth.  The constant bound otherwise climbs only when an
+       unsat core names it, which it cannot do before terms that can use a
+       constant exist, so deeper terms arrive with the bound still at its
+       starting value.  Only an increase of the depth raises it; a decrease
+       leaves it where it is.  It acts whenever the growth action raises the
+       shape parameter, with or without [term_depth_follows_shape]; without
+       that field the terms do not deepen, so the raised bound meets no new
+       term. *)
+    const_bound_follows_depth : bool; [@default false]
+    (* How many universally quantified index variables the template gets *per
+       array-sorted parameter*.  Zero, the default, is the template this module
+       always generated.  Above zero the predicate becomes
+
+         \\ params. forall i_1 .. i_n. <DNF over params and i_1 .. i_n>
+
+       with n = this field times the number of array-sorted parameters, so a
+       solution may say something about every index rather than about the
+       finitely many a quantifier-free body can name.  The quantified form is
+       strictly more expressive and strictly more expensive -- the synthesis
+       query grows with the number of bound variables -- which is why it is off
+       until an input is measured to need it. *)
+    number_of_quantifiers_per_array : int; [@default 0]
+    cells : cells; [@default Common.Util.config_default cells_of_yojson "{}"]
+        (** the cell columns and the qualifiers over them (the marker key
+            [cell_guard_disjuncts] stays at the top level, where batch
+            drivers locate this record by it) *)
+    (* Two extra disjuncts per integer cell index column [j], on top of the
+       [number_of_disj] base disjuncts, each a qualifier hole over only the
+       comparisons of [j] with zero and with the predicate's own integer
+       parameters, beside the qualifiers that mention no cell column (the
+       facts about the scalar arguments, which such an invariant conjoins into
+       every disjunct).  The typical quantified invariant is
+       [forall j. low <= j /\ j <= high => phi], which over a cell reads
+       [j < low \/ j > high \/ phi]: the two guards are meant to take the
+       first two disjuncts, so the base shape is left for [phi].  A predicate
+       with no integer cell index column gets no guard, so its template is
+       the one it gets without this field.  The guards are fixed rather than
+       counted into the shape: growing the template grows the base disjuncts
+       only.  This changes the hypothesis space and nothing else, so it
+       cannot bear on the soundness of a verdict. *)
+    cell_guard_disjuncts : bool; [@default false]
     declared_atoms_after_failures : int; [@default 0]
     (* With [n > 0], the candidate atoms the input declares for this
        predicate ([(set-info :candidates ...)], [Arg.declared_atoms]) join its
        qualifiers only after [n] growth-asking failures of the template, at the
        next regeneration, and stay from then on.  Meant with the qualifier
-       generator's [declared_atoms_houdini_only], which keeps them out of the
+       generator's [declared_atoms = Houdini_only], which keeps them out of the
        qualifiers it offers: the synthesizer then searches the space extraction
        gives first and the declared atoms widen it only once that space has
        failed, so declaring atoms cannot slow a predicate the plain space
        answers early.  Without that switch the atoms are qualifiers from the
-       start and this adds nothing.  [0]: off.  Like [plain_template_first] it
+       start and this adds nothing.  [0]: off.  Like [plain_first] it
        changes the hypothesis space and the order it is searched in and
        nothing else. *)
-    plain_template_first : bool; [@default false]
-    plain_template_failures : int; [@default 1]
-    (* [plain_template_first] for a predicate that reaches an array indexed by
-       a sort variable or an uninterpreted sort, and for no other: such a
-       predicate starts from the cell-free template and gets its cells after
-       [plain_template_failures] growth failures, while a predicate whose
-       arrays are all indexed by integers, enumerations or sequence positions
-       gets them at once.  Why the split: a trait or closure contract over a
-       quantified sort is an array over that sort, and cells over it gave a
-       Rust-derived counting loop that declares no array or sequence cell
-       columns on every predicate -- 180 thousand trace lines in a minute and
-       no answer, against an answer in 11 s without cells -- while the inputs
-       that need cells at once (a bounded prefix over an integer array or a
-       sequence) lost their answers when every predicate started without
-       them.  Like [plain_template_first] it changes only the hypothesis space
-       and its order.
-
-       The enumeration that the finite instantiation of a quantified sort
-       substitutes for the sort variable counts as the sort variable here.
-       That pass hands each size's instance to a nested constraint solve and
-       takes only a refutation from it, so on a satisfiable input the nested
-       solve runs until it finds a solution or the whole run's budget is gone.
-       With the stand-in read as an ordinary enumeration, every predicate of
-       the instance got its cells at once -- the case this switch exists to
-       avoid -- and a two-loop Rust program whose run answers in about 13 s
-       with the nested solve switched off spent all of 120 s in the nested
-       solve at size 1. *)
-    plain_template_first_sort_var_only : bool; [@default false]
-    (* With [plain_template_first_sort_var_only], also count as a reason to
-       defer the cells an array parameter with [Bool] elements that every
-       clause passes on unchanged (the same variable at every application of
-       the predicate within a clause).  That is the shape a dependency set
-       gives: a universally quantified relation the witness may see (a trait
-       invariant [Int -> Bool] over a quantified sort, say) is an array-sorted
-       free variable of the clauses and is passed to the predicate as an extra
-       argument, unchanged, everywhere.  Such an array is a parameter of the
-       contract rather than program state, and a Rust-derived generic program
-       whose only templated predicate reached an array this way answered in
-       about 1.7 s of user CPU without cells and in 10 to 12 s with them.
-       Why the criterion is syntactic is at [universal_array_positions].  Like
-       the switch it extends, it changes the hypothesis space and its order
-       and nothing else. *)
-    plain_template_first_universal_arrays : bool; [@default true]
-    (* With [plain_template_first], count a growth failure toward
-       [plain_template_failures] only when the shape it happened at is not
-       contained in a shape at which a failure was already counted.  The
-       cell-free space at a shape contains the space at every smaller shape
-       (fewer disjuncts, quantifiers, coefficient or constant bounds, a subset
-       of the seeds), and the examples only grow, so a failure at a contained
-       shape follows from the one already counted and says nothing new about
-       whether the cell-free template can succeed.  Such repeats come from a
-       restart, which returns the shape to its start while the counter
-       stays: a Rust-derived generic loop whose invariant needs two disjuncts
-       and no cells failed at one disjunct, grew, restarted after twenty
-       rounds without an update, failed again at one disjunct and once at
-       two, and so got its cells on its third failure; with cells each round
-       took seconds and it never answered within 120 s, where the runs that
-       kept the cell-free template answered in 15 to 50 s.  Off: every growth
-       failure counts.  Changes the hypothesis space's order only. *)
-    plain_template_failures_new_shapes_only : bool; [@default false]
+    plain_first : plain_first; [@default Off]
+        (** which predicates search the cell-free template first (see
+            [plain_first]) *)
     (* Two alternative growth policies for this template's bounds, from an
        abandoned branch, each off by default so that the default is the policy
        this template has always had.  They were one flag, which made them one
@@ -470,7 +865,8 @@ module Config = struct
         one after the first restart, and the template can no longer state an
         invariant that needs two, until it has grown again.  On: the shape
         the configuration starts from ([number_of_disj], [number_of_qpa],
-        [upper_bound_coeff], [upper_bound_const], [seeds]).  The two agree on
+        [bounds.atom.coeff.initial], [bounds.atom.const.initial],
+        [bounds.atom.const.seeds]).  The two agree on
         every configuration whose starting shape is that fixed one. *)
     grow_disj_when_qpa_inert : bool; [@default true]
     (** What a shape-growth step ([DisjQPA] or [Shape] label) raises when the
@@ -493,21 +889,6 @@ module Config = struct
         starting shape, the restart shape and every other parameter are
         unchanged.  Where [nq] is live the step alternates as before. *)
     restart_ladder : bool; [@default true]
-    (* Grow the non-ucore template by keeping its built disjuncts.  Off, every
-       build draws every hole afresh.  On, a build whose inputs are the last
-       build's (the qualifiers, the cell and template parameters, the guard
-       inputs) with more disjuncts returns the last template with the new
-       disjuncts' holes added beside it: [P := T_old \/ D_new], where [T_old]
-       keeps its hole and key names.  A fresh build at the same shape is
-       [G \/ D_1 \/ .. \/ D_n] with each [D_i] drawn by the same generator
-       independently, so the two templates are equal up to a renaming of hole
-       and key names and the order of disjunction: the same hypothesis space
-       and the same candidates.  It applies only without quantifier index
-       variables and without affine atoms in the base disjuncts (whose bounds
-       move with the shape); anything else builds afresh.  What it buys is
-       names that survive a growth step, so that a consumer can reuse what it
-       computed for the kept disjuncts. *)
-    grow_keeping_disjuncts : bool; [@default false]
     (** Where a restart puts the number of disjuncts.  Restarts are kept
         either way, and the first epoch (the run up to the first restart)
         starts at the configured shape either way.
@@ -528,26 +909,55 @@ module Config = struct
         candidate rounds without growth at the previous shape, and every
         count c is revisited with period 2^c in epochs, the small shapes most
         often. *)
-    non_ucore_affine_atoms : int; [@default 0]
-    (** Affine atoms per disjunct in the arm the trace labels [non-ucore] -- the main synthesis,
-        as against the unsat-core arms.  At 0, which is every shipped
-        configuration, that arm is a disjunction of the qualifiers it is handed
-        and nothing else: no term, no coefficient, no bound, so an array
-        predicate's whole expressiveness rests on a vocabulary and the
-        coefficient and constant labels that would widen the shape are never
-        produced.  A positive value gives each disjunct that many affine atoms
-        over the hypothesis space's terms and constants, with the same bounds
-        the unsat-core arms use.  It exists to answer whether that arm should
-        have affine atoms at all.  Measured: one atom per disjunct answers 18
-        of 43 cell-route inputs against 23 at zero, one gained and six lost,
-        so the arm stays without them. *)
-    upper_bound_coeff : int option; [@default Some 1]
-    upper_bound_const : int option; [@default Some 0]
-    seeds : int list option; [@default None]
-    bound_each_coeff : int option; [@default None]
-    threshold_coeff : int option; [@default None]
-    threshold_const : int option; [@default Some 3]
+    grow_keeping_disjuncts : bool; [@default false]
+    (** Grow the non-ucore template by keeping its built disjuncts.  Off, every
+       build draws every hole afresh.  On, a build whose inputs are the last
+       build's (the qualifiers, the cell and template parameters, the guard
+       inputs) with more disjuncts returns the last template with the new
+       disjuncts' holes added beside it: [P := T_old \/ D_new], where [T_old]
+       keeps its hole and key names.  A fresh build at the same shape is
+       [G \/ D_1 \/ .. \/ D_n] with each [D_i] drawn by the same generator
+       independently, so the two templates are equal up to a renaming of hole
+       and key names and the order of disjunction: the same hypothesis space
+       and the same candidates.  It applies only without quantifier index
+       variables and without affine atoms in the base disjuncts (whose bounds
+       move with the shape); anything else builds afresh.  What it buys is
+       names that survive a growth step, so that a consumer can reuse what it
+       computed for the kept disjuncts. *)
+    bounds : bounds; [@default Common.Util.config_default bounds_of_yojson "{}"]
+        (** the coefficient bounds of the synthesized templates *)
     add_mod2_quals : bool; [@default false]
+    datatype_size_terms : bool; [@default false]
+        (** Add, for each parameter of an inductive datatype sort (every
+            datatype reachable from it inductive, so its values are finite
+            trees), the application of the datatype's size function to it to
+            the terms the affine atoms range over, and the qualifier that the
+            size is even.  Why: without it a parameter of a datatype sort
+            reaches the template only through testers and selectors up to a
+            fixed depth, so no candidate can state a fact about a value's whole
+            depth -- [plus n m = r] with [|r| = |n| + |m| - 1] over Peano
+            naturals, or the parity [even] tests -- although the ranking
+            templates already use the same size function.  Only enlarges the
+            hypothesis space; sound because the size function is a total
+            definition of the problem's own function environment. *)
+    guarded_selector_chains : int; [@default 0]
+        (** When [k >= 2], add, for each parameter of a datatype sort with more
+            than one constructor, every integer field reached from it through a
+            chain of [2 .. k] selectors that passes at least one
+            multi-constructor level, as the term
+            [ite (g, s_n (... (s_1 x)), 0)] with [g] the conjunction of the
+            testers along the chain, to the terms the affine atoms range over,
+            and [g] itself to the qualifiers.  Why: the qualifier term map
+            reaches selectors to depth [number_of_qpa] (1 by default) and gives
+            the affine part those selectors unguarded, so a predicate over a
+            tree cannot state [r = 2 * l] for [l] a leaf two or three
+            constructors below its argument -- the summing of a node's two
+            leaves.  Raising the depth of the term map instead adds every
+            unguarded selector term and every equality over them.  Each term
+            and qualifier here is fixed by the theory: a selector on the wrong
+            constructor is unspecified in SMT-LIB, but it is read only where
+            every tester before it holds.  Only enlarges the hypothesis space;
+            0 (and 1) adds nothing. *)
     (* A ceiling on how far the template may be grown before the solution is
        reported to be outside the family (printed as MAYBE) instead of the
        search continuing.  [None], the default, is the behaviour this template
@@ -563,202 +973,44 @@ module Config = struct
        answer of "not in this family" than a run that does not end can say so.
        The per-predicate bounds an input may state ([upb_nd], [upb_depth]) are
        respected independently of this and are narrower. *)
-    sequence_cells : bool; [@default true]
-        (** Whether a sequence parameter gets cells as an array does.  Set by
-            the solution template from its own setting of the same name,
-            which also decides the example expansion's path list; a value
-            written in this file is overwritten, since a template and an
-            expansion that disagree on the paths build ill-sorted queries. *)
-    sequence_sentinel_cell : bool; [@default true]
-        (** Whether a sequence's cells include the sentinel at index -1, so
-            that a candidate's instance there is a statement about the other
-            arguments that holds on the empty sequence too.  Here it decides
-            one thing: under [cell_quals_only], a qualifier that mentions a
-            sequence ONLY through its length ([i < seq.len s]) is kept, since
-            that is the scalar fact the sentinel instance exists to state.  Set
-            by the solution template, like [sequence_cells]. *)
-    cell_cut_keeps_seq_store_quals : bool; [@default false]
-        (** Under [cell_quals_only], keep a qualifier [x = seq.store s i v]
-            between two sequence parameters although it mentions no cell
-            column.  It relates two whole sequences by one write, which no cell
-            qualifier can state (a cell is one position of one sequence), so
-            the cut would otherwise remove every such qualifier from a
-            predicate that has cells.  Only such equalities are kept, and only
-            where some path is a sequence. *)
-    cell_cut_keeps_seq_equalities : bool; [@default true]
-        (** Under [cell_quals_only], keep every equality between two
-            sequence-sorted terms that reads no position ([x = y],
-            [x = seq.extract y i n], [x = seq.store y i v]), where some path is
-            a sequence.  The cut removes every qualifier that names no cell
-            column, and with sequences as paths that includes the relations
-            between whole sequences: a predicate with no cells keeps them, the
-            same predicate with its sequences celled loses them, and no cell
-            qualifier can say [x = seq.extract y i n] instead -- so turning
-            sequence cells on could remove the one fact the plain template
-            would have used.  This field subsumes
-            [cell_cut_keeps_seq_store_quals]. *)
     upper_bound_disj : int option; [@default None]
     upper_bound_depth : int option; [@default None]
-    guarded_partial_selector_quals : bool; [@default true]
-        (** Add qualifiers comparing the integer payload of a constructor of a
-            multi-constructor datatype, each conjoined with that constructor's
-            tester ([HypSpace.qualifiers_of], [QualDT.guarded_payload_quals]).
-            Without them a predicate over, say, a [Result] can distinguish its
-            argument by constructor only, and two values of one constructor
-            with different payloads are the same row of the truth table
-            whatever the template's shape. On by default; it enlarges the
-            vocabulary of every predicate that reaches such a datatype. *)
-    guarded_partial_selector_offsets : bool; [@default true]
-        (** With [guarded_partial_selector_quals], also compare the payload
-            with each comparand plus or minus [1 .. threshold_const] (1 when
-            [threshold_const] is unset), so that payloads differing by a small
-            amount from a term of the predicate can be told apart without a
-            constant between them.  A separate switch because it multiplies
-            those qualifiers by [2 * threshold_const + 1]. *)
-    selector_path_quals : bool; [@default true]
-        (** Add qualifiers over the integer fields reached through selectors
-            of single-constructor datatypes ([QualDT.selector_path_quals]):
-            one field compared across two parameters of one sort ([<=], [>=],
-            [=]), and every such field compared with the predicate's constants
-            and with every integer literal of the problem.  Without them a
-            predicate over the value a loop started from and the value it has
-            now cannot say that a field is unchanged, and a bound set far from
-            the loop is not a constant of the loop predicate at all.  Off by
-            default: it enlarges the vocabulary of every predicate over a
-            struct. *)
-    curried_leaf_reads : bool; [@default false]
-        (** Read a curried array argument [x : S1 -> ... -> Sk -> L] ([k >= 2],
-            [L] Boolean or integer) to its leaf in one step of the qualifier
-            term map: every [x[t1]...[tk]] with each [ti] one of the
-            predicate's terms of sort [Si], filed as a Boolean qualifier or an
-            integer term, and none of the intermediate arrays.  The term map
-            otherwise adds one index level per step, so at depth 1 such an
-            argument (a Rust iterator's [produces] relation, for instance) has
-            no read of its value in the hypothesis space.  It also stops giving
-            a sort-variable or arrow index sort its default instance, which is
-            a variable no parameter binds and whose every qualifier the
-            template drops.  Off by default: it enlarges the vocabulary of
-            every predicate with a curried array argument. *)
-    curried_leaf_reads_limit : int; [@default 1000]
-        (** With [curried_leaf_reads], the largest number of leaf reads added
-            for one array sort (array terms times the product of the
-            index-term sets); above it that sort gets none. *)
-    seq_length_sum_quals : int; [@default 0]
-        (** Relate a sequence parameter's length to an integer parameter and
-            an integer term: the qualifiers [len s + x = t] for [s] a
-            sequence-sorted parameter, [x] zero or an integer parameter, and
-            [t] an integer parameter other than [x] or one of the integer
-            terms the parameters reach through the selectors of
-            single-constructor datatypes (the terms
-            [cell_guard_reachable_bounds] takes, in the same order).  At most
-            this many qualifiers are added, taken in that order (sequences,
-            then [x] with the parameters before zero, then [t] with the
-            parameters before the reached terms); 0, the default, adds none.
-            This is the vocabulary of a loop that consumes a sequence while a
-            counter moves: [len rest + n = t.1] over a tuple [t] carrying the
-            total, which the hypothesis space does not otherwise contain --
-            the integer part of the term map offers no qualifier of its own,
-            the template without an unsat core has no affine atoms, the
-            unsat-core template's affine atoms bound the sum of the absolute
-            coefficients by [upper_bound_coeff] (a three-term equation needs
-            three), and
-            [selector_path_quals] compares a field with one other term at a
-            time.  Qualifiers only enlarge the hypothesis space, so this
-            cannot bear on the soundness of a verdict. *)
-    related_position_quals : bool; [@default false]
-        (** Offer the qualifiers the hypothesis space generates over
-            combinations of reached terms (equalities and testers over
-            datatype, sequence, array and opaque-sort terms, the guarded
-            payload and selector-path comparisons, the sequence suffix
-            equations) only over sets of parameter positions the problem's
-            clauses relate, as [RelatedPositions] defines it: a qualifier
-            mentioning parameters [S] is kept when [|S| <= 1] or [S] is
-            connected under the related pairs.  The extracted qualifiers and
-            the integer part of the template are untouched.  Only narrows the
-            hypothesis space, so it bears on which solutions are expressible
-            and never on the soundness of a verdict. *)
-    related_position_quals_whole_clause : bool; [@default false]
-        (** With [related_position_quals], also relate every two variables of
-            one clause's pure part (rule (d) of [RelatedPositions]), which
-            keeps the relations a pure part states only jointly, through two
-            atoms. *)
-    opaque_clause_shapes_only : bool; [@default false]
-        (** Offer the pairwise equalities over a reached term of an opaque
-            sort (the hypothesis space's catch-all case: an uninterpreted
-            sort, which a type parameter of the source program becomes) only
-            between terms that are parameters or whose shape -- variables
-            abstracted, selectors of single-constructor datatypes erased --
-            is the shape of some term of that sort the problem's clauses
-            write ([OpaqueShapes]).  The term map reads every sequence at
-            every integer term in scope, lengths included, and those reads,
-            which no clause writes and which are mostly out of range, carry
-            most of the pairwise equalities; the reads at the shapes the
-            clauses use, a parameter-indexed read [s[i]] or [s[i][j]] and the
-            fields of the parameters, are kept.  Only narrows the hypothesis
-            space, so it bears on which solutions are expressible and never on
-            the soundness of a verdict. *)
-    max_quals_per_predicate : int option; [@default None]
-        (** At most this many qualifiers in one template of a predicate,
-            counted over everything its holes may choose from (the ordinary
-            qualifiers, the cell families and the lifted cell qualifiers,
-            after [cell_quals_only]'s cut); every hole of the template shares
-            that one list.  Above it the smallest qualifiers by [ast_size]
-            are kept, ties in the set's own order.  [None], the default,
-            keeps them all.  The term map multiplies: a sequence of sequences
-            read at every integer term and every suffix gives a hundred
-            element terms, and the pairwise equalities over them alone are
-            4950 qualifiers, which is where one predicate reached 10,411 and
-            a synthesis query exhausted memory.  Fewer qualifiers only narrow
-            the hypothesis space, so this cannot bear on the soundness of a
-            verdict: a candidate is still validated against the clauses, and
-            a synthesis failure is never read as a refutation. *)
-    defined_body_quals : int; [@default 0]
-        (** Instantiate each non-recursive Bool-valued definition of the
-            input ([define-fun]) at the terms the predicate's own parameters
-            reach, and add the quantifier-free atoms of the instantiated body
-            as qualifiers: at most this many per predicate, 0 (the default)
-            adding none ([defined_body_quals] below states the enumeration).
-            A contract predicate an input defines -- an iterator's [produces]
-            relating a start state, a produced sequence and an end state --
-            is inlined by the reader, and where the clauses apply it only at
-            variables a binder introduces, qualifier extraction drops every
-            atom of it, since none is over the unknown's parameters; this
-            puts those atoms back at the unknown's arguments.  Qualifiers only
-            enlarge the hypothesis space, so this cannot bear on the
-            soundness of a verdict. *)
-    loop_rate_terms : int; [@default 8]
-    (* With [n > 0] (8 by default), add to the terms the template's affine
-       atoms range over at most [n] linear combinations [a * xk + b * xl] of
-       two integer parameters that the predicate's self-loop clauses never
-       decrease ([loop_rate_terms] below), keeping only those with a
-       coefficient of absolute value two or more.  Why: an affine atom's
-       coefficients are bounded by the sum of their absolute values, which
-       starts at one and grows by one per failure while a restart puts it
-       back, so a loop whose counter [i] advances by one while [v] advances by
-       at most three, and whose invariant is therefore [v <= x + 3 * i], needs
-       a sum of five and the bound never got there; raising the bound for
-       every predicate makes every template larger.  As a term, [3 * i - v] is
-       one coefficient of one, and only predicates with such a loop get it.
-       Over 315 inputs terms appeared in 10, and the questions cost at most a
-       quarter of a second per predicate.  [0]: off.  Only enlarges the
-       hypothesis space, so it cannot bear on the soundness of a verdict. *)
-    rec_fun_app_quals : int; [@default 0]
-        (** Apply each recursive definition of the input
-            ([define-fun-rec], kept unexpanded in the function environment)
-            at the terms the predicate's parameters reach, and add the
-            atoms [x = f(t1, ..., tn)] for an integer- or real-valued [f]
-            and [x] a parameter of [f]'s result sort not occurring in the
-            [ti], and [f(t1, ..., tn)] itself for a Bool-valued one: at most
-            this many per predicate, 0 (the default) adding none
-            ([rec_fun_app_quals] below states the enumeration).  A loop that
-            accumulates what a recursive function computes keeps
-            [c = cnt s i] at its head, while the clauses apply [cnt] only at
-            the loop's bound, so neither extraction nor any arithmetic family
-            puts [cnt] at the loop counter.  Qualifiers only enlarge the
-            hypothesis space -- a candidate built from them is validated
-            against the clauses like any other, and the synthesis phase
-            failing to fit is never read as a refutation -- so this cannot
-            bear on the soundness of a verdict. *)
+    clause_affine_quals : int; [@default 0]
+        (** Offer the affine equalities the problem's clauses derive for this
+            predicate's integer observables ([ClauseAffineHull]: Karr's
+            affine-hull analysis run forward over the clauses, every join
+            computed from solver models): the reached integer fields, the
+            lengths of reached integer sequences, and, each under its guard,
+            a sequence's first element and a constructor's integer payloads.
+            At most this many per predicate, relational ones (two or more
+            coordinates) first; 0 (the default) adds none.  The relational
+            facts of a predicate the input leaves to inference -- an
+            iterator's [produces], whose produced sequence is as long as the
+            end's counter minus the start's -- are three-term unit equations
+            no other source offers: the template without an unsat core has no
+            affine atoms, the unsat-core templates start with a coefficient sum
+            of one, and extraction sees the facts only point-wise, one per
+            clause.  The hull of what the clauses derive is the equalities
+            common to all of them.  Only enlarges the hypothesis space. *)
+    clause_affine_budget : int; [@default 2000]
+        (** With [clause_affine_quals], the most solver questions the analysis
+            asks (each with a one-second timeout), once per problem. *)
+    (* Whether the unsat-core variant templates (all but the [only_bools]
+       one) also take the qualifiers over algebraic datatype parameters, not
+       only the Bool ones; see [ucore_arm_keeps_qualifier] for what a variant
+       takes and why.  Off, a variant is blind on a datatype parameter (it has
+       no affine atom), so its core can keep blaming a predicate that holds a
+       list while the one needing a second disjunct is never grown.  On, the
+       variants learn more qualifiers, and on some datatype inputs that slows
+       CEGIS badly: a list append-and-length system learned 22-26 qualifiers
+       against 5-7 and answered 1 run of 4 against 4 of 4 at 120 s, and a
+       mutable-parameter ensures clause fell from 10 of 10 to 5 of 10 with
+       deeper shape growth.  So it is off by default and set in the
+       configurations whose inputs need it. *)
+    datatype_qualifiers_in_core_variants : bool; [@default false]
+    extra_quals : extra_quals;
+        [@default Common.Util.config_default extra_quals_of_yojson "{}"]
+        (** the optional qualifier and term families (see [extra_quals]) *)
   }
   [@@deriving yojson]
 
@@ -797,6 +1049,16 @@ module type ArgType = sig
 
   (* the problem's clauses, for [loop_rate_terms] *)
   val problem_clauses : ClauseOld.t list Lazy.t
+
+  (* whether a sequence parameter gets cells as an array does, and whether a
+     sequence's cells include the sentinel at index -1 (false when
+     [sequence_cells] is): the solution template's settings, handed over
+     because the template and the example expansion must agree on which paths
+     there are, or they build ill-sorted queries.  Under [cells.quals_only]
+     the sentinel keeps a qualifier that mentions a sequence only through its
+     length ([i < seq.len s]), the scalar fact its instance states. *)
+  val sequence_cells : bool
+  val sequence_sentinel_cell : bool
 end
 
 type parameter = {
@@ -809,11 +1071,12 @@ type parameter = {
 
 type parameter_update_type += DisjQPA | Coeff | Const | Qual
 
-(* [parameter_update_type] is extensible and each template module adds its
-   own constructors, so a consumer holding a label cannot match it against
-   this module's [Coeff] without depending on this module.  Printing the
-   label is the only comparison such a consumer has, which is why this is
-   here and not a debugging aid. *)
+(* The name of a label of this module (or of [Function]'s); any other
+   module's label is "Unknown".  [parameter_update_type] is extensible and
+   each template module adds its own constructors, so a name says nothing
+   about which template a label belongs to: a caller that needs a template's
+   coefficient or constant labels asks that template
+   ([Function.Type.coeff_labels], [const_labels]) instead. *)
 let str_of_param_update_type = function
   | DisjQPA -> "DisjQPA"
   | Coeff -> "Coeff"
@@ -942,6 +1205,55 @@ let cap_qualifiers ~limit (quals : Formula.t Set.Poly.t) =
          (List.stable_sort (Set.to_list quals) ~compare:(fun a b ->
               Int.compare (Formula.ast_size a) (Formula.ast_size b)))
          (max 0 limit)
+(* Whether a qualifier enters the holes of an unsat-core variant template
+   ([gen_template ~ucore:(Some (_, _, only_bools))]).  Such a variant builds
+   its disjuncts from affine atoms over the predicate's numeric parameters and
+   terms, and takes from the qualifiers only what those atoms cannot say: a
+   qualifier is kept exactly when every variable it mentions is of a Bool
+   sort, or -- with [datatypes] and unless [only_bools] -- of a Bool or an
+   algebraic datatype sort.
+   A qualifier mentioning a parameter of any other sort (an integer, a real,
+   an array, a bit-vector, ...) is left to the affine atoms and the main
+   template.
+
+   Why datatypes as well as Bool: a parameter of a datatype sort has no
+   affine atom at all, so without its qualifiers a variant cannot tell [Nil]
+   from a cons cell.  Its holes then read [true] at every example, a variant
+   query over a predicate whose only non-numeric parameter is a list fails
+   for want of vocabulary rather than of shape, and its unsat core -- the
+   one that decides which predicate's shape grows -- blames that predicate
+   at every round while the predicate that needs a second disjunct is never
+   grown.  This was observed on a program using one list type at [int] and
+   at [int lst]: about 160 rounds each widening the same predicate, no
+   answer in 400 s.
+
+   Why not in the [only_bools] variant: that variant is a disjunction of
+   qualifiers alone, and what it finds is learned whole, as one new qualifier
+   (taking its atoms would give back the qualifiers it was built from).  Over
+   a datatype parameter the qualifiers are many and include guarded reads
+   ([is_cons x /\ head x >= 0]), so every round found a new disjunction of
+   old ones -- each nesting the previous round's -- and counted it as a
+   learned qualifier, which pre-empts the shape growth: a sorted-list
+   insertion that answers in under a minute stopped answering at all.
+   Without the datatype qualifiers that variant has nothing to say about such
+   a parameter, which is what it had before; the other variants learn atoms,
+   and an atom that is already a qualifier is no news.
+
+   Why it is optional ([~datatypes], the configuration field
+   [datatype_qualifiers_in_core_variants], off by default): with the datatype
+   qualifiers the variants learn more of them, and on some datatype inputs
+   that slows CEGIS more than the blind variants did; with [~datatypes:false]
+   a variant keeps the Bool qualifiers only, in every variant.
+
+   Pre: none.  Post: [true] for a closed qualifier ([false], say), which
+   mentions no variable; monotone in [only_bools] (what the [only_bools]
+   variant keeps, the others keep) and in [datatypes] (what is kept without
+   it is kept with it); with [only_bools] or without [datatypes], [true]
+   exactly when every variable is Bool-sorted.  Pure. *)
+let ucore_arm_keeps_qualifier ~datatypes ~only_bools (qual : Formula.t) =
+  Set.for_all (Formula.term_sort_env_of qual) ~f:(fun (_, s) ->
+      Term.is_bool_sort s || (datatypes && (not only_bools) && T_dt.is_sdt s))
+
 (* The atoms of the non-recursive Bool-valued definitions [defs] instantiated
    at the terms [params] reach, at most [limit] of them, each normalised as
    the other qualifiers are.  A definition's formal of sort [s] is filled by
@@ -1182,6 +1494,27 @@ let loop_rate_terms ~limit ~bound ~deadline ~(check : Formula.t list -> bool)
 (* [bool_equalities]: for a Bool-valued [f], also [x = f(t1, ..., tn)] for
    every Boolean parameter [x] not among the [ti] -- the shape of a predicate
    that records a Boolean function's result in its last argument. *)
+(* The function environment the hypothesis space is built from, under the
+   [reconstructed_fun_terms] setting.  Contract: [All] returns [fenv] itself
+   (physically); otherwise the result is [fenv] less the entries named in
+   [reconstructed] that the setting excludes -- every one for [Excluded], those
+   whose result sort is not [Int], [Real] or [Bool] for [Scalar_result_only] --
+   and every other entry is kept as it is.  So with [Excluded], when the pass
+   added exactly the names in [reconstructed] and changed no other entry, the
+   result is the environment the problem has without the pass. *)
+let hspace_fenv (setting : Config.reconstructed_fun_terms)
+    ~(reconstructed : Ident.tvar Set.Poly.t) (fenv : FunEnv.t) : FunEnv.t =
+  match setting with
+  | All -> fenv
+  | _ when Set.is_empty reconstructed -> fenv
+  | Excluded ->
+      Map.Poly.filter_keys fenv ~f:(fun f -> not (Set.mem reconstructed f))
+  | Scalar_result_only ->
+      Map.Poly.filteri fenv ~f:(fun ~key ~data:(_, sret, _, _, _) ->
+          (not (Set.mem reconstructed key))
+          || Term.is_int_sort sret || Term.is_real_sort sret
+          || Term.is_bool_sort sret)
+
 let rec_fun_app_quals ?(bool_equalities = false) ~limit ~(fenv : FunEnv.t)
     (params : sort_env_list) =
   if limit <= 0 || Map.Poly.is_empty fenv then []
@@ -1341,7 +1674,7 @@ let store_index_terms ~limit ~pvar ~(params : sort_env_list)
       limit
 
 (* The values the write indices [writes] take at a predicate's starting
-   state, for [cell_store_index_anchor_quals].  A fact clause of [pvar] is a
+   state, for [cells.store_index_anchor_quals].  A fact clause of [pvar] is a
    formula of [phis] that applies [pvar] positively and applies no predicate
    variable negatively.  From each positive application [pvar(args)] of such
    a clause, an integer parameter [x] at position [k] gets the starting value
@@ -1584,6 +1917,27 @@ let shape_within ~ignore_nq (p : parameter) (q : parameter) =
   && bound_le p.ubc q.ubc && bound_le p.ubd q.ubd
   && Set.is_subset p.s ~of_:q.s
 
+(* [ClauseAffineHull.analyze] once per problem: every predicate's template
+   asks for its own entry, and the analysis is over all clauses at once.  Keyed
+   by the physical identity of the clause list the synthesizer hands every
+   template (one lazy value per problem); two domains racing compute it twice,
+   to the same result. *)
+let clause_affine_memo :
+    (ClauseOld.t list Lazy.t * ClauseAffineHull.result) option ref =
+  ref None
+
+let clause_affine_hull ~id ~fenv ~budget (clauses : ClauseOld.t list Lazy.t) =
+  match !clause_affine_memo with
+  | Some (key, r) when phys_equal key clauses -> r
+  | _ ->
+      let r =
+        Common.PhaseTime.with_phase "clause-affine-hull" @@ fun () ->
+        ClauseAffineHull.analyze ~id ~fenv ~max_coords:24 ~budget
+          (Lazy.force clauses)
+      in
+      clause_affine_memo := Some (clauses, r);
+      r
+
 module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
   let config = Cfg.config
   let id = Arg.id
@@ -1598,15 +1952,15 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
       {
         nd = config.number_of_disj;
         nq = config.number_of_qpa;
-        ubc = Option.map config.upper_bound_coeff ~f:Z.of_int;
-        ubd = Option.map config.upper_bound_const ~f:Z.of_int;
+        ubc = Option.map config.bounds.atom.coeff.initial ~f:Z.of_int;
+        ubd = Option.map config.bounds.atom.const.initial ~f:Z.of_int;
         s =
-          (match config.seeds with
+          (match config.bounds.atom.const.seeds with
           | None -> Set.Poly.singleton Z.zero
           | Some s -> Set.Poly.of_list @@ List.map s ~f:Z.of_int);
       }
 
-  (* With [plain_template_first]: how many growth-asking failures the template
+  (* With the cells deferred: how many growth-asking failures the template
      has had, and whether it has been given its cells.  Per predicate, because
      each predicate has its own instance of this module; monotone, because the
      space must only grow. *)
@@ -1624,23 +1978,27 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
          | `Unsat -> false
          | _ -> true
        in
-       loop_rate_terms ~limit:config.loop_rate_terms ~bound:16
+       loop_rate_terms ~limit:config.extra_quals.loop_rate_terms ~bound:16
          ~deadline:(Common.Clock.now_s () +. 5.)
          ~check ~pvar:(Ident.tvar_to_pvar Arg.name)
          ~params:(sort_env_list_of_sorts Arg.sorts)
          (Lazy.force Arg.problem_clauses))
-  let cells_enabled = ref (not config.plain_template_first)
+  let cells_enabled =
+    ref (match config.plain_first with All _ -> false | Off | Sort_var_only _ -> true)
 
-  (* [plain_template_first_sort_var_only] is decided once, at the first
+  (* [plain_first = Sort_var_only _] is decided once, at the first
      template: until then it is not known which arrays the predicate reaches *)
   let sort_var_scope_decided = ref false
 
   let decide_sort_var_scope (hspace : HypSpace.hspace) =
-    if config.plain_template_first_sort_var_only && not !sort_var_scope_decided
+    match config.plain_first with
+    | Off | All _ -> ()
+    | Sort_var_only { universal_arrays; _ } ->
+    if not !sort_var_scope_decided
     then (
       sort_var_scope_decided := true;
       let reaches_universal_array () =
-        config.plain_template_first_universal_arrays
+        universal_arrays
         && not
              (List.is_empty
                 (universal_array_positions
@@ -1650,7 +2008,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
       let reaches_sort_var =
         reaches_universal_array ()
         || List.exists
-          (CellQual.array_paths ~sequences:config.sequence_cells
+          (CellQual.array_paths ~sequences:Arg.sequence_cells
              (List.map ~f:snd hspace.params))
           ~f:(fun path ->
             List.exists path.CellQual.index_sorts ~f:(function
@@ -1668,16 +2026,65 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
                 "[%s] reaches an array over a sort variable or a universal relation: cells deferred"
                 (Ident.name_of_tvar Arg.name))))
 
+  (* [cells.without_out_of_scope_index], decided once, at the first template;
+     [cells_withheld] keeps [note_failure] from switching the cells on.
+
+     Precondition: [hspace.params] are this predicate's parameters, the same
+     list [gen_template] takes its cell paths from.
+     Postcondition: on a predicate with no cell path -- no array, and no
+     sequence where sequences get cells, reachable through its parameters --
+     nothing is read and nothing changes: [cells_enabled], [cells_withheld]
+     and [plain_failures] keep their values and the problem's formulas are
+     not forced, so its templates, and every question asked of them, are
+     those of [Cells_regardless].  Such a predicate generates no cell under
+     any setting, but turning [cells_enabled] off made [note_failure] count
+     its growth failures toward cells it can never have and forced the
+     shared problem formulas from its first template, so the setting was not
+     inert on a problem without arrays or sequences (one such problem stopped
+     answering under it).  Only a
+     predicate with a cell path has its cells deferred or withheld, and only
+     when no clause of the problem accesses an array or a sequence at an
+     out-of-scope index. *)
+  let out_of_scope_index_decided = ref false
+  let cells_withheld = ref false
+
+  let decide_out_of_scope_index (hspace : HypSpace.hspace) =
+    match config.cells.without_out_of_scope_index with
+    | Cells_regardless -> ()
+    | (Defer_cells | Withhold_cells) as choice ->
+        if not !out_of_scope_index_decided then (
+          out_of_scope_index_decided := true;
+          if
+            !cells_enabled && !plain_failures = 0
+            && (not
+                  (List.is_empty
+                     (CellQual.array_paths ~sequences:Arg.sequence_cells
+                        (List.map ~f:snd hspace.params))))
+            && not
+                 (CellQual.has_out_of_scope_index
+                    (Lazy.force Arg.problem_formulas))
+          then (
+            cells_enabled := false;
+            (match choice with
+            | Withhold_cells -> cells_withheld := true
+            | _ -> ());
+            Debug.print
+            @@ lazy
+                 (sprintf
+                    "[%s] no clause accesses an array or a sequence at an out-of-scope index: cells %s"
+                    (Ident.name_of_tvar Arg.name)
+                    (if !cells_withheld then "withheld" else "deferred"))))
+
   let is_growth_label = function
     | DisjQPA | Shape | Coeff | Const -> true
     | _ -> false
 
-  (* With [cell_guard_after_failures]: how many times the celled template
+  (* With [cells.guard_after_failures]: how many times the celled template
      without guards has been regenerated, and whether it has its guards.  Per
      predicate and monotone, like the two above. *)
   let guard_failures = ref 0
   let guards_generated_once = ref false
-  let guards_enabled = ref (config.cell_guard_after_failures <= 0)
+  let guards_enabled = ref (config.cells.guard_after_failures <= 0)
 
   (* Called once per regeneration, at the template without an unsat core,
      which the synthesizer builds before the unsat-core shapes, so that all
@@ -1686,7 +2093,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     if !cells_enabled && not !guards_enabled then (
       if !guards_generated_once then incr guard_failures;
       guards_generated_once := true;
-      if !guard_failures >= config.cell_guard_after_failures then (
+      if !guard_failures >= config.cells.guard_after_failures then (
         guards_enabled := true;
         Debug.print
         @@ lazy
@@ -1721,7 +2128,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
           | Some (Some _) -> false
           | _ -> true))
 
-  (* With [plain_template_failures_new_shapes_only]: the shapes at which a
+  (* With [plain_first]'s [new_shapes_only]: the shapes at which a
      failure was counted toward the cells.  Per predicate, kept across
      restarts like the counter itself. *)
   let counted_failure_shapes = ref []
@@ -1729,7 +2136,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
   (* Whether a growth failure at the current shape counts toward the cells;
      records the shape when it does. *)
   let counts_toward_cells () =
-    if not config.plain_template_failures_new_shapes_only then true
+    if not (snd (Config.plain_first_counting config.plain_first)) then true
     else
       let ignore_nq = Lazy.force nq_inert in
       if
@@ -1761,12 +2168,12 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
                 (Ident.name_of_tvar Arg.name)
                 !declared_failures)));
     if
-      (not !cells_enabled)
+      (not !cells_enabled) && (not !cells_withheld)
       && Set.exists labels ~f:is_growth_label
       && counts_toward_cells ()
     then (
       incr plain_failures;
-      if !plain_failures >= config.plain_template_failures then (
+      if !plain_failures >= fst (Config.plain_first_counting config.plain_first) then (
         cells_enabled := true;
         Debug.print
         @@ lazy
@@ -1780,10 +2187,10 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
       {
         nd = config.number_of_disj;
         nq = config.number_of_qpa;
-        ubc = Option.map config.upper_bound_coeff ~f:Z.of_int;
-        ubd = Option.map config.upper_bound_const ~f:Z.of_int;
+        ubc = Option.map config.bounds.atom.coeff.initial ~f:Z.of_int;
+        ubd = Option.map config.bounds.atom.const.initial ~f:Z.of_int;
         s =
-          (match config.seeds with
+          (match config.bounds.atom.const.seeds with
           | None -> Set.Poly.singleton Z.zero
           | Some s -> Set.Poly.of_list @@ List.map s ~f:Z.of_int);
       }
@@ -1842,16 +2249,17 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     && within config.upper_bound_depth !param.nq
 
   (* REACHABLE ON THE DEFAULT PATH: [None] there, so nothing is filtered.  The
-     test [related_position_quals] puts on the generated families, over
+     test [extra_quals.related_positions] puts on the generated families, over
      [x1 ... xn], the parameters every hypothesis space of this template has;
      the relation is computed once per clause list for all templates. *)
   let keep_related =
     lazy
-      (if not config.related_position_quals then None
-       else
+      (match config.extra_quals.related_positions with
+       | All_positions -> None
+       | Related_only { whole_clause } ->
          let rel =
            RelatedPositions.compute_cached
-             ~whole_clause:config.related_position_quals_whole_clause
+             ~whole_clause
              (Lazy.force Arg.problem_clauses)
          in
          let params = sort_env_list_of_sorts Arg.sorts in
@@ -1896,7 +2304,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
         @@ Set.Poly.of_list (List.map seq_params ~f:fst)
       in
       (* [None] by default: the suffix equations are built over every pair of
-         terms, so [related_position_quals] filters them as it filters the
+         terms, so [extra_quals.related_positions] filters them as it filters the
          generated families *)
       let eqs =
         match Lazy.force keep_related with
@@ -1910,7 +2318,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
      computed once per clause list for all templates. *)
   let keep_opaque =
     lazy
-      (if not config.opaque_clause_shapes_only then None
+      (if not config.extra_quals.opaque_clause_shapes_only then None
        else
          let shapes =
            Common.PhaseTime.with_phase "opaque-shapes" @@ fun () ->
@@ -1926,35 +2334,42 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
       Common.PhaseTime.with_phase "qualifiers-of" @@ fun () ->
       HypSpace.qualifiers_of ?keep_generated:(Lazy.force keep_related)
         ?keep_opaque_term:(Lazy.force keep_opaque)
-        ~fenv:Arg.fenv ~add_mod2_quals:config.add_mod2_quals
-        ~guarded_partial_selector_quals:config.guarded_partial_selector_quals
+        ~func_apps_at_reached_sorts_only:
+          config.extra_quals.func_apps_at_reached_sorts_only
+        ~seq_nth_at_fun_apps:config.extra_quals.seq_reads_at_fun_apps
+        ~fenv:
+          (hspace_fenv config.extra_quals.reconstructed_fun_terms
+             ~reconstructed:(Atomic.get PCSP.Problem.reconstructed_functions)
+             Arg.fenv)
+        ~add_mod2_quals:config.add_mod2_quals
+        ~guarded_partial_selector_quals:config.extra_quals.guarded_partial_selectors.quals
         ~guarded_partial_selector_offset:
-          (if config.guarded_partial_selector_offsets then
-             Option.value config.threshold_const ~default:1
+          (if config.extra_quals.guarded_partial_selectors.offsets then
+             Option.value config.bounds.atom.const.unbounded_above ~default:1
            else 0)
-        ~selector_path_quals:config.selector_path_quals
+        ~selector_path_quals:config.extra_quals.selector_paths
         ?curried_leaf_reads:
-          (if config.curried_leaf_reads then
-             Some config.curried_leaf_reads_limit
-           else None)
+          (match config.extra_quals.curried_leaf_reads with
+           | Leaf_reads { limit } -> Some limit
+           | No_leaf_reads -> None)
         ~selector_path_consts:
-          (if config.selector_path_quals then Lazy.force Arg.problem_int_consts
+          (if config.extra_quals.selector_paths then Lazy.force Arg.problem_int_consts
            else [])
         ~add_bv_quals:true
         (if config.term_depth_follows_shape then !param.nq
          else config.number_of_qpa)
         hspace
     in
-    (* UNREACHABLE BY DEFAULT (seq_length_sum_quals).  Normalised as the
+    (* UNREACHABLE BY DEFAULT (extra_quals.seq_length_sums).  Normalised as the
        qualifiers above are, so that one equation reached both ways is one
        column of the truth table. *)
     let hspace =
-    if config.seq_length_sum_quals <= 0 then hspace
+    if config.extra_quals.seq_length_sums <= 0 then hspace
     else
       let extra =
         Set.Poly.of_list
         @@ List.map
-             (seq_length_sum_quals ~limit:config.seq_length_sum_quals
+             (seq_length_sum_quals ~limit:config.extra_quals.seq_length_sums
                 hspace.params)
              ~f:Evaluator.(simplify >> Normalizer.normalize >> simplify)
       in
@@ -1966,10 +2381,10 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
               (String.concat_map_set ~sep:", " extra ~f:Formula.str_of));
       { hspace with quals = Set.union hspace.quals extra }
     in
-    (* UNREACHABLE BY DEFAULT (loop_rate_terms).  Computed once, over
+    (* UNREACHABLE BY DEFAULT (extra_quals.loop_rate_terms).  Computed once, over
        [x1 ... xn], and renamed onto this template's parameters by position. *)
     let hspace =
-      if config.loop_rate_terms <= 0 then hspace
+      if config.extra_quals.loop_rate_terms <= 0 then hspace
       else
         let sub =
           Map.Poly.of_alist_exn
@@ -1988,6 +2403,139 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
                 (String.concat_map_set ~sep:", " extra ~f:Term.str_of));
         { hspace with terms = Set.union hspace.terms extra }
     in
+    (* UNREACHABLE BY DEFAULT (clause_affine_quals).  Over [x1 ... xn],
+       renamed onto this template's parameters by position, normalised as the
+       qualifiers above are. *)
+    let hspace =
+      if not config.datatype_size_terms then hspace
+      else
+        let sizes =
+          List.filter_map hspace.params ~f:(fun (x, s) ->
+              match s with
+              | T_dt.SDT dt when SubtermOrder.inductive_closure_sort s ->
+                  Some (Datatype.app_size_fun dt (Term.mk_var x s))
+              | _ -> None)
+        in
+        if List.is_empty sizes then hspace
+        else
+          let parity =
+            List.map sizes ~f:(fun t ->
+                Evaluator.(simplify >> Normalizer.normalize >> simplify)
+                @@ Formula.eq
+                     (T_int.mk_rem Value.Euclidean t (T_int.from_int 2))
+                     (T_int.zero ()))
+          in
+          Debug.print
+          @@ lazy
+               (sprintf "[%s] datatype size terms: %s"
+                  (Ident.name_of_tvar Arg.name)
+                  (String.concat_map_list ~sep:", " sizes ~f:Term.str_of));
+          {
+            hspace with
+            terms = Set.union hspace.terms (Set.Poly.of_list sizes);
+            quals = Set.union hspace.quals (Set.Poly.of_list parity);
+          }
+    in
+    (* UNREACHABLE BY DEFAULT (guarded_selector_chains).  The guard [g] of a
+       chain is the conjunction of the testers of the multi-constructor levels
+       it passes, the tester of level [i] applied to the chain's first [i]
+       selectors; a single-constructor level needs none, its selectors being
+       total.  Under [g] every selector of the chain is applied to a value of
+       its own constructor, so [ite (g, chain, 0)] and [g] have one value in
+       every model at a ground argument. *)
+    let hspace =
+      if config.guarded_selector_chains < 2 then hspace
+      else
+        let max_depth = config.guarded_selector_chains in
+        let conses_of dt =
+          try Datatype.conses_of dt
+          with exn_ when not (Common.Timer.is_async exn_) -> []
+        in
+        (* (guard, chain) for every integer field at depth [2 .. max_depth]
+           behind at least one tester *)
+        let rec walk depth guards t acc =
+          match Term.sort_of t with
+          | T_int.SInt ->
+              if depth >= 2 && not (List.is_empty guards) then
+                (Formula.and_of (List.rev guards), t) :: acc
+              else acc
+          | T_dt.SDT dt when depth < max_depth ->
+              let conses = conses_of dt in
+              let multi = List.length conses >= 2 in
+              List.fold conses ~init:acc ~f:(fun acc cons ->
+                  let guards =
+                    if multi then
+                      Formula.mk_atom
+                        (T_dt.mk_is_cons dt (Datatype.name_of_cons cons) t)
+                      :: guards
+                    else guards
+                  in
+                  List.fold (Datatype.sels_of_cons cons) ~init:acc
+                    ~f:(fun acc sel ->
+                      walk (depth + 1) guards
+                        (T_dt.mk_sel dt (Datatype.name_of_sel sel) t)
+                        acc))
+          | _ -> acc
+        in
+        let chains =
+          List.concat_map hspace.params ~f:(fun (x, s) ->
+              match s with
+              | T_dt.SDT dt when List.length (conses_of dt) >= 2 ->
+                  List.rev (walk 0 [] (Term.mk_var x s) [])
+              | _ -> [])
+        in
+        if List.is_empty chains then hspace
+        else
+          let terms =
+            List.map chains ~f:(fun (g, t) ->
+                T_bool.ifte g t (T_int.zero ()))
+          in
+          let guards =
+            List.map chains
+              ~f:(fst >> Evaluator.(simplify >> Normalizer.normalize >> simplify))
+          in
+          Debug.print
+          @@ lazy
+               (sprintf "[%s] guarded selector-chain terms: %s"
+                  (Ident.name_of_tvar Arg.name)
+                  (String.concat_map_list ~sep:", " terms ~f:Term.str_of));
+          {
+            hspace with
+            terms = Set.union hspace.terms (Set.Poly.of_list terms);
+            quals = Set.union hspace.quals (Set.Poly.of_list guards);
+          }
+    in
+    let hspace =
+      if config.clause_affine_quals <= 0 then hspace
+      else
+        let sub =
+          Map.Poly.of_alist_exn
+          @@ List.mapi hspace.params ~f:(fun i (x, s) ->
+              (Ident.Tvar (sprintf "x%d" (i + 1)), Term.mk_var x s))
+        in
+        let eqs =
+          Option.value ~default:[]
+          @@ Map.Poly.find
+               (clause_affine_hull ~id:Arg.id ~fenv:Arg.fenv
+                  ~budget:config.clause_affine_budget Arg.problem_clauses)
+               (Ident.tvar_to_pvar Arg.name)
+        in
+        let extra =
+          Set.Poly.of_list
+          @@ List.take
+               (List.map eqs
+                  ~f:(Formula.subst sub
+                     >> Evaluator.(simplify >> Normalizer.normalize >> simplify)))
+               config.clause_affine_quals
+        in
+        Debug.print
+        @@ lazy
+             (sprintf "[%s] clause affine-hull qualifiers (%d): %s"
+                (Ident.name_of_tvar Arg.name)
+                (Set.length extra)
+                (String.concat_map_set ~sep:", " extra ~f:Formula.str_of));
+        { hspace with quals = Set.union hspace.quals extra }
+    in
     (* UNREACHABLE BY DEFAULT (declared_atoms_after_failures).  The atoms are
        over [x1 ... xn]; they are renamed onto this template's parameters by
        position. *)
@@ -2005,13 +2553,13 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
         in
         { hspace with quals = Set.union hspace.quals extra }
     in
-    (* UNREACHABLE BY DEFAULT (defined_body_quals). *)
+    (* UNREACHABLE BY DEFAULT (extra_quals.defined_body). *)
     let hspace =
-    if config.defined_body_quals <= 0 then hspace
+    if config.extra_quals.defined_body <= 0 then hspace
     else
       let extra =
         Set.Poly.of_list
-        @@ defined_body_quals ~limit:config.defined_body_quals
+        @@ defined_body_quals ~limit:config.extra_quals.defined_body
              ~defs:(LogicOld.get_inlined_defs ())
              hspace.params
       in
@@ -2023,12 +2571,16 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
               (String.concat_map_set ~sep:", " extra ~f:Formula.str_of));
       { hspace with quals = Set.union hspace.quals extra }
     in
-    (* UNREACHABLE BY DEFAULT (the solver's [reconstruct_rec_functions]):
-       the applications of the functions a reconstruction pass added, at the
-       terms the parameters reach. *)
+    (* Reached when the solver's [recursive_functions.reconstruction] (on by
+       default) reconstructed a function: the applications of the functions
+       a reconstruction pass added, at the terms the parameters reach. *)
     let hspace =
       let limit = Atomic.get PCSatCommon.RecFunReconstruct.qual_limit in
-      let names = Atomic.get PCSP.Problem.reconstructed_functions in
+      let names =
+        Set.union
+          (Atomic.get PCSP.Problem.reconstructed_functions)
+          (Atomic.get PCSP.Problem.reconstruction_aliases)
+      in
       if limit <= 0 || Set.is_empty names then hspace
       else
         let extra =
@@ -2046,12 +2598,12 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
                 (String.concat_map_set ~sep:", " extra ~f:Formula.str_of));
         { hspace with quals = Set.union hspace.quals extra }
     in
-    (* UNREACHABLE BY DEFAULT (rec_fun_app_quals). *)
-    if config.rec_fun_app_quals <= 0 then hspace
+    (* UNREACHABLE BY DEFAULT (extra_quals.rec_fun_apps). *)
+    if config.extra_quals.rec_fun_apps <= 0 then hspace
     else
       let extra =
         Set.Poly.of_list
-        @@ rec_fun_app_quals ~limit:config.rec_fun_app_quals
+        @@ rec_fun_app_quals ~limit:config.extra_quals.rec_fun_apps
              ~fenv:(LogicOld.get_fenv ()) hspace.params
       in
       Debug.print
@@ -2061,6 +2613,62 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
               (Set.length extra)
               (String.concat_map_set ~sep:", " extra ~f:Formula.str_of));
       { hspace with quals = Set.union hspace.quals extra }
+
+  (* A diagnostic, read by nothing: with [COAR_HSPACE_SIZE] set, one stderr
+     line per hypothesis-space update, giving the predicate, its qualifier
+     count, the qualifiers' total size, its term count and the OCaml major
+     heap in MB before and after the update.  Without the variable nothing is
+     computed. *)
+  let update_hspace =
+    if Option.is_none (Sys.getenv "COAR_HSPACE_SIZE") then update_hspace
+    else fun hspace ->
+      let heap () =
+        (Gc.quick_stat ()).heap_words * (Stdlib.Sys.word_size / 8) / 1_048_576
+      in
+      let h0 = heap () in
+      let r = update_hspace hspace in
+      Out_channel.eprintf
+        "HSPACESIZE %s quals=%d qual_size=%d terms=%d heap_mb=%d->%d\n%!"
+        (Ident.name_of_tvar Arg.name)
+        (Set.length r.quals)
+        (Set.sum (module Int) r.quals ~f:Formula.ast_size)
+        (Set.length r.terms) h0 (heap ());
+      (* the families: each qualifier keyed by its predicate symbol and its
+         arguments' head symbols two levels down (digits blanked); the 25
+         largest families are printed *)
+      let blank = String.map ~f:(fun c -> if Char.is_digit c then '#' else c) in
+      let short s = blank @@ if String.length s > 40 then String.prefix s 40 else s in
+      let rec tkey d = function
+        | Term.Var (_, s, _) -> "v:" ^ short (Term.str_of_sort s)
+        | Term.FunApp (sym, ts, _) ->
+            let h =
+              try short (Term.str_of_funsym sym)
+              with exn_ when not (Common.Timer.is_async exn_) -> "?"
+            in
+            if d <= 0 || List.is_empty ts then h
+            else
+              h ^ "(" ^ String.concat ~sep:"," (List.map ts ~f:(tkey (d - 1))) ^ ")"
+        | Term.LetTerm _ -> "let"
+      in
+      let qkey = function
+        | Formula.Atom (Atom.App (Predicate.Psym p, ts, _), _) ->
+            Predicate.str_of_psym p ^ "["
+            ^ String.concat ~sep:" ; " (List.map ts ~f:(tkey 2))
+            ^ "]"
+        | Formula.Atom _ -> "atom-other"
+        | Formula.UnaryOp _ -> "unary"
+        | Formula.BinaryOp _ -> "binary"
+        | _ -> "other"
+      in
+      let tbl = Hashtbl.create (module String) in
+      Set.iter r.quals ~f:(fun q -> Hashtbl.incr tbl (qkey q));
+      Hashtbl.to_alist tbl
+      |> List.sort ~compare:(fun (_, a) (_, b) -> Int.compare b a)
+      |> (fun l -> List.take l 25)
+      |> List.iter ~f:(fun (k, n) ->
+             Out_channel.eprintf "HSPACEFAM %s %d %s\n%!"
+               (Ident.name_of_tvar Arg.name) n k);
+      r
 
   let kind_cert_template () = None
 
@@ -2074,7 +2682,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
      over none gets the quantifier-free template however the count is set. *)
   let num_of_arrays params =
     List.length
-    @@ CellQual.array_paths ~sequences:config.sequence_cells (List.map ~f:snd params)
+    @@ CellQual.array_paths ~sequences:Arg.sequence_cells (List.map ~f:snd params)
 
   (* The universally quantified index variables.  They are ordinary integer
      parameters while the template is generated -- so the atom templates and
@@ -2292,13 +2900,14 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
        module has always generated. *)
     let hspace_quals_in = hspace.quals in
     decide_sort_var_scope hspace;
+    decide_out_of_scope_index hspace;
     if Option.is_none ucore then note_regeneration ();
     let paths =
-      (* before [plain_template_first] has switched this predicate's cells on,
+      (* before [plain_first] has switched this predicate's cells on,
          it has no path, and everything below builds the cell-free template *)
       if not !cells_enabled then []
       else
-        CellQual.array_paths ~sequences:config.sequence_cells
+        CellQual.array_paths ~sequences:Arg.sequence_cells
           (List.map ~f:snd hspace.params)
     in
     (* the same list the count is defined from, so the two cannot drift *)
@@ -2309,7 +2918,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     (* The cell parameters go last, because the example expansion appends its
        concrete (index, value) pairs to the end of the atom's argument list
        and reads the count back as (arity - original arity) / 2 / arrays. *)
-    let cell_binds = cell_binds paths config.number_of_cells_per_array in
+    let cell_binds = cell_binds paths config.cells.number_of_cells_per_array in
     (* The template is generated over the predicate's parameters extended by the
        index variables, so every hole, every affine atom and every qualifier is
        built in their scope.  [Formula.forall] below closes them again. *)
@@ -2335,7 +2944,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
         remaining := rest;
         taken
       in
-      let m = config.number_of_cells_per_array in
+      let m = config.cells.number_of_cells_per_array in
       (* keyed by the array a path REACHES, so that a predicate over a tuple
          holding an array names the same thing the extraction named *)
       List.map paths ~f:(fun path ->
@@ -2375,8 +2984,8 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
                [ Formula.eq col t; Formula.neq col t ]))
     in
     let array_terms_filtered =
-      config.number_of_cells_per_array > 0
-      && config.cells_replace_array_terms && !cells_enabled
+      config.cells.number_of_cells_per_array > 0
+      && config.cells.replace_array_terms && !cells_enabled
     in
     let hspace =
       if array_terms_filtered then
@@ -2393,7 +3002,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
       else hspace
     in
     let boundary_quals =
-      if not config.cell_boundary_quals then Set.Poly.empty
+      if not config.cells.boundary_quals then Set.Poly.empty
       else
         let values =
           T_int.zero ()
@@ -2425,7 +3034,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
       else [ Formula.eq a b; Formula.neq a b ]
     in
     let pair_quals =
-      if not config.cell_pair_quals then Set.Poly.empty
+      if not config.cells.pair_quals then Set.Poly.empty
       else
         let per_array (path, (_, pairs)) =
           let indexed = List.mapi pairs ~f:(fun i p -> (i, p)) in
@@ -2461,7 +3070,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
         Set.Poly.of_list @@ List.concat_map celled_paths ~f:per_array
     in
     let cross_array_quals =
-      if not config.cell_cross_array_quals then Set.Poly.empty
+      if not config.cells.cross_array_quals then Set.Poly.empty
       else
         let offsets =
           T_int.zero ()
@@ -2510,44 +3119,44 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
              if Term.is_int_sort srt then Some (Term.mk_var x srt) else None)
     in
     let cross_index_value_quals =
-      if not config.cell_cross_index_value_quals then Set.Poly.empty
+      if not config.cells.cross_index_value_quals then Set.Poly.empty
       else
         Set.Poly.of_list
         @@ cell_cross_index_value_quals ~offsets:(int_params_and_zero ())
              celled_paths
     in
     let pair_index_eqs =
-      if not config.cell_pair_index_equalities then Set.Poly.empty
+      if not config.cells.pair_index_equalities then Set.Poly.empty
       else Set.Poly.of_list @@ cell_pair_index_equalities celled_paths
     in
     let affine_value_quals =
-      if config.cell_affine_value_terms <= 0 then Set.Poly.empty
+      if config.cells.affine_value_terms <= 0 then Set.Poly.empty
       else
         let values =
           (T_int.zero ()
           :: List.filter_map hspace.params ~f:(fun (x, srt) ->
                  if Term.is_int_sort srt then Some (Term.mk_var x srt) else None)
           )
-          @ reachable_int_bounds ~limit:config.cell_affine_value_terms
+          @ reachable_int_bounds ~limit:config.cells.affine_value_terms
               hspace.params
         in
         Set.Poly.of_list @@ cell_affine_value_quals ~values celled_paths
     in
     (* The write indices and anchors over the predicate's parameters; empty
-       unless [cell_store_index_quals] is on and the predicate has cells. *)
+       unless [cells.store_index_quals] is on and the predicate has cells. *)
     let store_index_writes =
-      if (not config.cell_store_index_quals) || List.is_empty celled_paths
+      if (not config.cells.store_index_quals) || List.is_empty celled_paths
       then []
       else
         let writes =
-          store_index_terms ~limit:config.cell_store_index_quals_max
+          store_index_terms ~limit:config.cells.store_index_quals_max
             ~pvar:(Ident.tvar_to_pvar Arg.name) ~params:hspace.params
             (Lazy.force Arg.problem_formulas)
         in
         let anchors =
-          if not config.cell_store_index_anchor_quals then []
+          if not config.cells.store_index_anchor_quals then []
           else
-            store_index_anchor_terms ~limit:config.cell_store_index_quals_max
+            store_index_anchor_terms ~limit:config.cells.store_index_quals_max
               ~pvar:(Ident.tvar_to_pvar Arg.name) ~params:hspace.params
               (Lazy.force Arg.problem_formulas)
               writes
@@ -2562,7 +3171,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
         writes @ anchors
     in
     let store_index_quals =
-      if (not config.cell_store_index_quals) || List.is_empty celled_paths
+      if (not config.cells.store_index_quals) || List.is_empty celled_paths
       then Set.Poly.empty
       else
         let quals =
@@ -2584,7 +3193,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
       @@ List.concat_map (Set.to_list quals) ~f:(CellQual.instantiate ~cells)
     in
     let cut_to_cells quals =
-      if not config.cell_quals_only then quals
+      if not config.cells.quals_only then quals
       else
         let cols =
           Set.Poly.of_list
@@ -2596,11 +3205,11 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
         else
           Set.filter quals ~f:(fun q ->
               (Fn.non Set.is_empty @@ Set.inter (Formula.tvs_of q) cols)
-              || (config.sequence_sentinel_cell && has_celled_sequence
+              || (Arg.sequence_sentinel_cell && has_celled_sequence
                  && CellQual.speaks_of_sequence_length_only q)
-              || (config.cell_cut_keeps_seq_store_quals && has_celled_sequence
+              || (config.cells.cut_keeps_seq_store_quals && has_celled_sequence
                  && CellQual.is_seq_store_equality q)
-              || (config.cell_cut_keeps_seq_equalities && has_celled_sequence
+              || (config.cells.cut_keeps_seq_equalities && has_celled_sequence
                  && CellQual.is_sequence_equality q))
     in
     (* What each cell qualifier family contributed, and what survived the cut.
@@ -2613,7 +3222,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
         ( hspace_quals_in,
           array_terms_filtered,
           cell_binds,
-          config.number_of_cells_per_array,
+          config.cells.number_of_cells_per_array,
           List.map cells ~f:fst,
           List.map hspace.params ~f:fst )
       in
@@ -2645,7 +3254,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     let quals = cut_to_cells (Set.union all_cell_quals lifted) in
     let uncapped = Set.length quals in
     let quals =
-      match config.max_quals_per_predicate with
+      match config.extra_quals.max_per_predicate with
       | None -> quals
       | Some limit ->
           let capped = cap_qualifiers ~limit quals in
@@ -2663,7 +3272,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
        path, what the lifting returned ([lifted]: the schemas instantiated
        and every other qualifier passed through unchanged), the cell
        families, the count after the cut and the count kept by
-       [max_quals_per_predicate]. *)
+       [extra_quals.max_per_predicate]. *)
     if Option.is_some (Sys.getenv "COAR_QUAL_COUNT") then
       Out_channel.eprintf
         "QUALCOUNT %s in=%d schema=%d paths=%d cells_per_path=%d lifted=%d \
@@ -2671,7 +3280,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
         (Ident.name_of_tvar Arg.name)
         (Set.length hspace.quals)
         (Set.count hspace.quals ~f:CellQual.mentions_placeholder)
-        (List.length celled_paths) config.number_of_cells_per_array
+        (List.length celled_paths) config.cells.number_of_cells_per_array
         (Set.length lifted) (Set.length all_cell_quals) uncapped
         (Set.length quals);
     Debug.print
@@ -2683,7 +3292,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
             (Set.length cross_array_quals) (Set.length lifted)
             (Set.length quals));
     if
-      config.cell_cross_index_value_quals || config.cell_pair_index_equalities
+      config.cells.cross_index_value_quals || config.cells.pair_index_equalities
     then
       Debug.print
       @@ lazy
@@ -2693,7 +3302,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
               (Ident.name_of_tvar Arg.name)
               (Set.length cross_index_value_quals)
               (Set.length pair_index_eqs));
-    if config.cell_affine_value_terms > 0 then
+    if config.cells.affine_value_terms > 0 then
       Debug.print
       @@ lazy
            (sprintf "[%s] affine value cell qualifiers (%d): %s"
@@ -2703,7 +3312,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
                  (Set.to_list affine_value_quals) ~f:Formula.str_of));
     let quals =
       if
-        (not config.celled_drop_array_equality_quals)
+        (not config.cells.drop_array_equality_quals)
         || List.is_empty cell_binds
       then quals
       else
@@ -2719,6 +3328,15 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
         kept
     in
     let hspace = { hspace with quals } in
+    (* affine atoms per disjunct of the main ([non-ucore]) arm; the array-free
+       override applies only to a predicate with no array-sorted parameter *)
+    let main_arm_affine_atoms =
+      if List.exists Arg.sorts ~f:Term.is_array_sort then
+        config.extra_quals.non_ucore_affine_atoms
+      else
+        max config.extra_quals.non_ucore_affine_atoms
+          config.extra_quals.non_ucore_affine_atoms_without_arrays
+    in
     (* The template built from nothing at the current shape: the base DNF
        and, where they apply, the cell guards around it. *)
     let fresh_template () =
@@ -2733,9 +3351,23 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
                   (let quals =
                      Set.filter hspace.quals
                        ~f:
-                         (Formula.term_sort_env_of
-                         >> Set.for_all ~f:(snd >> Term.is_bool_sort))
+                         (ucore_arm_keeps_qualifier
+                            ~datatypes:
+                              config.datatype_qualifiers_in_core_variants
+                            ~only_bools)
                    in
+                   if config.datatype_qualifiers_in_core_variants then
+                     Debug.print
+                     @@ lazy
+                          (sprintf
+                             "[%s] unsat-core variant%s keeps %d datatype \
+                              qualifiers"
+                             (Ident.name_of_tvar Arg.name)
+                             (if only_bools then " (only_bools)" else "")
+                             (Set.count quals
+                                ~f:
+                                  (Formula.term_sort_env_of
+                                  >> Set.exists ~f:(snd >> T_dt.is_sdt))));
                    (* A hole with no qualifiers cannot say what parameters it
                       takes, and the constraint generator then builds it at the
                       atom's arity -- which is short by the index variables
@@ -2754,12 +3386,12 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
                 ubd = !param.ubd;
                 s = !param.s;
               }
-              { bec = Option.map config.bound_each_coeff ~f:Z.of_int }
+              { bec = Option.map config.bounds.atom.coeff.per_coefficient ~f:Z.of_int }
               gen_params
         | None ->
             Templ.gen_dnf ~print:Debug.print ~eq_atom:false ~br_bools:false
               ~only_bools:false
-              (if config.non_ucore_affine_atoms <= 0 then
+              (if main_arm_affine_atoms <= 0 then
                  {
                    consts = [];
                    terms = [];
@@ -2774,15 +3406,15 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
                    consts = Set.to_list hspace.consts;
                    terms = Set.to_list hspace.terms;
                    quals = Set.to_list (Set.add hspace.quals (Formula.mk_false ()));
-                   shp = List.init !param.nd ~f:(fun _ -> config.non_ucore_affine_atoms);
+                   shp = List.init !param.nd ~f:(fun _ -> main_arm_affine_atoms);
                    ubc = !param.ubc;
                    ubd = !param.ubd;
                    s = !param.s;
                  })
               {
                 bec =
-                  (if config.non_ucore_affine_atoms <= 0 then None
-                   else Option.map config.bound_each_coeff ~f:Z.of_int);
+                  (if main_arm_affine_atoms <= 0 then None
+                   else Option.map config.bounds.atom.coeff.per_coefficient ~f:Z.of_int);
               }
               gen_params
       in
@@ -2793,12 +3425,12 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
           @@ lazy
                (sprintf "[%s] cell guards withheld: %d of %d failures without them"
                   (Ident.name_of_tvar Arg.name)
-                  !guard_failures config.cell_guard_after_failures);
+                  !guard_failures config.cells.guard_after_failures);
           template)
         else if
-          config.cell_guard_max_index_columns > 0
+          config.cells.guard_max_index_columns > 0
           && List.length (int_cell_index_columns celled_paths)
-             > config.cell_guard_max_index_columns
+             > config.cells.guard_max_index_columns
         then (
           Debug.print
           @@ lazy
@@ -2807,11 +3439,11 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
                    the bound %d"
                   (Ident.name_of_tvar Arg.name)
                   (List.length (int_cell_index_columns celled_paths))
-                  config.cell_guard_max_index_columns);
+                  config.cells.guard_max_index_columns);
           template)
         else
           let reachable =
-            reachable_int_bounds ~limit:config.cell_guard_reachable_bounds
+            reachable_int_bounds ~limit:config.cells.guard_reachable_bounds
               hspace.params
           in
           if not (List.is_empty reachable) then
@@ -2822,11 +3454,11 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
                     (String.concat_map_list ~sep:", " reachable ~f:Term.str_of));
           with_cell_guard_disjuncts
             ~bound_terms:
-              ((if config.cell_guard_bound_terms then Set.to_list hspace.terms
+              ((if config.cells.guard_bound_terms then Set.to_list hspace.terms
                 else [])
               @ reachable
               @
-              if config.cell_guard_store_index_bounds then
+              if config.cells.guard_store_index_bounds then
                 List.map store_index_writes ~f:snd
               else [])
             ~print:Debug.print ~int_params:hspace.params
@@ -2839,14 +3471,14 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     let retain_eligible =
       config.grow_keeping_disjuncts && Option.is_none ucore
       && List.is_empty index_binds
-      && config.non_ucore_affine_atoms <= 0
+      && main_arm_affine_atoms <= 0
     in
     let template =
       if
         (not config.grow_keeping_disjuncts)
         || Option.is_some ucore
         || (not (List.is_empty index_binds))
-        || config.non_ucore_affine_atoms > 0
+        || main_arm_affine_atoms > 0
       then fresh_template ()
       else
         (* everything the fresh build reads apart from the number of
@@ -3207,12 +3839,12 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     | Coeff :: labels ->
         count_label ~account "coeff";
         inner ~account
-          (increase_coeff config.threshold_coeff param_actions)
+          (increase_coeff config.bounds.atom.coeff.unbounded_above param_actions)
           labels
     | Const :: labels ->
         count_label ~account "const";
         inner ~account
-          (increase_const config.threshold_const param_actions)
+          (increase_const config.bounds.atom.const.unbounded_above param_actions)
           labels
     | Qual :: labels ->
         count_label ~account "qual";
@@ -3223,7 +3855,13 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     | TimeOut :: _labels ->
         count_label ~account "timeout";
         param_actions (* z3 may unexpectedly time out*)
-    | _ -> assert false
+    | _ ->
+        (* another template module's label: excluded by the contract of
+           [Function.Type.update_with_labels] *)
+        assert false
+
+  let coeff_labels = [ Coeff ]
+  let const_labels = [ Const ]
 
   let actions_of labels =
     (snd @@ inner ~account:false (!param, []) @@ Set.to_list labels) @ [ "end" ]

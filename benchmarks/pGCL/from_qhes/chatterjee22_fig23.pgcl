@@ -1,5 +1,5 @@
-nat x;
-nat y;
+int x;
+int y;
 
 while (1 <= y){
 	{

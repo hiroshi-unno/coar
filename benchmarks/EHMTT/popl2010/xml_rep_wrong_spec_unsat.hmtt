@@ -1,0 +1,72 @@
+%BEGING
+S x = F x leaf.
+Box v x = v x.
+Nogap w v x = w x.
+Node l p v x = l (p v leaf) x.
+Conc p q v x = p v (q v x).
+Replace x pp y =
+  case x of
+    doc x1 x2 => doc (Replace x1 pp leaf) (Replace x2 pp y)
+  | preface x1 x2 => preface (Replace x1 pp leaf) (Replace x2 pp y)
+  | header x1 x2 => header (Replace x1 pp leaf) (Replace x2 pp y)
+  | p x1 x2 => p (Replace x1 pp leaf) (Replace x2 pp y)
+  | div x1 x2 => pp (Replace x1 pp) (Replace x2 pp y)
+  | note x1 x2 => note (Replace x1 pp leaf) (Replace x2 pp y)
+  | leaf => y.
+F x y = Replace x (Node section (Conc (Nogap (header leaf)) Box)) y.
+%ENDG
+
+%BEGINA
+/*
+Input: Input
+type Input    = doc[Preface, (Div|P|Note)*]
+type Preface  = preface[Header, P*]
+type Header   = header[]
+type P        = p[]
+type Div      = div[(Div|P|Note)*]
+type Note     = note[P*]
+*/
+qi0 doc -> qi9 qi8.
+qi1 preface -> qi10 qi8.
+qi2 header -> qi8 qi8.
+qi3 p -> qi8 qi8.
+qi4 div -> qi6 qi8.
+qi5 note -> qi7 qi8.
+qi6 div -> qi6 qi6.
+qi6 p -> qi8 qi6.
+qi6 note -> qi7 qi6.
+qi6 leaf -> .
+qi7 p -> qi8 qi7.
+qi7 leaf -> .
+qi8 leaf -> .
+qi9 preface -> qi10 qi6.
+qi10 header -> qi8 qi7.
+/*
+Output: Doc
+type Doc      = doc[Preface, (Div|P|Note)*]
+type Preface  = preface[Header, P*]
+type Header   = header[]
+type P        = p[]
+type Div      = div[(Div|P|Note)*]
+type Note     = note[P*]
+*/
+q0 doc -> q9 q8.
+q1 preface -> q10 q8.
+q2 header -> q8 q8.
+q3 p -> q8 q8.
+q4 div -> q6 q8.
+q5 note -> q7 q8.
+q6 div -> q6 q6.
+q6 p -> q8 q6.
+q6 note -> q7 q6.
+q6 leaf -> .
+q7 p -> q8 q7.
+q7 leaf -> .
+q8 leaf -> .
+q9 preface -> q10 q6.
+q10 header -> q8 q7.
+%ENDA
+
+%BEGINT
+S : qi0 -> q0.
+%ENDT

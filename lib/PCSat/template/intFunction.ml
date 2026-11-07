@@ -1,8 +1,22 @@
-(* Template for an integer-valued function unknown ([Kind.IntFun], sort
-   [args -> Int]): a guarded piecewise affine term over the arguments and the
-   hypothesis space's terms, [number_of_expr] pieces under conditions of
-   [number_of_cond_conj] conjuncts, with coefficient and constant bounds.
-   Shape, depth and bounds grow from the labels of an unsat core. *)
+(* Template for a numeric function unknown: [Make] for [Kind.IntFun] (sort
+   [args -> Int]) and [MakeReal] for [Kind.RealFun] (sort [args -> Real]), the
+   one family instantiated at two result sorts.  A guarded piecewise affine term
+   over the arguments and the hypothesis space's terms, [number_of_expr] pieces
+   under conditions of [number_of_cond_conj] conjuncts, with coefficient and
+   constant bounds.  Shape, depth and bounds grow from the labels of an unsat
+   core.
+
+   At [Real] the constant of each piece is a [Real]-sorted template parameter
+   ([Templ.gen_fun ~real_const]), so it may be any rational within the
+   constant bound, while the coefficients of the arguments stay integers as at
+   [Int].  A nullary [RealFun] unknown -- a real constant to be synthesised,
+   which is what the template parameters of a polynomial quantified entailment
+   are -- thus gets the template [c] with [|c - s| <= ub] for a seed [s] and
+   the expression-constant bound [ub], raised on failure (at [Real] a nullary
+   unknown grows by that bound alone; [Make] grows exactly as it did before
+   [MakeReal] existed, nullary or not).  The bound makes the
+   search incomplete for a solution of larger magnitude until it has been
+   raised far enough, and never unsound: every candidate is validated. *)
 open Core
 open Common
 open Common.Ext
@@ -12,28 +26,59 @@ open Ast.LogicOld
 open Function
 
 module Config = struct
+  (* the coefficient bounds of the synthesized templates, by role *)
+  type coeff_bound = {
+    initial : int option; [@default Some 1]
+        (** the starting bound on the sum of the absolute values of the coefficients
+            ([None]: unbounded); a failure can raise it *)
+    lower : int option; [@default None]
+        (** a lower bound on the sum of the absolute values of the coefficients *)
+    per_coefficient : int option; [@default None]
+        (** a bound on the absolute value of each coefficient *)
+    unbounded_above : int option; [@default None]
+        (** once the coefficient bound has reached this value, raising it drops it
+            altogether ([None]: it is raised by one each time) *)
+  }
+  [@@deriving yojson]
+
+  type const_bound = {
+    initial : int option; [@default Some 0]
+        (** the starting bound on the sum of the absolute values of the constants
+            ([None]: unbounded); a failure can raise it *)
+    unbounded_above : int option; [@default None]
+        (** once the constant bound has reached this value, raising it drops it
+            altogether ([None]: it is raised by one each time) *)
+    seeds : int list option; [@default None]
+        (** the seed constants of the template ([None]: zero alone) *)
+  }
+  [@@deriving yojson]
+
+  type role_bounds = {
+    coeff : coeff_bound; [@default Common.Util.config_default coeff_bound_of_yojson "{}"]
+    const : const_bound; [@default Common.Util.config_default const_bound_of_yojson "{}"]
+  }
+  [@@deriving yojson]
+
+  type bounds = {
+    expr : role_bounds; [@default Common.Util.config_default role_bounds_of_yojson "{}"]
+        (** the bounds on the result expressions' coefficients and constants *)
+    cond : role_bounds; [@default Common.Util.config_default role_bounds_of_yojson "{}"]
+        (** the bounds on the branch conditions' coefficients and constants *)
+  }
+  [@@deriving yojson]
+
   type t = {
     verbose : bool; [@default false]
     number_of_expr : int; [@default 1]
     number_of_cond_conj : int; [@default 1]
-    depth : int; [@default 0]
-    ext : int; [@default 0]
-    upper_bound_expr_coeff : int option; [@default Some 1]
-    upper_bound_expr_const : int option; [@default Some 0]
-    expr_seeds : int list option; [@default None]
-    upper_bound_cond_coeff : int option; [@default Some 1]
-    upper_bound_cond_const : int option; [@default Some 0]
-    cond_seeds : int list option; [@default None]
+    term_depth : int; [@default 0]
+    extra_terms : int; [@default 0]
+    bounds : bounds; [@default Common.Util.config_default bounds_of_yojson "{}"]
+        (** the coefficient bounds of the synthesized templates *)
     max_number_of_cond_conj : int option; [@default None]
-    lower_bound_expr_coeff : int option; [@default None]
-    lower_bound_cond_coeff : int option; [@default None]
-    bound_each_expr_coeff : int option; [@default None]
-    bound_each_cond_coeff : int option; [@default None]
-    threshold_expr_coeff : int option; [@default None]
-    threshold_expr_const : int option; [@default None]
-    threshold_cond_coeff : int option; [@default None]
-    threshold_cond_const : int option; [@default None]
-    ignore_bool : bool; [@default true]
+    branch_on_bool_args : bool; [@default false]
+        (** offer the boolean parameters as branch conditions of the
+            template ([Templ.gen_fun_bool_branch]) *)
     fix_shape : bool; [@default false]
   }
   [@@deriving yojson]
@@ -127,7 +172,16 @@ let state_of param labels : state =
     Set.mem labels CondConst,
     Set.mem labels TimeOut )
 
-module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
+(** the result sort a function template is instantiated at, and the kind of
+    the unknowns it serves; [sort] is [Int] for [IntFun] and [Real] for
+    [RealFun] *)
+module type RetType = sig
+  val kind : Kind.t
+  val sort : Sort.t
+end
+
+module MakeOfSort (Ret : RetType) (Cfg : Config.ConfigType) (Arg : ArgType) :
+  Function.Type = struct
   let config = Cfg.config
   let id = Arg.id
 
@@ -141,18 +195,18 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
       {
         nd = config.number_of_expr;
         nc = config.number_of_cond_conj;
-        depth = config.depth;
-        ext = config.ext;
-        ubec = Option.map config.upper_bound_expr_coeff ~f:Z.of_int;
-        ubed = Option.map config.upper_bound_expr_const ~f:Z.of_int;
+        depth = config.term_depth;
+        ext = config.extra_terms;
+        ubec = Option.map config.bounds.expr.coeff.initial ~f:Z.of_int;
+        ubed = Option.map config.bounds.expr.const.initial ~f:Z.of_int;
         es =
-          (match config.expr_seeds with
+          (match config.bounds.expr.const.seeds with
           | None -> Set.Poly.singleton Z.zero
           | Some ds -> Set.Poly.of_list @@ List.map ds ~f:Z.of_int);
-        ubcc = Option.map config.upper_bound_cond_coeff ~f:Z.of_int;
-        ubcd = Option.map config.upper_bound_cond_const ~f:Z.of_int;
+        ubcc = Option.map config.bounds.cond.coeff.initial ~f:Z.of_int;
+        ubcd = Option.map config.bounds.cond.const.initial ~f:Z.of_int;
         cs =
-          (match config.cond_seeds with
+          (match config.bounds.cond.const.seeds with
           | None -> Set.Poly.singleton Z.zero
           | Some ds -> Set.Poly.of_list @@ List.map ds ~f:Z.of_int);
       }
@@ -186,10 +240,10 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
       }
 
   let name_of () = Arg.name
-  let kind_of () = Kind.str_of Kind.IntFun
-  let kind = Kind.IntFun
+  let kind_of () = Kind.str_of Ret.kind
+  let kind = Ret.kind
   let flexible = false
-  let sort_of () = Sort.mk_fun @@ Arg.sorts @ [ T_int.SInt ]
+  let sort_of () = Sort.mk_fun @@ Arg.sorts @ [ Ret.sort ]
   let params_of () = sort_env_list_of_sorts Arg.sorts
 
   let show_state ?(config = PCSatCommon.RLConfig.disabled) labels =
@@ -229,7 +283,8 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
   let gen_template ~ucore:_ (hspace : HypSpace.hspace) =
     let template =
       Function.refuse_without_template @@ fun () ->
-      Templ.gen_fun ~print:Debug.print ~ignore_bool:config.ignore_bool
+      Templ.gen_fun ~print:Debug.print ~real_const:(Term.is_real_sort Ret.sort)
+        ~ignore_bool:(not config.branch_on_bool_args)
         {
           consts = Set.to_list hspace.consts;
           terms = Set.to_list hspace.terms;
@@ -245,12 +300,12 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
           cs = !param.cs;
         }
         {
-          lbec = Option.map config.lower_bound_expr_coeff ~f:Z.of_int;
-          lbcc = Option.map config.lower_bound_cond_coeff ~f:Z.of_int;
-          beec = Option.map config.bound_each_expr_coeff ~f:Z.of_int;
-          becc = Option.map config.bound_each_cond_coeff ~f:Z.of_int;
+          lbec = Option.map config.bounds.expr.coeff.lower ~f:Z.of_int;
+          lbcc = Option.map config.bounds.cond.coeff.lower ~f:Z.of_int;
+          beec = Option.map config.bounds.expr.coeff.per_coefficient ~f:Z.of_int;
+          becc = Option.map config.bounds.cond.coeff.per_coefficient ~f:Z.of_int;
         }
-        hspace.params (None, T_int.SInt)
+        hspace.params (None, Ret.sort)
     in
     (* let func =
        Formula.elim_ite tmpl
@@ -625,6 +680,20 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
 
   let rec inner param_actions = function
     | [] -> param_actions
+    | (ExprCondConjDepthExt | Shape) :: labels
+      when Term.is_real_sort Ret.sort && List.is_empty Arg.sorts ->
+        (* A nullary unknown denotes one value, so a guard can mention no
+           argument and a second piece adds parameters and no candidate: every
+           guarded term over no arguments equals one of its pieces.  What can
+           widen its hypothesis space is the constant bound alone.  The same
+           holds at [Int], but there the growth stays the one below, so that
+           every existing run with a nullary integer unknown (refinement
+           types, games, CHC) proposes the same templates as before the [Real]
+           instance existed; only [MakeReal] takes this arm. *)
+        inner
+          (increase_expr_const config.bounds.expr.const.unbounded_above
+             param_actions)
+          labels
     | (ExprCondConjDepthExt | Shape) :: labels ->
         inner
           (if config.fix_shape then increase_depth_ext param_actions
@@ -632,23 +701,29 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
           labels
     | ExprCoeff :: labels ->
         inner
-          (increase_expr_coeff config.threshold_expr_coeff param_actions)
+          (increase_expr_coeff config.bounds.expr.coeff.unbounded_above param_actions)
           labels
     | ExprConst :: labels ->
         inner
-          (increase_expr_const config.threshold_expr_const param_actions)
+          (increase_expr_const config.bounds.expr.const.unbounded_above param_actions)
           labels
     | CondCoeff :: labels ->
         inner
-          (increase_cond_coeff config.threshold_cond_coeff param_actions)
+          (increase_cond_coeff config.bounds.cond.coeff.unbounded_above param_actions)
           labels
     | CondConst :: labels ->
         inner
-          (increase_cond_const config.threshold_cond_const param_actions)
+          (increase_cond_const config.bounds.cond.const.unbounded_above param_actions)
           labels
     | QualDep :: labels -> inner param_actions labels
     | TimeOut :: _labels -> param_actions (* z3 may unexpectedly time out*)
-    | _ -> assert false
+    | _ ->
+        (* another template module's label: excluded by the contract of
+           [Function.Type.update_with_labels] *)
+        assert false
+
+  let coeff_labels = [ ExprCoeff; CondCoeff ]
+  let const_labels = [ ExprConst; CondConst ]
 
   let actions_of labels =
     (snd @@ inner (!param, []) @@ Set.to_list labels) @ [ "end" ]
@@ -721,3 +796,13 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
             (Ident.name_of_tvar Arg.name));
     Debug.print @@ lazy (str_of ())
 end
+
+module Make = MakeOfSort (struct
+  let kind = Kind.IntFun
+  let sort = T_int.SInt
+end)
+
+module MakeReal = MakeOfSort (struct
+  let kind = Kind.RealFun
+  let sort = T_real.SReal
+end)

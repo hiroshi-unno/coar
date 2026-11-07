@@ -66,7 +66,8 @@ let opt_solve (soft : SAT.Problem.soft) hard =
            (Z3.Boolean.mk_and ctx @@ of_cnf ctx expr)
            (string_of_int weight)
            (Z3.Symbol.mk_string ctx "hoge"));
-  match Z3.Optimize.check optimizer with
+  (* with the runtime lock released, as [Z3.Solver.check] is *)
+  match Z3Released.optimize_check optimizer with
   | UNSATISFIABLE -> `Unsat
   | UNKNOWN -> `Unknown
   | SATISFIABLE -> (

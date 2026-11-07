@@ -1,0 +1,6 @@
+(set-logic HORN)
+(declare-sort X 0)
+(declare-fun p (X) Bool)
+(define-fun-rec b ((x Bool)) Bool (not (b x)))
+(assert (forall ((x X)) (p x)))
+(check-sat)

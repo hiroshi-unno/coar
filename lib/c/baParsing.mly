@@ -11,21 +11,23 @@
 %token <string> ID
 
 %start toplevel
-%type <(string * string * Ast.LogicOld.Formula.t) list> toplevel
+%type <(string * (string * Ast.LogicOld.Formula.t) list) list> toplevel
 %%
 
+/* Every declared state with its outgoing transitions, in the order of the
+   claim.  A state is kept even when it has no transition (`false;`): the never
+   claim of an unsatisfiable formula is exactly `T0_init: false;`, and dropping
+   the state lost the initial state with it. */
 toplevel:
     NEVER LBLOCK t=states RBLOCK EOF { t }
 
 states:
-    t=state { t }
-  | t1=state t2=states { t1 @ t2 }
+    t=state { [t] }
+  | t1=state t2=states { t1 :: t2 }
 
 state:
-    id=ID COLON SKIP { [id, id, Formula.mk_atom (Atom.mk_true () ~info:Dummy) ~info:Dummy] }
-  | id=ID COLON toes=transition SEMI {
-    List.map (fun (to_id, fml) -> id, to_id, fml) toes
-  }
+    id=ID COLON SKIP { id, [id, Formula.mk_atom (Atom.mk_true () ~info:Dummy) ~info:Dummy] }
+  | id=ID COLON toes=transition SEMI { id, toes }
 
 transition:
     FALSE { [] }

@@ -1,0 +1,23 @@
+# The weight p of the choice is a nat program variable, never assigned, and so is q, so the
+# bound is asked for every initial p, q >= 0; the choice is reached only where p + q <= 1, where
+# p is 0 or 1, a probability, so the guard that makes a run abort at an out-of-range weight never
+# fires there.  Without observe and loops, cwlp is wp, and wp(S, [c = 1]) is p where p + q <= 1
+# and 0 elsewhere, so the upper bound 1 holds at every p, q.
+# Expected: valid.  The cwlp upper bound is reduced to a lower bound 0 on wp(S, 1 - [c = 1]),
+# and a run reaching an out-of-range weight is given a value that fails it; this pins the other
+# direction: where no run reaches one, that value must not cost the bound.  The twin of
+# choice_weight_state_above_one_cwlp_upper_unknown.pgcl.
+nat p;
+nat q;
+nat c;
+c := 0;
+if (p + q <= 1) {
+	{
+		c := 1;
+	}[p]{
+		c := 0;
+	}
+} else {
+	c := 0;
+}
+?Ex [[c = 1]] <= 1 cwlp

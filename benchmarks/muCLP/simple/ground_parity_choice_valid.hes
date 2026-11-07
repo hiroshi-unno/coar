@@ -1,0 +1,9 @@
+/* three alternating fixpoints over ground atoms; at B 0 the prover chooses
+   between a cycle through B and C, whose outermost predicate B is a least
+   fixpoint (lost), and a cycle through A and B, whose outermost predicate A is
+   a greatest fixpoint (won): the query is true */
+B 0
+s.t.
+A (x: int): bool =nu B 0;
+B (x: int): bool =mu x = 0 /\ (C x \/ A x);
+C (x: int): bool =nu B 0;

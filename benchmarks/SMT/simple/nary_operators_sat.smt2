@@ -12,6 +12,8 @@
 ;   - / div      :left-assoc, and each also has a one-argument form of its own,
 ;                so (- 9 3 2) is 4 and not 8
 ;   + * bvand bvor bvxor bvadd bvmul concat re.++   :left-assoc
+;   re.union re.inter   :left-assoc; the third argument decides each conjunct,
+;                       so a fold that kept only two arguments answers false
 ;
 ; z3 and cvc5 agree on every one. They were answered with `<op> is not bound`,
 ; or an assertion failure for xor. This file is the reproducer that the reader's
@@ -44,5 +46,11 @@
              (= (concat #x1 #x2 #x3) #x123)
              (str.in_re "abc" (re.++ (str.to_re "a")
                                      (str.to_re "b")
-                                     (str.to_re "c")))))
+                                     (str.to_re "c")))
+             (str.in_re "c" (re.union (str.to_re "a")
+                                      (str.to_re "b")
+                                      (str.to_re "c")))
+             (not (str.in_re "ab" (re.inter re.all
+                                            (str.to_re "ab")
+                                            (str.to_re "a"))))))
 (check-sat)

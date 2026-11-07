@@ -51,12 +51,36 @@ type t = {
          than in a module-level reference because this record is per problem,
          where a global would be shared by every solver domain.  Shared by
          [{t with ...}] copies, like [unsat_witness] above. *)
+  undecided_unknowns : Ident.tvar Set.Poly.t ref;
+      (* set by the validation phase at the end of a round that rejected
+         every candidate and learnt nothing (each counterexample vacuous): the
+         unknowns applied by the problem clauses whose question the solver
+         left undecided in that round; empty after any other round.  Read by
+         the synthesis phase, which may then propose a candidate that differs
+         on those unknowns.  Per problem for the reason given at
+         [synthesis_stalled]; shared by [{t with ...}] copies. *)
+  seeded_examples : seeded option;
+      (* the examples the validation phase added from received ground seeds;
+         [None] when no seed was ever received, which is every run whose
+         configuration sends none *)
+}
+
+(* The instances received ground seeds chose (each an instance of one of the
+   problem's own clauses, so holding them is sound whatever the seeds were),
+   whether the sender asked for a trace (read at an [unsat], to say how many
+   of them the refuted example set held), and whether template synthesis
+   reads them ([synthesis_reads]; see [synthesis_examples_of]). *)
+and seeded = {
+  seeded : ExClause.t Set.Poly.t;
+  trace : bool;
+  synthesis_reads : bool;
 }
 
 let init ?(witness = WitnessConfig.default) oracle =
   {
     examples = ClauseGraph.create ();
     synthesis_stalled = ref false;
+    undecided_unknowns = ref Set.Poly.empty;
     hspaces = Hashtbl.Poly.create ();
     truth_table = TruthTable.create ();
     labelings = [ (Map.Poly.empty (*ToDo*), false (*ToDo*)) ];
@@ -71,6 +95,7 @@ let init ?(witness = WitnessConfig.default) oracle =
     unsat_witness = ref None;
     witness;
     kind_certs = Hashtbl.Poly.create ();
+    seeded_examples = None;
   }
 
 let clone t =
@@ -89,21 +114,23 @@ let clone t =
     assumed_clauses = Hash_set.copy t.assumed_clauses;
     unsat_witness = t.unsat_witness;
     synthesis_stalled = t.synthesis_stalled;
+    undecided_unknowns = t.undecided_unknowns;
     witness = t.witness;
     kind_certs = Hashtbl.copy t.kind_certs;
+    seeded_examples = t.seeded_examples;
   }
 
 let set_kind_certs t certs =
   List.iter certs ~f:(fun (pv, c) -> Hashtbl.set t.kind_certs ~key:pv ~data:c)
 
-let set_unsat_witness t w = if t.witness.unsat then t.unsat_witness := Some w
+let set_unsat_witness t w = if WitnessConfig.records_unsat t.witness then t.unsat_witness := Some w
 
-(* [subst] is dropped unless [unsat_substitutions] is on (it is the only
+(* [subst] is dropped unless the witness records substitutions (it is the only
    part of a witness whose cost grows with the number of examples) *)
 let record_derivation ?(via = None) ?(premises = []) t ex ~rule ~subst =
-  if t.witness.unsat then
+  if WitnessConfig.records_unsat t.witness then
     ClauseGraph.record_derivation ~via ~premises t.examples ex ~rule
-      ~subst:(if t.witness.unsat_substitutions then subst else None)
+      ~subst:(if WitnessConfig.records_substitutions t.witness then subst else None)
 
 (* the clauses an example was derived from, read off the clause graph;
    [Untracked] where the deriving component recorded no source *)
@@ -125,7 +152,7 @@ let sources_of_example t ex : UnsatWitness.source list =
 
 (* an example re-normalised after its derivation was recorded keeps it *)
 let copy_derivation t ~from ~to_ =
-  if t.witness.unsat then
+  if WitnessConfig.records_unsat t.witness then
     match ClauseGraph.derivation_of t.examples from with
     | Some d ->
         ClauseGraph.record_derivation ~via:d.ClauseGraph.via
@@ -161,6 +188,30 @@ let witness_example t ex =
 let witness_examples t exs = List.map (Set.to_list exs) ~f:(witness_example t)
 let examples_of t = ClauseGraph.examples_of t.examples
 let pos_neg_und_examples_of t = ClauseGraph.pos_neg_und_examples_of t.examples
+
+(* [synthesis_examples_of t]: the examples template synthesis must satisfy.
+   [examples_of t] itself unless received seeds asked to be kept from
+   synthesis ([synthesis_reads = false]); then [examples_of t] without the
+   seeded examples and every example the clause graph records as derived
+   from one (a derived example's edges cite its transitive sources, so a
+   successor walk from the seeded vertices finds them all).  Resolution and
+   labeling keep reading [examples_of t], so a refutation of the seeded
+   instances is found as before.  Sound to drop: synthesis only proposes
+   candidates, and validation checks each against the problem's clauses,
+   which the dropped examples are instances of.  A seeded example whose
+   stored spelling differs from the value recorded in [seeded] (the graph
+   identifies spellings up to normal form) is not found and stays visible,
+   which is the behaviour without the switch. *)
+let synthesis_examples_of t =
+  match t.seeded_examples with
+  | Some { seeded; synthesis_reads = false; _ } when not (Set.is_empty seeded)
+    ->
+      let hidden, count =
+        ClauseGraph.descendants_of_examples t.examples seeded
+      in
+      if count = 0 then examples_of t
+      else Set.filter (examples_of t) ~f:(fun ex -> not (hidden ex))
+  | _ -> examples_of t
 
 let hspace_of_pvar (Ident.Pvar name) t =
   match Hashtbl.Poly.find t.hspaces (Ident.Tvar name) with
@@ -204,19 +255,54 @@ type templ =
       * (Ident.tvar, Term.t array array array array) Hashtbl.t
       * (Ident.tvar, Term.t array array) Hashtbl.t)
 
-let shared_info :
-    ( int option * Ident.tvar,
-      (parameter ref * parameter ref)
-      * (templ
-        * (Ident.tvar, Formula.t Set.Poly.t * Term.t Set.Poly.t) Hashtbl.t) )
-    Hashtbl.t =
+type shared_entry =
+  (parameter ref * parameter ref)
+  * (templ * (Ident.tvar, Formula.t Set.Poly.t * Term.t Set.Poly.t) Hashtbl.t)
+
+(* The shape parameters, template cells and qualifier sets of a tagged family
+   of well-founded relations ([Kind.NWF], [Kind.Parity]), one entry per
+   (solver id, family name), shared by the family's unknowns so that growing
+   one grows them all.
+
+   The table is global and the solvers that use it run in parallel domains
+   (MuVal's primal, dual and second primal, each under its own id), so every
+   access goes through [shared_info_lock]: a Base hashtable is not safe under
+   concurrent mutation, and while one domain's insertion resizes it the table
+   is briefly empty, so another domain's lookup of an entry it had registered
+   itself could return nothing.  An entry's value is touched only by the
+   solver whose id is in its key, so the lock covers the table, not the
+   values.
+
+   Invariant: an entry is registered by the family's template when the
+   solver is constructed, before [initialize_predicates] reads it, and is
+   never removed. *)
+let shared_info : (int option * Ident.tvar, shared_entry) Hashtbl.t =
   Hashtbl.Poly.create ()
+
+let shared_info_lock = Stdlib.Mutex.create ()
+
+(** the entry of [key], if registered *)
+let find_shared_info key =
+  Stdlib.Mutex.protect shared_info_lock (fun () ->
+      Hashtbl.Poly.find shared_info key)
+
+(** the entry of [key], registered as [create ()] if there was none, the
+    lookup and the registration one atomic step; [create] runs under the lock,
+    so it must be cheap and must not touch [shared_info] *)
+let find_or_add_shared_info key ~create =
+  Stdlib.Mutex.protect shared_info_lock (fun () ->
+      match Hashtbl.Poly.find shared_info key with
+      | Some m -> m
+      | None ->
+          let m = create () in
+          Hashtbl.Poly.add_exn shared_info ~key ~data:m;
+          m)
 
 let initialize_predicates id t kind_map (*quals_terms_map*) =
   Hashtbl.Poly.iteri t.hspaces ~f:(fun ~key ~data:_ ->
       match Map.Poly.find kind_map key with
       | Some (Kind.NWF (nwf, _)) -> (
-          match Hashtbl.Poly.find shared_info (id, nwf.name) with
+          match find_shared_info (id, nwf.name) with
           | Some (_, (NWF (rcs, dcs, qds), qual_term_map)) ->
               Hashtbl.Poly.(
                 clear rcs;
@@ -225,7 +311,7 @@ let initialize_predicates id t kind_map (*quals_terms_map*) =
                 clear qual_term_map)
           | _ -> assert false)
       | Some (Kind.Parity (nwf, _)) -> (
-          match Hashtbl.Poly.find shared_info (id, nwf.name) with
+          match find_shared_info (id, nwf.name) with
           | Some (_, (Parity (rcs, dcs, qds), qual_term_map)) ->
               Hashtbl.Poly.(
                 clear rcs;
@@ -265,8 +351,8 @@ let initialize_predicates id t kind_map (*quals_terms_map*) =
               ~start:(List.length nwf.sorts_shared + List.length sorts_l)
               sorts_r
           in
-          Hashtbl.Poly.update shared_info (id, nwf.name) ~f:(function
-            | Some (params, (NWF templ, qual_term_map)) ->
+          (match find_shared_info (id, nwf.name) with
+          | Some (_, (NWF _, qual_term_map)) ->
                 let _ =
                   let quals' =
                     Templ.quals_over_set quals0 (params_shared @ params_left)
@@ -296,9 +382,8 @@ let initialize_predicates id t kind_map (*quals_terms_map*) =
                 Hashtbl.Poly.update qual_term_map tag_r ~f:(function
                   | Some (quals, terms) ->
                       (Set.union quals quals', Set.union terms terms')
-                  | None -> (quals', terms'));
-                (params, (NWF templ, qual_term_map))
-            | _ -> assert false)
+                  | None -> (quals', terms'))
+          | _ -> assert false)
       | Some (Kind.Parity (nwf, (tag_l, tag_r))) ->
           assert (List.is_empty nwf.sorts_shared);
           let sorts_l = Hashtbl.Poly.find_exn nwf.sorts_map tag_l in
@@ -308,8 +393,8 @@ let initialize_predicates id t kind_map (*quals_terms_map*) =
             LogicOld.sort_env_list_of_sorts ~pre:"" ~start:(List.length sorts_l)
               sorts_r
           in
-          Hashtbl.Poly.update shared_info (id, nwf.name) ~f:(function
-            | Some (params, (Parity templ, qual_term_map)) ->
+          (match find_shared_info (id, nwf.name) with
+          | Some (_, (Parity _, qual_term_map)) ->
                 let _ =
                   let quals' = Templ.quals_over_set quals0 params_left in
                   let terms' = Templ.terms_over_set terms0 params_left in
@@ -359,9 +444,8 @@ let initialize_predicates id t kind_map (*quals_terms_map*) =
                 Hashtbl.Poly.update qual_term_map tag_r ~f:(function
                   | Some (quals, terms) ->
                       (Set.union quals quals', Set.union terms terms')
-                  | None -> (quals', terms'));
-                (params, (Parity templ, qual_term_map))
-            | _ -> assert false)
+                  | None -> (quals', terms'))
+          | _ -> assert false)
       | _ -> ())
 
 (* end ParityPredicate / NWFPredicate *)
@@ -559,11 +643,28 @@ let set_pos_neg_und_examples examples t = { t with examples }
 let set_hspace pvar hspace t = Hashtbl.Poly.set t.hspaces ~key:pvar ~data:hspace
 let set_truth_table truth_table t = { t with truth_table }
 
+(* Enters every qualifier of every hypothesis space and every atom of every
+   example into the truth tables, each cell evaluated as [TruthTable] does.
+
+   Inside a solve given a strict deadline ([SolveDeadline]) it stops entering
+   qualifiers and atoms once the deadline has passed.  A cell is first
+   evaluated by simplification in this process, which no solver budget
+   reaches, and on a Rust-derived input whose parametric examples carry
+   dozens of sequence-valued arguments a synthesis round was measured asking
+   its first solver question 210 s past a 60 s deadline, the time (sampled
+   on the same input without a strict deadline) going to this update.  Nothing
+   is lost by stopping: the one caller, the template synthesizer, reads the
+   deadline next and gives the round up, which its loop answers with a
+   timeout anyway; and a qualifier or atom left out is entered whole when it
+   is looked up or at the next update, so the table stays consistent.
+   Without a strict deadline every entry is made. *)
 let update_truth_table ~print ~id t =
+  let live () = not (SolveDeadline.expired_strict ()) in
   Hashtbl.Poly.iteri t.hspaces ~f:(fun ~key:(Ident.Tvar name) ~data ->
-      TruthTable.update_map_with_qualifiers ~print ~id t.truth_table t.fenv
-        data.qdeps ((*ToDo*) Ident.Pvar name) (data.params, data.quals));
-  TruthTable.update_map_with_examples ~print ~id t.truth_table t.fenv t.hspaces
+      TruthTable.update_map_with_qualifiers ~live ~print ~id t.truth_table
+        t.fenv data.qdeps ((*ToDo*) Ident.Pvar name) (data.params, data.quals));
+  TruthTable.update_map_with_examples ~live ~print ~id t.truth_table t.fenv
+    t.hspaces
   @@ examples_of t
 
 let set_labelings labelings t = { t with labelings }
@@ -843,11 +944,33 @@ let variances_of_bags bags (* ToDo: fix *) =
   @@ List.map ~f:fst
   @@ List.concat_map ~f:fst bags
 
-(** assume that all predicate variable has at least one numeric argument *)
+(* The reason [update_heat_map] refuses, shared with the labeler's configuration
+   check so that a configuration and a run say the same thing. *)
+let heat_map_unavailable =
+  "the BMI_MAX_SAT labeling is not available in this build: its heat map is a \
+   bag-level multiple-instance SVM trained by the external BMI-Learner library \
+   (BMIsvm), which this build does not link"
+
+(** The heat map of the BMI-weighted MAX-SAT labeling: a bag-level
+    multiple-instance SVM over the weighted example clauses [wexs], each clause
+    a bag of atom vectors (an atom's numeric arguments, a Boolean encoded as
+    [enc_bool_to_float]), the kernel width of a predicate the inverse of its
+    vectors' variance; [get_heat] then reads an atom's decision value as the
+    weight of the soft constraint labeling it.  Assumes every unknown has at
+    least one numeric argument.
+
+    Contract as built: always [Error heat_map_unavailable], and [t.heat_map] is
+    left unchanged, so [get_heat] is never reached.  The trainer was the external
+    BMI-Learner library, and this build does not link it; the training code that
+    used it is kept below as a comment for when it is linked again.  Returning
+    an error rather than failing an assertion lets the labeling report why the
+    strategy cannot run; a configuration that selects the strategy outside an
+    oracle wrapper is refused when it is loaded, so this is reached only when an
+    oracle labeling has no oracle to fall back from. *)
 let update_heat_map ?((*~print*) enc_bool_to_float = 100.0)
-    ?(ignore_bool_args_variance = false) senv wexs t : unit =
+    ?(ignore_bool_args_variance = false) senv wexs t : unit Or_error.t =
   ignore (enc_bool_to_float, ignore_bool_args_variance, senv, wexs, t);
-  assert false
+  Or_error.error_string heat_map_unavailable
 (*
   let map (* pvar name to index *) =
     let cnt = ref 0 in
@@ -881,9 +1004,11 @@ let update_heat_map ?((*~print*) enc_bool_to_float = 100.0)
   print ~id @@ lazy (sprintf "negative support vectors (%d): %s" (List.length svs_neg) (String.concat_map_list ~sep:"," ~f:ExAtom.str_of svs_neg));
   t.heat_map := Some (model, map)*)
 
+(* Requires a heat map built by [update_heat_map], which in this build never
+   builds one, so a call here is a broken caller. *)
 let get_heat ?(enc_bool_to_float = 100.0) t atom =
   ignore (enc_bool_to_float, t, atom);
-  assert false
+  failwith ("VersionSpace.get_heat: " ^ heat_map_unavailable)
 (*
   match !(t.heat_map) with
   | None -> assert false

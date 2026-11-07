@@ -1,0 +1,11 @@
+/* Q y z holds when some x has x tdiv 3 = y + 2 and 4 x + z + 6 = 0.  At z = -2 that x is -1,
+   whose truncated quotient by 3 is 0, so Q y (-2) holds only at y = -2; the Euclidean quotient
+   of -1 by 3 is -1, which would put y = -3 there.  S holds only at (-3, -2) (its second case
+   needs y < -100 and climbs to a false base), so no (y, z) is in both and R 0 is invalid.
+   A model-based projection of Q's body that reads tdiv as the Euclidean quotient produces a
+   region of (y, z) containing (-3, -2), and a solver trusting that region answers valid. */
+R 0
+s.t.
+R (u: int): bool =mu exists (y: int). exists (z: int). u = 0 /\ (z = -10 \/ z = -2) /\ Q y z /\ S y z;
+Q (y: int) (z: int): bool =mu (exists (x: int). x tdiv 3 = y + 2 /\ 4 * x + z + 6 = 0) \/ (y < -100 /\ Q (y + 1) z);
+S (y: int) (z: int): bool =mu (y = -3 /\ z = -2) \/ (y < -100 /\ S (y + 1) z);

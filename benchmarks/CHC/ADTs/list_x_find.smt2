@@ -8,13 +8,11 @@
 (declare-sort a53 0)
 (declare-datatypes ((List 1)) ((par (T) ((nil) (cons (hd T) (tl (List T)))))))
 
-(declare-fun find ((a48) (List X) (a50) (a51) (a52) (a53)) Bool)
+(declare-fun find (a48 (List X) a50 a51 a52 a53) Bool)
 
 (assert (forall ( (p a48) (l (List X)) (ok a50) (exc a51) (var128 a52) (_v36 a53) )
     (=>
-        (and
-            ((_ is nil) l)
-        )
+        ((_ is nil) l)
         (find p l ok exc var128 _v36)
     )
 ))

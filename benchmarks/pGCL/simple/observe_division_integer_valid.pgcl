@@ -1,0 +1,11 @@
+# x is a nat variable equal to 1.  An observed condition is inside the program, so / between
+# integers there is integer division: x / 2 = 0 holds, the observation never blocks, and the
+# conditional expectation of c, which is 2, is at least 2.
+# Expected: valid.  Read as exact division, x / 2 was 1/2, every run was blocked, and the
+# program was refused as infeasible.
+nat x;
+nat c;
+x := 1;
+c := 2;
+observe (x / 2 = 0);
+?Ex [c] >= 2

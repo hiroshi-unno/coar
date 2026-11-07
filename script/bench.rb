@@ -18,55 +18,71 @@ def result_of(output)
   end
 end
 
-def exe_timeout(params, cmd, benchname, output)
-  ## timeout for the process that does not work OCaml's timeout.
-  params['timeout'] ||= "100"
+# The reason of a refusal -- exit status 1 with a last stderr line `error: <reason>`, the
+# shape in which the tool declines an input -- or nil for any other run (a crash exits 2
+# or by a signal, and a line on stdout is never read as one).
+def refusal_of(status, err)
+  return nil unless status && status.exitstatus == 1
+  line = err.scrub('?').lines.map(&:chomp).select { |l| l.start_with?('error: ') }.last
+  line && line.delete_prefix('error: ')
+end
+
+# The verdict of a finished run.  As before stdout and stderr were told apart, the run is
+# an answer only when it printed nothing but a verdict (stderr included); otherwise it is
+# `refused` (with its reason) or `abort`.
+def verdict_of(out, err, status)
+  return [result_of(out.chomp)] if err.empty?
+  reason = refusal_of(status, err)
+  reason ? ['refused', reason] : ['abort']
+end
+
+# run_command: runs CMD with stdout and stderr read apart (stderr in a thread, so that
+# neither pipe can fill and stall the solver), within LIMIT seconds when LIMIT is given.
+def run_command(cmd, benchname, output, limit)
   result = [benchname]
-  Open3.popen2e(cmd) { |_, stdout_err, wait_thr|
+  Open3.popen3(cmd) { |_, stdout, stderr, wait_thr|
+    pid = wait_thr.pid
+    # popen3 closes the pipes when its block ends, which a reader still waiting after a
+    # timeout meets as IOError: that run's stderr is not needed.
+    err_reader = Thread.new { begin stderr.read rescue IOError '' end }
+    err_reader.report_on_exception = false
     begin
-      pid = wait_thr.pid
       tmp = ''
       start = Time.now
-      Timeout.timeout(params['timeout'].to_i) { # set timeout
-        while line = stdout_err.gets
+      read = proc {
+        while line = stdout.gets
           tmp += line
         end
       }
+      limit ? Timeout.timeout(limit, &read) : read.call
+      status = wait_thr.value
       finish = Time.now
-      result.push (result_of tmp.chomp)
+      err = err_reader.value
+      STDERR.print err
+      verdict, reason = verdict_of(tmp, err, status)
+      result.push verdict
       result.push (finish - start)
+      result.push reason if reason
     rescue Timeout::Error
-      result.push "#{params['timeout'].to_i} Time Out"
+      result.push "#{limit} Time Out"
       Process.kill('KILL', pid)
     rescue Interrupt
       result.push 'Interrupted (Killed by Ctrl-C)'
-      Process.Kill('KILL', pid)
+      Process.kill('KILL', pid)
       sleep(1)
     end
   }
   output << result
 end
 
+def exe_timeout(params, cmd, benchname, output)
+  ## timeout for the process that does not work OCaml's timeout.
+  params['timeout'] ||= "100"
+  run_command(cmd, benchname, output, params['timeout'].to_i)
+end
+
 def exe_without_timeout(param, cmd, benchname, output)
-  result = [benchname]
-  Open3.popen2e(cmd) { |_, stdout_err, wait_thr|
-    begin
-      pid = wait_thr.pid
-      tmp = ''
-      start = Time.now
-      while line = stdout_err.gets
-        tmp += line
-      end
-      finish = Time.now
-      result.push (result_of tmp.chomp)
-      result.push (finish - start)
-    rescue Interrupt
-      result.push 'Interrupted (Killed by Ctrl-C)'
-      Process.Kill('KILL', pid)
-      sleep(1)
-    end
-  }
-  output << result
+  run_command(cmd, benchname, output, nil)
 end
 
 def execution(params, cmd, benchname, output)

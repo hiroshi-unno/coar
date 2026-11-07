@@ -1,0 +1,10 @@
+# A tick of negative cost would take the expected runtime out of [0, oo], where the least
+# fixpoints of the reduction live: an expected-runtime bound on such a program is refused.
+nat x;
+
+while (x = 0) {
+	tick(0 - 1);
+	{x := 1}[1/2]{skip}
+}
+
+?Ert[0] <= 2

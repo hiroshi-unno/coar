@@ -1,0 +1,18 @@
+/* The input language reserves the terminal br for nondeterministic choice:
+   br t1 t2 stands for the outputs of t1 and of t2, and a specification
+   holds when it holds of both, although the automaton has no transition on
+   br.  Main chooses between e and a e, both accepted from q0: sat.  The
+   reduction marks its own branches with the same br, so a program's br is
+   read exactly as the reduction's. */
+%BEGING
+Main x -> br e (a e).
+%ENDG
+
+%BEGINA
+q0 a -> q0.
+q0 e -> .
+%ENDA
+
+%BEGINT
+Main : q0 -> q0.
+%ENDT

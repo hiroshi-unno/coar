@@ -165,7 +165,9 @@ type node = {
   lineno : int;
   tag : tag;
   nsort : sort option;  (** absent for sort declarations and properties *)
-  args : int list;  (** operand ids; a negative id is the bitwise negation of the node *)
+  args : int list;
+      (** operand ids; a negative id is the bitwise negation of the node, which the reader
+          admits only for a bit-vector node *)
   imm : int list;  (** [slice]: upper and lower index; [uext]/[sext]: the extension width *)
   cst : string option;  (** the literal of [const]/[constd]/[consth] *)
   sym : string option;

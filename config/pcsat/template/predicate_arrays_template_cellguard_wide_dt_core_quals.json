@@ -1,0 +1,11 @@
+{
+  "datatype_qualifiers_in_core_variants": true,
+  "cells": {
+    "number_of_cells_per_array": 1,
+    "boundary_quals": true,
+    "guard_reachable_bounds": 2,
+    "guard_max_index_columns": 2
+  },
+  "cell_guard_disjuncts": true,
+  "plain_first": ["Sort_var_only", {"failures": 3}]
+}

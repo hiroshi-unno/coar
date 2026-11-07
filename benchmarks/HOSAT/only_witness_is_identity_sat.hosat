@@ -1,0 +1,2 @@
+(* f(true) and not f(false): the identity is the only witness, and it is not constant *)
+_exists f : bool -> bool. (f(|true|) && not (f(|false|)))

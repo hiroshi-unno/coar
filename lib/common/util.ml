@@ -15,7 +15,10 @@
    - small list-based vectors, matrices, bit vectors, graphs (strongly
      connected components), partial orders, permutations and combinations;
    - [ALMap], a sorted association list compared by polymorphic equality,
-     whose [find_exn] raises [Stdlib.Not_found] (not Base's [Not_found_s]). *)
+     whose [find_exn] raises [Stdlib.Not_found] (not Base's [Not_found_s]);
+   - [UnreadableAnswer], the message the Z3 decoder raises for a built-in it
+     has no term for, and the test that recognises it however it was
+     re-raised. *)
 open Core
 open Ext
 
@@ -197,10 +200,18 @@ let config_default (reader : Yojson.Safe.t -> ('a, string) result)
    every instantiated configuration as it was.  Names are not unique (two
    template modules share one), so the list keeps every registration. *)
 module ConfigRegistry = struct
+  exception Full_serialization_failed of exn
+
+  let serialize_full f =
+    try ConfigJsonRuntime.with_full f
+    with exn -> raise (Full_serialization_failed exn)
+
   type entry = {
     name : string;
     load : string -> Yojson.Safe.t Or_error.t;
     reparse : Yojson.Safe.t -> (Yojson.Safe.t, string) result;
+    load_full : string -> Yojson.Safe.t Or_error.t;
+    reparse_full : Yojson.Safe.t -> (Yojson.Safe.t, string) result;
   }
 
   let entries : entry list ref = ref []
@@ -241,14 +252,21 @@ end = struct
             @@ sprintf "Invalid %s Configuration (%s): %s" X.name filename msg)
 
   let () =
-    let load filename =
+    let load_with printer filename =
       Or_error.bind (load_ext_file (ExtFile.Filename filename)) ~f:(function
-        | ExtFile.Instance x -> Ok (X.to_yojson x)
+        | ExtFile.Instance x -> Ok (printer x)
         | ExtFile.Filename _ -> Or_error.error_string "not instantiated")
     in
+    let full_printer x =
+      ConfigRegistry.serialize_full (fun () -> X.to_yojson x)
+    in
+    let load = load_with X.to_yojson in
+    let load_full = load_with full_printer in
     let reparse json = Result.map (X.of_yojson json) ~f:X.to_yojson in
+    let reparse_full json = Result.map (X.of_yojson json) ~f:full_printer in
     ConfigRegistry.entries :=
-      { ConfigRegistry.name = X.name; load; reparse } :: !ConfigRegistry.entries
+      { ConfigRegistry.name = X.name; load; reparse; load_full; reparse_full }
+      :: !ConfigRegistry.entries
 end
 
 module LexingHelper = struct
@@ -362,6 +380,21 @@ module Task = struct
       Atomic.set p (Some (Error (e, bt)));
       match e with TasksActive -> raise e | _ -> ())
 
+  (* the domains the pools of this process have spawned and not yet joined.
+     Every domain of this tree is spawned here, so while this is positive
+     another domain runs and OCaml refuses [Unix.fork] (it fails whenever a
+     domain other than the caller's is running); a pass that can act only
+     through a forked copy may read [other_domains_live ()] to skip itself
+     before doing any work, where every copy it asked for would be refused.
+     A domain is counted from just after its spawn to just after its join,
+     so the count can exceed the running domains only while a pool is torn
+     down (a worker that has taken its quit and returned, not yet joined),
+     when the pool's owner is joining rather than running such a pass; and a
+     domain not yet counted only lets a pass start whose forks then fail, as
+     they did before the count existed *)
+  let live_domains = Atomic.make 0
+  let other_domains_live () = Atomic.get live_domains > 0
+
   let setup_pool ~num_additional_domains =
     let task_chan =
       Domainslib__Multi_channel.make (num_additional_domains + 1)
@@ -379,9 +412,13 @@ module Task = struct
     in
     let domains =
       Array.init num_additional_domains ~f:(fun _ ->
-          Domain.spawn (fun () ->
-              Stdlib.Printexc.record_backtrace record;
-              worker ()))
+          let d =
+            Domain.spawn (fun () ->
+                Stdlib.Printexc.record_backtrace record;
+                worker ())
+          in
+          Atomic.incr live_domains;
+          d)
     in
     { domains; task_chan }
 
@@ -407,7 +444,9 @@ module Task = struct
       Domainslib__Multi_channel.send pool.task_chan Quit
     done;
     Domainslib__Multi_channel.clear_local_state pool.task_chan;
-    Array.iter ~f:Domain.join pool.domains
+    Array.iter pool.domains ~f:(fun d ->
+        Domain.join d;
+        Atomic.decr live_domains)
 
   let parallel_for_reduce ?(chunk_size = 0) ~start ~finish ~body pool reduce_fun
       init =
@@ -877,4 +916,25 @@ module ALMap = struct
           else aux m1 tl2 lefts boths ((k2, d2) :: rights)
     in
     aux m1 m2 [] [] []
+end
+
+(* The [Failure] message the Z3 decoder raises when an answer holds a Z3
+   built-in this tree has no term for (such as [seq.nth_u], Z3's
+   uninterpreted out-of-range part of [seq.nth]).  It lives here, below both
+   the decoder and the callers that recover from it, so that the text raised
+   and the text recognised are one definition. *)
+module UnreadableAnswer = struct
+  (* The term decoder's message is [prefix ^ " <operator> in <expr>"]. *)
+  let prefix = "[z3:term_of] unsupported Z3 operator"
+
+  (* Unrelated atom failures retain the diagnostic wrapper. Unsupported causes
+     receive a distinct anchored prefix before any user-controlled expression. *)
+  let atom_wrapper = "[z3:atom_of] "
+  let atom_prefix = "[z3:atom_of] unsupported Z3 operator"
+
+  (* Recognise a cause before adding expression text, never by searching the
+     resulting diagnostic: quoted symbol names can contain arbitrary markers. *)
+  let is_failure msg =
+    String.is_prefix msg ~prefix:(prefix ^ " ")
+    || String.is_prefix msg ~prefix:(atom_prefix ^ " ")
 end

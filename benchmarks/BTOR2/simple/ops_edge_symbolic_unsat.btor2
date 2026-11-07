@@ -1,0 +1,577 @@
+; The edge cases of the operators SMT-LIB's FixedSizeBitVectors fixes and BTOR2 inherits, applied to
+; inputs rather than constants, so that no constant folding answers them: division and remainder
+; by zero and with every sign, shifts past the width, rotation by more than the width, the
+; overflow predicates at their boundaries, and widths 1 and 3. Each block is "x = c1 /\ y = c2 /\
+; op(x, y) != want"; the bad property is their disjunction, so the model is safe iff every
+; operator gives its expected value.
+1 sort bitvec 8
+2 sort bitvec 1
+3 sort bitvec 3
+4 input 1 x
+5 input 1 y
+6 input 3 x3
+7 input 3 y3
+8 input 2 x1
+9 input 2 y1
+; srem -7 0 = -7
+100 constd 1 249
+101 constd 1 0
+102 constd 1 249
+103 eq 2 4 100
+104 eq 2 5 101
+105 srem 1 4 5
+106 neq 2 105 102
+107 and 2 103 104
+108 and 2 107 106
+; smod -7 0 = -7
+110 constd 1 249
+111 constd 1 0
+112 constd 1 249
+113 eq 2 4 110
+114 eq 2 5 111
+115 smod 1 4 5
+116 neq 2 115 112
+117 and 2 113 114
+118 and 2 117 116
+; smod 7 -2 = -1 (the sign of the divisor)
+120 constd 1 7
+121 constd 1 254
+122 constd 1 255
+123 eq 2 4 120
+124 eq 2 5 121
+125 smod 1 4 5
+126 neq 2 125 122
+127 and 2 123 124
+128 and 2 127 126
+; srem 7 -2 = 1 (the sign of the dividend)
+130 constd 1 7
+131 constd 1 254
+132 constd 1 1
+133 eq 2 4 130
+134 eq 2 5 131
+135 srem 1 4 5
+136 neq 2 135 132
+137 and 2 133 134
+138 and 2 137 136
+; sdiv -7 -2 = 3
+140 constd 1 249
+141 constd 1 254
+142 constd 1 3
+143 eq 2 4 140
+144 eq 2 5 141
+145 sdiv 1 4 5
+146 neq 2 145 142
+147 and 2 143 144
+148 and 2 147 146
+; sdiv -128 -1 = -128 (wraps)
+150 constd 1 128
+151 constd 1 255
+152 constd 1 128
+153 eq 2 4 150
+154 eq 2 5 151
+155 sdiv 1 4 5
+156 neq 2 155 152
+157 and 2 153 154
+158 and 2 157 156
+; srem -128 -1 = 0
+160 constd 1 128
+161 constd 1 255
+162 constd 1 0
+163 eq 2 4 160
+164 eq 2 5 161
+165 srem 1 4 5
+166 neq 2 165 162
+167 and 2 163 164
+168 and 2 167 166
+; smod -7 -2 = -1
+170 constd 1 249
+171 constd 1 254
+172 constd 1 255
+173 eq 2 4 170
+174 eq 2 5 171
+175 smod 1 4 5
+176 neq 2 175 172
+177 and 2 173 174
+178 and 2 177 176
+; sra 128 200 = 255
+180 constd 1 128
+181 constd 1 200
+182 constd 1 255
+183 eq 2 4 180
+184 eq 2 5 181
+185 sra 1 4 5
+186 neq 2 185 182
+187 and 2 183 184
+188 and 2 187 186
+; sra 64 200 = 0
+190 constd 1 64
+191 constd 1 200
+192 constd 1 0
+193 eq 2 4 190
+194 eq 2 5 191
+195 sra 1 4 5
+196 neq 2 195 192
+197 and 2 193 194
+198 and 2 197 196
+; sll 1 255 = 0
+200 constd 1 1
+201 constd 1 255
+202 constd 1 0
+203 eq 2 4 200
+204 eq 2 5 201
+205 sll 1 4 5
+206 neq 2 205 202
+207 and 2 203 204
+208 and 2 207 206
+; srl 255 9 = 0
+210 constd 1 255
+211 constd 1 9
+212 constd 1 0
+213 eq 2 4 210
+214 eq 2 5 211
+215 srl 1 4 5
+216 neq 2 215 212
+217 and 2 213 214
+218 and 2 217 216
+; udiv 0 0 = 255
+220 constd 1 0
+221 constd 1 0
+222 constd 1 255
+223 eq 2 4 220
+224 eq 2 5 221
+225 udiv 1 4 5
+226 neq 2 225 222
+227 and 2 223 224
+228 and 2 227 226
+; urem 0 0 = 0
+230 constd 1 0
+231 constd 1 0
+232 constd 1 0
+233 eq 2 4 230
+234 eq 2 5 231
+235 urem 1 4 5
+236 neq 2 235 232
+237 and 2 233 234
+238 and 2 237 236
+; sdiv 0 0 = -1
+240 constd 1 0
+241 constd 1 0
+242 constd 1 255
+243 eq 2 4 240
+244 eq 2 5 241
+245 sdiv 1 4 5
+246 neq 2 245 242
+247 and 2 243 244
+248 and 2 247 246
+; sdiv -128 0 = 1
+250 constd 1 128
+251 constd 1 0
+252 constd 1 1
+253 eq 2 4 250
+254 eq 2 5 251
+255 sdiv 1 4 5
+256 neq 2 255 252
+257 and 2 253 254
+258 and 2 257 256
+; usubo 0 1 = 1
+260 constd 1 0
+261 constd 1 1
+262 constd 2 1
+263 eq 2 4 260
+264 eq 2 5 261
+265 usubo 2 4 5
+266 neq 2 265 262
+267 and 2 263 264
+268 and 2 267 266
+; usubo 0 0 = 0
+270 constd 1 0
+271 constd 1 0
+272 constd 2 0
+273 eq 2 4 270
+274 eq 2 5 271
+275 usubo 2 4 5
+276 neq 2 275 272
+277 and 2 273 274
+278 and 2 277 276
+; ssubo 127 -1 = 1
+280 constd 1 127
+281 constd 1 255
+282 constd 2 1
+283 eq 2 4 280
+284 eq 2 5 281
+285 ssubo 2 4 5
+286 neq 2 285 282
+287 and 2 283 284
+288 and 2 287 286
+; ssubo 0 -128 = 1
+290 constd 1 0
+291 constd 1 128
+292 constd 2 1
+293 eq 2 4 290
+294 eq 2 5 291
+295 ssubo 2 4 5
+296 neq 2 295 292
+297 and 2 293 294
+298 and 2 297 296
+; ssubo -1 -128 = 0
+300 constd 1 255
+301 constd 1 128
+302 constd 2 0
+303 eq 2 4 300
+304 eq 2 5 301
+305 ssubo 2 4 5
+306 neq 2 305 302
+307 and 2 303 304
+308 and 2 307 306
+; saddo -128 -1 = 1
+310 constd 1 128
+311 constd 1 255
+312 constd 2 1
+313 eq 2 4 310
+314 eq 2 5 311
+315 saddo 2 4 5
+316 neq 2 315 312
+317 and 2 313 314
+318 and 2 317 316
+; saddo 127 1 = 1
+320 constd 1 127
+321 constd 1 1
+322 constd 2 1
+323 eq 2 4 320
+324 eq 2 5 321
+325 saddo 2 4 5
+326 neq 2 325 322
+327 and 2 323 324
+328 and 2 327 326
+; smulo -128 -1 = 1
+330 constd 1 128
+331 constd 1 255
+332 constd 2 1
+333 eq 2 4 330
+334 eq 2 5 331
+335 smulo 2 4 5
+336 neq 2 335 332
+337 and 2 333 334
+338 and 2 337 336
+; smulo -1 -1 = 0
+340 constd 1 255
+341 constd 1 255
+342 constd 2 0
+343 eq 2 4 340
+344 eq 2 5 341
+345 smulo 2 4 5
+346 neq 2 345 342
+347 and 2 343 344
+348 and 2 347 346
+; smulo 16 8 = 1
+350 constd 1 16
+351 constd 1 8
+352 constd 2 1
+353 eq 2 4 350
+354 eq 2 5 351
+355 smulo 2 4 5
+356 neq 2 355 352
+357 and 2 353 354
+358 and 2 357 356
+; smulo -16 8 = 0
+360 constd 1 240
+361 constd 1 8
+362 constd 2 0
+363 eq 2 4 360
+364 eq 2 5 361
+365 smulo 2 4 5
+366 neq 2 365 362
+367 and 2 363 364
+368 and 2 367 366
+; umulo 128 2 = 1
+370 constd 1 128
+371 constd 1 2
+372 constd 2 1
+373 eq 2 4 370
+374 eq 2 5 371
+375 umulo 2 4 5
+376 neq 2 375 372
+377 and 2 373 374
+378 and 2 377 376
+; umulo 255 1 = 0
+380 constd 1 255
+381 constd 1 1
+382 constd 2 0
+383 eq 2 4 380
+384 eq 2 5 381
+385 umulo 2 4 5
+386 neq 2 385 382
+387 and 2 383 384
+388 and 2 387 386
+; sdivo -128 -1 = 1
+390 constd 1 128
+391 constd 1 255
+392 constd 2 1
+393 eq 2 4 390
+394 eq 2 5 391
+395 sdivo 2 4 5
+396 neq 2 395 392
+397 and 2 393 394
+398 and 2 397 396
+; sdivo -128 1 = 0
+400 constd 1 128
+401 constd 1 1
+402 constd 2 0
+403 eq 2 4 400
+404 eq 2 5 401
+405 sdivo 2 4 5
+406 neq 2 405 402
+407 and 2 403 404
+408 and 2 407 406
+; uaddo 255 1 = 1
+410 constd 1 255
+411 constd 1 1
+412 constd 2 1
+413 eq 2 4 410
+414 eq 2 5 411
+415 uaddo 2 4 5
+416 neq 2 415 412
+417 and 2 413 414
+418 and 2 417 416
+; rol (3 bits) 1 4 = 2: the amount is taken modulo the width
+420 constd 3 1
+421 constd 3 4
+422 constd 3 2
+423 eq 2 6 420
+424 eq 2 7 421
+425 rol 3 6 7
+426 neq 2 425 422
+427 and 2 423 424
+428 and 2 427 426
+; ror (3 bits) 1 4 = 4
+430 constd 3 1
+431 constd 3 4
+432 constd 3 4
+433 eq 2 6 430
+434 eq 2 7 431
+435 ror 3 6 7
+436 neq 2 435 432
+437 and 2 433 434
+438 and 2 437 436
+; rol (3 bits) 3 7 = 6
+440 constd 3 3
+441 constd 3 7
+442 constd 3 6
+443 eq 2 6 440
+444 eq 2 7 441
+445 rol 3 6 7
+446 neq 2 445 442
+447 and 2 443 444
+448 and 2 447 446
+; sll (3 bits) 1 5 = 0
+450 constd 3 1
+451 constd 3 5
+452 constd 3 0
+453 eq 2 6 450
+454 eq 2 7 451
+455 sll 3 6 7
+456 neq 2 455 452
+457 and 2 453 454
+458 and 2 457 456
+; sra (3 bits) 4 5 = 7
+460 constd 3 4
+461 constd 3 5
+462 constd 3 7
+463 eq 2 6 460
+464 eq 2 7 461
+465 sra 3 6 7
+466 neq 2 465 462
+467 and 2 463 464
+468 and 2 467 466
+; sdiv (1 bit) -1 -1 = -1 (wraps)
+470 constd 2 1
+471 constd 2 1
+472 constd 2 1
+473 eq 2 8 470
+474 eq 2 9 471
+475 sdiv 2 8 9
+476 neq 2 475 472
+477 and 2 473 474
+478 and 2 477 476
+; srem (1 bit) -1 -1 = 0
+480 constd 2 1
+481 constd 2 1
+482 constd 2 0
+483 eq 2 8 480
+484 eq 2 9 481
+485 srem 2 8 9
+486 neq 2 485 482
+487 and 2 483 484
+488 and 2 487 486
+; sdivo (1 bit) -1 -1 = 1
+490 constd 2 1
+491 constd 2 1
+492 constd 2 1
+493 eq 2 8 490
+494 eq 2 9 491
+495 sdivo 2 8 9
+496 neq 2 495 492
+497 and 2 493 494
+498 and 2 497 496
+; smulo (1 bit) -1 -1 = 1
+500 constd 2 1
+501 constd 2 1
+502 constd 2 1
+503 eq 2 8 500
+504 eq 2 9 501
+505 smulo 2 8 9
+506 neq 2 505 502
+507 and 2 503 504
+508 and 2 507 506
+; saddo (1 bit) -1 -1 = 1
+510 constd 2 1
+511 constd 2 1
+512 constd 2 1
+513 eq 2 8 510
+514 eq 2 9 511
+515 saddo 2 8 9
+516 neq 2 515 512
+517 and 2 513 514
+518 and 2 517 516
+; saddo (1 bit) 0 -1 = 0
+520 constd 2 0
+521 constd 2 1
+522 constd 2 0
+523 eq 2 8 520
+524 eq 2 9 521
+525 saddo 2 8 9
+526 neq 2 525 522
+527 and 2 523 524
+528 and 2 527 526
+; ssubo (1 bit) 0 -1 = 1
+530 constd 2 0
+531 constd 2 1
+532 constd 2 1
+533 eq 2 8 530
+534 eq 2 9 531
+535 ssubo 2 8 9
+536 neq 2 535 532
+537 and 2 533 534
+538 and 2 537 536
+; umulo (1 bit) 1 1 = 0
+540 constd 2 1
+541 constd 2 1
+542 constd 2 0
+543 eq 2 8 540
+544 eq 2 9 541
+545 umulo 2 8 9
+546 neq 2 545 542
+547 and 2 543 544
+548 and 2 547 546
+; smod (1 bit) -1 0 = -1
+550 constd 2 1
+551 constd 2 0
+552 constd 2 1
+553 eq 2 8 550
+554 eq 2 9 551
+555 smod 2 8 9
+556 neq 2 555 552
+557 and 2 553 554
+558 and 2 557 556
+; sdiv (1 bit) -1 0 = 1
+560 constd 2 1
+561 constd 2 0
+562 constd 2 1
+563 eq 2 8 560
+564 eq 2 9 561
+565 sdiv 2 8 9
+566 neq 2 565 562
+567 and 2 563 564
+568 and 2 567 566
+; smod (3 bits) -3 3 = 0
+570 constd 3 5
+571 constd 3 3
+572 constd 3 0
+573 eq 2 6 570
+574 eq 2 7 571
+575 smod 3 6 7
+576 neq 2 575 572
+577 and 2 573 574
+578 and 2 577 576
+; smod (3 bits) 3 -3 = 0
+580 constd 3 3
+581 constd 3 5
+582 constd 3 0
+583 eq 2 6 580
+584 eq 2 7 581
+585 smod 3 6 7
+586 neq 2 585 582
+587 and 2 583 584
+588 and 2 587 586
+; smod (3 bits) 1 -2 = -1
+590 constd 3 1
+591 constd 3 6
+592 constd 3 7
+593 eq 2 6 590
+594 eq 2 7 591
+595 smod 3 6 7
+596 neq 2 595 592
+597 and 2 593 594
+598 and 2 597 596
+; srem (3 bits) -3 2 = -1
+600 constd 3 5
+601 constd 3 2
+602 constd 3 7
+603 eq 2 6 600
+604 eq 2 7 601
+605 srem 3 6 7
+606 neq 2 605 602
+607 and 2 603 604
+608 and 2 607 606
+; some block fails
+1000 or 2 108 118
+1001 or 2 1000 128
+1002 or 2 1001 138
+1003 or 2 1002 148
+1004 or 2 1003 158
+1005 or 2 1004 168
+1006 or 2 1005 178
+1007 or 2 1006 188
+1008 or 2 1007 198
+1009 or 2 1008 208
+1010 or 2 1009 218
+1011 or 2 1010 228
+1012 or 2 1011 238
+1013 or 2 1012 248
+1014 or 2 1013 258
+1015 or 2 1014 268
+1016 or 2 1015 278
+1017 or 2 1016 288
+1018 or 2 1017 298
+1019 or 2 1018 308
+1020 or 2 1019 318
+1021 or 2 1020 328
+1022 or 2 1021 338
+1023 or 2 1022 348
+1024 or 2 1023 358
+1025 or 2 1024 368
+1026 or 2 1025 378
+1027 or 2 1026 388
+1028 or 2 1027 398
+1029 or 2 1028 408
+1030 or 2 1029 418
+1031 or 2 1030 428
+1032 or 2 1031 438
+1033 or 2 1032 448
+1034 or 2 1033 458
+1035 or 2 1034 468
+1036 or 2 1035 478
+1037 or 2 1036 488
+1038 or 2 1037 498
+1039 or 2 1038 508
+1040 or 2 1039 518
+1041 or 2 1040 528
+1042 or 2 1041 538
+1043 or 2 1042 548
+1044 or 2 1043 558
+1045 or 2 1044 568
+1046 or 2 1045 578
+1047 or 2 1046 588
+1048 or 2 1047 598
+1049 or 2 1048 608
+1050 bad 1049

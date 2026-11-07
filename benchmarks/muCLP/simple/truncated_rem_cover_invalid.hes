@@ -1,0 +1,5 @@
+/* `rem` is the truncated remainder, which takes the dividend's sign: at
+   x = -1 it is -1, so neither disjunct holds. */
+forall (x: int). P x
+s.t.
+P (x: int): bool =mu x rem 2 = 0 \/ x rem 2 = 1;

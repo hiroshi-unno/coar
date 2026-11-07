@@ -1,0 +1,35 @@
+/* Keeping the even naturals of a list, linearly: Even and Odd analyse an
+   element once and rebuild it in the accumulated continuation ac, which
+   outputs it (ac z) when it is even. */
+%BEGING
+Filter x -> case x of
+  nil => nil
+| cons x xs => Even Z x xs.
+Z x -> x.
+S ac x -> ac (s x).
+Even ac x xs -> case x of
+  z => cons (ac z) (Filter xs)
+| s x => Odd (S ac) x xs.
+Odd ac x xs -> case x of
+  z => Filter xs
+| s x => Even (S ac) x xs.
+%ENDG
+
+%BEGINA
+qn z -> .
+qn s -> qn.
+qe z -> .
+qe s -> qo.
+qo s -> qe.
+/* q0 : nat list */
+q0 nil -> .
+q0 cons -> qn q0.
+/* q1 : even list */
+q1 nil -> .
+q1 cons -> qe q1.
+%ENDA
+
+%BEGINT
+/* Filter : nat list -> even list */
+Filter : q0 -> q1.
+%ENDT

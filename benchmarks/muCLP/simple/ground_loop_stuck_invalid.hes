@@ -1,0 +1,5 @@
+/* a closed loop that stops increasing at 5 and then repeats one state for
+   ever: the least fixpoint does not hold */
+L 0
+s.t.
+L (x: int): bool =mu x >= 10 \/ (x < 5 /\ L (x + 1)) \/ (x >= 5 /\ x < 10 /\ L x);

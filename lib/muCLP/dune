@@ -8,7 +8,8 @@
  (name muCLP)
  (public_name CoAR.muCLP)
  (preprocess
-  (pps ppx_deriving_yojson))
- (libraries core CoAR.pCSP CoAR.ast CoAR.common CoAR.LTS)
- (modules pred problem lexer parser util optimizer qelim reducer)
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
+ (libraries core CoAR.pCSP CoAR.ast CoAR.common CoAR.LTS CoAR.SMT)
+ (modules pred problem lexer parser util onePoint optimizer qelim reducer
+  groundSolve)
  (synopsis "The definition of muCLP"))

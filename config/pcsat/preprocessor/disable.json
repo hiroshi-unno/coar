@@ -1,6 +1,12 @@
 {
     "enable": false,
-    "resolution_threshold": 4,
-    "num_elim_bool_vars": 0,
-    "reduce_pvar_args": false
+    "elimination": {
+        "resolution_threshold": 4,
+        "bool_vars": 0
+    },
+    "argument_reduction": {
+        "reduce": [
+            "No_arg_reduction"
+        ]
+    }
 }

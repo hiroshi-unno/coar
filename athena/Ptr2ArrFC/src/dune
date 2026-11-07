@@ -1,0 +1,16 @@
+; The transformation as a library, registered as the Frama-C plugin "ptr2arr"
+; and linked into the standalone executable in ../bin. Both are optional, so a
+; build of the enclosing repository without Frama-C skips them.
+
+(library
+ (optional)
+ (name ptr2arr_fc)
+ (public_name frama-c-ptr2arr.core)
+ (flags :standard -open Frama_c_kernel)
+ (libraries frama-c.kernel frama-c-eva.core yojson))
+
+(plugin
+ (optional)
+ (name ptr2arr)
+ (libraries frama-c-ptr2arr.core)
+ (site (frama-c plugins)))

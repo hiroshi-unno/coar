@@ -2,8 +2,16 @@
     "verbose": true,
     "number_of_disj": 4,
     "number_of_conj": 2,
-    "upper_bound_coeff": 2,
-    "upper_bound_const": 1,
+    "bounds": {
+        "atom": {
+            "coeff": {
+                "initial": 2
+            },
+            "const": {
+                "initial": 1
+            }
+        }
+    },
     "eq_atom": true,
     "add_mod2_quals": false
 }

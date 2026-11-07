@@ -15,6 +15,7 @@ rule main = parse
 (* keywords for declaration *)
 | "bool" { Parser.BOOL }
 | "nat" { Parser.NAT }
+| "int" { Parser.INT }
 | "real" { Parser.REAL }
 | "const" { Parser.CONST }
 | "rparam" { Parser.RPARAM }
@@ -31,6 +32,7 @@ rule main = parse
 
 (* keywords for query *)
 | "?Ex" { Parser.EXPECTATION }
+| "?Ert" { Parser.ERT }
 | "?Pr" { Parser.PRQUERY }
 | "!Print" { Parser.PRINT }
 | "!Plot" { Parser.PLOT }

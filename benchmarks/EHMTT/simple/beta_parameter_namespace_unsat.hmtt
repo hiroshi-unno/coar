@@ -1,0 +1,12 @@
+/* Expected: unsat. In-house beta-parameter namespace regression. */
+%BEGING
+S u -> H a b.
+H x x_2 -> copy (coerce q x_2).
+%ENDG
+%BEGINA
+q a -> .
+r b -> .
+%ENDA
+%BEGINT
+S : q -> q.
+%ENDT

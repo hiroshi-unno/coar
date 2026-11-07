@@ -1,0 +1,23 @@
+[
+    "MuCyc",
+    {
+        "verbose": true,
+
+        "pcsp_solver": [
+            "Filename",
+            "./config/solver/spacer_sol.json"
+        ],
+        "refinement_strategy": [
+            "Solve"
+        ],
+
+        "backtrack_strategy": [
+            "Chronological"
+        ],
+        "frames": {
+            "model_after_lemma": [
+                "Entry_model"
+            ]
+        }
+    }
+]

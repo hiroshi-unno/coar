@@ -1,0 +1,9 @@
+[
+    "OptPCSat",
+    {
+        "improve_solver": [
+            "Filename",
+            "./config/solver/pcsat.json"
+        ]
+    }
+]

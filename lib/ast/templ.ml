@@ -121,8 +121,16 @@ let mk_const_bounds_real t lb ub seeds =
         let norm = T_real.mk_rabs @@ T_real.mk_rsub t (T_real.mk_real n) in
         Formula.and_of @@ Formula.mk_range_real_opt norm lb ub)
 
+(** The norm of a coefficient vector that the bounds of a template's
+    coefficients constrain ([mk_coeffs_bounds]): [L1] the sum of absolute
+    values, [L2_squared] the sum of squares.  A configuration states it for
+    the well-foundedness templates (their ranking functions' coefficients);
+    every other template bounds by [L1]. *)
+type norm_type = L1 | L2_squared [@@deriving yojson]
+
 let mk_coeffs_bounds norm_type ts lb ub be =
-  if avoid_ite_coeffs && norm_type = 1 then (* ToDO: support bitvectors *)
+  if avoid_ite_coeffs && (match norm_type with L1 -> true | L2_squared -> false)
+  then (* ToDO: support bitvectors *)
     let xps, xns =
       List.unzip
       @@ List.map ts ~f:(fun t ->
@@ -154,9 +162,9 @@ let mk_coeffs_bounds norm_type ts lb ub be =
       List.map ts ~f:(fun t -> T_irb.cast (Term.sort_of t, T_int.SInt) t)
     in
     let norm =
-      if norm_type = 1 then T_int.l1_norm ts
-      else if norm_type = 2 then T_int.l2_norm_sq ts
-      else failwith "not supported"
+      match norm_type with
+      | L1 -> T_int.l1_norm ts
+      | L2_squared -> T_int.l2_norm_sq ts
     in
     ( Set.Poly.empty,
       Evaluator.simplify @@ Formula.and_of
@@ -168,7 +176,8 @@ let mk_coeffs_bounds norm_type ts lb ub be =
           List.concat_map ts ~f:(fun t -> Formula.mk_range t (Z.neg be) be) )
 
 let mk_coeffs_bounds_of_real norm_type ts lb ub be =
-  if avoid_ite_coeffs && norm_type = 1 then
+  if avoid_ite_coeffs && (match norm_type with L1 -> true | L2_squared -> false)
+  then
     let xps, xns =
       List.unzip
       @@ List.map ts ~f:(fun t ->
@@ -201,9 +210,9 @@ let mk_coeffs_bounds_of_real norm_type ts lb ub be =
       List.map ts ~f:(fun t -> T_irb.cast (Term.sort_of t, T_real.SReal) t)
     in
     let norm =
-      if norm_type = 1 then T_real.l1_norm ts
-      else if norm_type = 2 then T_real.l2_norm_sq ts
-      else failwith "not supported"
+      match norm_type with
+      | L1 -> T_real.l1_norm ts
+      | L2_squared -> T_real.l2_norm_sq ts
     in
     ( Set.Poly.empty,
       Evaluator.simplify @@ Formula.and_of
@@ -373,8 +382,12 @@ type fun_tfsp = {
   becc : Z.t option;
 }
 
-let gen_cond_and_exps_of_fun ~print tf_params tf_sub_params params
-    (vret_opt, sret) =
+(* [extra_terms] are further candidate results, appended after the
+   hypothesis-space terms over [params]; unlike those they may mention the
+   template's own parameters (coefficients), so they are not filtered by
+   [terms_over].  They must have sort [sret]. *)
+let gen_cond_and_exps_of_fun ?(extra_terms = []) ~print tf_params tf_sub_params
+    params (vret_opt, sret) =
   let nd = List.length tf_params.shp in
   if nd <= 0 then
     {
@@ -388,7 +401,7 @@ let gen_cond_and_exps_of_fun ~print tf_params tf_sub_params params
       cond_const_bounds = Formula.mk_true ();
     }
   else
-    let terms = terms_over tf_params.terms params in
+    let terms = terms_over tf_params.terms params @ extra_terms in
     let txs =
       List.map ~f:T_irb.to_int_if_rb
       @@ List.filter ~f:T_irb.is_sirb
@@ -462,7 +475,7 @@ let gen_cond_and_exps_of_fun ~print tf_params tf_sub_params params
         @@ List.init (nd - 1) ~f:(fun i ->
             List.unzip
             @@ List.init (List.nth_exn tf_params.shp i) ~f:(fun j ->
-                mk_coeffs_bounds 1
+                mk_coeffs_bounds L1
                   (Array.to_list
                   @@ Array.slice dc.(i).(j) 1 (Array.length dc.(i).(j)))
                   tf_sub_params.lbcc tf_params.ubcc tf_sub_params.becc))
@@ -539,9 +552,18 @@ let gen_sel_expr sel_terms sel default =
     and one bound [sum |c_i| <= ub] per expression, and with thousands of
     terms Z3 does not decide those bounds within the synthesis budget.  This
     only restricts which candidates can be proposed, and every candidate is
-    still checked against the constraints, so it cannot bear on soundness. *)
-let gen_irb_fun ?(linear_own_args_only = false) ~print tf_params tf_sub_params
-    params (vret_opt, sret) : templ_func =
+    still checked against the constraints, so it cannot bear on soundness.
+
+    With [real_const] and [sret = Real], the constant of each affine part is a
+    [Real]-sorted template parameter, bounded by [|c - s| <= ubed] for a seed
+    [s] as the integer one is, instead of [int_to_real] of an integer
+    parameter.  Without it a real-valued function with no arguments -- a real
+    constant to be found -- can only denote an integer, and a problem whose
+    every solution is a non-integer rational (a probability such as [1/2]) is
+    searched forever.  The coefficients of the arguments stay integers. *)
+let gen_irb_fun ?(linear_own_args_only = false) ?(real_const = false) ~print
+    tf_params tf_sub_params params (vret_opt, sret) : templ_func =
+  let real_const = real_const && Term.is_real_sort sret in
   let terms = terms_over tf_params.terms params in
   let quals, sel_terms =
     let quals = quals_over tf_params.quals params in
@@ -647,6 +669,9 @@ let gen_irb_fun ?(linear_own_args_only = false) ~print tf_params tf_sub_params
         gen_params_2d_flex_variant num_sort (nd - 1) tf_params.shp
           (List.length txs + 1) )
     in
+    if real_const then
+      Array.iter rc ~f:(fun r ->
+          r.(0) <- Term.mk_var (Ident.mk_fresh_parameter ()) T_real.SReal);
     let r_x i = T_irb.affine_exp_of sret rc.(i) expr_terms in
     let d_x i j = T_irb.affine_exp_of num_sort dc.(i).(j) num_terms in
     let templ_params_quals, hole_quals_map, func =
@@ -678,7 +703,7 @@ let gen_irb_fun ?(linear_own_args_only = false) ~print tf_params tf_sub_params
       let expr_pos_neg_maps, phis =
         List.unzip
         @@ List.init nd ~f:(fun i ->
-            mk_coeffs_bounds 1
+            mk_coeffs_bounds L1
               (Array.to_list @@ Array.slice rc.(i) 1 (Array.length rc.(i)))
               tf_sub_params.lbec tf_params.ubec tf_sub_params.beec)
       in
@@ -687,7 +712,11 @@ let gen_irb_fun ?(linear_own_args_only = false) ~print tf_params tf_sub_params
     let expr_const_bounds =
       Formula.and_of
       @@ List.init nd ~f:(fun i ->
-          mk_const_bounds rc.(i).(0) None tf_params.ubed tf_params.es)
+          if real_const then
+            mk_const_bounds_real rc.(i).(0) None
+              (Option.map tf_params.ubed ~f:Q.of_bigint)
+              (Set.Poly.map tf_params.es ~f:Q.of_bigint)
+          else mk_const_bounds rc.(i).(0) None tf_params.ubed tf_params.es)
     in
     let cond_pos_neg_map, cond_coeffs_bounds =
       let cond_pos_neg_mapss, phiss =
@@ -695,7 +724,7 @@ let gen_irb_fun ?(linear_own_args_only = false) ~print tf_params tf_sub_params
         @@ List.init (nd - 1) ~f:(fun i ->
             List.unzip
             @@ List.init (List.nth_exn tf_params.shp i) ~f:(fun j ->
-                mk_coeffs_bounds 1
+                mk_coeffs_bounds L1
                   (Array.to_list
                   @@ Array.slice dc.(i).(j) 1 (Array.length dc.(i).(j)))
                   tf_sub_params.lbcc tf_params.ubcc tf_sub_params.becc))
@@ -740,8 +769,62 @@ let gen_irb_fun ?(linear_own_args_only = false) ~print tf_params tf_sub_params
       cond_const_bounds;
     }
 
-let gen_dt_fun ~print tf_params tf_sub_params params (vret_opt, sret) :
-    templ_func =
+(* The integer leaves of [t : sort] reached through the selectors of
+   single-constructor datatypes, at most [depth] selectors deep, in
+   constructor-argument order.  Every selector applied is total, since its
+   datatype has one constructor; a datatype with several constructors, or a
+   leaf of another sort, contributes nothing. *)
+let rec int_leaves_through_records depth t sort =
+  match sort with
+  | T_int.SInt -> [ t ]
+  | T_dt.SDT dt when depth > 0 -> (
+      match Datatype.conses_of dt with
+      | [ cons ] ->
+          List.concat_mapi (Datatype.sorts_of_cons dt cons) ~f:(fun i s ->
+              int_leaves_through_records (depth - 1)
+                (T_dt.mk_sel_by_cons dt cons.name i t)
+                s)
+      | _ -> [])
+  | _ -> []
+
+(* [record_of_int_leaves depth sort mk_leaf]: when [sort] is built only from
+   single-constructor datatypes, at most [depth] constructors deep, over
+   integer leaves, the constructor tree of that sort whose leaves are
+   [mk_leaf ()], called once per leaf in order; [None] for any other sort
+   (an integer alone included: it is no record). *)
+let record_of_int_leaves depth sort mk_leaf =
+  let rec build depth sort =
+    match sort with
+    | T_int.SInt -> Some (mk_leaf ())
+    | T_dt.SDT dt when depth > 0 -> (
+        match Datatype.conses_of dt with
+        | [ cons ] ->
+            Option.map
+              (Option.all
+                 (List.map (Datatype.sorts_of_cons dt cons)
+                    ~f:(build (depth - 1))))
+              ~f:(T_dt.mk_cons dt cons.name)
+        | _ -> None)
+    | _ -> None
+  in
+  match sort with T_dt.SDT _ -> build depth sort | _ -> None
+
+(* [gen_dt_fun ?record_leaf_depth] is the template of a function into a
+   datatype sort: a guarded choice among the arguments of that sort and the
+   constructor terms over them.  With [record_leaf_depth = Some d] and a
+   result sort that is a record of integers (see [record_of_int_leaves]), one
+   more candidate is offered: the record whose every leaf is an affine
+   expression, with its own coefficients, over the integer arguments and the
+   integer leaves of the arguments reached through at most [d] selectors
+   ([int_leaves_through_records]).  A choice among the arguments cannot
+   build a record that is a modified copy of one of them -- a mutable
+   reference's next state, a counter one step on -- and an existential whose
+   witness is such a value otherwise has no candidate at all.  The
+   coefficients are bounded as the other affine parts are: the constant's
+   absolute value by [ubed] and the sum of the other coefficients' absolute
+   values by [ubec], per leaf. *)
+let gen_dt_fun ?record_leaf_depth ~print tf_params tf_sub_params params
+    (vret_opt, sret) : templ_func =
   let quals = quals_over tf_params.quals params in
   let int_terms =
     List.dedup_and_sort ~compare:Stdlib.compare
@@ -757,6 +840,11 @@ let gen_dt_fun ~print tf_params tf_sub_params params (vret_opt, sret) :
           (List.length int_terms + 1)
           ~f:(fun j -> fst @@ Term.let_var dc.(i).(j)))
   in
+  (* Not what it appears to be: a term below that contains an [ext]
+     expression mentions the coefficients [dc], which are not among [params],
+     so [gen_cond_and_exps_of_fun] drops it with [terms_over], and only the
+     constructor terms over the arguments themselves become candidates.  The
+     record candidate is passed as [extra_terms] for that reason. *)
   let terms =
     Set.to_list
     @@ Datatype.enum_cons_terms tf_params.depth sret
@@ -765,34 +853,64 @@ let gen_dt_fun ~print tf_params tf_sub_params params (vret_opt, sret) :
         T_int.mk_sum dc.(i).(0)
         @@ List.mapi int_terms ~f:(fun j -> T_int.mk_mul dc.(i).(j + 1)))
   in
+  (* the record candidate and the coefficient arrays of its leaves, one array
+     [c] per leaf with [c.(0)] the constant *)
+  let record_term, record_coeffs =
+    match record_leaf_depth with
+    | None -> ([], [])
+    | Some depth -> (
+        let leaf_terms =
+          List.dedup_and_sort ~compare:Stdlib.compare
+          @@ List.concat_map params ~f:(fun (x, s) ->
+              int_leaves_through_records depth (Term.mk_var x s) s)
+        in
+        let coeffs = ref [] in
+        let mk_leaf () =
+          let c = gen_params_0d T_int.SInt (List.length leaf_terms + 1) in
+          coeffs := c :: !coeffs;
+          T_int.mk_sum c.(0)
+            (List.mapi leaf_terms ~f:(fun j -> T_int.mk_mul c.(j + 1)))
+        in
+        match record_of_int_leaves depth sret mk_leaf with
+        | None -> ([], [])
+        | Some t -> ([ t ], List.rev !coeffs))
+  in
   let template =
-    gen_cond_and_exps_of_fun ~print
+    gen_cond_and_exps_of_fun ~extra_terms:record_term ~print
       { tf_params with terms; quals }
       tf_sub_params params (vret_opt, sret)
+  in
+  let coeff_arrays =
+    List.init tf_params.ext ~f:(fun i -> dc.(i)) @ record_coeffs
   in
   let expr_const_bounds =
     match tf_params.ubed with
     | Some ubed ->
         Formula.and_of
-        @@ List.init tf_params.ext ~f:(fun i ->
-            Formula.leq (T_int.mk_abs dc.(i).(0)) (T_int.mk_int ubed))
+        @@ List.map coeff_arrays ~f:(fun c ->
+            Formula.leq (T_int.mk_abs c.(0)) (T_int.mk_int ubed))
     | _ -> Formula.mk_true ()
   in
   let expr_coeffs_bounds =
     match tf_params.ubec with
     | Some ubec ->
         Formula.and_of
-        @@ List.init tf_params.ext ~f:(fun i ->
+        @@ List.map coeff_arrays ~f:(fun c ->
             Formula.leq
-              (Array.foldi dc.(i) ~init:(T_int.zero ()) ~f:(fun j acc c ->
+              (Array.foldi c ~init:(T_int.zero ()) ~f:(fun j acc c ->
                    if j = 0 then acc else T_int.mk_add acc @@ T_int.mk_abs c))
               (T_int.mk_int ubec))
     | _ -> Formula.mk_true ()
   in
+  let record_params_map =
+    Set.Poly.of_list
+    @@ List.concat_map record_coeffs ~f:(fun c ->
+        List.map (Array.to_list c) ~f:(Term.let_var >> fst))
+  in
   let templ_params =
     Map.force_merge template.templ_params
     @@ Map.of_set_exn
-    @@ Logic.of_old_sort_env_set ext_params_map
+    @@ Logic.of_old_sort_env_set (Set.union ext_params_map record_params_map)
   in
   { template with templ_params; expr_coeffs_bounds; expr_const_bounds }
 
@@ -868,7 +986,7 @@ let gen_prop_fun ~print ~is_integ tf_params tf_sub_params params (vret, sret) :
       let expr_pos_neg_maps, phis =
         List.unzip
         @@ List.init nd ~f:(fun i ->
-            mk_coeffs_bounds 1
+            mk_coeffs_bounds L1
               (Array.to_list @@ Array.slice rc.(i) 1 (Array.length rc.(i)))
               tf_sub_params.lbec tf_params.ubec tf_sub_params.beec)
       in
@@ -885,7 +1003,7 @@ let gen_prop_fun ~print ~is_integ tf_params tf_sub_params params (vret, sret) :
         @@ List.init (nd - 1) ~f:(fun i ->
             List.unzip
             @@ List.init (List.nth_exn tf_params.shp i) ~f:(fun j ->
-                mk_coeffs_bounds 1
+                mk_coeffs_bounds L1
                   (Array.to_list
                   @@ Array.slice dc.(i).(j) 1 (Array.length dc.(i).(j)))
                   None tf_params.ubcc None))
@@ -1037,15 +1155,19 @@ let svar_candidates ~print (tf_params : fun_tfp) sv params =
 (** The bounds of the template for a function into a sequence sort
     ([gen_seq_fun]).  [seq_concat_depth] is the number of concatenations a
     candidate may contain (0: none), [seq_max_candidates] the length of the
-    candidate list (at least 1), [seq_selector_depth] the length of the
+    atoms and of the concatenations (each at least 1), [seq_selector_depth]
+    the length of the
     selector chains through single-constructor datatype arguments that reach a
     sequence or an element, and [seq_prefixes] whether the prefixes
-    [seq.extract s 0 n] at integer arguments [n] are offered. *)
+    [seq.extract s 0 n] at integer arguments [n] are offered, and
+    [seq_length_cuts] whether the cuts of a sequence at the length of a
+    sequence argument are. *)
 type seq_fun_tfp = {
   seq_concat_depth : int;
   seq_max_candidates : int;
   seq_selector_depth : int;
   seq_prefixes : bool;
+  seq_length_cuts : bool;
 }
 
 (** [sel_terms_of_sort ~depth target params] are the terms of sort [target]
@@ -1077,19 +1199,38 @@ let sel_terms_of_sort ~depth target params =
   List.concat_map params ~f:(fun (x, s) -> from_term depth [] (Term.mk_var x s))
 
 (** [seq_candidates cfg ~terms se params] are the candidate results of a
-    function of [params] into [Seq se], in this order, without duplicates and
-    cut to the first [cfg.seq_max_candidates]:
-    - the atoms: the arguments of sort [Seq se], the sequences reached from
-      single-constructor datatype arguments ([sel_terms_of_sort]), the
+    function of [params] into [Seq se], without duplicates, in parts each
+    cut to [cfg.seq_max_candidates] (so at most three times that many in
+    all):
+    - first the atoms: the arguments of sort [Seq se], the sequences reached
+      from single-constructor datatype arguments ([sel_terms_of_sort]), the
       hypothesis-space terms of that sort over the arguments, [seq.empty], the
       units [seq.unit e] of the element terms [e] found the same way (the
       arguments of sort [se], then selector chains, then hypothesis-space
       terms), and, with [cfg.seq_prefixes], [seq.extract s 0 n] for each
       sequence atom [s] and integer argument [n];
-    - for [k] = 1 to [cfg.seq_concat_depth], the concatenations [c ++ a] of a
-      candidate [c] with [k - 1] concatenations and a non-empty atom [a],
-      units before sequences, so that a history extended by one element
-      ([s ++ seq.unit x]) comes first.
+    - with [cfg.seq_length_cuts], the length cuts: for each sequence atom [s]
+      and each argument [s'] of a sequence sort (of any element sort) other
+      than [s], the prefix [seq.extract s 0 (seq.len s')] and the suffix
+      [seq.extract s (seq.len s - seq.len s') (seq.len s')] of length
+      [|s'|] (when [|s'| > |s|], the theory's [seq.extract] makes the
+      prefix [s] itself and the suffix empty); they witness a history that
+      overlaps its neighbour in one element, as a transitivity clause over
+      state histories one longer than the item sequences asks
+      ([hab ++ suffix hbc |bc|], [prefix hab |ab| ++ hbc]);
+    - then, for [k] = 1 to [cfg.seq_concat_depth], the concatenations
+      [c ++ a] of a candidate [c] with [k - 1] concatenations and a non-empty
+      atom [a], level by level, each level taking in turn an extension by a
+      unit ([s ++ seq.unit x], first, so that a history extended by one
+      element comes first), an extension by a sequence ([s ++ s'], [s'] an
+      argument, selector or prefix sequence) and one involving a length cut
+      on either side.
+    The concatenations have a budget of their own because the atoms alone can
+    fill the cap: with a dozen element-sorted arguments the units did, and the
+    concatenation of two sequence arguments -- the witness of a transitivity
+    clause [ab ++ bc] -- was cut before it was built.  The alternation keeps
+    both shapes of extension within the budget whichever kind of atom is more
+    numerous; the length cuts have their own budget for the same reason.
     Every candidate is a well-sorted term of sort [Seq se] whose free
     variables are among [params] (the hypothesis-space terms are filtered by
     [terms_over]), and each is total: concatenation, units and extraction are
@@ -1117,35 +1258,86 @@ let seq_candidates cfg ~terms se params =
               else None))
     else []
   in
-  let nonempty = units @ seqs @ prefixes in
-  let atoms = seqs @ [ T_seq.mk_empty se ] @ units @ prefixes in
   let cap = max 1 cfg.seq_max_candidates in
+  let cuts =
+    if cfg.seq_length_cuts then
+      let all_seq_args =
+        List.filter_map params ~f:(fun (x, s) ->
+            match s with T_seq.SSeq _ -> Some (Term.mk_var x s) | _ -> None)
+      in
+      List.take
+        (dedup
+           (List.concat_map seqs ~f:(fun s ->
+                List.concat_map all_seq_args ~f:(fun s' ->
+                    if Stdlib.( = ) s s' then []
+                    else
+                      let len' =
+                        match Term.sort_of s' with
+                        | T_seq.SSeq se' -> T_seq.mk_len se' s'
+                        | _ -> assert false
+                      in
+                      [
+                        T_seq.mk_extract se s (T_int.zero ()) len';
+                        T_seq.mk_extract se s
+                          (T_int.mk_sub (T_seq.mk_len se s) len')
+                          len';
+                      ]))))
+        cap
+    else []
+  in
+  let nonempty = units @ seqs @ prefixes @ cuts in
+  let atoms = dedup (seqs @ [ T_seq.mk_empty se ] @ units @ prefixes) in
+  let rec round_robin = function
+    | [] -> []
+    | lists -> (
+        match List.filter lists ~f:(Fn.non List.is_empty) with
+        | [] -> []
+        | lists ->
+            List.map lists ~f:List.hd_exn
+            @ round_robin (List.map lists ~f:List.tl_exn))
+  in
+  let is_unit a = List.mem units a ~equal:Stdlib.( = ) in
+  let is_cut a = List.mem cuts a ~equal:Stdlib.( = ) in
   let rec levels k prev acc =
     if k > cfg.seq_concat_depth || List.length acc >= cap then acc
     else
-      let next =
+      let ext ~f =
         List.concat_map prev ~f:(fun c ->
-            List.map nonempty ~f:(fun a -> T_seq.mk_concat se c a))
+            List.filter_map nonempty ~f:(fun a ->
+                if f c a then Some (T_seq.mk_concat se c a) else None))
       in
-      let next = List.take next cap in
+      let plain a = not (is_unit a || is_cut a) in
+      let next =
+        List.take
+          (round_robin
+             [
+               ext ~f:(fun c a -> (not (is_cut c)) && is_unit a);
+               ext ~f:(fun c a -> (not (is_cut c)) && plain a);
+               ext ~f:(fun c a -> is_cut c || is_cut a);
+             ])
+          cap
+      in
       levels (k + 1) next (dedup (acc @ next))
   in
-  List.take
-    (levels 1
-       (List.filter atoms ~f:(fun t -> List.mem nonempty t ~equal:Stdlib.( = )))
-       (dedup atoms))
-    cap
+  let concats =
+    levels 1
+      (List.filter atoms ~f:(fun t -> List.mem nonempty t ~equal:Stdlib.( = ))
+      @ cuts)
+      []
+  in
+  dedup (List.take atoms cap @ cuts @ List.take concats cap)
 
-let rec gen_fun ?linear_own_args_only ~print ~ignore_bool ?seq_result tf_params
+let rec gen_fun ?linear_own_args_only ?real_const ?record_leaf_depth ~print
+    ~ignore_bool ?seq_result tf_params
     tf_sub_params params ret : templ_func =
   gen_fun_bool_branch ~ignore_bool
     ~f:(fun () ->
       (match (ret, seq_result) with
       | (_, T_bool.SBool), _ -> gen_bool_fun
       | (_, (T_int.SInt | T_real.SReal | T_bv.SBV _)), _ ->
-          gen_irb_fun ?linear_own_args_only
+          gen_irb_fun ?linear_own_args_only ?real_const
       | (_, T_array.SArray _), _ -> gen_array_fun ?linear_own_args_only
-      | (_, T_dt.SDT _), _ -> gen_dt_fun
+      | (_, T_dt.SDT _), _ -> gen_dt_fun ?record_leaf_depth
       | (_, Sort.SVar _), _ -> gen_svar_fun
       | (_, T_seq.SSeq _), Some cfg -> gen_seq_fun cfg
       | (_, sort), _ -> no_template_for ~what:"gen_fun" sort)
@@ -1347,11 +1539,11 @@ let gen_dnf ~print ?(eq_atom = false) ?(real_coeff = false)
                 @@ List.map coeffs_const_list ~f:(fun (coeffs, const) ->
                     let pos_neg_map, coeffs_bound =
                       if real_coeff then
-                        mk_coeffs_bounds_of_real 1 coeffs None
+                        mk_coeffs_bounds_of_real L1 coeffs None
                           (Option.map ~f:Q.of_bigint tf_params.ubc)
                           (Option.map ~f:Q.of_bigint tfs_params.bec)
                       else
-                        mk_coeffs_bounds 1 coeffs None tf_params.ubc
+                        mk_coeffs_bounds L1 coeffs None tf_params.ubc
                           tfs_params.bec
                     in
                     let consts_bound =
@@ -1410,12 +1602,13 @@ type templ_func_pred = {
   cond_const_bounds : Formula.t;
 }
 
-let gen_fn_predicate ?linear_own_args_only ~print ~ignore_bool ?seq_result
-    tf_params tf_sub_params params : templ_func_pred =
+let gen_fn_predicate ?linear_own_args_only ?record_leaf_depth ~print
+    ~ignore_bool ?seq_result tf_params tf_sub_params params : templ_func_pred =
   let params, (xret, sret) = List.rest_last params in
   (* assert (Fn.non Term.is_bool_sort (snd ret)); *)
   let templ =
-    gen_fun ?linear_own_args_only ~print ~ignore_bool ?seq_result tf_params
+    gen_fun ?linear_own_args_only ?record_leaf_depth ~print ~ignore_bool
+      ?seq_result tf_params
       tf_sub_params params
       (Some xret, sret)
   in
@@ -1450,7 +1643,8 @@ let gen_fn_predicate ?linear_own_args_only ~print ~ignore_bool ?seq_result
     and constants are reported under the condition labels), and its shape is
     [shp], the same number of disjuncts and conjuncts as the function's
     guards. *)
-let gen_tot_fun_predicate ?linear_own_args_only ~print ~ignore_bool ~universal
+let gen_tot_fun_predicate ?linear_own_args_only ?record_leaf_depth ~print
+    ~ignore_bool ~universal
     ~relation ?seq_result (tf_params : fun_tfp) (tf_sub_params : fun_tfsp) params : templ_func_pred =
   let us, vs =
     List.partition_tf (List.mapi params ~f:(fun i p -> (i, p)))
@@ -1460,8 +1654,8 @@ let gen_tot_fun_predicate ?linear_own_args_only ~print ~ignore_bool ~universal
   let graphs, _ =
     List.fold vs ~init:([], us) ~f:(fun (acc, args) (xret, sret) ->
         let templ =
-          gen_fun ?linear_own_args_only ~print ~ignore_bool ?seq_result
-            tf_params tf_sub_params args (Some xret, sret)
+          gen_fun ?linear_own_args_only ?record_leaf_depth ~print ~ignore_bool
+            ?seq_result tf_params tf_sub_params args (Some xret, sret)
         in
         ( acc @ [ (Formula.eq (Term.mk_var xret sret) templ.func, templ) ],
           args @ [ (xret, sret) ] ))
@@ -1566,7 +1760,8 @@ let gen_bool_ne_template ~print:_ tfp b_j params (rv, rs) =
     consts_bounds = Formula.mk_true ();
   }
 
-let gen_int_ne_template ~print tfp b_j params (rv, rs) =
+let gen_int_ne_template ?(exact_affine_coeff = false) ~print tfp b_j params
+    (rv, rs) =
   print
   @@ lazy
        (sprintf "gen_int_ne_template terms: %s"
@@ -1588,7 +1783,7 @@ let gen_int_ne_template ~print tfp b_j params (rv, rs) =
             Set.is_subset tvs ~of_:vs
             && Set.mem tvs (rv, rs)
             && not @@ Set.is_empty
-               @@ AffineTerm.extract_term (rv, rs)
+               @@ AffineTerm.extract_term ~exact_coeff:exact_affine_coeff (rv, rs)
                     (Evaluator.simplify_term >> Normalizer.normalize_term)
                     t1
         | _ -> false)
@@ -1730,7 +1925,8 @@ let gen_dt_ne_template ~print:_ tfp b_j params (rv, rs) =
     consts_bounds;
   }
 
-let gen_ne_template ~print ?(universal = []) tfp params =
+let gen_ne_template ?(exact_affine_coeff = false) ~print ?(universal = []) tfp
+    params =
   let us, vs =
     List.partition_tf (List.mapi params ~f:(fun i p -> (i, p)))
       ~f:(fun (i, _) -> List.mem universal i ~equal:Int.equal)
@@ -1748,7 +1944,7 @@ let gen_ne_template ~print ?(universal = []) tfp params =
               let xs = us @ List.take params j in
               (match snd r with
               | T_dt.SDT _ -> gen_dt_ne_template
-              | T_int.SInt -> gen_int_ne_template
+              | T_int.SInt -> gen_int_ne_template ~exact_affine_coeff
               | T_bool.SBool -> gen_bool_ne_template
               | sort -> no_template_for ~what:"gen_ne_template" sort)
                 ~print tfp
@@ -1807,10 +2003,31 @@ let gen_ne_template ~print ?(universal = []) tfp params =
       Formula.and_of @@ List.map templs ~f:(fun t -> t.consts_bounds);
   }
 
-(** Templates for admissible predicate variables *)
+(** Templates for admissible predicate variables.
 
-let gen_adm_predicate ~print ~with_cond ~ignore_bool ~enable_lhs_param tf_params
+    Every instantiation is admissible at the answer value [v] in the order of
+    [adm]'s domain (it contains the domain's least element and is closed under
+    suprema of omega-chains there), [d], [c_i] and the branch conditions being
+    the template's parameters and [e] its piecewise-affine expression over the
+    other arguments:
+    - [Adm_expectation]: [0 <= v /\ d * v <= e], [d >= 0] (Kura and Unno,
+      ICFP 2024, template (12) and its Lemma 6.1); per component for a tuple.
+    - [Adm_probability]: the same with [v <= 1] conjoined.  [{v | v <= 1}] is
+      admissible in [0, 1] with the usual order (it is the whole domain), and
+      admissible sets are closed under intersection.
+    - [Adm_liberal]: [0 <= v /\ v <= 1 /\ min(e, p) <= p * v] with
+      [p = 1 + d >= 1]: the lower bound [v >= min(e/p, 1)].  In [0, 1] with the
+      opposite order the least element is 1, which satisfies it since
+      [min(e, p) <= p]; and the set is closed under infima of descending
+      chains, which are the suprema of the opposite order, because it is an
+      interval [[min(e/p, 1), 1]] closed at its lower end.  This is the shape
+      of the paper's template for the [[0, 1]^op] component of conditional
+      weakest pre-expectations (its section 6.2.3), applied to a scalar.
+    - [Adm_conditional]: that paper's section 6.2.3 template on the pair. *)
+
+let gen_adm_predicate ~print ~adm ~ignore_bool ~enable_lhs_param tf_params
     params : templ_func_pred =
+  let with_cond = Kind.adm_with_cond adm in
   let params, ret = List.rest_last params in
   (* assert (Fn.non Term.is_bool_sort (snd ret)); *)
   let xs =
@@ -1867,12 +2084,44 @@ let gen_adm_predicate ~print ~with_cond ~ignore_bool ~enable_lhs_param tf_params
               ] )
       | _ -> assert false
     else
-      ( templ_params,
-        Formula.and_of
-        @@ List.map3_exn xs pxs funcs ~f:(fun x px exp_x ->
-            Formula.mk_and
-              (Formula.leq (T_real.rzero ()) x)
-              (Formula.leq px exp_x)) )
+      match adm with
+      | Kind.Adm_liberal -> (
+          match (xs, ps, pxs, funcs) with
+          | [ x ], [ p2 ], [ px ], [ exp_x ] ->
+              let p = T_real.(mk_radd (rone ()) (T_irb.mk_int_to_real p2)) in
+              ( templ_params,
+                Formula.and_of
+                  [
+                    Formula.leq (T_real.rzero ()) x;
+                    Formula.leq x (T_real.rone ());
+                    (* min (e, p) <= p * x where p >= 1 *)
+                    Formula.leq (T_real.mk_rmin exp_x p) (T_real.mk_radd x px);
+                  ] )
+          | [ x ], [], _, [ exp_x ] ->
+              (* without the scaling parameter, p = 1 *)
+              ( templ_params,
+                Formula.and_of
+                  [
+                    Formula.leq (T_real.rzero ()) x;
+                    Formula.leq x (T_real.rone ());
+                    Formula.leq (T_real.mk_rmin exp_x (T_real.rone ())) x;
+                  ] )
+          | _ -> no_template_for ~what:"gen_adm_predicate (liberal)" (snd ret))
+      | Kind.Adm_expectation | Kind.Adm_probability | Kind.Adm_conditional ->
+          let at_most_one x =
+            match adm with
+            | Kind.Adm_probability -> [ Formula.leq x (T_real.rone ()) ]
+            | _ -> []
+          in
+          ( templ_params,
+            Formula.and_of
+            @@ List.map3_exn xs pxs funcs ~f:(fun x px exp_x ->
+                Formula.and_of
+                  ([
+                     Formula.leq (T_real.rzero ()) x;
+                     Formula.leq px exp_x;
+                   ]
+                  @ at_most_one x)) )
   in
   let expr_selectors_bounds =
     Formula.and_of @@ lhs_bounds
@@ -1959,6 +2208,44 @@ let gen_integ_predicate ~print ~ignore_bool ~enable_lhs_param tf_params params :
       Formula.and_of @@ List.map templs ~f:(fun t -> t.cond_const_bounds);
   }
 
+(* A scalar uniform integral candidate shares the integrand's symbolic
+   coefficients and qualifier selections. Generating another template would
+   lose that relationship. This constructs candidates only: the midpoint
+   equality must never be asserted as a constraint on arbitrary integrands.
+   Nonnegativity of the selected affine integrand on the sampling interval
+   remains an obligation of the caller's original constraints. *)
+let gen_scalar_uniform_integ_pair ~print ~ignore_bool ~enable_lhs_param
+    tf_params params =
+  match List.rev params with
+  | (v, sv) :: (y, sy) :: _
+    when Term.is_real_sort sv && Term.is_real_sort sy
+         && not (Ident.tvar_equal v y)
+         && List.length params
+            = Set.length (Set.Poly.of_list (List.map params ~f:fst)) ->
+      let sample =
+        gen_integ_predicate ~print ~ignore_bool ~enable_lhs_param tf_params params
+      in
+      (* The affine pieces may be selected only by guards independent of
+         both the sample and the result bound.
+         Inspect the actual qualifier map rather than relying on its current
+         generator's filtering convention. *)
+      if
+        List.exists sample.hole_quals_map ~f:(fun (_, quals) ->
+            List.exists quals ~f:(fun (_, (_, phi)) ->
+                let fvs = Formula.tvs_of phi in
+                Set.mem fvs y || Set.mem fvs v))
+      then None
+      else
+        let sub =
+          Map.Poly.singleton y (T_real.mk_real Q.(one / of_int 2))
+        in
+        let integral = { sample with pred = Formula.subst sub sample.pred } in
+        let integral_params =
+          List.filter params ~f:(fun (x, _) -> not (Ident.tvar_equal x y))
+        in
+        Some (sample, integral, integral_params)
+  | _ -> None
+
 (** Templates for well-founded predicate variables *)
 
 (* the ranking function behind a WF/NWF/Parity template instance,
@@ -2007,8 +2294,38 @@ type wf_pred_tfp = {
   ds : Z.t Set.Poly.t;
 }
 
+(* The terms a simplified ranking-function template is offered beyond its
+   parameters.  For every equality or disequality qualifier [l = r] the two
+   differences [r - l] and [l - r] are always selection terms; these add the
+   absolute difference (a conditional choosing the non-negative one) per sort,
+   the forward distance around a counter wrapping at 256 for an integer one
+   (the bit-vector one is offered above width 8 regardless), and the
+   problem's integer, real and bit-vector constants as terms of the affine
+   parts.  The absolute differences over bit-vectors only and no integer wrap
+   distance are how these measured on the C category of the Termination
+   Competition -- a measured choice, not a difference between the sorts in
+   principle; the constants are off as the template has always run. *)
+type ranking_extra_terms = {
+  int_abs_diff : bool; [@default false]
+  int_wrap256_dist : bool; [@default false]
+  real_abs_diff : bool; [@default false]
+  bv_abs_diff : bool; [@default true]
+  bv_wrap256_dist_both : bool; [@default true]
+      (** also offer the bit-vector wrap distance in the other orientation.
+          The equality qualifier [l = r] is symmetric, but the distance
+          offered for it is [(r - l) mod 256] only, so which of the two
+          counters it measures depends on how the qualifier happened to be
+          written: a loop [for (c = c1; c != c2; c++)] over a byte [c] needs
+          [(c2 - c) mod 256], and the qualifier printed as [zext c = c2]
+          offers [(c - c2) mod 256], which grows.  [true] adds the mirrored
+          term, a larger selection vocabulary, so it can move other runs *)
+  constants : bool; [@default false]
+}
+[@@deriving yojson]
+
 type wf_pred_tsfp = {
-  norm_type : int;
+  extra_terms : ranking_extra_terms;
+  norm_type : norm_type;
   lbrc : Z.t option;
   lbdc : Z.t option;
   berc : Z.t option;
@@ -2272,14 +2589,29 @@ let size_fun_apps =
         Option.some @@ Datatype.app_size_fun dt (Term.mk_var v @@ T_dt.SDT dt)
     | _ -> None)
 
-let ts_of_sort_env_list params tfp =
+(* [ts_of_sort_env_list ~extra params tfp]: the terms a ranking or
+   discriminator template combines linearly (each one is multiplied by a
+   coefficient in [T_irb.affine_exp_of]): the template's constants when
+   [extra.constants] holds, then the variables of [params].
+   Guarantees: every returned term has an int, real or bit-vector sort, so
+   [T_irb.affine_exp_of] can multiply it by a coefficient and cast it to the
+   template's numeric sort.
+   [params] may carry any sort: an NWF or parity predicate's parameters are
+   the whole state of its two locations, and a transition system over memory
+   has array-sorted state variables.  A variable of another sort is left out
+   here (the plain WF template filters its parameters the same way before
+   calling) rather than handed to the affine builder, which has no product of
+   a coefficient with an array and failed on the first such variable.  It
+   still reaches the template through the qualifiers and the selector terms
+   built from them. *)
+let ts_of_sort_env_list ~extra params tfp =
   let consts =
-    if true then []
+    if not extra.constants then []
     else List.dedup_keep_last @@ List.filter tfp.consts ~f:T_irb.is_sirb
   in
-  consts @ Term.of_sort_env params
+  consts @ Term.of_sort_env (List.filter params ~f:(snd >> Term.is_irb_sort))
 
-let sel_terms_of quals terms =
+let sel_terms_of ~extra quals terms =
   List.dedup_keep_last
   (* filter out trivial candidates *)
   @@ List.filter_map ~f:(fun t ->
@@ -2322,8 +2654,8 @@ let sel_terms_of quals terms =
                 t1
                 (T_int.mk_sub (T_int.mk_int (Z.of_int 256)) t2)
             in
-            (t1 :: t2 :: (if false then [ tabs ] else []))
-            @ if false then [ tmod_dist8 ] else []
+            (t1 :: t2 :: (if extra.int_abs_diff then [ tabs ] else []))
+            @ if extra.int_wrap256_dist then [ tmod_dist8 ] else []
         | T_int.SInt, T_int.(Leq | Lt | Geq | Gt) ->
             let t1 = T_int.mk_sub rhs lhs in
             let t2 = T_int.mk_sub lhs rhs in
@@ -2332,7 +2664,7 @@ let sel_terms_of quals terms =
             let t1 = T_real.mk_rsub rhs lhs in
             let t2 = T_real.mk_rsub lhs rhs in
             let tabs = T_bool.ifte (Formula.geq t1 (T_real.rzero ())) t1 t2 in
-            t1 :: t2 :: (if false then [ tabs ] else [])
+            t1 :: t2 :: (if extra.real_abs_diff then [ tabs ] else [])
         | T_real.SReal, T_real.(RLeq | RLt | RGeq | RGt) ->
             let t1 = T_real.mk_rsub rhs lhs in
             let t2 = T_real.mk_rsub lhs rhs in
@@ -2368,8 +2700,20 @@ let sel_terms_of quals terms =
                 t1
                 (T_bv.mk_bvsub ~size (T_bv.mk_bvnum ~size (Z.of_int 256)) t2)
             in
-            (t1 :: t2 :: (if true then [ tabs ] else []))
-            @ if T_bv.bits_of size > 8 then [ tmod_dist8 ] else []
+            let tmod_dist8_rev =
+              T_bool.ifte
+                (Formula.mk_atom
+                @@ T_bv.mk_bvgeq ~size ~signed:(Some true) t2
+                     (T_bv.bvzero ~size ()))
+                t2
+                (T_bv.mk_bvsub ~size (T_bv.mk_bvnum ~size (Z.of_int 256)) t1)
+            in
+            (t1 :: t2 :: (if extra.bv_abs_diff then [ tabs ] else []))
+            @ (if T_bv.bits_of size > 8 then [ tmod_dist8 ] else [])
+            @
+            if T_bv.bits_of size > 8 && extra.bv_wrap256_dist_both then
+              [ tmod_dist8_rev ]
+            else []
         | T_bv.SBV size, T_bv.(BVLeq _ | BVLt _ | BVGeq _ | BVGt _) ->
             let t1 = T_bv.mk_bvsub ~size rhs lhs in
             let t2 = T_bv.mk_bvsub ~size lhs rhs in
@@ -2605,14 +2949,16 @@ let gen_simplified_wf_predicate ~print tfp tsfp params : templ_wf_pred =
   in
   let quals_x = quals_over tfp.quals params_x in
   let sel_terms_x =
-    sel_terms_of quals_x
+    sel_terms_of ~extra:tsfp.extra_terms quals_x
       (List.map ~f:(Term.rename ren_y_x) (size_fun_apps params @ tfp.terms))
   in
   let txs, tys =
     let irb_params = List.filter params ~f:(snd >> Term.is_irb_sort) in
     let size = List.length irb_params / 2 in
     let irb_params_x, irb_params_y = List.split_n irb_params size in
-    (ts_of_sort_env_list irb_params_x tfp, ts_of_sort_env_list irb_params_y tfp)
+    let extra = tsfp.extra_terms in
+    ( ts_of_sort_env_list ~extra irb_params_x tfp,
+      ts_of_sort_env_list ~extra irb_params_y tfp )
   in
   let num_txs = List.map txs ~f:(fun t -> (t, Term.sort_of t)) in
   let num_tys = List.map tys ~f:(fun t -> (t, Term.sort_of t)) in
@@ -2925,10 +3271,12 @@ let gen_simplified_nwf_predicate ~print (rcs, dcs, qds) tfp tsfp
       params_y ) (quals_x, terms_x) (quals_y, terms_y) : templ_wf_pred =
   let params = params_shared @ params_x @ params_y in
   let sel_terms_x =
-    sel_terms_of quals_x (size_fun_apps (params_shared @ params_x) @ terms_x)
+    sel_terms_of ~extra:tsfp.extra_terms quals_x
+      (size_fun_apps (params_shared @ params_x) @ terms_x)
   in
   let sel_terms_y =
-    sel_terms_of quals_y (size_fun_apps (params_shared @ params_y) @ terms_y)
+    sel_terms_of ~extra:tsfp.extra_terms quals_y
+      (size_fun_apps (params_shared @ params_y) @ terms_y)
   in
   print
   @@ lazy
@@ -2940,8 +3288,9 @@ let gen_simplified_nwf_predicate ~print (rcs, dcs, qds) tfp tsfp
           (String.concat_map_list ~sep:", " ~f:Term.str_of sel_terms_y));
   let num_txs, num_tys =
     let txs, tys =
-      ( ts_of_sort_env_list (params_shared @ params_x) tfp,
-        ts_of_sort_env_list (params_shared @ params_y) tfp )
+      let extra = tsfp.extra_terms in
+      ( ts_of_sort_env_list ~extra (params_shared @ params_x) tfp,
+        ts_of_sort_env_list ~extra (params_shared @ params_y) tfp )
     in
     ( List.map txs ~f:(fun t -> (t, Term.sort_of t)),
       List.map tys ~f:(fun t -> (t, Term.sort_of t)) )
@@ -3008,13 +3357,37 @@ let merge_list op ts =
           Formula.and_of [ t1.disc_const_bounds; t2.disc_const_bounds ];
       })
 
-let gen_simplified_parity_predicate ~print (rcs, dcs, qds)
-    (max_pri, sigma, trunc, acc_set) tfp tsfp
+(* [gen_simplified_parity_predicate ?nested_levels ...]: the template of the
+   parity relation from a state of [tag_x] to one of [tag_y].  With [L] the
+   number of ranking components the left tag's priority compares, the
+   relation holds when the measure decreases lexicographically: strictly at
+   some level [i < L] and non-strictly at every level below it, and, at an
+   accepting priority, also when it decreases non-strictly at all [L] levels.
+
+   By default that is written as the disjunction over the levels,
+   [s_0 \/ (s_1 /\ n_0) \/ (s_2 /\ n_0 /\ n_1) \/ ...], which builds [L]
+   strict and [L(L-1)/2] non-strict decrease templates ([+ L] more when
+   accepting): 15 at [L = 5], each a full piecewise template over both tags.
+   With [nested_levels] it is written in the nested form
+   [s_0 \/ (n_0 /\ (s_1 \/ (n_1 /\ ... (s_(L-1) [\/ n_(L-1)]))))], which
+   builds each [s_i] and each [n_j] once: [2L - 1] templates ([2L]
+   accepting).  The two are the same formula up to distributivity, and every
+   non-strict template at level [j] is the same formula however many times it
+   is built: its ranking, discriminator and qualifier parameters are the
+   tag's shared ones ([rcs], [dcs], [qds]), and only the names of its
+   qualifier holes are fresh, each hole standing for the same selection over
+   the same parameters.  So the relation, its parameters and its bounds are
+   unchanged; what changes is the size of every constraint an example of the
+   relation produces, and the order in which fresh names are drawn.  The
+   certificate is built from the strict templates in both forms. *)
+let gen_simplified_parity_predicate ?(nested_levels = false) ~print
+    (rcs, dcs, qds) (max_pri, sigma, trunc, acc_set) tfp tsfp
     ((tag_x : Ident.tvar), params_x, (tag_y : Ident.tvar), params_y)
     (quals_x, terms_x) (quals_y, terms_y) : templ_wf_pred =
   let params = params_x @ params_y in
-  let sel_terms_x = sel_terms_of quals_x (size_fun_apps params_x @ terms_x) in
-  let sel_terms_y = sel_terms_of quals_y (size_fun_apps params_y @ terms_y) in
+  let extra = tsfp.extra_terms in
+  let sel_terms_x = sel_terms_of ~extra quals_x (size_fun_apps params_x @ terms_x) in
+  let sel_terms_y = sel_terms_of ~extra quals_y (size_fun_apps params_y @ terms_y) in
   print
   @@ lazy
        (sprintf "[gen_simplified_parity_predicate] sel_terms_x: %s"
@@ -3025,7 +3398,7 @@ let gen_simplified_parity_predicate ~print (rcs, dcs, qds)
           (String.concat_map_list ~sep:", " ~f:Term.str_of sel_terms_y));
   let num_txs, num_tys =
     let txs, tys =
-      (ts_of_sort_env_list params_x tfp, ts_of_sort_env_list params_y tfp)
+      (ts_of_sort_env_list ~extra params_x tfp, ts_of_sort_env_list ~extra params_y tfp)
     in
     ( List.map txs ~f:(fun t -> (t, Term.sort_of t)),
       List.map tys ~f:(fun t -> (t, Term.sort_of t)) )
@@ -3073,6 +3446,47 @@ let gen_simplified_parity_predicate ~print (rcs, dcs, qds)
      when it is even, at component [ceil (pri/2)]) *)
   let pri = Map.Poly.find_exn sigma tag_x in
   let pril = trunc pri in
+  let accepting = Set.mem acc_set pri in
+  let decrease ~strict j =
+    mk_decrease ~print ~strict tfp tsfp np params num_sort
+      (rc_x.(j), dc_x.(j), qd_x, tag_x, quals_x, num_txs, sel_terms_x)
+      (rc_y.(j), dc_y.(j), qd_y, tag_y, quals_y, num_tys, sel_terms_y)
+  in
+  if nested_levels && pril >= 1 then (
+    (* built in the default form's order of first use: [n_0 ... n_(i-1)]
+       before [s_i], and the accepting chain's last [n_(L-1)] after them *)
+    let stricts = Array.create ~len:pril None in
+    let nonstricts = Array.create ~len:pril None in
+    for i = 0 to pril - 1 do
+      if i >= 1 then nonstricts.(i - 1) <- Some (decrease ~strict:false (i - 1));
+      stricts.(i) <- Some (decrease ~strict:true i)
+    done;
+    if accepting then
+      nonstricts.(pril - 1) <- Some (decrease ~strict:false (pril - 1));
+    let s i = Option.value_exn stricts.(i) in
+    let n j = Option.value_exn nonstricts.(j) in
+    let innermost =
+      if accepting then merge_list Formula.or_of [ s (pril - 1); n (pril - 1) ]
+      else s (pril - 1)
+    in
+    let templ =
+      List.fold_right (List.init (pril - 1) ~f:Fn.id) ~init:innermost
+        ~f:(fun i acc ->
+          merge_list Formula.or_of
+            [ s i; merge_list Formula.and_of [ n i; acc ] ])
+    in
+    let cert =
+      {
+        cert_params_shared = [];
+        cert_params_x = params_x;
+        cert_params_y = params_y;
+        cert_levels =
+          List.init pril ~f:(fun i -> List.hd_exn (s i).cert.cert_levels);
+        cert_accepting = accepting;
+      }
+    in
+    { templ with cert })
+  else
   (* level [i]: strict decrease at priority [i], non-strict at every lower
      one; the strict template's certificate carries the level's ranking
      pieces (the lower ones are generated first, as the original
@@ -3093,7 +3507,6 @@ let gen_simplified_parity_predicate ~print (rcs, dcs, qds)
         (merge_list Formula.and_of (strict :: lower), strict.cert))
   in
   let templ = merge_list Formula.or_of (List.map levels ~f:fst) in
-  let accepting = Set.mem acc_set pri in
   let cert =
     {
       cert_params_shared = [];
@@ -3159,7 +3572,14 @@ let terms_of degree args =
        (Set.subsets_with_duplicates (Term.of_sort_env args) degree)
        ~f:(function [] -> None | t :: ts -> Some (T_real.mk_rprod t ts))
 
-let gen_quant_template ?(coeffs = None) ~use_orig_ite ~num_conds ~cond_degree
+(* With [use_orig_ite], [body]'s if-then-else structure is kept and each leaf
+   becomes an affine template; [annot_branches_follow_ite] and
+   [cond_branches_follow_ite] say whether the branches an annotation or one of
+   the [num_conds] template conditions selects are built that way too or as one
+   affine template.  Without [use_orig_ite] both are one affine template, so
+   the two flags change nothing. *)
+let gen_quant_template ?(coeffs = None) ?(annot_branches_follow_ite = false)
+    ?(cond_branches_follow_ite = true) ~use_orig_ite ~num_conds ~cond_degree
     ~term_degree args body annots : templ_quant_pred =
   let rec aux = function
     | Term.FunApp (T_bool.IfThenElse, [ cond; t1; t2 ], _) when use_orig_ite ->
@@ -3175,7 +3595,7 @@ let gen_quant_template ?(coeffs = None) ~use_orig_ite ~num_conds ~cond_degree
   let init =
     List.fold_right annots ~init:(aux body) ~f:(fun cond t ->
         let t' =
-          if false then aux body
+          if annot_branches_follow_ite then aux body
           else mk_affine ~coeffs @@ terms_of term_degree args
         in
         {
@@ -3190,7 +3610,7 @@ let gen_quant_template ?(coeffs = None) ~use_orig_ite ~num_conds ~cond_degree
   List.fold_right (List.init num_conds ~f:Fn.id) ~init ~f:(fun _ t ->
       let cond = mk_affine @@ terms_of cond_degree args in
       let t' =
-        if true then aux body
+        if cond_branches_follow_ite then aux body
         else mk_affine ~coeffs @@ terms_of term_degree args
       in
       {

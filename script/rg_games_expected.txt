@@ -1,0 +1,32 @@
+# Expected winner of each SimSat reachability game (benchmarks/QSMT/ijcai2016/test/reachability/).
+# Columns, tab-separated: name, winner (SAFE or REACH), source of the expectation.
+# 'POPL 2018 table' is the table of section 7.2 of Farzan and Kincaid, https://doi.org/10.1145/3158149
+# (SimSat's own answers, 10-minute limit).  'Bouton' is Nim's theorem (C. L. Bouton, Annals of
+# Mathematics 3, 1901, https://doi.org/10.2307/1967631): the player to move loses exactly when the
+# xor of the heap sizes is 0; with real heaps a heap h plays as the integer heap floor(h).  SAFE moves
+# first, so SAFE is the table's Player 1.
+thermostat	SAFE	POPL 2018 section 7.2 text (safety strategy synthesised)
+cinderella3	SAFE	POPL 2018 table
+cinderella2.5	SAFE	POPL 2018 table
+cinderella2	SAFE	POPL 2018 table
+cinderella1.8	REACH	POPL 2018 section 7.2 text: Stepmother wins for c < 2, citing Hurkens et al. 2011 (unverified); SimSat timed out
+cinderella1.7	REACH	POPL 2018 table
+cinderella1.6	REACH	POPL 2018 table
+cinderella1.5	REACH	POPL 2018 table
+cinderella1.4	REACH	POPL 2018 table
+nim44	REACH	Bouton; POPL 2018 table agrees
+nim45	SAFE	Bouton; POPL 2018 table agrees
+nim55	REACH	Bouton; POPL 2018 table agrees
+nim56	SAFE	Bouton; POPL 2018 table agrees
+nim66	REACH	Bouton; POPL 2018 table: timeout
+nim222	SAFE	Bouton; POPL 2018 table agrees
+nim123	REACH	Bouton; POPL 2018 table DISAGREES (Player 1)
+nim233	SAFE	Bouton; POPL 2018 table agrees
+nim333	SAFE	Bouton; POPL 2018 table agrees
+nim444	SAFE	Bouton; POPL 2018 table agrees
+nim555	SAFE	Bouton; POPL 2018 table agrees
+nim556	SAFE	Bouton; POPL 2018 table: timeout
+nim2222	REACH	Bouton; POPL 2018 table agrees
+nim2223	SAFE	Bouton; POPL 2018 table: timeout
+tag_safe	SAFE	POPL 2018 section 7.2 text (safety strategy synthesised)
+tag_reach	REACH	POPL 2018 section 7.2 text (reachability strategy synthesised)

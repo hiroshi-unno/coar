@@ -1,0 +1,8 @@
+(set-logic HORN)
+(declare-sort X 0)
+(declare-datatypes ((List 1)) ((par (T) ((nil) (cons (hd T) (tl (List T)))))))
+(declare-fun len ((List X) Int) Bool)
+(assert (forall ((l (List X))) (=> (= l (as nil (List X))) (len l 0))))
+(assert (forall ((l (List X)) (n Int)) (=> (and ((_ is cons) l) (len (tl l) n)) (len l (+ n 1)))))
+(assert (forall ((l (List X)) (n Int)) (=> (len l n) (>= n 1))))
+(check-sat)

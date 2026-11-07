@@ -1,0 +1,11 @@
+{
+ "cex_strategy": [
+  "AllExamples"
+ ],
+ "check_part_sol_with_lbs": false,
+ "houdini": {
+  "candidates": {
+   "concat_equations": 24
+  }
+ }
+}

@@ -2,14 +2,19 @@
  (name MuStrat)
  (public_name CoAR.MuStrat)
  (preprocess
-  (pps ppx_deriving.std ppx_deriving_yojson))
+  (pps ppx_deriving.std ppx_deriving_yojson CoAR.ppx_config_full_json))
  (libraries
   core
   CoAR.ast
   CoAR.muCLP
   CoAR.PCSPSolver
+  CoAR.SPACER
   CoAR.PCSat
   CoAR.Z3Smt
-  CoAR.MuCyc)
- (modules config rankingCheck passedChoices initStrategy solver)
+  CoAR.MuCyc
+  CoAR.linarith
+  CoAR.interpolation
+  core_unix
+  threads.posix)
+ (modules config relComplete rankingCheck chainPairs passedChoices mbpRegion freedValues cav24Guards cav24Regions skolemTerms chainRegions jointWall counterPlay rankCandidate initStrategy reaskInline groundGoals checkContinuation verdictValidation solver)
  (synopsis "A fixpoint logic validity checker based on strategy synthesis"))

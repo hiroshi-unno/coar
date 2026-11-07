@@ -1,4 +1,4 @@
-nat x;
+int x;
 
 while (0 <= x){
 	if (x <= 1000){

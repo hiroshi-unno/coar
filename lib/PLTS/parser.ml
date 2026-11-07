@@ -3,6 +3,49 @@ open Common.Combinator
 open Ast
 open Ast.LogicOld
 
+(* [release_consumed_definitions fenv init nexts]: the SMT-LIB reader keeps
+   every non-recursive [define-fun] it read in [LogicOld]'s inlined-definition
+   table, for the passes that unfold an application of a defined symbol later.
+   An integer transition system is written entirely as such definitions (the
+   initial and the transition relations, and the [cfg_*] wrappers around
+   them), and this reader consumes them: their bodies are taken apart into
+   [init] and [nexts], and their names never reach the result.  Left in the
+   table, the parsed relations stay reachable for the whole run -- on a 55 MB
+   input about 420 MB of live heap after the conversion to muCLP, against a
+   converted problem of a few MB -- and every copy a solver forks inherits
+   and rewrites them.
+
+   Removes from the table each definition of [fenv] whose name occurs in no
+   relation of the result (an application left inside a relation keeps its
+   definition, so a later unfolding reads what it read before).  Postcondition:
+   the table's other entries are unchanged.  Exact: an entry removed is one no
+   formula of the result can apply.  The table is also read whole by the
+   Houdini candidate families that instantiate every Boolean definition at an
+   unknown's reached terms of each formal's sort; these definitions all take a
+   location (an uninterpreted sort) and the unknowns of the converted problem
+   take integers and Booleans only, so those families got nothing from them
+   before their removal either.  A transition system whose definitions took
+   only integer formals would make this removal change the candidates. *)
+let release_consumed_definitions fenv (_, _, _, init_rel) nexts =
+  let rels =
+    init_rel
+    :: List.concat_map nexts ~f:(fun (_, _, _, trans) ->
+           List.map (Set.to_list trans) ~f:(fun (_, _, rel) -> rel))
+  in
+  let applied =
+    List.fold rels ~init:Set.Poly.empty ~f:(fun acc rel ->
+        Set.fold (Formula.funsyms_of rel) ~init:acc ~f:(fun acc -> function
+          | FVar (x, _, _) -> Set.add acc x
+          | _ -> acc))
+  in
+  let consumed =
+    Set.diff (Map.key_set fenv) applied
+  in
+  if not (Set.is_empty consumed) then
+    LogicOld.set_inlined_defs
+    @@ Map.Poly.filter_keys (LogicOld.get_inlined_defs ()) ~f:(fun x ->
+           not (Set.mem consumed x))
+
 let parse_from_lexbuf ~print lexbuf =
   let _phis (* assert distict ...*), envs =
     SMT.(Parser.program Lexer.token lexbuf)
@@ -15,6 +58,7 @@ let parse_from_lexbuf ~print lexbuf =
               kind for a function into an uninterpreted sort, so every such
               file was refused *)
            decl_reading = SMT.Problem.Uninterpreted;
+           lifted_universals = Map.Poly.empty;
            candidates = Map.Poly.empty;
            uni_sort = Set.Poly.empty;
            uni_senv = Map.Poly.empty;
@@ -75,10 +119,20 @@ let parse_from_lexbuf ~print lexbuf =
                | [] -> failwith ""
              in
              let res =
+               (* a [false] disjunct is no transition (a body that is just
+                  [false] is a procedure without transitions, where every
+                  run stops at once), not a [cfg_trans2] application *)
                Formula.disjuncts_of phi
+               |> Set.filter ~f:(Fn.non Formula.is_false)
                |> Set.Poly.map ~f:(fun phi ->
                    let t, _, _ = Formula.let_eq phi in
                    let f, _, _, args, _ = Term.let_fvar_app t in
+                   (* [cfg_trans3] is a procedure call (exit, call and return
+                      locations); calls are not read, and such a file is
+                      refused rather than read without them *)
+                   if String.(Ident.name_of_tvar f = "cfg_trans3") then
+                     failwith
+                       "procedure calls (cfg_trans3) are not supported";
                    assert (String.(Ident.name_of_tvar f = "cfg_trans2"));
                    match args with
                    | [ pc1'; src; pc2'; dst; rel ] ->
@@ -95,9 +149,11 @@ let parse_from_lexbuf ~print lexbuf =
   let init =
     match Map.Poly.data inits with
     | [ init ] -> init
-    | _ -> failwith "parse_from_lexbuf"
+    | _ -> failwith "exactly one init_ definition is expected"
   in
-  Ok (locs, init, Map.Poly.data nexts)
+  let nexts = Map.Poly.data nexts in
+  release_consumed_definitions envs.fenv init nexts;
+  Ok (locs, init, nexts)
 
 let from_file ~print filename =
   In_channel.with_file filename ~f:(fun channel ->

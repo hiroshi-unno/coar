@@ -1,0 +1,10 @@
+# A fair choice between r = 1.5 and r = 0.5 gives wp(S, r) = 1/2 * 1.5 + 1/2 * 0.5 = 1, so the
+# upper bound 0.9 is false.  The false twin of real_post_loop_free_choice_valid.pgcl.
+# Expected: unknown (the bound checker does not refute).
+real r;
+{
+	r := 1.5;
+}[1/2]{
+	r := 0.5;
+}
+?Ex [r] <= 0.9

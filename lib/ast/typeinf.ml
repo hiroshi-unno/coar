@@ -116,11 +116,7 @@ let rec cgen_term ~print senv term =
              ]
             @ constrss) )
     | FunApp (T_real.Real _, [], _) -> (senv, T_real.SReal, Set.Poly.empty)
-    | FunApp (T_real.Alge _, [ t ], _) ->
-        let senv, ty, constrs = cgen_term ~print senv t in
-        ( senv,
-          T_real.SReal,
-          Set.union constrs (Set.Poly.singleton (CEq (ty, T_real.SReal))) )
+    | FunApp (T_real.Alge _, [], _) -> (senv, T_real.SReal, Set.Poly.empty)
     | FunApp (T_real.(RNeg | RAbs), [ t1 ], _) ->
         let senv, ty, constrs = cgen_term ~print senv t1 in
         ( senv,
@@ -721,12 +717,18 @@ and cgen_formula ~print senv phi =
   print @@ lazy (sprintf "formula constrs: %s" @@ str_of_constrs constrs);
   (senv, constrs)
 
+(* The sort that the type name [prop] (lambda-HFL's truth values) denotes in a
+   refinement type: the reals in RCaml's expectation modes and wherever no
+   mode says otherwise, [bool] in its Boolean HFL mode.  Set by RCaml before a
+   file's annotations are read; never changed while a solver runs. *)
+let prop_sort = ref T_real.SReal
+
 (* val sort_of_name : ?args:Sort.t list -> DTEnv.t -> string -> Sort.t *)
 let sort_of_name ?(rectyps = None) dtenv ?(args = []) = function
   | "bool" (* | "Bool"*) -> T_bool.SBool
   | "int" (* | "Int"*) -> T_int.SInt
   | "float" | "real" (* | "Real"*) -> T_real.SReal
-  | "prop" -> T_real.SReal (*ToDo*)
+  | "prop" -> !prop_sort
   | "string" -> T_string.SString
   (* the finite and infinite trace sorts.  [finseq]/[infseq] are what input
      written before the theory was renamed says, and they keep working: these
@@ -759,6 +761,65 @@ let sort_of_name ?(rectyps = None) dtenv ?(args = []) = function
                   assert (List.is_empty args);
                   Sort.SVar (Svar name) (*ToDo*)
               | Some _ -> (*recursive types*) T_dt.SUS (name, args))))
+
+(* The variance of each parameter of the datatype [name], as a pair
+   [(positive, negative)]: whether the parameter occurs in a positive and in a
+   negative position of the fields of the datatype's declaration in the
+   global datatype environment.  A parameter of [type 'a sink = Sink of ('a ->
+   int)] is [(false, true)]: a [t1 sink] is a subtype of a [t2 sink] when [t2]
+   is a subtype of [t1], not the converse.
+
+   Contract: the result has [arity] elements and over-approximates the
+   occurrences (an occurrence is never missed, so a comparison built from it
+   is never too weak).  A field's positions are read by [polar_svs_of_sort],
+   which counts every parameter of a nested datatype or reference as occurring
+   both ways; a field that refers back to a member of the declaration's group
+   contributes nothing when it is the datatype itself applied to its own
+   parameters (uniform recursion: the variance is the fixpoint of the other
+   fields) and both ways otherwise.  When the declaration is not found, its
+   parameters are not variables, the arity disagrees or a field's sort is one
+   the polarity reader does not know, every parameter is reported positive
+   only, which is the covariant comparison this module used before variance
+   was read. *)
+let param_variances name arity =
+  let default = List.init arity ~f:(Fn.const (true, false)) in
+  try
+    match DTEnv.look_up_dt (get_dtenv ()) name with
+    | None -> default
+    | Some t -> (
+        let dt = Datatype.dt_of t in
+        let params = Datatype.params_of_dt dt in
+        match
+          Option.all
+          @@ List.map params ~f:(function
+            | Sort.SVar sv -> Some sv
+            | _ -> None)
+        with
+        | Some svs when List.length svs = arity ->
+            let pos, neg =
+              List.fold (Datatype.conses_of_dt dt)
+                ~init:(Set.Poly.empty, Set.Poly.empty)
+                ~f:(fun acc cons ->
+                  List.fold (Datatype.sels_of_cons cons) ~init:acc
+                    ~f:(fun (pos, neg) -> function
+                    | Datatype.Sel (_, s) ->
+                        ( Set.union pos (Term.polar_svs_of_sort ~pos:true s),
+                          Set.union neg (Term.polar_svs_of_sort ~pos:false s) )
+                    | Datatype.InSel (_, target, args) ->
+                        if
+                          String.(target = name)
+                          && List.equal Stdlib.( = ) args params
+                        then (pos, neg)
+                        else
+                          let svs =
+                            Set.Poly.union_list
+                            @@ List.map args ~f:Term.svs_of_sort
+                          in
+                          (Set.union pos svs, Set.union neg svs)))
+            in
+            List.map svs ~f:(fun sv -> (Set.mem pos sv, Set.mem neg sv))
+        | _ -> default)
+  with exn_ when not (Common.Timer.is_async exn_) -> default
 
 (* val subtype : (Ident.svar, Sort.t option) Map.Poly.t -> Sort.t -> Sort.t -> (Ident.svar, Sort.t option) Map.Poly.t * (Sort.e list * Sort.e) Set.Poly.t * (Sort.o * Sort.o) Set.Poly.t *)
 let rec subtype map s1 s2 =
@@ -799,42 +860,16 @@ let rec subtype map s1 s2 =
             let map, econstrs', oconstrs' = subtype map s1 s2 in
             (map, Set.union econstrs econstrs', Set.union oconstrs oconstrs'))
     | T_dt.SDT dt1, T_dt.SDT dt2 when String.(dt1.name = dt2.name) ->
-        List.fold2_exn (Datatype.params_of dt1) (Datatype.params_of dt2)
-          ~init:(map, Set.Poly.empty, Set.Poly.empty)
-          ~f:(fun (map, econstrs, oconstrs) s1 s2 ->
-            let map, econstrs', oconstrs' =
-              subtype map s1 s2
-              (*ToDo*)
-            in
-            (map, Set.union econstrs econstrs', Set.union oconstrs oconstrs'))
+        subtype_params map dt1.name (Datatype.params_of dt1)
+          (Datatype.params_of dt2)
     | T_dt.SDT dt1, T_dt.SUS (name2, sorts2) when String.(dt1.name = name2) ->
         (*ToDo: fix the ad hoc use of SUS*)
-        List.fold2_exn (Datatype.params_of dt1) sorts2
-          ~init:(map, Set.Poly.empty, Set.Poly.empty)
-          ~f:(fun (map, econstrs, oconstrs) s1 s2 ->
-            let map, econstrs', oconstrs' =
-              subtype map s1 s2
-              (*ToDo*)
-            in
-            (map, Set.union econstrs econstrs', Set.union oconstrs oconstrs'))
+        subtype_params map dt1.name (Datatype.params_of dt1) sorts2
     | T_dt.SUS (name1, sorts1), T_dt.SDT dt2 when String.(name1 = dt2.name) ->
         (*ToDo: fix the ad hoc use of SUS*)
-        List.fold2_exn sorts1 (Datatype.params_of dt2)
-          ~init:(map, Set.Poly.empty, Set.Poly.empty)
-          ~f:(fun (map, econstrs, oconstrs) s1 s2 ->
-            let map, econstrs', oconstrs' =
-              subtype map s1 s2
-              (*ToDo*)
-            in
-            (map, Set.union econstrs econstrs', Set.union oconstrs oconstrs'))
+        subtype_params map name1 sorts1 (Datatype.params_of dt2)
     | T_dt.SUS (n1, sorts1), T_dt.SUS (n2, sorts2) when String.(n1 = n2) ->
-        List.fold2_exn sorts1 sorts2 ~init:(map, Set.Poly.empty, Set.Poly.empty)
-          ~f:(fun (map, econstrs, oconstrs) s1 s2 ->
-            let map, econstrs', oconstrs' =
-              subtype map s1 s2
-              (*ToDo*)
-            in
-            (map, Set.union econstrs econstrs', Set.union oconstrs oconstrs'))
+        subtype_params map n1 sorts1 sorts2
     | T_ref.SRef s1, T_ref.SRef s2 ->
         let map, econstrs1, oconstrs1 = subtype map s1 s2 in
         let map, econstrs2, oconstrs2 = subtype map s2 s1 in
@@ -890,6 +925,32 @@ let rec subtype map s1 s2 =
         failwith
         @@ sprintf "[Typeinf.subtype] %s and %s" (Term.str_of_sort s1)
              (Term.str_of_sort s2)
+
+(* [subtype] on the parameters of two instances of the datatype [name]:
+   each pair is compared in the direction its variance asks
+   ([param_variances]), covariantly, contravariantly, or both ways for a
+   parameter that occurs in both positions.  A covariant-only comparison
+   gives a contravariant parameter that carries an effectful arrow the
+   reversed effect constraint, so an effect inferred where the datatype is
+   used never reaches the function stored where it was built: that function
+   was typed pure and then called with an argument that performs an
+   operation. *)
+and subtype_params map name sorts1 sorts2 =
+  List.fold2_exn
+    (List.zip_exn sorts1 sorts2)
+    (param_variances name (List.length sorts1))
+    ~init:(map, Set.Poly.empty, Set.Poly.empty)
+    ~f:(fun (map, econstrs, oconstrs) (s1, s2) (positive, negative) ->
+      let map, econstrs, oconstrs =
+        if positive || not negative then
+          let map, econstrs', oconstrs' = subtype map s1 s2 in
+          (map, Set.union econstrs econstrs', Set.union oconstrs oconstrs')
+        else (map, econstrs, oconstrs)
+      in
+      if negative then
+        let map, econstrs', oconstrs' = subtype map s2 s1 in
+        (map, Set.union econstrs econstrs', Set.union oconstrs oconstrs')
+      else (map, econstrs, oconstrs))
 
 (* val subeff : (Ident.svar, Sort.t option) Map.Poly.t -> Sort.c -> Sort.c -> (Ident.svar, Sort.t option) Map.Poly.t * (Sort.e list * Sort.e) Set.Poly.t * (Sort.o * Sort.o) Set.Poly.t *)
 and subeff map c1 c2 =
@@ -985,7 +1046,12 @@ let rec resolve_sort tbl s =
    unification TARGET.  The argument is optional because forty-odd callers have
    no forall-sorts and an empty set is right for them; the one reader that
    creates forall-sorts (the SMT-LIB2 front end) must pass it, and a test pins
-   that it does. *)
+   that it does.  A rigid variable that cannot be kept apart is the input's
+   error, not this module's: it is raised as [Common.Refusal.Refused], which the
+   command-line entry prints as one "error:" line with status 1; a [Failure]
+   here reached the user as an uncaught exception with a backtrace, which a
+   harness reads as a crash.  The other unification failures stay [Failure]:
+   without a rigid variable they can also be an internal caller's fault. *)
 let rec unify_sort ~print ~rigid tbl = function
   | [] -> ()
   | (s1, s2) :: eqs -> (
@@ -1055,11 +1121,10 @@ let rec unify_sort ~print ~rigid tbl = function
         | Sort.SVar svar1, Sort.SVar svar2 ->
             let r1, r2 = (Set.mem rigid svar1, Set.mem rigid svar2) in
             if r1 && r2 then
-              failwith
-                (sprintf
-                   "ill-sorted: the universally quantified sorts %s and %s are \
-                    required to be one sort"
-                   (Ident.name_of_svar svar1) (Ident.name_of_svar svar2))
+              Common.Refusal.refuse
+                "ill-sorted: the universally quantified sorts %s and %s are \
+                 required to be one sort"
+                (Ident.name_of_svar svar1) (Ident.name_of_svar svar2)
             else
               let svar, s =
                 (* the rigid side survives; otherwise the old name order *)
@@ -1073,11 +1138,10 @@ let rec unify_sort ~print ~rigid tbl = function
               unify_sort ~print ~rigid tbl eqs
         | Sort.SVar svar, s | s, Sort.SVar svar ->
             if Set.mem rigid svar then
-              failwith
-                (sprintf
-                   "ill-sorted: the universally quantified sort %s is required \
-                    to be %s"
-                   (Ident.name_of_svar svar) (Term.str_of_sort s))
+              Common.Refusal.refuse
+                "ill-sorted: the universally quantified sort %s is required to \
+                 be %s"
+                (Ident.name_of_svar svar) (Term.str_of_sort s)
             else if Term.occurs svar s then
               failwith
               @@ sprintf "unification failure: %s occurs in %s @ 6"
@@ -1108,11 +1172,10 @@ let solve ~print ?(rigid = Set.Poly.empty) cs =
      as a different one, by the silent-default route rather than the
      unification one. *)
   Set.iter (Set.inter nums rigid) ~f:(fun svar ->
-      failwith
-        (sprintf
-           "ill-sorted: the universally quantified sort %s is used where a \
-            numeric sort is required"
-           (Ident.name_of_svar svar)));
+      Common.Refusal.refuse
+        "ill-sorted: the universally quantified sort %s is used where a \
+         numeric sort is required"
+        (Ident.name_of_svar svar));
   let map =
     let tbl = Hashtbl.Poly.create () in
     unify_sort ~print ~rigid tbl eqs;
@@ -1191,10 +1254,15 @@ let typeinf ~print ?(to_sus = false) ?(rigid = Set.Poly.empty) ~default phis =
   let phis' =
     if true (* *) then
       let _, constrs =
+        Common.PhaseTime.with_phase "cgen" @@ fun () ->
         cgen_formula ~print Map.Poly.empty (Formula.and_of phis)
       in
-      let nums, map = solve ~print ~rigid constrs in
+      let nums, map =
+        Common.PhaseTime.with_phase "solve" @@ fun () ->
+        solve ~print ~rigid constrs
+      in
       let map = elim_nums ~to_sus ~default nums map in
+      Common.PhaseTime.with_phase "subst" @@ fun () ->
       List.map phis ~f:(Formula.subst_sorts map)
     else
       List.map phis ~f:(fun phi ->

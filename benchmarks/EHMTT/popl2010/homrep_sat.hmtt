@@ -1,0 +1,36 @@
+%BEGING
+A xa xb z = xa z.
+B xa xb z = xb z.
+Empty xa xb z = z.
+Concat s1 s2 xa xb z = s1 xa xb (s2 xa xb z).
+I2Str x xa xb z = case x of
+    e => Empty xa xb z
+  | a y => Concat A (I2Str y) xa xb z
+  | b y => Concat B (I2Str y) xa xb z
+.
+Str2O s = s a b e.
+Hom sa sb s xa xb z = s (sa xa xb) (sb xa xb) z.
+HomRep n s = F n (Hom (Concat B B) A) (I2Str s).
+F n h s = case n of
+    zero => Str2O s
+  | succ m => F m h (h s)
+.
+%ENDG
+
+%BEGINA
+/* q0 : a*b*e */
+q0 a -> q0.
+q0 b -> q1.
+q0 e -> .
+q1 b -> q1.
+q1 e -> .
+/* q2 : even */
+q2 succ -> q3.
+q2 zero -> .
+q3 succ -> q2.
+%ENDA
+
+%BEGINT
+/* HomRep : even -> a*b*e -> a*b*e */
+HomRep : q2 -> q0 -> q0.
+%ENDT

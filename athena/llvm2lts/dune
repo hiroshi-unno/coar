@@ -1,0 +1,46 @@
+; (optional): the LLVM 19 OCaml bindings (opam llvm.19-static) are not a
+; dependency of CoAR, so a build without them skips this library instead of
+; failing.
+
+(library
+ (name llvm2lts)
+ (public_name llvm2lts)
+ (optional)
+ (libraries
+  llvm
+  llvm.irreader
+  llvm.debuginfo
+  llvm.analysis
+  llvm.passbuilder
+  llvm.target
+  llvm_X86)
+ (foreign_stubs
+  (language c)
+  (names llvm2lts_stubs)
+  (flags
+   (:standard
+    (:include c_flags.sexp))))
+ (foreign_stubs
+  (language cxx)
+  (names llvm2lts_cxx_stubs)
+  (flags
+   (:include cxx_flags.sexp)))
+ (synopsis "LLVM IR to labelled transition systems"))
+
+; The LLVM headers the stubs include, and for the C++ stub the flags LLVM was
+; built with (it is built without RTTI), from the LLVM the bindings were
+; built against.
+
+(rule
+ (targets c_flags.sexp)
+ (action
+  (with-stdout-to
+   %{targets}
+   (system "printf '(-I%s)' \"$(llvm-config-19 --includedir)\""))))
+
+(rule
+ (targets cxx_flags.sexp)
+ (action
+  (with-stdout-to
+   %{targets}
+   (system "printf '(-fPIC %s)' \"$(llvm-config-19 --cxxflags)\""))))

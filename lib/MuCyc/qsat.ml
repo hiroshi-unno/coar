@@ -226,9 +226,10 @@ module QSAT (A : MBP_TYPE) = struct
       (* Where a theory's projection cannot eliminate a variable -- an index
          under a read of an array the block does not bind, a variable under a
          constructor, an element of an uninterpreted sort -- the fallbacks
-         below are tried in order: model-guided read-over-write, then
+         below are tried in the order the configuration lists them
+         ([qsat_projections]; by default model-guided read-over-write, then
          extensionality, then a term of the formula, and only then the
-         variable's value in the model.  Each result holds in the model and
+         variable's value in the model).  Each result holds in the model and
          implies the existential, which is all a projection must guarantee.
          The first three are determined by the formula (the model only picks
          among finitely many cases), so they keep the projections of a formula
@@ -458,56 +459,85 @@ module QSAT (A : MBP_TYPE) = struct
             | _ -> None)
         | _ -> None
       in
+      (* [project_with_fallbacks tvar sort project atoms]: [atoms] with the
+         non-Boolean variable [tvar] of sort [sort] eliminated, by the steps of
+         the configuration's [qsat_projections] in order; [project] is the
+         projection module of [sort] at the current model.
+         Assumes: [model] satisfies [atoms] and binds [tvar] unless the model
+         left it out.
+         Guarantees: the result holds in [model] and implies the existential
+         closure of [atoms] over [tvar], since every step's result does and a
+         step that declines hands on atoms that hold in [model] and imply the
+         ones it received.  When every step declined, the theory projection's
+         failure is raised (or, if it was not listed or did not fail, a failure
+         naming the variable); [Model_value] on an uninterpreted sort fails
+         with its own message; an exception from any other step propagates.
+         A timeout is never taken for a declined step. *)
       let project_with_fallbacks tvar sort project atoms =
-        try
-          (match sort with
-          | T_int.SInt when not (arith_atoms tvar atoms) ->
-              raise Mbp.NotNormalized
-          | _ -> ());
-          project atoms
-        with exn_ when not (Common.Timer.is_async exn_) -> (
-          let atoms, reproject =
-            match sort with
-            | T_int.SInt -> (
-                match row_rewrite tvar atoms with
-                | Some atoms' -> (
-                    ( atoms',
-                      if arith_atoms tvar atoms' then
-                        try Some (project atoms')
-                        with exn_ when not (Common.Timer.is_async exn_) ->
-                          None
-                      else None ))
-                | None -> (atoms, None))
-            | _ -> (atoms, None)
-          in
-          match
-            match reproject with
-            | Some _ -> reproject
-            | None -> (
-                match sort with
-                | T_int.SInt -> by_extensionality tvar atoms
-                | _ -> None)
-          with
-          | Some atoms' -> atoms'
-          | None -> (
-              match by_formula_term tvar sort atoms with
-              | Some atoms' -> atoms'
-              | None -> (
-                  match (sort, Map.Poly.find model tvar) with
-                  | (Sort.SVar _ | T_dt.SUS _), _ ->
-                      (* the model's name for an element is not a term of the
-                         problem; a point value would hand the solver an
-                         unbound constant *)
-                      failwith
-                      @@ sprintf
-                           "MuCyc's QSAT solver has no projection for %s, a \
-                            variable of the uninterpreted sort %s that no \
-                            term of the formula equals in the model"
-                           (Ident.name_of_tvar tvar) (Term.str_of_sort sort)
-                  | _, Some v ->
-                      let sub = Map.Poly.singleton tvar v in
-                      Set.Poly.map atoms ~f:(Atom.subst sub)
-                  | _, None -> raise exn_)))
+        (* [Some atoms']: the step projected; [None]: it declined *)
+        let step (atoms, failure) = function
+          | Config.Theory_mbp -> (
+              try
+                (match sort with
+                | T_int.SInt when not (arith_atoms tvar atoms) ->
+                    raise Mbp.NotNormalized
+                | _ -> ());
+                (Some (project atoms), atoms, failure)
+              with exn_ when not (Common.Timer.is_async exn_) ->
+                (None, atoms, Some (Option.value failure ~default:exn_)))
+          | Config.Read_over_write -> (
+              match sort with
+              | T_int.SInt -> (
+                  match row_rewrite tvar atoms with
+                  | Some atoms' ->
+                      ( (if arith_atoms tvar atoms' then
+                           try Some (project atoms')
+                           with exn_ when not (Common.Timer.is_async exn_) ->
+                             None
+                         else None),
+                        atoms',
+                        failure )
+                  | None -> (None, atoms, failure))
+              | _ -> (None, atoms, failure))
+          | Config.Extensionality -> (
+              match sort with
+              | T_int.SInt -> (by_extensionality tvar atoms, atoms, failure)
+              | _ -> (None, atoms, failure))
+          | Config.Formula_term ->
+              (by_formula_term tvar sort atoms, atoms, failure)
+          | Config.Model_value -> (
+              match (sort, Map.Poly.find model tvar) with
+              | (Sort.SVar _ | T_dt.SUS _), _ ->
+                  (* the model's name for an element is not a term of the
+                     problem; a point value would hand the solver an
+                     unbound constant *)
+                  failwith
+                  @@ sprintf
+                       "MuCyc's QSAT solver has no projection for %s, a \
+                        variable of the uninterpreted sort %s that no term \
+                        of the formula equals in the model"
+                       (Ident.name_of_tvar tvar) (Term.str_of_sort sort)
+              | _, Some v ->
+                  let sub = Map.Poly.singleton tvar v in
+                  (Some (Set.Poly.map atoms ~f:(Atom.subst sub)), atoms, failure)
+              | _, None -> (None, atoms, failure))
+        in
+        let rec go atoms failure = function
+          | [] -> (
+              match failure with
+              | Some exn_ -> raise exn_
+              | None ->
+                  failwith
+                  @@ sprintf
+                       "MuCyc's QSAT solver: no step of the projection list \
+                        eliminated %s"
+                       (Ident.name_of_tvar tvar))
+          | s :: rest -> (
+              match step (atoms, failure) s with
+              | Some atoms', _, _ -> atoms'
+              | None, atoms, failure -> go atoms failure rest)
+        in
+        go atoms None config.Config.qsat_projections
       in
       let non_bool_atms, bool_atms =
         List.fold ordered ~init:(non_bool_atms, bool_atms)
@@ -555,9 +585,9 @@ module QSAT (A : MBP_TYPE) = struct
     in
     let jformula = Formula.and_of @@ Set.to_list jformulas in
     match config.Config.backtrack_strategy with
-    | Original -> (jformula, index)
+    | Deepest_own_variable -> (jformula, index)
     | Chronological -> (jformula, Z.(j - Z.of_int 2))
-    | NonChronological ->
+    | Deepest_own_variable_projected ->
         if Z.Compare.(index = Z.(j - Z.of_int 2)) then (jformula, index)
         else
           let vs =
@@ -565,9 +595,27 @@ module QSAT (A : MBP_TYPE) = struct
                 Z.Compare.(level >= Z.(index + Z.one)))
           in
           (Formula.and_of @@ Set.to_list @@ mbp_main vs jformulas, index)
-    | NonChronologicalRec ->
+    | Deepest_own_variable_projected_repeatedly ->
         if Z.Compare.(index = Z.(j - Z.of_int 2)) then (jformula, index)
         else mbp ~print ~config model Z.(index + Z.of_int 2) vlevel jformulas
+    | Deepest_any_variable ->
+        (* the deepest level of any free variable of the lemma, of either parity; the
+           projection above leaves none deeper than [j - 2], so the level returned to
+           is at most [j - 2] *)
+        let deepest =
+          Set.fold jformulas ~init:Z.zero ~f:(fun l jformula ->
+              Set.fold (Formula.fvs_of jformula) ~init:l ~f:(fun l x ->
+                  match Map.Poly.find vlevel x with
+                  | Some (l', _) -> Z.max l l'
+                  | None -> l))
+        in
+        let lowest = if Z.is_odd j then Z.one else Z.of_int 2 in
+        let level =
+          if Z.Compare.(deepest <= lowest) then lowest
+          else if Z.(is_odd (deepest - j)) then Z.succ deepest
+          else deepest
+        in
+        (jformula, level)
 
   let add_atoms atoms1 atoms2 =
     let neg_atoms1 =
@@ -580,7 +628,7 @@ module QSAT (A : MBP_TYPE) = struct
 
   let update_frames ~config frames atoms j jformula =
     let newframes =
-      if config.Config.update_all_frames_j_and_after then
+      if config.Config.frames.update_all_frames_j_and_after then
         Map.Poly.mapi frames ~f:(fun ~key ~data ->
             if Z.Compare.(key < j) then data
             else if Z.(is_even (key - j)) then
@@ -598,7 +646,7 @@ module QSAT (A : MBP_TYPE) = struct
       in
       Map.Poly.mapi atoms ~f:(fun ~key ~data ->
           if
-            (not config.Config.update_only_atoms_j_and_before)
+            (not config.Config.frames.update_only_atoms_j_and_before)
             || Z.Compare.(key <= j)
           then add_atoms data jatoms
           else data)
@@ -714,7 +762,37 @@ module QSAT (A : MBP_TYPE) = struct
                     (Formula.str_of lemma));
             Some (lemma, Z.(j - of_int 2))
     in
-    let rec loop model j frames atoms names =
+    (* The model the search resumes with at level [j] after a lemma: empty
+       ([Reset]), so that level [j] proposes every earlier level's values afresh; or
+       ([Keep_outer_levels]) the latest model restricted to the variables of levels below
+       [j], so that the search stays in the subgame those values opened until it is
+       decided.  Variables of level [j] and deeper get no value: an atom mentioning one
+       is left out of the strategy computed on resuming.  Or ([Entry_model]) the whole
+       model level [j] was last entered with: [entries] maps a level [i] to the model of
+       the last satisfiable check at level [i - 1] (empty for level 1).  An entry for a
+       level deeper than [j] is stale after the return, but it is not read before it is
+       overwritten: the search reaches level [i] again only through a satisfiable check
+       at [i - 1], which writes the entry of [i]. *)
+    let resume_model entries model j =
+      match config.Config.frames.model_after_lemma with
+      | Config.Reset -> Map.Poly.empty
+      | Config.Keep_outer_levels ->
+          Map.Poly.filter_keys model ~f:(fun x ->
+              match Map.Poly.find vlevel x with
+              | Some (l, _) -> Z.Compare.(l < j)
+              | None -> false)
+      | Config.Entry_model ->
+          let resumed =
+            Option.value ~default:Map.Poly.empty @@ Map.Poly.find entries j
+          in
+          print
+          @@ lazy
+               (sprintf "[solve] resume @ %s with the model it was entered with%s"
+                  (Z.to_string j)
+                  (if Map.Poly.is_empty resumed then " (none)" else ""));
+          resumed
+    in
+    let rec loop entries model j frames atoms names =
       if Z.Compare.(j > Z.(max_level + of_int 2)) then
         failwith
           "MuCyc's QSAT solver: the strategy could not fix every atom (an \
@@ -773,13 +851,13 @@ module QSAT (A : MBP_TYPE) = struct
                   in
                   Map.Poly.mapi atoms ~f:(fun ~key ~data ->
                       if
-                        (not config.Config.update_only_atoms_j_and_before)
+                        (not config.Config.frames.update_only_atoms_j_and_before)
                         || Z.Compare.(key <= j)
                       then add_atoms data lemma_atoms
                       else data)
                 in
                 on_subst_lemma j lemma;
-                loop Map.Poly.empty j frames atoms names
+                loop entries (resume_model entries model j) j frames atoms names
             | None ->
                 let jformula, j =
                   mbp ~print ~config model j vlevel (Set.Poly.of_list core)
@@ -794,7 +872,7 @@ module QSAT (A : MBP_TYPE) = struct
                 let frames, atoms =
                   update_frames ~config frames atoms j jformula
                 in
-                loop Map.Poly.empty j frames atoms names)
+                loop entries (resume_model entries model j) j frames atoms names)
       | `Sat model ->
           let model =
             let model =
@@ -830,7 +908,7 @@ module QSAT (A : MBP_TYPE) = struct
             Map.Poly.update frames (Z.succ j) ~f:(function
               | Some frame -> frame
               | None ->
-                  if config.Config.reuse_prev_frame then
+                  if config.Config.frames.reuse_prev_frame then
                     Map.Poly.find_exn frames (Z.pred j)
                   else if Z.is_odd (Z.succ j) then f
                   else Formula.negate f)
@@ -839,17 +917,22 @@ module QSAT (A : MBP_TYPE) = struct
             Map.Poly.update atoms (Z.succ j) ~f:(function
               | Some atoms -> atoms
               | None ->
-                  if config.Config.update_only_atoms_j_and_before then atoms0
+                  if config.Config.frames.update_only_atoms_j_and_before then atoms0
                   else Map.Poly.find_exn atoms j)
           in
-          loop model (Z.succ j) frames atoms names
+          let entries =
+            match config.Config.frames.model_after_lemma with
+            | Config.Entry_model -> Map.Poly.set entries ~key:(Z.succ j) ~data:model
+            | Config.Reset | Config.Keep_outer_levels -> entries
+          in
+          loop entries model (Z.succ j) frames atoms names
       | `Unknown reason ->
           failwith
           @@ sprintf "MuCyc's QSAT solver: the SMT solver answered unknown (%s)"
                reason
       | `Timeout -> raise Common.Timer.Timeout
     in
-    loop Map.Poly.empty Z.one frames atoms names
+    loop Map.Poly.empty Map.Poly.empty Z.one frames atoms names
 
   (* Abstraction refinement over the outermost block of a prefix
      exists X1. forall X2. exists X3. ...  A candidate for X1 has to satisfy every instance
@@ -1002,7 +1085,7 @@ module QSAT (A : MBP_TYPE) = struct
     let vlevel = level_of Z.one quantifiers in
     let levels = Set.Poly.of_list @@ List.map (Map.Poly.data vlevel) ~f:fst in
     if
-      config.Config.forward
+      config.Config.frames.forward
       && Set.mem levels Z.one
       && Set.mem levels (Z.of_int 3)
       (* two levels would make the instance the whole matrix with no opponent move to

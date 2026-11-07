@@ -1,22 +1,44 @@
 {
-    "resolution_threshold": 4,
-    "num_elim_bool_vars": 0,
-    "refute_by_unfolding": false,
-    "refute_by_unfolding_fitting_doubling": false,
-    "share_determined_pvar_args": false,
-    "drop_constant_args": false,
-    "resolution_complete_max_clauses": 0,
-    "restore_witness_universals": false,
-    "add_fn_totality_consequences": false,
-    "condense_resolvents": false,
-    "condense_pure_resolvents": false,
-    "elim_joint_condense": false,
-    "elim_dedup_alpha_disjuncts": false,
-    "elim_subsume_clauses": false,
-    "elim_tautology_test": false,
-    "elim_assign_before_cnf": false,
-    "dedup_alpha_equivalent_disjuncts": false,
-    "pvar_elim_split_int_binders_at_ite": false,
-    "pvar_elim_implied_factor_equalities": false,
-    "pvar_elim_valid_timeout": 1000000000
+    "elimination": {
+        "resolution_threshold": 4,
+        "bool_vars": 0,
+        "complete": [
+            "No_complete_elimination"
+        ],
+        "subsume": [
+            "No_subsume"
+        ],
+        "tautology_test": false,
+        "assign_before_cnf": false,
+        "fn_totality_consequences": false,
+        "dedup_alpha_disjuncts": false,
+        "questions": {
+            "timeout_ms": 1000000000,
+            "rewrites": {
+                "split_int_binders_at_ite": false
+            }
+        }
+    },
+    "refute_by_unfolding": [
+        "No_unfolding"
+    ],
+    "argument_reduction": {
+        "drop_constant_args": false,
+        "share_determined": [
+            "No_share_determined"
+        ]
+    },
+    "clauses": {
+        "dedup_alpha_equivalent_disjuncts": false,
+        "restore_witness_universals": false
+    },
+    "condensation": {
+        "resolvents": false,
+        "pure": {
+            "resolvents": false,
+            "joint": {
+                "condense": false
+            }
+        }
+    }
 }

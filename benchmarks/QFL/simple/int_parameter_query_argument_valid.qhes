@@ -1,0 +1,5 @@
+// A query applying a function with an int parameter to an int argument:
+// F 3 = 1, so the upper bound 1.0 holds.
+F 3 <= 1.0
+s.t.
+F (x : int) : real =mu if x <= 0 then 1.0 else F (x - 1);

@@ -1,0 +1,5 @@
+(* g(true) is a partial application of a binary g, a function of sort bool -> bool passed to f;
+   f constantly true is a witness.  A light companion of partial_application_as_argument_sat,
+   which HorSat2 decides in about 70 s against this one's 18 s *)
+_exists f : (bool -> bool) -> bool. _exists g : bool -> bool -> bool.
+f(|g(|true|)|)

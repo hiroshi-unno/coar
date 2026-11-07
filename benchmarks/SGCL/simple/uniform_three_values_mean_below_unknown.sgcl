@@ -1,0 +1,8 @@
+# A discrete uniform draw over three values has mean exactly 1, so this upper bound is false.
+# Expected: unknown (the bound checker proves bounds and never refutes one).
+# A sampler that weighted each value by 1/3 at every nesting level instead gave the
+# distribution 4/9, 2/9, 1/3 on 0, 1, 2, whose mean 8/9 is below 0.9, and the false bound
+# could be proved.
+x ~ UniformDisc(0, 3);
+return x
+?Ex[x] <= 0.9

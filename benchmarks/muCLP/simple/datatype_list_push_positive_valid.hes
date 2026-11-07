@@ -1,0 +1,6 @@
+/* A datatype declared by an SMT-LIB prelude: the greatest fixpoint pushes
+   n, n-1, ..., 1 onto a list and asks that the head is always positive. */
+(declare-datatypes ((L 0)) (((nil) (cons (hd Int) (tl L)))))
+forall (n: int). P nil n
+s.t.
+P (l: L) (n: int) : bool =nu (is_cons l => (hd l) >= 1) /\ (n > 0 => P (cons n l) (n - 1));

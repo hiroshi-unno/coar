@@ -13,6 +13,11 @@
 #include "tracking_rewriter.h"
 #include "../points_to_analysis/points_to_set.h"
 
+// True when both --memory-safety and --assume-safety are given. The two are exclusive: the first
+// makes an out-of-bounds access an error for a safety checker to find, the second makes it the end
+// of the execution for a termination checker, and one program cannot do both.
+bool safetyModesConflict();
+
 class CodeVisitorAndRewriter : public clang::RecursiveASTVisitor<CodeVisitorAndRewriter> {
     bool isFirstFunction = true;
     std::string currentFunction="";
@@ -38,8 +43,11 @@ public:
     bool VisitUnaryExprOrTypeTraitExpr(clang::UnaryExprOrTypeTraitExpr *UE);
     bool VisitCallExpr(clang::CallExpr *CE);
     bool TraverseCompoundStmt(clang::CompoundStmt *CS);
-    //bool TraverseReturnStmt(clang::ReturnStmt *RS);
+    bool VisitReturnStmt(clang::ReturnStmt *RS);
     bool requiresReachErrorDeclaration() const { return reachErrorCallGenerated; }
+    // Makes the insertions that must follow every other rewrite (see `deferredInsertions`); called
+    // once the traversal is over.
+    void applyDeferredInsertions();
 
     void runPreCheck(clang::TranslationUnitDecl *TU) {
         this->isPreCheckPhase = true;
@@ -64,6 +72,21 @@ private:
     std::vector<std::vector<AllocInfo>> scopeStack;
     bool hasReturnStmt = false;
     clang::FunctionDecl *currentFD = nullptr;
+    // The bounds of the block the pointer value `E` points into, as two expressions (length, base)
+    // that are valid once `E` has been evaluated. False when the block cannot be found.
+    bool boundsOf(const clang::Expr *E, std::string &len, std::string &base);
+    // The name of the function `CE` calls when that function is defined in the main file and
+    // returns a pointer, so that its returns record their bounds; empty otherwise.
+    std::string trackedReturnName(const clang::CallExpr *CE);
+    // Where the memory array of `typeName` must be declared when that type is a struct or union the
+    // main file defines after the function definition `first`: right before the next function
+    // definition. Invalid when the type is defined before `first`, elsewhere, or is no record.
+    clang::SourceLocation laterRecordLocation(const std::string &typeName, const clang::FunctionDecl *first);
+    const clang::RecordDecl *lookupRecord(const std::string &typeName);
+    // True when `typeName` names a struct or union the translation unit declares and never defines.
+    bool undefinedRecord(const std::string &typeName);
+    // Insertions to make after the traversal, at a place whose own rewrites come later in it.
+    std::vector<std::pair<clang::SourceLocation, std::string>> deferredInsertions;
     bool reachErrorCallGenerated = false;
     bool isPreCheckPhase = false;
     bool hasFreeInCode = false;

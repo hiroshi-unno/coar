@@ -92,16 +92,32 @@ let let_bind = function
   | ExistsNode (args, fml) -> (Formula.Exists, args, fml)
   | _ -> assert false
 
-let rec get_ftv = function
-  | AndNode fmls | OrNode fmls ->
-      List.map ~f:get_ftv fmls
-      |> List.fold_left ~f:Set.union ~init:Set.Poly.empty
-  | ForallNode (bounds, fml) | ExistsNode (bounds, fml) ->
-      Set.diff (get_ftv fml) (List.map ~f:fst bounds |> Set.Poly.of_list)
-  | CondNode (_, args) | AppNode (_, args) ->
-      List.map ~f:Term.tvs_of args
-      |> List.fold_left ~f:Set.union ~init:Set.Poly.empty
-  | TopNode () | BotNode () -> Set.Poly.empty
+(* Nullary predicate occurrences embedded in Boolean terms may denote scalar
+   Bool variables. Positive-arity predicate heads are relations, not scalar
+   dependencies. The signature traversal respects binders and local definitions
+   inside terms; callers intersect these dependencies with their bound names. *)
+let get_ftv =
+  let scalar_dependencies_of_term term =
+    Set.union (Term.tvs_of term)
+      (Set.Poly.of_list
+         (Set.to_list (Formula.predicate_signatures_of_term term)
+          |> List.filter_map ~f:(fun (pvar, args) ->
+                 if List.is_empty args then Some (Ident.pvar_to_tvar pvar)
+                 else None)))
+  in
+  let rec go = function
+    | AndNode fmls | OrNode fmls ->
+        List.map ~f:go fmls
+        |> List.fold_left ~f:Set.union ~init:Set.Poly.empty
+    | ForallNode (bounds, fml) | ExistsNode (bounds, fml) ->
+        Set.diff (go fml) (List.map ~f:fst bounds |> Set.Poly.of_list)
+    | AppNode (pvar, []) -> Set.Poly.singleton (Ident.pvar_to_tvar pvar)
+    | CondNode (_, args) | AppNode (_, args) ->
+        List.map ~f:scalar_dependencies_of_term args
+        |> List.fold_left ~f:Set.union ~init:Set.Poly.empty
+    | TopNode () | BotNode () -> Set.Poly.empty
+  in
+  go
 
 let rec get_fpv = function
   | AndNode fmls | OrNode fmls ->

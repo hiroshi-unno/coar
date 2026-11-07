@@ -40,7 +40,5 @@ RUN sudo chown -R opam:opam /home/opam/coar && \
 # cp -r non-incremental/LRA/* benchmarks/QSMT/LRA/
 #
 # cd cav26ae
-# ./LRA_mucyc.sh > LRA_mucyc.csv
-# ./LRA_mucyc_np.sh > LRA_mucyc_np.csv
-# ./LRA_z3.sh > LRA_z3.csv
+# ./run.sh LRA
 # ./gen_figs_LRA.sh

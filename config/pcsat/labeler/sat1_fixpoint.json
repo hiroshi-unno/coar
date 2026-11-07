@@ -3,7 +3,5 @@
     "sat_solver": [
         "Filename",
         "./config/solver/minisat.json"
-    ],
-    "conflict_by_unification": false,
-    "discharge_guards_globally": false
+    ]
 }

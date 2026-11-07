@@ -1,0 +1,2 @@
+(* h(f) is f(true) xor f(false): true exactly on the two non-constant f *)
+_exists h : (bool -> bool) -> bool. _forall f : bool -> bool. (h(f) <=> (|f(|true|)| <> |f(|false|)|))

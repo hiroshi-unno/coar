@@ -1,0 +1,28 @@
+[
+    "PCSat",
+    {
+        "preprocessor": [
+            "Filename",
+            "./config/pcsat/preprocessor/enable_fixpoint.json"
+        ],
+        "coordinator": [
+            "Filename",
+            "./config/pcsat/coordinator/tbq_ar_fixpoint.json"
+        ],
+        "witness": {
+            "sat": false
+        },
+        "probes": {
+            "least_definition": {
+                "mode": [
+                    "Sequential"
+                ]
+            },
+            "true_precondition": {
+                "mode": [
+                    "Sequential"
+                ]
+            }
+        }
+    }
+]

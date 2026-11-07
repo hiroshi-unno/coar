@@ -1,0 +1,7 @@
+/* A predicate named like the relation a Horn-clause encoding may give the
+   query.  Entry_ holds exactly at x >= 5, so no negative y satisfies it and
+   the query is invalid.  If the query's relation shares the predicate's name
+   and sorts, the predicate's own clauses derive the goal: a wrong valid. */
+exists (y: int). y < 0 /\ Entry_ y
+s.t.
+Entry_ (x: int): bool =mu x = 5 \/ Entry_ (x - 1);

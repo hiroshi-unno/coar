@@ -19,13 +19,52 @@ module Config = struct
   type tot_witness_template = Affine | Functional | Functional_or_relation
   [@@deriving yojson]
 
+  (* the coefficient bounds of the synthesized templates, by role *)
+  type coeff_bound = {
+    initial : int; [@default 1]
+        (** the starting bound on the sum of the absolute values of the coefficients;
+            a failure can raise it *)
+  }
+  [@@deriving yojson]
+
+  type const_bound = {
+    initial : int; [@default 0]
+        (** the starting bound on the sum of the absolute values of the constants;
+            a failure can raise it *)
+  }
+  [@@deriving yojson]
+
+  type role_bounds = {
+    coeff : coeff_bound; [@default Common.Util.config_default coeff_bound_of_yojson "{}"]
+    const : const_bound; [@default Common.Util.config_default const_bound_of_yojson "{}"]
+  }
+  [@@deriving yojson]
+
+  type bounds = {
+    atom : role_bounds; [@default Common.Util.config_default role_bounds_of_yojson "{}"]
+        (** the bounds on the affine atoms' coefficients and constants *)
+  }
+  [@@deriving yojson]
+
   type t = {
     verbose : bool; [@default false]
-    depth : int; [@default 0]
-    ext : int; [@default 0]
-    upper_bound_coeff : int; [@default 1]
-    upper_bound_const : int; [@default 0]
+    term_depth : int; [@default 0]
+    extra_terms : int; [@default 0]
+    bounds : bounds; [@default Common.Util.config_default bounds_of_yojson "{}"]
+        (** the coefficient bounds of the synthesized templates *)
     tot_witness_template : tot_witness_template; [@default Affine]
+    exact_affine_coefficient : bool; [@default false]
+        (** when a qualifier is solved for the unknown's result to give a
+            candidate result term, read the result's coefficient exactly
+            ([AffineTerm.exact_coeff_of]).  Off, the coefficient is taken to
+            be 1 whatever it is, so a qualifier [-1 + y - r = 0] offers
+            [1 - y] (not a root) and one with coefficient 2 or more offers a
+            term too; on, only roots are offered and a qualifier whose
+            coefficient is not 1 or -1 offers none.  Changes the candidate
+            terms, so the search, on every path that reads qualifiers.  Also
+            decides which equational qualifiers the template keeps as ways
+            to choose the witness ([Templ.gen_ne_template]): on, one whose
+            coefficient is not 1 or -1 is dropped. *)
   }
   [@@deriving yojson]
 
@@ -88,10 +127,10 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) (U : TotalityType) :
   let param =
     ref
       {
-        depth = config.depth;
-        ext = config.ext;
-        ubc = config.upper_bound_coeff;
-        ubd = config.upper_bound_const;
+        depth = config.term_depth;
+        ext = config.extra_terms;
+        ubc = config.bounds.atom.coeff.initial;
+        ubd = config.bounds.atom.const.initial;
       }
 
   let init = { depth = 0; ext = 0; ubc = 1; ubd = 0 }
@@ -120,6 +159,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) (U : TotalityType) :
     let params = params_of () in
     let quals', terms' =
       Qual.extract_terms_from_quals
+        ~exact_affine_coeff:config.exact_affine_coefficient
         ~qelim:(Z3Smt.Z3interface.qelim ~id ~fenv:Arg.fenv)
         params quals
     in
@@ -142,7 +182,8 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) (U : TotalityType) :
     let params = params_of () in
     let template =
       Function.refuse_without_template @@ fun () ->
-      Templ.gen_ne_template ~print:Debug.print ~universal:U.universal
+      Templ.gen_ne_template ~print:Debug.print
+        ~exact_affine_coeff:config.exact_affine_coefficient ~universal:U.universal
         {
           consts = Set.to_list hspace.consts;
           terms = Set.to_list hspace.terms;
@@ -322,7 +363,13 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) (U : TotalityType) :
     | Coeff :: labels -> inner (increase_coeff param_actions) labels
     | Const :: labels -> inner (increase_const param_actions) labels
     | TimeOut :: _labels -> param_actions (* z3 may unexpectedly time out*)
-    | _ -> assert false
+    | _ ->
+        (* another template module's label: excluded by the contract of
+           [Function.Type.update_with_labels] *)
+        assert false
+
+  let coeff_labels = [ Coeff ]
+  let const_labels = [ Const ]
 
   let actions_of labels =
     (snd @@ inner (!param, []) @@ Set.to_list labels) @ [ "end" ]

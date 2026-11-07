@@ -19,6 +19,91 @@ module Config = struct
     | P of phase * phase
   [@@deriving yojson]
 
+  (** Deciding the clauses without an unknown first, as a problem with no
+      unknown, through the whole zero-unknown verdict (its sequence
+      instantiation, pins and retries).  Proved valid: they are dropped, and
+      the loop runs on the rest.  Refuted: the problem is answered [unsat]
+      with that refutation.  Undecided: the loop runs on the whole problem
+      as without the pass.  Asked once per solve, before the sweep and the
+      loop, when preprocessing leaves predicate variables and some clauses
+      mention none of them. *)
+  type prove_first =
+    | No_prove_first
+    | Prove_first of {
+        beyond_arithmetic : bool; [@default false]
+            (** a pre-check of the pass, decided from
+                the sorts of the clauses' variables before anything is solved or
+                forked: the pass runs only when some variable of the clauses
+                without an unknown, free or bound, has a sort other than an
+                integer, real, Boolean or bit-vector one (a sequence, an array, a
+                datatype, a sort the input leaves open).  Why: what the pass
+                buys over the loop's own validation query is the zero-unknown
+                verdict's sequence instantiation and pins, which decided two
+                clauses over a generic iterator's relations (open sorts,
+                sequences under quantifiers) that a plain query never proved, so
+                that no candidate was accepted; on clauses over arithmetic alone
+                those devices have nothing to act on and the pass costs a fork
+                and up to its budget.  [false]: the pass runs whenever such
+                clauses exist, as before *)
+        budget_ms : int option; [@default Some 60000]
+            (** [Some ms] runs the pass
+                in a forked copy of the process killed after [ms] milliseconds of
+                wall clock, so it costs at most that (plus the fork) on an input
+                where it decides nothing; a killed or failed copy is the undecided
+                case.  A refutation found in the copy is answered [unsat] without
+                a certificate, or, when one is asked for, the pass is run again in
+                this process to build it.  [None]: the pass runs in this process
+                with no bound but the ladder's own per-question budgets *)
+        in_process_when_large : bool; [@default false]
+            (** with [budget_ms = Some ms], the
+                pass is run in this process, under a strict deadline of [ms],
+                instead of in a forked copy whenever the fork's copy-on-write
+                cost does not fit: when this process's major heap is larger than
+                the least headroom ([memory.max - memory.current]) of its memory
+                cgroups ([Common.ForkGuard.fork_fits]); since the shared memory
+                budget ([Common.ForkGuard.fits]) this is what the pass does with
+                the field off as well, so the field has no effect.  A forked OCaml copy
+                writes every page of the live heap while its collector marks, so
+                it can hold a second copy of the heap; past the headroom that
+                copy is what a memory cap kills.  In process the pass asks the
+                same questions; the deadline is read at phase boundaries, so it
+                can overrun [ms] by one phase where the copy was killed on time,
+                and an answer the deadline cuts is the undecided case, as a killed
+                copy's is.  With no readable limit the copy is made as before *)
+        within_deadline : bool; [@default true]
+            (** with [budget_ms = Some ms],
+                inside a nested solve bounded by a deadline (the finite
+                instantiation of a quantified sort) the forked copy is killed at
+                the earlier of [ms] and the deadline, and the pass is not run once
+                the deadline has passed.  Why: the nested solve stops at its
+                deadline only at a phase boundary, and this pass is one phase, so
+                a nested solve given 10 s spent the pass's whole 60 s (an iterator
+                adapter's loop, whose finite instance's unknown-free clauses the
+                copy did not decide).  Only the copy's time is cut, so the switch
+                can lose an answer the pass would have found after the deadline
+                and never makes a wrong one *)
+      }
+  [@@deriving yojson]
+
+  type unknown_free_clauses = {
+    sweep : bool; [@default false]
+        (** when preprocessing leaves predicate variables, first ask every
+            clause that mentions none of them, piece by piece, under the
+            budgets of [zero_unknown.budgets.quick_sweep] ((500, 5000) when that
+            is [None]); a piece shown invalid refutes the problem at once,
+            with its countermodel.  Asked once per solve, before the loop *)
+    prove_first : prove_first;
+        [@default
+          Prove_first
+            {
+              beyond_arithmetic = false;
+              budget_ms = Some 60000;
+              in_process_when_large = false;
+              within_deadline = true;
+            }]
+  }
+  [@@deriving yojson]
+
   type t = {
     phase_list : phase list; [@default [ S (Common.Util.ExtFile.Filename "./config/pcsat/synthesizer/tbq_ar.json"); V (Common.Util.ExtFile.Filename "./config/pcsat/validator/nce.json"); L (Common.Util.ExtFile.Filename "./config/pcsat/labeler/sat1.json"); R (Common.Util.ExtFile.Filename "./config/pcsat/resolver/smt.json"); L (Common.Util.ExtFile.Filename "./config/pcsat/labeler/sat1.json") ]]
     rl_config : RLConfig.t ext_file; [@default Common.Util.ExtFile.Filename "./config/pcsat/rl/disable.json"]
@@ -27,7 +112,7 @@ module Config = struct
         (** build the synthesis phase when it is first run instead of with the
             other phases before the loop.  The loop's first iteration can ask
             the validator's pre-pass before any synthesis, and with
-            [houdini_in_parallel] that pre-pass is raced in a forked copy at
+            [houdini.schedule = Parallel _] that pre-pass is raced in a forked copy at
             once; building the synthesizer first delays the copy by the whole
             build (the qualifier and template construction, 4-15 s on an input
             with a few dozen clauses over sequences, most of it outside the
@@ -37,1812 +122,21 @@ module Config = struct
             the fork, and the copy builds its own only if it runs a synthesis.
             The synthesizer is the same module either way; only when it is
             built, and so the order of fresh-name draws, changes *)
-    dedup_normalized_examples : bool; [@default true]
-        (** store at most one spelling of an example per its
-            [ExClause.normalize] form: an example arriving in another spelling
-            of one already held is identified with it
-            ([ClauseGraph.spelling_of]).  When off, the example sets are keyed
-            on the value as it arrives, and the labeler's normalised copy of an
-            unnormalised example is kept beside it *)
     eliminate_tot_preds : bool; [@default false]
         (** also solve away, before the loop, a [Tot u] predicate occurring
             only in clauses [P(t) => phi] (see [eliminate_fn_preds]); when
             off, a [Tot] predicate is always left to the templates *)
-    onepoint_split_no_unknown_query : bool; [@default true]
-        (** when preprocessing leaves no predicate variable and the
-            unrewritten validity questions are undecided, also ask them after
-            the one-point rule, the single-constructor split and the
-            sequence-length split ([Evaluator.elim_onepoint_and_split_binders],
-            all exact), in a fresh solver context; when off, the questions
-            asked are exactly the unrewritten ones *)
-    no_unknown_query_timeout : int; [@default 10000]
-        (** when preprocessing leaves no predicate variable, the wall-clock
-            budget in milliseconds of each validity question the zero-unknown
-            verdict asks (the conjunction, each clause and piece, the rewritten
-            forms, the sequence-instantiated clauses, and the sequence-axiom
-            fallback's share).  An undecided question is carried out as
-            [timeout] or [unknown], never as a verdict; being wall-clock, the
-            same question can be decided on an idle machine and run out on a
-            loaded one *)
-    no_unknown_refutation_timeout : int; [@default 5000]
-        (** the wall-clock budget in milliseconds of each last-resort
-            refutation query of the same verdict (pinned array-literal bounds,
-            pinned sequence lengths), asked only where the answer would
-            otherwise be [timeout] or [unknown] *)
-    zero_unknown_reads_strict_deadline : bool; [@default false]
-        (** inside a solve bounded by a strict deadline
-            ([PCSatCommon.SolveDeadline.within ~strict_budget:true]: the
-            true-precondition and lower-bound probes, the nested finite-sort
-            solve), the zero-unknown verdict stops once the deadline has passed:
-            no further validity question is asked (a question that would have
-            been asked is reported as having run out of time) and no further
-            stage of its ladder is entered, the verdict being [unknown].  Only
-            undecided answers replace questions, so only an answer of the
-            bounded solve can be lost, never a wrong one given; outside such a
-            solve nothing changes.  [false]: the ladder runs to its end
-            whatever the deadline.  Why: the deadline is read only between
-            CEGIS phases, and a problem with no unknown left never enters one,
-            so a probe given 60 s spent 118-125 s in its ladder and with it the
-            whole run of a 120 s budget, three runs of three *)
-    no_unknown_query_rlimit : int option; [@default None]
-        (** a Z3 resource limit ([rlimit]: a count of the solver's own steps,
-            the same whatever the host's load) per query of the zero-unknown
-            verdict, beside the wall-clock budgets above, which stay as the
-            bound on a query Z3 does not interrupt.  A query that exhausts it is
-            treated as one that ran out of time.  [None] sets none *)
-    ladder_stage_rlimits_no_unknown_query : (string * int) list; [@default []]
-        (** a Z3 resource limit per question for the named stages of the
-            zero-unknown verdict's ladder (the stage names its trace prints:
-            [quick], [early-seqinst], [conj], ...), in place of
-            [no_unknown_query_rlimit] for the questions asked in that stage;
-            a stage not named keeps that field's value.  Beside the stage's
-            wall-clock budget, which stays as the bound on a check Z3 does not
-            interrupt.  Why per stage: a resource count separates the checks
-            a stage decides from the ones it cuts only where the stage's
-            wall budget is short.  In the 500 ms quick sweep every decided
-            check (Z3 5.1.0, Rust-derived inputs) took at most about 12,000
-            units and every cut one at least about 69,000; in the 1 s and
-            10 s stages the two ranges overlap, because units per second
-            differ a hundredfold between questions, so no single count can
-            stand in for those budgets.  A count, unlike a wall-clock budget,
-            does not move with the host's load.  [[]] sets none *)
-    report_budget_exhaustion : bool; [@default false]
-        (** when the zero-unknown verdict is left undecided and at least one
-            of its validity questions ran out of its budget, answer [unknown]
-            rather than [timeout] and say on stderr which budget ran out and
-            how many questions it cut ("budget exhausted: ...").  Without it
-            such a run answers [timeout], the word the run-wide time limit also
-            prints, and the budget's part is visible only in the verbose
-            trace *)
-    quick_sweep_no_unknown_query : (int * int) option; [@default Some (500, 5000)]
-        (** when preprocessing leaves no predicate variable, first ask every
-            residual clause -- split into its [ClausePieces] when
-            [split_clause_heads_no_unknown_query] is on -- with a short budget
-            per question, [(per question, whole sweep)] in milliseconds, before
-            the conjunction and the long per-clause questions: a piece shown
-            invalid refutes the problem at once, and a clause all of whose
-            pieces are shown valid is recorded as valid and not asked again.
-            The questions are the ones asked later anyway, so this changes only
-            their order and budget.  What it buys: a Thrust problem whose last
-            residual clause has a piece refuted in 0.03 s spent 57 s first on
-            the conjunction, a rewritten conjunction and a piece of an earlier
-            clause, each at the 10 s budget, and on proving two other clauses
-            valid.  The sweep stops asking once its whole budget is spent.
-            [None] skips it. *)
-    quick_sweep_finish_clause_no_unknown_query : bool; [@default true]
-        (** with [quick_sweep_no_unknown_query], let the sweep's whole budget
-            stop it only between clauses, or inside a clause once one of its
-            pieces was left undecided: a clause started before the budget ran
-            out is asked to its end while every piece so far was shown valid,
-            so that it can still be recorded as valid
-            ([NoUnknownLadder.quick_sweep]).  Without it the budget cuts a
-            clause at any piece and the pieces already shown valid are lost.
-            Only adds questions the sweep would ask of the same pieces, so it
-            changes when an answer is reached, never which.  What it buys: a
-            tuple variable split into its fields gave a residual clause 60
-            pieces (36 unsplit), six of them about 1 s each, and the 5 s sweep
-            stopped a few pieces short; the later stages took 40 s more to prove
-            the clause, and the file went from 32-59 s to 78-104 s; with this
-            on it answered in 30-31 s.  On by default *)
-    instantiate_sequence_premises_no_unknown_query : bool; [@default true]
-        (** when preprocessing leaves no predicate variable and every validity
-            question asked before ends undecided, also ask each clause not yet
-            shown valid after instantiating its sequence binders, and then its
-            integer binders, where that only strengthens the question
-            ([NoUnknownSeqInst]); it can only
-            turn [unknown]/[timeout] into [sat], never into [unsat].  On by
-            default: it is asked only after every other question ended
-            undecided, and on the Thrust corpus it answers the same two
-            iterator-extension queries as the sequence-axiom fallback.  When
-            off, nothing is asked beyond the existing questions *)
-    seq_axioms_first_no_unknown_query : int option; [@default Some 1000]
-        (** before each validity question of the zero-unknown verdict that
-            mentions a sequence, first ask it with the sequences axiomatised
-            (the sequence-axiom encoding), under this budget in milliseconds,
-            and read only a proof; the native question follows otherwise.  The
-            native sequence theory was measured spending 98% of a Thrust run in
-            such questions, while the axiomatised form decides the pointwise
-            shape at once.  On by default at 1000 ms: over 205 Thrust and
-            quantified-invariant inputs it lost no answer and cut the time of
-            the answered ones by about 5%. *)
-    seq_axioms_first_fresh_no_unknown_query : bool; [@default false]
-        (** apply [seq_axioms_first_no_unknown_query] also to the questions
-            asked in a fresh context, which otherwise ask the native sequence
-            theory first and reach the axiomatised form only through the
-            sequence-axiom fallback, after the native question has spent its
-            budget.  Contract: when on (and [seq_axioms_first_no_unknown_query]
-            is [Some]), every validity question the ladder asks in a fresh
-            context -- the rewritten clauses early and late, the
-            sequence-instantiated forms in both passes of the two-pass budget,
-            and the point pin's proofs, which all go through one asker -- that
-            mentions a sequence is first asked with the sequences axiomatised
-            under that budget; when off, those questions are asked exactly as
-            before.  The satisfiability questions of the pins, which read a
-            model, are not affected: the axiomatised form yields no model.
-            Only a proof is read from the axiomatised question, so it can
-            only answer [Valid], and that proof is the one the fallback would
-            read from the same encoding afterwards; any other outcome hands
-            the question to the native theory as before, so a refutation of
-            an exact rewrite is still reached, at most one axioms budget
-            later.  The switch therefore changes timing only -- which answer
-            is reached within the time, never which answer is right.  What it buys: pieces whose native question runs out its
-            10 s and whose axiomatised form is proved in under a second, each
-            asked 10 s sooner; what it costs: up to the axioms-first budget per
-            question the encoding does not prove. *)
-    word_instances_first_no_unknown_query : bool; [@default true]
-        (** in the early rewritten pass ([exact_forms_first_no_unknown_query]),
-            ask each piece (and each whole clause asked) first through the
-            words of its matched-instance forms: every quantifier-free form of
-            [SeqInstantiation.matched_forms] (every positive existential, a
-            premise universal among them, replaced by its instances at the
-            piece's own ground terms), and of the same matching in two rounds
-            (the second against the ground terms the first round's instances
-            write), that converts an integer to a word, asked by
-            [Z3interface.check_valid_by_words]; then the piece as it is.  Each
-            form implies its piece and the words question is weaker than its
-            form, so only a proof is read and only the order of the questions
-            changes.  What it buys: a bit set's word and bit obligations, whose
-            proof needs a premise at the goal's index and a premise at that
-            index's word ([i div 64]) and then only bit-vector reasoning, are
-            proved in a fraction of a second, where the piece as it is, and its
-            matched forms asked as they are, run out their budget (Z3 does not
-            combine [i div 64], [i mod 64] and bits read through [int_to_bv]);
-            what it costs: the words questions of a piece they do not prove,
-            each answered (a model of the weaker question, which says nothing)
-            in about a second.  On by default; best with
-            [contextual_ite_no_unknown_query], which removes the
-            negative-index branches of a truncated division before the forms
-            are matched *)
-    word_instances_two_rounds_first_no_unknown_query : bool;
-        [@default true]
-        (** with [word_instances_first_no_unknown_query], ask each piece's
-            two-round matched-instance form through its words first, and its
-            one-round form only when the two-round one is past the size bound
-            ([SeqInstantiation.word_forms]).  The one-round form implies the
-            two-round one (the second pass only adds instances beside those of
-            the first), so it is valid only if the two-round form is: dropping
-            it costs only a proof the solver would find through the smaller
-            form's words and not the larger one's.  Only proofs are read, so
-            the answer can only be reached at another time, never be another.
-            Why: on a bit-set input the one-round words question of a piece
-            ran out of its 10 s where the two-round one was proved in 0.6 s,
-            and of another piece both ran out and the piece as it is was
-            proved in 2.7 s, so each such piece paid 10 s for a question the
-            one after it subsumes.  On by default. *)
-    implied_factor_equalities_no_unknown_query : bool; [@default false]
-        (** each native question of the zero-unknown verdict (the quick sweep's
-            and the fresh-context ones) is asked with the equations between
-            the factors of its products that its linear facts imply stated as
-            disjuncts [t != u] ([Z3interface.implied_factor_equalities], each
-            equation shown by an [unsat] under the question's budget): an
-            equivalence in every model, so every answer is one about the
-            question.  Why: Z3's nonlinear arithmetic does not compare two
-            products [n * t] and [w * i] once the linear part forces [n = w];
-            on a bit-set obligation the question ran past 30 s under two of
-            three seeds, and in the verdict two fresh 10 s questions of its
-            pieces ran 30-88 s, while with [n = w] stated it was answered in
-            under 0.12 s under every seed.  Off by default *)
-    exact_forms_first_no_unknown_query : bool; [@default true]
-        (** after the quick sweep, ask each clause not yet shown valid in its
-            rewritten form ([onepoint_split_no_unknown_query]) piece by piece,
-            and then the sequence instantiation
-            ([instantiate_sequence_premises_no_unknown_query]), BEFORE the long
-            questions on the unrewritten conjunction and clauses, instead of
-            after them.  Only the order changes: each of these questions can
-            refute only through an exact rewrite and prove only validity, so an
-            answer is the same whichever order reaches it; what changes is the
-            time spent first on questions that run out their budget.  On by default
-            together with the next field: over 349 Thrust, quantified-invariant
-            and CHC inputs at 120 s the pair answered 296.8 expected against
-            294.6 without, with no verdict disagreement. *)
-    two_pass_budget_no_unknown_query : int option; [@default None]
-        (** [Some ms]: the early rewritten pieces
-            ([exact_forms_first_no_unknown_query]) and every form of a piece
-            the sequence instantiation asks are first asked with a budget of
-            [ms] milliseconds each; only for a piece none of whose forms is
-            proved so are the forms that ran out of that budget (not those
-            answered invalid or refused for their shape) asked again with
-            [no_unknown_query_timeout].  The early rewritten pieces get their
-            full-budget question from the later rewritten pass of the ladder,
-            which asks them anyway when nothing earlier decides.  Only [`Valid]
-            is read from the sequence-instantiated forms and a refutation only
-            from an exact rewrite, so this changes when an answer is reached,
-            never which: a form that needs more than [ms] is still asked with
-            the full budget.  What it buys: a form asked later that is proved
-            at once is no longer queued behind an earlier form that spends the
-            whole budget -- one Thrust input spent 41 of 46 s in four such
-            questions while every decided question of eight profiled inputs
-            returned within 2.3 s.  [None]: every question has the full budget
-            and the forms are asked once, in order *)
-    split_constructor_equations_no_unknown_query : bool; [@default true]
-        (** inside the rewrite [onepoint_split_no_unknown_query] switches on,
-            also split an equation between two applications of one datatype
-            constructor into the equations of their fields (a disequation into
-            the disjunction of the fields' disequations), exact by the
-            injectivity of constructors; so a bound tuple the single-constructor
-            split opened and an equation fixes to a literal is eliminated by
-            the one-point rule, and a bound sequence whose length it fixed is
-            written out as units *)
-    drop_valid_premises_before_pin_no_unknown_query : bool; [@default true]
-        (** in the point pin of the zero-unknown verdict, accept a point
-            also when the quantified conjuncts of its pinned negation that
-            are not proved valid have a model: the conjuncts proved valid
-            hold in every model, so dropping them leaves the negation's
-            models unchanged, and a model of the rest is a countermodel.
-            Only a model is read from the added question.  On by default *)
-    seq_array_view_candidates_no_unknown_query : bool; [@default true]
-        (** in the sequence instantiation of the zero-unknown verdict, also
-            instantiate a positive existential over an array of sort
-            [Int -> E] at the array views [lambda k. seq.nth s k] of the
-            clause's ground sequences [s] of sort [Seq E]: a loop history a
-            clause states once as a premise sequence and once as a goal array
-            of the same states is witnessed by the sequence read as an array.
-            Sound for validity only, as every instance of a positive
-            existential is.  On by default *)
-    pointwise_array_witnesses_no_unknown_query : bool; [@default true]
-        (** in the sequence instantiation of the zero-unknown verdict, also
-            instantiate a positive existential over an array of sort
-            [Int -> E] at its pointwise definitions: for an equation
-            [select x j = u] in its body, [j] an integer variable and [u]
-            mentioning only [j] and the formula's free variables, the array
-            [lambda j'. u[j'/j]].  A history stated in the array-and-length
-            encoding of sequences, [forall k. 0 <= k < n => ta[k] = k + c], is
-            witnessed by that function.  Sound for validity only, as every
-            instance of a positive existential is.  On by default *)
-    pointwise_array_countermodels_no_unknown_query : bool; [@default false]
-        (** in the zero-unknown verdict, when a clause's (or a piece's)
-            validity question is left undecided, ask once more, under the
-            same budget, the instance of it with each free array of sort
-            [Int -> E] replaced by a pointwise definition read off the clause
-            ([SeqInstantiation.pointwise_array_instance]), reading only a
-            refutation.  Sound for refutation only: the clause holds for every
-            value of its free variables, so a countermodel of an instance is
-            one of the clause.  Off by default *)
-    pin_scalars_binder_free_relaxation_no_unknown_query : bool;
-        [@default true]
-        (** in the point pin, guess a point first from a quantifier-free
-            relaxation of the piece's negation built by taking its binders
-            apart from the outside in ([ScalarPin.binder_free_relaxation]):
-            an existential's variables made free, a universal over an integer
-            replaced by its instances at the integer literals of the formula
-            and their negations, any other universal by one instance at a
-            fresh variable.  Every model of the negation extends to a model
-            of it, so its models cover the countermodels; a point is still
-            reported only once the pinned negation is proved.  On by
-            default *)
-    instantiate_element_binders_no_unknown_query : bool; [@default false]
-        (** in the sequence instantiation of the zero-unknown verdict, also
-            instantiate an existential over an element of a sort variable or
-            an uninterpreted sort, at the indices of the reads of the same
-            array outside it, instead of replacing it by [false].  A trait
-            law over a quantified sort -- the transitivity of [produces] --
-            reaches a clause as such an existential, whose witnesses are the
-            states the clause already reads.  Sound for the same reason as the
-            other instances: each implies the existential. *)
-    split_seq_prefix_over_concat_no_unknown_query : bool; [@default true]
-        (** in the sequence instantiation of the zero-unknown verdict, where
-            every read of a concatenation is split by index, also split every
-            prefix of a concatenation: [extract (a ++ b) 0 k] becomes
-            [if k <= len a then extract a 0 k else a ++ extract b 0 (k - len
-            a)], and likewise in the clauses asked before any rewriting.  An
-            equivalence in every model (SMT-LIB's extraction is empty for
-            [k <= 0] and the whole sequence past its end), so the question
-            stays the same one. *)
-    split_seq_prefix_focus_only_no_unknown_query : bool; [@default true]
-        (** with [split_seq_prefix_over_concat_no_unknown_query], split
-            prefixes of concatenations only inside the chain-focused and
-            associativity-matched forms (their instantiated variant), not in
-            the clauses asked before rewriting nor in the deep forms.  Those
-            forms hold a few kilobytes and one witness, so the split's
-            [ite]s stay few, where applied to a deep form it was measured to
-            triple its size; the split is exact wherever it applies, so this
-            only chooses which questions carry it *)
-    offset_int_candidates_no_unknown_query : bool; [@default true]
-        (** in the sequence instantiation of the zero-unknown verdict, also
-            offer an integer existential used as a read index or an
-            extraction bound the positions [t - len u] and [t + len u], [t] an
-            index or extraction bound the clause reads and [u] a sequence
-            whose length it mentions, after every other candidate and at most
-            eight of them: the position a lemma over prefixes of [u ++ w]
-            needs to reach a read of the concatenation at [t].  Sound as the
-            other instances are: each implies the existential. *)
-    array_read_int_candidates_no_unknown_query : bool; [@default false]
-        (** in the sequence instantiation of the zero-unknown verdict, also
-            offer an integer existential read as an array index, [a[x + d]],
-            the indices [u - d] of the reads [a[u]] of the same array outside
-            every binder ([SeqInstantiation.array_read_int_candidates]): the
-            witness of a goal [exists j. f[j] = i] over an index map joined
-            from two, which is a premise's witness [k] or [k + n] and is read
-            by no sequence.  Sound as every instance is: each implies the
-            existential.  Off by default: built for one input, not measured
-            on a corpus *)
-    bool_binder_candidates_no_unknown_query : bool; [@default false]
-        (** an existential of the zero-unknown verdict's integer
-            instantiation that also binds a [Bool] is instantiated with the
-            [Bool] at both values rather than replaced by [false]
-            ([SeqInstantiation.bool_binder_candidates]): a law over a
-            closure's postcondition, which quantifies over its result.  Sound
-            as every instance is.  Off by default: built for one input, not
-            measured on a corpus *)
-    element_candidates_through_constructors_no_unknown_query : bool;
-        [@default false]
-        (** with [instantiate_element_binders_no_unknown_query], an element
-            binder that is a constructor's argument at an array index,
-            [r[c(.., x, ..)]], is also offered the argument at that place of
-            the same constructor at that index of a read of [r] outside the
-            quantifier
-            ([SeqInstantiation.element_candidates_through_constructors]): a
-            law over a closure's states [mut c d].  Sound as every instance
-            is.  Off by default: built for one input, not measured on a
-            corpus *)
-    nested_focus_forms_no_unknown_query : bool; [@default false]
-        (** the chain-focused and associativity-matched forms of the
-            zero-unknown verdict instantiate their integer binders in two
-            nested rounds with equated candidates, as the deep forms do
-            ([SeqInstantiation.nested_focus_forms]), so that an existential
-            exposed by the first round's instances is instantiated rather
-            than dropped.  Sound as every instance is.  Off by default: built
-            for one input, not measured on a corpus *)
-    literal_range_int_candidates_no_unknown_query : bool; [@default false]
-        (** in the sequence instantiation of the zero-unknown verdict, also
-            offer an integer existential the integers in [-8, 8] satisfying
-            every top-level conjunct of its body that mentions it alone, when
-            there are at most four
-            ([SeqInstantiation.literal_range_int_candidates]): a position of a
-            sequence of literal length, such as the one item a filter's step
-            visits.  Sound as every instance is.  Off by default: built for
-            one input, not measured on a corpus *)
-    index_map_shift_candidates_no_unknown_query : bool; [@default false]
-        (** with [instantiate_element_binders_no_unknown_query], also offer
-            an existential over an array [Int -> Int] the shifts [lambda k. k
-            + len u] by the lengths the clause mentions outside every binder,
-            and the identity ([SeqInstantiation.index_map_shift_candidates]):
-            the index map of a visited suffix [v] of [u ++ v], which a
-            filter's [produces] needs after it has produced one item.  Sound
-            as every instance is.  Off by default: built for one input, not
-            measured on a corpus *)
-    index_map_join_candidates_no_unknown_query : bool; [@default false]
-        (** with [instantiate_element_binders_no_unknown_query], also offer
-            an existential over an array [Int -> Int] the joins [lambda k.
-            ite (k < c) g[k] (h[k - c] + d)] of two free index maps at the
-            prefix lengths of two concatenations its body mentions
-            ([SeqInstantiation.index_map_join_candidates]): the index map of
-            [ab ++ bc] over [s1 ++ s2] that a filter's [produces_trans]
-            needs, which the input writes as a [lambda] that is beta-reduced
-            before instantiation.  Sound as every instance is.  Off by
-            default: built for one input, not measured on a corpus *)
-    offset_int_candidates_chain_only_no_unknown_query : bool;
-        [@default true]
-        (** with [offset_int_candidates_no_unknown_query], offer the positions
-            [t - len u] and [t + len u] only for a [u] that is an operand of
-            the middle argument of a chained pair of ground applications
-            [h(s, u1, m)], [h(m, u2, e)] of the piece -- the operands a
-            transitivity witness [u1 ++ u2] is built from, and the only [u]
-            whose offset a prefix lemma over that witness needs.  Fewer
-            instances of the same kind, so sound as they are; with the
-            unrestricted rule the extra instances were measured to cost more
-            time than they save *)
-    onepoint_array_reads_no_unknown_query : bool; [@default true]
-        (** inside the rewrite [onepoint_split_no_unknown_query] switches on,
-            also eliminate a literal fixing a read of a bound array:
-            [exists s. L(s) /\ select s k = t] becomes
-            [exists s. L(store s k t)], and a range of reads fixed pointwise:
-            [exists s. L(s) /\ forall i. R(i) \/ s[i + c] = u(i)] becomes
-            [exists s. L(lam j. ite (not R(j - c)) u(j - c) s[j])] (both
-            dually under a universal), exact under array extensionality.  A
-            disjunct [exists s. not P(s) /\ x = s[0]] -- the array encoding of
-            a sequence witness whose first element an equation fixes -- needs
-            a witness array the question does not contain, and Z3 answers
-            "incomplete quantifiers" until the store is spelled out; a
-            trait law's prepend witness is stated by both shapes at once.
-            When off, bound arrays are left as they are *)
-    surjective_pairing_no_unknown_query : bool; [@default true]
-        (** inside the rewrite [onepoint_split_no_unknown_query] switches on,
-            also split an equation [u = C(a1..an)] of a datatype or tuple with
-            a single constructor [C] into [sel_1 u = a1 /\ .. /\ sel_n u = an]
-            (a disequation into the disjunction of the fields'), when some
-            [ai] is a variable of the enclosing quantifier block not occurring
-            in [u]; the one-point rule then eliminates it as [sel_i u].  Exact
-            by surjective pairing and injectivity; a bound pair of integers a
-            projection fixes, [exists v1 v2. t.0 = tuple(v1, v2) /\ ...],
-            otherwise stays bound because the projection is no constructor
-            application.  On by default: exact, and over 203 sequence and array inputs
-            it answered, together with the chain and prepend witness forms, 171.6
-            expected against 169.2 without. *)
-    surjective_pairing_nested_no_unknown_query : bool; [@default true]
-        (** with [surjective_pairing_no_unknown_query], also split such an
-            equation when an [ai] mentions a variable of the enclosing block
-            not occurring in [u] without being one ([u = TM (mut c d)], two
-            single-constructor types, becomes [sel (sel u) = c /\ ..] in two
-            steps and [c] is removed).  Exact; only when the split fires
-            changes *)
-    lift_spine_blocks_no_unknown_query : bool; [@default true]
-        (** inside the rewrite [onepoint_split_no_unknown_query] switches on,
-            merge a block of the same quantifier that is a conjunct of an
-            existential's body (a disjunct of a universal's) into the
-            enclosing block, when none of its variables is bound there or
-            free in the other parts: [exists xs. A /\ exists ys. B] is
-            [exists xs ys. A /\ B].  Exact; what it buys is that an outer
-            witness defined only through an inner binder ([w = t ++ s]) is
-            removed by the one-point rule *)
-    contextual_ite_no_unknown_query : bool; [@default true]
-        (** inside the rewrite [onepoint_split_no_unknown_query] switches on,
-            also replace an [ite] by the branch its context selects: where a
-            sibling conjunct, the negation of a sibling disjunct or an
-            enclosing [ite] guard entails the guard (or its negation), decided
-            syntactically over integer linear literals.  Exact in every model,
-            so it can neither lose nor invent an answer; what it buys is a
-            bound array the array-read one-point rule left only in the else
-            branch of the lambda it wrote, [k < 0 \/ k >= n \/ ite (0 <= k < n)
-            u s[k]], which then no longer occurs and is dropped with its
-            binder *)
-    contextual_ite_as_extra_form_no_unknown_query : bool; [@default true]
-        (** with [contextual_ite_no_unknown_query], apply the contextual
-            [ite] rule not in place, to every rewritten clause and every form
-            the verdict asks, but only to forms asked in addition, after the
-            forms asked without it have failed: each rewritten clause not
-            decided piece by piece is asked once more, piece by piece, in its
-            contextual-ite form ([Evaluator.elim_onepoint_and_split_binders_contextual]),
-            and in the sequence instantiation each piece gets its
-            [SeqInstantiation.contextual_ite_form] as its last form, after
-            the grouped question of its group and every other form of its own.
-            Every other question is then the one asked with
-            [contextual_ite_no_unknown_query] off, so the contract is: with
-            the field on, every clause and every piece proved, and every
-            clause refuted, without the rewrite is proved (resp. refuted) by
-            the same question, before any added question is asked.  The added
-            questions are exact (the rewrite holds in every model) or
-            strengthenings (the instantiation), so a proof read from one is
-            sound, and a refutation is read only from the exact clause form.
-            Why: applied in place, the rewrite changed the forms the grouped
-            piece questions are built from, and on a Rust-derived call-site
-            input those questions proved 8 pieces where without it they
-            proved 21, turning an input answered 6 of 6 into 1 of 6.  Inert
-            without [contextual_ite_no_unknown_query].  On by default. *)
-    witness_forms_no_unknown_query : bool; [@default true]
-        (** in the sequence instantiation of the zero-unknown verdict, also
-            ask each piece, after every other form, in a form shaped for the
-            solver's e-matching ([SeqInstantiation.witness_form]): an
-            existential's variable that occurs only inside array lambdas
-            instantiated at a fresh free variable, and an integer one read
-            through [n - c] in a constructor argument or array index renamed
-            so it reads as a variable.  A strengthening, so only a proof of
-            validity is read from it and it can only turn an undecided piece
-            into a proved one.  With [onepoint_array_reads_no_unknown_query],
-            a law witness stated pointwise (an array prepending one element
-            to another) becomes a lambda the solver instantiates the law
-            with *)
-    drop_array_hypotheses_no_unknown_query : bool; [@default false]
-        (** in the sequence instantiation of the zero-unknown verdict, also
-            ask each piece, after every other form (the witness form
-            included), with the disjuncts of its negation normal form that
-            are existentials binding an array or sequence around a universal
-            quantifier removed ([SeqInstantiation.drop_array_hypotheses_form]):
-            the negated form of a premise quantified over arrays, which the
-            solver's instantiation cannot decide even where the piece does
-            not depend on it.  Removing a disjunct strengthens the question,
-            so only a proof of validity is read from it and it can only turn
-            an undecided piece into a proved one *)
-    skolemize_positive_universals_no_unknown_query : bool; [@default true]
-        (** in the sequence instantiation of the zero-unknown verdict, first
-            replace every universal of a piece reached through conjunctions,
-            disjunctions and other such universals alone -- a conclusion's
-            universal, or a premise's existential after negation normal form
-            -- by fresh free variables, so that terms built from its variables
-            become candidate witnesses for a sequence existential beneath it
-            and candidate instances of a premise law.  Validity is unchanged
-            by that step, so the instantiation's contract is too: only a
-            proof of validity is read.  Off by default *)
-    cancel_forced_sequence_binders_no_unknown_query : bool; [@default true]
-        (** in the sequence instantiation of the zero-unknown verdict, first
-            eliminate a sequence binder [x] of an existential whose body has a
-            conjunct [p ++ x = q] (or [x ++ p = q]) when the piece has a
-            disjunct [p ++ u != q] (respectively [u ++ p != q]) over variables
-            not bound there: the existential is replaced by its instance at
-            [u].  Exact, by cancellation of a common prefix or suffix: where
-            the disjunct is false [x] is forced to be [u], where it is true
-            the piece holds.  So the binder is never offered candidates.  On
-            by default *)
-    subst_projection_definitions_no_unknown_query : bool; [@default false]
-        (** before the zero-unknown verdict asks a clause, replace a
-            sequence-valued projection of a clause variable, [sel x], by the
-            constructor term [t] a disjunct [sel x != t] of the clause defines
-            it as, in the clause's other disjuncts
-            ([Evaluator.subst_seq_projection_definitions]).  The disjunct is
-            kept, so the clause is equivalent to its rewritten form in every
-            model.  Off by default *)
-    chain_concat_candidates_no_unknown_query : bool; [@default true]
-        (** in the sequence instantiation of the zero-unknown verdict, also
-            offer a positive sequence existential whose body applies a
-            relation [h] (an array read as a chain of [select]s) with the
-            binder at position [j] the concatenation [x0 ++ x1] of two
-            applications [h(s, x0, m)] and [h(m, x1, e)] of the piece whose
-            middle arguments agree -- the witness a transitivity law
-            [h(a, u, b) /\ h(b, v, c) => h(a, u ++ v, c)] gives, which the
-            clause never writes.  First among the candidates, those whose
-            endpoints are the goal's own ahead, at most four.  Sound as the
-            other instances are: each implies the existential.  On by
-            default *)
-    chain_candidates_free_only_no_unknown_query : bool; [@default true]
-        (** with [chain_concat_candidates_no_unknown_query], read the chained
-            applications only where their arguments mention no variable the
-            clause binds, after rebinding such a variable by constructor
-            injectivity against an equation over free terms
-            ([SeqInstantiation.chain_apps_free_only]), so that the premise
-            [forall i. r = Some i => h(b, [i], c)] beside [r = Some x] gives
-            the witness [t ++ [x]] rather than [t ++ [i]] with [i] free.  Any
-            term is a sound instance, so this changes which forms are built,
-            never what a proof means.  When off, the candidates are exactly
-            those built without it. *)
-    matched_instance_forms_no_unknown_query : bool; [@default true]
-        (** in the sequence instantiation of the zero-unknown verdict, ask
-            each piece FIRST with every positive existential replaced by its
-            instances at the substitutions one round of first-order matching
-            of its body's subterms against the piece's ground terms finds
-            (at most eight each), [false] where none is found
-            ([SeqInstantiation.matched_instance_form]).  Sound for validity
-            only: each instance implies its existential, so the form implies
-            the piece.  On by default *)
-    matched_instance_hyp_budget_no_unknown_query : int option; [@default None]
-        (** with [matched_instance_forms_no_unknown_query], the number of
-            instances one pass of the earlier-pieces form may make
-            ([SeqInstantiation.earlier_pieces_form]; 64 when [None], as for
-            the other matched forms).  Only which instances are offered
-            changes, so soundness is as above.  [None] by default *)
-    matched_instance_element_candidates_no_unknown_query : bool;
-        [@default true]
-        (** with [matched_instance_forms_no_unknown_query], a sequence binder
-            of a positive existential is also offered the one-element
-            sequence [seq.unit t] for each element equation [seq.nth x i = t]
-            of its body, and [u ++ seq.unit t] for each sequence [u] of its
-            sort free in the piece
-            ([SeqInstantiation.element_equation_candidates_for]), these only
-            where the matches leave room; and [a ++ b] where the body states
-            the binder pointwise as [a] below [len a] and [b] above
-            ([SeqInstantiation.pointwise_definition_candidates_for]): the
-            witness of an existential introduction built from the element the
-            goal fixes, or a lemma's concatenation, which the piece never
-            writes.  Only which instances are offered changes, so soundness
-            is as above.  On by default *)
-    matched_instance_chain_join_candidates_no_unknown_query : bool;
-        [@default true]
-        (** with [matched_instance_forms_no_unknown_query], a piece is also
-            asked its chain-join forms ([SeqInstantiation.chain_join_forms_of],
-            after its matched forms): a positive existential whose sequence
-            binder its body reads instantiated at the join
-            [u ++ extract w 1 (len w - 1)] (or [extract u 0 i ++ w]) of two
-            sequences free in the piece whose elements [u[i]] and [w[0]] the
-            piece equates to a common term
-            ([SeqInstantiation.chain_join_candidates_for]) -- the witness of
-            a chain of states over a concatenation whose halves share their
-            middle state -- its reads split, its universals skolemized, the
-            rest matched.  Each form is a strengthening, so only a proof is
-            read.  On by default *)
-    chain_join_direct_reads_no_unknown_query : bool; [@default false]
-        (** with [matched_instance_chain_join_candidates_no_unknown_query],
-            two chains are also joined where the piece writes their shared
-            element as one equation [u[i] = w[0]] between the two reads,
-            with no common term ([SeqInstantiation.chain_join_direct_reads]).
-            That is the shape the pairs take once the middle state, a field
-            of a tuple, is a variable the one-point rule replaced by one of
-            the reads (as after the preprocessor's
-            [split_single_cons_clause_vars]).  Only which instances are
-            offered changes, so only a proof is read.  Off by default *)
-    matched_instance_assoc_open_no_unknown_query : bool;
-        [@default true]
-        (** with [matched_instance_forms_no_unknown_query], the matching that
-            chooses a matched form's instances matches a concatenation
-            pattern modulo associativity (a sequence binder standing for a
-            run of the ground term's operands:
-            [SeqInstantiation.assoc_concat_matching]), and an existential no
-            complete substitution matches is instantiated at the maximal
-            substitutions that fix every array and sequence binder, the
-            scalar binders they leave out kept existential
-            ([SeqInstantiation.open_scalar_matches]).  Every such instance
-            implies its existential, so each form still only strengthens its
-            piece and only a proof is read.  What it buys: a premise
-            [forall s e r. P(h ++ s) /\ Q(s ++ [e], r) => P(h ++ s ++ [e])]
-            whose ground facts write [h ++ [x] ++ y] is instantiated at
-            [s = [x] ++ y], with the end state [r] that no ground term names
-            left to the solver.  On by default *)
-    matched_instance_last_index_candidates_no_unknown_query : bool;
-        [@default true]
-        (** with [matched_instance_forms_no_unknown_query], an integer binder
-            of a positive existential is also offered [len s - 1] for each
-            [seq.len s] of its body free in the piece
-            ([SeqInstantiation.last_index_candidates_for]): the instance at
-            the last index of a premise stated for every index.  Only which
-            instances are offered changes.  On by default *)
-    chain_join_focused_no_unknown_query : bool; [@default true]
-        (** with [matched_instance_chain_join_candidates_no_unknown_query],
-            the chain-join forms instantiate every existential left after the
-            goal's instance at its two best substitutions, those whose
-            instances write a term mentioning a constant the goal's
-            skolemization introduced first (the per-index premise at the
-            goal's fresh index, the transitivity law at the state it reads),
-            then those writing the most terms of the piece, and keep no
-            existential beside its instances.  A strengthening, so only a proof is read.
-            On by default *)
-    matched_instance_collections_only_no_unknown_query : bool;
-        [@default true]
-        (** with [matched_instance_forms_no_unknown_query], each piece is also
-            asked, after its other matched-instance forms, with only the
-            existentials binding an array or a sequence instantiated by
-            matching and every other existential left as it is
-            ([SeqInstantiation.matched_instance_form]'s [collections_only]):
-            a premise universal over indices then stays for the solver to
-            instantiate at the index the goal's instance leaves.  A
-            strengthening of the piece, so only a proof is read.  On by
-            default *)
-    max_matched_form_size_no_unknown_query : int option;
-        [@default Some 20000]
-        (** with [matched_instance_forms_no_unknown_query], a matched-instance
-            form whose instances are estimated (instances times body size, in
-            formula nodes, summed over the existentials it instantiates, before
-            any is built) past this many nodes is not built and is skipped as
-            an undecided form is ([SeqInstantiation.max_matched_form_size]);
-            [None] builds every form.  Skipping a form only loses a proof.
-            20,000 nodes by default: over the Thrust inputs with the largest
-            matched forms, every form of at most 160,000 characters was
-            estimated at 12,300 nodes or fewer, while the two pieces that
-            built three-million-character forms (13-31 s each) were
-            estimated at 30,500 and 110,300 *)
-    matched_bound_before_ranking_no_unknown_query : bool; [@default true]
-        (** with [matched_instance_forms_no_unknown_query] and
-            [max_matched_form_size_no_unknown_query], an existential's share
-            of a matched-instance form's size estimate is tested against the
-            bound before its substitutions are ranked
-            ([SeqInstantiation.matched_bound_before_ranking]) rather than
-            after: the ranking is a permutation, so the same forms are built
-            and the same are skipped; only the time to skip one changes.  On
-            by default *)
-    ground_funapps_linear_no_unknown_query : bool; [@default true]
-        (** with [matched_instance_forms_no_unknown_query], the ground
-            function applications a matched-instance form matches against are
-            collected in one pass that computes each node's variables outside
-            the formula's free ones from its children's
-            ([SeqInstantiation.ground_funapps_one_pass]), instead of one
-            [Term.tvs_of] per application, which is quadratic in the nesting
-            depth.  The same list either way, so the forms and the questions
-            are the same; only the time to build them changes.  On by
-            default *)
-    max_chain_join_focus_size_no_unknown_query : int option; [@default None]
-        (** with [matched_instance_forms_no_unknown_query], a chain-join form
-            whose focused formula (the piece with the joined existential
-            instantiated and the transitivity-law instances over every chained
-            pair, before simplification) is past this many nodes is not built
-            and is skipped as an undecided form is
-            ([SeqInstantiation.max_chain_join_focus_size]); [None] builds every
-            one.  Skipping a form only loses a proof.  Why: on Rust-derived
-            pieces the focused formula and the simplification and matching
-            run on it, before any instance estimate is reached, held the
-            verdict for more than 200 s with no question asked *)
-    fork_seqinst_questions_no_unknown_query : int option; [@default None]
-        (** in the sequence instantiation of the zero-unknown verdict, ask each
-            instantiated form in a forked copy of the process, killed after
-            the larger of this many milliseconds and the question's own budget
-            ([PCSatCommon.ForkedQuery]); [None] asks in-process.  Only a
-            [`Valid] is read from such a question (a countermodel of an
-            instantiated form says nothing about the clause), so a copy that is
-            killed, or that cannot be forked, only loses a proof.  Why: one such
-            question, quantifier-free and of about 13,000 nodes, was asked under
-            a 10 s budget and had not returned 83 s later, when the run was
-            killed: Z3's own budget does not hold on it *)
-    fork_seqinst_kill_margin_no_unknown_query : int option; [@default None]
-        (** with [fork_seqinst_questions_no_unknown_query], [Some m] kills a
-            forked form at its own budget plus [m] milliseconds
-            ([ForkedQuery.ladder_kill_ms]) instead of at the larger of that
-            field's value and the budget, so that a short budget -- the first
-            pass of [two_pass_budget_no_unknown_query] -- bounds a forked
-            question as Z3's timeout bounds one asked in process, and [m]
-            covers what the copy does besides the solver call (the fork, the
-            conversion of the form, the copy's exit).  [None]: the larger of
-            the two, as before.  Only the time an undecided question costs
-            changes: a proof read from the copy is the solver's proof.  Why:
-            with the field's value at 15,000 ms and a first-pass budget of
-            5,000 ms, three undecided forms of one Rust-derived loop step each
-            held the run 15.6 s, 48 s of the 54 s spent before the form that
-            proved the clause in 1.8 s *)
-    lemma_application_ms_no_unknown_query : int option; [@default Some 2000]
-        (** in the sequence instantiation of the zero-unknown verdict, a piece
-            nothing else proved is given to [PCSatCommon.LemmaApplication]:
-            its quantified hypotheses (a lemma the clause calls, the negated
-            goal) are instantiated at matched terms, each disjunct of an
-            instance is asked about alone, under this many milliseconds, and
-            dropped when the facts refute it; a hypothesis left with one
-            disjunct adds it as a fact, and one left with none proves the
-            piece.  [None] asks nothing; the default is 2000.  Only proofs of
-            validity are read.
-            Why: a lemma applied at the premises' witnesses and a goal at the
-            lemma's joined index map were each decided in about 0.1 s per
-            disjunct, while every form asked whole, and the same instances
-            asked as one question, were left undecided at 30 s by z3 and
-            cvc5. *)
-    guarded_facts_ms_no_unknown_query : int option; [@default Some 3000]
-        (** in the quick sweep and the rewritten stages of the zero-unknown
-            verdict, a piece (or a
-            clause asked whole) whose negation holds a hypothesis
-            [forall xs. not B(xs) \/ ...] with a guard [B] that a fact [B(ts)]
-            matches is first given to [PCSatCommon.GuardedFacts]: the
-            single-constructor variables it reads through selectors split into
-            their fields, the hypothesis applied forward at [ts] (a disjunct the
-            facts over its own variables refute dropped, the one left kept as a
-            fact), and the strengthened question asked -- all in a forked copy
-            killed after this many milliseconds, with the bit-vector rewrite of
-            bounded integers off in the copy.  Only a proof is read; anything
-            else falls through to the piece's own question.  Each question is
-            tried once per process.  [None] (the default): nothing is tried.
-            Why: on a Rust-derived bit-set postcondition (the word index and
-            mask a call returned, read through a tuple, and the relation fixing
-            the element's index) every form of the ladder was left undecided at
-            10 s, while the tuple split with the contract's conclusion
-            derived as a fact at the relation's point was decided in 0.1-0.3 s;
-            with the contract's instance asserted as the implication it is, or
-            with the tuples unsplit, Z3 left it undecided at 20-30 s *)
-    guarded_facts_theory_facts_only_no_unknown_query : bool;
-        [@default true]
-        (** with [guarded_facts_ms_no_unknown_query], a form whose derived
-            facts are all reads of a relation (a Boolean [select] chain, a
-            variable or a function application said to hold or fail) is not
-            asked, and the piece is asked as without the rule.  Such a form
-            is the question plus ground atoms of the relations its own
-            hypotheses are guarded by.  Why: over five Rust-derived inputs no
-            such form was decided where the question alone was not (each form
-            and question replayed in z3 at 10 s): the decided ones were decided
-            as fast without the facts, the others were undecided questions, and
-            each undecided form held the forked copy for its whole budget --
-            15-20 s of a loop-closure input that answers at 86-103 s of 120;
-            the forms that proved what the question did not all derived a fact
-            with arithmetic content.  [false] (the default): every form is
-            asked. *)
-    lemma_application_rlimits_no_unknown_query : (int * int) option;
-        [@default Some (300000, 500000)]
-        (** with [lemma_application_ms_no_unknown_query], [Some (native,
-            fallback)] bounds each of the route's questions by a Z3 resource
-            count ([rlimit], the solver's own steps, the same whatever the
-            host's load): [native] per question as asked, [fallback] per
-            question of the sequence-axiom fallback asked after an undecided
-            one; the route's milliseconds then stay as the kill of both (the
-            fallback's wall-clock budget is raised to them from the
-            process-wide one), so that what decides a question is its count
-            and the wall clock only stops a check the count does not stop.
-            An exhausted count is an undecided question, which the route reads
-            as "not refuted", as it reads a timeout.  [None]: wall clock only.
-            Why: on a Rust-derived filter's transitivity piece the route's
-            questions split cleanly -- every refutation the route used took at
-            most 37,347 units (under 0.1 s), every native question it did not
-            decide ran to the 2000 ms budget (1.0-1.4 million units), and the
-            fallback proved at 27,563 and 204,943 units where the questions it
-            did not prove ran to its 500 ms budget (437,589-583,927 units) --
-            so the undecided ones were 27 of the route's 36 s at load 8, and
-            under load the fallback's 205k-unit proof came near its 500 ms *)
-    fork_invalid_skips_seq_axiom_fallback_no_unknown_query : bool;
-        [@default false]
-        (** a zero-unknown ladder question asked in a forked copy
-            ([fork_seqinst_questions_no_unknown_query],
-            [fork_refused_questions_no_unknown_query]) and answered invalid
-            there is not handed to the sequence-axiom fallback, as an
-            in-process question answered invalid is not: the copy's
-            countermodel is not sent back, so without the field its answer
-            reaches the fallback as an undecided one.  The fallback can only
-            turn an undecided answer into a proof, and a question with a
-            countermodel has none to give, so only the time changes.  Why: on
-            a Rust-derived input under a resource-counted fallback, each such
-            question spent another 1-2 s in a fallback that proved none of
-            them, about 20 s of one clause's 21 s *)
-    ladder_seq_axiom_rlimit_no_unknown_query : (int * int) option;
-        [@default None]
-        (** [Some (units, kill_ms)]: every question of the zero-unknown
-            ladder asks its sequence-axiom fallback under a Z3 resource count
-            of [units] ([Z3interface.with_seq_axiom_rlimit]), its wall-clock
-            budget raised (or lowered) from the process-wide
-            [seq_axiom_fallback] to [kill_ms], which then only stops a check
-            the count does not stop (the question's own budget still caps
-            it).  An exhausted count is an undecided fallback, which leaves
-            the question's answer as it was: only a proof comes out of the
-            fallback.  [None]: the process-wide wall-clock budget alone.  Why:
-            on a Rust-derived loop step the fallback's proofs of seven
-            near-identical pieces took 0.37-0.74 s against its 500 ms budget,
-            so the host's load decided how many of the seven were proved
-            (seven in one run, three in the next), and each piece lost cost
-            another 12-20 s of larger forms *)
-    ladder_seq_axiom_rlimit_refused_only_no_unknown_query : bool;
-        [@default false]
-        (** with [ladder_seq_axiom_rlimit_no_unknown_query], the pair applies
-            only to the fallback of a fresh ladder question the solver was
-            not asked at all -- [may_not_return] refused it and no forked
-            copy asked it ([fork_refused_questions_no_unknown_query] off) --
-            for which the fallback is the question's only attempt
-            ([LadderSeqAxiomRlimit.for_fallback]); the fallback after a
-            question the solver was asked and left undecided, and every
-            fallback asked inside the pooled questions' [check_valid], keep
-            the process-wide wall-clock budget, as without the pair.  The
-            fallback turns nothing but an undecided answer into [`Valid], so
-            only which undecided questions are proved, and what each costs,
-            changes.  Why: over four Rust-derived inputs every fallback proof
-            of a fresh question the solver had been asked was cheap (at most
-            0.2 s), and on one loop step the 17 fallbacks after questions the
-            solver had run to their budget proved nothing and cost 51 s under
-            a 3 s kill, where the process-wide 500 ms would have cost 8.5 s *)
-    ladder_seq_axiom_units_per_node_no_unknown_query : int option;
-        [@default None]
-        (** with [ladder_seq_axiom_rlimit_no_unknown_query] = [Some (units,
-            kill_ms)], [Some k] makes the fallback's count of a fresh ladder
-            question of [n] nodes [k * n] rather than [units], and gives a
-            question the count only where [k * n] reaches [units]; a smaller
-            question keeps the process-wide wall-clock budget, as without the
-            pair ([LadderSeqAxiomRlimit.for_fallback]).  So a large question
-            is given a count in proportion to its size, killed at [kill_ms],
-            and a small one stops when it stopped before.  [None]: the fixed
-            count [units] for every question.  The fallback turns nothing but
-            an undecided answer into [`Valid], so only which undecided
-            questions are proved, and what each costs, changes.  Why: over
-            four Rust-derived inputs (125 fallback questions of the ladder,
-            each asked with a 3 s or 1 s kill) the questions the fallback
-            proved needed at most 135 units per node of the question except
-            five of under 1,600 nodes (at most 0.71 s each), while those it
-            did not prove ran at 170-40,000 units per node until stopped, the
-            large ones at 5-50; so a count of 64 units per node is above
-            every proof of a large question -- seven 22,900-node pieces of
-            one loop step needed 650,000-1,120,000 units, 0.33-0.54 s against
-            the 500 ms that load decided -- while a fixed count of 1,500,000
-            units let small unproved questions run 1-3 s instead of 0.5 s,
-            8-17 s more a run on three other inputs *)
-    lemma_application_before_cvc5_no_unknown_query : bool; [@default true]
-        (** ask a piece no form proved of the lemma application
-            ([lemma_application_ms_no_unknown_query]) BEFORE the cvc5 retry
-            ([ladder_cvc5_retry_ms_no_unknown_query]) rather than after it;
-            each reads only a proof, so the order changes the time a piece
-            costs, never what is proved of it.  Why: on a Rust-derived
-            filter's pieces the route proves, the cvc5 retry ran first and
-            answered [unknown] after 6.6-7.4 s each (16.5 s of a run at load
-            8), while the route's own refutations take well under a second *)
-    lemma_application_after_form_timeout_no_unknown_query : bool;
-        [@default true]
-        (** ask a piece of the lemma application
-            ([lemma_application_ms_no_unknown_query]) as soon as one of the
-            piece's forms has run out of its budget, before its later forms
-            (with [two_pass_budget_no_unknown_query], between the two passes
-            when a form was deferred), instead of after every form.  A piece
-            some form proves before any form runs out is asked exactly as
-            without it; each step reads only a proof, so only the time a piece
-            costs changes.  Why: on a Rust-derived filter's iterator law, which
-            the route proves in a few seconds, three of the piece's thirteen
-            forms ran to the 10 s budget, 34 s of the 37 s its forms cost *)
-    lemma_goal_first_probe_no_unknown_query : int option; [@default None]
-        (** [Some n], with [lemma_application_extended_no_unknown_query]: a
-            piece some of whose goal pieces have a witness goal that only the
-            last-witness-disjunct rule finds is first given a short extended
-            goal-first probe of at most [n] questions per goal piece, before
-            the plain route ([PCSatCommon.LemmaApplication.goal_first_probe]).
-            Only the order and the caps change; only proofs are read.  Why:
-            on a loop step the plain route spent all 64 of its questions
-            (35-60 s) where the extended route then proved the piece in 11. *)
-    lemma_application_extended_no_unknown_query : bool; [@default false]
-        (** with [lemma_application_ms_no_unknown_query], the extended route
-            ([PCSatCommon.LemmaApplication.extended]): a conclusion that is a
-            conjunction split into one piece per conjunct, each piece's
-            negated goal tried first; the existential facts opened; a
-            sequence binder offered the one-step extensions [g ++ [e]] of the
-            facts' sequences, and the instances that build their terms tried
-            first; a disjunct the facts leave undecided asked again by cases
-            (an existential's disjunctive body distributed, an index split
-            against a concatenation's prefix), each with selections of the
-            facts, smallest first.  Only proofs are read, as without it.
-            Why: a loop step whose witness extends the invariant's history by
-            the one item [next] produced was undecided whole by z3 and cvc5,
-            with the witness given too, while each case, asked beside the two
-            or three facts about its terms, was decided in under a second. *)
-    ladder_cvc5_retry_ms_no_unknown_query : int option; [@default Some 20000]
-        (** in the sequence instantiation of the zero-unknown verdict (and
-            wherever its forms are asked: the validator's read-back ladder and
-            the Houdini pre-pass's sequence route), a piece none of its forms
-            proved is asked once more, after its last form: its largest form
-            built ([SeqInstantiation.best_built_form]) is given to cvc5 as a
-            separate process with this many milliseconds of its own budget and
-            killed by the wall clock one second later
-            ([PCSatCommon.Cvc5Proof.valid_within]).  Only cvc5's [unsat] of the
-            negation is read, as a proof of the form and so of the piece; its
-            [sat] is never a refutation (its models are not checked here), and
-            anything else leaves the piece undecided as before.  [None] asks
-            nothing.  Why: a form of a Rust-derived produces-transitivity piece
-            that Z3 left undecided at 30 s was proved by cvc5 in 3.5-15 s.
-            On by default *)
-    weaken_refused_questions_no_unknown_query : int option; [@default None]
-        (** a fresh-context validity question of the zero-unknown verdict that
-            [may_not_return] refuses is first handed, with this many
-            milliseconds (capped by the question's own budget), to its weakened
-            form: the negation's top-level conjuncts [may_not_return] refuses
-            (those binding a sequence under a quantifier) are dropped and the
-            rest is asked in-process ([WeakenedQuery.rest_unsat]).  Only an
-            [unsat] of the rest is read, as [`Valid]; anything else leaves the
-            question as it is without this field (refused, or forked under
-            [fork_refused_questions_no_unknown_query], then the sequence-axiom
-            fallback).  [None] asks nothing.  Why: on five sequence inputs
-            that otherwise go unanswered the ladder refused 182 questions and the weakened form
-            proved 97 of them valid, none invalid *)
-    ladder_cvc5_rlimit_no_unknown_query : int option; [@default None]
-        (** with the cvc5 retry above, also give cvc5 a budget of this many of
-            its own resource units ([--rlimit-per]); cvc5 answers [unknown]
-            when they are spent, which leaves the piece undecided as any other
-            non-proof does.  Unlike the budget in milliseconds, the count does
-            not depend on the machine's load, so the same question gets the
-            same chance on an idle and on a busy machine; the milliseconds stay
-            as cvc5's time limit and the wall-clock kill.  [None] passes no
-            resource limit *)
-    ladder_proof_shortcuts_no_unknown_query : bool; [@default true]
-        (** two exact shortcuts in front of solver calls whose answer is
-            already known.  (1) A form of the sequence instantiation (in every
-            route that asks its forms) that is literally [true] is proved
-            without being asked ([SeqInstantiation.true_forms_proved]), and so
-            is a literally [true] formula handed to the cvc5 retry.  (2) The
-            cvc5 retry answers a text it has already had [unsat] or [sat] to,
-            in this process, from that answer ([PCSatCommon.Cvc5Proof.
-            shortcuts]; a forked copy keeps what was recorded before its
-            fork).  Both give the answers asking would give: [true] is valid
-            in every model, and cvc5 is deterministic on one text, so only
-            budget cuts, which say nothing about a form, are skipped.  Why:
-            on six Rust-derived inputs ten of 27 cvc5 retries were of a form
-            that was [true], left unproved by an asker whose budget was cut,
-            and one 46,467-unit text was sent four times in one run.  On by
-            default *)
-    fork_refused_questions_no_unknown_query : int option; [@default None]
-        (** a fresh-context question of the zero-unknown verdict that
-            [may_not_return] refuses (a quantifier binding a sequence) is asked
-            all the same, in a forked copy killed after the smaller of this many
-            milliseconds and the question's budget, and only a [`Valid] is read
-            from it; [None] refuses it as before.  The smaller, because every
-            refused question then costs its kill: at the 10 s budget the
-            rewritten stage of one input spent 90 s on nine refused pieces,
-            none proved, where refusing them took 0.6 s each.  The sequence-axiom fallback
-            still follows an undecided answer.  Sound for the reason the fork of
-            [fork_seqinst_questions_no_unknown_query] is: the copy's proof is
-            the solver's proof, and anything else is undecided.  Why: on a
-            Rust-derived input a refused piece of the rewritten stage is proved
-            by Z3 in 2.5 s when asked, while the forms that replace it time out
-            at 12 s *)
-    seqinst_max_int_input_nodes_no_unknown_query : int option; [@default None]
-        (** in the sequence instantiation of the zero-unknown verdict, a
-            piece's deep form is not built when the formula its integer step
-            would instantiate is past this many nodes
-            ([SeqInstantiation.piece_max_int_input_nodes]); [None] builds every
-            one.  Not building a form only loses a proof.  Why: that step did
-            not return in 45-70 s on forms of 80,000 and 270,000 nodes, the
-            silent stretch that ended two Rust-derived inputs' runs, while the
-            deep forms proved on them were under 20,000 nodes *)
-    seqinst_max_nodes_no_unknown_query : int option; [@default None]
-        (** in the sequence instantiation of the zero-unknown verdict, the node
-            budget of each piece's plain and deep instantiations
-            ([SeqInstantiation.piece_max_nodes]); [None] bounds nothing but the
-            per-quantifier limits.  A bounded instantiation is still a
-            strengthening of the piece, so the bound only loses proofs.  Why: on
-            two Rust-derived inputs the verdict went silent for 60-100 s while
-            the first deep form of one piece was being built, no question
-            asked, until the run was killed *)
-    matched_instance_aligned_hyps_no_unknown_query : bool; [@default true]
-        (** with [matched_instance_forms_no_unknown_query], the earlier-pieces
-            form first aligns each earlier piece with the piece, mapping its
-            own variables onto the piece's by matching disjunct against
-            disjunct and dropping the disjuncts so matched
-            ([SeqInstantiation.aligned_hypotheses]), and then keeps every
-            existential over no array or sequence and every universal for the
-            solver to pair, the goal's index with a hypothesis's among them.
-            Sound because the pieces before are proved first.  Off by
-            default *)
-    chain_focus_form_no_unknown_query : bool; [@default true]
-        (** in the sequence instantiation of the zero-unknown verdict, after
-            every other form of a piece has failed, also ask it with a
-            positive sequence existential [exists x. ... h(s, x, e) ...]
-            instantiated at [x0 ++ x1] ALONE, for a pair of ground
-            applications [h(s, x0, m)] and [h(m, x1, e)] of the piece, a
-            sequence existential two of whose applications of [h] match that
-            pair (a negated transitivity law) instantiated at the matched
-            tuple alone, and every other sequence existential replaced by
-            [false]; once with the integer binders left bound and once with
-            them instantiated.  Sound for validity only: each instance
-            implies its existential and [false] implies anything, so the form
-            implies the piece.  Off by default *)
-    chain_focus_push_witnesses_no_unknown_query : bool; [@default true]
-        (** in the chain-focused forms ([chain_focus_form_no_unknown_query]
-            and the pushed forms below), the chain-focused
-            existential's OTHER sequence binders are instantiated too, each
-            binder [y] the body reads at the focused binder's length ([t =
-            seq.nth y (seq.len x)]) at [a ++ unit t], [a] the premise
-            sequence whose length a premise ties to the chain's prefix (a
-            loop's history restated after a step: the previous history
-            pushed once, [SeqInstantiation.push_witnesses]); and each such
-            focused form, with the premise laws over opaque values kept
-            quantified and its integer binders instantiated, is asked FIRST
-            among the piece's forms (at most two).  Sound for validity only:
-            every instance implies its existential and keeping a disjunct is
-            exact, so each form implies the piece.  Off by default *)
-    lazy_plain_form_no_unknown_query : bool; [@default true]
-        (** in the sequence instantiation of the zero-unknown verdict, build
-            a piece's plain instantiation only when that form is asked
-            ([SeqInstantiation.lazy_plain_form]), not when the piece's forms
-            are listed (every piece of a clause, before grouping).  The same
-            forms in the same order; only when each is built changes (and
-            with it the order of fresh-name draws).  On by default: the
-            eager listing built every piece's plain instantiation (1-3 s a
-            piece under load) although that form comes late and is rarely
-            asked, which spent most of a 120 s budget before any question *)
-    case_split_index_forms_no_unknown_query : bool; [@default true]
-        (** in the sequence instantiation of the zero-unknown verdict, ask
-            each of the first two forms of a piece that reads [seq.nth (u ++
-            w) i] at [i = t] or [t + c] ([t] a free integer, the skolem of a
-            position of an extended history) first by the three cases of [t]
-            against [len u] ([SeqInstantiation.index_cases_outcome]: the form
-            with [t >= len u], [t != len u], [t <= len u] added as a
-            disjunct), and whole only when some case is not proved; once a
-            case question of a piece is left undecided (it ran out of its
-            budget), the piece's forms are asked only whole.  Sound: the
-            cases cover every model, so the three proved prove the form, and
-            the form implies the piece.  On by default, together with the size
-            ratio below *)
-    case_split_index_budget_no_unknown_query : int option; [@default None]
-        (** with [case_split_index_forms_no_unknown_query], ask each index
-            case question at this budget in ms (capped at
-            [no_unknown_query_timeout]) instead of the form's own, so that a
-            case the solver decides only slowly counts as undecided and the
-            piece's forms are then asked whole
-            ([SeqInstantiation.index_case_ask]).  Only when a proof is found
-            changes: the cases are still all proved for a proof by cases,
-            and a form not so proved is asked whole at its own budget.  Why:
-            on a loop-step clause whose whole form is proved in about 11 s,
-            each of its three cases was proved in 10.6-14.3 s, tripling its
-            cost, while on the input the cases are for each case decides in
-            0.1-0.2 s.  [None] (the default) asks the cases at the form's
-            budget *)
-    case_split_index_max_size_ratio_no_unknown_query : float option;
-        [@default Some 0.5]
-        (** with [case_split_index_forms_no_unknown_query], ask a candidate
-            split by cases only when each of its three case questions has an
-            AST size at most this ratio times the form's, skipping it with no
-            question otherwise ([SeqInstantiation.index_case_max_size_ratio]);
-            a form none of whose candidates passes is asked whole, as
-            without the cases.  Only removes case questions, so a proof by
-            cases is still three proved cases.  Why: where a case decides
-            the guards of most of the form's reads its question is a few
-            percent of the form's size and decided fast; where it does not,
-            each case question keeps most of the form's size and is about as
-            slow as the whole form, tripling the piece's cost.  [None] asks
-            every candidate; the default is 0.5 *)
-    chain_assoc_match_no_unknown_query : bool; [@default true]
-        (** as [chain_focus_form_no_unknown_query], for a positive sequence
-            existential whose body applies [h] with [v ++ t] in the middle
-            ([v] bound by it) and a pair [h(a, u, b)], [h(b, w, c)] of ground
-            applications whose start and end match the application's: [u ++
-            w] is matched against [v ++ t] modulo associativity (so [v] is [u
-            ++ w'] with [w = w' ++ t], the end bound to [c]), the existential
-            is instantiated at that match alone and a transitivity law at the
-            pair.  Sound for validity only, for the same reason.  Off by
-            default *)
-    prepend_unit_candidates_no_unknown_query : bool; [@default true]
-        (** in the sequence instantiation of the zero-unknown verdict, also
-            offer a positive sequence existential whose body builds
-            [x ++ p1 ++ ... ++ pk] the terms [unit e ++ u], where [u] is what
-            a clause term [u ++ q1 ++ ... ++ qk] leaves for [x] and [unit e] a
-            singleton of the clause: a law at a state one step later, after
-            the step produced the item [e].  Sound as the other instances are:
-            each implies the existential, so only a proof of validity is
-            read.  Off by default *)
-    pointwise_concat_candidates_no_unknown_query : bool; [@default true]
-        (** in the sequence instantiation of the zero-unknown verdict, also
-            offer a positive sequence existential read pointwise and mentioning
-            a clause sequence [w1 ++ ... ++ wm] the terms [u1 ++ ... ++ um],
-            each [u_i] read beside [w_i] at one index in an atom of the clause
-            (the premise [forall k. R(u_i[k], w_i[k])]); an element bound by a
-            premise's universal is a candidate only with
-            [skolemize_positive_universals_no_unknown_query].  Sound as the
-            other instances are: each implies the existential.  Also splits a
-            piece whose distribution over its disjunctions would exceed the
-            piece bound along one side of the disjunction, the other kept
-            whole, which is exact.  Off by default *)
-    share_premise_instances_no_unknown_query : bool; [@default false]
-        (** in the sequence instantiation of the zero-unknown verdict, ask a
-            clause of several pieces first as the pieces of ONE instantiation
-            of the whole clause, which is then quantifier-free, so the split
-            is exact, before instantiating every piece on its own; the premise
-            disjuncts the pieces share are instantiated once instead of once
-            per piece.  Sound as the other forms are: the whole clause's
-            instantiation strengthens it, and only a proof of validity is
-            read.  When it does not prove the clause the pieces are asked as
-            without it, so it costs time and never an answer.  Off by
-            default: on the one input measured the shared forms were larger
-            and the first undecided *)
-    group_piece_forms_no_unknown_query : bool; [@default true]
-        (** in the sequence instantiation of the zero-unknown verdict, ask the
-            first forms of consecutive pieces of one clause as ONE question
-            before asking each piece's forms: the forms, renamed so that the
-            premise disjuncts they repeat coincide, with their common
-            disjuncts factored out ([SeqInstantiation.PieceGroups]).  The
-            question is equivalent to the conjunction of the renamed forms,
-            each of which is valid exactly when its form is, so only a proof
-            of validity is read and it proves every piece of the group; when
-            the question is not proved, each piece is asked its forms as
-            without the switch, the first being the same one, so it costs
-            time and never an answer.  On by default: over 198 sequence and
-            array inputs at 120 s, together with the switch below, it gained
-            an input no run answered without it (6 of 6 against 0 of 6) and
-            lost none *)
-    split_int_binders_at_ite_no_unknown_query : bool; [@default true]
-        (** every validity question the zero-unknown verdict asks through
-            [Z3interface.check_valid], [check_valid_seq_as_array] or the
-            sequence-axiom fallback (the lemma route's included) is first
-            rewritten with each integer binder whose body holds an [ite] on
-            [x < c] (alone, or inside a compound condition such as the range
-            tests a read of a concatenation is split with) split at [c] and
-            its upper part shifted to start at zero
-            ([Z3interface.with_split_int_binders], [IntBinderSplit.rewrite]).
-            Exact: each split is an equivalence in every model, so every
-            answer means what it meant.  Why: a proof that needs a universal
-            at [x := k + c] from a read at [x - c] was found only by
-            model-based instantiation, whose success depended on the spelling
-            of a generated sort name or of bound variables and on the seed.
-            On by default *)
-    arith_solver_no_unknown_query : int option; [@default None]
-        (** Z3's [smt.arith.solver] for every pooled question the zero-unknown
-            verdict asks ([Z3interface.with_arith_solver]): [Some 2] asks them
-            with the simplex-based [theory_arith] instead of the default
-            [lp]-based [theory_lra], on instances of their own.  The questions
-            are the same, so only their time, and whether one outside the
-            decidable fragment is decided, can change.  [None], the default,
-            leaves the parameter unset. *)
-    group_question_max_nodes_no_unknown_query : int option; [@default Some 380000]
-        (** with [group_piece_forms_no_unknown_query], a grouped question
-            larger than this many formula nodes, as it would be asked, is not
-            asked, and its group's pieces are asked their own forms at once,
-            as after a grouped question that is not proved
-            ([SeqInstantiation.group_question_max_nodes]); [None] asks every
-            one.  Only a proof is read from a grouped question, so this
-            changes which questions are asked and never which answer is
-            read.  Why: one grouped question of 570,000 nodes was held by Z3
-            for 44 s under a 10 s budget and left the run no time for the
-            per-piece forms that prove its pieces, while the grouped
-            questions proved on the same inputs were under 90,000 nodes.
-            On by default. *)
-    share_piece_simplify_no_unknown_query : bool; [@default true]
-        (** with [group_piece_forms_no_unknown_query], group the pieces'
-            first forms before their last simplification and simplify each
-            grouped question once ([SeqInstantiation.share_piece_simplify]),
-            so that the disjuncts the pieces share are simplified once per
-            group instead of once per piece.  The question is equivalent in
-            every model to the one asked without it, but not the same
-            formula; a piece whose group is not proved is asked its own
-            forms as without it.  Inert without the grouping switch.  On by
-            default, measured together with it *)
-    share_replayed_int_instances_no_unknown_query : bool; [@default false]
-        (** inside the replay of fresh names under which a clause's pieces
-            have their first deep forms built for grouping, let the integer
-            step reuse the instances of an existential met again with the
-            same candidates, budget left and replay position
-            ([SeqInstantiation.share_replayed_int_instances]).  Each form is
-            the formula built without it, name for name, so the questions
-            asked are the same; only the building time changes.  Why: the 64
-            pieces of a Rust-derived clause share their premise, and its
-            integer instances were built once per piece, 11 s of a 120 s
-            budget.  Off by default: to be measured *)
-    share_deep_shapes_no_unknown_query : bool; [@default true]
-        (** build the first deep form of the pieces of one clause that differ
-            only in small quantifier-free literals no step of the deep form
-            reads (no sequence, array or opaque-sort subterm, no binder) once
-            per premise part and replay position, with a placeholder for the
-            literals, and give each piece that form with its own literals put
-            back where the simplification of the whole piece puts them
-            ([SeqInstantiation.share_deep_shapes]).  Each form is the formula
-            built without it, with the same fresh names drawn, so the
-            questions asked are the same; a piece whose literals the
-            simplification could merge with the premise part is built as
-            without it.  Why: a Rust-derived loop-body
-            clause has 64 pieces in families of eight sharing their premise
-            part, and their first deep forms, 139,000-307,000 nodes each,
-            took 75 s of a run at load 14.  Off by default: to be measured *)
-    remember_proved_pieces_no_unknown_query : bool; [@default true]
-        (** a schedule for the zero-unknown verdict's clause-by-clause
-            stages that keeps what one stage proved for the next ones and
-            lets no clause or piece end a stage for the others:
-            - a rewritten clause asked by its pieces (the early and the late
-              rewritten passes) is asked EVERY piece, not only those up to the
-              first undecided one; a piece refuted still refutes at once, and
-              when a piece stays undecided the whole clause is asked last, as
-              without the switch;
-            - the pieces left undecided are remembered, and the later
-              rewritten pass and the sequence instantiation ask the
-              conjunction of those pieces in place of the rewritten clause
-              (the clause is the conjunction of its pieces in every model, so
-              the clause is valid once the remembered pieces are) -- only
-              when some piece was shown valid: with every piece undecided
-              that conjunction is the clause again, in a form the sequence
-              instantiation splits worse, and the clause is kept;
-            - the sequence instantiation asks every clause not yet shown
-              valid, smallest first by formula size (ties in the clauses'
-              order), records each it proves, and does not stop at the first
-              it cannot prove.
-            Only a proof is read from the new questions and a refutation is
-            taken only where it was before (a piece of a rewritten clause
-            refuted, which refutes the rewritten clause), so the switch
-            changes which answer is reached within the time and never which
-            answer is right.  What it buys: a 32-piece clause whose second
-            rewritten piece the sequence-axiom fallback decided in one run
-            and not in another went whole, in the second, to the sequence
-            instantiation, where every piece took about 27 s; the other
-            pieces had each been decided in 0.1 s in the rewritten form.
-            On by default *)
-    pin_seq_lengths_no_unknown_query : bool; [@default true]
-        (** when preprocessing leaves no predicate variable and the validity
-            questions end undecided or out of budget, also look for a
-            refutation with every free sequence variable fixed to a literal of
-            length 0, then 1, then 2 ([NoUnknownSeqPin]); it can only turn
-            [unknown]/[timeout] into [unsat], never into [sat]: a model violating
-            the clause with a sequence fixed to a literal violates the clause.
-            On by default: with [split_seq_reads] in the preprocessor it
-            refutes a nested-sequence Thrust query that no other setting
-            decides.  When off, nothing is asked beyond the existing
-            questions *)
-    pin_seq_lengths_from_model_no_unknown_query : bool; [@default true]
-        (** with [pin_seq_lengths_no_unknown_query], first, clause by
-            clause, take each free sequence's length from a model of the
-            quantifier-free relaxation of the clause's negation (its quantified
-            parts replaced by [true]), at most 32, and ask the clause's
-            negation strengthened by those length equations, before the fixed
-            lengths 0, 1, 2.  Up to two more questions per clause; a
-            refutation is still only a model of a strengthening of the
-            negation, so it can only turn [unknown]/[timeout] into [unsat].
-            The relaxation's model is read for lengths and for nothing else *)
-    sweep_unknown_free_clauses : bool; [@default false]
-        (** when preprocessing leaves predicate variables, first ask every
-            clause that mentions none of them, piece by piece, under the
-            budgets of [quick_sweep_no_unknown_query] ((500, 5000) when that
-            is [None]); a piece shown invalid refutes the problem at once,
-            with its countermodel.  Asked once per solve, before the loop *)
-    prove_unknown_free_clauses_first : bool; [@default true]
-        (** when preprocessing leaves predicate variables and some clauses
-            mention none of them, first decide those clauses alone as a
-            problem with no unknown, through the whole zero-unknown verdict
-            (its sequence instantiation, pins and retries).  Proved valid:
-            they are dropped, and the loop runs on the rest.  Refuted: the
-            problem is answered [unsat] with that refutation.  Undecided: the
-            loop runs on the whole problem as without the switch.  Asked
-            once per solve, before the sweep and the loop *)
-    prove_unknown_free_clauses_first_budget_ms : int option; [@default Some 60000]
-        (** with [prove_unknown_free_clauses_first], [Some ms] runs the pass
-            in a forked copy of the process killed after [ms] milliseconds of
-            wall clock, so it costs at most that (plus the fork) on an input
-            where it decides nothing; a killed or failed copy is the undecided
-            case.  A refutation found in the copy is answered [unsat] without
-            a certificate, or, when one is asked for, the pass is run again in
-            this process to build it.  [None]: the pass runs in this process
-            with no bound but the ladder's own per-question budgets *)
-    prove_unknown_free_clauses_first_in_process_when_large : bool;
-        [@default false]
-        (** with [prove_unknown_free_clauses_first_budget_ms = Some ms], the
-            pass is run in this process, under a strict deadline of [ms],
-            instead of in a forked copy whenever the fork's copy-on-write
-            cost does not fit: when this process's major heap is larger than
-            the least headroom ([memory.max - memory.current]) of its memory
-            cgroups ([Common.ForkGuard.fork_fits]).  A forked OCaml copy
-            writes every page of the live heap while its collector marks, so
-            it can hold a second copy of the heap; past the headroom that
-            copy is what a memory cap kills.  In process the pass asks the
-            same questions; the deadline is read at phase boundaries, so it
-            can overrun [ms] by one phase where the copy was killed on time,
-            and an answer the deadline cuts is the undecided case, as a killed
-            copy's is.  With no readable limit the copy is made as before *)
-    prove_unknown_free_clauses_first_within_deadline : bool; [@default true]
-        (** with [prove_unknown_free_clauses_first_budget_ms = Some ms],
-            inside a nested solve bounded by a deadline (the finite
-            instantiation of a quantified sort) the forked copy is killed at
-            the earlier of [ms] and the deadline, and the pass is not run once
-            the deadline has passed.  Why: the nested solve stops at its
-            deadline only at a phase boundary, and this pass is one phase, so
-            a nested solve given 10 s spent the pass's whole 60 s (an iterator
-            adapter's loop, whose finite instance's unknown-free clauses the
-            copy did not decide).  Only the copy's time is cut, so the switch
-            can lose an answer the pass would have found after the deadline
-            and never makes a wrong one *)
-    pin_scalars_no_unknown_query : bool; [@default true]
-        (** when preprocessing leaves no predicate variable and every question
-            above, the sequence-length pin included, leaves the answer
-            [unknown]/[timeout], also look for a point of a clause's free
-            variables at which the clause is PROVED false in every model
-            ([NoUnknownScalarPin]): a point guessed from a quantifier-free
-            relaxation of the clause's negation, then the negation at that
-            point proved valid by the sequence instantiation.  It can only turn
-            [unknown]/[timeout] into [unsat].  Built for a clause whose
-            sequences are all bound and whose countermodel is an integer
-            point *)
-    pin_relations_no_unknown_query : bool; [@default true]
-        (** when preprocessing leaves no predicate variable and every question
-            above, the point pin included, leaves the answer
-            [unknown]/[timeout], also look for a countermodel of a clause whose
-            free variables include Boolean-valued arrays (universally
-            quantified relations) with those arrays fixed to the finite
-            relations the clause's own facts and laws generate
-            ([NoUnknownRelationPin]); the pinned negation is asked for
-            satisfiability and only a model is read, so it can only turn
-            [unknown]/[timeout] into [unsat].  It runs only after the point
-            pin has found nothing, so no answer reached without it can be
-            reached any later with it *)
-    early_pins_no_unknown_query : bool; [@default true]
-        (** when preprocessing leaves no predicate variable, also ask the
-            sequence-length, point and relation pins (the three fields above)
-            once right after the quick sweep, before the rewritten forms and
-            the sequence instantiation, on the clauses not yet shown valid,
-            under [early_pins_budget_no_unknown_query]; a refutation found
-            there is returned as the late pins' is, and otherwise the ladder
-            continues unchanged, the late pins included.  It changes only the
-            time at which a pin's answer is reached, never the answer.  On
-            by default; built for a Thrust input whose point pin refutes it
-            only at the end of the ladder, near the run's budget *)
-    early_pins_stop_at_deadline_no_unknown_query : bool; [@default true]
-        (** with [early_pins_no_unknown_query], stop the early pins once the
-            whole budget of [early_pins_budget_no_unknown_query] has elapsed,
-            before building the next clause's, piece's or relaxation's
-            question, and build a point or relation pin's relaxations one at
-            a time rather than all at once.  Without it the deadline only
-            stops questions from being asked, while the pins go on building
-            the relaxations they would ask -- two sequence instantiations per
-            piece, each measured at 17-25 s on a Rust-derived map-extension
-            clause, where two such inputs spent 78 and 94 s in early pins of a
-            10 s budget.  Only the early pins are cut short, and they read
-            only a model of a pinned negation or a proof, so this changes
-            when the ladder moves on, never an answer: the late pins still
-            run in full.  On by default *)
-    early_pins_budget_no_unknown_query : int * int; [@default (1000, 10000)]
-        (** [(per question, whole)] in milliseconds for the early pins: each
-            question gets at most the first, and none is asked once the
-            second has elapsed since the early pins began *)
-    early_relation_pin_budget_no_unknown_query : (int * int) option;
-        [@default None]
-        (** [Some (per question, whole)] in milliseconds: with
-            [early_pins_no_unknown_query], the EARLY relation pin gets a budget
-            of its own, which starts when that pin starts, instead of what the
-            sequence-length and point pins before it have left of
-            [early_pins_budget_no_unknown_query].  Under the shared budget
-            those two pins can spend all of it, and the relation pin then
-            builds its shapes and asks none of them, or asks its shape guesses
-            under a one-second cap that a loaded machine overruns, which ends
-            the shape search for that length sum.  The late relation pin is
-            unchanged.  The relation pin returns at once on a clause with no
-            Boolean-valued array among its free variables, so the budget is
-            spent only where a relation can be pinned.  A pin reads only a
-            model of a strengthened negation, so this changes when a
-            refutation is reached and which questions are asked before it,
-            never an answer.  Built for a Rust-derived input refuted only by
-            the late relation pin near the end of a 120 s run; off by
-            default: to be measured *)
-    early_relation_pin_cpu_clock_no_unknown_query : bool; [@default false]
-        (** with [early_relation_pin_budget_no_unknown_query], charge that
-            budget by the CPU time of the thread running the pin instead of
-            by the wall clock ([NoUnknownLadder.cpu_budget]): the whole budget
-            is CPU milliseconds, and each question's cap, which the solver
-            takes in wall time, is the per-question CPU budget times the
-            wall-over-CPU slowdown the pin has seen so far (at most
-            [early_relation_pin_max_scale_no_unknown_query]), the whole stage
-            being cut off at that many times the whole budget in wall time.
-            On a loaded machine the pin's wall time is a multiple of its CPU
-            time -- each question, and the full major collection forced
-            before each fresh solver context, waits for a processor -- so a
-            wall-clock budget ran out, or a shape guess hit its cap and ended
-            the search at its length sum, before the shape that refutes was
-            reached, on a Rust-derived input the pin refutes in about 10 s of
-            CPU time.  The questions are the same and asked in the same
-            order; only how far down the list the budget reaches changes, so
-            this changes when a refutation is found, never an answer.  Off by
-            default *)
-    early_relation_pin_max_scale_no_unknown_query : float; [@default 6.]
-        (** the bound on the slowdown factor of
-            [early_relation_pin_cpu_clock_no_unknown_query] *)
-    early_relation_pin_precheck_no_unknown_query : bool; [@default false]
-        (** with [early_pins_no_unknown_query], the early relation pin asks,
-            once per piece and before its per-sum shape guesses, whether the
-            piece's relaxation with every sequence length in range has a model
-            at all; when the answer is [unsat] no guess is asked, since each is
-            that question with conjuncts added and would be [unsat] too.  Any
-            other answer leaves the guesses as they were.  On a Rust-derived
-            input one piece's relaxation is unsatisfiable and its nine
-            guesses were a seventh of the pin's time.  Fewer questions with
-            the same shapes found, so this never changes an answer; off by
-            default *)
-    early_relation_pin_full_major_every_no_unknown_query : int option;
-        [@default None]
-        (** [Some n]: during the early relation pin, the full major collection
-            forced before a new Z3 context runs before every n-th one only
-            ([Z3interface.with_new_context_full_major_every]), whatever
-            [z3_new_context_full_major_every] says elsewhere.  Each shape guess
-            and pinned negation is asked in a fresh context, and on a
-            Rust-derived input the collections before them were 35-65% of the
-            pin's wall time, more under load, the questions themselves being
-            small.  Same questions; only the collector's timing changes, and at
-            most n dropped contexts wait for it at once *)
-    early_pins_full_major_every_no_unknown_query : int option;
-        [@default Some 8]
-        (** [Some n]: during the whole early-pin stage (sequence-length, point
-            and relation pins; [early_pins_no_unknown_query]) the full major
-            collection forced before a new Z3 context runs before every n-th
-            one only, as [early_relation_pin_full_major_every_no_unknown_query]
-            does for the relation pin alone (which, when set, still governs
-            that pin).  Same questions; only the collector's timing changes.
-            Why: the pins ask many small questions, each in a fresh context,
-            under one shared wall-clock budget; on a Rust-derived input refuted
-            only by the point pin, its 28 questions took 7.2 s, 3.6 s of it
-            the collections, and at a higher load the stage ran out of its
-            10 s before the refuting question, so the input went unanswered;
-            on a satisfiable Rust-derived filter the relation pin's 9 s were 7 s
-            of collections *)
-    early_rewritten_max_pieces_no_unknown_query : int option;
-        [@default Some 32]
-        (** [Some n]: the early rewritten pass
-            ([exact_forms_first_no_unknown_query]) leaves a clause that splits
-            into more than [n] pieces ([ClausePieces.of_clause], each piece
-            counted by its own sub-pieces, the questions the pass would ask) to
-            the early sequence instantiation after it, which
-            splits it itself, groups pieces that share their premise and asks
-            each group once; the pass asks it nothing.  Only which stage asks
-            first changes: the pass reads proofs and refutations of exact
-            rewrites, which the stages after it ask again when the sequence
-            instantiation does not decide the clause.  Why: on a Rust-derived
-            loop-body clause of 69 pieces in families of 4-8 that differ only
-            in their goal, the pass asked every piece in a fresh context, 18-25
-            s of a 120 s budget at a load of 4-8, 27 of the questions left
-            undecided in families, while the sequence instantiation proves every
-            piece and asks one question per family; [Some 32] by default *)
-    early_rewritten_refute_skipped_no_unknown_query : bool; [@default false]
-        (** with [early_rewritten_max_pieces_no_unknown_query], a clause the
-            early rewritten pass skips for its piece count is still asked once,
-            whole, in its rewritten form, at the pass's budget
-            ([ClausePieces.early_question]), and only a countermodel is read:
-            an invalid clause is refuted there, a valid or undecided one costs
-            that one question and is left to the sequence instantiation as
-            without the switch.  Why: an invalid clause of more pieces than
-            the bound, refuted by the pass in 1.6 s with four questions when
-            the pass asked it, was otherwise asked again only by the late
-            rewritten pass, which the time limit did not reach; off by
-            default *)
-    early_rewritten_full_major_every_no_unknown_query : int option;
-        [@default Some 8]
-        (** [Some n]: during the early rewritten pass
-            ([exact_forms_first_no_unknown_query]'s piece-by-piece questions
-            before the early sequence instantiation), the full major collection
-            forced before a new Z3 context runs before every n-th one only, as
-            [early_pins_full_major_every_no_unknown_query] does for the pins.
-            Same questions; only the collector's timing changes.  Why: on a
-            Rust-derived loop-body clause the pass asks 69 pieces in the
-            sequence-axiom form, each in a context of its own with model
-            production off, and the collections before them were 5-11 s of the
-            pass's 19-32 s on two cores, more under load; off by default *)
-    early_relation_pin_length_shapes_no_unknown_query : bool; [@default true]
-        (** with [early_pins_no_unknown_query], the EARLY relation pin finds a
-            piece's sequence-length shapes from the piece's length-only
-            conjuncts ([RelationPin.length_vectors]): at each length sum, the
-            vectors those conjuncts leave (at most six) are confirmed one at a
-            time by asking whether the relaxation has a model with exactly
-            those lengths, every sequence a literal over fresh elements, and
-            a sum they leave empty asks nothing; a sum with more candidates is
-            asked as before, by one guess per shape with only the sum fixed.
-            A confirmation has no length left to choose and is a small
-            question, where a per-sum guess at a sum with a model searched
-            the lengths too: on a Rust-derived input refuted only by this pin
-            (lengths tied by [len x9 = len x3 + len x5] and two equalities,
-            so only sums divisible by three have a model), the guess at the
-            refuting sum took 0.5-2.6 s of CPU near idle, overran the
-            one-second cap under load and so ended that sum's search, and the
-            six guesses at the sums with no model were asked anyway.  The
-            shapes found are models of the relaxation, as before, and a pin
-            reads only a model of a strengthened negation, so this changes
-            which questions are asked and when a refutation is reached, never
-            an answer.  The late relation pin is unchanged.  On by default *)
-    early_relation_pin_first_no_unknown_query : bool; [@default false]
-        (** with [early_pins_no_unknown_query], ask the EARLY relation pin
-            before the sequence-length and point pins, instead of after them,
-            whenever a clause not yet shown valid has a Boolean-valued array
-            among its free variables -- the one shape the relation pin acts
-            on; otherwise the order is unchanged.  The three early pins share
-            [early_pins_budget_no_unknown_query]'s whole budget in order, and
-            on a Rust-derived input refuted only by this pin the two before it
-            spent 6-10 s of the 10 s under load (sequence-pinned questions
-            timing out at the one-second cap, a point pin on a clause with no
-            relation), so the relation pin asked two of its five pinned
-            negations, and the late relation pin answered near the end of a
-            120 s run or not at all.  The budget, its per-question cap and
-            the questions each pin asks are as before; each pin reads only a
-            model of a strengthened negation, so this changes which pin is
-            asked first and when a refutation is reached, never an answer.
-            The late pins are unchanged.  Off by default *)
-    early_pins_require_applicable_no_unknown_query : bool; [@default true]
-        (** with [early_pins_no_unknown_query], each EARLY pin asks only about
-            the clauses and pieces its shape admits, decided before any of its
-            questions: the sequence-length pin leaves out the clauses a
-            question before it has proved valid and, with
-            [pin_seq_lengths_from_model_no_unknown_query], those whose
-            relaxation it found to have no model ([SeqPin.refute]); the point
-            pin skips a piece with a free variable at a sort every value of
-            which holds an element of an uninterpreted sort or a sort variable
-            ([ScalarPin.opaque_sort]: no closed point exists for it) and, with
-            one satisfiability question, a piece whose cheapest relaxation has
-            no model; the relation pin skips a clause with no Boolean-valued
-            array among its free variables before splitting it, and asks the
-            same cheap question of each piece before building its relaxations.
-            A skipped clause or piece is one the pin could not have refuted
-            (the relaxation is implied by the negation; a point needs a closed
-            value of every free variable, and the decoder renders an element of
-            an uninterpreted sort as a variable), so this changes which
-            questions are asked and when an answer is reached, never an
-            answer.  The late pins are unchanged.  Built for Rust-derived
-            inputs whose clauses quantify over generic element types, where
-            the point pin's guesses were dropped for want of a closed point
-            and the length pin's questions carried the clauses already proved;
-            on by default *)
-    early_pins_after_exact_forms_no_unknown_query : bool; [@default true]
-        (** with [early_pins_no_unknown_query] and
-            [exact_forms_first_no_unknown_query], ask the early pins AFTER the
-            early rewritten pieces and the early sequence instantiation
-            instead of before them ([NoUnknownLadder.early_order]); the early
-            pins then also skip every clause those stages showed valid.  Each
-            of the two stages is sound alone (the pins read only a
-            refutation, the exact forms a refutation of an exact rewrite or a
-            proof), so the order changes which questions are asked before an
-            answer and when it is reached, never which answer is right: a
-            problem the exact forms prove no longer pays the pins' questions,
-            and a refutation by a pin is reached later by the time the exact
-            forms spend.  Its budget, [early_pins_budget_no_unknown_query],
-            starts when the pins start.  Read from traces of 13 Rust-derived
-            inputs with no predicate variable left: the early pins took
-            8.7-13 s on every input and found nothing on any of them, and the
-            three inputs that answer near the 120 s budget are proved by the
-            exact forms after them.  Off by default: to be measured *)
-    early_pins_raced_no_unknown_query : bool; [@default false]
-        (** with [early_pins_after_exact_forms_no_unknown_query] (and
-            [early_pins_no_unknown_query]), start the early pins, before the
-            exact forms, in a forked copy of the process
-            ([PCSatCommon.ParallelRace]) that answers only with a refutation,
-            while the process goes on with the exact forms and the rest of the
-            ladder in the pins-after order unchanged (its own early pins
-            included, after the exact forms).  A copy whose pins
-            find a countermodel takes the run over and answers [unsat] from
-            it, exactly as the sequential pins would have at that point; a
-            copy that finds nothing leaves silently (in the copy each pin has
-            the stage's whole budget to itself, a copy delaying nothing); the
-            process kills the
-            copy when its ladder has a verdict (or raises) and before that
-            verdict leaves the ladder.  Sequential, in the pins-after order,
-            when no copy can be forked or inside a solve bounded by a
-            deadline.  Each side is sound alone (the pins read only a model of
-            a strengthened negation; the exact forms read a proof or a
-            refutation of an exact rewrite), so the race changes when an
-            answer is reached, never which.  Why: the pins-after order spares
-            a problem the exact forms prove the pins' questions, which on the
-            satisfiable twin of a Thrust pair spend their whole budget, and
-            makes the unsatisfiable twin, which the sequence-length pin
-            refutes in one to six seconds, wait a minute or more for the exact
-            forms to stay undecided; no shape test tells the two apart (the
-            twins share their shape), and a second core does not have to.
-            Off by default, a candidate for the next default-deciding batch:
-            three runs each against the default on eight Rust-derived inputs
-            gave a refutation at 14-17 s where the default took 77-92 s and at
-            80-119 s where it took 191-241 s, and the six others answered
-            alike *)
-    early_point_pin_first_no_unknown_query : bool; [@default true]
-        (** with [early_pins_after_exact_forms_no_unknown_query] (and
-            [early_pins_no_unknown_query], [pin_scalars_no_unknown_query]),
-            ask the point pin alone BEFORE the exact forms
-            ([NoUnknownLadder.Point_pin]), under a budget of its own equal to
-            [early_pins_budget_no_unknown_query] and started when it starts,
-            and the other early pins after the exact forms as before.  The
-            later early pins leave the point pin out when the first one
-            searched every open clause under full per-question caps
-            ([NoUnknownLadder.point_pin_searched_all]); the late pins at the
-            end of the ladder are unchanged.  The point pin reads only a
-            point at which a clause's negation is proved valid (a
-            countermodel), so this changes when a refutation is reached and
-            which questions are asked before it, never an answer.
-            Why the point pin and no other: its first questions are about
-            quantifier-free relaxations and its proofs about the clause with
-            every free variable fixed to a closed value, where the
-            sequence-length pin's pinned negations keep their quantifiers and
-            on an input with no countermodel run to their per-question cap
-            (the cost the pins-after order saves).  Two Rust-derived
-            refutations the pins-after order delayed are both found by the
-            point pin: one in about a second after the quick sweep, but only
-            after a minute of exact forms; the other after the
-            sequence-length pin, which with every clause still open spent the
-            pins' shared budget and left the point pin about two seconds.
-            On by default: five runs each against the default on those two
-            inputs gave the refutation within 12-17 s (default none in 30 s)
-            and 64-101 s (default none in 120 s), and an input decided by the
-            CEGIS loop answered alike *)
-    early_cheap_pins_first_no_unknown_query : bool; [@default false]
-        (** with [early_pins_after_exact_forms_no_unknown_query] (and
-            [early_pins_no_unknown_query]), ask BEFORE the exact forms the one
-            pin question whose cost the problem's shape bounds
-            ([SeqPin.cheap_first]; [NoUnknownLadder.Cheap_pins]): the negation
-            of the clauses not yet shown valid with every free sequence pinned
-            to the empty sequence, asked only when some such clause has a free
-            sequence, does not simplify to [false] there, and the simplified
-            question has at most [SeqPin.cheap_max_size] nodes.  It is asked
-            once, under the early pins' per-question cap; a model is a
-            refutation (the question is a strengthening of the negation),
-            anything else is dropped and the ladder goes on exactly as without
-            the switch, the full early pins still asked after the exact forms.
-            So it changes when a refutation is reached and costs at most one
-            question when the shape is wrong, never an answer.  Built for an
-            input the pins-after order slowed from a refutation in the first
-            seconds (by this very question) to one after a minute of the
-            sequence instantiation.  Off by default: to be measured *)
-    conj_timeout_after_early_no_unknown_query : int option; [@default None]
-        (** [Some ms]: once the early rewritten pieces and the early sequence
-            instantiation ([exact_forms_first_no_unknown_query]) have run and
-            left the problem undecided, the whole-conjunction questions (the
-            conjunction, the conjunction with its single-constructor binders
-            opened, and the conjunction of the rewritten clauses not yet shown
-            valid) are asked with at most [ms] milliseconds each instead of
-            [no_unknown_query_timeout], and [ms <= 0] does not ask them
-            ([NoUnknownLadder.conj_timeout], [NoUnknownLadder.ask_conj]).  The
-            per-clause and per-piece questions keep their budget.  Only
-            [`Valid] and [`Invalid] are read from these questions, so a
-            shorter budget can only lose an answer one of them would have
-            given between [ms] and the full budget, to the later stages, and
-            changes which questions are asked after it.  Read from the same
-            traces: the conjunction and its opened form each spent their full
-            10 s (11.9-13.4 s of wall time) on two inputs and decided nothing
-            on any of the 13.  [None], the default, keeps the full budget *)
-    pin_scalars_default_compound_values : bool; [@default false]
-        (** in the point pin, give a variable the guessed model leaves
-            unassigned a closed default value also when its sort is a tuple or
-            a datatype (the constructor of fewest arguments applied to
-            defaults, recursively), where without it the point is dropped;
-            the point is still proved by the validity of the pinned negation,
-            so a default costs time and never an answer *)
-    split_clause_heads_no_unknown_query : bool; [@default true]
-        (** when preprocessing leaves no predicate variable and a residual
-            clause is asked alone, first ask each of its [ClausePieces] -- a
-            clause [body => c1 /\ ... /\ cn] is valid exactly when every
-            [body => ci] is -- and ask the whole clause only when a piece is
-            undecided ([ClausePieces.ask_by_pieces]); when off, each clause is asked
-            whole, as before.  On by default: on the 112-file control it moved
-            no verdict *)
-    uncapped_conjunction_pieces_no_unknown_query : bool; [@default true]
-        (** in the sequence instantiation of the zero-unknown verdict, split a
-            conjunction into its sides' pieces however many they are together
-            ([SeqInstantiation.uncapped_conjunction_pieces]), instead of
-            keeping it whole once they pass the bound that limits a
-            disjunction's distribution, and split a disjunction past that
-            bound along one side as [pointwise_concat_candidates_no_unknown_query]
-            does, so that no clause gets fewer pieces than without it.  Exact:
-            a conjunction is valid exactly when each of its pieces is, so only
-            which questions are asked changes.  Why: one more conjunct in a
-            loop-body clause's conclusion took its 42 + 32 goal pieces past the
-            bound, and the whole conclusion became one question whose
-            instantiated form was millions of nodes and left undecided, where
-            each piece is proved in a fraction of a second.  On by default *)
-    group_open_pieces_no_unknown_query : bool; [@default true]
-        (** with [group_piece_forms_no_unknown_query], let a piece join any
-            open group whose common part admits it, not only the group of
-            the pieces just before it ([SeqInstantiation.group_open_pieces]),
-            and ask the groups once every piece has its first form.  Sound as
-            the grouping is: a group's question implies each member's first
-            form.  Why: a loop-body clause's pieces fall into a few families
-            with different premise instances, interleaved, so grouping only
-            consecutive pieces asked 18 questions where 3 would do *)
-    lead_forms_before_grouping_no_unknown_query : bool; [@default true]
-        (** with [group_piece_forms_no_unknown_query] (consecutive grouping;
-            open grouping only with
-            [lead_forms_under_open_grouping_no_unknown_query]), ask each
-            piece's forms that come before its deep forms (the
-            push-witness and matched-instance forms) before building the deep
-            first form the grouping compares, and leave a piece they prove out
-            of every group ([SeqInstantiation.lead_forms_before_grouping]); a
-            piece they do not prove is grouped as before and asked its
-            remaining forms, so no question is asked twice.  Sound: only a
-            proof of a form, which is a strengthening of its piece, is read.
-            Why: on a Rust-derived loop clause the deep first forms, about a
-            second each at idle, were built for twelve pieces of which the
-            matched-instance forms then proved eleven at 0.1-0.2 s each *)
-    lead_forms_under_open_grouping_no_unknown_query : bool; [@default false]
-        (** let [lead_forms_before_grouping_no_unknown_query] act under
-            [group_open_pieces_no_unknown_query] too: each piece's lead forms
-            are asked before it is listed for open grouping, a piece they
-            prove joins no group, and a member asked alone after its group's
-            question fails starts after the lead forms already asked
-            ([SeqInstantiation.lead_forms_under_open_grouping]).  Off, the
-            open path asks no lead stage before grouping.  Needs
-            [lead_forms_before_grouping_no_unknown_query]; ignored while
-            [lead_forms_for_unasked_groups_no_unknown_query] is set, which
-            decides the open path's lead forms alone.  Sound: only a proof of
-            a form is read, and no question is asked twice.  Why off: on one
-            Rust-derived counter clause it proved six pieces whose grouped
-            question ran to the cap, while on a Rust-derived map clause its
-            lead proofs displaced cheaper grouped questions and the file, at
-            the edge of its budget, lost answers *)
-    lead_forms_for_unasked_groups_no_unknown_query : bool; [@default true]
-        (** with [group_open_pieces_no_unknown_query], ask a piece's lead
-            forms (push-witness and matched-instance forms) as a stage of
-            their own, before its other forms, only for the pieces no grouped
-            question is asked about -- members of a group whose question is
-            past [group_question_max_nodes_no_unknown_query], a group of one,
-            a piece with no first form -- and list every piece for grouping
-            as with [lead_forms_before_grouping_no_unknown_query] off, which
-            then does not act on the open path (nor does
-            [lead_forms_under_open_grouping_no_unknown_query]; this switch
-            acts whether or not that one is set)
-            ([SeqInstantiation.lead_forms_for_unasked_groups]).  The pieces
-            affected are asked the same forms in the same order; only the
-            lemma route's one attempt after a form's timeout
-            ([lemma_application_after_form_timeout_no_unknown_query]) moves
-            after the lead forms.  Sound: only a proof of a form, which
-            implies its piece, is read.  Why: on a Rust-derived counter
-            clause a skipped five-piece question and a piece alone each left
-            a piece whose matched-instance form timed out to the lemma route,
-            which ran 60 s without a proof where the piece's next
-            matched-instance form proved it, while asking every piece's lead
-            forms before grouping displaced cheap grouped proofs on another
-            clause *)
-    lead_forms_under_open_grouping_min_nodes_no_unknown_query : int option;
-        [@default None]
-        (** with [group_open_pieces_no_unknown_query], a group of two or more
-            pieces whose grouped question has more than this many nodes is
-            not asked; its members are asked their lead forms (push-witness
-            and matched-instance forms) as a stage of their own, before their
-            other forms.  Every other group is asked as with the switch off,
-            and no lead stage is asked before grouping on the open path
-            ([lead_forms_under_open_grouping_no_unknown_query] is not read
-            while this is set) ([SeqInstantiation.lead_forms_open_min_nodes]).
-            Sound: only a proof of a form, which implies its piece, is read,
-            and no question is asked twice.  Why: the lead stage before
-            grouping proved six pieces of a Rust-derived counter clause whose
-            grouped question of about 428,000 nodes proved nothing in about
-            90 s, while on a Rust-derived bit-set clause it replaced two
-            small grouped questions proving 128 pieces by 129 serial
-            questions; the size of the grouped question tells the two
-            apart *)
-    replay_piece_fresh_names_no_unknown_query : bool; [@default true]
-        (** in the sequence instantiation of the zero-unknown verdict, build
-            the first forms of a clause's pieces for grouping with the fresh
-            names replayed from one scope per clause
-            ([SeqInstantiation.replay_piece_names]), so the instances of the
-            premise the pieces share are named alike in every piece.  Sound:
-            each first form is the strengthening of its piece it always is,
-            only named differently, and the grouped question still implies
-            each member's form, whatever names two members share.  Why: each
-            piece's first form drew hundreds of fresh names of its own, which
-            the grouping renamed back into one before seeing the common part *)
-    clause_piece_bound_no_unknown_query : int option; [@default Some 4]
-        (** with [Some m], a residual clause asked by its [ClausePieces] in
-            the zero-unknown verdict is split into at most [m] pieces rather
-            than the default bound's, and a piece left undecided is split once
-            more, down to the default bound ([ClausePieces.ask_by_pieces]);
-            [None], or a bound not below the default, keeps the default split.
-            Each split is exact, so the bound changes which questions are
-            asked and their number, never what an answer means.  The quick
-            sweep keeps the default split *)
-    seq_as_array_no_unknown_query : bool; [@default false]
-        (** when preprocessing leaves no predicate variable, ask each validity
-            question whose sequences are concat-free and whose reads are
-            range-guarded as arrays plus a length first
-            ([Z3interface.check_valid_seq_as_array], an equisatisfiable
-            translation), and untranslated when that is undecided or the
-            question is outside the fragment; when off, the questions are asked
-            as they are *)
+    zero_unknown : ZeroUnknownConfig.t;
+        [@default Common.Util.config_default ZeroUnknownConfig.of_yojson "{}"]
+        (** the zero-unknown verdict's ladder ([ZeroUnknownConfig]): the
+            stages that decide a problem with no unknown left after
+            preprocessing, and the clauses without an unknown asked
+            first *)
+    unknown_free_clauses : unknown_free_clauses;
+        [@default Common.Util.config_default unknown_free_clauses_of_yojson "{}"]
+        (** what is done, before the loop, with the clauses that mention no
+            predicate variable when preprocessing leaves some (see
+            [unknown_free_clauses]) *)
   }
   [@@deriving yojson]
 
@@ -1888,9 +182,9 @@ end
 (* Refuting a constraint by fixing the lengths of its free sequence variables
    lives in [SeqPin], where the validator can use it too. *)
 (* The resource limit of a zero-unknown question asked in the ladder stage
-   [phase] ([ladder_stage_rlimits_no_unknown_query]): the first binding of
+   [phase] ([zero_unknown.budgets.stage_rlimits]): the first binding of
    [phase] in [stage_rlimits] when there is one, else [default] (the
-   ladder-wide [no_unknown_query_rlimit]).  Total; [stage_rlimits = []] gives
+   ladder-wide [zero_unknown.budgets.query_rlimit]).  Total; [stage_rlimits = []] gives
    [default] for every stage, so the field's default changes nothing.  Only the
    questions the ladder asks through its budgeted helper read it; a site
    inside such a question that sets the ladder-wide limit itself replaces the
@@ -1904,13 +198,18 @@ module LadderStageRlimit = struct
 end
 
 (* The ladder's sequence-axiom fallback bound by a resource count
-   ([ladder_seq_axiom_rlimit_no_unknown_query]): [with_ (Some (units,
+   ([zero_unknown.axioms.ladder_fallback]): [with_ (Some (units,
    kill_ms)) f] runs [f] with the fallback's questions under [units] and its
-   wall-clock budget replaced by [kill_ms] (each question's own budget still
-   capping it); [with_ None f] is [f ()].  Both settings are per domain and
+   budget replaced by [kill_ms] (each question's own budget still capping
+   it); [with_ None f] is [f ()].  Both settings are per domain and
    restored on return and on raise.  Only an undecided answer is ever turned
    into a proof by the fallback, so the pair changes which undecided
-   questions are proved, never what a proof says. *)
+   questions are proved, never what a proof says.  Both numbers are Z3's own
+   parameters ([rlimit], [timeout]): asked in this process a check is bounded
+   only where Z3 reads them, which it does not always do, and is killed only
+   when the fallback asks in a forked copy
+   ([zero_unknown.axioms.fork_fallbacks] or [z3.seq_axiom_fork]), at
+   three times [kill_ms]. *)
 module LadderSeqAxiomRlimit = struct
   let with_ pair f =
     match pair with
@@ -1920,8 +219,8 @@ module LadderSeqAxiomRlimit = struct
         Z3Smt.Z3interface.with_seq_axiom_fallback_base (Some kill_ms) f
 
   (* Which fallbacks get the pair, and with which count
-     ([ladder_seq_axiom_rlimit_refused_only_no_unknown_query],
-     [ladder_seq_axiom_units_per_node_no_unknown_query]).
+     ([zero_unknown.axioms.ladder_fallback.scope],
+     [zero_unknown.axioms.ladder_fallback.units_per_node]).
 
      [around_question ~refused_only ~per_node pair] is what is set around a
      whole ladder question: [pair] when neither refinement is on (every
@@ -1990,7 +289,34 @@ module NoUnknownRelationPin = RelationPin
    [body => ci] was decided in at most 0.01 s. *)
 module ClausePieces = PCSatCommon.ClausePieces
 
-(* The sweep of unknown-free clauses ([sweep_unknown_free_clauses]); the
+(* The question rewrites of the zero-unknown ladder, as the validity
+   service's [QuestionRewrites] value: every clause asked has its reads of a
+   concatenation split by index; its prefixes of a concatenation split too
+   under [zero_unknown.rewrites.split_seq_prefix] unless
+   [zero_unknown.rewrites.split_seq_prefix (Focus_only)] keeps that split to the
+   instantiated forms; integer binders split at their [ite] thresholds by the
+   solver interface, in force around the ladder's asks, under
+   [zero_unknown.rewrites.split_int_binders_at_ite]; the implied factor equalities
+   under [zero_unknown.rewrites.implied_factor_equalities].  No one-point
+   pre-rewrite: the ladder's one-point form ([zero_unknown.rewrites.onepoint.split])
+   is a later stage of its own, not a rewrite of every question. *)
+let ladder_question_rewrites (config : Config.t) : Ast.QuestionRewrites.t =
+  {
+    onepoint = false;
+    split_seq_reads = true;
+    prefix_over_concat =
+      (match config.zero_unknown.rewrites.split_seq_prefix with
+      | Everywhere -> true
+      | No_prefix_split | Focus_only -> false);
+    int_binders =
+      (if config.zero_unknown.rewrites.split_int_binders_at_ite then
+         Ast.QuestionRewrites.In_solver_calls
+       else Ast.QuestionRewrites.Off);
+    implied_factor_equalities =
+      config.zero_unknown.rewrites.implied_factor_equalities;
+  }
+
+(* The sweep of unknown-free clauses ([unknown_free_clauses.sweep]); the
    contract and why a refutation is sound are at [PCSatCommon.UnknownFreeSweep].
    Here the pieces are [ClausePieces.of_clause]'s when [split] is set. *)
 module UnknownFreeSweep = struct
@@ -2024,224 +350,296 @@ module NoUnknownSeqInst = SeqInstantiation
 module LadderSwitches = struct
   (* The process-wide switches of [Ast.Evaluator.elim_onepoint_and_split_binders]
      (and the contextual-ite extra form of [SeqInstantiation]), set from the
-     configuration's [*_no_unknown_query] fields; returns whether the
+     ladder's configuration [z]; returns whether the
      contextual rule is applied in place and whether as an extra form, which
      are never both.  Each switch adds an equivalence to the rewrite, so it
      changes which questions a solver can answer, never what an answer
      means.  The head of this module says who calls it. *)
-  let set_onepoint_rewrite_switches (config : Config.t) =
+  let set_onepoint_rewrite_switches (z : ZeroUnknownConfig.t) =
     Ast.Evaluator.split_constructor_equations :=
-      config.split_constructor_equations_no_unknown_query;
+      z.rewrites.split_constructor_equations;
     Ast.Evaluator.onepoint_array_reads :=
-      config.onepoint_array_reads_no_unknown_query;
-    let contextual_in_place =
-      config.contextual_ite_no_unknown_query
-      && not config.contextual_ite_as_extra_form_no_unknown_query
-    in
-    let contextual_extra =
-      config.contextual_ite_no_unknown_query
-      && config.contextual_ite_as_extra_form_no_unknown_query
+      z.rewrites.onepoint.array_reads;
+    let contextual_in_place, contextual_extra =
+      match z.rewrites.contextual_ite with
+      | No_contextual_ite -> (false, false)
+      | In_place -> (true, false)
+      | As_extra_form -> (false, true)
     in
     Ast.Evaluator.contextual_ite := contextual_in_place;
     SeqInstantiation.contextual_ite_extra_form := contextual_extra;
     Ast.Evaluator.surjective_pairing :=
-      config.surjective_pairing_no_unknown_query;
+      (ZeroUnknownConfig.Switch.surjective_pairing z);
     Ast.Evaluator.surjective_pairing_nested :=
-      config.surjective_pairing_nested_no_unknown_query;
-    Ast.Evaluator.lift_spine_blocks := config.lift_spine_blocks_no_unknown_query;
+      (ZeroUnknownConfig.Switch.surjective_pairing_nested z);
+    Ast.Evaluator.lift_spine_blocks := z.rewrites.lift_spine_blocks;
     (contextual_in_place, contextual_extra)
 
+  (* [zero_unknown.budgets.reads_strict_deadline] for the two routes the ladder
+     hands a sequence piece it left undecided (the cvc5 retry and the lemma
+     route), which run outside its own questions: [strict_deadline_passed z]
+     says a route is not to be tried, and [cap_by_strict_deadline z ms] is a
+     try's budget [ms] cut to the time left.  With the field off they are
+     [false] and [ms], so nothing changes *)
+  let strict_deadline_passed (z : ZeroUnknownConfig.t) =
+    z.budgets.reads_strict_deadline
+    && PCSatCommon.SolveDeadline.expired_strict ()
+
+  let cap_by_strict_deadline (z : ZeroUnknownConfig.t) ms =
+    if z.budgets.reads_strict_deadline then
+      Option.value ~default:ms (PCSatCommon.SolveDeadline.cap_ms_strict (Some ms))
+    else ms
+
   (* The process-wide switches of [SeqInstantiation]'s witness instantiation,
-     set from the configuration's [*_no_unknown_query] fields; [print]
+     set from the ladder's configuration [z]; [verbose] is the coordinator's
+     (it adds an exit tally of the integer-binder split); [print]
      traces the cvc5 retry of an undecided piece.  Setting a switch changes
      which instantiated forms are built, never what a proof of one means. *)
   let set_seq_instantiation_switches ?(print = fun (_ : string lazy_t) -> ())
-      (config : Config.t) =
+      ~verbose (z : ZeroUnknownConfig.t) =
     (* with the ladder's integer-binder split on and [verbose], one stderr
        line at exit tallying the questions it rewrote: a diagnostic, so a
        plain run's output stays the answer *)
-    if config.split_int_binders_at_ite_no_unknown_query && config.verbose then
+    if z.rewrites.split_int_binders_at_ite && verbose then
       Ast.IntBinderSplit.report_tallies ();
     SeqInstantiation.onepoint_split_forms :=
-      config.onepoint_split_no_unknown_query;
+      z.rewrites.onepoint.split;
     SeqInstantiation.instantiate_element_binders :=
-      config.instantiate_element_binders_no_unknown_query;
+      z.seq_instantiation.element_binders;
+    SeqInstantiation.instantiate_index_map_binders :=
+      z.seq_instantiation.index_map_binders;
     SeqInstantiation.seq_array_view_candidates :=
-      config.seq_array_view_candidates_no_unknown_query;
+      z.candidates.seq_array_view;
     SeqInstantiation.pointwise_array_witnesses :=
-      config.pointwise_array_witnesses_no_unknown_query;
+      z.candidates.pointwise_array;
+    SeqInstantiation.pointwise_seq_literals :=
+      z.candidates.pointwise_seq_literal;
     SeqInstantiation.witness_forms :=
-      config.witness_forms_no_unknown_query;
+      z.seq_instantiation.witness_forms;
+    SeqInstantiation.single_index_map_witness_forms
+    := z.seq_instantiation.single_index_map_witness_forms;
     SeqInstantiation.drop_array_hypotheses :=
-      config.drop_array_hypotheses_no_unknown_query;
+      z.seq_instantiation.drop_array_hypotheses;
+    SeqInstantiation.unwrap_embedded_formulas_before_instantiation
+    := z.rewrites.unwrap_embedded_formulas;
     SeqInstantiation.skolemize_positive_universals_before_instantiation
-    := config.skolemize_positive_universals_no_unknown_query;
+    := z.rewrites.skolemize_positive_universals;
     SeqInstantiation.cancel_forced_sequence_binders_before_instantiation
-    := config.cancel_forced_sequence_binders_no_unknown_query;
+    := z.rewrites.cancel_forced_sequence_binders;
     SeqInstantiation.offset_int_candidates
-    := config.offset_int_candidates_no_unknown_query;
+    := (ZeroUnknownConfig.Switch.offset_int_candidates z);
     SeqInstantiation.array_read_int_candidates
-    := config.array_read_int_candidates_no_unknown_query;
+    := z.candidates.array_read_int;
     SeqInstantiation.index_map_shift_candidates
-    := config.index_map_shift_candidates_no_unknown_query;
+    := z.candidates.index_map.shift;
     SeqInstantiation.index_map_join_candidates
-    := config.index_map_join_candidates_no_unknown_query;
+    := z.candidates.index_map.join;
     SeqInstantiation.literal_range_int_candidates
-    := config.literal_range_int_candidates_no_unknown_query;
+    := z.candidates.literal_range_int;
+    SeqInstantiation.recfun_predecessor_int_candidates
+    := z.candidates.recfun_predecessor_int;
     SeqInstantiation.nested_focus_forms
-    := config.nested_focus_forms_no_unknown_query;
+    := z.candidates.nested_focus_forms;
     SeqInstantiation.element_candidates_through_constructors
-    := config.element_candidates_through_constructors_no_unknown_query;
+    := z.candidates.through_constructors;
     SeqInstantiation.bool_binder_candidates
-    := config.bool_binder_candidates_no_unknown_query;
+    := z.candidates.bool_binder;
     SeqInstantiation.split_seq_prefix_over_concat
-    := config.split_seq_prefix_over_concat_no_unknown_query;
+    := (ZeroUnknownConfig.Switch.split_seq_prefix_over_concat z);
     SeqInstantiation.split_seq_prefix_focus_only
-    := config.split_seq_prefix_focus_only_no_unknown_query;
+    := (ZeroUnknownConfig.Switch.split_seq_prefix_focus_only z);
     SeqInstantiation.offset_int_candidates_chain_only
-    := config.offset_int_candidates_chain_only_no_unknown_query;
+    := (ZeroUnknownConfig.Switch.offset_int_candidates_chain_only z);
     SeqInstantiation.chain_candidates_free_only
-    := config.chain_candidates_free_only_no_unknown_query;
+    := z.candidates.chain_free_only;
     SeqInstantiation.chain_concat_candidates
-    := config.chain_concat_candidates_no_unknown_query;
+    := z.candidates.chain_concat;
     SeqInstantiation.chain_focus_forms
-    := config.chain_focus_form_no_unknown_query;
+    := z.chains.focus.form;
     SeqInstantiation.chain_focus_push_witnesses
-    := config.chain_focus_push_witnesses_no_unknown_query;
+    := z.chains.focus.push_witnesses;
     SeqInstantiation.case_split_index_forms
-    := config.case_split_index_forms_no_unknown_query;
+    := (ZeroUnknownConfig.Switch.case_split_index_forms z);
     (* set only around the coordinator's own sequence instantiation, where
        its short-budget asker exists *)
     SeqInstantiation.index_case_ask := None;
     SeqInstantiation.index_case_max_size_ratio
-    := config.case_split_index_max_size_ratio_no_unknown_query;
+    := (ZeroUnknownConfig.Switch.case_split_index_max_size_ratio z);
     SeqInstantiation.lazy_plain_form
-    := config.lazy_plain_form_no_unknown_query;
+    := z.seq_instantiation.lazy_plain_form;
     SeqInstantiation.matched_instance_forms
-    := config.matched_instance_forms_no_unknown_query;
+    := z.matched_instances.forms;
     SeqInstantiation.matched_instance_hyp_budget
-    := config.matched_instance_hyp_budget_no_unknown_query;
+    := z.matched_instances.hyp_budget;
     SeqInstantiation.matched_instance_aligned_hyps
-    := config.matched_instance_aligned_hyps_no_unknown_query;
+    := z.matched_instances.aligned_hyps;
     SeqInstantiation.matched_instance_element_candidates
-    := config.matched_instance_element_candidates_no_unknown_query;
+    := z.matched_instances.element;
     SeqInstantiation.matched_instance_chain_join_candidates
-    := config.matched_instance_chain_join_candidates_no_unknown_query;
+    := z.matched_instances.chain_join;
     SeqInstantiation.chain_join_direct_reads
-    := config.chain_join_direct_reads_no_unknown_query;
+    := z.chains.join.direct_reads;
+    SeqInstantiation.chain_join_forms_first
+    := z.chains.join.forms_first;
     SeqInstantiation.matched_instance_last_index_candidates
-    := config.matched_instance_last_index_candidates_no_unknown_query;
+    := z.matched_instances.last_index;
     SeqInstantiation.matched_instance_collections_only
-    := config.matched_instance_collections_only_no_unknown_query;
+    := z.matched_instances.collections_only;
     SeqInstantiation.chain_join_focused
-    := config.chain_join_focused_no_unknown_query;
+    := z.chains.join.focused;
     SeqInstantiation.assoc_concat_matching
-    := config.matched_instance_assoc_open_no_unknown_query;
+    := z.matched_instances.assoc_open;
     SeqInstantiation.open_scalar_matches
-    := config.matched_instance_assoc_open_no_unknown_query;
+    := z.matched_instances.assoc_open;
     SeqInstantiation.max_matched_form_size
-    := config.max_matched_form_size_no_unknown_query;
+    := z.matched_instances.max_form_size;
     SeqInstantiation.max_chain_join_focus_size
-    := config.max_chain_join_focus_size_no_unknown_query;
+    := z.chains.join.max_focus_size;
     SeqInstantiation.ground_funapps_linear
-    := config.ground_funapps_linear_no_unknown_query;
+    := z.seq_instantiation.ground_funapps_linear;
     SeqInstantiation.matched_bound_before_ranking
-    := config.matched_bound_before_ranking_no_unknown_query;
+    := z.matched_instances.bound_before_ranking;
+    SeqInstantiation.goal_directed_instances
+    := z.matched_instances.goal_directed;
     SeqInstantiation.piece_max_nodes
-    := config.seqinst_max_nodes_no_unknown_query;
+    := z.seq_instantiation.max_nodes;
     SeqInstantiation.piece_max_int_input_nodes
-    := config.seqinst_max_int_input_nodes_no_unknown_query;
+    := z.seq_instantiation.max_int_input_nodes;
     SeqInstantiation.chain_assoc_match_forms
-    := config.chain_assoc_match_no_unknown_query;
+    := z.chains.assoc_match;
     SeqInstantiation.prepend_unit_candidates
-    := config.prepend_unit_candidates_no_unknown_query;
+    := z.candidates.prepend_unit;
     SeqInstantiation.pointwise_concat_candidates
-    := config.pointwise_concat_candidates_no_unknown_query;
+    := z.candidates.pointwise_concat;
+    SeqInstantiation.singleton_extension_candidates
+    := z.candidates.singleton_extension;
     SeqInstantiation.uncapped_conjunction_pieces
-    := config.uncapped_conjunction_pieces_no_unknown_query;
+    := z.pieces.uncapped_conjunctions;
     SeqInstantiation.share_premise_instances
-    := config.share_premise_instances_no_unknown_query;
+    := z.pieces.share.premise_instances;
     SeqInstantiation.replay_piece_names
-    := config.replay_piece_fresh_names_no_unknown_query;
+    := (ZeroUnknownConfig.Switch.replay_piece_fresh_names z);
     SeqInstantiation.group_open_pieces
-    := config.group_open_pieces_no_unknown_query;
+    := (ZeroUnknownConfig.Switch.group_open_pieces z);
     SeqInstantiation.group_piece_forms
-    := config.group_piece_forms_no_unknown_query;
+    := (ZeroUnknownConfig.Switch.group_piece_forms z);
     SeqInstantiation.lead_forms_before_grouping
-    := config.lead_forms_before_grouping_no_unknown_query;
+    := (ZeroUnknownConfig.Switch.lead_forms_before_grouping z);
     SeqInstantiation.lead_forms_under_open_grouping
-    := config.lead_forms_under_open_grouping_no_unknown_query;
+    := (ZeroUnknownConfig.Switch.lead_forms_under_open_grouping z);
     SeqInstantiation.lead_forms_for_unasked_groups
-    := config.lead_forms_for_unasked_groups_no_unknown_query;
+    := (ZeroUnknownConfig.Switch.lead_forms_for_unasked_groups z);
     SeqInstantiation.lead_forms_open_min_nodes
-    := config.lead_forms_under_open_grouping_min_nodes_no_unknown_query;
+    := (ZeroUnknownConfig.Switch.lead_forms_under_open_grouping_min_nodes z);
     SeqInstantiation.share_piece_simplify
-    := config.share_piece_simplify_no_unknown_query;
+    := (ZeroUnknownConfig.Switch.share_piece_simplify z);
     SeqInstantiation.share_replayed_int_instances
-    := config.share_replayed_int_instances_no_unknown_query;
+    := z.pieces.share.replayed_int_instances;
     SeqInstantiation.share_deep_shapes
-    := config.share_deep_shapes_no_unknown_query;
+    := z.pieces.share.deep_shapes;
     SeqInstantiation.group_question_max_nodes
-    := config.group_question_max_nodes_no_unknown_query;
+    := (ZeroUnknownConfig.Switch.group_question_max_nodes z);
     PCSatCommon.LemmaApplication.extended
-    := config.lemma_application_extended_no_unknown_query;
+    := (ZeroUnknownConfig.Switch.lemma_application_extended z);
     PCSatCommon.LemmaApplication.goal_first_probe
-    := config.lemma_goal_first_probe_no_unknown_query;
+    := (ZeroUnknownConfig.Switch.lemma_goal_first_probe z);
+    PCSatCommon.LemmaApplication.offer_read_maps
+    := (ZeroUnknownConfig.Switch.lemma_read_maps z);
+    PCSatCommon.LemmaApplication.offer_map_lengths
+    := (ZeroUnknownConfig.Switch.lemma_map_lengths z);
+    PCSatCommon.LemmaApplication.retry_with_laws
+    := (ZeroUnknownConfig.Switch.lemma_law_retry z);
+    PCSatCommon.LemmaApplication.keep_after_fact
+    := (ZeroUnknownConfig.Switch.lemma_keep_hypotheses z);
     SeqInstantiation.lemma_before_retry
-    := config.lemma_application_before_cvc5_no_unknown_query;
+    := (ZeroUnknownConfig.Switch.lemma_application_before_cvc5 z);
     SeqInstantiation.lemma_after_form_timeout
-    := config.lemma_application_after_form_timeout_no_unknown_query;
+    := (ZeroUnknownConfig.Switch.lemma_application_after_form_timeout z);
     SeqInstantiation.lemma_application_prover
-    := Option.map config.lemma_application_ms_no_unknown_query ~f:(fun ms piece ->
+    := Option.map (ZeroUnknownConfig.Switch.lemma_application_ms z) ~f:(fun ms piece ->
            (* at most the budget left to a caller that set one
               ([SeqInstantiation.with_last_attempt_budget]) *)
            match SeqInstantiation.last_attempt_ms ms with
            | None -> false
+           | Some _ when strict_deadline_passed z ->
+               (* past a strict deadline the lemma route is not tried, as
+                  the ladder's own questions are not asked: an untried route
+                  proves nothing, which leaves the piece open exactly as a
+                  failed one does.  Without this the route's questions (a
+                  dozen per piece) ran on for tens of seconds after a probe's
+                  deadline had passed *)
+               PCSatCommon.SolveDeadline.cut ();
+               false
            | Some ms ->
+           let ms = cap_by_strict_deadline z ms in
            Common.PhaseTime.with_phase "lemma-application" (fun () ->
                let outcome =
                  PCSatCommon.LemmaApplication.z3_outcome ~ms
-                   ?rlimits:config.lemma_application_rlimits_no_unknown_query
+                   ?rlimits:(ZeroUnknownConfig.Switch.lemma_application_rlimits z)
                in
-               PCSatCommon.LemmaApplication.prove ~outcome
+               let law_outcome =
+                 Option.map (ZeroUnknownConfig.Switch.lemma_law_retry_rlimits z)
+                   ~f:(fun rl ->
+                     PCSatCommon.LemmaApplication.z3_outcome ~ms ~rlimits:rl)
+               in
+               PCSatCommon.LemmaApplication.prove ~outcome ?law_outcome
                  ~trace:(fun r -> print @@ lazy ("[no-unknown verdict] " ^ Lazy.force r))
                  ~usable:(fun fact -> not (Z3Smt.Z3interface.may_not_return fact))
                  ~valid:(fun psi ->
                    match outcome psi with `Valid -> true | _ -> false)
                  piece));
     SeqInstantiation.true_forms_proved
-    := config.ladder_proof_shortcuts_no_unknown_query;
+    := z.external_.proof_shortcuts;
     PCSatCommon.Cvc5Proof.shortcuts
-    := config.ladder_proof_shortcuts_no_unknown_query;
+    := z.external_.proof_shortcuts;
+    PCSatCommon.Cvc5Proof.rename_reserved
+    := z.external_.cvc5_spelling.rename_reserved_symbols;
+    PCSatCommon.Cvc5Proof.unindex_recursive
+    := z.external_.cvc5_spelling.unindex_recursive_functions;
+    SeqInstantiation.cvc5_on_undecided_form
+    := (ZeroUnknownConfig.Switch.ladder_cvc5_on_undecided_form z);
+    PCSatCommon.ScalarPin.binder_free_chain_bound
+    := (ZeroUnknownConfig.Switch.pin_scalars_binder_free_chain_bound z);
     SeqInstantiation.undecided_piece_prover
-    := Option.map config.ladder_cvc5_retry_ms_no_unknown_query ~f:(fun ms phi ->
+    := Option.map (ZeroUnknownConfig.Switch.ladder_cvc5_retry_ms z) ~f:(fun ms phi ->
            (* the piece as the ladder's Z3 checks ask it: where
               [Z3interface.with_split_int_binders] is in force in this domain
-              ([split_int_binders_at_ite_no_unknown_query]), its integer
+              ([zero_unknown.rewrites.split_int_binders_at_ite]), its integer
               binders are split at their [ite] thresholds and the upper parts
               shifted to start at zero, and otherwise it is [phi] itself.  The
               rewrite is an equivalence in every model that adds no free
               variable, so cvc5's proof of it is a proof of [phi] *)
            match SeqInstantiation.last_attempt_ms ms with
            | None -> false
+           | Some _ when strict_deadline_passed z ->
+               (* as the lemma route below: an unasked retry proves nothing,
+                  as an undecided one; cvc5 runs in a process of its own
+                  and its budget is its own, so nothing else ends it *)
+               PCSatCommon.SolveDeadline.cut ();
+               false
            | Some ms ->
+           let ms = cap_by_strict_deadline z ms in
            let phi = Z3Smt.Z3interface.split_int_binders_here phi in
            (* timed as its own phase: the retry runs cvc5 in a separate
               process, so its wait is otherwise charged to no named phase *)
-           Common.PhaseTime.with_phase "cvc5-retry" (fun () ->
-               PCSatCommon.Cvc5Proof.valid_within
-                 ~trace:(fun r ->
-                   print @@ lazy ("[no-unknown verdict] cvc5 retry: " ^ r))
-                 ?rlimit:config.ladder_cvc5_rlimit_no_unknown_query ~ms
-                 ~id:None
-                 (Z3Smt.Z3interface.fenv_reached_by (Ast.LogicOld.get_fenv ())
-                    phi)
-                 phi))
+           PCSatCommon.ValidityAsk.proved_by_cvc5
+             ~trace:(fun r ->
+               print @@ lazy ("[no-unknown verdict] cvc5 retry: " ^ r))
+             {
+               ms;
+               rlimit = (ZeroUnknownConfig.Switch.ladder_cvc5_rlimit z);
+               site = "ladder";
+               phase = "cvc5-retry";
+             }
+             ~id:None
+             (Z3Smt.Z3interface.fenv_reached_by (Ast.LogicOld.get_fenv ()) phi)
+             phi)
 
   (* both setters, for a reader that does not need the contextual-ite pair *)
   let set ?print (config : Config.t) =
-    ignore (set_onepoint_rewrite_switches config : bool * bool);
-    set_seq_instantiation_switches ?print config
+    ignore (set_onepoint_rewrite_switches config.zero_unknown : bool * bool);
+    set_seq_instantiation_switches ?print ~verbose:config.verbose
+      config.zero_unknown
 end
 
 module type CoordinatorType = sig
@@ -2253,7 +651,7 @@ module type CoordinatorType = sig
 end
 
 (* raised by the zero-unknown verdict's ladder when
-   [zero_unknown_reads_strict_deadline] is on and a strict solve deadline has
+   [zero_unknown.budgets.reads_strict_deadline] is on and a strict solve deadline has
    passed; caught where the verdict starts, which answers [unknown] *)
 exception Zero_unknown_deadline_passed
 
@@ -2295,21 +693,22 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
   module Debug =
     Debug.Make ((val Debug.Config.(if config.verbose then enable else disable)))
 
-  (* the grouping counters of [group_piece_forms_no_unknown_query], on stderr
+  (* the grouping counters of [zero_unknown.pieces.grouping], on stderr
      whenever that switch is on, so that a run shows that it was read and what
      the grouped questions did, without the verbose trace (which prints every
      form asked, megabytes each on the inputs the switch is for) *)
   module GroupDebug =
     Common.Debug.Make
       ((val Common.Debug.Config.(
-              if config.group_piece_forms_no_unknown_query then enable
+              if (ZeroUnknownConfig.Switch.group_piece_forms config.zero_unknown) then enable
               else disable)))
 
   let set_onepoint_rewrite_switches () =
-    LadderSwitches.set_onepoint_rewrite_switches config
+    LadderSwitches.set_onepoint_rewrite_switches config.zero_unknown
 
   let set_seq_instantiation_switches () =
-    LadderSwitches.set_seq_instantiation_switches ~print:Debug.print config
+    LadderSwitches.set_seq_instantiation_switches ~print:Debug.print
+      ~verbose:config.verbose config.zero_unknown
 
   let build_phase pcsp rl_config phase =
     let open Config in
@@ -2457,6 +856,18 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
 
   (* the typed payload of [Unsat]: the recorded witness as a refutation
      ([PCSP.Refutation]) *)
+  (* The witness terms of a countermodel refutation, as a suspension of
+     [CountermodelWitness.find] over [phi] and [model] (see
+     [UnsatWitness.Countermodel] for where it may be forced).  The function
+     environment is read now, at the refutation, and not when the
+     suspension is forced, so the search reads the formula in the
+     environment it was refuted in.  The event [countermodel-witness-deferred]
+     counts the refutations at which the search would have run eagerly. *)
+  let lazy_witnesses ~timeout phi model =
+    let fenv = Ast.LogicOld.get_fenv () in
+    Common.PhaseTime.event_here "countermodel-witness-deferred";
+    lazy (CountermodelWitness.find ~fenv ~timeout phi model)
+
   let payload_of w = PCSP.Problem.Proof (UnsatWitness.to_refutation w)
 
   let rec main_loop ~pcsp sol_eliminated messenger
@@ -2470,7 +881,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
     | U (State.Sat cand) ->
         (* a census line, read by nothing: the units of the solution's bodies
            whose parameter positions the clauses do not relate (both forms of
-           the relation), which a template under [related_position_quals]
+           the relation), which a template under [extra_quals.related_positions]
            could not have built from a generated qualifier *)
         (if Option.is_some (Sys.getenv "COAR_RELPOS_CENSUS") then
            try
@@ -2512,13 +923,32 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                 | None -> Map.Poly.empty);
             } )
     | U State.Unsat ->
+        (* examples chosen by received ground seeds: with their sender's
+           trace, how many the refuted example set held *)
+        (match !last_version_space with
+        | Some
+            ({
+               VersionSpace.seeded_examples =
+                 Some { seeded; trace = true; _ };
+               _;
+             } as vs) ->
+            let held =
+              let exs = VersionSpace.examples_of vs in
+              Set.count seeded ~f:(Set.mem exs)
+            in
+            Out_channel.output_string stderr
+              (sprintf
+                 "ground-seeds: unsat with %d of the %d seeded examples held\n"
+                 held (Set.length seeded));
+            Out_channel.flush stderr
+        | _ -> ());
         let unsat_witness =
           Option.bind !last_version_space ~f:(fun vs ->
               Option.map !(vs.VersionSpace.unsat_witness) ~f:(fun w ->
                   { w with UnsatWitness.problem = Some pcsp }))
         in
         Option.iter unsat_witness ~f:(fun w ->
-            Debug.print @@ lazy (UnsatWitness.str_of w);
+            Debug.print @@ lazy (UnsatWitness.str_of ~force:false w);
             Debug.print
             @@ lazy
                  ("payload: "
@@ -2592,7 +1022,9 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
   let solve =
     let module Z3interface =
       Z3Smt.Z3interfaceNew.Make (Z3Smt.Z3interfaceNew.ExtTerm) in
-    fun senv phi -> Z3interface.check_sat [ phi ] senv (Z3.mk_context [])
+    fun senv phi ->
+      Common.PhaseTime.with_phase "fresh-ctx-check" (fun () ->
+          Z3interface.check_sat [ phi ] senv (Z3.mk_context []))
 
   (* [witnesses_of_game ~nondet ~is_sat ~neg_formula ~lose phi] plays the
      strategy-improvement game on [phi], which is the NEGATION of the closed
@@ -2665,12 +1097,335 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
        only adds clauses, it has no solution either.  This needs [body] to BE
        the meaning of [P]'s clauses: it may not mention another unknown (a
        pure part of [P]'s own clauses mentioning one would be read as a fixed
-       formula) and [P] may not occur in a pure part of any clause.  For
-       [Tot] both are checked below; for FN only the second is, and only
-       against the clauses outside the eliminated shape.
+       formula, quantified by nothing) and [P] may not occur in a pure part
+       of any clause.  Both are checked below, for both kinds.  The game's
+       readers would not save an unchecked case: an applied unknown makes them
+       decline, but a nullary numeric one reads as a free variable, which the
+       game's solver cannot encode, and the solve stopped with an uncaught
+       exception instead of an answer.
+     [P]'s solution is returned with the problem, so an unknown whose
+     solution a caller wants kept is not lost by its elimination here.
      The quantifier eliminations and simplifications applied to [body] are
      equivalences, and a [None] from either theory's reader or an undecided
-     game keeps the clauses for the loop, which is only incompleteness. *)
+     game keeps the clauses for the loop, which is only incompleteness.
+     An FN predicate with a Boolean result and a quantifier-free [body] is
+     decided without the game, by [eliminate_bool_fn_pred]. *)
+  (* [eliminate_bool_fn_pred ~cls ~tvar ~args ~univ ~r body] is the
+     elimination of an FN predicate [tvar] whose result [r] is Boolean, with
+     [args] its parameters ([univ] and then [r]) and [body] quantifier-free.
+     The strategy game cannot play it: its linear-arithmetic readers take no
+     Boolean variable, so such a predicate was always left to the CEGIS loop,
+     where the template of a Boolean function of no non-Boolean argument has
+     no candidate at all, and even [P(b) => b] went unanswered.  None is
+     needed: a Boolean has two values, so
+       [forall univ. exists r. body]  iff  [forall univ. body[true] \/ body[false]],
+     which is one validity question, and its winning strategy is
+     [r := body[true]].
+     - Valid: [P(univ, r) := (r <=> body[true])] is total and single-valued,
+       and each of its points satisfies [body] (at [r = true] by definition,
+       at [r = false] because [body[true]] fails there, so [body[false]]
+       holds), hence every clause of [P], as [eliminate_fn_preds] argues.
+     - Invalid: the refutation is [eliminate_fn_preds]'s, provided the
+       countermodel is a real point.  That holds only on a formula without
+       interpretation-dependent terms, so it is taken only when the question,
+       its Boolean universals expanded into both values, is read by the
+       game's linear integer or real reader -- the fragment whose verdicts
+       the game itself trusts; elsewhere an invalid answer is only [unknown].
+     - Anything else keeps the clauses for the loop (incompleteness only).
+     Returns [First cls] (kept) or [Second (tvar, solution)]; raises
+     [NoSolution] on a refutation. *)
+  let eliminate_bool_fn_pred ~cls ~tvar ~args ~univ ~r body =
+    let open Ast in
+    let open Ast.LogicOld in
+    let at x b phi = Formula.subst (Map.Poly.singleton x (T_bool.make b)) phi in
+    let b_true = at r true body in
+    let question = Formula.mk_or b_true (at r false body) in
+    let in_linear_fragment () =
+      let bools, others = List.partition_tf univ ~f:(snd >> Term.is_bool_sort) in
+      let phi =
+        List.fold bools ~init:question ~f:(fun phi (x, _) ->
+            Formula.mk_and (at x true phi) (at x false phi))
+      in
+      let t =
+        Logic.ExtTerm.of_old_formula @@ Evaluator.simplify
+        @@ Formula.mk_forall_if_bounded others phi
+      in
+      Option.is_some (StratSynth.LIA.formula_of_term_with_constants t)
+      || Option.is_some (StratSynth.LRA.formula_of_term_with_constants t)
+    in
+    match
+      Z3Smt.Z3interface.check_valid ~timeout:(Some 10_000) ~id:None
+        (get_fenv ()) question
+    with
+    | `Valid ->
+        Second
+          ( tvar,
+            Logic.Term.mk_lambda
+              (List.map args ~f:(fun (x, s) -> (x, Logic.ExtTerm.of_old_sort s)))
+            @@ Logic.ExtTerm.of_old_formula
+            @@ Formula.eq (Term.mk_var r T_bool.SBool) (T_bool.of_formula b_true)
+          )
+    | `Invalid _ when in_linear_fragment () ->
+        raise
+          (NoSolution
+             "an FN predicate with a Boolean result cannot be total")
+    | _ -> First cls
+
+  (* [eliminate_term_fn_pred ~cls ~lst ~tvar ~args ~univ ~r ~sort body] is the
+     elimination of an FN predicate [tvar] whose result [r] has a datatype, an
+     array or a bit-vector sort [sort], with [args] its parameters ([univ] and
+     then [r]), [lst] its clauses (each [P(ts) => phi], one negative atom and
+     nothing else) and [body] their meaning, quantifier-free, over [args]
+     (the eliminated form, or the one-point reading of the clauses where the
+     elimination left a binder).
+     The strategy game reads linear integer or real arithmetic only, and the
+     CEGIS loop's templates for these sorts cannot express most witnesses (an
+     array template is a constant array, a datatype template's leaves are the
+     arguments themselves), so such a predicate went unanswered even when its
+     clauses name the witness, as in [P(x, o) => is-some(o) /\ val(o) = x + 1].
+     The question [forall univ. exists r. body] is quantified, and Z3 may not
+     return on it whatever its budget, so it is never asked.  Only
+     quantifier-free questions are, each with a budget:
+     - [body] unsatisfiable: no [(univ, r)] satisfies [body] in any model of
+       the theory under any interpretation of its underspecified terms (Z3
+       reads a selector applied to the wrong constructor as an uninterpreted
+       application, so its [unsat] covers every interpretation).  Sorts are
+       non-empty, so any [univ] has no [r], and the refutation of
+       [eliminate_fn_preds] applies: no total [P] satisfies [P]'s clauses.
+       This is the validity of [not body], the sufficient half of the
+       refutation; an invalid [forall univ. exists r. body] whose countermodel
+       needs a particular [univ] is not detected and keeps the clauses.
+     - Otherwise candidate witness terms [w] over [univ] are read from [body]
+       and from Z3's model of it -- a quantifier-free projection restricted to
+       definitions: [r = t], or a field of [r] isolated from a linear
+       integer equation with coefficient 1 or -1; for a datatype, the constructor [c] of a tester
+       [is-c(r)] or of [r]'s model value, with each field the [t] of a
+       [sel(r) = t] or else the model value's field; for an array, the stores
+       [select(r, i) = t] over [r]'s model value or a constant array -- each
+       [t] and [i] free of [r] and mentioning only [univ].  The first [w] such
+       that [P(ts) := last ts = w(init ts)] makes every clause of [lst] valid
+       gives [P(univ, r) := r = w(univ)], which is total and single-valued;
+       [P] occurs nowhere else ([eliminate_fn_preds] checks it), so the other
+       clauses are unaffected.  Each check is the clause itself with [P]
+       replaced, so it does not rest on [body]'s quantifier elimination.
+       Validity is asked of Z3 with underspecified terms uninterpreted, so the
+       solution holds in every model under every interpretation.
+     - Anything else -- no candidate checks, a question not decided within
+       its budget, a clause whose pure part is quantified -- keeps the clauses
+       for the loop exactly as before (incompleteness only).
+     Returns [First cls] (kept) or [Second (tvar, solution)]; raises
+     [NoSolution] on a refutation. *)
+  let eliminate_term_fn_pred ~cls ~lst ~tvar ~args ~univ ~r ~sort body =
+    let open Ast in
+    let open Ast.LogicOld in
+    let fenv = get_fenv () in
+    let univ_vars = Set.Poly.of_list (List.map univ ~f:fst) in
+    let over_univ t = Set.is_subset (Term.tvs_of t) ~of_:univ_vars in
+    let is_r = function
+      | Term.Var (x, _, _) -> Ident.tvar_equal x r
+      | _ -> false
+    in
+    let model_value =
+      match
+        Z3Smt.Z3interface.check_sat ~timeout:(Some 10_000) ~id:None fenv
+          [ body ]
+      with
+      | `Unsat -> `Unsat
+      | `Sat model ->
+          `Value
+            (List.find_map model ~f:(fun ((x, _), v) ->
+                 if Ident.tvar_equal x r then
+                   Option.filter v ~f:(fun t -> Set.is_empty (Term.tvs_of t))
+                 else None))
+      | _ -> `Value None
+      | exception exn when not (Common.Timer.is_async exn) -> `Value None
+    in
+    match model_value with
+    | `Unsat ->
+        raise
+          (NoSolution
+             "an FN predicate whose clauses no value of its result satisfies \
+              cannot be total")
+    | `Value model_value -> (
+        (* [body] has been through quantifier elimination and simplification,
+           which may rewrite [val(o) = x + 1] into two strict inequalities, so
+           the clauses' own pure parts are read as well, each over [args]
+           when its atom's arguments are distinct variables *)
+        let atoms =
+          let pures =
+            List.filter_map lst ~f:(fun (_, _, ns, phi) ->
+                let _, _, ts, _ = Atom.let_pvar_app @@ Set.choose_exn ns in
+                match
+                  Option.all
+                  @@ List.map ts ~f:(function
+                    | Term.Var (x, _, _) -> Some x
+                    | _ -> None)
+                with
+                | Some xs
+                  when not (List.contains_dup ~compare:Stdlib.compare xs) ->
+                    Some
+                      (Formula.subst
+                         (Map.Poly.of_alist_exn
+                         @@ List.map2_exn xs args ~f:(fun x (y, s) ->
+                             (x, Term.mk_var y s)))
+                         phi)
+                | _ -> None)
+          in
+          List.concat_map (body :: pures) ~f:(fun phi ->
+              let pos, neg = Formula.atoms_of phi in
+              Set.to_list (Set.union pos neg))
+        in
+        (* [(lhs, t)] for each equality [lhs = t] of [body] with [t] over
+           [univ] alone *)
+        let defs =
+          List.concat_map atoms ~f:(function
+            | Atom.App (Predicate.Psym T_bool.Eq, [ t1; t2 ], _) ->
+                (if over_univ t2 then [ (t1, t2) ] else [])
+                @ if over_univ t1 then [ (t2, t1) ] else []
+            | _ -> [])
+        in
+        (* and [(s, e)] for each integer equation that, read with a field
+           [s] of [r] ([sel(r)] or [select(r, i)]) as its unknown, is linear in
+           [s] with coefficient 1 or -1 and solves to [s = e]: the normalized
+           [0 = -1 - x + val(o)] gives [val(o) = x + 1] *)
+        let defs =
+          let fields_of t =
+            let acc = ref [] in
+            ignore
+            @@ Term.map_term true t ~f:(fun s ->
+                (match s with
+                | Term.FunApp (T_dt.DTSel _, [ a ], _)
+                | Term.FunApp (T_array.ASelect _, [ a; _ ], _)
+                  when is_r a ->
+                    acc := s :: !acc
+                | _ -> ());
+                s);
+            !acc
+          in
+          defs
+          @ List.concat_map atoms ~f:(function
+            | Atom.App (Predicate.Psym T_bool.Eq, [ t1; t2 ], _)
+              when Term.is_int_sort (Term.sort_of t1) ->
+                let t1 = Term.map_term true t1 ~f:Fn.id
+                and t2 = Term.map_term true t2 ~f:Fn.id in
+                List.filter_map
+                  (List.dedup_and_sort ~compare:Stdlib.compare
+                     (fields_of t1 @ fields_of t2))
+                  ~f:(fun s ->
+                    let z = Ident.mk_fresh_tvar () in
+                    let abs =
+                      Term.map_term true ~f:(fun t ->
+                          if Stdlib.(t = s) then Term.mk_var z T_int.SInt
+                          else t)
+                    in
+                    match ArrayPointwise.solve_for z (abs t1) (abs t2) with
+                    | Some e when over_univ e -> Some (s, e)
+                    | _ -> None)
+            | _ -> [])
+        in
+        let direct =
+          List.filter_map defs ~f:(fun (lhs, t) ->
+              if is_r lhs then Some t else None)
+        in
+        let structural =
+          match sort with
+          | T_dt.SDT dt ->
+              let testers =
+                List.filter_map atoms ~f:(function
+                  | Atom.App (Predicate.Psym (T_dt.IsCons (name, _)), [ t ], _)
+                    when is_r t ->
+                      Some name
+                  | _ -> None)
+              in
+              let of_model =
+                match model_value with
+                | Some (Term.FunApp (T_dt.DTCons (name, _, _), ts, _)) ->
+                    Some (name, ts)
+                | _ -> None
+              in
+              List.dedup_and_sort ~compare:String.compare
+                (testers @ Option.to_list (Option.map of_model ~f:fst))
+              |> List.filter_map ~f:(fun name ->
+                  match Datatype.look_up_cons dt name with
+                  | None -> None
+                  | Some cons ->
+                      let model_args =
+                        match of_model with
+                        | Some (n, ts) when String.equal n name -> Some ts
+                        | _ -> None
+                      in
+                      let fields =
+                        List.mapi (Datatype.sels_of_cons cons) ~f:(fun i sel ->
+                            let sname = Datatype.name_of_sel sel in
+                            match
+                              List.find_map defs ~f:(fun (lhs, t) ->
+                                  match lhs with
+                                  | Term.FunApp (T_dt.DTSel (s, _, _), [ a ], _)
+                                    when String.equal s sname && is_r a ->
+                                      Some t
+                                  | _ -> None)
+                            with
+                            | Some t -> Some t
+                            | None ->
+                                Option.bind model_args ~f:(fun ts ->
+                                    List.nth ts i))
+                      in
+                      Option.map (Option.all fields) ~f:(T_dt.mk_cons dt name))
+          | T_array.SArray (si, se) ->
+              let writes =
+                List.filter_map defs ~f:(fun (lhs, t) ->
+                    match lhs with
+                    | Term.FunApp (T_array.ASelect _, [ a; i ], _)
+                      when is_r a && over_univ i ->
+                        Some (i, t)
+                    | _ -> None)
+              in
+              if List.is_empty writes then []
+              else
+                List.map
+                  (Option.to_list model_value
+                  @ [ T_array.mk_const_array si se (Term.mk_dummy se) ])
+                  ~f:(fun base ->
+                    List.fold writes ~init:base ~f:(fun a (i, e) ->
+                        T_array.mk_store si se a i e))
+          | _ -> []
+        in
+        let candidates =
+          List.take
+            (List.filter ~f:over_univ
+            @@ direct @ structural @ Option.to_list model_value)
+            8
+        in
+        let satisfies w =
+          List.for_all lst ~f:(fun (_, _, ns, phi) ->
+              Formula.is_quantifier_free phi
+              &&
+              let _, _, ts, _ = Atom.let_pvar_app @@ Set.choose_exn ns in
+              let tu, tr = List.rest_last ts in
+              let sub =
+                Map.Poly.of_alist_exn
+                @@ List.map2_exn univ tu ~f:(fun (x, _) t -> (x, t))
+              in
+              match
+                Z3Smt.Z3interface.check_valid ~timeout:(Some 2_000) ~id:None
+                  fenv
+                  (Formula.mk_imply (Formula.eq tr (Term.subst sub w)) phi)
+              with
+              | `Valid -> true
+              | _ -> false
+              | exception exn when not (Common.Timer.is_async exn) -> false)
+        in
+        match List.find candidates ~f:satisfies with
+        | None -> First cls
+        | Some w ->
+            Second
+              ( tvar,
+                Logic.Term.mk_lambda
+                  (List.map args ~f:(fun (x, s) ->
+                       (x, Logic.ExtTerm.of_old_sort s)))
+                @@ Logic.ExtTerm.of_old_formula
+                @@ Formula.eq (Term.mk_var r sort) w ))
+
   let eliminate_fn_preds pcsp =
     let clauses = PCSP.Problem.clauses_of pcsp in
     let unknowns = Map.key_set (PCSP.Problem.senv_of pcsp) in
@@ -2697,10 +1452,10 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
       @@ Set.concat_map cls2 ~f:(fun (_, _, _, phi) ->
           Set.inter (Ast.Logic.Term.fvs_of phi) unknowns)
     in
-    let tot_blocked =
-      (* the two conditions the [Tot] refutation needs that [pvs2] does not
-         give (see above): [P] in a pure part of a clause of the eliminated
-         shape, and a clause of [P] whose pure part mentions an unknown *)
+    let blocked =
+      (* the two conditions the refutation needs that [pvs2] does not give
+         (see above): [P] in a pure part of a clause of the eliminated shape,
+         and a clause of [P] whose pure part mentions an unknown *)
       Set.Poly.union_list
       @@ List.map (Set.to_list cls1) ~f:(fun ((_, _, _, phi) as cl) ->
           let in_phi = Set.inter (Ast.Logic.Term.fvs_of phi) unknowns in
@@ -2710,8 +1465,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
     let cls11, cls12 =
       Set.partition_tf cls1 ~f:(fun cl ->
           let p = Set.choose_exn @@ Ast.Clause.pvs_of cl in
-          (not @@ Set.mem pvs2 p)
-          && not (PCSP.Problem.is_tot_pred pcsp p && Set.mem tot_blocked p))
+          (not @@ Set.mem pvs2 p) && not (Set.mem blocked p))
     in
     let clss, sol_eliminated =
       cls11
@@ -2732,7 +1486,11 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
             let tot_positions =
               (* [None] for FN, which keeps its own solution shape below *)
               if PCSP.Problem.is_fn_pred pcsp tvar then None
-              else Kind.tot_positions_of @@ PCSP.Problem.kind_of pcsp tvar
+              else (
+                (* act counter: a [Tot] unknown is eliminated here only
+                   under [eliminate_tot_preds] *)
+                Common.PhaseTime.event "tot-elimination/attempt";
+                Kind.tot_positions_of @@ PCSP.Problem.kind_of pcsp tvar)
             in
             let args = mk_fresh_sort_env_list sorts in
             let params = Term.of_sort_env args in
@@ -2754,9 +1512,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                      declines; any other failure still propagates *)
                   try Z3Smt.Z3interface.qelim ~id:None ~fenv:(get_fenv ()) phi
                   with
-                  | Failure msg
-                    when String.is_prefix msg
-                           ~prefix:"[z3:term_of] unsupported Z3 operator" ->
+                  | Failure msg when UnreadableAnswer.is_failure msg ->
                     phi)
             in
             let univ, exis =
@@ -2776,6 +1532,58 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
               @@ Formula.mk_exists_if_bounded exis
               @@ Formula.aconv_tvar body
             in
+            let bool_result =
+              match (tot_positions, exis) with
+              | None, [ (r, s) ]
+                when Term.is_bool_sort s && Formula.is_quantifier_free body ->
+                  Some r
+              | _ -> None
+            in
+            let term_result =
+              (* quantifier elimination may decline (Z3 keeps the binder of
+                 [forall y. y = x => phi] over bit-vectors), so where every
+                 clause's atom has distinct variables as arguments and its
+                 pure part mentions no other variable, the one-point rule
+                 gives the same meaning quantifier-free *)
+              let one_point () =
+                Option.map ~f:Formula.and_of @@ Option.all
+                @@ List.map lst ~f:(fun (_, _, ns, phi) ->
+                    let _, _, ts, _ = Atom.let_pvar_app @@ Set.choose_exn ns in
+                    match
+                      Option.all
+                      @@ List.map ts ~f:(function
+                        | Term.Var (x, _, _) -> Some x
+                        | _ -> None)
+                    with
+                    | Some xs
+                      when (not (List.contains_dup ~compare:Stdlib.compare xs))
+                           && Set.is_subset (Formula.tvs_of phi)
+                                ~of_:(Set.Poly.of_list xs)
+                           && Formula.is_quantifier_free phi ->
+                        Some
+                          (Formula.subst
+                             (Map.Poly.of_alist_exn
+                             @@ List.map2_exn xs args ~f:(fun x (y, s) ->
+                                 (x, Term.mk_var y s)))
+                             phi)
+                    | _ -> None)
+              in
+              match (tot_positions, exis) with
+              | None, [ (r, s) ]
+                when Term.is_dt_sort s || Term.is_array_sort s
+                     || Term.is_bv_sort s ->
+                  if Formula.is_quantifier_free body then Some (r, s, body)
+                  else Option.map (one_point ()) ~f:(fun b -> (r, s, b))
+              | _ -> None
+            in
+            match (bool_result, term_result) with
+            | Some r, _ -> eliminate_bool_fn_pred ~cls ~tvar ~args ~univ ~r body
+            | None, Some (r, sort, body) ->
+                (* the game's readers take neither sort, so nothing else is
+                   tried when this keeps the clauses *)
+                eliminate_term_fn_pred ~cls ~lst ~tvar ~args ~univ ~r ~sort
+                  body
+            | None, None -> (
             let open StratSynth in
             let game =
               let t = Logic.ExtTerm.of_old_formula phi in
@@ -2838,15 +1646,27 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                         Option.map (Map.Poly.find sub x) ~f:(fun (_, t) ->
                             Logic.BoolTerm.eq_of
                               (Logic.ExtTerm.of_old_sort s)
-                              (Logic.Term.mk_var x) t)) )))
+                              (Logic.Term.mk_var x) t)) ))))
     in
     let pvs1 = Set.Poly.of_list @@ List.map ~f:fst sol_eliminated in
     let params = PCSP.Problem.params_of pcsp in
+    (* [clauses] above is the full clause set, the stable clauses included,
+       and the problem below is rebuilt from [params], whose stable clauses
+       [PCSP.Problem.clauses_of] adds back.  A stable clause of an eliminated
+       predicate is solved by its strategy like any other of its clauses, so
+       it is dropped here with them: kept, it brought back an application of
+       a predicate no longer in [senv], and the first reader of the problem
+       that looks a predicate up in [senv] (the qualifier generator's
+       normalisation) stopped with [Not_found_s].  Postcondition: no clause
+       of the result applies a predicate of [pvs1]. *)
     let params =
       {
         params with
         senv = Map.Poly.filter_keys params.senv ~f:(Set.mem pvs1 >> not);
         kind_map = Map.Poly.filter_keys params.kind_map ~f:(Set.mem pvs1 >> not);
+        stable_clauses =
+          Set.filter params.stable_clauses ~f:(fun cl ->
+              Set.is_empty (Set.inter (Ast.Clause.pvs_of cl) pvs1));
       }
     in
     ( Map.Poly.of_alist_exn sol_eliminated,
@@ -2877,7 +1697,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
             kind_certificates = Map.Poly.empty;
           } )
 
-  (* [prove_unknown_free_clauses_first].  Contract: [`Rest p] is either [pcsp]
+  (* [unknown_free_clauses.prove_first].  Contract: [`Rest p] is either [pcsp]
      itself or [pcsp] without clauses that mention no unknown and that the
      zero-unknown verdict answered [sat] for, i.e. proved valid in every model
      of the theory; such a clause holds under every interpretation of the
@@ -2891,8 +1711,10 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
      never proved, so no candidate is ever accepted however right it is. *)
   and prove_unknown_free_first ~witness ~oracle pcsp =
     let senv = PCSP.Problem.senv_of pcsp in
-    if (not config.prove_unknown_free_clauses_first) || Map.Poly.is_empty senv
-    then `Rest pcsp
+    match config.unknown_free_clauses.prove_first with
+    | No_prove_first -> `Rest pcsp
+    | Prove_first pf ->
+    if Map.Poly.is_empty senv then `Rest pcsp
     else
       match PCSP.Problem.clauses_of_opt ~full_clauses:false pcsp with
       | None -> `Rest pcsp
@@ -2902,7 +1724,36 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
           let free =
             Set.filter (PCSP.Problem.clauses_of pcsp) ~f:is_free
           in
+          (* [beyond_arithmetic]: whether
+             some variable of [free], free or bound, has a sort other than
+             an arithmetic or Boolean one *)
+          let beyond_arithmetic () =
+            let open Ast.LogicOld in
+            let arith = function
+              | T_int.SInt | T_real.SReal | T_bool.SBool | T_bv.SBV _ -> true
+              | _ -> false
+            in
+            Set.exists
+              (Ast.ClauseSet.to_old_clause_set Map.Poly.empty free)
+              ~f:(fun c ->
+                let phi = Ast.ClauseOld.to_formula c |> snd in
+                Set.exists (Formula.term_sort_env_of phi) ~f:(fun (_, s) ->
+                    not (arith s))
+                || Set.exists (Formula.quantified_sort_env_of phi)
+                     ~f:(fun (_, s) -> not (arith s)))
+          in
           if Set.is_empty free then `Rest pcsp
+          else if
+            pf.beyond_arithmetic
+            && not (beyond_arithmetic ())
+          then (
+            Debug.print
+            @@ lazy
+                 (sprintf
+                    "[unknown-free first] not run: the %d clause(s) without \
+                     an unknown are over arithmetic alone"
+                    (Set.length free));
+            `Rest pcsp)
           else
             let started = Common.Clock.now_s () in
             let sub =
@@ -2930,8 +1781,8 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
             in
             let result =
               let budget_ms =
-                match config.prove_unknown_free_clauses_first_budget_ms with
-                | Some ms when config.prove_unknown_free_clauses_first_within_deadline
+                match pf.budget_ms with
+                | Some ms when pf.within_deadline
                   -> (
                     match PCSatCommon.SolveDeadline.remaining_ms () with
                     | Some r -> Some (Int.min ms r)
@@ -2941,7 +1792,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
               match budget_ms with
               | None -> in_process ()
               | Some _
-                when config.prove_unknown_free_clauses_first_within_deadline
+                when pf.within_deadline
                      && PCSatCommon.SolveDeadline.expired () ->
                   Ok
                     ( PCSP.Problem.Unknown,
@@ -2951,14 +1802,23 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                         kind_certificates = Map.Poly.empty;
                       } )
               | Some ms
-                when config.prove_unknown_free_clauses_first_in_process_when_large
-                     && not
-                          (Common.ForkGuard.fork_fits
-                             ~heap_bytes:(Common.ForkGuard.major_heap_bytes ())
-                             ~headroom:(Common.ForkGuard.cgroup_headroom_bytes ()))
+                when not
+                       (Common.ForkGuard.fits
+                          ~growth:(Common.ForkGuard.peak_excess_bytes ())
+                          ())
                 ->
                   (* too large to copy: in this process, under the same
-                     budget, as a strict deadline *)
+                     budget, as a strict deadline.  The copy would solve the
+                     unknown-free clauses again from this process's heap, so
+                     its need is the whole heap (its collector writes every
+                     live page) plus the process's own peak excess, beside
+                     the copies already alive; a copy past that is what the
+                     memory cap kills, with the whole run.  Taken whatever
+                     [in_process_when_large]
+                     says: the field asked for this test alone, which the
+                     shared budget now always applies *)
+                  Atomic.incr Common.ForkGuard.refused;
+                  Common.PhaseTime.event_here "fork-refused/memory";
                   Common.PhaseTime.with_phase "unknown-free-first-large"
                     (fun () ->
                       try
@@ -2974,7 +1834,9 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                   match
                     Common.PhaseTime.with_phase "unknown-free-first-forked"
                       (fun () ->
-                        PCSatCommon.ForkedQuery.run ~ms (fun () ->
+                        PCSatCommon.ForkedQuery.run
+                          ~growth:(Common.ForkGuard.peak_excess_bytes ())
+                          ~ms (fun () ->
                             match solve_aux ~witness ~oracle sub with
                             | Ok (PCSP.Problem.Sat _, _) -> `Valid
                             | Ok (PCSP.Problem.Unsat _, _) -> `Refuted
@@ -2986,7 +1848,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                         kind_certificates = Map.Poly.empty;
                       })
                   | Some `Refuted ->
-                      if witness.WitnessConfig.unsat then (
+                      if WitnessConfig.records_unsat witness then (
                         (* the certificate is built here; should this run
                            not refute again, the pass decides nothing *)
                         match in_process () with
@@ -3037,7 +1899,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
 
   and solve_aux ~witness ~oracle pcsp =
     let senv = PCSP.Problem.senv_of pcsp in
-    let if_witness w = if witness.WitnessConfig.unsat then Some w else None in
+    let if_witness w = if WitnessConfig.records_unsat witness then Some w else None in
     match
       Set.find
         (PCSP.Problem.formulas_of pcsp)
@@ -3060,7 +1922,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
         if Map.Poly.is_empty senv then
           Common.PhaseTime.with_phase "zero-unknown" @@ fun () ->
           (fun body ->
-            if not config.zero_unknown_reads_strict_deadline then body ()
+            if not config.zero_unknown.budgets.reads_strict_deadline then body ()
             else
               try body ()
               with Zero_unknown_deadline_passed ->
@@ -3077,11 +1939,61 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                     } ))
           @@ fun () ->
           Z3Smt.Z3interface.with_arith_solver
-            config.arith_solver_no_unknown_query
+            config.zero_unknown.budgets.arith_solver
           @@ fun () ->
-          Z3Smt.Z3interface.with_split_int_binders
-            config.split_int_binders_at_ite_no_unknown_query
+          let rewrites = ladder_question_rewrites config in
+          PCSatCommon.ValidityAsk.with_int_binder_split rewrites
           @@ fun () ->
+          (* [zero_unknown.rewrites.rejoin_single_cons_fields]: every stage
+             below reads the clauses of [pcsp] (the conjunction, the pieces,
+             the point and relation pins), so the fold is applied here, once,
+             to the problem itself; the problem is untouched when nothing is
+             folded, but the attempt is not free of effects: every clause makes
+             a round trip through the old term representation and a clause
+             with a candidate group is alpha-converted, and both draw names
+             from the process-global fresh-name counter.  So with nothing
+             folded, every name drawn after this point still differs from the
+             run with the field off, and so may the path of every later stage
+             that names a variable.  The event says which of the two happened:
+             [rejoin-single-cons-fields] when a group was folded,
+             [rejoin-single-cons-fields-none] when the fold ran and folded
+             nothing *)
+          let pcsp =
+            if not config.zero_unknown.rewrites.rejoin_single_cons_fields then
+              pcsp
+            else
+              let count_before = Atomic.get Ast.Ident.tvar_count in
+              let folded = ref 0 in
+              let pcsp' =
+                PCSP.Problem.map_old pcsp ~f:(fun (uni_senv, phi) ->
+                    let uni_senv, phi, n =
+                      Ast.Evaluator.rejoin_single_cons_fields_in uni_senv phi
+                    in
+                    folded := !folded + n;
+                    (uni_senv, phi))
+              in
+              (* other domains draw from the same counter, so this is an
+                 upper bound on the names the fold drew; 0 inside a replay *)
+              let drawn = Atomic.get Ast.Ident.tvar_count - count_before in
+              if !folded = 0 then (
+                Common.PhaseTime.event_here "rejoin-single-cons-fields-none";
+                Debug.print
+                @@ lazy
+                     (sprintf
+                        "[no-unknown verdict] single-constructor field groups \
+                         folded back: none (fresh names drawn meanwhile: %d)"
+                        drawn);
+                pcsp)
+              else (
+                Common.PhaseTime.event_here "rejoin-single-cons-fields";
+                Debug.print
+                @@ lazy
+                     (sprintf
+                        "[no-unknown verdict] single-constructor field groups \
+                         folded back: %d (fresh names drawn meanwhile: %d)"
+                        !folded drawn);
+                pcsp')
+          in
           let phi =
             Ast.ClauseSetOld.to_formula
             @@ Ast.ClauseSet.to_old_clause_set Map.Poly.empty
@@ -3162,25 +2074,53 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
              observed to leave the whole conjunction undecided, and this query
              carried no budget, so the process hung here although the problem
              had no predicate variable left. *)
+          (* the witness check of [eliminate_guarded_length_only_sequences]:
+             a quantifier-free linear question over a guard's body, read only
+             when proved; asked under a resource limit, with no wall clock *)
+          let guard_witness_valid phi =
+            match
+              Z3Smt.Z3interface.with_rlimit (Some 2_000_000) (fun () ->
+                  Z3Smt.Z3interface.check_valid ~timeout:None ~id:None
+                    (Ast.LogicOld.get_fenv ()) phi)
+            with
+            | `Valid -> true
+            | _ -> false
+          in
           let prepare phi =
             let phi =
-              if config.subst_projection_definitions_no_unknown_query then
+              if config.zero_unknown.rewrites.guarded_length_only_sequences
+              then
+                Common.PhaseTime.with_phase "guarded-length-only" (fun () ->
+                    Ast.Evaluator.eliminate_guarded_length_only_sequences
+                      ~valid:guard_witness_valid phi)
+              else phi
+            in
+            let phi =
+              if config.zero_unknown.rewrites.subst_projection_definitions then
                 Ast.Evaluator.subst_seq_projection_definitions phi
               else phi
             in
-            let phi = Ast.Evaluator.split_seq_reads_for_validity phi in
-            if
-              config.split_seq_prefix_over_concat_no_unknown_query
-              && not config.split_seq_prefix_focus_only_no_unknown_query
-            then
-              Ast.Evaluator.rewrite_seq_prefix_over_concat phi
-            else phi
+            (* the read split, then the prefix split where [rewrites] asks
+               for it, untimed as before *)
+            Ast.QuestionRewrites.formula_rewrites ~phases:false rewrites phi
           in
           let per_clause =
             List.map ~f:prepare @@ Set.to_list @@ Ast.ClauseSetOld.to_formulas
             @@ Ast.ClauseSet.to_old_clause_set Map.Poly.empty
             @@ PCSP.Problem.clauses_of pcsp
           in
+          (* [COAR_DUMP_UNKNOWN_FREE_CLAUSES=dir] (instrument only): each clause
+             the verdict is about to decide is written as [dir/cN-PID_native.smt2],
+             its negation, before anything is asked; nothing is written and
+             nothing changes without the variable. *)
+          Option.iter (Sys.getenv "COAR_DUMP_UNKNOWN_FREE_CLAUSES")
+            ~f:(fun dir ->
+              let fenv = Ast.LogicOld.get_fenv () in
+              List.iteri per_clause ~f:(fun i c ->
+                  Z3Smt.Z3interface.with_query_dump
+                    (sprintf "%s/c%d-%d" dir i (Common.ForkGuard.self_pid ()))
+                    (fun () ->
+                      Z3Smt.Z3interface.dump_native_question ~id:None fenv c)));
           let asked = Ast.LogicOld.Formula.and_of per_clause in
           (* The same clauses after the one-point rule, the single-constructor
              split and the sequence-length split, when switched on.  The
@@ -3197,7 +2137,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
             set_onepoint_rewrite_switches ()
           in
           let per_clause_rewritten =
-            if config.onepoint_split_no_unknown_query then
+            if config.zero_unknown.rewrites.onepoint.split then
               Some
                 (List.map per_clause
                    ~f:Ast.Evaluator.elim_onepoint_and_split_binders)
@@ -3218,13 +2158,13 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
              [unknown].  Where the budget does not hold over such a binder the
              call behaves as it did with no budget at all. *)
           (* [~enabled] (default [true]) is how a fresh-context ask applies
-             [seq_axioms_first_fresh_no_unknown_query]; see [AxiomsFirst.ask]
+             [zero_unknown.axioms.first.fresh]; see [AxiomsFirst.ask]
              for the order and why it changes only timing *)
           let axioms_first ?(enabled = true) phi k =
-            match config.seq_axioms_first_no_unknown_query with
+            match (ZeroUnknownConfig.Switch.seq_axioms_first config.zero_unknown) with
             | Some ms ->
                 AxiomsFirst.ask ~enabled
-                  ~applies:Z3Smt.SeqAxiomEncoding.mentions_seq
+                  ~applies:Ast.SeqAxiomEncoding.mentions_seq
                   ~prove:(fun phi ->
                     match
                       Z3Smt.Z3interface.prove_valid_by_seq_axioms ~timeout:ms
@@ -3236,21 +2176,35 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
             | None -> k phi
           in
           (* how many questions below ran out of their budget, for the
-             report at the end (see [report_budget_exhaustion]); every query
+             report at the end (see [zero_unknown.budgets.report_exhaustion]); every query
              goes through [budgeted], which also applies the rlimit *)
           let budget_cut = ref 0 in
           let budget_asked = ref 0 in
+          (* [zero_unknown.axioms.first_after_fallback_proof]: armed once a
+             fresh question of this verdict ran its native question to its
+             budget and the sequence-axiom fallback then proved it; from
+             then on the fresh questions ask the axiomatised form first, as
+             [axioms.first.fresh] does.  Per verdict: a later verdict starts
+             unarmed *)
+          let after_fallback_proof =
+            PCSatCommon.AxiomsFirst.After_fallback_proof.create
+              ~on:
+                (ZeroUnknownConfig.Switch.seq_axioms_first_after_fallback_proof
+                   config.zero_unknown)
+          in
           (* LADDER-PROFILE tracing: which stage of the ladder a question
              belongs to, printed with each question and at each transition *)
           let ladder_phase = ref "start" in
           let ladder_t0 = Common.Clock.now_s () in
           let ladder_stage, _ = Common.PhaseTime.stages () in
           let deadline_passed () =
-            config.zero_unknown_reads_strict_deadline
+            config.zero_unknown.budgets.reads_strict_deadline
             && PCSatCommon.SolveDeadline.expired_strict ()
           in
           let enter_phase name =
-            if deadline_passed () then raise Zero_unknown_deadline_passed;
+            if deadline_passed () then (
+              PCSatCommon.SolveDeadline.cut ();
+              raise Zero_unknown_deadline_passed);
             ladder_stage name;
             ladder_phase := name;
             Debug.print
@@ -3260,8 +2214,8 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
           in
           let stage_rlimit =
             LadderStageRlimit.find
-              ~stage_rlimits:config.ladder_stage_rlimits_no_unknown_query
-              ~default:config.no_unknown_query_rlimit
+              ~stage_rlimits:config.zero_unknown.budgets.stage_rlimits
+              ~default:config.zero_unknown.budgets.query_rlimit
           in
           let budgeted f =
             let started = Common.Clock.now_s () in
@@ -3269,19 +2223,41 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
               (* past a strict deadline the question is not asked; it is
                  reported as one that ran out of its budget, which every
                  caller reads as undecided *)
-              if deadline_passed () then `Timeout
+              if deadline_passed () then (
+                PCSatCommon.SolveDeadline.cut ();
+                `Timeout)
               else
-                (* with [ladder_seq_axiom_rlimit_no_unknown_query], the
-                   fallback is bounded by its count and killed at its own
-                   wall clock; the lemma route sets its own pair inside; with
+                (* with [zero_unknown.axioms.ladder_fallback], the
+                   fallback is asked under its count and its own budget (Z3
+                   parameters, a kill only in a forked copy); the lemma route
+                   sets its own pair inside; with
                    either refinement of the pair, it is chosen per fresh
                    question in [fresh_body] instead *)
+                (* with [zero_unknown.axioms.fork_fallbacks], every
+                   fallback check inside is asked in a killed copy, the one
+                   bound on it that holds *)
+                Z3Smt.Z3interface.with_seq_axiom_fork_runner
+                  (if config.zero_unknown.axioms.fork_fallbacks then
+                     Some
+                       (fun ~ms ask ->
+                         let r = PCSatCommon.ForkedQuery.run_forked ~ms ask in
+                         (* counted only: a fallback check asked in a copy
+                            (`Not_forked asks it in process, as without the
+                            field); [r] is returned either way *)
+                         Common.PhaseTime.event_here
+                           (match r with
+                           | `Value _ -> "fallback-fork/value"
+                           | `Lost -> "fallback-fork/lost"
+                           | `Not_forked -> "fallback-fork/not-forked");
+                         r)
+                   else None)
+                @@ fun () ->
                 LadderSeqAxiomRlimit.with_
                   (LadderSeqAxiomRlimit.around_question
                      ~refused_only:
-                       config.ladder_seq_axiom_rlimit_refused_only_no_unknown_query
-                     ~per_node:config.ladder_seq_axiom_units_per_node_no_unknown_query
-                     config.ladder_seq_axiom_rlimit_no_unknown_query)
+                       (ZeroUnknownConfig.Switch.ladder_seq_axiom_rlimit_refused_only config.zero_unknown)
+                     ~per_node:(ZeroUnknownConfig.Switch.ladder_seq_axiom_units_per_node config.zero_unknown)
+                     (ZeroUnknownConfig.Switch.ladder_seq_axiom_rlimit config.zero_unknown))
                 @@ fun () ->
                 Z3Smt.Z3interface.with_rlimit
                   ~label:(sprintf "q%d:%s" !budget_asked !ladder_phase)
@@ -3330,7 +2306,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                     timeout
                     (Common.Clock.now_s () -. ladder_t0))
           in
-          (* [pointwise_array_countermodels_no_unknown_query]: an undecided
+          (* [zero_unknown.pins.pointwise_array_countermodels]: an undecided
              [answer] to the validity question [phi] is followed by the
              question about its instance at the pointwise definitions of its
              free arrays ([SeqInstantiation.pointwise_array_instance]), of
@@ -3342,7 +2318,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
           let pointwise_refute ~timeout phi answer =
             match answer with
             | `Valid | `Invalid _ -> answer
-            | _ when not config.pointwise_array_countermodels_no_unknown_query
+            | _ when not config.zero_unknown.pins.pointwise_array_countermodels
               ->
                 answer
             | _ -> (
@@ -3401,19 +2377,113 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                             @ List.map defs ~f:(fun (xs, t) -> (xs, Some t)))
                       | _ -> answer))
           in
-          let ask_within timeout phi =
-            note_asking ~kind:"pooled" timeout phi;
+          (* [~fresh:true] asks the same question in a Z3 context made for
+             it and told only the defined functions it reaches (as the
+             rewritten questions are asked, see below), instead of the pooled
+             context; only [zero_unknown.external.conj_seq_binder] passes
+             it *)
+          let ask_within ?(fresh = false) timeout phi =
+            note_asking ~kind:(if fresh then "fresh" else "pooled") timeout phi;
             budgeted @@ fun () ->
             pointwise_refute ~timeout phi
             @@ axioms_first phi @@ fun phi ->
-            (if config.seq_as_array_no_unknown_query then
+            (if config.zero_unknown.rewrites.seq_as_array then
                Z3Smt.Z3interface.check_valid_seq_as_array
              else Z3Smt.Z3interface.check_valid)
               ~timeout:(Some timeout)
-              ~fresh_solver:false ~id:None
-              (Ast.LogicOld.get_fenv ()) phi
+              ~fresh_solver:fresh ~id:None
+              (if fresh then
+                 Z3Smt.Z3interface.fenv_reached_by (Ast.LogicOld.get_fenv ())
+                   phi
+               else Ast.LogicOld.get_fenv ())
+              phi
           in
-          let ask = ask_within config.no_unknown_query_timeout in
+          let ask = ask_within config.zero_unknown.budgets.query_ms in
+          (* [conj_within timeout phi] asks the pooled whole-conjunction
+             questions ([conj], [conj-opened]) as [ask_within] does, except
+             that a question whose shape [may_not_return] refuses (a
+             quantifier binding a sequence or a regular expression) is asked
+             as [zero_unknown.external.conj_seq_binder] says: in process
+             ([Asked_in_process], as before), in process in a fresh context
+             ([Asked_fresh]), not at all ([Refused], answered [`Unknown]), or
+             in a forked copy given the question's budget plus a margin
+             ([Killed_copy], in the pooled or a fresh context).
+             Contract: the result is [`Valid] or [`Invalid m] only when the
+             very question [ask_within timeout phi] asks (the same formula,
+             in the pooled or in a fresh context), asked in this process or
+             in a copy of it forked at this point, answered so -- in the copy's case the copy has
+             become the run and this call returns there; every other result
+             is one the ladder reads as undecided, as it reads every such
+             answer of these questions ([NoUnknownLadder.ask_conj]).  So each
+             arm changes only how long an undecided question may take, and
+             which questions are asked at all, never how an answer is read:
+             [Refused] can lose a decision, [Killed_copy] only one reached
+             after the kill.
+             Why: asked in process, Z3's sequence theory does not read its
+             cancel flag, and these questions returned after 20-36 s against
+             a 10 s budget on a Rust-derived loop step, with every stack
+             sample past the budget inside the sequence theory.
+             With the phase account on, every question of the refused shape
+             is counted as [conj-seqbinder:<outcome>], whatever the arm
+             ([valid], [invalid] and [undecided] when asked in process,
+             [refused], [killed] when the copy gave nothing back in time,
+             [copy-undecided] when it answered neither, [in-copy] when it
+             decided, counted in the copy that becomes the
+             run), so a run under the default shows how often such a question
+             decides; the count decides nothing. *)
+          let conj_within timeout phi =
+            if not (Z3Smt.Z3interface.may_not_return phi) then
+              ask_within timeout phi
+            else
+              let counted r =
+                Common.PhaseTime.event_here
+                  ("conj-seqbinder:"
+                  ^
+                  match r with
+                  | `Valid -> "valid"
+                  | `Invalid _ -> "invalid"
+                  | _ -> "undecided");
+                r
+              in
+              match config.zero_unknown.external_.conj_seq_binder with
+              | ZeroUnknownConfig.Asked_in_process -> counted (ask_within timeout phi)
+              | ZeroUnknownConfig.Asked_fresh ->
+                  counted (ask_within ~fresh:true timeout phi)
+              | ZeroUnknownConfig.Refused ->
+                  Common.PhaseTime.event_here "conj-seqbinder:refused";
+                  `Unknown "not asked: the solver may not return on this shape"
+              | ZeroUnknownConfig.Killed_copy { margin_ms; fresh } -> (
+                  (* a nested solve under a cooperative deadline is not
+                     handed to a copy, as the raced early pins are not *)
+                  if PCSatCommon.SolveDeadline.active () then
+                    counted (ask_within ~fresh timeout phi)
+                  else
+                    match
+                      PCSatCommon.ParallelRace.decide_in_copy
+                        ~ms:(timeout + Int.max margin_ms 0)
+                        ~decisive:(function
+                          | `Valid | `Invalid _ -> true | _ -> false)
+                        (fun () -> ask_within ~fresh timeout phi)
+                    with
+                    | `Decided r ->
+                        Common.PhaseTime.event_here "conj-seqbinder:in-copy";
+                        r
+                    | `Not_started -> counted (ask_within ~fresh timeout phi)
+                    | `Undecided `Answered ->
+                        (* the copy's answer was neither [`Valid] nor
+                           [`Invalid _]; which undecided answer it was does
+                           not come back, and every one reads the same *)
+                        Common.PhaseTime.event_here
+                          "conj-seqbinder:copy-undecided";
+                        `Unknown "undecided in a forked copy"
+                    | `Undecided `Killed ->
+                        Common.PhaseTime.event_here "conj-seqbinder:killed";
+                        (* counted as a question that ran out of its budget,
+                           as [budgeted] counts one asked here *)
+                        incr budget_asked;
+                        incr budget_cut;
+                        `Timeout)
+          in
           (* The rewritten clauses are asked in a Z3 context made for the
              query and told only the defined functions they mention.  Both
              matter, and for the same reason: the goals the rewrite produces
@@ -3445,24 +2515,32 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
              sequence-axiom fallback when it is on ([check_valid], which
              [ask] uses, does the same by itself): it can only turn the answer
              into [`Valid], and only by proving the clause. *)
-          (* [implied_factor_equalities_no_unknown_query]: the question with
+          (* [zero_unknown.rewrites.implied_factor_equalities]: the question with
              the factor equations its linear facts imply stated, an
              equivalence ([Z3interface.implied_factor_equalities]); [phi]
              itself when off *)
           let factor_eqs ~timeout phi =
-            if not config.implied_factor_equalities_no_unknown_query then phi
-            else
-              Common.PhaseTime.with_phase "factor-eqs" (fun () ->
-                  Z3Smt.Z3interface.implied_factor_equalities ~timeout ~id:None
-                    (Ast.LogicOld.get_fenv ()) phi)
+            PCSatCommon.ValidityAsk.factor_equalities rewrites ~timeout
+              ~id:None (Ast.LogicOld.get_fenv ()) phi
           in
           (* [native] asks the solver itself ([native_check] in-process, or a
              forked copy of it) *)
-          let native_check ~timeout phi =
+          (* [factor_ms]: the budget of [factor_eqs]'s questions, by default
+             the question's own (10 s without one); a forked copy that asks
+             with no Z3 timer passes the budget the in-process call would
+             have given them *)
+          let native_check ?factor_ms ~timeout phi =
             let open Ast.LogicOld in
-            let phi = factor_eqs ~timeout:(Option.value timeout ~default:10000) phi in
+            let phi =
+              factor_eqs
+                ~timeout:
+                  (match factor_ms with
+                  | Some ms -> ms
+                  | None -> Option.value timeout ~default:10000)
+                phi
+            in
             match
-              (if config.seq_as_array_no_unknown_query then
+              (if config.zero_unknown.rewrites.seq_as_array then
                  Z3Smt.Z3interface.check_sat_seq_as_array
                else Z3Smt.Z3interface.check_sat)
                 ~timeout ~fresh_solver:true ~id:None (fenv_used_by phi)
@@ -3491,6 +2569,69 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                 `Timeout
             | (`Valid | `Unknown _) as r -> r
           in
+          (* [native_check ~timeout phi] asked in a forked copy killed after
+             [ms], and read as the in-process call would be read
+             ([zero_unknown.external.fork_seqinst (Killed_after_budget
+             {read_as_in_process})]).  The copy asks with no Z3 timer (the
+             thread serving one does not exist in a forked process; the kill
+             is the budget), [factor_eqs] with the budget it has in process.
+             Contract: [`Valid] only if the copy answered valid, [`Invalid []]
+             only if it answered invalid (its countermodel, a value of
+             extensible variants, does not survive the trip back, so it is
+             empty: no reader of the sequence instantiation reads one),
+             [`Unknown r] for the copy's undecided answer [r], and [`Timeout]
+             for a copy that timed out, was killed, died or raised; when no
+             copy can be made (the memory budget, a pipe, other domains
+             running) the call is made here, with its budget, exactly as
+             without the fork.  So a question's answer differs from the
+             in-process one only when the call does not return within [ms],
+             which is where the in-process call overran its own budget.  With
+             [quantified_only], a quantifier-free [phi] is asked here, as
+             without the fork.  Each outcome is a phase-report event
+             [seqinst-fork/...]. *)
+          let forked_native_as_in_process ~ms ~timeout phi =
+            if
+              ZeroUnknownConfig.Switch.fork_seqinst_quantified_only
+                config.zero_unknown
+              && Ast.LogicOld.Formula.is_quantifier_free phi
+            then (
+              (* [quantified_only]: a quantifier-free form is asked here, the
+                 call [`Not_forked] makes below *)
+              Common.PhaseTime.event_here "seqinst-fork/here-qf";
+              native_check ~timeout phi)
+            else
+            let factor_ms = Option.value timeout ~default:10000 in
+            let outcome =
+              ForkedQuery.run_forked ~ms (fun () ->
+                  match native_check ~factor_ms ~timeout:None phi with
+                  | `Valid -> `V
+                  | `Invalid _ -> `I
+                  | `Timeout -> `T
+                  | `Unknown r -> `K r
+                  | `Sat _ | `Unsat -> `K "unexpected answer")
+            in
+            Common.PhaseTime.event_here
+              (match outcome with
+              | `Value `V -> "seqinst-fork/valid"
+              | `Value `I -> "seqinst-fork/invalid"
+              | `Value `T -> "seqinst-fork/timeout"
+              | `Value (`K r) ->
+                  (* the reason's first words, so that the report tells a
+                     solver's [unknown] from a refusal *)
+                  "seqinst-fork/unknown:"
+                  ^ String.prefix
+                      (String.map r ~f:(fun c ->
+                           if Char.is_alphanum c then c else '_'))
+                      40
+              | `Lost -> "seqinst-fork/killed"
+              | `Not_forked -> "seqinst-fork/in-process");
+            match outcome with
+            | `Value `V -> `Valid
+            | `Value `I -> `Invalid []
+            | `Value `T | `Lost -> `Timeout
+            | `Value (`K r) -> `Unknown r
+            | `Not_forked -> native_check ~timeout phi
+          in
           (* With COAR_PROBE_WEAKEN set in the environment, a validity
              question the ladder refuses is also handed to the weakened form
              ([WeakenedQuery.decide] on its negation, 2 s for the rest and for
@@ -3515,7 +2656,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                 | Some (`Sat _) -> "weaken-probe:invalid"
                 | _ -> "weaken-probe:undecided")
           in
-          (* [weaken_refused_questions_no_unknown_query]: a refused question
+          (* [zero_unknown.external.weaken_refused_ms]: a refused question
              [phi] is proved when the negation with its refused top-level
              conjuncts dropped is unsatisfiable.  Soundness, in the reading
              this verdict decides (a clause is valid when it holds in every
@@ -3530,7 +2671,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
              counted in the phase report ([weaken-refused:valid] or
              [:not-proved]). *)
           let weakened_proves ~timeout phi =
-            match config.weaken_refused_questions_no_unknown_query with
+            match config.zero_unknown.external_.weaken_refused_ms with
             | None -> false
             | Some ms ->
                 let proved =
@@ -3542,46 +2683,102 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                    else "weaken-refused:not-proved");
                 proved
           in
-          let fresh_body ?(native = native_check) timeout phi =
+          let fresh_body
+              ?(native = fun ~timeout phi -> native_check ~timeout phi) timeout
+              phi =
             let open Ast.LogicOld in
             pointwise_refute ~timeout phi
-            @@ axioms_first ~enabled:config.seq_axioms_first_fresh_no_unknown_query
-              phi
+            @@ axioms_first
+                 ~enabled:
+                   (PCSatCommon.AxiomsFirst.After_fallback_proof.enabled
+                      after_fallback_proof
+                      ~fresh:
+                        (ZeroUnknownConfig.Switch.seq_axioms_first_fresh
+                           config.zero_unknown))
+                 phi
             @@ fun phi ->
             let refused = Z3Smt.Z3interface.may_not_return phi in
+            if refused then
+              Debug.print
+              @@ lazy
+                   (sprintf
+                      "[no-unknown verdict] refused for its binders: %s"
+                      (String.concat ~sep:", "
+                         (List.map
+                            (Set.to_list
+                               (Z3Smt.Z3interface.unsupported_binders phi))
+                            ~f:(fun (x, s) ->
+                              Ast.Ident.name_of_tvar x ^ ":"
+                              ^ Ast.LogicOld.Term.str_of_sort s))));
             (* the fallback's own count, when the pair is chosen per question
                ([LadderSeqAxiomRlimit.for_fallback]); the solver was not asked
                a refused question unless a forked copy asked it *)
             let fallback_pair =
               LadderSeqAxiomRlimit.for_fallback
                 ~refused_only:
-                  config.ladder_seq_axiom_rlimit_refused_only_no_unknown_query
-                ~per_node:config.ladder_seq_axiom_units_per_node_no_unknown_query
+                  (ZeroUnknownConfig.Switch.ladder_seq_axiom_rlimit_refused_only config.zero_unknown)
+                ~per_node:(ZeroUnknownConfig.Switch.ladder_seq_axiom_units_per_node config.zero_unknown)
                 ~only_attempt:
                   (refused
                   && Option.is_none
-                       config.fork_refused_questions_no_unknown_query)
+                       config.zero_unknown.external_.fork_refused_ms)
                 ~size:
                   (match
-                     config.ladder_seq_axiom_units_per_node_no_unknown_query
+                     (ZeroUnknownConfig.Switch.ladder_seq_axiom_units_per_node config.zero_unknown)
                    with
                   | None -> 0
                   | Some _ -> Formula.ast_size phi)
-                config.ladder_seq_axiom_rlimit_no_unknown_query
+                (ZeroUnknownConfig.Switch.ladder_seq_axiom_rlimit config.zero_unknown)
             in
             ForkedQuery.fallback_unless_invalid
-              ~skip:config.fork_invalid_skips_seq_axiom_fallback_no_unknown_query
+              ~skip:config.zero_unknown.axioms.invalid_skips_fallback
               ~fallback:(fun answer ->
-                LadderSeqAxiomRlimit.with_ fallback_pair @@ fun () ->
-                Z3Smt.Z3interface.with_seq_axiom_fallback
-                  ~caller_timeout:(Some timeout) ~id:None (get_fenv ()) phi
-                  answer)
+                let r =
+                  LadderSeqAxiomRlimit.with_ fallback_pair @@ fun () ->
+                  Z3Smt.Z3interface.with_seq_axiom_fallback
+                    ~caller_timeout:(Some timeout) ~id:None (get_fenv ()) phi
+                    answer
+                in
+                (* the native question ran out of its budget and the
+                   axiomatised form proved the question: the event
+                   [axioms.first_after_fallback_proof] waits for *)
+                if
+                  PCSatCommon.AxiomsFirst.After_fallback_proof.note
+                    after_fallback_proof ~asked_natively:(not refused)
+                    ~native_ran_out:
+                      (match answer with `Timeout -> true | _ -> false)
+                    ~fallback_proved:
+                      (match r with `Valid -> true | _ -> false)
+                then (
+                  Common.PhaseTime.event_here "axioms-first-from-here";
+                  Debug.print
+                  @@ lazy
+                       "[no-unknown verdict] the native question ran out of \
+                        its budget and the axiomatised form proved it: later \
+                        fresh questions ask the axiomatised form first");
+                (* counted only: a fallback question asked under the
+                   per-question pair rather than the process-wide budget
+                   (an undecided answer over a sequence is the only one the
+                   fallback asks about); the answer is [r] either way *)
+                (if
+                   (!(Common.PhaseTime.on) || !(Common.PhaseTime.in_child))
+                   && Option.is_some fallback_pair
+                   && (match answer with
+                      | `Valid | `Invalid _ -> false
+                      | _ -> true)
+                   && Ast.SeqAxiomEncoding.mentions_seq phi
+                 then
+                   Common.PhaseTime.event_here
+                     (match r with
+                     | `Valid -> "ladder-seq-axiom-rl/proved"
+                     | _ -> "ladder-seq-axiom-rl/unproved"));
+                r)
             @@
             if refused then (
               probe_weakened phi;
               if weakened_proves ~timeout phi then `Valid
               else
-              match config.fork_refused_questions_no_unknown_query with
+              match config.zero_unknown.external_.fork_refused_ms with
               | Some kill_ms -> forked_native ~ms:(Int.min kill_ms timeout) phi
               | None ->
                   `Unknown "not asked: the solver may not return on this shape")
@@ -3623,12 +2820,12 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                 Z3Smt.Z3interface.dump_native_question ~id:None fenv phi;
                 fresh_body timeout phi
           in
-          let ask_fresh = ask_fresh_within config.no_unknown_query_timeout in
+          let ask_fresh = ask_fresh_within config.zero_unknown.budgets.query_ms in
           let ask_clause_by_pieces ?(refine = contextual_in_place) ?unproved
               ~what ~ask c =
             ClausePieces.ask_by_pieces ~refine
-              ?max:config.clause_piece_bound_no_unknown_query ?unproved
-              ~enabled:config.split_clause_heads_no_unknown_query
+              ?max:config.zero_unknown.pieces.bound ?unproved
+              ~enabled:config.zero_unknown.pieces.split_clause_heads
               ~note:(fun msg ->
                 Debug.print
                 @@ lazy (sprintf "[no-unknown verdict] %s clause: %s" what msg))
@@ -3641,7 +2838,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
              one asked without the extra form, so its answer is kept; the
              contextual form is equivalent to the clause in every model, so a
              proof or a refutation of it is one of the clause. *)
-          (* [guarded_facts_ms_no_unknown_query]: a question the forward
+          (* [zero_unknown.guarded_facts]: a question the forward
              application of guarded hypotheses can act on is given to it,
              once per question.  The rule itself asks nothing, so a proof by
              the rule alone is taken before the question is asked.  In the
@@ -3659,7 +2856,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
           let guarded_tried = Common.Ext.Hashtbl.PolyDeep.create () in
           let guarded_short_ms = 2000 in
           let guarded_first ?short ask phi =
-            match config.guarded_facts_ms_no_unknown_query with
+            match (ZeroUnknownConfig.Switch.guarded_facts_ms config.zero_unknown) with
             | None -> ask phi
             | Some ms -> (
                 let trace r =
@@ -3675,8 +2872,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                     Common.PhaseTime.with_phase "guarded-facts" (fun () ->
                         PCSatCommon.GuardedFacts.syntactic ~trace
                           ~theory_facts_only:
-                            config
-                              .guarded_facts_theory_facts_only_no_unknown_query
+                            (ZeroUnknownConfig.Switch.guarded_facts_theory_facts_only config.zero_unknown)
                           phi))
                 in
                 match rule with
@@ -3735,6 +2931,54 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                   (sprintf "ladder-clause-valid:%d-of-%d" i
                      (Array.length clause_valid)))
           in
+          (* [zero_unknown.congruence_match]: a clause whose conclusion is
+             its own premises up to their equalities is proved without a
+             solver ([CongruenceMatch.valid], which reads only proofs and
+             interprets no symbol); skipped where only a refutation is read.
+             A phase-report event per clause proved, and a failure inside
+             the match (a formula [nnf_of] does not take) proves nothing. *)
+          if
+            config.zero_unknown.congruence_match
+            && not !PCSatCommon.ShapeProof.refutation_only
+          then
+            Common.PhaseTime.with_phase "congruence-match" (fun () ->
+                List.iteri per_clause ~f:(fun i c ->
+                    if
+                      (not clause_valid.(i))
+                      &&
+                      try PCSatCommon.CongruenceMatch.valid c
+                      with exn_ when not (Common.Timer.is_async exn_) ->
+                        false
+                    then (
+                      Common.PhaseTime.event "congruence-match/proved";
+                      Debug.print
+                      @@ lazy
+                           (sprintf
+                              "[no-unknown verdict] clause %d: proved by \
+                               congruence match"
+                              i);
+                      mark_valid i)));
+          (* skipped where only a refutation is read: a proof of validity
+             refutes nothing (see [ShapeProof.with_refutation_only]) *)
+          Option.iter
+            (if !PCSatCommon.ShapeProof.refutation_only then None
+             else (ZeroUnknownConfig.Switch.shape_proof_ms config.zero_unknown)) ~f:(fun ms ->
+              Common.PhaseTime.with_phase "shape-proof" @@ fun () ->
+              List.iteri per_clause ~f:(fun i c ->
+                  if
+                    (not clause_valid.(i))
+                    && PCSatCommon.ShapeProof.valid_within
+                         ~print:(fun m ->
+                           Debug.print
+                           @@ lazy
+                                (sprintf "[no-unknown verdict] clause %d: %s" i
+                                   (Lazy.force m)))
+                         ~fork:false
+                         ~literal_closures:
+                           ( (ZeroUnknownConfig.Switch.shape_proof_literal_closures config.zero_unknown),
+                             (ZeroUnknownConfig.Switch.shape_proof_literal_closure_ms config.zero_unknown) )
+                         ~ms ~id:!id c
+                  then mark_valid i));
           Debug.print
           @@ lazy
                (sprintf "[no-unknown verdict] %d clause(s), sizes %s"
@@ -3742,12 +2986,12 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                   (String.concat ~sep:" "
                   @@ List.map per_clause ~f:(fun c ->
                          string_of_int (Ast.LogicOld.Formula.ast_size c))));
-          (* Under [remember_proved_pieces_no_unknown_query]: for a rewritten
+          (* Under [zero_unknown.pieces.remember_proved]: for a rewritten
              clause asked by its pieces and not shown valid, the conjunction of
              the pieces left undecided (every other piece was shown valid), by
              the same index.  Valid exactly when the rewritten clause is, so a
              later stage may ask it in the clause's place. *)
-          let remember = config.remember_proved_pieces_no_unknown_query in
+          let remember = config.zero_unknown.pieces.remember_proved in
           let residual = Array.create ~len:(List.length per_clause) None in
           (* [ClausePieces.ask_by_pieces] gives the undecided pieces only
              when some piece or sub-piece was shown valid, and gives an
@@ -3790,7 +3034,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
           let seq_instantiation undecided =
             let ask_form ask_fresh c =
               let c =
-                if config.onepoint_split_no_unknown_query then
+                if config.zero_unknown.rewrites.onepoint.split then
                   Ast.Evaluator.elim_onepoint_and_split_binders c
                 else c
               in
@@ -3812,25 +3056,28 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                       (Ast.LogicOld.Formula.str_of_prefix c));
               r
             in
-            (* With [two_pass_budget_no_unknown_query], every form is asked
+            (* With [zero_unknown.budgets.two_pass_ms], every form is asked
                first at the short budget and only the ones that ran out of it
                again at the full one; see [first_proved]. *)
-            (* With [fork_seqinst_questions_no_unknown_query], a form is asked
+            (* With [zero_unknown.external.fork_seqinst], a form is asked
                in a forked copy killed at the larger of the field and the
                question's budget (at the budget plus a margin with
-               [fork_seqinst_kill_margin_no_unknown_query], so that the
+               [zero_unknown.external.fork_seqinst (Killed_after_budget)], so that the
                first pass's short budget holds in the copy too); only the
                verdict comes back, and anything but
                [`Valid] is reported as undecided, which [prove_valid] reads as
-               it reads every answer but [`Valid] *)
+               it reads every answer but [`Valid] -- or, with
+               [read_as_in_process], every answer is read as in process and
+               a question no copy can be made for is asked here
+               ([forked_native_as_in_process]) *)
             let fresh_within =
-              match config.fork_seqinst_questions_no_unknown_query with
+              match (ZeroUnknownConfig.Switch.fork_seqinst_questions config.zero_unknown) with
               | None -> ask_fresh_within
               | Some kill_ms ->
                   fun timeout phi ->
                     let ms =
                       ForkedQuery.ladder_kill_ms ~floor:kill_ms
-                        ~margin:config.fork_seqinst_kill_margin_no_unknown_query
+                        ~margin:(ZeroUnknownConfig.Switch.fork_seqinst_kill_margin config.zero_unknown)
                         ~timeout
                     in
                     (* only the solver call is forked, and asked there with no
@@ -3838,20 +3085,32 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                        forked process), the kill being its budget; the shape
                        test and the sequence-axiom fallback stay in-process, as
                        without the field *)
-                    let native ~timeout:_ phi = forked_native ~ms phi in
+                    let native =
+                      if
+                        ZeroUnknownConfig.Switch.fork_seqinst_read_as_in_process
+                          config.zero_unknown
+                      then forked_native_as_in_process ~ms
+                      else fun ~timeout:_ phi ->
+                        (* rebuilt, so that its type is open as the other
+                           branch's is *)
+                        match forked_native ~ms phi with
+                        | `Valid -> `Valid
+                        | `Timeout -> `Timeout
+                        | `Unknown r -> `Unknown r
+                    in
                     note_asking ~kind:"forked" timeout phi;
                     budgeted @@ fun () -> fresh_body ~native timeout phi
             in
             let ask, second_pass =
-              match config.two_pass_budget_no_unknown_query with
+              match config.zero_unknown.budgets.two_pass_ms with
               | None ->
-                  ( ask_form (fresh_within config.no_unknown_query_timeout),
+                  ( ask_form (fresh_within config.zero_unknown.budgets.query_ms),
                     None )
               | Some ms ->
                   ( ask_form (fresh_within ms),
                     Some
                       ( (function `Timeout -> true | _ -> false),
-                        ask_form (fresh_within config.no_unknown_query_timeout)
+                        ask_form (fresh_within config.zero_unknown.budgets.query_ms)
                       ) )
             in
             SeqInstantiation.form_built_trace :=
@@ -3875,18 +3134,18 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                      (sprintf "[no-unknown verdict] seqinst %s, at %.2f s"
                         (Lazy.force msg)
                         (Common.Clock.now_s () -. ladder_t0)));
-            (* With [case_split_index_budget_no_unknown_query], the index-case
+            (* With [zero_unknown.case_split_index (Index_cases budget_ms)], the index-case
                questions are asked at that budget (never above the form's own),
                so that a case the solver decides only slowly counts as
                undecided and the form is then asked whole; reset on the way
                out, so that no later ladder asks with this one's solver *)
             SeqInstantiation.index_case_ask :=
-              Option.map config.case_split_index_budget_no_unknown_query
+              Option.map (ZeroUnknownConfig.Switch.case_split_index_budget config.zero_unknown)
                 ~f:(fun ms ->
                   let ask_case =
                     ask_form
                       (fresh_within
-                         (Int.min ms config.no_unknown_query_timeout))
+                         (Int.min ms config.zero_unknown.budgets.query_ms))
                   in
                   fun phi ->
                     match ask_case phi with
@@ -3901,7 +3160,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                     ~schedule:remember
                     ~proved:mark_valid
                     ~enabled:
-                      config.instantiate_sequence_premises_no_unknown_query
+                      config.zero_unknown.seq_instantiation.premises
                     ~already_valid:(fun i -> clause_valid.(i))
                     ~ask
                     (match per_clause_rewritten with
@@ -3928,36 +3187,107 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
             | `Valid -> `Valid
             | `Undecided -> undecided
           in
-          (* The quick sweep (see [quick_sweep_no_unknown_query]): every
+          (* The quick sweep (see [zero_unknown.budgets.quick_sweep]): every
              clause, piece by piece, at a short budget, stopping at the first
              refutation; a clause whose pieces are all shown valid is recorded.
              Asked exactly as the long questions below ask ([ask]), only with a
              smaller budget, so an answer here is one of theirs. *)
           let quick_sweep () =
-            match config.quick_sweep_no_unknown_query with
+            match (ZeroUnknownConfig.Switch.quick_sweep config.zero_unknown) with
             | None -> None
             | Some (per_query, whole) ->
                 enter_phase "quick";
                 let deadline =
                   Common.Clock.now_s () +. (Float.of_int whole /. 1000.)
                 in
-                let ask_short phi = budgeted @@ fun () ->
+                (* [COAR_DUMP_QUICK_SWEEP=dir] (instrument only): each piece
+                   the sweep asks is written as [dir/sN-PID_native.smt2], its
+                   negation, and every solver check made while it is asked
+                   under the prefix [dir/sN-PID] (the sequence-axiom fallback's
+                   included); nothing is written and nothing changes without
+                   the variable. *)
+                let quick_dumped = ref 0 in
+                let ask_short_body ?(fresh = false) phi = budgeted @@ fun () ->
                   pointwise_refute ~timeout:per_query phi
                   @@ axioms_first phi @@ fun phi ->
                   let phi = factor_eqs ~timeout:per_query phi in
-                  (if config.seq_as_array_no_unknown_query then
+                  (if config.zero_unknown.rewrites.seq_as_array then
                      Z3Smt.Z3interface.check_valid_seq_as_array
                    else Z3Smt.Z3interface.check_valid)
-                    ~timeout:(Some per_query) ~fresh_solver:false ~id:None
+                    ~timeout:(Some per_query) ~fresh_solver:fresh ~id:None
                     (Ast.LogicOld.get_fenv ()) phi
+                in
+                (* [budgets.quick_sweep.plain_retry]: a piece [phi] left
+                   undecided above, whose question the integer-binder split
+                   in force would change, is asked again by the same route
+                   and under the same budget with the split off, in a fresh
+                   solver context (one that holds only this question).
+                   Assumes: [phi] is the piece's validity question, as
+                   above.  Guarantees: [`Valid] or [`Invalid m] only when
+                   one of the two asks returned it about [phi] (the split is
+                   an equivalence in every model with no fresh free
+                   variable, so the split and plain questions have the same
+                   valid and invalid instances, and a countermodel of
+                   either is one of [phi]); the first ask's answer
+                   otherwise.  Both asks go through [check_valid] (or its
+                   sequences-as-arrays twin), so the negation is built,
+                   interpretation-dependent terms are encoded and the
+                   sequence-axiom fallback is applied the same way in both.
+                   Each retry is one phase-report event
+                   [quick-plain-retry:valid|invalid|undecided].  Why: the
+                   split is wanted where a read at [x - c] needs an instance
+                   no trigger produces, yet on one piece over a
+                   concatenation's range tests the split form was left
+                   undecided by Z3 5.1.0 past 20 s under three seeds while
+                   the plain form was unsatisfiable in 0.08 s; asked in the
+                   sweep's pooled context, which holds the earlier pieces'
+                   declarations, the plain form was proved within the 500 ms
+                   budget in only about half of the asks, and in a fresh
+                   context in every one. *)
+                let ask_short_body phi =
+                  match ask_short_body ~fresh:false phi with
+                  | (`Valid | `Invalid _) as r -> r
+                  | r
+                    when (not
+                            (ZeroUnknownConfig.Switch.quick_sweep_plain_retry
+                               config.zero_unknown))
+                         || not
+                              (Z3Smt.Z3interface.split_int_binders_would_change
+                                 phi) ->
+                      r
+                  | r -> (
+                      let r' =
+                        Z3Smt.Z3interface.without_split_int_binders (fun () ->
+                            ask_short_body ~fresh:true phi)
+                      in
+                      Common.PhaseTime.event_here
+                        (match r' with
+                        | `Valid -> "quick-plain-retry:valid"
+                        | `Invalid _ -> "quick-plain-retry:invalid"
+                        | _ -> "quick-plain-retry:undecided");
+                      match r' with (`Valid | `Invalid _) -> r' | _ -> r)
+                in
+                let ask_short phi =
+                  match Sys.getenv "COAR_DUMP_QUICK_SWEEP" with
+                  | None -> ask_short_body phi
+                  | Some dir ->
+                      let prefix =
+                        sprintf "%s/s%d-%d" dir !quick_dumped
+                          (Common.ForkGuard.self_pid ())
+                      in
+                      incr quick_dumped;
+                      Z3Smt.Z3interface.with_query_dump prefix (fun () ->
+                          Z3Smt.Z3interface.dump_native_question ~id:None
+                            (Ast.LogicOld.get_fenv ()) phi;
+                          ask_short_body phi)
                 in
                 NoUnknownLadder.quick_sweep
                   ~finish_started_clause:
-                    config.quick_sweep_finish_clause_no_unknown_query
+                    (ZeroUnknownConfig.Switch.quick_sweep_finish_clause config.zero_unknown)
                   ~past_deadline:(fun () ->
                     Float.(Common.Clock.now_s () >= deadline))
                   ~pieces_of:(fun c ->
-                    if config.split_clause_heads_no_unknown_query then
+                    if config.zero_unknown.pieces.split_clause_heads then
                       match ClausePieces.of_clause c with
                       | [] -> [ c ]
                       | ps -> ps
@@ -3979,7 +3309,68 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                             i))
                   per_clause
           in
-          (* The questions [exact_forms_first_no_unknown_query] moves ahead of
+          let pieces_first () =
+            match (ZeroUnknownConfig.Switch.pieces_first config.zero_unknown) with
+            | None -> None
+            | Some pf ->
+                let pf = PCSatCommon.ValidityAsk.pieces_first_of_pair pf in
+                enter_phase "pieces-first";
+                (* each piece: the shape test, then natively in a fresh
+                   context under the piece budget (never forked: the ladder's
+                   stage has no fork policy), then by cvc5 under its piece
+                   budget; inside the ladder's [budgeted] like every other
+                   question it asks *)
+                let ask p =
+                  budgeted @@ fun () ->
+                  let fenv = Ast.LogicOld.get_fenv () in
+                  let r =
+                    PCSatCommon.ValidityAsk.ask_piece
+                      ~native:(fun p ->
+                        PCSatCommon.ValidityAsk.check_valid ~margin_ms:None
+                          ~timeout:pf.z3_ms ~fresh_solver:true ~id:None fenv p)
+                      ~cvc5:
+                        (PCSatCommon.ValidityAsk.cvc5_of_pieces_first pf
+                           ~rlimit:None ~site:"ladder-pieces"
+                           ~phase:"pieces-first-cvc5")
+                      ~id:None fenv p
+                  in
+                  Debug.print
+                  @@ lazy
+                       (sprintf
+                          "[no-unknown verdict] pieces first: a piece of size %d %s"
+                          (Ast.LogicOld.Formula.ast_size p)
+                          (match r with
+                          | `Valid -> "valid"
+                          | `Invalid _ -> "invalid"
+                          | _ -> "undecided"));
+                  r
+                in
+                List.find_mapi per_clause ~f:(fun i c ->
+                    if clause_valid.(i) then None
+                    else
+                      match PCSatCommon.ValidityAsk.prove_pieces ~ask c with
+                      | `Valid ->
+                          Debug.print
+                          @@ lazy
+                               (sprintf
+                                  "[no-unknown verdict] pieces first: clause %d valid"
+                                  i);
+                          mark_valid i;
+                          None
+                      | `Invalid model -> Some (`Invalid model)
+                      | `Rest (_, proved, total) ->
+                          (* the clause is left to the stages below whole:
+                             the conjunction of its pieces left is not always
+                             the easier question *)
+                          Debug.print
+                          @@ lazy
+                               (sprintf
+                                  "[no-unknown verdict] pieces first: clause %d, %d of %d pieces valid"
+                                  i proved total);
+                          None
+                      | `Unsplit -> None)
+          in
+          (* The questions [zero_unknown.early_stage.exact_forms_first] moves ahead of
              the long unrewritten ones: each clause not yet shown valid asked in
              its rewritten form, piece by piece, then the sequence instantiation.
              Every answer taken from them is one the ladder below would take
@@ -3987,32 +3378,104 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
              rewrite, a proof only of validity -- so moving them changes which
              answer is reached within the time, never which answer is right. *)
           let exact_forms_first () =
-            if not config.exact_forms_first_no_unknown_query then None
+            if not config.zero_unknown.early_stage.exact_forms_first then None
             else
               let () = enter_phase "early-rewritten" in
-              (* at the short budget under [two_pass_budget_no_unknown_query]:
+              (* at the short budget under [zero_unknown.budgets.two_pass_ms]:
                  a piece that runs out of it is asked again at the full budget
                  by the rewritten pass further down, which every run reaches
                  when nothing before it decides *)
               let ask_early =
-                match config.two_pass_budget_no_unknown_query with
+                match config.zero_unknown.budgets.two_pass_ms with
                 | None -> ask_fresh
                 | Some ms -> ask_fresh_within ms
               in
               (* the question asked of a skipped clause under
-                 [early_rewritten_refute_skipped_no_unknown_query]: the pass's
+                 [zero_unknown.early_stage.rewritten.refute_skipped]: the pass's
                  own fresh question at its own budget, without the proof-only
                  word forms added below, since only a refutation is read *)
               let ask_skipped = ask_early in
-              (* With [word_instances_first_no_unknown_query], each question of
-                 this pass is asked first through the words of its
-                 quantifier-free matched-instance forms (each a strengthening,
-                 and the words question weaker than its form, so only a proof
-                 is read), then as it is *)
+              (* [zero_unknown.rewrites.decided_forms]: the piece with the
+                 contextual [ite] rule applied (exact), its two-round
+                 matched-instance form ([word_forms ~two_rounds_first:true]'s
+                 first; it implies the piece), after the exact one-point
+                 rule, with the integer atoms its own integer facts decide
+                 replaced by their values ([EntailedAtoms.decide], an
+                 equivalence), asked natively in a context of its own.  Only a
+                 proof is read: the form implies the piece *)
+              let entailed_memo = Common.Ext.Hashtbl.PolyDeep.create () in
+              let decided_form_proved phi =
+                (* the pieces of one clause share their premises, so the same
+                   entailment is asked again and again; its answer is a
+                   function of the two formulas and kept *)
+                let entails l a =
+                  match Hashtbl.find entailed_memo (l, a) with
+                  | Some b -> b
+                  | None ->
+                  let b =
+                  try
+                    match
+                      Z3Smt.Z3interface.with_rlimit
+                        (Some (ZeroUnknownConfig.Switch.decided_forms_rlimit config.zero_unknown))
+                        (fun () ->
+                          Z3Smt.Z3interface.check_sat
+                            ~timeout:(Some config.zero_unknown.budgets.query_ms)
+                            ~id:None (Ast.LogicOld.get_fenv ())
+                            [ l; Ast.LogicOld.Formula.negate a ])
+                    with
+                    | `Unsat -> true
+                    | _ -> false
+                  with exn when not (Common.Timer.is_async exn) -> false
+                  in
+                  Hashtbl.set entailed_memo ~key:(l, a) ~data:b;
+                  b
+                in
+                let piece =
+                  NoUnknownSeqInst.prepare_piece
+                    (Ast.Evaluator.elim_onepoint_and_split_binders_contextual
+                       phi)
+                in
+                match
+                  NoUnknownSeqInst.word_forms ~two_rounds_first:true piece
+                with
+                | [] -> false
+                | form :: _ -> (
+                    match
+                      (try Lazy.force form
+                       with exn when not (Common.Timer.is_async exn) -> None)
+                    with
+                    | None -> false
+                    | Some c ->
+                        let c = Ast.Evaluator.elim_onepoint_and_split_binders c in
+                        if
+                          not
+                            (Set.is_empty
+                               (Ast.LogicOld.Formula.quantified_sort_env_of c))
+                        then false
+                        else
+                          let c' =
+                            Common.PhaseTime.with_phase "decided-form" (fun () ->
+                                PCSatCommon.EntailedAtoms.decide ~entails c)
+                          in
+                          Debug.print
+                          @@ lazy
+                               (sprintf
+                                  "[no-unknown verdict] decided form: size %d \
+                                   -> %d"
+                                  (Ast.LogicOld.Formula.ast_size c)
+                                  (Ast.LogicOld.Formula.ast_size c'));
+                          match ask_fresh c' with `Valid -> true | _ -> false)
+              in
+              (* Unless [zero_unknown.words] is
+                 [No_word_instances], each question of this pass is asked first
+                 through the words of its quantifier-free matched-instance forms
+                 (each a strengthening, and the words question weaker than its
+                 form, so only a proof is read), then as it is *)
               let ask_early =
-                if not config.word_instances_first_no_unknown_query then
-                  ask_early
-                else fun phi ->
+                match config.zero_unknown.words with
+                | No_word_instances -> ask_early
+                | (One_round_first | Two_rounds_first) as word_instances ->
+                fun phi ->
                   (* A form substitutes terms of [phi] for its binders, so it
                      reads an integer as a word only if [phi] already does;
                      without such a read no form can be asked as a words
@@ -4030,12 +3493,14 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                   let forms =
                     NoUnknownSeqInst.word_forms
                       ~two_rounds_first:
-                        config.word_instances_two_rounds_first_no_unknown_query
+                        (match word_instances with
+                        | Two_rounds_first -> true
+                        | One_round_first | No_word_instances -> false)
                       piece
                   in
                   let by_words c =
                     let c =
-                      if config.onepoint_split_no_unknown_query then
+                      if config.zero_unknown.rewrites.onepoint.split then
                         Ast.Evaluator.elim_onepoint_and_split_binders c
                       else c
                     in
@@ -4044,11 +3509,11 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                       && Set.is_empty
                            (Ast.LogicOld.Formula.quantified_sort_env_of c)
                     then (
-                      note_asking ~kind:"words" config.no_unknown_query_timeout
+                      note_asking ~kind:"words" config.zero_unknown.budgets.query_ms
                         c;
                       budgeted @@ fun () ->
                       Z3Smt.Z3interface.check_valid_by_words
-                        ~timeout:(Some config.no_unknown_query_timeout)
+                        ~timeout:(Some config.zero_unknown.budgets.query_ms)
                         ~id:None
                         (Ast.LogicOld.get_fenv ())
                         c)
@@ -4061,10 +3526,22 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                          "[no-unknown verdict] early question proved through \
                           the words of a matched-instance form";
                     `Valid)
+                  else if
+                    (ZeroUnknownConfig.Switch.decided_forms config.zero_unknown)
+                    && ((* counted so that a run can be told to have reached
+                          this question; nothing else is changed *)
+                        Common.PhaseTime.event_here "decided-form-tried";
+                        decided_form_proved phi)
+                  then (
+                    Debug.print
+                    @@ lazy
+                         "[no-unknown verdict] early question proved through \
+                          its decided form";
+                    `Valid)
                   else ask_early phi
               in
               let refuted =
-                (match config.early_rewritten_full_major_every_no_unknown_query with
+                (match config.zero_unknown.early_stage.rewritten.full_major_every with
                 | Some n -> Z3Smt.Z3interface.with_new_context_full_major_every n
                 | None -> fun f -> f ())
                 @@ fun () ->
@@ -4076,11 +3553,13 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                         else
                           match
                             ClausePieces.early_question
-                              ?max:config.clause_piece_bound_no_unknown_query
+                              ?max:config.zero_unknown.pieces.bound
+                              ~within_refinement:
+                                config.zero_unknown.early_stage.rewritten.within_refinement
                               ~max_pieces:
-                                config.early_rewritten_max_pieces_no_unknown_query
+                                config.zero_unknown.early_stage.rewritten.max_pieces
                               ~refute_skipped:
-                                config.early_rewritten_refute_skipped_no_unknown_query
+                                config.zero_unknown.early_stage.rewritten.refute_skipped
                               ~ask_whole:(fun c ->
                                 Common.PhaseTime.with_phase
                                   (sprintf "clause-%d-refute" i)
@@ -4094,6 +3573,10 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                               c
                           with
                           | `Skipped (Some model) ->
+                              (* counted in both cases, so that a run can be
+                                 told to have skipped a clause *)
+                              Common.PhaseTime.event_here
+                                (sprintf "clause-%d-skipped" i);
                               Debug.print
                               @@ lazy
                                    (sprintf
@@ -4103,6 +3586,8 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                                       i);
                               Some (`Invalid model)
                           | `Skipped None ->
+                              Common.PhaseTime.event_here
+                                (sprintf "clause-%d-skipped" i);
                               Debug.print
                               @@ lazy
                                    (sprintf
@@ -4120,6 +3605,13 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
               match refuted with
               | Some verdict -> Some verdict
               | None when Array.for_all clause_valid ~f:Fn.id -> Some `Valid
+              | None
+                when not
+                       (PCSatCommon.NoUnknownLadder.seq_instantiation_read
+                          !PCSatCommon.NoUnknownLadder.read) ->
+                  (* a proof only, and the caller reads only a refutation *)
+                  Common.PhaseTime.event_here "early-seqinst-not-read";
+                  None
               | None -> (
                   enter_phase "early-seqinst";
                   match seq_instantiation `Undecided with
@@ -4137,12 +3629,12 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
              The three pins below take [within], which gives the budget of
              the next question in milliseconds, or [None] when the pin's time
              is spent and the question is not asked: the late pins at the end
-             of the ladder always have [no_unknown_refutation_timeout]; the
-             early pins ([early_pins_no_unknown_query]) have a smaller one and
+             of the ladder always have [zero_unknown.budgets.refutation_ms]; the
+             early pins ([zero_unknown.early_stage.pins]) have a smaller one and
              a deadline. *)
           let seq_pin_refutation ~within ?expired:_ ?(early = false) () =
             let applicable =
-              early && config.early_pins_require_applicable_no_unknown_query
+              early && (ZeroUnknownConfig.Switch.early_pins_require_applicable config.zero_unknown)
             in
             let guess_question psi =
               match within () with
@@ -4150,7 +3642,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
               | Some timeout -> (
                   let r =
                     Z3Smt.Z3interface.with_rlimit ~label:"ladder"
-                      config.no_unknown_query_rlimit
+                      config.zero_unknown.budgets.query_rlimit
                     @@ fun () ->
                     Z3Smt.Z3interface.check_sat ~timeout:(Some timeout)
                       ~fresh_solver:true ~id:None (fenv_used_by psi) [ psi ]
@@ -4171,18 +3663,42 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                   | _ -> `Undecided)
             in
             NoUnknownSeqPin.refute
-              ~enabled:config.pin_seq_lengths_no_unknown_query
+              ~fixed_per_clause:
+                (ZeroUnknownConfig.Switch.seq_pin_fixed_lengths_per_clause config.zero_unknown)
+              ?askable:
+                (if (ZeroUnknownConfig.Switch.pin_seq_lengths_asked_shapes_only config.zero_unknown)
+                 then
+                   Some
+                     (fun psi ->
+                       let refused = Z3Smt.Z3interface.may_not_return psi in
+                       (* counted for the act set of a batch: a pinned
+                          negation the pin would have asked without the
+                          switch; raised after the decision, changing none *)
+                       if refused then
+                         Common.PhaseTime.event_here "askpin-not-asked";
+                       if refused then
+                         Debug.print
+                         @@ lazy
+                              "[no-unknown verdict] sequence-pinned query: \
+                               not asked (it binds a sequence under a \
+                               quantifier)";
+                       not refused)
+                 else None)
+              ~enabled:(ZeroUnknownConfig.Switch.pin_seq_lengths config.zero_unknown)
               ?already_valid:
-                (if applicable then
+                (if applicable
+                    || ((not early)
+                       && (ZeroUnknownConfig.Switch.late_seq_pin_skips_proved_clauses config.zero_unknown))
+                 then
                    Some
                      (fun i -> i < Array.length clause_valid && clause_valid.(i))
                  else None)
               ?classify:
-                (if applicable && config.pin_seq_lengths_from_model_no_unknown_query
+                (if applicable && (ZeroUnknownConfig.Switch.pin_seq_lengths_from_model config.zero_unknown)
                  then Some guess_question
                  else None)
               ?guess:
-                (if config.pin_seq_lengths_from_model_no_unknown_query
+                (if (ZeroUnknownConfig.Switch.pin_seq_lengths_from_model config.zero_unknown)
                     && not applicable then
                    Some
                      (fun psi ->
@@ -4192,7 +3708,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                            let r =
                              Z3Smt.Z3interface.with_rlimit
                                ~label:"ladder"
-                               config.no_unknown_query_rlimit
+                               config.zero_unknown.budgets.query_rlimit
                              @@ fun () ->
                              Z3Smt.Z3interface.check_sat
                                ~timeout:(Some timeout) ~fresh_solver:true
@@ -4214,12 +3730,56 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                 match within () with
                 | None -> None
                 | Some timeout ->
-                let r =
-                  Z3Smt.Z3interface.with_rlimit ~label:"ladder" config.no_unknown_query_rlimit
+                Debug.print
+                @@ lazy
+                     (sprintf "[no-unknown verdict] sequence-pinned query \
+                               of size %d, binding a sequence: %b"
+                        (Ast.LogicOld.Formula.ast_size psi)
+                        (Z3Smt.Z3interface.may_not_return psi));
+                let in_process ~timeout =
+                  Z3Smt.Z3interface.with_rlimit ~label:"ladder" config.zero_unknown.budgets.query_rlimit
                   @@ fun () ->
                   Z3Smt.Z3interface.check_sat
-                    ~timeout:(Some timeout)
-                    ~fresh_solver:true ~id:None (fenv_used_by psi) [ psi ]
+                    ~timeout ~fresh_solver:true ~id:None (fenv_used_by psi) [ psi ]
+                in
+                (* [pins.seq_lengths.fork_unreturning]: a pinned negation of
+                   a shape on which Z3 may ignore its own [timeout]
+                   ([Z3interface.may_ignore_timeout]: a quantifier binding a
+                   sequence, or any quantifier in a question that reads a
+                   sequence) is asked first in a forked copy killed after the
+                   question's budget ([ForkedQuery.first_in_copy]): one such
+                   negation, the same formula up to the names of its
+                   uninterpreted sorts as one Z3 answered [unsat] in 0.5 s,
+                   ran past 60 s and 5 GB in process until the memory cap
+                   killed the run.  [sat] is asked again here for its model,
+                   so a refutation is always an in-process [sat], as without
+                   the field; a copy that runs out, dies or raises leaves the
+                   question undecided, which the pin reads as it reads a
+                   timeout.  A workaround for an external defect: Z3 5.1.0
+                   ignores its timeout on such a query in a context that has
+                   been in a scope, and whether it does can depend only on the
+                   uninterpreted sort names.  It is fixed upstream in Z3 5.3.3
+                   (and the 5.3.4 nightly), but the newest Z3 in
+                   opam-repository is 5.1.0, so the workaround stays until
+                   opam provides a fixed Z3.  Remove the field and this branch,
+                   with [preprocessor.elimination.questions.fork.seq_unreturning],
+                   when the row for
+                   [benchmarks/SMT/simple/z3_seq_pin_scoped_timeout_unsat.smt2]
+                   in [script/rerun_external_reproducers.sh] reports GONE for
+                   the Z3 that opam installs. *)
+                let r =
+                  if (ZeroUnknownConfig.Switch.pin_seq_lengths_fork_unreturning config.zero_unknown)
+                     && Z3Smt.Z3interface.may_ignore_timeout psi
+                  then
+                    PCSatCommon.ForkedQuery.first_in_copy ~copy_timeout:None ~ms:timeout
+                      ~event:"seqpin-fork" ~ask:in_process ~lost:`Timeout
+                      ~here_for:(function `Sat _ -> true | _ -> false)
+                      ~label:(function
+                        | `Sat _ -> "sat"
+                        | `Unsat -> "unsat"
+                        | `Unknown _ -> "unknown"
+                        | `Timeout -> "lost")
+                  else in_process ~timeout:(Some timeout)
                 in
                 Debug.print
                 @@ lazy
@@ -4247,7 +3807,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
           let scalar_pin_refutation ~within ?expired ?search_complete
               ?(early = false) () =
             let applicable =
-              early && config.early_pins_require_applicable_no_unknown_query
+              early && (ZeroUnknownConfig.Switch.early_pins_require_applicable config.zero_unknown)
             in
             (* an early pin's per-question cap and whole budget ([within])
                also bound the last attempts [proved_at]'s validity proofs make
@@ -4270,7 +3830,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                        | Some timeout -> (
                            let r =
                              Z3Smt.Z3interface.with_rlimit ~label:"ladder"
-                               config.no_unknown_query_rlimit
+                               config.zero_unknown.budgets.query_rlimit
                              @@ fun () ->
                              Z3Smt.Z3interface.check_sat
                                ~timeout:(Some timeout) ~fresh_solver:true
@@ -4289,7 +3849,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                            match r with `Unsat -> true | _ -> false))
                  else None)
               ?residual_sat:
-                (if config.drop_valid_premises_before_pin_no_unknown_query then
+                (if (ZeroUnknownConfig.Switch.drop_valid_premises_before_pin config.zero_unknown) then
                    Some
                      (fun psi ->
                        match within () with
@@ -4298,7 +3858,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                            let r =
                              Z3Smt.Z3interface.with_rlimit
                                ~label:"ladder"
-                               config.no_unknown_query_rlimit
+                               config.zero_unknown.budgets.query_rlimit
                              @@ fun () ->
                              Z3Smt.Z3interface.check_sat
                                ~timeout:(Some timeout) ~fresh_solver:true
@@ -4316,10 +3876,10 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                                    | `Unknown reason -> "unknown: " ^ reason));
                            match r with `Sat model -> Some model | _ -> None))
                  else None)
-              ~enabled:config.pin_scalars_no_unknown_query
-              ~default_compound:config.pin_scalars_default_compound_values
+              ~enabled:(ZeroUnknownConfig.Switch.pin_scalars config.zero_unknown)
+              ~default_compound:(ZeroUnknownConfig.Switch.pin_scalars_default_compound_values config.zero_unknown)
               ~binder_free_relaxation:
-                config.pin_scalars_binder_free_relaxation_no_unknown_query
+                (ZeroUnknownConfig.Switch.pin_scalars_binder_free_relaxation config.zero_unknown)
               ~already_valid:(fun i ->
                 i < Array.length clause_valid && clause_valid.(i))
               ~guess:(fun psi ->
@@ -4327,7 +3887,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                 | None -> None
                 | Some timeout ->
                 let r =
-                  Z3Smt.Z3interface.with_rlimit ~label:"ladder" config.no_unknown_query_rlimit
+                  Z3Smt.Z3interface.with_rlimit ~label:"ladder" config.zero_unknown.budgets.query_rlimit
                   @@ fun () ->
                   Z3Smt.Z3interface.check_sat
                     ~timeout:(Some timeout)
@@ -4344,7 +3904,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                 match r with `Sat model -> Some model | _ -> None)
               ~ask:(fun c ->
                 let c =
-                  if config.onepoint_split_no_unknown_query then
+                  if config.zero_unknown.rewrites.onepoint.split then
                     Ast.Evaluator.elim_onepoint_and_split_binders c
                   else c
                 in
@@ -4373,78 +3933,237 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
              questions about quantifier-free relaxations, of which only the
              sequence lengths are used; its pinned negations are asked like
              the sequence-pinned query, and only a model is read. *)
-          let relation_pin_refutation ~within ?expired ?(early = false) () =
-            let ask_sat what psi =
-              match within () with
-              | None -> None
-              | Some timeout ->
-              let r =
-                Z3Smt.Z3interface.with_rlimit ~label:"ladder" config.no_unknown_query_rlimit
-                @@ fun () ->
-                Z3Smt.Z3interface.check_sat
-                  ~timeout:(Some timeout)
-                  ~fresh_solver:true ~id:None (fenv_used_by psi) [ psi ]
+          (* the clauses this problem has open (not shown valid) that
+             mention a relation, the one shape the relation pin acts on *)
+          let open_relation_clause i c =
+            (not (i < Array.length clause_valid && clause_valid.(i)))
+            && NoUnknownRelationPin.mentions_relation c
+          in
+          (* the clauses the early relation pin reads after it has searched
+             this problem's, when the preprocessing offered a problem
+             ([NoUnknownLadder.early_pins_problem]): the second, unsplit
+             preprocessing's clauses, none skipped (they are not this
+             problem's, so none is shown valid).  Asked for only while an
+             open clause mentions a relation, so that a problem whose relation
+             clauses are all proved does not pay for the second
+             preprocessing; the offered function remembers its answer *)
+          let early_relation_pin_unsplit () =
+            match !(NoUnknownLadder.early_pins_problem ()) with
+            | None -> None
+            | Some problem ->
+                if
+                  List.existsi ~f:open_relation_clause
+                    (Set.to_list @@ Ast.ClauseSetOld.to_formulas
+                    @@ Ast.ClauseSet.to_old_clause_set Map.Poly.empty
+                    @@ PCSP.Problem.clauses_of pcsp)
+                then
+                  Option.map (problem ()) ~f:(fun p ->
+                      ( Set.to_list @@ Ast.ClauseSetOld.to_formulas
+                        @@ Ast.ClauseSet.to_old_clause_set Map.Poly.empty
+                        @@ PCSP.Problem.clauses_of p,
+                        fun _ -> false ))
+                else None
+          in
+          (* [over]: the clauses searched and the indices among them to skip,
+             in place of this problem's clauses and those shown valid *)
+          let relation_pin_refutation ~within ?expired ?(early = false) ?over
+              () =
+            let clauses, shown_valid =
+              match over with
+              | Some over -> over
+              | None ->
+                  ( Set.to_list @@ Ast.ClauseSetOld.to_formulas
+                    @@ Ast.ClauseSet.to_old_clause_set Map.Poly.empty
+                    @@ PCSP.Problem.clauses_of pcsp,
+                    fun i -> i < Array.length clause_valid && clause_valid.(i) )
+            in
+            (* one search of [refute] over [clauses], every question under
+               [within], skipping the clauses [already_valid] names *)
+            let search ~within ?expired ~already_valid () =
+              let ask_sat what psi =
+                match within () with
+                | None -> None
+                | Some timeout ->
+                let r =
+                  Z3Smt.Z3interface.with_rlimit ~label:"ladder" config.zero_unknown.budgets.query_rlimit
+                  @@ fun () ->
+                  Z3Smt.Z3interface.check_sat
+                    ~timeout:(Some timeout)
+                    ~fresh_solver:true ~id:None (fenv_used_by psi) [ psi ]
+                in
+                Debug.print
+                @@ lazy
+                     (sprintf "[no-unknown verdict] relation pin, %s: %s" what
+                        (match r with
+                        | `Sat _ -> "sat"
+                        | `Unsat -> "unsat"
+                        | `Timeout -> "timeout"
+                        | `Unknown reason -> "unknown: " ^ reason));
+                Some r
               in
-              Debug.print
-              @@ lazy
-                   (sprintf "[no-unknown verdict] relation pin, %s: %s" what
-                      (match r with
-                      | `Sat _ -> "sat"
-                      | `Unsat -> "unsat"
-                      | `Timeout -> "timeout"
-                      | `Unknown reason -> "unknown: " ^ reason));
-              Some r
-            in
-            let sat what psi =
-              match ask_sat what psi with Some (`Sat model) -> Some model | _ -> None
-            in
-            let infeasible =
-              if early && config.early_relation_pin_precheck_no_unknown_query
-              then
-                Some
-                  (fun psi ->
-                    match ask_sat "shape precheck" psi with
-                    | Some `Unsat -> true
-                    | _ -> false)
-              else None
+              let sat what psi =
+                match ask_sat what psi with Some (`Sat model) -> Some model | _ -> None
+              in
+              let infeasible =
+                if early && (ZeroUnknownConfig.Switch.early_relation_pin_precheck config.zero_unknown)
+                then
+                  Some
+                    (fun psi ->
+                      match ask_sat "shape precheck" psi with
+                      | Some `Unsat -> true
+                      | _ -> false)
+                else None
+              in
+              let applicable =
+                early && (ZeroUnknownConfig.Switch.early_pins_require_applicable config.zero_unknown)
+              in
+              NoUnknownRelationPin.refute ~log:Debug.print ?expired ?infeasible
+                ~by_length_vectors:
+                  (early
+                  && (ZeroUnknownConfig.Switch.early_relation_pin_length_shapes config.zero_unknown))
+                ~skip_relation_free_clauses:applicable
+                ?cheap_infeasible:
+                  (if applicable then
+                     Some
+                       (fun psi ->
+                         match ask_sat "applicability precheck" psi with
+                         | Some `Unsat -> true
+                         | _ -> false)
+                   else None)
+                ~attempts_per_piece:
+                  config.zero_unknown.pins.relation_attempts_per_piece
+                ~enabled:config.zero_unknown.pins.relations
+                ~already_valid
+                ~guess:(sat "shape guess")
+                ~ask:(sat "pinned negation (sat is a refutation)")
+                clauses
             in
             let gc_every =
               if early then
-                config.early_relation_pin_full_major_every_no_unknown_query
+                (ZeroUnknownConfig.Switch.early_relation_pin_full_major_every config.zero_unknown)
               else None
             in
             (match gc_every with
             | Some n -> Z3Smt.Z3interface.with_new_context_full_major_every n
             | None -> fun f -> f ())
             @@ fun () ->
-            let applicable =
-              early && config.early_pins_require_applicable_no_unknown_query
-            in
-            NoUnknownRelationPin.refute ~log:Debug.print ?expired ?infeasible
-              ~by_length_vectors:
-                (early
-                && config.early_relation_pin_length_shapes_no_unknown_query)
-              ~skip_relation_free_clauses:applicable
-              ?cheap_infeasible:
-                (if applicable then
-                   Some
-                     (fun psi ->
-                       match ask_sat "applicability precheck" psi with
-                       | Some `Unsat -> true
-                       | _ -> false)
-                 else None)
-              ~enabled:config.pin_relations_no_unknown_query
-              ~already_valid:(fun i ->
-                i < Array.length clause_valid && clause_valid.(i))
-              ~guess:(sat "shape guess")
-              ~ask:(sat "pinned negation (sat is a refutation)")
-              (Set.to_list @@ Ast.ClauseSetOld.to_formulas
-              @@ Ast.ClauseSet.to_old_clause_set Map.Poly.empty
-              @@ PCSP.Problem.clauses_of pcsp)
+            if
+              early
+              && ZeroUnknownConfig.Switch.early_relation_pin_per_clause
+                   config.zero_unknown
+            then (
+              (* [zero_unknown.early_stage.pins (Early_pins
+                 relation.per_clause)]: one search per open clause that has a
+                 Boolean-valued array among its free variables, in clause
+                 order, the n-th of k given the whole budget's rest divided
+                 by k - n + 1, from when it starts (what an earlier clause
+                 left unspent passes on), every question also under the
+                 enclosing [within], and [refute]'s cap on pinned negations
+                 counted per clause.  Each search is [refute]'s on one clause,
+                 so a model it returns is a countermodel as before; only how
+                 the budget is spread over the clauses changes.  Why: the pin
+                 spends its whole budget on the first open clause whose shape
+                 guesses do not decide, and so never reaches a later clause it
+                 refutes in under a second -- seen where a valid clause had
+                 stayed open only because the quick sweep's sequence-axiom
+                 question about it came out slow in that process. *)
+              let whole_ms =
+                match
+                  ZeroUnknownConfig.Switch.early_relation_pin_budget
+                    config.zero_unknown
+                with
+                | Some (_, whole) -> whole
+                | None ->
+                    snd
+                      (ZeroUnknownConfig.Switch.early_pins_budget
+                         config.zero_unknown)
+              in
+              let started = Common.Clock.now_s () in
+              let left_ms () =
+                whole_ms
+                - Float.iround_down_exn
+                    ((Common.Clock.now_s () -. started) *. 1000.)
+              in
+              let expired_now () =
+                match expired with Some f -> f () | None -> false
+              in
+              let open_clauses =
+                List.filter_mapi clauses ~f:(fun i c ->
+                    if shown_valid i || not (NoUnknownRelationPin.mentions_relation c)
+                    then None
+                    else Some i)
+              in
+              let k = List.length open_clauses in
+              List.find_mapi open_clauses ~f:(fun n i ->
+                  let left = left_ms () in
+                  if left <= 0 || expired_now () || Option.is_none (within ())
+                  then None
+                  else
+                    let deadline =
+                      Common.Clock.now_s ()
+                      +. (Float.of_int (left / (k - n)) /. 1000.)
+                    in
+                    let within_clause () =
+                      match within () with
+                      | None -> None
+                      | Some t ->
+                          let l =
+                            Float.iround_down_exn
+                              ((deadline -. Common.Clock.now_s ()) *. 1000.)
+                          in
+                          if l <= 0 then None else Some (Int.min t l)
+                    in
+                    search ~within:within_clause
+                      ~expired:(fun () ->
+                        expired_now () || Option.is_none (within_clause ()))
+                      ~already_valid:(fun j -> j <> i || shown_valid j)
+                      ()))
+            else (
+              (* act census (instrument only): two or more clauses to share
+                 the budget among is where [relation.per_clause] acts *)
+              if
+                early && Common.ActCensus.on ()
+                && List.count (List.filteri clauses ~f:(fun i c ->
+                       (not (shown_valid i))
+                       && NoUnknownRelationPin.mentions_relation c)) ~f:(fun _ -> true)
+                   >= 2
+              then
+                Common.ActCensus.note
+                  "zero_unknown.early_stage.pins.relation.per_clause";
+              search ~within ?expired ~already_valid:shown_valid ())
+          in
+          (* the early relation pin's search over the unsplit problem's
+             clauses ([early_relation_pin_unsplit]) under [fresh ()], a budget
+             of its own made when the search starts.  Asked with the
+             unprefixed fresh names drawn in a replay scope of their own (not
+             from the process-wide counter) and on contexts set aside from
+             this domain's pools, so that the stages after this one draw the
+             same names and meet the same pooled contexts as without it: a
+             borderline later question (a sequence pin's) was seen to stop
+             refuting once a second preprocessing here had moved the
+             process-wide name counter and the pools.  Reads only a
+             countermodel of a clause of the unsplit problem, which refutes
+             the input (the split is an equivalence per clause) *)
+          let unsplit_relation_refutation fresh =
+            Ast.Ident.with_replayed_fresh_names
+              ~scope:(NoUnknownLadder.early_unsplit_scope ())
+            @@ fun () ->
+            Z3Smt.Z3interface.with_isolated_pools @@ fun () ->
+            match
+              Common.PhaseTime.with_phase "unsplit" early_relation_pin_unsplit
+            with
+            | None -> None
+            | Some over ->
+                Common.PhaseTime.event_here "unsplit-for-early-pins";
+                Common.ActCensus.note
+                  "clauses.split_single_cons.outside_early_pins";
+                let within, expired = fresh () in
+                Common.PhaseTime.with_phase "unsplit-search" @@ fun () ->
+                relation_pin_refutation ~within ?expired ~early:true ~over ()
           in
           (* [stage] prefixes the ladder phases the three pins are traced
              under: [""] for the late pins, ["early-"] for the early ones *)
-          let pins ?expired ?relation_budget ?per_pin_budget
+          let pins ?expired ?relation_budget ?per_pin_budget ?fresh_budget
               ?(relation_first = false) ?(skip_point = false) ~stage ~within ()
               =
             let early = String.equal stage "early-" in
@@ -4460,12 +4179,26 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
               enter_phase (stage ^ "relpin");
               (* [relation_budget]: the relation pin's own
                  [(within, expired)], in place of the shared ones *)
-              match relation_budget with
-              | None ->
-                  let within, expired = budget () in
-                  relation_pin_refutation ~within ?expired ~early ()
-              | Some (within, expired) ->
-                  relation_pin_refutation ~within ?expired ~early ()
+              let within, expired =
+                match relation_budget with
+                | None -> budget ()
+                | Some (within, expired) -> (within, expired)
+              in
+              match relation_pin_refutation ~within ?expired ~early () with
+              | Some _ as r -> r
+              | None when early -> (
+                  (* then the unsplit problem's clauses
+                     ([unsplit_relation_refutation]), under a [fresh_budget]
+                     of their own (the shared one has run during the first
+                     search), after every question the first search asks, so
+                     that a refutation found there is found as without them.
+                     No [fresh_budget] is passed when that search is a stage
+                     of its own after the exact forms
+                     ([NoUnknownLadder.Unsplit_pins]) *)
+                  match fresh_budget with
+                  | None -> None
+                  | Some fresh -> unsplit_relation_refutation fresh)
+              | None -> None
             in
             let seqpin () =
               enter_phase (stage ^ "seqpin");
@@ -4483,6 +4216,28 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                having already searched every open clause before the exact
                forms ([NoUnknownLadder.point_pin_searched_all]) *)
             let scalarpin () = if skip_point then None else scalarpin () in
+            (* A pin only guesses a strengthening of the negation and reads a
+               model of it; it never proves anything.  So a pin that raises
+               (a defect in building its question) is treated as one that
+               found nothing: the next pin and the rest of the ladder run as
+               without it, and the answer, if any, still comes from a question
+               that was asked.  Without this a raise inside one guess ended
+               the whole solve with no verdict.  Asynchronous exceptions (the
+               timer's timeout, an interrupt, running out of memory or stack)
+               are re-raised, so the budgets still end the ladder. *)
+            let guarded name pin () =
+              try pin ()
+              with exn_ when not (Common.Timer.is_async exn_) ->
+                Common.PhaseTime.event_here ~in_copy:false "pin-raised";
+                Debug.print
+                @@ lazy
+                     (sprintf "[no-unknown verdict] %s pin raised %s: dropped"
+                        name (Exn.to_string exn_));
+                None
+            in
+            let relpin = guarded "relation" relpin
+            and seqpin = guarded "sequence" seqpin
+            and scalarpin = guarded "point" scalarpin in
             List.find_map
               (if relation_first then [ relpin; seqpin; scalarpin ]
                else [ seqpin; scalarpin; relpin ])
@@ -4501,13 +4256,21 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                 && NoUnknownRelationPin.mentions_relation c)
           in
           let pin_refutation () =
+            if not (NoUnknownLadder.late_pins_read !NoUnknownLadder.read) then (
+              (* a refutation only, and the caller reads only a proof *)
+              Common.PhaseTime.event_here "late-pins-not-read";
+              None)
+            else if !NoUnknownLadder.early_only then
+              (* the caller asked for the early stages only *)
+              None
+            else
             pins ~stage:""
-              ~within:(fun () -> Some config.no_unknown_refutation_timeout)
+              ~within:(fun () -> Some config.zero_unknown.budgets.refutation_ms)
               ()
           in
           (* The same three pins asked once EARLY, right after the quick
              sweep and before the rewritten forms and the sequence
-             instantiation, under [early_pins_no_unknown_query]'s
+             instantiation, under [zero_unknown.early_stage.pins]'s
              [(per question, whole)] budget.  Moving them changes only when
              they are asked and with what budget, never an answer: a pin reads
              only a model of the negation pinned to a point, a length or a
@@ -4519,7 +4282,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
              ladder continues unchanged and the late pins still run with their
              full budget. *)
           (* The point pin asked alone, before the exact forms
-             ([early_point_pin_first_no_unknown_query],
+             ([zero_unknown.early_stage.pins (Early_pins point_pin_first)],
              [NoUnknownLadder.Point_pin]), with a budget of its own: the early
              pins' [(per question, whole)] pair, its clock started at its
              first question ([NoUnknownLadder.lazy_budget]), so that no other
@@ -4534,19 +4297,19 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
           let early_point_pin_searched_all = ref false in
           let early_point_pin_refutation () =
             enter_phase "early-pointpin";
-            let per_query, whole = config.early_pins_budget_no_unknown_query in
+            let per_query, whole = (ZeroUnknownConfig.Switch.early_pins_budget config.zero_unknown) in
             let within, expired =
               NoUnknownLadder.lazy_budget ~now:Common.Clock.now_s
                 (per_query, whole)
             in
             let expired =
-              if config.early_pins_stop_at_deadline_no_unknown_query then
+              if (ZeroUnknownConfig.Switch.early_pins_stop_at_deadline config.zero_unknown) then
                 Some expired
               else None
             in
             let search_complete = ref false in
             let r =
-              (match config.early_pins_full_major_every_no_unknown_query with
+              (match (ZeroUnknownConfig.Switch.early_pins_full_major_every config.zero_unknown) with
               | Some n -> Z3Smt.Z3interface.with_new_context_full_major_every n
               | None -> fun f -> f ())
               @@ fun () ->
@@ -4569,73 +4332,91 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
             r
           in
           (* [per_pin]: each early pin gets the whole of
-             [early_pins_budget_no_unknown_query] from when it starts, rather
+             [zero_unknown.early_stage.pins (Early_pins budget)] from when it starts, rather
              than all three sharing one from when the first starts.  Used by
-             the raced copy of [early_pins_raced_no_unknown_query], which runs
+             the raced copy of [zero_unknown.early_stage.pins (Early_pins raced)], which runs
              beside the process: the shared budget exists to bound how long the
              pins delay the ladder, and a copy delays nothing.  Why: with every
              clause still open (before the exact forms prove any), the
              sequence-length pin's questions on a Rust-derived bit-set input
              reached their 1 s caps on four clauses and spent the shared 10 s,
              leaving the point pin, the one that refutes it, about two. *)
+          (* a fresh copy of the early pins' [(per question, whole)]
+             budget, its clock started now *)
+          let early_fresh_budget () =
+            let per_query, whole =
+              ZeroUnknownConfig.Switch.early_pins_budget config.zero_unknown
+            in
+            let deadline =
+              Common.Clock.now_s () +. (Float.of_int whole /. 1000.)
+            in
+            let within () =
+              let left =
+                Float.iround_down_exn
+                  ((deadline -. Common.Clock.now_s ()) *. 1000.)
+              in
+              if left <= 0 then None else Some (Int.min per_query left)
+            in
+            let expired =
+              if
+                ZeroUnknownConfig.Switch.early_pins_stop_at_deadline
+                  config.zero_unknown
+              then Some (fun () -> Option.is_none (within ()))
+              else None
+            in
+            (within, expired)
+          in
+          (* whether the unsplit search is the stage of its own
+             [NoUnknownLadder.Unsplit_pins] after the exact forms rather than
+             the tail of the early relation pin *)
+          let unsplit_last =
+            ZeroUnknownConfig.Switch.early_pins config.zero_unknown
+            && ZeroUnknownConfig.Switch.early_unsplit_after_exact_forms
+                 config.zero_unknown
+          in
           let early_pin_refutation ?(per_pin = false) () =
-            match config.early_pins_no_unknown_query with
+            match (ZeroUnknownConfig.Switch.early_pins config.zero_unknown) with
             | false -> None
             | true ->
-                let per_query, whole = config.early_pins_budget_no_unknown_query in
-                let fresh_budget () =
-                  let deadline =
-                    Common.Clock.now_s () +. (Float.of_int whole /. 1000.)
-                  in
-                  let within () =
-                    let left =
-                      Float.iround_down_exn
-                        ((deadline -. Common.Clock.now_s ()) *. 1000.)
-                    in
-                    if left <= 0 then None else Some (Int.min per_query left)
-                  in
-                  let expired =
-                    if config.early_pins_stop_at_deadline_no_unknown_query then
-                      Some (fun () -> Option.is_none (within ()))
-                    else None
-                  in
-                  (within, expired)
-                in
+                let fresh_budget = early_fresh_budget in
                 let within, expired = fresh_budget () in
                 let per_pin_budget =
                   if per_pin then Some fresh_budget else None
                 in
                 let relation_budget =
-                  Option.map config.early_relation_pin_budget_no_unknown_query
+                  Option.map (ZeroUnknownConfig.Switch.early_relation_pin_budget config.zero_unknown)
                     ~f:(fun budget ->
                       let within, expired =
-                        if config.early_relation_pin_cpu_clock_no_unknown_query
+                        if (ZeroUnknownConfig.Switch.early_relation_pin_cpu_clock config.zero_unknown)
                         then
                           NoUnknownLadder.cpu_budget ~now:Common.Clock.now_s
                             ~cpu:NoUnknownLadder.thread_cpu_seconds
                             ~max_scale:
-                              config.early_relation_pin_max_scale_no_unknown_query
+                              (ZeroUnknownConfig.Switch.early_relation_pin_max_scale config.zero_unknown)
                             budget
                         else
                           NoUnknownLadder.lazy_budget
                             ~now:Common.Clock.now_s budget
                       in
                       ( within,
-                        if config.early_pins_stop_at_deadline_no_unknown_query
+                        if (ZeroUnknownConfig.Switch.early_pins_stop_at_deadline config.zero_unknown)
                         then Some expired
                         else None ))
                 in
                 let relation_first =
-                  config.early_relation_pin_first_no_unknown_query
+                  (ZeroUnknownConfig.Switch.early_relation_pin_first config.zero_unknown)
                   && some_relation_clause ()
                 in
                 let r =
-                  (match config.early_pins_full_major_every_no_unknown_query with
+                  (match (ZeroUnknownConfig.Switch.early_pins_full_major_every config.zero_unknown) with
                   | Some n ->
                       Z3Smt.Z3interface.with_new_context_full_major_every n
                   | None -> fun f -> f ())
                   @@ fun () ->
-                  pins ?expired ?relation_budget ?per_pin_budget ~relation_first
+                  pins ?expired ?relation_budget ?per_pin_budget
+                    ?fresh_budget:
+                      (if unsplit_last then None else Some fresh_budget)
+                    ~relation_first
                     ~skip_point:!early_point_pin_searched_all ~stage:"early-"
                     ~within ()
                 in
@@ -4646,7 +4427,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                          else "nothing"));
                 r
           in
-          (* The cheap pin question ([early_cheap_pins_first_no_unknown_query],
+          (* The cheap pin question ([zero_unknown.early_stage.pins (Early_pins cheap_first)],
              [SeqPin.cheap_first]), asked before the exact forms when the
              shape says it is cheap.  Like the sequence-length pin it is given
              the clauses as they stand (a countermodel of a rewritten clause
@@ -4679,10 +4460,10 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                         n NoUnknownSeqPin.cheap_max_size);
                 None
             | `Ask psi -> (
-                let per_query, _ = config.early_pins_budget_no_unknown_query in
+                let per_query, _ = (ZeroUnknownConfig.Switch.early_pins_budget config.zero_unknown) in
                 let r =
                   Z3Smt.Z3interface.with_rlimit ~label:"ladder"
-                    config.no_unknown_query_rlimit
+                    config.zero_unknown.budgets.query_rlimit
                   @@ fun () ->
                   Z3Smt.Z3interface.check_sat ~timeout:(Some per_query)
                     ~fresh_solver:true ~id:None (fenv_used_by psi) [ psi ]
@@ -4698,52 +4479,85 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                         | `Unknown reason -> "unknown: " ^ reason));
                 match r with `Sat model -> Some model | _ -> None)
           in
-          (* the race of [early_pins_raced_no_unknown_query], when started:
+          (* the race of [zero_unknown.early_stage.pins (Early_pins raced)], when started:
              finished (its copy killed, or the process parked when the copy
              has already taken the run over) before the verdict leaves *)
           let pins_race = ref None in
+          (* the last sequence instantiation, a proof only: not run when the
+             caller reads only a refutation *)
+          let late_seq_instantiation undecided =
+            if
+              NoUnknownLadder.seq_instantiation_read !NoUnknownLadder.read
+            then (
+              enter_phase "late-seqinst";
+              seq_instantiation undecided)
+            else (
+              Common.PhaseTime.event_here "late-seqinst-not-read";
+              undecided)
+          in
           let verdict =
             Exn.protect
               ~finally:(fun () ->
                 Option.iter !pins_race ~f:PCSatCommon.ParallelRace.finish;
                 pins_race := None)
               ~f:(fun () ->
-            match quick_sweep () with
+            match
+              (* every clause already proved (by the congruence match or the
+                 shape proof, both of which read only proofs): nothing is
+                 left to ask *)
+              if
+                config.zero_unknown.congruence_match
+                && Array.for_all clause_valid ~f:Fn.id
+              then None
+              else
+              match pieces_first () with
+              | Some verdict -> Some verdict
+              | None -> quick_sweep ()
+            with
             | Some verdict -> verdict
             | None when Array.for_all clause_valid ~f:Fn.id -> `Valid
             | None ->
             (* the two early stages, in the order
-               [early_pins_after_exact_forms_no_unknown_query] gives; either
+               [zero_unknown.early_stage.pins_after_exact_forms] gives; either
                decides alone, so the order changes only when an answer is
                reached.  [conj_ask] below is the budget of the whole-conjunction
                questions, shortened under
-               [conj_timeout_after_early_no_unknown_query] once the exact forms
+               [zero_unknown.budgets.conjunction_ms_after_early] once the exact forms
                have run and left the problem undecided. *)
-            let early_ran = config.exact_forms_first_no_unknown_query in
+            let early_ran = config.zero_unknown.early_stage.exact_forms_first in
             let conj_ask ask_within phi =
               NoUnknownLadder.ask_conj
                 ~timeout:
                   (NoUnknownLadder.conj_timeout
-                     ~cap:config.conj_timeout_after_early_no_unknown_query
-                     ~early_ran ~default:config.no_unknown_query_timeout)
+                     ~cap:config.zero_unknown.budgets.conjunction_ms_after_early
+                     ~early_ran ~default:config.zero_unknown.budgets.query_ms)
                 ~ask:ask_within phi
             in
             match
               NoUnknownLadder.first_decided
-                (NoUnknownLadder.early_order
+                (List.filter
+                   ~f:(fun stage ->
+                     let r =
+                       NoUnknownLadder.stage_read !NoUnknownLadder.read stage
+                     in
+                     if not r then
+                       Common.PhaseTime.event_here "early-pins-not-read";
+                     r)
+                @@ NoUnknownLadder.early_order
                    ~cheap_pins_first:
-                     (config.early_cheap_pins_first_no_unknown_query
-                     && config.early_pins_no_unknown_query
-                     && config.pin_seq_lengths_no_unknown_query)
+                     ((ZeroUnknownConfig.Switch.early_cheap_pins_first config.zero_unknown)
+                     && (ZeroUnknownConfig.Switch.early_pins config.zero_unknown)
+                     && (ZeroUnknownConfig.Switch.pin_seq_lengths config.zero_unknown))
                    ~pins_raced:
-                     (config.early_pins_raced_no_unknown_query
-                     && config.early_pins_no_unknown_query)
+                     ((ZeroUnknownConfig.Switch.early_pins_raced config.zero_unknown)
+                     && (ZeroUnknownConfig.Switch.early_pins config.zero_unknown))
                    ~point_pin_first:
-                     (config.early_point_pin_first_no_unknown_query
-                     && config.early_pins_no_unknown_query
-                     && config.pin_scalars_no_unknown_query)
+                     ((ZeroUnknownConfig.Switch.early_point_pin_first config.zero_unknown)
+                     && (ZeroUnknownConfig.Switch.early_pins config.zero_unknown)
+                     && (ZeroUnknownConfig.Switch.pin_scalars config.zero_unknown))
+                   ~unsplit_last
                    ~pins_after_exact:
-                     config.early_pins_after_exact_forms_no_unknown_query
+                     config.zero_unknown.early_stage.pins_after_exact_forms
                    ())
                 ~run:(function
                   | NoUnknownLadder.Raced_pins -> (
@@ -4777,7 +4591,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                                     Option.is_some
                                       (Stdlib.Sys.getenv_opt "COAR_RACE_STATS")
                                   in
-                                  let t0 = Core_unix.gettimeofday ()
+                                  let t0 = Common.Clock.now_s ()
                                   and c0 = Core_unix.times ()
                                   and g0 = Stdlib.Gc.quick_stat () in
                                   let r = early_pin_refutation ~per_pin:true () in
@@ -4790,7 +4604,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                                            sys=%.3f minor=%d major=%d \
                                            heap_words=%d top_heap_words=%d \
                                            found=%b"
-                                          (Core_unix.gettimeofday () -. t0)
+                                          (Common.Clock.now_s () -. t0)
                                           (c1.tms_utime -. c0.tms_utime)
                                           (c1.tms_stime -. c0.tms_stime)
                                           (g1.minor_collections
@@ -4812,15 +4626,42 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                       Option.map (cheap_pin_refutation ()) ~f:(fun model ->
                           `Invalid model)
                   | NoUnknownLadder.Point_pin ->
+                      (* counted so that a run shows the early point pin was
+                         asked ahead of the exact forms; changes nothing *)
+                      Common.PhaseTime.event_here "point-pin-first";
                       Option.map (early_point_pin_refutation ())
                         ~f:(fun model -> `Invalid model)
                   | NoUnknownLadder.Early_pins ->
                       Option.map (early_pin_refutation ()) ~f:(fun model ->
                           `Invalid model)
-                  | NoUnknownLadder.Exact_forms -> exact_forms_first ())
+                  | NoUnknownLadder.Exact_forms -> exact_forms_first ()
+                  | NoUnknownLadder.Unsplit_pins ->
+                      (* the unsplit search after every other early stage
+                         ([zero_unknown.early_stage.pins (Early_pins
+                         relation.unsplit_after_exact_forms)]), on the
+                         relation clauses still open, under a fresh copy of
+                         the early pins' budget *)
+                      enter_phase "early-unsplit";
+                      (match
+                         ZeroUnknownConfig.Switch.early_pins_full_major_every
+                           config.zero_unknown
+                       with
+                      | Some n ->
+                          Z3Smt.Z3interface.with_new_context_full_major_every n
+                      | None -> fun f -> f ())
+                      @@ fun () ->
+                      Option.map
+                        (unsplit_relation_refutation early_fresh_budget)
+                        ~f:(fun model -> `Invalid model))
             with
             | Some verdict -> verdict
             | None when Array.for_all clause_valid ~f:Fn.id -> `Valid
+            | None when !NoUnknownLadder.early_only ->
+                (* the caller asked for the early stages only (see
+                   [NoUnknownLadder.early_only]): undecided, and the late pins
+                   are not run either *)
+                Common.PhaseTime.event_here "ladder-early-only-stop";
+                `Timeout
             | None -> (
             (* Ask the conjunction first -- that is the question, and it is what
                a solver is best at -- and only where it does not settle, ask the
@@ -4843,11 +4684,11 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                refutation those answers were dropped and the problem came back
                `timeout`. *)
             enter_phase "conj";
-            match conj_ask ask_within asked with
+            match conj_ask conj_within asked with
             | (`Valid | `Invalid _) as verdict -> verdict
             | undecided -> (
                 enter_phase "conj-opened";
-                match conj_ask ask_within (open_single_cons_binders asked) with
+                match conj_ask conj_within (open_single_cons_binders asked) with
                 | (`Valid | `Invalid _) as verdict -> verdict
                 | _ -> (
                 (* stops at the first refutation, as before; a clause shown
@@ -4869,7 +4710,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                 | None when all_valid () -> `Valid
                 | None -> (
                     match per_clause_rewritten with
-                    | None -> enter_phase "late-seqinst"; seq_instantiation undecided
+                    | None -> late_seq_instantiation undecided
                     | Some rewritten -> (
                         (* a clause already shown valid need not be asked
                            again: it has no countermodel to offer, and the
@@ -4917,9 +4758,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                             with
                             | Some verdict -> verdict
                             | None when all_valid () -> `Valid
-                            | None ->
-                                enter_phase "late-seqinst";
-                                seq_instantiation undecided)))))))
+                            | None -> late_seq_instantiation undecided)))))))
           in
           (* With COAR_COUNT_LADDER_CLAUSES set in the environment, how many
              of the clauses this ladder was asked about it showed valid, as
@@ -4933,7 +4772,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
           (* The run is about to end undecided.  Say whether a budget is the
              reason -- a question cut by it, as against a solver that answered
              "unknown" -- in the trace always and, under
-             [report_budget_exhaustion], on stderr; the result is whether that
+             [zero_unknown.budgets.report_exhaustion], on stderr; the result is whether that
              option turns a [timeout] into [unknown]. *)
           let budget_exhausted () =
             if !budget_cut = 0 then false
@@ -4942,10 +4781,10 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                 sprintf
                   "budget exhausted: %d of %d validity queries of the \
                    zero-unknown verdict ran out of their budget (%d ms wall \
-                   clock each%s; coordinator fields no_unknown_query_timeout, \
-                   no_unknown_query_rlimit)"
-                  !budget_cut !budget_asked config.no_unknown_query_timeout
-                  (match config.no_unknown_query_rlimit with
+                   clock each%s; coordinator fields zero_unknown.budgets.query_ms, \
+                   zero_unknown.budgets.query_rlimit)"
+                  !budget_cut !budget_asked config.zero_unknown.budgets.query_ms
+                  (match config.zero_unknown.budgets.query_rlimit with
                   | None -> ""
                   | Some r -> sprintf ", rlimit %d" r)
               in
@@ -4953,16 +4792,18 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
               (* opted into: the person who set the option asked for the
                  reason, and a reason behind a tracing flag is one they do
                  not have *)
-              if config.report_budget_exhaustion then prerr_endline msg;
-              config.report_budget_exhaustion
+              if config.zero_unknown.budgets.report_exhaustion then prerr_endline msg;
+              config.zero_unknown.budgets.report_exhaustion
             end
           in
           (* The countermodel is recorded with witness terms for the
              refuted clause's universal binders when a certificate is asked
              for (see [CountermodelWitness]); finding them costs solver
-             questions, so nothing is computed otherwise. *)
+             questions, so nothing is computed otherwise, and even then only
+             a suspension is built here: the search runs when a printer or a
+             checker reads the terms, after the verdict ([lazy_witnesses]). *)
           let countermodel_witness model =
-            if witness.WitnessConfig.unsat then
+            if WitnessConfig.records_unsat witness then
               Some
                 (UnsatWitness.make ~problem:(Some pcsp) senv
                    (UnsatWitness.Countermodel
@@ -4970,8 +4811,8 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                         formula = phi;
                         model;
                         witnesses =
-                          CountermodelWitness.find
-                            ~timeout:(Some config.no_unknown_query_timeout) phi
+                          lazy_witnesses
+                            ~timeout:(Some config.zero_unknown.budgets.query_ms) phi
                             model;
                       }))
             else None
@@ -4991,6 +4832,13 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                 { iters with unsat_witness; kind_certificates = Map.Poly.empty }
               )
           in
+          (* one answer-neutral event per refutation, named by the ladder
+             stage that found it, so a phase report tells which stage a
+             refuting caller (the lower-bound probe) needs *)
+          (match verdict with
+          | `Invalid _ ->
+              Common.PhaseTime.event_here ("ladder-refuted-at:" ^ !ladder_phase)
+          | _ -> ());
           match verdict with
           | `Valid -> Ok (PCSP.Problem.Sat Map.Poly.empty, iters)
           | `Invalid model ->
@@ -5017,7 +4865,10 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
               | None ->
                   if budget_exhausted () then Ok (PCSP.Problem.Unknown, iters)
                   else Ok (PCSP.Problem.Timeout, iters)
-              | Some model -> refuted_by model)
+              | Some model ->
+                  Common.PhaseTime.event_here
+                    ("ladder-refuted-at:" ^ !ladder_phase);
+                  refuted_by model)
           | `Unknown _ -> (
               (* The validity question was not decided, which on these inputs
                  means the constraint contains an array literal: a solver asked
@@ -5047,7 +4898,10 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
               in
               enter_phase "arraybound-pin";
               let refutation =
-                if Set.is_empty bounds then None
+                if
+                  Set.is_empty bounds
+                  || not (NoUnknownLadder.late_pins_read !NoUnknownLadder.read)
+                then None
                 else
                   List.find_map [ 0; 1; 2 ] ~f:(fun v ->
                       let pins =
@@ -5058,10 +4912,10 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                       match
                         Z3Smt.Z3interface.with_rlimit
                           ~label:"ladder"
-                          config.no_unknown_query_rlimit
+                          config.zero_unknown.budgets.query_rlimit
                         @@ fun () ->
                         Z3Smt.Z3interface.check_sat
-                          ~timeout:(Some config.no_unknown_refutation_timeout)
+                          ~timeout:(Some config.zero_unknown.budgets.refutation_ms)
                           ~id:None (Ast.LogicOld.get_fenv ())
                           (Ast.LogicOld.Formula.negate phi :: pins)
                       with
@@ -5077,6 +4931,8 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                   ignore (budget_exhausted () : bool);
                   Ok (PCSP.Problem.Unknown, iters)
               | Some model ->
+                  Common.PhaseTime.event_here
+                    ("ladder-refuted-at:" ^ !ladder_phase);
                   let model =
                     Ast.LogicOld.Formula.and_of
                     @@ List.filter_map model ~f:(fun ((x, sort), t) ->
@@ -5111,8 +4967,16 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
               | Some _ -> Context.significant_version_of MContext.context pcsp
             in
             Context.set_version MContext.context version;
-            Ast.ClauseGraph.set_dedup_normalized version.graph
-              config.dedup_normalized_examples;
+            (* One spelling per example, always.  The labeler's unit
+               propagation hands every example back in [ExClause.normalize]
+               form, so an example a producer stored unnormalised (a resolvent
+               guarded by [0 = 0], an argument [-5 + x]) would otherwise come
+               back as a second value: the example sets, keyed on the value,
+               would hold the same fact twice, as two truth-table rows and two
+               labeling variables nothing ties together (342 examples for 279
+               distinct facts were measured on one input).  That is duplicated
+               work and never a gain, so the identification is not optional. *)
+            Ast.ClauseGraph.set_dedup_normalized version.graph true;
             let new_state =
               VersionSpace.init ~witness oracle
               |> VersionSpace.set_fenv (PCSP.Problem.fenv_of pcsp)
@@ -5127,12 +4991,18 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
             Debug.set_id !id;
             ExtFile.unwrap Cfg.config.rl_config >>= fun rl_config ->
             Common.PhaseTime.with_phase "cegis-init" (fun () ->
+                (* each phase's build and the synthesizer's initialisation
+                   start at a safe point to end a probe whose strict deadline
+                   has passed ([SolveDeadline.check_at_stage]) *)
                 config.phase_list
-                |> List.map ~f:(build_phase pcsp rl_config)
+                |> List.map ~f:(fun phase ->
+                    SolveDeadline.check_at_stage ();
+                    build_phase pcsp rl_config phase)
                 |> Result.all
                 >>| fun phase_list ->
                 List.iter phase_list ~f:(function
                   | US (module MUS) ->
+                      SolveDeadline.check_at_stage ();
                       Common.PhaseTime.with_phase "init-S" MUS.init
                   | _ -> ());
                 phase_list)
@@ -5165,7 +5035,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                examples it adds are labelled and resolved as a validation's
                counterexamples are before the next synthesis sees them.  When
                it asks for nothing, the first iteration is the ordinary one.
-               A lazy pre-pass ([houdini_after_seconds]) is asked the same way
+               A lazy pre-pass ([houdini.schedule.after_ms]) is asked the same way
                at the start of each later iteration, with the wall-clock time
                since this loop started; it stands in for that iteration's
                phases up to and including the validation, and runs at most
@@ -5216,7 +5086,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                          by a deadline, in parallel or not *)
                       None
                   | Some prepass -> (
-                      (* [houdini_in_parallel]: the copy that finds a solution
+                      (* [houdini.schedule = Parallel _]: the copy that finds a solution
                          returns it here as the sequential pre-pass would and
                          runs the rest of the program; the process goes on as
                          if the pre-pass had found nothing *)
@@ -5293,10 +5163,10 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                   kind_certificates = Map.Poly.empty;
                 } )))
 
-  (* [sweep_unknown_free_clauses]: see [UnknownFreeSweep].  [Some] only with
+  (* [unknown_free_clauses.sweep]: see [UnknownFreeSweep].  [Some] only with
      a refutation, as [Unsat] with the refuted clause's countermodel. *)
   and sweep_unknown_free ?(witness = WitnessConfig.default) pcsp =
-    if not config.sweep_unknown_free_clauses then None
+    if not config.unknown_free_clauses.sweep then None
     else
       let senv = PCSP.Problem.senv_of pcsp in
       let formulas =
@@ -5306,22 +5176,22 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
       if List.is_empty formulas then None
       else
         let per_query, whole =
-          Option.value config.quick_sweep_no_unknown_query
+          Option.value (ZeroUnknownConfig.Switch.quick_sweep config.zero_unknown)
             ~default:(500, 5000)
         in
         let started = Common.Clock.now_s () in
         let deadline = started +. (Float.of_int whole /. 1000.) in
         let ask phi =
-          Z3Smt.Z3interface.with_rlimit ~label:"ladder" config.no_unknown_query_rlimit
+          Z3Smt.Z3interface.with_rlimit ~label:"ladder" config.zero_unknown.budgets.query_rlimit
           @@ fun () ->
-          (if config.seq_as_array_no_unknown_query then
+          (if config.zero_unknown.rewrites.seq_as_array then
              Z3Smt.Z3interface.check_valid_seq_as_array
            else Z3Smt.Z3interface.check_valid)
             ~timeout:(Some per_query) ~fresh_solver:false ~id:None
             (Ast.LogicOld.get_fenv ()) phi
         in
         let result =
-          UnknownFreeSweep.sweep ~split:config.split_clause_heads_no_unknown_query
+          UnknownFreeSweep.sweep ~split:config.zero_unknown.pieces.split_clause_heads
             ~expired:(fun () -> Float.(Common.Clock.now_s () >= deadline))
             ~ask formulas
         in
@@ -5345,7 +5215,7 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                         t))
             in
             let unsat_witness =
-              if witness.WitnessConfig.unsat then
+              if WitnessConfig.records_unsat witness then
                 Some
                   (UnsatWitness.make ~problem:(Some pcsp) senv
                      (UnsatWitness.Countermodel
@@ -5353,8 +5223,8 @@ module Make (Cfg : Config.ConfigType) (MContext : Context.ContextType) :
                           formula = piece;
                           model;
                           witnesses =
-                            CountermodelWitness.find
-                              ~timeout:(Some config.no_unknown_query_timeout)
+                            lazy_witnesses
+                              ~timeout:(Some config.zero_unknown.budgets.query_ms)
                               piece model;
                         }))
               else None

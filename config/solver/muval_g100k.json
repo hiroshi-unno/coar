@@ -1,0 +1,11 @@
+[
+    "MuVal",
+    {
+        "ground_query_solve": [
+            "Ground_solve",
+            {
+                "atom_budget": 100000
+            }
+        ]
+    }
+]

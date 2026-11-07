@@ -1,0 +1,12 @@
+# A geometric loop that pays one tick per iteration and stops with probability 1/2 at
+# each: from x = 0 its expected runtime is 1 + 1/2 + 1/4 + ... = 2, and from any other x
+# the loop does not run, so it is 0 there (ert of Kaminski et al., ESOP 2016).
+# 1.5 is below the expected runtime 2 at x = 0: the bound is false and must not be valid.
+nat x;
+
+while (x = 0) {
+	tick(1);
+	{x := 1}[1/2]{skip}
+}
+
+?Ert[0] <= 1.5

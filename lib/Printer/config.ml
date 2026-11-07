@@ -18,6 +18,17 @@ type t = {
   smt_format : smt_format; [@default SMT2]
   lts_format : lts_format; [@default MuCLP]
   add_missing_forall : bool; [@default false]
+  simplify_inline_lets_once : bool; [@default false]
+      (** see [Ast.Evaluator.simplify_inline_lets_once]; process-wide once on,
+          set when the printer is built *)
+  simplify_skip_settled_bv_eval : bool; [@default false]
+      (** see [Ast.Evaluator.simplify_skip_settled_bv_eval]; process-wide once
+          on, set when the printer is built *)
+  hfl_format : string; [@default "coar"]
+      (** how an HFL problem is printed: as an HES in a dialect (["coar"],
+          ["rethfl"], ["hflmc2"], ["muhfl"]), as its OCaml representation in
+          RCaml's Boolean HFL mode (["ocaml"]), or, at order 1, as a muCLP
+          (["muclp"]) *)
 }
 [@@deriving yojson]
 

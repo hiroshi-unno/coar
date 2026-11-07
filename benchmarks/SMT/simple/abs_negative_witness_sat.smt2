@@ -1,0 +1,6 @@
+; a negative x with |x| = 4 exists (x = -4)
+(set-logic QF_LIA)
+(declare-const x Int)
+(assert (= (abs x) 4))
+(assert (< x 0))
+(check-sat)

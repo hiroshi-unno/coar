@@ -1,0 +1,6 @@
+(set-logic HORN)
+(declare-datatypes ((L 0)) (((nil) (cons (hd Int) (tl L)))))
+(declare-fun P (L) Bool)
+(define-fun-rec h ((l L)) Int (+ (h l) 1))
+(assert (forall ((l L)) (=> ((_ is nil) l) (P l))))
+(check-sat)

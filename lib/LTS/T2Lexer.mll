@@ -23,6 +23,12 @@ rule token = parse
 | "AT" { AT }
 | "CUTPOINT" { CUTPOINT }
 | "SHADOW" { SHADOW }
+(* LTL-VerP's extension of T2 (FM 2024 artifact): [BUCHI: {l, ...};] names the
+   Buechi locations and [PRE: {cond};] the initial condition *)
+| "BUCHI" { BUCHI }
+| "PRE" { PRE }
+| '{' { LBRACE }
+| '}' { RBRACE }
 | ':' { COLON }
 | ';' { SEMICOLON }
 | ',' { COMMA }
@@ -75,7 +81,10 @@ rule token = parse
 | "sle" { SLE }
 | "ule" { ULE }
 
-| digit+ { INT (Lexing.lexeme lexbuf |> int_of_string) }
+(* The digits as they are: a literal is read at arbitrary precision by
+   T_num.mk_value, and only the positions that need a small integer (a width,
+   an extract bound, a location number) convert it. *)
+| digit+ { INT (Lexing.lexeme lexbuf) }
 | (alpha | '_') (digit | alpha | '_' | '.')* ('!' digit+)? { VAR (Lexing.lexeme lexbuf) }
 
 | '\'' ['a'-'z' 'A'-'Z' '0'-'9'] '\''
@@ -113,7 +122,9 @@ rule token = parse
 | '(' { LPAREN }
 | ')' { RPAREN }
 | space { token lexbuf }
-| newline | "//" [^'\n']* newline { Lexing.new_line lexbuf; token lexbuf }
+| newline { Lexing.new_line lexbuf; token lexbuf }
+(* a comment runs to the end of its line, or of the file *)
+| "//" [^'\r' '\n']* { token lexbuf }
 
 | '+' { PLUS }
 | '-' { MINUS }

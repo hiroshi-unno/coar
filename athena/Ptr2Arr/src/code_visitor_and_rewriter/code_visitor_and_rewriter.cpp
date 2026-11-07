@@ -12,6 +12,91 @@ static llvm::cl::opt<bool> MemorySafety(
     llvm::cl::cat(Ptr2ArrCategory)
 );
 
+static llvm::cl::opt<bool> AssumeSafety(
+    "assume-safety",
+    llvm::cl::desc("Assume memory safety: an execution ends at its first access outside the block it points into"),
+    llvm::cl::init(false),
+    llvm::cl::cat(Ptr2ArrCategory)
+);
+
+// Both safety modes give each pointer the base and the length of the block it points into (the
+// `__Ptr2Arr_base_*` and `__Ptr2Arr_len_*` globals) and route every access through
+// `safe_idx_memoryN`; they differ only in what an access outside those bounds does. Under
+// --memory-safety it calls `reach_error()`, so a safety checker asked whether that call is reachable
+// decides memory safety. Under --assume-safety it ends the execution normally, so a termination
+// checker's YES on the rewritten program says that every execution staying in bounds terminates,
+// and its NO exhibits one that stays in bounds and does not. Together with a proof that the
+// --memory-safety program never reaches `reach_error()`, that is a verdict on the input, as far as
+// the rewriting itself is faithful.
+static bool tracksBounds() { return MemorySafety || AssumeSafety; }
+
+bool safetyModesConflict() { return MemorySafety && AssumeSafety; }
+
+// A memory set read at more than one type is addressed by bytes: its cells are `unsigned char`, and
+// it is read and written through the `load_memoryK_T` and `store_memoryK_T` helpers.
+static bool isByteAddressed(const MemorySet &set) {
+    return set.dataType == "unsigned char" && set.accessedTypes.size() > 1;
+}
+
+// The bytes one element of type `T` takes in a byte-addressed set: one for a character type, four
+// for anything else, which the model reads and writes through the 4-byte int helpers.
+static int modelBytes(clang::QualType T) { return T->isCharType() ? 1 : 4; }
+
+// `count` elements of type `T`, in the units of `set`: elements for an element-addressed set,
+// bytes for a byte-addressed one.
+static std::string modelCount(const std::string &count, clang::QualType T, const MemorySet &set) {
+    if (!isByteAddressed(set)) return count;
+    if (count == "1") return std::to_string(modelBytes(T));
+    return "(" + count + ") * " + std::to_string(modelBytes(T));
+}
+
+// The size argument of an `alloca` or `malloc`, in the units of `set`. In an element-addressed set
+// every `sizeof(T)` is 1. In a byte-addressed set it is the bytes the model touches for `T`, as in
+// `modelBytes`; the argument is source text, so a `T` that is not a spelled character type counts
+// four.
+static std::string modelSize(const std::string &size, const MemorySet &set) {
+    static const std::regex sizeofPattern("sizeof\\s*\\((.*?)\\)");
+    static const std::regex charType("^\\s*(?:(?:signed|unsigned)\\s+)?char\\s*$");
+    std::string out;
+    std::size_t last = 0;
+    for (auto it = std::sregex_iterator(size.begin(), size.end(), sizeofPattern); it != std::sregex_iterator(); ++it) {
+        out += size.substr(last, it->position() - last);
+        out += (isByteAddressed(set) && !std::regex_match((*it)[1].str(), charType)) ? "4" : "1";
+        last = it->position() + it->length();
+    }
+    return out + size.substr(last);
+}
+
+// The name whose `__Ptr2Arr_base_*` and `__Ptr2Arr_len_*` describe the block the pointer value `E`
+// points into: `q` for `q`, `q + i`, `q - i`, `&q[i]` and `&q`, with the `_index` suffix when `q` is
+// itself a block (a pointee) rather than a pointer. Pointer arithmetic does not move the block, so
+// the base and the length are the operand's, unshifted. Empty when no tracked variable is found.
+static std::string boundsOwner(const clang::Expr *E, const std::vector<MemorySet> &memorySets) {
+    E = E->IgnoreParenCasts();
+    if (const auto *DRE = llvm::dyn_cast<clang::DeclRefExpr>(E)) {
+        std::string name = DRE->getDecl()->getNameAsString();
+        auto named = [&name](const ScopedPointer &s) { return s.pointerName == name; };
+        for (const auto &ms : memorySets)
+            if (std::find_if(ms.pointers.begin(), ms.pointers.end(), named) != ms.pointers.end()) return name;
+        for (const auto &ms : memorySets)
+            if (std::find_if(ms.pointees.begin(), ms.pointees.end(), named) != ms.pointees.end()) return name + "_index";
+        return "";
+    }
+    if (const auto *UO = llvm::dyn_cast<clang::UnaryOperator>(E)) {
+        if (UO->getOpcode() != clang::UO_AddrOf) return "";
+        const clang::Expr *sub = UO->getSubExpr()->IgnoreParenCasts();
+        if (const auto *ASE = llvm::dyn_cast<clang::ArraySubscriptExpr>(sub)) return boundsOwner(ASE->getBase(), memorySets);
+        if (llvm::isa<clang::DeclRefExpr>(sub)) return boundsOwner(sub, memorySets);
+        return "";
+    }
+    if (const auto *BO = llvm::dyn_cast<clang::BinaryOperator>(E)) {
+        if (BO->getOpcode() != clang::BO_Add && BO->getOpcode() != clang::BO_Sub) return "";
+        if (BO->getLHS()->getType()->isPointerType() || BO->getLHS()->getType()->isArrayType()) return boundsOwner(BO->getLHS(), memorySets);
+        if (BO->getOpcode() == clang::BO_Add && (BO->getRHS()->getType()->isPointerType() || BO->getRHS()->getType()->isArrayType())) return boundsOwner(BO->getRHS(), memorySets);
+    }
+    return "";
+}
+
 
 std::string getTypeSuffix(clang::QualType type) {
     if (type->isPointerType() || type->isArrayType()) return "int";
@@ -21,6 +106,154 @@ std::string getTypeSuffix(clang::QualType type) {
     if (typeStr.find("double") != std::string::npos) return "double";
     return "int";
 }
+// Bounds that decide nothing on their own, for a pointer whose block cannot be found: under
+// --memory-safety a length of 0 reports every access through it, under --assume-safety the whole
+// memory array cuts none. Every memory array has the size of the first.
+static void unknownBounds(std::string &len, std::string &base) {
+    len = AssumeSafety ? "MEMORY0_SIZE" : "0";
+    base = "0";
+}
+
+clang::SourceLocation CodeVisitorAndRewriter::laterRecordLocation(const std::string &typeName, const clang::FunctionDecl *first) {
+    clang::SourceManager &SM = TheRewriter.getSourceMgr();
+    const clang::RecordDecl *found = lookupRecord(typeName);
+    const clang::RecordDecl *record = found ? found->getDefinition() : nullptr;
+    if (!record || !SM.isInMainFile(SM.getExpansionLoc(record->getBeginLoc()))) return clang::SourceLocation();
+    clang::SourceLocation recordEnd = SM.getExpansionLoc(record->getEndLoc());
+    if (!SM.isBeforeInTranslationUnit(SM.getExpansionLoc(first->getBeginLoc()), recordEnd)) return clang::SourceLocation();
+    for (auto *D : Context->getTranslationUnitDecl()->decls()) {
+        const auto *F = llvm::dyn_cast<clang::FunctionDecl>(D);
+        if (!F || !F->doesThisDeclarationHaveABody()) continue;
+        clang::SourceLocation begin = SM.getExpansionLoc(F->getBeginLoc());
+        if (SM.isInMainFile(begin) && SM.isBeforeInTranslationUnit(recordEnd, begin)) return begin;
+    }
+    return clang::SourceLocation();
+}
+
+// The struct or union `typeName` names (`struct S`, `union U`, or a typedef of one), looked up in the
+// translation unit's scope, which also holds a tag first named inside another declaration
+// (`struct L4 { struct L5 *down; };` declares `struct L5`); null when it names none.
+const clang::RecordDecl *CodeVisitorAndRewriter::lookupRecord(const std::string &typeName) {
+    clang::TranslationUnitDecl *TU = Context->getTranslationUnitDecl();
+    for (const char *keyword : {"struct ", "union "}) {
+        std::string prefix = keyword;
+        if (typeName.compare(0, prefix.size(), prefix) != 0) continue;
+        clang::IdentifierInfo &name = Context->Idents.get(typeName.substr(prefix.size()));
+        for (clang::NamedDecl *ND : TU->lookup(clang::DeclarationName(&name))) {
+            if (const auto *RD = llvm::dyn_cast<clang::RecordDecl>(ND)) return RD;
+        }
+        return nullptr;
+    }
+    for (auto *D : TU->decls()) {
+        const auto *TD = llvm::dyn_cast<clang::TypedefNameDecl>(D);
+        if (!TD || TD->getNameAsString() != typeName) continue;
+        if (const auto *RT = TD->getUnderlyingType()->getAs<clang::RecordType>()) return RT->getDecl();
+    }
+    return nullptr;
+}
+
+namespace {
+// The spelling (`struct S`, `union U`) of every struct and union definition of a translation unit,
+// wherever it is written, inside a function or another record included.
+class RecordDefinitions : public clang::RecursiveASTVisitor<RecordDefinitions> {
+public:
+    explicit RecordDefinitions(clang::ASTContext &context) : context(context) {}
+    bool VisitRecordDecl(clang::RecordDecl *RD) {
+        if (RD->isThisDeclarationADefinition()) names.insert(context.getRecordType(RD).getAsString());
+        return true;
+    }
+    std::set<std::string> names;
+private:
+    clang::ASTContext &context;
+};
+}
+
+bool CodeVisitorAndRewriter::undefinedRecord(const std::string &typeName) {
+    if (typeName.compare(0, 7, "struct ") == 0 || typeName.compare(0, 6, "union ") == 0) {
+        RecordDefinitions definitions(*Context);
+        definitions.TraverseDecl(Context->getTranslationUnitDecl());
+        return definitions.names.count(typeName) == 0;
+    }
+    const clang::RecordDecl *RD = lookupRecord(typeName);
+    return RD && !RD->getDefinition();
+}
+
+void CodeVisitorAndRewriter::applyDeferredInsertions() {
+    for (const auto &[loc, text] : deferredInsertions) {
+        if (TheRewriter.InsertTextBefore(loc, text)) {
+            llvm::errs() << "[Ptr2Arr] Error: a memory array could not be declared after its element type\n";
+        }
+    }
+    deferredInsertions.clear();
+}
+
+std::string CodeVisitorAndRewriter::trackedReturnName(const clang::CallExpr *CE) {
+    const clang::FunctionDecl *callee = CE->getDirectCallee();
+    if (!callee) return "";
+    const clang::FunctionDecl *def = callee->getDefinition();
+    if (!def || !def->getReturnType()->isPointerType()) return "";
+    if (!TheRewriter.getSourceMgr().isInMainFile(def->getLocation())) return "";
+    return def->getNameAsString();
+}
+
+bool CodeVisitorAndRewriter::boundsOf(const clang::Expr *E, std::string &len, std::string &base) {
+    std::string owner = boundsOwner(E, memorySets);
+    if (!owner.empty()) {
+        len = "__Ptr2Arr_len_" + owner;
+        base = "__Ptr2Arr_base_" + owner;
+        return true;
+    }
+    if (E->isNullPointerConstant(*Context, clang::Expr::NPC_ValueDependentIsNull)) {
+        // A null pointer points into no block, so every access through it is out of bounds.
+        len = "0";
+        base = "0";
+        return true;
+    }
+    const clang::Expr *S = E->IgnoreParenCasts();
+    if (const auto *CE = llvm::dyn_cast<clang::CallExpr>(S)) {
+        std::string f = trackedReturnName(CE);
+        if (f.empty()) return false;
+        len = "__Ptr2Arr_ret_len_" + f;
+        base = "__Ptr2Arr_ret_base_" + f;
+        return true;
+    }
+    if (const auto *BO = llvm::dyn_cast<clang::BinaryOperator>(S)) {
+        if (BO->getOpcode() == clang::BO_Add || BO->getOpcode() == clang::BO_Sub) {
+            if (BO->getLHS()->getType()->isPointerType()) return boundsOf(BO->getLHS(), len, base);
+            if (BO->getOpcode() == clang::BO_Add && BO->getRHS()->getType()->isPointerType()) return boundsOf(BO->getRHS(), len, base);
+        }
+    }
+    return false;
+}
+
+// `return e;` in a function that returns a pointer records the bounds of the block `e` points into:
+// `return (__Ptr2Arr_ret_val_f = e', __Ptr2Arr_ret_len_f = len, __Ptr2Arr_ret_base_f = base,
+// __Ptr2Arr_ret_val_f);`. The value is computed first, so `e` may itself be a call whose bounds are
+// taken over. A caller reads the three right after the call returns.
+bool CodeVisitorAndRewriter::VisitReturnStmt(clang::ReturnStmt *RS) {
+    if (isPreCheckPhase || !tracksBounds() || memorySets.empty() || !currentFD) return true;
+    clang::SourceManager &SM = TheRewriter.getSourceMgr();
+    const clang::Expr *value = RS->getRetValue();
+    if (!value || !SM.isInMainFile(SM.getExpansionLoc(RS->getBeginLoc()))) return true;
+    if (!currentFD->getReturnType()->isPointerType()) return true;
+
+    clang::CharSourceRange range = clang::CharSourceRange::getTokenRange(
+        SM.getExpansionLoc(value->getBeginLoc()), SM.getExpansionLoc(value->getEndLoc()));
+    bool isNull = value->isNullPointerConstant(*Context, clang::Expr::NPC_ValueDependentIsNull);
+    std::string text = isNull ? "0" : TheRewriter.getRewrittenText(range);
+    if (text.empty()) return true;
+    std::string len, base;
+    if (!boundsOf(value, len, base)) unknownBounds(len, base);
+
+    std::string f = currentFD->getNameAsString();
+    std::string replacement = "(__Ptr2Arr_ret_val_" + f + " = " + text + ", __Ptr2Arr_ret_len_" + f + " = " + len +
+                              ", __Ptr2Arr_ret_base_" + f + " = " + base + ", __Ptr2Arr_ret_val_" + f + ")";
+    if (TheRewriter.ReplaceText(range, replacement)) {
+        llvm::errs() << "[Ptr2Arr] Warning: the bounds of a pointer returned by " << f << " could not be recorded\n";
+    }
+    return true;
+}
+
 bool CodeVisitorAndRewriter::VisitFieldDecl(clang::FieldDecl *FD) {
     if (isPreCheckPhase) return true;
     clang::SourceManager &SM = TheRewriter.getSourceMgr();
@@ -28,7 +261,7 @@ bool CodeVisitorAndRewriter::VisitFieldDecl(clang::FieldDecl *FD) {
         if (FD->getType()->isPointerType()) {
             std::string fieldName = FD->getNameAsString();
 
-            if (MemorySafety) {
+            if (tracksBounds()) {
                 std::string textToReplace = "int " + fieldName;
                 TheRewriter.ReplaceText(FD->getSourceRange(), textToReplace);
                 WriteToFile("StructureField, " + fieldName);
@@ -55,11 +288,14 @@ bool CodeVisitorAndRewriter::TraverseFunctionDecl(clang::FunctionDecl *FD) {
     // Set currentFunction to the function being traversed,
     // and restore it after traversal to handle nested functions correctly
     std::string savedFunction = currentFunction;
+    clang::FunctionDecl *savedFD = currentFD;
     currentFunction = FD->getNameAsString();
+    currentFD = FD;
 
     bool result = clang::RecursiveASTVisitor<CodeVisitorAndRewriter>::TraverseFunctionDecl(FD);
 
     currentFunction = savedFunction;
+    currentFD = savedFD;
     return result;
 }
 
@@ -69,7 +305,9 @@ std::string getMemorySetType(std::string dataType) {
         exit(1);
     }
 
-    if (dataType.back() == '*') {
+    // A set whose pointers are all `void *` is never read or written through `void` itself, and an
+    // array of `void` does not compile, so its cells are ints, like those of any pointer value.
+    if (dataType.back() == '*' || dataType == "void" || dataType == "const void") {
         return "int";
     }else {
         return dataType;
@@ -101,7 +339,7 @@ bool CodeVisitorAndRewriter::VisitFunctionDecl(clang::FunctionDecl *FD) {
                             int len = pts.content.length();
 
                             textToInsert += "\n    " + pts.varName + " = allocate_memory" + memIdx + "(" + std::to_string(len) + ");\n";
-                            if (MemorySafety) {
+                            if (tracksBounds()) {
                                 textToInsert += "    __Ptr2Arr_base_" + pts.varName + " = " + pts.varName + ";\n";
                             }
 
@@ -171,18 +409,54 @@ bool CodeVisitorAndRewriter::VisitFunctionDecl(clang::FunctionDecl *FD) {
 
             if (isFirstFunction) {
                 std::string textToInsert;
+                if (AssumeSafety && !memorySets.empty()) {
+                    // The assumption ends an execution with `_Exit` rather than `exit`, because some
+                    // inputs define `exit` themselves, as SV-COMP's `void exit(int s) { _EXIT: goto
+                    // _EXIT; }`, which would turn the end of an execution into a loop that never
+                    // terminates; the C standard reserves `_Exit`, so no input may define it. The
+                    // helper's name is Ptr2Arr's own because inputs define `__VERIFIER_assume`
+                    // themselves, some with an `int` and some with a `_Bool` parameter, and a
+                    // definition of ours would collide with either. llvm2kittel ends the run at the
+                    // `unreachable` that follows a call to a noreturn function, so in the
+                    // transition system a failed assumption is a terminating step.
+                    textToInsert += "extern void _Exit(int) __attribute__((__noreturn__));\n"
+                                    "void __Ptr2Arr_assume(int cond) {\n"
+                                    "    if (!cond) _Exit(0);\n"
+                                    "}\n\n";
+                    WriteToFile("Function, __Ptr2Arr_assume");
+                    WriteToFile("FunctionParameter, __Ptr2Arr_assume, cond");
+                }
                 for (size_t i = 0; i < memorySets.size(); ++i) {
 
                     std::string convertedDatatype = getMemorySetType(memorySets[i].dataType);
                     std::string memIdx = std::to_string(i);
 
+                    // A struct or union no declaration completes (only pointers to it are used) has
+                    // no object that is read or written, so its cells are ints.
+                    if (undefinedRecord(convertedDatatype)) convertedDatatype = "int";
+
+                    // The memory array of a struct or union defined after the first function
+                    // definition (an input may define `exit` before its types) is declared instead
+                    // right before the first function definition that follows the type's. Every
+                    // function that reads or writes the array needs the type complete, so it comes
+                    // later still; everything else in the prelude is independent of the type. The
+                    // insertion is made after the whole traversal: that function's own rewrites (its
+                    // return type) start at the same place, and a replacement made after an insertion
+                    // there would count the inserted text in its length and erase it.
+                    std::string memoryDecl = convertedDatatype + " memory" + memIdx + "[MEMORY" + memIdx + "_SIZE];\n";
+                    clang::SourceLocation laterLoc = laterRecordLocation(convertedDatatype, FD);
+                    if (laterLoc.isValid()) {
+                        deferredInsertions.push_back({laterLoc, memoryDecl});
+                        memoryDecl = "";
+                    }
+
                     if (MemorySafety) {
                         reachErrorCallGenerated = true;
                         textToInsert += "#define MEMORY" + memIdx + "_SIZE 100000\n" +
-                                        convertedDatatype + " memory" + memIdx + "[MEMORY" + memIdx + "_SIZE];\n"
+                                        memoryDecl +
                                         "int memory" + memIdx + "_freeIndex = 1;\n\n";
                         if(hasFreeInCode){
-                             textToInsert += convertedDatatype + " memory" + memIdx + "_free" + "[MEMORY" + memIdx + "_SIZE];\n"
+                             textToInsert += "int memory" + memIdx + "_free" + "[MEMORY" + memIdx + "_SIZE];\n"
                                             "int allocate_memory" + memIdx + "(int size) {\n"
                                             "   int allocatedIndex = memory" + memIdx + "_freeIndex;\n"
                                             "   memory" + memIdx + "_freeIndex = memory" + memIdx + "_freeIndex + size;\n"
@@ -231,9 +505,26 @@ bool CodeVisitorAndRewriter::VisitFunctionDecl(clang::FunctionDecl *FD) {
                                             "}\n\n";
                         }
 
+                    } else if (AssumeSafety) {
+                        // No `memoryN_free` table: a free is a no-op in this mode (see the rewrite
+                        // of `free` below), so there is no freed block to look up.
+                        textToInsert += "#define MEMORY" + memIdx + "_SIZE 100000\n" +
+                                        memoryDecl +
+                                        "int memory" + memIdx + "_freeIndex = 1;\n\n"
+                                        "int allocate_memory" + memIdx + "(int size) {\n"
+                                        "   int allocatedIndex = memory" + memIdx + "_freeIndex;\n"
+                                        "   memory" + memIdx + "_freeIndex = memory" + memIdx + "_freeIndex + size;\n"
+                                        "   return allocatedIndex;\n"
+                                        "}\n\n"
+
+                                        "int safe_idx_memory" + memIdx + "(int base_idx, int ptr_idx, int idx, int len) {\n"
+                                        "   __Ptr2Arr_assume(0 <= (ptr_idx - base_idx + idx) && (ptr_idx - base_idx + idx) < len);\n"
+                                        "   return ptr_idx + idx;\n"
+                                        "}\n\n";
+
                     }else{
                         textToInsert += "#define MEMORY" + memIdx + "_SIZE 100000\n" +
-                                        convertedDatatype + " memory" + memIdx + "[MEMORY" + memIdx + "_SIZE];\n"
+                                        memoryDecl +
                                         "int memory" + memIdx + "_freeIndex = 1;\n"
                                         "int allocate_memory" + memIdx + "(int size) {\n"
                                         "   int allocatedIndex = memory" + memIdx + "_freeIndex;\n"
@@ -263,7 +554,7 @@ bool CodeVisitorAndRewriter::VisitFunctionDecl(clang::FunctionDecl *FD) {
                             generatedTypes.insert(baseType);
 
                            if (baseType == "int") {
-                                if (MemorySafety) {
+                                if (tracksBounds()) {
                                     textToInsert +=
                                         "int load_memory" + memIdx + "_int(int base_idx, int index, int len) {\n"
                                         "    int b0 = memory" + memIdx + "[safe_idx_memory" + memIdx + "(base_idx, index, 0, len)];\n"
@@ -298,7 +589,7 @@ bool CodeVisitorAndRewriter::VisitFunctionDecl(clang::FunctionDecl *FD) {
                                 }
                             }
                             else if (baseType == "char") {
-                                if (MemorySafety) {
+                                if (tracksBounds()) {
                                     textToInsert +=
                                         "char load_memory" + memIdx + "_char(int base_idx, int index, int len) {\n"
                                         "    return (char)memory" + memIdx + "[safe_idx_memory" + memIdx + "(base_idx, index, 0, len)];\n"
@@ -327,7 +618,7 @@ bool CodeVisitorAndRewriter::VisitFunctionDecl(clang::FunctionDecl *FD) {
                 for (const auto& [type, index] : requiredDecrementHelpers) {
                     std::string idxStr = std::to_string(index);
 
-                    if (MemorySafety) {
+                    if (tracksBounds()) {
                         textToInsert += type + " post_decrement_memory" + idxStr + "_" + type + "(int base_idx, int index, int len) {\n";
                         textToInsert += "    " + type + " old_val = load_memory" + idxStr + "_" + type + "(base_idx, index, len);\n";
                         textToInsert += "    store_memory" + idxStr + "_" + type + "(base_idx, index, old_val - 1, len);\n";
@@ -346,7 +637,7 @@ bool CodeVisitorAndRewriter::VisitFunctionDecl(clang::FunctionDecl *FD) {
                 for (const auto& [type, index] : requiredIncrementHelpers) {
                     std::string idxStr = std::to_string(index);
 
-                    if (MemorySafety) {
+                    if (tracksBounds()) {
                         textToInsert += type + " post_increment_memory" + idxStr + "_" + type + "(int base_idx, int index, int len) {\n";
                         textToInsert += "    " + type + " old_val = load_memory" + idxStr + "_" + type + "(base_idx, index, len);\n";
                         textToInsert += "    store_memory" + idxStr + "_" + type + "(base_idx, index, old_val + 1, len);\n";
@@ -361,7 +652,7 @@ bool CodeVisitorAndRewriter::VisitFunctionDecl(clang::FunctionDecl *FD) {
                     }
                 }
 
-                if (MemorySafety) {
+                if (tracksBounds()) {
                     textToInsert += "// Global meta variables for pointer tracking\n";
 
                     std::set<std::string> declaredMetaVars;
@@ -399,6 +690,23 @@ bool CodeVisitorAndRewriter::VisitFunctionDecl(clang::FunctionDecl *FD) {
                             }
                         }
                     }
+
+                    // A function of the main file that returns a pointer records the bounds of the
+                    // block it returns (`__Ptr2Arr_ret_len_f`, `__Ptr2Arr_ret_base_f`), and the value
+                    // itself (`__Ptr2Arr_ret_val_f`), from which a call's result takes them.
+                    std::set<std::string> declaredReturns;
+                    for (auto *D : Context->getTranslationUnitDecl()->decls()) {
+                        const auto *F = llvm::dyn_cast<clang::FunctionDecl>(D);
+                        if (!F || !F->doesThisDeclarationHaveABody() || !F->getReturnType()->isPointerType()) continue;
+                        if (!SM.isInMainFile(F->getLocation())) continue;
+                        std::string f = F->getNameAsString();
+                        if (!declaredReturns.insert(f).second) continue;
+                        for (const char *what : {"len", "base", "val"}) {
+                            std::string var = std::string("__Ptr2Arr_ret_") + what + "_" + f;
+                            textToInsert += "int " + var + ";\n";
+                            WriteToFile("GlobalVariable, " + var);
+                        }
+                    }
                     textToInsert += "\n";
                 }
 
@@ -408,21 +716,16 @@ bool CodeVisitorAndRewriter::VisitFunctionDecl(clang::FunctionDecl *FD) {
                     WriteToFile("GlobalVariable, " + pointToString.varName);
                 }
 
-                clang::SourceLocation insertLoc;
-                clang::ASTContext &Context = FD->getASTContext();
-
-                for (auto *D : Context.getTranslationUnitDecl()->decls()) {
-                    if (SM.isInMainFile(D->getBeginLoc()) && D->getBeginLoc().isValid()) {
-                        insertLoc = D->getBeginLoc();
-                        break;
-                    }
+                // The prelude goes right before the first function definition. A memory array
+                // whose element is a struct or a union must follow that type's definition, and an
+                // input defines its types, its own and those of the headers it pastes in, before its
+                // functions. The first declaration of the main file comes before all of them, and can
+                // even sit inside another declaration: `typedef struct S {…} T;` declares the struct
+                // first, after the `typedef`.
+                clang::SourceLocation insertLoc = SM.getExpansionLoc(FD->getBeginLoc());
+                if (TheRewriter.InsertTextBefore(insertLoc, textToInsert)) {
+                    llvm::errs() << "[Ptr2Arr] Error: the generated declarations could not be inserted before " << currentFunction << "\n";
                 }
-
-                if (insertLoc.isInvalid()) {
-                    insertLoc = SM.getLocForStartOfFile(SM.getMainFileID());
-                }
-
-                TheRewriter.InsertTextBefore(insertLoc, textToInsert);
 
                 isFirstFunction = false;
             }
@@ -452,6 +755,9 @@ bool CodeVisitorAndRewriter::VisitVarDecl(clang::VarDecl *VD) {
             }
         }
 
+        // The cell of a variable whose address is taken, in the units of its memory set.
+        std::string cell = pointeeId != -1 ? modelCount("1", VD->getType(), memorySets[pointeeId]) : "1";
+
         bool isMulti = false;
         bool isFirstDecl = false;
         auto parents = VD->getASTContext().getParents(*VD);
@@ -470,7 +776,7 @@ bool CodeVisitorAndRewriter::VisitVarDecl(clang::VarDecl *VD) {
                     if (isMulti) {
                         TheRewriter.RemoveText(VD->getLocation().getLocWithOffset(-1), 1);
                     } else {
-                        if (MemorySafety) {
+                        if (tracksBounds()) {
 
                             std::string textToReplace = "int " + varName + "_index;\n"
                                                         "__Ptr2Arr_len_" + varName + "_index = 0;\n"
@@ -496,10 +802,10 @@ bool CodeVisitorAndRewriter::VisitVarDecl(clang::VarDecl *VD) {
                         if (isMulti) {
                             TheRewriter.RemoveText(VD->getLocation().getLocWithOffset(-1), 1);
                         } else {
-                            if (MemorySafety) {
+                            if (tracksBounds()) {
 
-                                std::string textToReplace = "int " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(1);\n"
-                                                            "    __Ptr2Arr_len_" + varName + "_index = 1;\n"
+                                std::string textToReplace = "int " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(" + cell + ");\n"
+                                                            "    __Ptr2Arr_len_" + varName + "_index = " + cell + ";\n"
                                                             "    __Ptr2Arr_base_" + varName + "_index = " + varName + "_index";
                                 if (memorySets[pointeeId].accessedTypes.size() > 1) {
                                     std::string suffix = getTypeSuffix(VD->getType());
@@ -513,16 +819,16 @@ bool CodeVisitorAndRewriter::VisitVarDecl(clang::VarDecl *VD) {
                                 if (memorySets[pointeeId].accessedTypes.size() > 1) {
                                     std::string suffix = getTypeSuffix(VD->getType());
                                     std::string initExprStrRewrite = TheRewriter.getRewrittenText(VD->getInit()->getSourceRange());
-                                    std::string textToReplace = "int " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(1);\n    store_memory" + std::to_string(pointeeId) + "_" + suffix + "(" + varName + "_index, " + initExprStrRewrite + ")";
+                                    std::string textToReplace = "int " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(" + cell + ");\n    store_memory" + std::to_string(pointeeId) + "_" + suffix + "(" + varName + "_index, " + initExprStrRewrite + ")";
                                     TheRewriter.ReplaceText(clang::SourceRange(VD->getBeginLoc(), VD->getInit()->getEndLoc()), textToReplace);
                                 } else {
-                                    std::string textToReplace = "int " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(1);\n    memory" + std::to_string(pointeeId) + "[" + varName + "_index] = 0";
+                                    std::string textToReplace = "int " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(" + cell + ");\n    memory" + std::to_string(pointeeId) + "[" + varName + "_index] = 0";
                                     TheRewriter.ReplaceText(clang::SourceRange(VD->getBeginLoc(), VD->getInit()->getEndLoc()), textToReplace);
                                 }
                             }
                         }
 
-                        if (MemorySafety && !scopeStack.empty()) {
+                        if (tracksBounds() && !scopeStack.empty()) {
                             scopeStack.back().push_back({varName + "_index", pointeeId, false});
                         }
                         WriteToFile("LocalVariable, " + currentFunction + ", " + varName + "_index");
@@ -535,11 +841,11 @@ bool CodeVisitorAndRewriter::VisitVarDecl(clang::VarDecl *VD) {
                         std::smatch match;
                         if (std::regex_match(initExprStr, match, allocPattern)){
                             size = match[1].str();
-                            size = std::regex_replace(size, std::regex("sizeof\\s*\\(.*?\\)"), "1");
+                            size = modelSize(size, memorySets[pointeeId]);
                         }
 
                         std::string textToReplace;
-                        if (MemorySafety) {
+                        if (tracksBounds()) {
                             textToReplace = "int " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(" + size + ");\n"
                                             "    __Ptr2Arr_len_" + varName + "_index = " + size + ";\n"
                                             "    __Ptr2Arr_base_" + varName + "_index = " + varName + "_index";
@@ -547,7 +853,7 @@ bool CodeVisitorAndRewriter::VisitVarDecl(clang::VarDecl *VD) {
                             textToReplace = "int " + varName + "_index" + " = allocate_memory" + std::to_string(pointeeId) + "(" + size + ")";
                         }
 
-                        if (MemorySafety && isAlloca && !scopeStack.empty()) {
+                        if (tracksBounds() && isAlloca && !scopeStack.empty()) {
                             scopeStack.back().push_back({varName + "_index", pointeeId, true});
                         }
 
@@ -567,9 +873,9 @@ bool CodeVisitorAndRewriter::VisitVarDecl(clang::VarDecl *VD) {
                                 if (isMulti) {
                                     TheRewriter.RemoveText(VD->getLocation().getLocWithOffset(-1), 1);
                                 } else {
-                                    if (MemorySafety) {
-                                        std::string textToReplace = "int " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(1);\n"
-                                                                    "    __Ptr2Arr_len_" + varName + "_index = 1;\n"
+                                    if (tracksBounds()) {
+                                        std::string textToReplace = "int " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(" + cell + ");\n"
+                                                                    "    __Ptr2Arr_len_" + varName + "_index = " + cell + ";\n"
                                                                     "    __Ptr2Arr_base_" + varName + "_index = " + varName + "_index";
                                         if (memorySets[pointeeId].accessedTypes.size() > 1) {
                                             std::string suffix = getTypeSuffix(VD->getType());
@@ -583,16 +889,16 @@ bool CodeVisitorAndRewriter::VisitVarDecl(clang::VarDecl *VD) {
                                         if (memorySets[pointeeId].accessedTypes.size() > 1) {
                                             std::string suffix = getTypeSuffix(VD->getType());
                                             std::string initExprStrRewrite = TheRewriter.getRewrittenText(VD->getInit()->getSourceRange());
-                                            std::string textToReplace = "int " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(1);\n    store_memory" + std::to_string(pointeeId) + "_" + suffix + "(" + varName + "_index, " + initExprStrRewrite + ");";
+                                            std::string textToReplace = "int " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(" + cell + ");\n    store_memory" + std::to_string(pointeeId) + "_" + suffix + "(" + varName + "_index, " + initExprStrRewrite + ");";
                                             TheRewriter.ReplaceText(clang::SourceRange(VD->getBeginLoc(), VD->getInit()->getEndLoc()), textToReplace);
                                         } else {
-                                            std::string textToReplace = "int " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(1);\n    memory" + std::to_string(pointeeId) + "[" + varName + "_index]";
+                                            std::string textToReplace = "int " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(" + cell + ");\n    memory" + std::to_string(pointeeId) + "[" + varName + "_index]";
                                             TheRewriter.ReplaceText(clang::SourceRange(VD->getBeginLoc(), VD->getInit()->getEndLoc()), textToReplace);
                                         }
                                     }
                                 }
 
-                                if (MemorySafety && !scopeStack.empty()) {
+                                if (tracksBounds() && !scopeStack.empty()) {
                                     scopeStack.back().push_back({varName + "_index", pointeeId, false});
                                 }
                                 WriteToFile("LocalVariable, " + currentFunction + ", " + varName + "_index");
@@ -604,9 +910,9 @@ bool CodeVisitorAndRewriter::VisitVarDecl(clang::VarDecl *VD) {
                         if (isMulti) {
                             TheRewriter.RemoveText(VD->getLocation().getLocWithOffset(-1), 1);
                         } else {
-                            if (MemorySafety) {
-                                std::string textToReplace = "int " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(1);\n"
-                                                            "    __Ptr2Arr_len_" + varName + "_index = 1;\n"
+                            if (tracksBounds()) {
+                                std::string textToReplace = "int " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(" + cell + ");\n"
+                                                            "    __Ptr2Arr_len_" + varName + "_index = " + cell + ";\n"
                                                             "    __Ptr2Arr_base_" + varName + "_index = " + varName + "_index";
                                 if (memorySets[pointeeId].accessedTypes.size() > 1) {
                                     std::string suffix = getTypeSuffix(VD->getType());
@@ -620,16 +926,16 @@ bool CodeVisitorAndRewriter::VisitVarDecl(clang::VarDecl *VD) {
                                 if (memorySets[pointeeId].accessedTypes.size() > 1) {
                                     std::string suffix = getTypeSuffix(VD->getType());
                                     std::string initExprStrRewrite = TheRewriter.getRewrittenText(VD->getInit()->getSourceRange());
-                                    std::string textToReplace = "int " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(1);\n    store_memory" + std::to_string(pointeeId) + "_" + suffix + "(" + varName + "_index, " + initExprStrRewrite + ");";
+                                    std::string textToReplace = "int " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(" + cell + ");\n    store_memory" + std::to_string(pointeeId) + "_" + suffix + "(" + varName + "_index, " + initExprStrRewrite + ");";
                                     TheRewriter.ReplaceText(clang::SourceRange(VD->getBeginLoc(), VD->getInit()->getEndLoc()), textToReplace);
                                 } else {
-                                    std::string textToReplace = "int " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(1);\n    memory" + std::to_string(pointeeId) + "[" + varName + "_index]";
+                                    std::string textToReplace = "int " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(" + cell + ");\n    memory" + std::to_string(pointeeId) + "[" + varName + "_index]";
                                     TheRewriter.ReplaceText(clang::SourceRange(VD->getBeginLoc(), VD->getInit()->getEndLoc()), textToReplace);
                                 }
                             }
                         }
 
-                        if (MemorySafety && !scopeStack.empty()) {
+                        if (tracksBounds() && !scopeStack.empty()) {
                             scopeStack.back().push_back({varName + "_index", pointeeId, false});
                         }
                         WriteToFile("LocalVariable, " + currentFunction + ", " + varName + "_index");
@@ -639,11 +945,16 @@ bool CodeVisitorAndRewriter::VisitVarDecl(clang::VarDecl *VD) {
                         if (isMulti) {
                             TheRewriter.RemoveText(VD->getLocation().getLocWithOffset(-1), 1);
                         } else {
-                            if (MemorySafety) {
-                                std::string rhsName = initExprStr;
+                            if (tracksBounds()) {
+                                // The value as rewritten (`&x` is `x_index` by now), and the bounds of
+                                // the block it points into, which pointer arithmetic does not move.
+                                std::string rhsName = TheRewriter.getRewrittenText(VD->getInit()->getSourceRange());
+                                if (rhsName.empty()) rhsName = initExprStr;
+                                std::string len, base;
+                                if (!boundsOf(VD->getInit(), len, base)) unknownBounds(len, base);
                                 std::string textToReplace = "int " + varName + "_index = " + rhsName + ";\n"
-                                                            "    __Ptr2Arr_len_" + varName + "_index = __Ptr2Arr_len_" + rhsName + ";\n"
-                                                            "    __Ptr2Arr_base_" + varName + "_index = __Ptr2Arr_base_" + rhsName + ";\n";
+                                                            "    __Ptr2Arr_len_" + varName + "_index = " + len + ";\n"
+                                                            "    __Ptr2Arr_base_" + varName + "_index = " + base + ";\n";
                                 TheRewriter.ReplaceText(clang::SourceRange(VD->getBeginLoc(), VD->getInit()->getEndLoc()), textToReplace);
                             } else {
                                 std::string textToReplace = "int " + varName + "_index";
@@ -657,7 +968,7 @@ bool CodeVisitorAndRewriter::VisitVarDecl(clang::VarDecl *VD) {
                     if (isMulti) {
                         TheRewriter.RemoveText(VD->getLocation().getLocWithOffset(-1), 1);
                     } else {
-                        if (MemorySafety) {
+                        if (tracksBounds()) {
                             std::string textToReplace = "int " + varName + "_index;\n"
                                                         "    __Ptr2Arr_len_" + varName + "_index = 0;\n"
                                                         "    __Ptr2Arr_base_" + varName + "_index = 0";
@@ -677,7 +988,7 @@ bool CodeVisitorAndRewriter::VisitVarDecl(clang::VarDecl *VD) {
                     if (isMulti) {
                         TheRewriter.RemoveText(VD->getLocation().getLocWithOffset(-1), 1);
                     } else {
-                        if (MemorySafety) {
+                        if (tracksBounds()) {
                             std::string textToReplace = "int " + varName + ";\n"
                                                         "__Ptr2Arr_len_" + varName + " = 0;\n"
                                                         "__Ptr2Arr_base_" + varName + " = 0;";
@@ -702,7 +1013,7 @@ bool CodeVisitorAndRewriter::VisitVarDecl(clang::VarDecl *VD) {
                         if (isMulti) {
                             TheRewriter.RemoveText(VD->getLocation().getLocWithOffset(-1), 1);
                         } else {
-                            if (MemorySafety) {
+                            if (tracksBounds()) {
                                 std::string textToReplace = "int " + varName + " = 0;\n"
                                                             "    __Ptr2Arr_len_" + varName + " = 0;\n"
                                                             "    __Ptr2Arr_base_" + varName + " = 0;";
@@ -730,11 +1041,11 @@ bool CodeVisitorAndRewriter::VisitVarDecl(clang::VarDecl *VD) {
                         std::smatch match;
                         if (std::regex_match(initExprStr, match, allocPattern)) {
                             size = match[1].str();
-                            size = std::regex_replace(size, std::regex("sizeof\\s*\\(.*?\\)"), "1");
+                            size = modelSize(size, memorySets[pointerId]);
                         }
 
                         std::string textToReplace;
-                        if (MemorySafety) {
+                        if (tracksBounds()) {
                             textToReplace = "int " + varName + " = allocate_memory" + std::to_string(pointerId) + "(" + size + ");\n"
                                             "    __Ptr2Arr_len_" + varName + " = " + size + ";\n"
                                             "    __Ptr2Arr_base_" + varName + " = " + varName + "";
@@ -742,7 +1053,7 @@ bool CodeVisitorAndRewriter::VisitVarDecl(clang::VarDecl *VD) {
                             textToReplace = "int " + varName + " = allocate_memory" + std::to_string(pointerId) + "(" + size + ")";
                         }
 
-                        if (MemorySafety && isAlloca && !scopeStack.empty()) {
+                        if (tracksBounds() && isAlloca && !scopeStack.empty()) {
                             scopeStack.back().push_back({varName, pointerId, true});
                         }
 
@@ -764,11 +1075,15 @@ bool CodeVisitorAndRewriter::VisitVarDecl(clang::VarDecl *VD) {
                                 TheRewriter.RemoveText(VD->getLocation().getLocWithOffset(-1), 1);
                             }
                         } else {
-                            if (MemorySafety) {
-                                std::string rhsName = initExprStr;
+                            if (tracksBounds()) {
+                                // As above: the rewritten value and the unshifted bounds of its block.
+                                std::string rhsName = TheRewriter.getRewrittenText(VD->getInit()->getSourceRange());
+                                if (rhsName.empty()) rhsName = initExprStr;
+                                std::string len, base;
+                                if (!boundsOf(VD->getInit(), len, base)) unknownBounds(len, base);
                                 std::string textToReplace = "int " + varName + " = " + rhsName + ";\n"
-                                                            "    __Ptr2Arr_len_" + varName + " = __Ptr2Arr_len_" + rhsName + ";\n"
-                                                            "    __Ptr2Arr_base_" + varName + " = __Ptr2Arr_base_" + rhsName + ";\n";
+                                                            "    __Ptr2Arr_len_" + varName + " = " + len + ";\n"
+                                                            "    __Ptr2Arr_base_" + varName + " = " + base + ";\n";
                                 TheRewriter.ReplaceText(clang::SourceRange(VD->getBeginLoc(), VD->getInit()->getEndLoc()), textToReplace);
                             } else {
                                 std::string textToReplace = "int " + varName;
@@ -787,7 +1102,7 @@ bool CodeVisitorAndRewriter::VisitVarDecl(clang::VarDecl *VD) {
                             TheRewriter.RemoveText(VD->getLocation().getLocWithOffset(-1), 1);
                         }
                     } else {
-                        if (MemorySafety) {
+                        if (tracksBounds()) {
                             std::string textToReplace = "int " + varName + ";\n"
                                                         "    __Ptr2Arr_len_" + varName + " = 0;\n"
                                                         "    __Ptr2Arr_base_" + varName + " = 0";
@@ -811,9 +1126,12 @@ bool CodeVisitorAndRewriter::VisitVarDecl(clang::VarDecl *VD) {
                         size_t startBracket = arrayType.find('[');
                         size_t endBracket = arrayType.find(']', startBracket);
                         size = arrayType.substr(startBracket + 1, endBracket - startBracket - 1);
+                        size = modelCount(size, varType->getAsArrayTypeUnsafe()->getElementType(), memorySets[pointeeId]);
+                    } else {
+                        size = cell;
                     }
 
-                    if (MemorySafety) {
+                    if (tracksBounds()) {
                         std::string textToReplace = "int " + varName + "_index;\n"
                                                     "__Ptr2Arr_len_" + varName + "_index = " + size + ";\n"
                                                     "__Ptr2Arr_base_" + varName + "_index = 0";
@@ -824,7 +1142,7 @@ bool CodeVisitorAndRewriter::VisitVarDecl(clang::VarDecl *VD) {
                     }
 
                     std::string textToInsert = "\n    " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(" + size + ");\n";
-                    if (MemorySafety) {
+                    if (tracksBounds()) {
                         textToInsert += "    __Ptr2Arr_base_" + varName + "_index = " + varName + "_index;\n";
                     }
                     TheRewriter.InsertTextAfterToken(mainFunctionStartLoc, textToInsert);
@@ -837,9 +1155,9 @@ bool CodeVisitorAndRewriter::VisitVarDecl(clang::VarDecl *VD) {
                     if (isMulti) {
                         TheRewriter.RemoveText(VD->getLocation().getLocWithOffset(-1), 1);
                     } else {
-                        if (MemorySafety) {
-                            std::string textToReplace = "int " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(1);\n"
-                                                        "    __Ptr2Arr_len_" + varName + "_index = 1;\n"
+                        if (tracksBounds()) {
+                            std::string textToReplace = "int " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(" + cell + ");\n"
+                                                        "    __Ptr2Arr_len_" + varName + "_index = " + cell + ";\n"
                                                         "    __Ptr2Arr_base_" + varName + "_index = " + varName + "_index;\n";
                             if (memorySets[pointeeId].accessedTypes.size() > 1) {
                                 std::string suffix = getTypeSuffix(VD->getType());
@@ -853,16 +1171,16 @@ bool CodeVisitorAndRewriter::VisitVarDecl(clang::VarDecl *VD) {
                             if (memorySets[pointeeId].accessedTypes.size() > 1) {
                                 std::string suffix = getTypeSuffix(VD->getType());
                                 std::string initExprStrRewrite = TheRewriter.getRewrittenText(VD->getInit()->getSourceRange());
-                                std::string textToReplace = "int " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(1);\n    store_memory" + std::to_string(pointeeId) + "_" + suffix + "(" + varName + "_index, " + initExprStrRewrite + ");";
+                                std::string textToReplace = "int " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(" + cell + ");\n    store_memory" + std::to_string(pointeeId) + "_" + suffix + "(" + varName + "_index, " + initExprStrRewrite + ");";
                                 TheRewriter.ReplaceText(clang::SourceRange(VD->getBeginLoc(), VD->getInit()->getEndLoc()), textToReplace);
                             } else {
-                                std::string textToReplace = "int " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(1);\n    memory" + std::to_string(pointeeId) + "[" + varName + "_index]";
+                                std::string textToReplace = "int " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(" + cell + ");\n    memory" + std::to_string(pointeeId) + "[" + varName + "_index]";
                                 TheRewriter.ReplaceText(clang::SourceRange(VD->getBeginLoc(), VD->getInit()->getEndLoc()), textToReplace);
                             }
                         }
                     }
 
-                    if (MemorySafety && !scopeStack.empty()) {
+                    if (tracksBounds() && !scopeStack.empty()) {
                         scopeStack.back().push_back({varName + "_index", pointeeId, false});
                     }
                     WriteToFile("LocalVariable, " + currentFunction + ", " + varName + "_index");
@@ -876,12 +1194,15 @@ bool CodeVisitorAndRewriter::VisitVarDecl(clang::VarDecl *VD) {
                         size_t endBracket = arrayType.find(']', startBracket);
                         size = arrayType.substr(startBracket + 1, endBracket - startBracket - 1);
                         arrayVariableSizes[varName] = size;
+                        size = modelCount(size, varType->getAsArrayTypeUnsafe()->getElementType(), memorySets[pointeeId]);
+                    } else {
+                        size = cell;
                     }
                     if (isMulti) {
                         TheRewriter.RemoveText(VD->getLocation().getLocWithOffset(-1), 1);
                     } else {
                         std::string textToReplace;
-                        if (MemorySafety) {
+                        if (tracksBounds()) {
                             textToReplace = "int " + varName + "_index = allocate_memory" + std::to_string(pointeeId) + "(" + size + ");\n"
                                             "    __Ptr2Arr_len_" + varName + "_index = " + size + ";\n"
                                             "    __Ptr2Arr_base_" + varName + "_index = " + varName + "_index;\n";
@@ -891,7 +1212,7 @@ bool CodeVisitorAndRewriter::VisitVarDecl(clang::VarDecl *VD) {
                         TheRewriter.ReplaceText(VD->getSourceRange(), textToReplace);
                     }
 
-                    if (MemorySafety && !scopeStack.empty()) {
+                    if (tracksBounds() && !scopeStack.empty()) {
                         scopeStack.back().push_back({varName + "_index", pointeeId, false});
                     }
                     WriteToFile("LocalVariable, " + currentFunction + ", " + varName + "_index");
@@ -988,8 +1309,8 @@ bool CodeVisitorAndRewriter::VisitDeclRefExpr(clang::DeclRefExpr *DRE) {
                 std::string idStr = std::to_string(id);
 
                 if (memorySets[id].accessedTypes.size() > 1) {
-                    if (MemorySafety) {
-                        replacement = "load_memory" + idStr + "_" + getTypeSuffix(T) + "(__Ptr2Arr_base_" +varName +"," + varName + "_index, __Ptr2Arr_len_" + varName + "_index)";
+                    if (tracksBounds()) {
+                        replacement = "load_memory" + idStr + "_" + getTypeSuffix(T) + "(__Ptr2Arr_base_" + varName + "_index," + varName + "_index, __Ptr2Arr_len_" + varName + "_index)";
                     } else {
                         replacement = "load_memory" + idStr + "_" + getTypeSuffix(T) + "(" + varName + "_index)";
                     }
@@ -997,7 +1318,7 @@ bool CodeVisitorAndRewriter::VisitDeclRefExpr(clang::DeclRefExpr *DRE) {
                     // If it's an array type, we want to add _index to the variable name
                     replacement = varName + "_index";
                 } else {
-                    if (MemorySafety) {
+                    if (tracksBounds()) {
                         replacement = "memory" + idStr + "[safe_idx_memory" + idStr + "( __Ptr2Arr_base_" + varName + "_index," + varName + "_index,0, __Ptr2Arr_len_" + varName + "_index)]";
                     }else {
                         replacement = "memory" + idStr + "[" + varName + "_index]";
@@ -1072,7 +1393,7 @@ bool CodeVisitorAndRewriter::VisitMemberExpr(clang::MemberExpr *ME) {
                     std::string idStr = std::to_string(i);
                     std::string textToReplace;
 
-                    if (MemorySafety) {
+                    if (tracksBounds()) {
                         std::string safeIndex = "safe_idx_memory" + idStr + "(__Ptr2Arr_base_" + idx + "," + idx + ",0, __Ptr2Arr_len_" + idx + ")";
                         textToReplace = "memory" + idStr + "[" + safeIndex + "]." + memberAccessed;
                     }else {
@@ -1125,15 +1446,15 @@ bool CodeVisitorAndRewriter::VisitArraySubscriptExpr(clang::ArraySubscriptExpr *
                     std::string indexStr = arrayName + " + (" + arrayIndex + ")";
 
                     if (memorySets[i].accessedTypes.size() > 1) {
-                        if (MemorySafety) {
-                            std::string textToReplace = "load_memory" + idStr + "_" + getTypeSuffix(ASE->getType()) + "(__Ptr2Arr_base_"+ indexStr + "," + indexStr + ", __Ptr2Arr_len_" + arrayName + ")";
+                        if (tracksBounds()) {
+                            std::string textToReplace = "load_memory" + idStr + "_" + getTypeSuffix(ASE->getType()) + "(__Ptr2Arr_base_" + arrayName + "," + indexStr + ", __Ptr2Arr_len_" + arrayName + ")";
                             TheRewriter.ReplaceText(ASE->getSourceRange(), textToReplace);
                         } else {
                             std::string textToReplace = "load_memory" + idStr + "_" + getTypeSuffix(ASE->getType()) + "(" + indexStr + ")";
                             TheRewriter.ReplaceText(ASE->getSourceRange(), textToReplace);
                         }
                     } else {
-                        if (MemorySafety) {
+                        if (tracksBounds()) {
                             std::string entireToReplace = "memory" + idStr + "[safe_idx_memory" + idStr + "(__Ptr2Arr_base_" + arrayName + "," + arrayName + ", " + arrayIndex + ", __Ptr2Arr_len_" + arrayName + ")]";
                             TheRewriter.ReplaceText(ASE->getSourceRange(), entireToReplace);
                         }else {
@@ -1147,15 +1468,15 @@ bool CodeVisitorAndRewriter::VisitArraySubscriptExpr(clang::ArraySubscriptExpr *
                     std::string indexStr = arrayName + "_index + (" + arrayIndex + ")";
 
                     if (memorySets[i].accessedTypes.size() > 1) {
-                        if (MemorySafety) {
-                            std::string textToReplace = "load_memory" + idStr + "_" + getTypeSuffix(ASE->getType()) + "(__Ptr2Arr_base_" + indexStr+ "," + indexStr + ", __Ptr2Arr_len_" + arrayName + "_index)";
+                        if (tracksBounds()) {
+                            std::string textToReplace = "load_memory" + idStr + "_" + getTypeSuffix(ASE->getType()) + "(__Ptr2Arr_base_" + arrayName + "_index," + indexStr + ", __Ptr2Arr_len_" + arrayName + "_index)";
                             TheRewriter.ReplaceText(ASE->getSourceRange(), textToReplace);
                         } else {
                             std::string textToReplace = "load_memory" + idStr + "_" + getTypeSuffix(ASE->getType()) + "(" + indexStr + ")";
                             TheRewriter.ReplaceText(ASE->getSourceRange(), textToReplace);
                         }
                     } else {
-                        if (MemorySafety) {
+                        if (tracksBounds()) {
                             std::string entireToReplace = "memory" + idStr + "[safe_idx_memory" + idStr + "(__Ptr2Arr_base_" + arrayName + "_index," + arrayName + "_index, " + arrayIndex + ", __Ptr2Arr_len_" + arrayName + "_index)]";
                             TheRewriter.ReplaceText(ASE->getSourceRange(), entireToReplace);
                         }else {
@@ -1191,22 +1512,24 @@ bool CodeVisitorAndRewriter::VisitBinaryOperator(clang::BinaryOperator *BO) {
                 std::string operatorStr = BO->getOpcodeStr().str();
 
                 std::string replacement;
+                // Under bounds tracking a load is `load_memoryN_T(base, index, len)` and a store takes
+                // (base, index, value, len). Every parameter is an int, so arguments in another order
+                // still compile, and the bounds test then reads the wrong values.
+                std::string baseParam = match[4].matched ? match[3].str() : "__Ptr2Arr_base_" + indexStr;
+                std::string indexParam = match[4].matched ? match[4].str() : indexStr;
+                std::string lenParam = match[4].matched ? match[5].str() : "__Ptr2Arr_len_" + indexStr;
                 if (operatorStr == "=") {
                     // Simple assignment
-                    if (MemorySafety) {
-                        std::string lenParam = match[4].matched ? match[4].str() : "__Ptr2Arr_len_" + indexStr;
-                        std::string baseParam = match[4].matched ? match[4].str() : "__Ptr2Arr_base_" + indexStr;
-                        replacement = "store_memory" + id + "_" + suffix + "(" + baseParam + "," + indexStr + ", " + rewrittenRHS + ", " + lenParam + ")";
+                    if (tracksBounds()) {
+                        replacement = "store_memory" + id + "_" + suffix + "(" + baseParam + "," + indexParam + ", " + rewrittenRHS + ", " + lenParam + ")";
                     } else {
                         replacement = "store_memory" + id + "_" + suffix + "(" + indexStr + ", " + rewrittenRHS + ")";
                     }
                 } else {
                     // Compound assignment (e.g., +=, -=): store(index, load(index) OP RHS)
                     char op = operatorStr[0];
-                    if (MemorySafety) {
-                        std::string lenParam = match[4].matched ? match[4].str() : "__Ptr2Arr_len_" + indexStr;
-                        std::string baseParam = match[4].matched ? match[4].str() : "__Ptr2Arr_base_" + indexStr;
-                        replacement = "store_memory" + id + "_" + suffix + "(" + indexStr + ", load_memory" + id + "_" + suffix + "("+ baseParam +"," + indexStr + ", " + lenParam + ") " + op + " " + rewrittenRHS + ", " + lenParam + ")";
+                    if (tracksBounds()) {
+                        replacement = "store_memory" + id + "_" + suffix + "(" + baseParam + "," + indexParam + ", load_memory" + id + "_" + suffix + "(" + baseParam + "," + indexParam + ", " + lenParam + ") " + op + " " + rewrittenRHS + ", " + lenParam + ")";
                     } else {
                         replacement = "store_memory" + id + "_" + suffix + "(" + indexStr + ", load_memory" + id + "_" + suffix + "(" + indexStr + ") " + op + " " + rewrittenRHS + ")";
                     }
@@ -1249,7 +1572,7 @@ bool CodeVisitorAndRewriter::VisitBinaryOperator(clang::BinaryOperator *BO) {
                     clang::SourceLocation endLoc = SM.getExpansionLoc(BO->getRHS()->getEndLoc());
                     clang::CharSourceRange replaceRange = clang::CharSourceRange::getTokenRange(startLoc, endLoc);
 
-                    if (MemorySafety) {
+                    if (tracksBounds()) {
                         std::string textToReplace = "0;\n    __Ptr2Arr_len_" + varName + " = 0;\n       __Ptr2Arr_base_" + varName + " = 0";
                         TheRewriter.ReplaceText(replaceRange, textToReplace);
                     } else {
@@ -1261,11 +1584,11 @@ bool CodeVisitorAndRewriter::VisitBinaryOperator(clang::BinaryOperator *BO) {
                     std::smatch match;
                     if (std::regex_match(initExprStr, match, allocaPattern)) {
                         size = match[1].str();
-                        size = std::regex_replace(size, std::regex("sizeof\\s*\\(.*?\\)"), "1");
+                        size = modelSize(size, memorySets[id]);
                     }
 
                     std::string textToReplace;
-                    if (MemorySafety) {
+                    if (tracksBounds()) {
                         textToReplace = varName + " = allocate_memory" + std::to_string(id) + "(" + size + ");\n"
                                         "    __Ptr2Arr_len_" + varName + " = " + size + ";\n"
                                         "    __Ptr2Arr_base_" + varName + " = " + varName;
@@ -1285,11 +1608,11 @@ bool CodeVisitorAndRewriter::VisitBinaryOperator(clang::BinaryOperator *BO) {
                     std::smatch match;
                     if (std::regex_match(initExprStr, match, mallocPattern)) {
                         size = match[1].str();
-                        size = std::regex_replace(size, std::regex("sizeof\\s*\\(.*?\\)"), "1");
+                        size = modelSize(size, memorySets[id]);
                     }
 
                     std::string textToReplace;
-                    if (MemorySafety) {
+                    if (tracksBounds()) {
                         textToReplace = varName + " = allocate_memory" + std::to_string(id) + "(" + size + ");\n"
                                         "    __Ptr2Arr_len_" + varName + " = " + size + ";\n"
                                         "    __Ptr2Arr_base_" + varName + " = " + varName;
@@ -1304,15 +1627,19 @@ bool CodeVisitorAndRewriter::VisitBinaryOperator(clang::BinaryOperator *BO) {
                             clang::Lexer::getLocForEndOfToken(initExpr->getEndLoc(), 0, SMExp, TheRewriter.getLangOpts())),
                         textToReplace);
                 } else {
-                    if (MemorySafety) {
+                    if (tracksBounds()) {
                         std::string rewrittenRHS = TheRewriter.getRewrittenText(BO->getRHS()->getSourceRange());
                         std::string textToReplace;
-                        if(rewrittenRHS == varName){
+                        // The bounds of the block the value points into, which pointer arithmetic
+                        // does not move: `p = q + 1` keeps q's base and length.
+                        std::string len, base;
+                        if (!boundsOf(BO->getRHS(), len, base)) unknownBounds(len, base);
+                        if(len == "__Ptr2Arr_len_" + varName){
                             textToReplace = "(" + varName + " = " + rewrittenRHS + ")";
                         }else {
                             textToReplace = "(" + varName + " = " + rewrittenRHS + ","
-                                                        "    __Ptr2Arr_len_" + varName + " = __Ptr2Arr_len_" + rewrittenRHS + ","
-                                                        "    __Ptr2Arr_base_" + varName + " = __Ptr2Arr_base_" + rewrittenRHS + ")";
+                                                        "    __Ptr2Arr_len_" + varName + " = " + len + ","
+                                                        "    __Ptr2Arr_base_" + varName + " = " + base + ")";
                         }
                         auto &SMExp = TheRewriter.getSourceMgr();
                         TheRewriter.ReplaceText(
@@ -1412,13 +1739,13 @@ bool CodeVisitorAndRewriter::VisitUnaryOperator(clang::UnaryOperator *UO) {
                                 std::string textToReplace;
 
                                 if (memorySets[i].accessedTypes.size() > 1) {
-                                    if (MemorySafety) {
+                                    if (tracksBounds()) {
                                         textToReplace = "load_memory" + idStr + "_" + getTypeSuffix(UO->getType()) + "(__Ptr2Arr_base_" + varName + ","  + innerIndex + ", __Ptr2Arr_len_" + varName + "_index)";
                                     } else {
                                         textToReplace = "load_memory" + idStr + "_" + getTypeSuffix(UO->getType()) + "(" + innerIndex + ")";
                                     }
                                 } else {
-                                    if (MemorySafety) {
+                                    if (tracksBounds()) {
                                         textToReplace = "memory" + idStr + "[safe_idx_memory" + idStr + "( __Ptr2Arr_base_" + varName + "_index," + innerIndex + ",0, __Ptr2Arr_len_" + varName + "_index)]";
                                     }else {
                                         textToReplace = "memory" + idStr + "[" + innerIndex + "]";
@@ -1432,13 +1759,13 @@ bool CodeVisitorAndRewriter::VisitUnaryOperator(clang::UnaryOperator *UO) {
                         if (!handled) {
                             std::string textToReplace;
                             if (memorySets[i].accessedTypes.size() > 1) {
-                                if (MemorySafety) {
+                                if (tracksBounds()) {
                                     textToReplace = "load_memory" + idStr + "_" + getTypeSuffix(UO->getType()) + "(__Ptr2Arr_base_" + varName + "," + varName + ", __Ptr2Arr_len_" + varName + ")";
                                 } else {
                                     textToReplace = "load_memory" + idStr + "_" + getTypeSuffix(UO->getType()) + "(" + varName + ")";
                                 }
                             } else {
-                                if (MemorySafety) {
+                                if (tracksBounds()) {
                                     textToReplace = "memory" + idStr + "[safe_idx_memory" + idStr + "(__Ptr2Arr_base_" + varName + "," + varName +",0, __Ptr2Arr_len_" + varName + ")]";
                                 }else {
                                     textToReplace = "memory" + idStr + "[" + varName + "]";
@@ -1453,7 +1780,7 @@ bool CodeVisitorAndRewriter::VisitUnaryOperator(clang::UnaryOperator *UO) {
 
             else if (auto *unaryOp = dyn_cast<clang::UnaryOperator>(subExpr)) {
                 if (currentSetID != -1 && memorySets[currentSetID].accessedTypes.size() > 1) {
-                    if (MemorySafety && !baseVar.empty()) {
+                    if (tracksBounds() && !baseVar.empty()) {
                         TheRewriter.ReplaceText(UO->getOperatorLoc(), 1, "load_memory" + std::to_string(currentSetID) + "_" + getTypeSuffix(UO->getType()) + "(__Ptr2Arr_base_" + baseVar + ",");
                         TheRewriter.InsertTextAfterToken(UO->getEndLoc(), ", __Ptr2Arr_len_" + baseVar + ")");
                     } else {
@@ -1462,7 +1789,7 @@ bool CodeVisitorAndRewriter::VisitUnaryOperator(clang::UnaryOperator *UO) {
                     }
                 } else {
                     std::string idStr = std::to_string(currentSetID);
-                    if (MemorySafety) {
+                    if (tracksBounds()) {
                         std::string lenParam = !baseVar.empty() ? "__Ptr2Arr_len_" + baseVar : "0";
                         std::string baseParam = !baseVar.empty() ? "__Ptr2Arr_base_" + baseVar : "0";
                         TheRewriter.ReplaceText(UO->getOperatorLoc(), 1, "memory" + idStr + "[safe_idx_memory" + idStr + "(" + baseParam + ",");
@@ -1490,13 +1817,13 @@ bool CodeVisitorAndRewriter::VisitUnaryOperator(clang::UnaryOperator *UO) {
                             std::string textToReplace;
                             std::string idStr = std::to_string(i);
                             if (memorySets[i].accessedTypes.size() > 1) {
-                                if (MemorySafety) {
+                                if (tracksBounds()) {
                                     textToReplace = "load_memory" + idStr + "_" + getTypeSuffix(UO->getType()) + "(__Ptr2Arr_base_" + basePointerStr + "," + subExprStr + ", __Ptr2Arr_len_" + basePointerStr + ")";
                                 } else {
                                     textToReplace = "load_memory" + idStr + "_" + getTypeSuffix(UO->getType()) + "(" + subExprStr + ")";
                                 }
                             } else {
-                                if (MemorySafety) {
+                                if (tracksBounds()) {
                                     textToReplace = "memory" + idStr + "[safe_idx_memory" + idStr + "(__Ptr2Arr_base_" + basePointerStr + "," + subExprStr + ",0, __Ptr2Arr_len_" + basePointerStr + ")]";
                                 }else {
                                     textToReplace = "memory" + idStr + "[" + subExprStr + "]";
@@ -1519,7 +1846,7 @@ bool CodeVisitorAndRewriter::VisitUnaryOperator(clang::UnaryOperator *UO) {
 
                             std::string textToReplace;
                             std::string idStr = std::to_string(i);
-                            if (MemorySafety) {
+                            if (tracksBounds()) {
                                 textToReplace = "memory" + idStr + "[safe_idx_memory" + idStr + "(__Ptr2Arr_base_" + basePointerStr + "," + subExprStr + ",0, __Ptr2Arr_len_" + basePointerStr + ")]";
                             }else {
                                 textToReplace = "memory" + idStr + "[" + subExprStr + "]";
@@ -1547,13 +1874,13 @@ bool CodeVisitorAndRewriter::VisitUnaryOperator(clang::UnaryOperator *UO) {
                             std::string textToReplace;
                             std::string idStr = std::to_string(i);
                             if (memorySets[i].accessedTypes.size() > 1) {
-                                if (MemorySafety) {
+                                if (tracksBounds()) {
                                     textToReplace = "load_memory" + idStr + "_" + getTypeSuffix(UO->getType()) + "(__Ptr2Arr_base_" + basePointerStr + "," + subExprStr + ", __Ptr2Arr_len_" + basePointerStr + ")";
                                 } else {
                                     textToReplace = "load_memory" + idStr + "_" + getTypeSuffix(UO->getType()) + "(" + subExprStr + ")";
                                 }
                             } else {
-                                if (MemorySafety) {
+                                if (tracksBounds()) {
                                     textToReplace = "memory" + idStr + "[safe_idx_memory" + idStr + "( __Ptr2Arr_base_" + basePointerStr + "," + subExprStr + ",0, __Ptr2Arr_len_" + basePointerStr + ")]";
                                 }else {
                                     textToReplace = "memory" + idStr + "[" + subExprStr + "]";
@@ -1574,13 +1901,13 @@ bool CodeVisitorAndRewriter::VisitUnaryOperator(clang::UnaryOperator *UO) {
                             std::string textToReplace;
                             std::string idStr = std::to_string(i);
                             if (memorySets[i].accessedTypes.size() > 1) {
-                                if (MemorySafety) {
+                                if (tracksBounds()) {
                                     textToReplace = "load_memory" + idStr + "_" + getTypeSuffix(UO->getType()) + "(__Ptr2Arr_base_" + basePointerStr + "," + basePointerStr + ", __Ptr2Arr_len_" + basePointerStr + ")";
                                 } else {
                                     textToReplace = "load_memory" + idStr + "_" + getTypeSuffix(UO->getType()) + "(" + basePointerStr + ")";
                                 }
                             } else {
-                                if (MemorySafety) {
+                                if (tracksBounds()) {
                                     textToReplace = "memory" + idStr + "[safe_idx_memory" + idStr + "(__Ptr2Arr_base_" + basePointerStr + "," + basePointerStr + ", 0, __Ptr2Arr_len_" + basePointerStr + ")]";
                                 }else {
                                     textToReplace = "memory" + idStr + "[" + basePointerStr + "]";
@@ -1644,13 +1971,13 @@ bool CodeVisitorAndRewriter::VisitUnaryOperator(clang::UnaryOperator *UO) {
                             std::string baseParam = !originVarName.empty() ? "__Ptr2Arr_base_" + originVarName : "0";
 
                             if (memorySets[targetSetID].accessedTypes.size() > 1) {
-                                if (MemorySafety) {
+                                if (tracksBounds()) {
                                     textToReplace = "load_memory" + targetStr + "_" + getTypeSuffix(UO->getType()) + "("  + baseParam + "," + subExprStr + ", " + lenParam + ")";
                                 } else {
                                     textToReplace = "load_memory" + targetStr + "_" + getTypeSuffix(UO->getType()) + "(" + subExprStr + ")";
                                 }
                             } else {
-                                if (MemorySafety) {
+                                if (tracksBounds()) {
                                     textToReplace = "memory" + targetStr + "[safe_idx_memory" + targetStr + "(" + baseParam + "," + subExprStr + ",0, " + lenParam + ")]";
                                 }else {
                                     textToReplace = "memory" + targetStr + "[" + subExprStr + "]";
@@ -1666,7 +1993,7 @@ bool CodeVisitorAndRewriter::VisitUnaryOperator(clang::UnaryOperator *UO) {
 
                             std::string textToReplace;
 
-                            if (MemorySafety) {
+                            if (tracksBounds()) {
                                 textToReplace = "memory0[safe_idx_memory0(0," + subExprStr + ",  0, 0)]";
                             }else {
                                 textToReplace = "memory0[" + subExprStr + "]";
@@ -1837,17 +2164,19 @@ bool CodeVisitorAndRewriter::VisitUnaryOperator(clang::UnaryOperator *UO) {
 
                             if (!argumentStr.empty()) {
                                 std::string replacement;
-                                if (MemorySafety && !detectedVarName.empty()) {
-                                    std::string lenMeta = ", __Ptr2Arr_len_" + detectedVarName;
-                                    std::string baseMeta = ", __Ptr2Arr_base_" + detectedVarName;
+                                if (tracksBounds() && !detectedVarName.empty()) {
+                                    // The helpers take (base, index, len), as `safe_idx_memoryN` does. Every
+                                    // parameter is an int, so another order still compiles, and the bounds
+                                    // test then reads the wrong values.
+                                    std::string args = "__Ptr2Arr_base_" + detectedVarName + ", " + argumentStr + ", __Ptr2Arr_len_" + detectedVarName;
                                     if (isPreOp) {
                                         if (UO->getOpcode() == clang::UO_PreDec) {
-                                            replacement = "(" + funcName + "(" + baseMeta + argumentStr + lenMeta   + ") - 1)";
+                                            replacement = "(" + funcName + "(" + args + ") - 1)";
                                         } else {
-                                            replacement = "(" + funcName + "(" + baseMeta + argumentStr + lenMeta + ") + 1)";
+                                            replacement = "(" + funcName + "(" + args + ") + 1)";
                                         }
                                     } else {
-                                        replacement = funcName + "(" + argumentStr + lenMeta  + baseMeta + ")";
+                                        replacement = funcName + "(" + args + ")";
                                     }
                                 } else {
                                     if (isPreOp) {
@@ -2015,7 +2344,7 @@ bool CodeVisitorAndRewriter::VisitCallExpr(clang::CallExpr *CE) {
             return true;
         }
 
-        if (!MemorySafety) {
+        if (!tracksBounds()) {
             return true;
         }
 
@@ -2024,7 +2353,23 @@ bool CodeVisitorAndRewriter::VisitCallExpr(clang::CallExpr *CE) {
         }
 
         if (funcName == "free") {
-            if (CE->getNumArgs() > 0) {
+            if (AssumeSafety) {
+                // A free is a no-op under --assume-safety. `allocate_memoryN` never hands out an
+                // index twice, so a block left in place changes no execution that does not touch
+                // it after the free, which every memory-safe execution is; an invalid free or a
+                // use after free is the --memory-safety program's to catch. An argument other than
+                // a plain variable is still evaluated, since evaluating it can read through a
+                // pointer (`free(p->next)`), which the assumption may cut off.
+                std::string replacement = "(void)0";
+                if (CE->getNumArgs() > 0 && !llvm::isa<clang::DeclRefExpr>(CE->getArg(0)->IgnoreParenImpCasts())) {
+                    std::string argText = TheRewriter.getRewrittenText(CE->getArg(0)->getSourceRange());
+                    if (!argText.empty()) {
+                        replacement = "(void)(" + argText + ")";
+                    }
+                }
+                TheRewriter.ReplaceText(CE->getSourceRange(), replacement);
+                WriteToFile("FreeRewrite, " + currentFunction + ", noop_free");
+            } else if (CE->getNumArgs() > 0) {
                 clang::Expr *arg = CE->getArg(0)->IgnoreImpCasts();
 
                 clang::SourceLocation argBegin = arg->getBeginLoc();
@@ -2075,15 +2420,57 @@ bool CodeVisitorAndRewriter::VisitCallExpr(clang::CallExpr *CE) {
 
                 if (param->getType()->isPointerType() || param->getType()->isArrayType()) {
                     std::string paramName = param->getNameAsString();
-                    std::string argName = "";
+                    // A call's result as the argument: its bounds exist only once that call has
+                    // returned, so the argument itself takes them over, `g(f())` becoming
+                    // `g((__Ptr2Arr_ret_val_f = f(), __Ptr2Arr_len_p = __Ptr2Arr_ret_len_f, …,
+                    // __Ptr2Arr_ret_val_f))`. Each argument does so right after its own call, so
+                    // `g(f(), f())` gives each parameter its own call's bounds.
+                    const auto *argCall = llvm::dyn_cast<clang::CallExpr>(arg->IgnoreParenCasts());
+                    std::string returned = argCall ? trackedReturnName(argCall) : "";
+                    if (!returned.empty() && !paramName.empty() && !isPreCheckPhase) {
+                        clang::SourceRange argRange = CE->getArg(i)->getSourceRange();
+                        std::string argText = TheRewriter.getRewrittenText(argRange);
+                        if (!argText.empty()) {
+                            std::string wrapped = "(__Ptr2Arr_ret_val_" + returned + " = " + argText +
+                                                  ", __Ptr2Arr_len_" + paramName + " = __Ptr2Arr_ret_len_" + returned +
+                                                  ", __Ptr2Arr_base_" + paramName + " = __Ptr2Arr_ret_base_" + returned +
+                                                  ", __Ptr2Arr_ret_val_" + returned + ")";
+                            if (!TheRewriter.ReplaceText(argRange, wrapped)) continue;
+                            llvm::errs() << "[Ptr2Arr] Warning: the bounds of an argument of " << funcName << " could not be passed\n";
+                        }
+                    }
 
-                    if (const auto *DRE = llvm::dyn_cast<clang::DeclRefExpr>(arg)) {
-                        argName = DRE->getNameInfo().getAsString();
+                    // The bounds of the block the argument points into: `f(b + 1)` passes b's, and a
+                    // null pointer passes no block.
+                    std::string argName = boundsOwner(arg, memorySets);
+                    if (argName.empty() && !paramName.empty() &&
+                        arg->isNullPointerConstant(*Context, clang::Expr::NPC_ValueDependentIsNull)) {
+                        exprSync += "__Ptr2Arr_len_" + paramName + " = 0, ";
+                        exprSync += "__Ptr2Arr_base_" + paramName + " = 0, ";
+                        continue;
                     }
 
                     if (!argName.empty() && !paramName.empty()) {
                         exprSync += "__Ptr2Arr_len_" + paramName + " = __Ptr2Arr_len_" + argName + ", ";
                         exprSync += "__Ptr2Arr_base_" + paramName + " = __Ptr2Arr_base_" + argName + ", ";
+                    } else if (!paramName.empty()) {
+                        // Bounds that cannot be found must not decide anything. Under --memory-safety
+                        // a length of 0 reports every access through the parameter (a null argument
+                        // is one); under --assume-safety the whole memory array cuts none. Leaving the
+                        // parameter's previous bounds, as before, could do either.
+                        int setId = -1;
+                        ScopedPointer paramSp = {FD->getNameAsString(), paramName};
+                        for (size_t k = 0; k < memorySets.size(); ++k) {
+                            if (std::find(memorySets[k].pointers.begin(), memorySets[k].pointers.end(), paramSp) != memorySets[k].pointers.end()) {
+                                setId = k;
+                                break;
+                            }
+                        }
+                        if (setId != -1) {
+                            std::string len = AssumeSafety ? "MEMORY" + std::to_string(setId) + "_SIZE" : "0";
+                            exprSync += "__Ptr2Arr_len_" + paramName + " = " + len + ", ";
+                            exprSync += "__Ptr2Arr_base_" + paramName + " = 0, ";
+                        }
                     }
                 }
             }
@@ -2109,13 +2496,13 @@ bool CodeVisitorAndRewriter::TraverseCompoundStmt(clang::CompoundStmt *CS) {
     }
     clang::SourceManager &SM = TheRewriter.getSourceMgr();
     bool isInMain = SM.isInMainFile(CS->getBeginLoc());
-    if (MemorySafety && isInMain) {
+    if (tracksBounds() && isInMain) {
         scopeStack.push_back(std::vector<AllocInfo>());
     }
 
     bool result = clang::RecursiveASTVisitor<CodeVisitorAndRewriter>::TraverseCompoundStmt(CS);
 
-    if (MemorySafety && isInMain) {
+    if (tracksBounds() && isInMain) {
         if (!scopeStack.empty()) {
             if (!hasReturnStmt) {
                 std::vector<AllocInfo> &currentScopeAllocations = scopeStack.back();

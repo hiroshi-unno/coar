@@ -1,0 +1,12 @@
+/* Expected: sat. In-house EHMTT lowering regression. */
+%BEGING
+S x -> copy x.
+Copy x -> b.
+%ENDG
+%BEGINA
+q a -> .
+r b -> .
+%ENDA
+%BEGINT
+S : q -> q.
+%ENDT

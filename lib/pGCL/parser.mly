@@ -4,15 +4,22 @@
   open Ast.LogicOld
   open PgclSyntax
 
+  let mk_bound_query post op bound transformer =
+    match op with
+    | T_num.NLeq _ -> Query.mk_bound post Query.Upper ~transformer bound
+    | T_num.NLt _ -> Query.mk_bound post Query.Upper ~strict:true ~transformer bound
+    | T_num.NGeq _ -> Query.mk_bound post Query.Lower ~transformer bound
+    | T_num.NGt _ -> Query.mk_bound post Query.Lower ~strict:true ~transformer bound
+    | _ -> failwith "unsupported pGCL expectation bound comparator"
 %}
 
-%token BOOL NAT REAL CONST
+%token BOOL NAT INT REAL CONST
 %token RPARAM NPARAM
 %token EOF
 %token SKIP WHILE
 %token IF ELSE
 %token TICK OBSERVE LOOP
-%token EXPECTATION PRQUERY PRINT PLOT OPTIMIZE
+%token EXPECTATION ERT PRQUERY PRINT PLOT OPTIMIZE
 %token DUNIFORM CUNIFORM GEOMETRIC POISSON
 %token LOGDIST BINOMIAL BERNOULLI IID
 %token TRUE FALSE INFINITY
@@ -61,10 +68,16 @@ Declarations:
 	| { ([], [], []) }
 
 
-/* TODO: Implement the bounds for nat and real */
+/* A [nat] variable is an integer (sort Int) that is non-negative: the sort is
+   kept here, and the non-negativity is recorded in [nat_vars] and becomes a
+   constraint on the domain of the reduction's equations.  An [int] variable
+   is an ordinary integer of either sign: subtraction on it is ordinary, and
+   it is in no [nat_vars], so neither monus nor the domain constraint
+   applies. */
 VarDeclaration:
 	BOOL varname=ID { ((Ident.Tvar varname, T_bool.SBool), None) }
-  | NAT varname=ID  { ((Ident.Tvar varname, T_real.SReal), Some (Ident.Tvar varname)) }
+  | NAT varname=ID  { ((Ident.Tvar varname, T_int.SInt), Some (Ident.Tvar varname)) }
+  | INT varname=ID  { ((Ident.Tvar varname, T_int.SInt), None) }
   | REAL varname=ID { ((Ident.Tvar varname, T_real.SReal), None) }
   | RPARAM varname=ID { ((Ident.Tvar varname, T_real.SReal), None) }
   | NPARAM varname=ID { ((Ident.Tvar varname, T_int.SInt), None) }
@@ -104,12 +117,27 @@ Instruction:
 Query:
 	EXPECTATION LBRACKET expr=Expr RBRACKET { Query.mk_expectation expr }
   | EXPECTATION LBRACKET post=Expr RBRACKET op=PREDSYM bound=Expr {
-      match op with
-      | T_num.NLeq _ -> Query.mk_bound post Query.Upper bound
-      | T_num.NLt _ -> Query.mk_bound post Query.Upper ~strict:true bound
-      | T_num.NGeq _ -> Query.mk_bound post Query.Lower bound
-      | T_num.NGt _ -> Query.mk_bound post Query.Lower ~strict:true bound
-      | _ -> failwith "unsupported pGCL expectation bound comparator"
+      mk_bound_query post op bound Query.Cwp
+    }
+  /* The conditional expectation transformer a bound speaks of on a program
+     with observe, written as a word after the bound: cwp (the default), cwlp
+     or r2.  A bare word adds no conflict: an identifier already follows an
+     expression wherever an instruction comes next, which a bracketed
+     [cwp] would not. */
+  | EXPECTATION LBRACKET post=Expr RBRACKET op=PREDSYM bound=Expr name=ID {
+      match Query.transformer_of_string name with
+      | Some transformer -> mk_bound_query post op bound transformer
+      | None ->
+        Common.Refusal.refuse
+          "unknown expectation transformer %s: expected cwp, cwlp or r2" name
+    }
+  /* A bound on the expected runtime, the sum of the ticks a run pays, plus
+     the post-expectation: ert(S, post), the tick-cost variant of Kaminski
+     et al.'s calculus (ESOP 2016, where every statement costs a unit).  It
+     takes no transformer word: the conditional transformers are about
+     observe, which the runtime calculus does not have. */
+  | ERT LBRACKET post=Expr RBRACKET op=PREDSYM bound=Expr {
+      mk_bound_query post op bound Query.Ert
     }
  /*
  | PRQUERY LBRACKET expr=Expr RBRACKET { Program.prquery_of expr }
@@ -214,6 +242,17 @@ T_NumAddSub:
   e4=Expr4 COLON e5=Expr5 { Expr.mk_mul e4 e5 }
 	| Expr5 { $1 }*/
 
+/* The arithmetic operators are sort-polymorphic and are resolved by
+   [PGCL.Util.elaborate]: [%] on two integer operands is the remainder
+   rounding toward zero; [/] between two integer operands is integer
+   division rounding toward zero inside the program (an assignment's value,
+   a guard, an observed condition), and exact division in an expectation, a
+   bound, a choice weight or a probability; [-] between [nat] operands is
+   truncated subtraction, and ordinary on [int] ones.
+   Toward zero (truncation) is a choice made for operands of either sign; it
+   agrees with flooring and with SMT-LIB's Euclidean division whenever the
+   dividend is non-negative and the divisor positive, which is every division
+   over [nat] values with a positive divisor. */
 T_NumMulDivMod:
   e1=T_NumMulDivMod MULT e2=T_NumPow { T_num.mk_nmul e1 e2 }
 	| e1=T_NumMulDivMod DIV e2=T_NumPow { T_num.mk_ndiv Value.Truncated e1 e2 }
@@ -230,8 +269,9 @@ T_NumAtom:
   | LBRACKET e=T_bool RBRACKET
   	{ T_bool.mk_if_then_else e (T_real.rone ()) (T_real.rzero ())  }
   | varname=ID { Term.mk_var (Ident.Tvar varname) @@ Sort.mk_fresh_svar () }
-//   | n=NATL { T_int.from_int n }
-  | n=NATL {T_real.mk_real (Q.of_int n)}
+  /* a numeral takes the sort its context requires: an integer beside a [nat]
+     variable, a real in a probability weight such as [1/2] or an expectation */
+  | n=NATL { T_num.mk_value (string_of_int n) }
   | r=REALL { T_real.mk_real (Q.of_string r) }
 
 /*   | INFINITY { AstPgcl.Infinity } */

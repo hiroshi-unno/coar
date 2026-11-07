@@ -1,6 +1,6 @@
 (* Configuration of the higher-order model checking front door: which external
-   model checker decides a HORS or EHMTT problem, TRecS (trivial tree automata)
-   or HorSat2 (alternating tree automata). *)
+   model checker decides a HORS problem, TRecS or HorSat2.  Each reads a
+   problem of either automaton dialect (its wrapper translates the other). *)
 open Core
 open Common.Util
 

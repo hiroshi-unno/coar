@@ -1,0 +1,21 @@
+# The weight p of the choice is a program variable, never assigned, so the bound is asked for
+# every initial p >= 0.  Where p >= 2 the choice is reached with weight p outside [0, 1]: such a
+# run is an error from which no bound may be proved, so against an upper bound it is worth +oo
+# and the bound fails at every p >= 2, although every other run's indicator [c = 1] is at most
+# 1.  Elsewhere c = 0 and the bound holds.
+# Expected: unknown.  The cwlp query is reduced to a lower bound on wp(S, 1 - [c = 1]); when an
+# out-of-range weight made the run abort it was worth 1 in wlp, as a diverging run is, the
+# bound 1 held there, and it was proved (valid).
+nat p;
+nat c;
+c := 0;
+if (p >= 2) {
+	{
+		c := 1;
+	}[p]{
+		c := 0;
+	}
+} else {
+	c := 0;
+}
+?Ex [[c = 1]] <= 1 cwlp

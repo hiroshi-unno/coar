@@ -1,0 +1,4 @@
+c A variable is a number, not a spelling: 01 and 1 are the same variable.
+p cnf 1 2
+01 0
+-1 0

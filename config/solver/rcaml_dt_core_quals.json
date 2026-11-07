@@ -1,0 +1,10 @@
+[
+    "RCaml",
+    {
+        "verbose": false,
+        "solver": [
+            "Filename",
+            "./config/solver/pcsat_dt_core_quals.json"
+        ]
+    }
+]

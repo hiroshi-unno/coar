@@ -1,13 +1,15 @@
 (* Abstract syntax of SGCL, a probabilistic guarded command language with
-   real-valued variables, and its reduction to QFL.  Statements are
+   undeclared numeric variables, and its reduction to QFL.  Statements are
    assignment (also in increment and decrement form), conditional, loop,
    probabilistic choice, a loop that continues with a given probability
    ([WHILE_FLIP]) and observation; a program's variables are all those its
-   statements mention, read as reals.  [Program.wpt] is the
+   statements mention, each an integer or a real as [SGCL.Util.infer_sorts]
+   decides.  [Program.wpt] is the
    weakest-preexpectation transformer: it returns the preexpectation of the
    program's post-expectation as a real-valued term together with one
    least-fixpoint equation per loop, the input of the QFL solver.  A failing
-   observation contributes 0, so the result is unnormalised. *)
+   observation contributes a given value, 0 unless [Util]'s reduction of a
+   conditional expectation asks for another. *)
 open Core
 open Common.Ext
 open Ast.LogicOld
@@ -305,11 +307,21 @@ end
 and Program : sig
   type kind = LB | UB
 
+  (** which conditional expectation a bound speaks of, for a program with
+      [observe] (Olmedo et al., Conditioning in Probabilistic Programming,
+      TOPLAS 40(1), 2018): [Cwp] is [wp(S, f) / wlp(S, 1)], where a diverging
+      run counts as one that passed the observations, [Cwlp] its liberal
+      [wlp(S, g) / wlp(S, 1)] for [g] bounded by 1, and [R2] is
+      [wp(S, f) / wp(S, 1)], normalised over the terminating runs.  Without
+      [observe], [Cwp] is [wp(S, f)]. *)
+  type transformer = Cwp | Cwlp | R2
+
   type bound = {
     post : Term.t;
     kind : kind;
     value : Term.t;
     strict : bool;
+    transformer : transformer;
   }
 
   type query = {
@@ -329,17 +341,31 @@ and Program : sig
   }
 
   val make : ?bound:bound -> Statement.t -> Term.t -> t
-  val mk_bound : Term.t -> kind -> ?strict:bool -> Term.t -> bound
+
+  val mk_bound :
+    Term.t -> kind -> ?strict:bool -> ?transformer:transformer -> Term.t -> bound
+
+  (** [transformer_of_string name] reads [cwp], [cwlp] or [r2] *)
+  val transformer_of_string : string -> transformer option
+
   val str_of : t -> string
-  val wpt : print:(string lazy_t -> unit) -> t -> EquationSystem.t
+
+  val wpt :
+    print:(string lazy_t -> unit) ->
+    ?fail:Term.t ->
+    ?err:Term.t ->
+    t ->
+    EquationSystem.t
 end = struct
   type kind = LB | UB
+  type transformer = Cwp | Cwlp | R2
 
   type bound = {
     post : Term.t;
     kind : kind;
     value : Term.t;
     strict : bool;
+    transformer : transformer;
   }
 
   type query = {
@@ -361,16 +387,64 @@ end = struct
   let make ?bound stmts f =
     { vars = Statement.collect_all_vars stmts; stmts; f; bound }
 
-  let mk_bound post kind ?(strict = false) value =
-    { post; kind; value; strict }
+  let mk_bound post kind ?(strict = false) ?(transformer = Cwp) value =
+    { post; kind; value; strict; transformer }
+
+  let transformer_of_string = function
+    | "cwp" -> Some Cwp
+    | "cwlp" -> Some Cwlp
+    | "r2" -> Some R2
+    | _ -> None
 
   let str_of pgcl =
     sprintf "Variables:%s\nStmts:%s"
       (str_of_sort_env_list Term.str_of_sort pgcl.vars)
       (Statement.string_of pgcl.stmts)
 
-  (* weakest preexpectation transformer *)
-  let rec wpt_rep (pgcl : t) eqs : EquationSystem.t =
+  (* the variable [x] at the sort the program gives it (an integer or a real;
+     see [SGCL.Util.infer_sorts]) *)
+  let var_term_of (pgcl : t) x =
+    Term.mk_var x
+      (List.Assoc.find pgcl.vars x ~equal:Ident.tvar_equal
+      |> Option.value ~default:T_real.SReal)
+
+  (* weakest preexpectation transformer.  [fail] is the value of a run that
+     fails an observation: [wp(observe(b), X) = [b] * X + [not b] * fail].
+     With [fail = 0] this is the unnormalised [wp] of Olmedo et al. (TOPLAS
+     2018); a constant [fail = q >= 0] makes it the expected reward of a run
+     that earns [f] when it terminates, [q] when an observation blocks it and
+     0 when it diverges, that is [wp(S, f) + q * (1 - wlp(S, 1))], the
+     identity the conditional reductions in [Util] rest on.  Every loop is a
+     least fixpoint, whatever [fail] is. *)
+
+  (* [guard_weight ~err p e] is the preexpectation of a choice (or of one
+     round of [while flip(p)]) weighted by [p] whose rule gives [e] when [p]
+     is a probability.  The rule is an expectation transformer only for
+     [0 <= p <= 1]: at a state where a weight over program variables lies
+     outside the interval a branch has a negative coefficient, and a bound
+     could be proved about a program with no such distribution.  Such a run is
+     an error from which no bound may be proved, so it is worth [err] there:
+     [ite(0 <= p <= 1, e, err)].  The caller chooses [err] against the claim:
+     0 for a lower bound, and for an upper bound the run is worth +oo, which no
+     term expresses, so the caller sets [err = 1] with [f = 0] to obtain the
+     probability of reaching the error and makes the upper bound fail wherever
+     it is positive.  Worth 0 an error run is a diverging one, whatever [fail]
+     is, so the identities the conditional reductions rest on still hold.  A
+     closed probability is refused outside the interval before the reduction,
+     so it needs no guard. *)
+  let guard_weight ~err p e =
+    if Set.is_empty (Term.fvs_of p) then e
+    else
+      T_bool.mk_if_then_else
+        (T_bool.of_formula
+           (Formula.and_of
+              [
+                Formula.geq p (T_real.rzero ()); Formula.leq p (T_real.rone ());
+              ]))
+        e err
+
+  let rec wpt_rep ~fail ~err (pgcl : t) eqs : EquationSystem.t =
+    let wpt_rep = wpt_rep ~fail ~err in
     match pgcl.stmts with
     | SKIP -> eqs
     | IF (cond_fml, t_stmt, f_stmt) ->
@@ -409,9 +483,10 @@ end = struct
           wpt_rep { pgcl with stmts = body_stmt } { eqs with qf = new_pred_app }
         in
         let loop_formula =
-          T_real.mk_radd
-            (T_real.mk_rmul prob eq_body.qf)
-            (T_real.mk_rmul (T_real.mk_rsub (T_real.rone ()) prob) eqs.qf)
+          guard_weight ~err prob
+            (T_real.mk_radd
+               (T_real.mk_rmul prob eq_body.qf)
+               (T_real.mk_rmul (T_real.mk_rsub (T_real.rone ()) prob) eqs.qf))
         in
         let loop_pred =
           Pred.make Predicate.Mu new_pred_var pgcl.vars loop_formula
@@ -424,15 +499,15 @@ end = struct
         let map = Map.Poly.of_alist_exn [ (varname, term) ] in
         { qf = Term.subst map eqs.qf; equations = eqs.equations }
     | PLUSASSIGN (varname, term) ->
-        let var_term = Term.mk_var varname T_real.SReal in
+        let var_term = var_term_of pgcl varname in
         let map =
-          Map.Poly.of_alist_exn [ (varname, T_real.mk_radd var_term term) ]
+          Map.Poly.of_alist_exn [ (varname, T_num.mk_nadd var_term term) ]
         in
         { qf = Term.subst map eqs.qf; equations = eqs.equations }
     | MINUSASSIGN (varname, term) ->
-        let var_term = Term.mk_var varname T_real.SReal in
+        let var_term = var_term_of pgcl varname in
         let map =
-          Map.Poly.of_alist_exn [ (varname, T_real.mk_rsub var_term term) ]
+          Map.Poly.of_alist_exn [ (varname, T_num.mk_nsub var_term term) ]
         in
         { qf = Term.subst map eqs.qf; equations = eqs.equations }
     | COMPOUND (stmt1, stmt2) ->
@@ -443,20 +518,20 @@ end = struct
         let eq_f = wpt_rep { pgcl with stmts = f_stmt } eqs in
         {
           qf =
-            T_real.mk_radd
-              (T_real.mk_rmul cond eq_t.qf)
-              (T_real.mk_rmul (T_real.mk_rsub (T_real.rone ()) cond) eq_f.qf);
+            guard_weight ~err cond
+              (T_real.mk_radd
+                 (T_real.mk_rmul cond eq_t.qf)
+                 (T_real.mk_rmul (T_real.mk_rsub (T_real.rone ()) cond) eq_f.qf));
           equations = PredSet.union eq_t.equations eq_f.equations;
         }
     | OBSERVE fml ->
         {
-          qf =
-            T_bool.mk_if_then_else (T_bool.of_formula fml) eqs.qf
-              (T_real.rzero ());
+          qf = T_bool.mk_if_then_else (T_bool.of_formula fml) eqs.qf fail;
           equations = eqs.equations;
         }
 
-  let wpt ~print (pgcl : t) =
+  let wpt ~print ?(fail = T_real.rzero ()) ?(err = T_real.rzero ()) (pgcl : t)
+      =
     EquationSystem.typeinf ~print pgcl
-    @@ wpt_rep pgcl { qf = pgcl.f; equations = PredSet.empty }
+    @@ wpt_rep ~fail ~err pgcl { qf = pgcl.f; equations = PredSet.empty }
 end

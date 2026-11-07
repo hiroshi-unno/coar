@@ -1,0 +1,5 @@
+/* nu_mu_input_onepoint_successor_valid.hes with the successors applied directly.  Valid. */
+forall (x: int). A x
+s.t.
+A (x: int): bool =nu B x;
+B (x: int): bool =mu forall (i: int). x >= 0 /\ i >= 1 /\ B (x - 1) \/ i < 1 /\ A (x + 1) \/ i >= 1 /\ x < 0;

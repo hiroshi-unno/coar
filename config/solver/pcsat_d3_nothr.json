@@ -1,0 +1,9 @@
+[
+    "PCSat",
+    {
+        "coordinator": [
+            "Filename",
+            "./config/pcsat/coordinator/tbq_ar_d3_nothr.json"
+        ]
+    }
+]

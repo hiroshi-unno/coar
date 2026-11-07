@@ -1,0 +1,39 @@
+# HORS/koba2: benchmark.zip of https://www-kb.is.s.u-tokyo.ac.jp/~koba/horsat2/ (sha256 pinned in
+# script/fetch_benchmarks.sh), its benchmark/ directory placed at benchmarks/HORS/koba2.
+# source	destination	sha256
+benchmark/from-aplas2014/cfa-life2.hrs	benchmarks/HORS/koba2/from-aplas2014/cfa-life2.hrs	c0cd334e32b4627bf42bb81c45ea3f92bbf6dc7be5ce571fda86fb23f7e532f1
+benchmark/from-aplas2014/cfa-psdes.hrs	benchmarks/HORS/koba2/from-aplas2014/cfa-psdes.hrs	54504481c225b5e7d67619f6845ebe4f3d8e10177d42014d0239ec59e91717ee
+benchmark/from-aplas2014/checknz.hrs	benchmarks/HORS/koba2/from-aplas2014/checknz.hrs	a7a9dee94dbf52c14d31224a2219a4291819d10166afdd6f365d1d782f672b83
+benchmark/from-aplas2014/checkpairs.hrs	benchmarks/HORS/koba2/from-aplas2014/checkpairs.hrs	1a66898d2eef9ea4cb2426d49bdfc9ff6d59e3207c9541a2de336fb002e28661
+benchmark/from-aplas2014/exp2-1600.hrs	benchmarks/HORS/koba2/from-aplas2014/exp2-1600.hrs	d9545a69a757ae000aef7fe02cb66efcc658fd866aaa0669ba30011bf021c509
+benchmark/from-aplas2014/exp3-1600.hrs	benchmarks/HORS/koba2/from-aplas2014/exp3-1600.hrs	f3505d0b823cb206b2402b1b509df19b105666b828e982b94d8532cb5ba77013
+benchmark/from-aplas2014/exp4-1600.hrs	benchmarks/HORS/koba2/from-aplas2014/exp4-1600.hrs	c053519c68c4a628897b017e89d61604849a896bf216110c6d66adb891d7f6df
+benchmark/from-aplas2014/filepath.hrs	benchmarks/HORS/koba2/from-aplas2014/filepath.hrs	261e0d5a9b94507f632882953f2823167a210dfdeb8715d94683e79f47de2017
+benchmark/from-aplas2014/filter-nonzero-1.corrected.hrs	benchmarks/HORS/koba2/from-aplas2014/filter-nonzero-1.corrected.hrs	c3508a96453854b131989f459d7181b55ef8041a048750d2c50a03ae329ea5b1
+benchmark/from-aplas2014/filter-nonzero.corrected.hrs	benchmarks/HORS/koba2/from-aplas2014/filter-nonzero.corrected.hrs	548619a0accc3ada4a7c1720c71481a25237ca2e129dcc0014e3ba7886f02683
+benchmark/from-aplas2014/fold_fun_list.hrs	benchmarks/HORS/koba2/from-aplas2014/fold_fun_list.hrs	9ecb98cc8157e2ed10e98b8f2ba84abc246c1433a313f099cac31d212e76831b
+benchmark/from-aplas2014/fold_right.hrs	benchmarks/HORS/koba2/from-aplas2014/fold_right.hrs	f4ccd1b285f98c91124f41d4b41a8d66716f98a9b873fb6e2f7e12e45f20c20d
+benchmark/from-aplas2014/gapid-2.hrs	benchmarks/HORS/koba2/from-aplas2014/gapid-2.hrs	c9e2bef68b4724e62cb69639ee3839f89ae1eaf8895456b8322006dbeccdff51
+benchmark/from-aplas2014/jwig-cal_main.hrs	benchmarks/HORS/koba2/from-aplas2014/jwig-cal_main.hrs	785d7c56be3b361bb2301a049340ddad42b79fe3a1343fd93942dcc39a290054
+benchmark/from-aplas2014/last.hrs	benchmarks/HORS/koba2/from-aplas2014/last.hrs	a58db5e497a2deaecfba4e7fd6a1381bd55c167db8b166bf965b4a9eb9bb155b
+benchmark/from-aplas2014/map-head-filter-1.hrs	benchmarks/HORS/koba2/from-aplas2014/map-head-filter-1.hrs	199f47f7bf41a2764e4fb00b2b123441d1e1a6b2b64e0c186257625d035a12d4
+benchmark/from-aplas2014/map-head-filter.hrs	benchmarks/HORS/koba2/from-aplas2014/map-head-filter.hrs	12ddad978113d75ba077ad81998100bfed05afb3a9497ca7dc7731e03f1793be
+benchmark/from-aplas2014/map-plusone.hrs	benchmarks/HORS/koba2/from-aplas2014/map-plusone.hrs	30559d180f35ce72a31761d9cc76e8608768d03ae063366a25a4845784d15b2d
+benchmark/from-aplas2014/mc91-2.hrs	benchmarks/HORS/koba2/from-aplas2014/mc91-2.hrs	702f64e2a74eb612533215cf4ce41fe584d8822d8cac92eb9919eca667cd5d8c
+benchmark/from-aplas2014/merge4-2.hrs	benchmarks/HORS/koba2/from-aplas2014/merge4-2.hrs	201f74a92d1fd379de7c0029e40e2aa607f7cf3cbbd2a131cea17c79b4d77d0f
+benchmark/from-aplas2014/merge4.hrs	benchmarks/HORS/koba2/from-aplas2014/merge4.hrs	b851fb3549be377238a7937fa764567bf0c5f46ec56fe3af172cc6f03da6a584
+benchmark/from-aplas2014/mkgroundterm.hrs	benchmarks/HORS/koba2/from-aplas2014/mkgroundterm.hrs	91d430f5080ec9e8a97a0c4627766b446806a5d6bda875e7ab45c82b30e43a58
+benchmark/from-aplas2014/risers.hrs	benchmarks/HORS/koba2/from-aplas2014/risers.hrs	fb1c5fa9ec58c11c5873b9fc958ab0b6693e6d7e3250154176f2f5147a3889e9
+benchmark/from-aplas2014/safe-head.hrs	benchmarks/HORS/koba2/from-aplas2014/safe-head.hrs	b32a1fb7c21a2a4f8bfb6c3e506acfe5e22f3e48355c01dfd0a4489567c30ed3
+benchmark/from-aplas2014/safe-init.hrs	benchmarks/HORS/koba2/from-aplas2014/safe-init.hrs	bf3f66dbd35810d6a0aa1e121ce87c3ee88f59013587b2b711d12c3e0b35f5ce
+benchmark/from-aplas2014/safe-tail.hrs	benchmarks/HORS/koba2/from-aplas2014/safe-tail.hrs	0974c65052ed9953ae6fbece7b99bd1573f33bc7e4a284c0c8c0ca9543da8e38
+benchmark/from-aplas2014/search-e-church.hrs	benchmarks/HORS/koba2/from-aplas2014/search-e-church.hrs	79d71f9c6aef409744ac089ed4c2689aa2ee579ff4c759213b051040e908ff12
+benchmark/from-aplas2014/t800.hrs	benchmarks/HORS/koba2/from-aplas2014/t800.hrs	2cb919a8767224aff60c31e907b7add05c6997f362d35d8d0ecf0b9dc36ef7a7
+benchmark/from-aplas2014/tails.hrs	benchmarks/HORS/koba2/from-aplas2014/tails.hrs	b5d00c330177bd9ea3082fc68d7536eb2e87d61e48ce5f50fa564c825ef9d94b
+benchmark/from-aplas2014/xhtmlf-div-2.hrs	benchmarks/HORS/koba2/from-aplas2014/xhtmlf-div-2.hrs	4a2d37649b802412848035c012fa123cb3d97b11116c4bd094708b6d9b23fa16
+benchmark/from-aplas2014/xhtmlf-m-church.hrs	benchmarks/HORS/koba2/from-aplas2014/xhtmlf-m-church.hrs	4a39df22d23baad17382fe50183c890e96aa94cb15fd2e9cfca2db37efdde574
+benchmark/from-aplas2014/zip.hrs	benchmarks/HORS/koba2/from-aplas2014/zip.hrs	f625d1fb65f09bf51069d4d7b322f92e81fe4e1c7f9dbac8484e6cb5754212b8
+benchmark/new/file-e.hrs	benchmarks/HORS/koba2/new/file-e.hrs	c8c53c7e72cfaeb523434e819d1d58364e685e5b3fd8bdf784c8171120f53c60
+benchmark/new/file.hrs	benchmarks/HORS/koba2/new/file.hrs	d0ffa6cdcd2baf81ca7488e240f822696ddff792daa54fabf7def71addc22fa0
+benchmark/new/intro-e.hrs	benchmarks/HORS/koba2/new/intro-e.hrs	9322c0331af90915119aaf02c0d1b4be11c9b9e0a54a8333c82fd1cfdf178ee4
+benchmark/new/intro.hrs	benchmarks/HORS/koba2/new/intro.hrs	e0b9516a65955e7598c6526f1fa2e7440e5a98e33e774554562d484113defdd7

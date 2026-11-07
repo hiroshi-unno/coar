@@ -1,0 +1,6 @@
+/* `%` is SMT-LIB's Euclidean remainder, never negative, so every integer
+   leaves remainder 0 or 1 by 2.  Read as the truncated remainder, x = -1 gives
+   -1 and the formula is invalid. */
+forall (x: int). P x
+s.t.
+P (x: int): bool =mu x % 2 = 0 \/ x % 2 = 1;

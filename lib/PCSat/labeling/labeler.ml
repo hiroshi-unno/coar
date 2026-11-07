@@ -7,6 +7,10 @@ open Ast
 open PCSatCommon
 
 module Config = struct
+  (* declared before [perturbation], whose [None] constructor would otherwise
+     shadow the option's in the derived reader *)
+  type ms_option = int option [@@deriving yojson]
+
   type perturbation =
     | None
     | Trans of int (* max_iters *)
@@ -14,83 +18,132 @@ module Config = struct
     | Gaussian of float (* standard deviation *)
   [@@deriving yojson]
 
+  (* Each payload is a record with a default on every field (the value most
+     configuration files stated), so a configuration states only what
+     differs: ["BMI_MAX_SAT", {"num": 400}]. *)
   type strategy =
     | SAT (* SAT solving *)
     | ORACLE_SAT of strategy
     | POS_BIASED_SAT (* Positively biased SAT solving *)
     | NEG_BIASED_SAT (* Negatively biased SAT solving *)
-    | RAND_MAX_SAT of
+    | RAND_MAX_SAT of {
         (* Randomly weighted MAX-SAT solving *)
-        float
-        (* cut-off lower-bound *)
-        * float (* cut-off upper-bound *)
-    | BMI_MAX_SAT of
+        cut_off_lb : float; [@default 0.0]
+            (** a random heat in [-1, 1] whose absolute value is at most this
+                gives no soft constraint *)
+        cut_off_ub : float; [@default 0.0]  (** not read *)
+      }
+    | BMI_MAX_SAT of {
         (* BMI weighted MAX-SAT solving *)
-        int
-        (* num *)
-        * int (* bound *)
-        * float (* ratio *)
-        * perturbation
-        * float (* cut-off lower-bound *)
-        * float (* cut-off upper-bound *)
-        * float (* enc_bool_to_float *)
-        * bool (* ignore_bool_args_variance *)
+        num : int; [@default 100]
+            (** how many random ground instances of the problem's clauses
+                are sampled beside the examples *)
+        bound : int; [@default 200]
+            (** the sampled integers and reals lie in [-bound, bound] *)
+        ratio : float; [@default 1.0]
+            (** the weight of the samples together, relative to that of the
+                examples *)
+        perturbation : perturbation; [@default None]
+        cut_off_lb : float; [@default 0.0]
+        cut_off_ub : float; [@default 0.0]  (** not read *)
+        enc_bool_to_float : float; [@default 100.0]
+        ignore_bool_args_variance : bool; [@default true]
+      }
     | ORACLE_MAX_SAT of strategy
-    | POS_BIASED_MAX_SAT of
+    | POS_BIASED_MAX_SAT of {
         (* Positively biased MAX-SAT solving *)
-        bool
-        (* use examples *)
-        * float (* weight *)
-    | NEG_BIASED_MAX_SAT of
+        use_examples : bool; [@default true]
+            (** raise an atom's weight by [weight] over the size of each
+                example clause in which it occurs positively *)
+        weight : float; [@default 4.0]
+      }
+    | NEG_BIASED_MAX_SAT of {
         (* Negatively biased MAX-SAT solving *)
-        bool
-        (* use examples *)
-        * float (* weight *)
-    | Mixed of (strategy * bool (* enable sampling *)) list
+        use_examples : bool; [@default true]
+            (** as for [POS_BIASED_MAX_SAT], for negative occurrences *)
+        weight : float; [@default 4.0]
+      }
+    | Mixed of mixed_entry list
+        (** the strategies in turn, one per labeling round *)
     | CBandit (* Contextual bandit *)
     | Bandit_BDD (* Bandit with BDDs *)
+
+  and mixed_entry = {
+    strategy : strategy;
+    sample_examples : bool; [@default true]
+        (** whether the labeling this strategy finds may be sampled *)
+  }
+  [@@deriving yojson]
+
+  (** How a conflict between a positive and a negative example is found. *)
+  type example_conflicts =
+    | By_ground_instances
+        (** by intersecting the sets of ground instances; the instantiation
+            builds each example's instances from its own parameters alone *)
+    | By_unification of {
+        discharge_cardinality_guards : bool; [@default false]
+            (** NOT SOUND AS IT STANDS -- kept off, and kept because the
+                measurement it produced is worth reproducing, not because the
+                step is licensed.
+
+                It treats a guard that constrains only the size of a quantified
+                sort as a fact rather than a hypothesis. The reasoning was: a
+                solution holds in every model of the theory, a quantified sort
+                is every non-empty type, so a satisfiable such guard holds in
+                some model and the model-independent solution must satisfy the
+                atom there. Carrying that from *that* model to every value of
+                the guard's parameters is the step that fails.
+
+                The guard says the sort is a singleton. In a model where it
+                holds, any two arguments of that sort are necessarily equal; in
+                a model with two elements they need not be. So a candidate that
+                tests two such arguments for equality -- which this hypothesis
+                space can express -- satisfies the guarded example and violates
+                the discharged one, and dropping the guard rejects a candidate
+                the problem admits. That is a wrong refutation, not a lost
+                answer. Invariance under permutations of the sort does not
+                rescue it: permutations act inside one model, and the direction
+                needed here identifies distinct elements, which creates
+                equalities that did not hold.
+
+                What would be sound is to instantiate the sort at the size the
+                guard describes rather than to drop the guard, which is what the
+                preprocessing pass that fixes a quantified sort at a finite size
+                already does. *)
+        structured_args_only : bool; [@default true]
+            (** search by unification only on a problem some unknown of which
+                takes a non-scalar argument (a datatype, an uninterpreted sort,
+                a sort variable, an array, a sequence, a tuple; anything but
+                [Int], [Real], [Bool] and bit-vectors), and only intersect
+                ground instances, as [By_ground_instances] does, on any other
+                problem.  Decided once, from the problem's signature, before
+                any pair is asked.  The conflicts the intersection cannot find
+                pair two examples whose parameters sit inside such arguments (a
+                parametric [append(nil, l, l)] against a negative whose list is
+                built from its own parameters, where the one instance each
+                example contributes never coincides with the other's); on a
+                scalar problem the search still finds conflicts, at a solver
+                question per pair that may meet at every labeling, and on
+                linear-arithmetic inputs no conflict was seen that the
+                intersection missed.  On by default, which makes the search act
+                exactly as [By_ground_instances] on a scalar problem.  [false]:
+                every problem is searched. *)
+      }
+        (** by asking whether their argument lists can be made equal.  Two
+            parametric examples conflict at any COMMON instance, and a common
+            instance needing coordinated choices across the two is never
+            produced by the instantiation however many instances are taken *)
   [@@deriving yojson]
 
   type t = {
     verbose : bool; [@default false]
     num_labelings : int; [@default 1]
-    strategy : strategy; [@default SAT]
+    labeling : strategy; [@default SAT]
     sat_solver : SATSolver.Config.t ext_file; [@default Common.Util.ExtFile.Filename "./config/solver/z3_sat_dim_red.json"]
-    discharge_cardinality_guards : bool; [@default false]
-        (** NOT SOUND AS IT STANDS -- kept off, and kept because the measurement
-            it produced is worth reproducing, not because the step is licensed.
-
-            It treats a guard that constrains only the size of a quantified sort
-            as a fact rather than a hypothesis. The reasoning was: a solution
-            holds in every model of the theory, a quantified sort is every
-            non-empty type, so a satisfiable such guard holds in some model and
-            the model-independent solution must satisfy the atom there. Carrying
-            that from *that* model to every value of the guard's parameters is
-            the step that fails.
-
-            The guard says the sort is a singleton. In a model where it holds,
-            any two arguments of that sort are necessarily equal; in a model
-            with two elements they need not be. So a candidate that tests two
-            such arguments for equality -- which this hypothesis space can
-            express -- satisfies the guarded example and violates the discharged
-            one, and dropping the guard rejects a candidate the problem admits.
-            That is a wrong refutation, not a lost answer. Invariance under
-            permutations of the sort does not rescue it: permutations act inside
-            one model, and the direction needed here identifies distinct
-            elements, which creates equalities that did not hold.
-
-            What would be sound is to instantiate the sort at the size the guard
-            describes rather than to drop the guard, which is what the
-            preprocessing pass that fixes a quantified sort at a finite size
-            already does. *)
-    conflict_by_unification : bool; [@default true]
-        (** find a conflict between a positive and a negative example by asking
-            whether their argument lists can be made equal, instead of by
-            intersecting the sets of ground instances. Two parametric examples
-            conflict at any COMMON instance, and the instantiation builds each
-            example's instances from its own parameters alone, so a common
-            instance needing coordinated choices across the two is never
-            produced however many instances are taken *)
+    example_conflicts : example_conflicts;
+        [@default By_unification { discharge_cardinality_guards = false; structured_args_only = true }]
+        (** how a conflict between a positive and a negative example is
+            found (see [example_conflicts]) *)
     pex_instances : int; [@default 1]
         (** how many ground instances a parametric example contributes to the
             satisfiability check and the labeling; [1] is one per example, the
@@ -107,24 +160,27 @@ module Config = struct
             satisfies the examples, which is weaker than what a solution must
             do, so its `unsat` refutes and its `sat` and `unknown` say nothing.
         *)
-    truth_table_valid_timeout : int; [@default 0]
+    truth_table_valid_timeout_ms : ms_option; [@default Stdlib.Option.none]
         (** a budget in milliseconds for each validity question the truth
             tables ask while this phase runs (a new atom evaluated against
-            every qualifier of its predicate).  [0] (or less) asks without
-            one, as before; an [int] rather than an option only because this
-            module's own [None] constructor shadows the option's.  A question not decided in time leaves its cell undecided
+            every qualifier of its predicate).  [None] asks without one, and
+            so does a value of [0] or less.  A question not decided in time leaves its cell undecided
             and is not recorded as "not valid", so a later question can still
             decide it; answers can be lost, never decided wrongly.  Without
             it one labeling phase was observed asking for minutes, most
             questions answering undecided after about a second. *)
-    discharge_guards_globally : bool; [@default true]
+    discharge_guards_globally : bool; [@default false]
         (** ask once whether the guards of *all* the parametric example atoms
             hold together, and if they do, drop every one of them for this
             labeling. A solution must work for every interpretation of a
             universally quantified sort, so a refutation may choose one, and in
             one where every guard holds a guarded atom is its bare application.
             Two atoms that differ only in their guards then collide, which is
-            the one thing the propositional abstraction can refute with. *)
+            the one thing the propositional abstraction can refute with.  Off
+            by default: alone it was measured neutral on the parametric-example
+            corpora (no file gained), and the one input known to need it, a
+            well-foundedness unknown over a universally quantified sort, needs
+            [pex_instances] above 1 beside it, which is not the default either *)
     fn_totality_drop : bool; [@default false]
         (** in an undecided example clause, drop a body atom of a functional
             unknown whose result is a parameter occurring nowhere else in the
@@ -140,8 +196,31 @@ module Config = struct
   }
   [@@deriving yojson]
 
+  (* Whether [strategy] can run [BMI_MAX_SAT] although no oracle solution
+     replaces it: an occurrence under [ORACLE_SAT] or [ORACLE_MAX_SAT] runs only
+     when the run has no oracle, which is not known when the configuration is
+     loaded, so it is left to the labeling to refuse. *)
+  let rec selects_bmi_unguarded = function
+    | BMI_MAX_SAT _ -> true
+    | ORACLE_SAT _ | ORACLE_MAX_SAT _ -> false
+    | Mixed entries ->
+        List.exists entries ~f:(fun { strategy; _ } ->
+            selects_bmi_unguarded strategy)
+    | SAT | POS_BIASED_SAT | NEG_BIASED_SAT | RAND_MAX_SAT _
+    | POS_BIASED_MAX_SAT _ | NEG_BIASED_MAX_SAT _ | CBandit | Bandit_BDD ->
+        false
+
+  (* Refuses a labeling that would select [BMI_MAX_SAT] at its turn, since its
+     heat map cannot be built in this build: the run would otherwise stop with
+     an error only when that turn comes, after the other strategies' rounds. *)
   let instantiate_ext_files cfg =
     let open Or_error in
+    (if selects_bmi_unguarded cfg.labeling then
+       error_string
+         ("Invalid Labeler Configuration: "
+         ^ PCSatCommon.VersionSpace.heat_map_unavailable)
+     else Ok ())
+    >>= fun () ->
     SATSolver.Config.load_ext_file cfg.sat_solver >>= fun sat ->
     Ok { cfg with sat_solver = sat }
 
@@ -165,34 +244,37 @@ module Config = struct
     | ORACLE_SAT s -> sprintf "Oracle SAT solving [%s]" @@ str_of_strategy s
     | POS_BIASED_SAT -> "Positively biased SAT solving"
     | NEG_BIASED_SAT -> "Negatively biased SAT solving"
-    | RAND_MAX_SAT (cut_off_lb, cut_off_ub) ->
+    | RAND_MAX_SAT { cut_off_lb; cut_off_ub } ->
         sprintf "Randomly weighted MAX-SAT solving (%f, %f)" cut_off_lb
           cut_off_ub
     | BMI_MAX_SAT
-        ( num,
-          bound,
-          ratio,
-          perturbation,
-          cut_off_lb,
-          cut_off_ub,
-          enc_bool_to_float,
-          ignore_bool_args_variance ) ->
+        {
+          num;
+          bound;
+          ratio;
+          perturbation;
+          cut_off_lb;
+          cut_off_ub;
+          enc_bool_to_float;
+          ignore_bool_args_variance;
+        } ->
         sprintf "BMI weighted MAX-SAT solving (%d, %d, %f, %s, %f, %f, %f, %b)"
           num bound ratio
           (str_of_perturbation perturbation)
           cut_off_lb cut_off_ub enc_bool_to_float ignore_bool_args_variance
     | ORACLE_MAX_SAT s ->
         sprintf "Oracle MAX-SAT solving [%s]" (str_of_strategy s)
-    | POS_BIASED_MAX_SAT (b, w) ->
+    | POS_BIASED_MAX_SAT { use_examples = b; weight = w } ->
         sprintf "Positively biased MAX-SAT solving (%b, %s)" b
           (string_of_float w)
-    | NEG_BIASED_MAX_SAT (b, w) ->
+    | NEG_BIASED_MAX_SAT { use_examples = b; weight = w } ->
         sprintf "Negatively biased MAX-SAT solving (%b, %s)" b
           (string_of_float w)
     | Mixed ss ->
         String.bracket
-        @@ String.concat_map_list ~sep:", " ss ~f:(fun (s, b) ->
-            (if b then "!" else "") ^ str_of_strategy s)
+        @@ String.concat_map_list ~sep:", " ss
+             ~f:(fun { strategy = s; sample_examples = b } ->
+               (if b then "!" else "") ^ str_of_strategy s)
     | CBandit -> "Contextual bandit"
     | Bandit_BDD -> "Bandit with BDDs"
 
@@ -222,6 +304,12 @@ module Make
              let n = List.length (Logic.Sort.args_of data) in
              if n >= 1 then Some (List.init (n - 1) ~f:Fn.id) else None
            else None))
+
+  (* whether every unknown takes only integers, reals, Booleans and
+     bit-vectors; read only by the unification search's
+     [structured_args_only] *)
+  let scalar_problem =
+    lazy (PCSatCommon.ScalarArgs.unknowns_take_only_scalars APCSP.problem)
 
   module Debug =
     Debug.Make ((val Debug.Config.(if config.verbose then enable else disable)))
@@ -265,8 +353,7 @@ module Make
           | Some (pv, terms) ->
               Set.add res (ExClause.mk_unit_neg (ExAtom.PApp (pv, terms)))
           | None ->
-              let open Graph in
-              let open Pack.Digraph in
+              let open IntDigraph in
               let graph, node_map_rev = LoopDetector.gen_graph sample in
               LoopDetector.detect ~print:Debug.print pvar sorts
                 (graph, Components.scc_list graph, node_map_rev)
@@ -293,8 +380,7 @@ module Make
           match NWFLoopDetector.nwf_self_loop m sample with
           | Some lemma -> Set.add res lemma
           | None ->
-              let open Graph in
-              let open Pack.Digraph in
+              let open IntDigraph in
               let graph, node_map_rev = NWFLoopDetector.gen_graph m sample in
               NWFLoopDetector.detect_nwf ~print:Debug.print name m
                 (graph, Components.scc_list graph, node_map_rev)
@@ -321,8 +407,7 @@ module Make
           match NWFLoopDetector.parity_self_loop m sample with
           | Some lemma -> Set.add res lemma
           | None ->
-              let open Graph in
-              let open Pack.Digraph in
+              let open IntDigraph in
               let graph, node_map_rev = NWFLoopDetector.gen_graph m sample in
               NWFLoopDetector.detect_parity ~print:Debug.print m
                 (graph, Components.scc_list graph, node_map_rev)
@@ -333,7 +418,11 @@ module Make
     | None -> failwith @@ sprintf "Not found: %s" (ExAtom.str_of atm)
     | Some p -> p
 
-  let abstract_clause map clause =
+  let abstract_by_set = Option.is_some (Sys.getenv "COAR_LABEL_ABSTRACT_SET")
+
+  (* the set forms the two below replaced: the reference for
+     [COAR_LABEL_ABSTRACT_SET] and for the crosscheck *)
+  let abstract_clause_by_set map clause =
     let ps = Set.Poly.map clause.ExClause.positive ~f:(abstract_exatom map) in
     let ns =
       Set.Poly.map clause.ExClause.negative
@@ -341,9 +430,43 @@ module Make
     in
     PropLogic.Formula.or_of @@ Set.to_list @@ Set.union ps ns
 
-  let abstract map cls =
+  let abstract_by_set_of map cls =
     PropLogic.Formula.and_of @@ Set.to_list
-    @@ Set.Poly.map cls ~f:(abstract_clause map)
+    @@ Set.Poly.map cls ~f:(abstract_clause_by_set map)
+
+  (* the disjunction of the clause's literals' propositional abstractions,
+     each once, in ascending polymorphic order: the list the union of the two
+     [Set.Poly] images returns, made by sorting with repeats dropped (see
+     [abstract]) *)
+  let abstract_clause map clause =
+    PropLogic.Formula.or_of
+    @@ List.dedup_and_sort ~compare:Stdlib.compare
+    @@ List.map (Set.to_list clause.ExClause.positive) ~f:(abstract_exatom map)
+    @ List.map (Set.to_list clause.ExClause.negative)
+        ~f:(abstract_exatom map >> PropLogic.Formula.mk_neg)
+
+  (* the conjunction of the clauses' propositional abstractions, each once, in
+     ascending polymorphic order.  Sorting the list of abstractions and
+     dropping repeats gives the list a [Set.Poly] built from them returns
+     ([Set.Poly] orders by the same polymorphic compare, and two formulas it
+     calls equal are structurally identical), without rebalancing a tree at
+     every insertion, which was most of the labeling's time on large example
+     sets.  [COAR_LABEL_ABSTRACT_SET] selects the set forms. *)
+  let abstract map cls =
+    if abstract_by_set then abstract_by_set_of map cls
+    else
+      let phi =
+        PropLogic.Formula.and_of
+        @@ List.dedup_and_sort ~compare:Stdlib.compare
+        @@ List.map (Set.to_list cls) ~f:(abstract_clause map)
+      in
+      (* COAR_EXACT_CROSSCHECK set: compared with the set forms' formula, a
+         difference reported on stderr *)
+      if PropLogic.Formula.crosscheck then (
+        PropLogic.Formula.crosscheck_tick ();
+        if not (Stdlib.( = ) phi (abstract_by_set_of map cls)) then
+          Stdlib.prerr_endline "exact-crosscheck: Labeler.abstract DIFFERS");
+      phi
 
   let gen_fresh_prop =
     let prop_count = ref 0 in
@@ -389,22 +512,88 @@ module Make
      exists", which would make the verdict [unsat] *)
   exception Sat_solver_unknown
 
-  let search_labeling_with iters vs _wfpvs _dwfpvs map cls =
+  (* [COAR_LABEL_ABSTRACT_PER_CALL] set: every query re-abstracts the whole
+     clause set and converts the whole conjunction to clauses, as before the
+     abstractions were shared between the queries of one labeling search *)
+  let abstract_per_call =
+    Option.is_some (Sys.getenv "COAR_LABEL_ABSTRACT_PER_CALL")
+
+  (* The abstractions of [cls]'s clauses in ascending polymorphic order, each
+     once (the conjuncts [abstract map cls] joins, in its order), each paired
+     with its clausal form, computed when first asked.  Since [and_of] nests
+     its operands to the left from [True], and [cnf_of] of a conjunction is
+     the clauses of the left operand followed by those of the right,
+     [cnf_of (abstract map cls)] is the concatenation of the paired forms in
+     list order. *)
+  let abstractions map cls =
+    List.map ~f:(fun phi -> (phi, lazy (PropLogic.Formula.cnf_of phi)))
+    @@ List.dedup_and_sort ~compare:Stdlib.compare
+    @@ List.map (Set.to_list cls) ~f:(abstract_clause map)
+
+  (* the union of two [abstractions] lists: ascending, each formula once
+     (when both hold it, the first list's pair is kept; the two pairs' forms
+     are equal, since [Stdlib.compare] calls only structurally identical
+     formulas equal) *)
+  let merge_abstractions = PropLogic.Formula.merge_sorted
+
+  (* [abs] is [abstractions map cls] for the clause set [cls] (forced only to
+     print it and for the crosscheck); the query is the conjunction of [abs]'s
+     formulas, handed to the SAT solver as the concatenation of their clausal
+     forms, which is [SAT.Problem.of_prop_formula (abstract map cls)] *)
+  let search_labeling_with iters vs _wfpvs _dwfpvs map abs cls =
     let open Or_error.Monad_infix in
     if print_log then
-      Set.iter cls ~f:(fun cl ->
+      Set.iter (Lazy.force cls) ~f:(fun cl ->
           Debug.print
           @@ lazy ("[search_labeling_with] clause: " ^ ExClause.str_of cl));
-    let constr = abstract map cls in
+    let constr, constr_problem =
+      if abstract_per_call then
+        let constr = lazy (abstract map (Lazy.force cls)) in
+        (constr, lazy (SAT.Problem.of_prop_formula (Lazy.force constr)))
+      else
+        let constr =
+          lazy (PropLogic.Formula.and_of (List.map (Lazy.force abs) ~f:fst))
+        in
+        let constr_problem =
+          lazy
+            (let p =
+               SAT.Problem.make
+               @@ List.concat_map (Lazy.force abs) ~f:(fun (_, c) ->
+                   Lazy.force c)
+             in
+             (* COAR_EXACT_CROSSCHECK set: compared with the problem the
+                whole clause set gives when abstracted and converted afresh,
+                a difference reported on stderr *)
+             if PropLogic.Formula.crosscheck then (
+               PropLogic.Formula.crosscheck_tick ();
+               let old = abstract_by_set_of map (Lazy.force cls) in
+               if
+                 not
+                   (Stdlib.( = ) (Lazy.force constr) old
+                   && Stdlib.( = ) (SAT.Problem.clauses_of p)
+                        (PropLogic.Formula.cnf_of_appending old))
+               then
+                 Stdlib.prerr_endline
+                   "exact-crosscheck: Labeler shared abstractions DIFFER");
+             p)
+        in
+        (constr, constr_problem)
+    in
     if print_log then
       Debug.print
       @@ lazy
-           ("[search_labeling_with] constr: " ^ PropLogic.Formula.str_of constr);
+           ("[search_labeling_with] constr: "
+           ^ PropLogic.Formula.str_of (Lazy.force constr));
     let rec aux iters strategy =
       sat_solver >>= fun (module SatSolver : SATSolver.Solver.SolverType) ->
       match strategy with
       | Config.SAT -> (
-          SatSolver.solve (SAT.Problem.of_prop_formula constr) >>= function
+          let problem =
+            Common.PhaseTime.with_phase "abstract" (fun () ->
+                Lazy.force constr_problem)
+          in
+          Common.PhaseTime.with_phase "sat" (fun () -> SatSolver.solve problem)
+          >>= function
           | SAT.Problem.Unsat -> Ok None
           | SAT.Problem.Unknown -> raise Sat_solver_unknown
           | SAT.Problem.Sat sol -> Ok (Some (of_assignment map sol, true)))
@@ -412,7 +601,7 @@ module Make
           match vs.VersionSpace.oracle with
           | None -> aux iters s
           | Some oracle -> (
-              constr
+              Lazy.force constr
               :: List.filter_map (Map.Poly.to_alist map) ~f:(fun (atom, prop) ->
                   let open Option in
                   ExAtom.pvar_of atom >>= fun pvar ->
@@ -436,7 +625,7 @@ module Make
               | SAT.Problem.Sat sol -> Ok (Some (of_assignment map sol, true))))
       | Config.POS_BIASED_SAT | Config.NEG_BIASED_SAT -> (
           let pos_bias = Stdlib.(strategy = Config.POS_BIASED_SAT) in
-          constr
+          Lazy.force constr
           :: List.filter_map (Map.Poly.to_alist map) ~f:(fun (atm, prop) ->
               match (ExAtom.pvar_of atm, prop) with
               | Some _, PropLogic.Formula.Atom (_, _) ->
@@ -448,14 +637,14 @@ module Make
           >>= function
           | SAT.Problem.Unsat | SAT.Problem.Unknown (*ToDo*) -> (
               Debug.print @@ lazy "biased labeling not found";
-              SatSolver.solve (SAT.Problem.of_prop_formula constr) >>= function
+              SatSolver.solve (Lazy.force constr_problem) >>= function
               | SAT.Problem.Unsat -> Ok None
               | SAT.Problem.Unknown -> raise Sat_solver_unknown
               | SAT.Problem.Sat sol -> Ok (Some (of_assignment map sol, true)))
           | SAT.Problem.Sat sol ->
               Debug.print @@ lazy "biased labeling found";
               Ok (Some (of_assignment map sol, true)))
-      | RAND_MAX_SAT (cut_off_lb, _cut_off_ub) -> (
+      | RAND_MAX_SAT { cut_off_lb; cut_off_ub = _ } -> (
           let soft =
             assert (Float.(cut_off_lb >= 0.));
             List.filter_map (Map.Poly.to_alist map) ~f:(fun (atom, prop) ->
@@ -472,20 +661,21 @@ module Make
                       -scaled_heat )
                 else None)
           in
-          SatSolver.opt_solve soft (SAT.Problem.of_prop_formula constr)
-          >>= function
+          SatSolver.opt_solve soft (Lazy.force constr_problem) >>= function
           | SAT.Problem.Unsat -> Ok None
           | SAT.Problem.Unknown -> raise Sat_solver_unknown
           | SAT.Problem.Sat sol -> Ok (Some (of_assignment map sol, true)))
       | BMI_MAX_SAT
-          ( num,
-            bound,
-            ratio,
-            perturbation,
-            cut_off_lb,
-            _cut_off_ub,
-            enc_bool_to_float,
-            ignore_bool_args_variance ) -> (
+          {
+            num;
+            bound;
+            ratio;
+            perturbation;
+            cut_off_lb;
+            cut_off_ub = _;
+            enc_bool_to_float;
+            ignore_bool_args_variance;
+          } -> (
           let soft =
             assert (Float.(cut_off_lb >= 0.));
             Debug.print @@ lazy ">>> heat map generation";
@@ -556,10 +746,12 @@ module Make
             VersionSpace.update_heat_map ~enc_bool_to_float
               ~ignore_bool_args_variance
               (PCSP.Problem.senv_of APCSP.problem)
-              (exs1 @ exs2) vs;
+              (exs1 @ exs2) vs
+            >>= fun () ->
             Debug.print @@ lazy (sprintf "<<< heat map generation: %f" (tm ()));
             (*Out_channel.print_endline @@ string_of_int iters_mod;*)
-            List.filter_map (Map.Poly.to_alist map) ~f:(fun (atom, prop) ->
+            Or_error.return
+            @@ List.filter_map (Map.Poly.to_alist map) ~f:(fun (atom, prop) ->
                 let heat = VersionSpace.get_heat vs atom in
                 let heat =
                   match perturbation with
@@ -590,8 +782,8 @@ module Make
                       -scaled_heat )
                 else None)
           in
-          SatSolver.opt_solve soft (SAT.Problem.of_prop_formula constr)
-          >>= function
+          soft >>= fun soft ->
+          SatSolver.opt_solve soft (Lazy.force constr_problem) >>= function
           | SAT.Problem.Unsat -> Ok None
           | SAT.Problem.Unknown -> raise Sat_solver_unknown
           | SAT.Problem.Sat sol -> Ok (Some (of_assignment map sol, true)))
@@ -619,13 +811,13 @@ module Make
                             1 )
                     | None -> assert false)
               in
-              SatSolver.opt_solve soft (SAT.Problem.of_prop_formula constr)
-              >>= function
+              SatSolver.opt_solve soft (Lazy.force constr_problem) >>= function
               | SAT.Problem.Unsat -> Ok None
               | SAT.Problem.Unknown -> raise Sat_solver_unknown
               | SAT.Problem.Sat sol -> Ok (Some (of_assignment map sol, true))))
-      | Config.POS_BIASED_MAX_SAT (strengthen_bias, w)
-      | Config.NEG_BIASED_MAX_SAT (strengthen_bias, w) -> (
+      | Config.POS_BIASED_MAX_SAT { use_examples = strengthen_bias; weight = w }
+      | Config.NEG_BIASED_MAX_SAT { use_examples = strengthen_bias; weight = w }
+        -> (
           let pos_bias =
             match strategy with
             | Config.POS_BIASED_MAX_SAT _ -> true
@@ -639,7 +831,7 @@ module Make
           in
           let weights =
             if strengthen_bias then
-              Set.fold ~init:weights cls ~f:(fun weights clause ->
+              Set.fold ~init:weights (Lazy.force cls) ~f:(fun weights clause ->
                   List.map weights ~f:(fun (atm, weight) ->
                       let size =
                         Set.length clause.ExClause.positive
@@ -664,13 +856,12 @@ module Make
                   ( SAT.Problem.of_prop_formula (PropLogic.Formula.mk_neg prop),
                     int_of_float (scaler *. weight) ))
           in
-          SatSolver.opt_solve soft (SAT.Problem.of_prop_formula constr)
-          >>= function
+          SatSolver.opt_solve soft (Lazy.force constr_problem) >>= function
           | SAT.Problem.Unsat -> Ok None
           | SAT.Problem.Unknown -> raise Sat_solver_unknown
           | SAT.Problem.Sat sol -> Ok (Some (of_assignment map sol, true)))
       | Config.Mixed ss -> (
-          let strategy, sample_examples =
+          let { Config.strategy; sample_examples } =
             List.nth_exn ss (iters mod List.length ss)
           in
           aux (iters / List.length ss) strategy >>= function
@@ -685,8 +876,10 @@ module Make
       variables *)
   let search_labeling_main iters vs wfpvs dwfpvs nwfpvs parpvs fnpvs pos_atms
       neg_atms undecided =
-    let und_atms = ExClauseSet.exatoms_of undecided in
-    let map = mk_labels pos_atms neg_atms und_atms in
+    let map =
+      Common.PhaseTime.with_phase "mk-labels" (fun () ->
+          mk_labels pos_atms neg_atms (ExClauseSet.exatoms_of undecided))
+    in
     if print_log then
       Debug.print
       @@ lazy
@@ -695,14 +888,19 @@ module Make
                ~f:(fun (atm, prop) ->
                  sprintf "%s -> %s" (ExAtom.str_of atm)
                    (PropLogic.Formula.str_of prop)));
+    (* the undecided examples' abstractions, made once for every query of
+       this search: the map, hence each clause's abstraction, is fixed here,
+       and every query's clause set contains them *)
+    let undecided_abs = lazy (abstractions map undecided) in
     let rec outer_loop ps_ns_list cls n =
       let open Or_error.Monad_infix in
+      let block_prev_assignments =
+        (* constraints to block previous assignments *)
+        Set.Poly.map (Set.Poly.of_list ps_ns_list) ~f:(fun (ps, ns, _) ->
+            ExClause.canon { positive = ns; negative = ps })
+      in
+      (* [sample] is [undecided] at every call below *)
       let rec inner_loop lcls (* learned clauses *) sample =
-        let block_prev_assignments =
-          (* constraints to block previous assignments *)
-          Set.Poly.map (Set.Poly.of_list ps_ns_list) ~f:(fun (ps, ns, _) ->
-              ExClause.canon { positive = ns; negative = ps })
-        in
         if print_log then (
           Debug.print
           @@ lazy
@@ -716,9 +914,16 @@ module Make
           @@ lazy
                ("[search_labeling_main] block_prev_assignments:\n"
                ^ ExClauseSet.str_of ~max_display:None block_prev_assignments));
-        search_labeling_with iters vs wfpvs dwfpvs map
-          (Set.Poly.union_list [ lcls; sample; block_prev_assignments ])
-          config.strategy
+        let cls =
+          lazy (Set.Poly.union_list [ lcls; sample; block_prev_assignments ])
+        in
+        let abs =
+          lazy
+            (assert (phys_equal sample undecided);
+             merge_abstractions (Lazy.force undecided_abs)
+               (abstractions map (Set.union lcls block_prev_assignments)))
+        in
+        search_labeling_with iters vs wfpvs dwfpvs map abs cls config.labeling
         >>= function
         | None -> Ok (None, lcls)
         | Some ((pos, neg), sample_examples) ->
@@ -734,6 +939,7 @@ module Make
                       Some papp
                   | _ -> (*ToDo: is it OK to ignore parametric examples?*) None)
               in
+              Common.PhaseTime.with_phase "learn" @@ fun () ->
               Set.Poly.union_list
                 [
                   learn_clauses_for_wf_cycles papps Set.Poly.empty wfpvs;
@@ -852,6 +1058,12 @@ module Make
             let subs =
               param_instance_subs config.pex_instances @@ ExClause.params_of cl
             in
+            (* act counters for this field: the path itself renormalises
+               every key, and [extra] marks an example given more than its
+               default instance *)
+            Common.PhaseTime.event "pex-instances/path";
+            if not (List.is_empty subs) then
+              Common.PhaseTime.event "pex-instances/extra";
             (* the guard is part of the atom, hence part of the key the
                labeling matches on, and [ExAtom.instantiate] only simplifies it
                -- [$1 != $2] under the identity and under the swap come out as
@@ -1093,10 +1305,14 @@ module Make
 
   let search_labeling_body iters vs () =
     let dpos, dneg, undecided = VersionSpace.pos_neg_und_examples_of vs in
+    let unknowns = Map.key_set @@ PCSP.Problem.senv_of APCSP.problem in
+    let mentions_unknown phi =
+      not (Set.are_disjoint unknowns (LogicOld.Formula.fvs_of phi))
+    in
     factgoal_count vs dpos dneg undecided;
     (*Debug.print @@ lazy ("undecided:\n" ^ ExClauseSet.str_of ~max_display:None undecided);*)
     Debug.print
-    @@ lazy ("*** labeling with " ^ Config.str_of_strategy config.strategy);
+    @@ lazy ("*** labeling with " ^ Config.str_of_strategy config.labeling);
     let wfpvs =
       List.map ~f:(fun (x, sort) ->
           ( Ident.tvar_to_pvar x,
@@ -1193,6 +1409,7 @@ module Make
         lose Labeling "grounded-for-the-propositional-path" (p1 + p2)
       end);
     let pos_atms, neg_atms, undecided_inst =
+      Common.PhaseTime.with_phase "instantiate" @@ fun () ->
       (*ToDo: extend satisfiability checker to support parametric examples;
         [instantiate_examples] only widens the set of ground instances it sees
         ([pex_instances]) *)
@@ -1217,11 +1434,35 @@ module Make
        certified by a check replaying the same encoding, on a satisfiable
        input.  Removing an atom or a clause only weakens the problem, so a
        refutation of what is left is still one. *)
+    let n_before =
+      Set.length pos_atms + Set.length neg_atms + Set.length undecided_inst
+    in
     let pos_atms = Set.filter pos_atms ~f:(Fn.non ExAtom.guard_is_false)
     and neg_atms = Set.filter neg_atms ~f:(Fn.non ExAtom.guard_is_false)
     and undecided_inst =
       Set.filter undecided_inst ~f:(Fn.non ExClause.has_false_guard)
     in
+    (* counts for the phase-time account only: how many instances the default
+       point made vacuous (dropped just above), and how many decided instances
+       still carry a guard that is neither [true] nor [false] -- the ones the
+       conflict test below has to ask a solver about *)
+    if !Common.PhaseTime.on then begin
+      let n_after =
+        Set.length pos_atms + Set.length neg_atms + Set.length undecided_inst
+      in
+      Common.PhaseTime.add_here "instance-guard-false-dropped" ~secs:0.
+        ~count:(n_before - n_after);
+      let guarded atm =
+        let _, cond, _ = ExAtom.to_old_formula_and_cond atm in
+        not (LogicOld.Formula.is_true cond)
+      in
+      Common.PhaseTime.add_here "decided-instance-guarded" ~secs:0.
+        ~count:(Set.count pos_atms ~f:guarded + Set.count neg_atms ~f:guarded);
+      Common.PhaseTime.add_here "decided-instance-unguarded" ~secs:0.
+        ~count:
+          (Set.count pos_atms ~f:(Fn.non guarded)
+          + Set.count neg_atms ~f:(Fn.non guarded))
+    end;
     (* Stage 1 of the labeling redesign: the guards the instantiation could not
        discharge one at a time may still hold *together*, and a refutation is
        entitled to pick an interpretation in which they do -- a solution has to
@@ -1259,6 +1500,7 @@ module Make
                   ~f:LogicOld.Formula.str_of);
         if List.is_empty conds then (pos_atms, neg_atms, undecided_inst)
         else
+          let () = Common.PhaseTime.event "guards-globally/asked" in
           let phi = LogicOld.Formula.and_of conds in
           match
             (* a binder of certain sorts makes the call not return at all, and
@@ -1268,13 +1510,20 @@ module Make
                when the solver gives up: the guards are KEPT, which is the safe
                direction -- discharging a guard that was never shown to hold is
                what turns examples that apply nowhere into a refutation *)
-            if Z3Smt.Z3interface.may_not_return phi then
+            if mentions_unknown phi then
+              (* A common model of the guards can select an existential
+                 function. Discharging them would constrain its other choices,
+                 so keep these guards for the learner. *)
+              `Unknown "guards depend on an existential unknown"
+            else if Z3Smt.Z3interface.may_not_return phi then
               `Unknown "a sort the query may not return on (a binder, or an occurrence)"
             else
               Z3Smt.Z3interface.check_sat ~id ~timeout:(Some 5000) vs.fenv
                 [ phi ]
           with
           | `Sat _ ->
+              Common.PhaseTime.event "guards-globally/discharged";
+              Common.PhaseTime.event_here "global-guard-discharge-sat";
               Debug.print
               @@ lazy
                    (sprintf
@@ -1285,6 +1534,7 @@ module Make
                 Set.Poly.map neg_atms ~f:ExAtom.discharge_guard,
                 Set.Poly.map undecided_inst ~f:ExClause.discharge_guards )
           | ans ->
+              Common.PhaseTime.event_here "global-guard-discharge-kept";
               Debug.print
               @@ lazy
                    (sprintf "*** the %d guards are %s together; kept"
@@ -1313,8 +1563,17 @@ module Make
     and undecided_pairs = ref 0
     and guard_only = ref 0 in
     let unification_conflicts =
-      if not config.conflict_by_unification then Set.Poly.empty
-      else
+      Common.PhaseTime.with_phase "unification" @@ fun () ->
+      match config.example_conflicts with
+      | By_ground_instances -> Set.Poly.empty
+      | By_unification { structured_args_only = true; _ }
+        when Lazy.force scalar_problem ->
+          Debug.print
+          @@ lazy
+               "[search_labeling] no search by unification: every unknown \
+                takes only scalar arguments";
+          Set.Poly.empty
+      | By_unification { discharge_cardinality_guards; _ } ->
         (* Is this guard a statement about the SIZE of a forall-sort alone?
            Then it is a fact rather than a hypothesis: it holds in some model of
            the theory -- a forall-sort is every non-empty type -- and a solution
@@ -1331,7 +1590,7 @@ module Make
            elements the sort has, so discharging it would assert something the
            example never said. *)
         let cardinality_guard_only cond =
-          config.discharge_cardinality_guards
+          discharge_cardinality_guards
           && (not (LogicOld.Formula.is_true cond))
           && Set.for_all (LogicOld.Formula.term_sort_env_of cond)
                ~f:(fun (_, srt) ->
@@ -1375,7 +1634,7 @@ module Make
            is that the condition travels: the literal is not removed, an example
            GUARDED by the condition is derived, which says exactly "where these
            two are the same atom, the body is false" and nothing more. *)
-        let matching (pv1, a1, c1, prm1) (pv2, a2, c2, prm2) =
+        let meets_at_some_instance (pv1, a1, c1, prm1) (pv2, a2, c2, prm2) =
           if not (Ident.pvar_equal pv1 pv2 && List.length a1 = List.length a2)
           then None
           else
@@ -1537,7 +1796,8 @@ module Make
                                   Atomic.get Debug.enable
                                   && String.(bare head = bare n)
                                 then incr renamed);
-                              Option.map (matching hp np) ~f:(fun (cond, prm) ->
+                              Option.map (meets_at_some_instance hp np)
+                                ~f:(fun (cond, prm) ->
                                   (* the body, guarded by the condition under
                                      which the head and the decided negative are
                                      the same atom: where that holds the head is
@@ -1600,7 +1860,13 @@ module Make
                       (drop_if_cardinality c1 :: drop_if_cardinality c2 :: eqs)
                   in
                   incr paired;
-                  if Z3Smt.Z3interface.may_not_return query then (
+                  if mentions_unknown query then (
+                    (* SAT can choose a shared existential function so that the
+                       examples meet. That does not refute its other choices.
+                       Leave this pair to the learner instead. *)
+                    incr declined;
+                    None)
+                  else if Z3Smt.Z3interface.may_not_return query then (
                     incr declined;
                     None)
                   else if PCSatCommon.SolveDeadline.expired_strict () then (
@@ -1692,9 +1958,19 @@ module Make
     @@ lazy
          (sprintf
             "[search_labeling] conflict pairs: %d same-predicate, %d declined \
-             (query may not return), %d unsatisfiable (%d of them only because \
+             (unknown dependency or query may not return), %d unsatisfiable (%d of them only because \
              of the negative's guard), %d undecided"
             !paired !declined !unsat_pairs !guard_only !undecided_pairs);
+    List.iter
+      [
+        ("unification-pairs", !paired);
+        ("unification-declined", !declined);
+        ("unification-unsat", !unsat_pairs);
+        ("unification-unsat-only-by-guard", !guard_only);
+        ("unification-undecided", !undecided_pairs);
+        ("conflict-candidates-identical-atoms", Set.length (Set.inter pos_atms neg_atms));
+      ]
+      ~f:(fun (name, n) -> Common.PhaseTime.add_here name ~secs:0. ~count:n);
     let conflicts =
       (* an example atom carries a guard: it says [cond => P(t̄)]
          ([ExAtom.to_old_formula]), so where the instance falsifies [cond] the
@@ -1713,7 +1989,11 @@ module Make
             (* same question, same place it is answered; and the same safe
                direction -- a conflict is a refutation, so one whose guard
                cannot be asked about is dropped rather than counted *)
-            if Z3Smt.Z3interface.may_not_return cond then
+            if mentions_unknown cond then
+              (* A satisfiable guard may hold only for some choices of a shared
+                 existential unknown; those choices alone cannot refute it. *)
+              `Unknown "a guard depends on an existential unknown"
+            else if Z3Smt.Z3interface.may_not_return cond then
               `Unknown "a sort the query may not return on (a binder, or an occurrence)"
             else
               Z3Smt.Z3interface.check_sat ~id ~timeout:(Some 5000) vs.fenv
@@ -1721,6 +2001,10 @@ module Make
           with
           | `Sat _ -> true
           | ans ->
+              Common.PhaseTime.event_here
+                (match ans with
+                | `Unsat -> "conflict-dropped-guard-unsat"
+                | _ -> "conflict-dropped-guard-undecided");
               Debug.print
               @@ lazy
                    (sprintf
@@ -1754,6 +2038,8 @@ module Make
         (Set.length (Set.diff unification_atoms conflicts));
       use Labeling "conflicts-by-identical-atoms" (Set.length conflicts));
     let conflicts = Set.union conflicts unification_atoms in
+    Common.PhaseTime.add_here "conflicts-found" ~secs:0.
+      ~count:(Set.length conflicts);
     let senv = PCSP.Problem.senv_of APCSP.problem in
     let examples_with atom exs =
       VersionSpace.witness_examples vs
@@ -1832,7 +2118,9 @@ module Make
           @@ LogicOld.Formula.and_of phis
         in
         match
-          Z3Smt.Z3interface.check_sat ~id ~timeout:(Some 10000) vs.fenv [ phi ]
+          Common.PhaseTime.with_phase "smt-refutation" (fun () ->
+              Z3Smt.Z3interface.check_sat ~id ~timeout:(Some 10000) vs.fenv
+                [ phi ])
         with
         | `Unsat ->
             Debug.print
@@ -1856,8 +2144,9 @@ module Make
                 });
         Ok State.Unsat)
       else
-        search_labeling_main iters vs wfpvs dwfpvs nwfpvs parpvs fnpvs pos_atms
-          neg_atms undecided_inst
+        Common.PhaseTime.with_phase "search" (fun () ->
+            search_labeling_main iters vs wfpvs dwfpvs nwfpvs parpvs fnpvs
+              pos_atms neg_atms undecided_inst)
         >>= function
         | [], lemmas ->
             VersionSpace.set_unsat_witness vs
@@ -1927,6 +2216,7 @@ module Make
     let dpos = Set.Poly.map dpos ~f:simplify in
     let dneg = Set.Poly.map dneg ~f:simplify in
     let undecided =
+      Common.PhaseTime.with_phase "simplify" @@ fun () ->
       Set.Poly.map undecided
         ~f:
           (simplify
@@ -1938,6 +2228,7 @@ module Make
               (Lazy.force fn_input_positions) cl)
     in
     let res =
+      Common.PhaseTime.with_phase "propagate" @@ fun () ->
       ExClauseSet.unit_propagation
         (Map.key_set @@ PCSP.Problem.senv_of APCSP.problem)
         (Set.Poly.map dpos ~f:(fun ex -> (ex, [ ex ])))
@@ -1974,6 +2265,7 @@ module Make
         in
         (* only the examples this propagation produced: the result sets also
            contain the inputs, whose derivation is somebody else's *)
+        Common.PhaseTime.with_phase "record" @@ fun () ->
         let before = VersionSpace.examples_of vs in
         Set.iter new_examples ~f:(fun (ex, _) ->
             if not (Set.mem before ex) then
@@ -1985,11 +2277,14 @@ module Make
     Debug.print @@ lazy "**** labeler";
     let open State.Monad_infix in
     TruthTable.with_valid_budget
-      (if config.truth_table_valid_timeout > 0 then
-         Stdlib.Option.some config.truth_table_valid_timeout
-       else Stdlib.Option.none)
+      (match config.truth_table_valid_timeout_ms with
+      | Some ms when ms > 0 -> Stdlib.Option.some ms
+      | _ -> Stdlib.Option.none)
     @@ fun () ->
-    Ok e >>=? unit_propagation >>=? search_labeling iters
+    Ok e
+    >>=? (fun vs () ->
+    Common.PhaseTime.with_phase "unit-propagation" (unit_propagation vs))
+    >>=? search_labeling iters
 
   let run_phase iters e =
     if RLCfg.config.enable then (

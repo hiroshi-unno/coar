@@ -1,0 +1,17 @@
+; Run with script/llvm2lts/dune.sh runtest; like the executable, the tests are
+; off unless LLVM2LTS_BUILD=1.
+
+(cram
+ (enabled_if
+  (= %{env:LLVM2LTS_BUILD=0} 1))
+ (deps
+  %{bin:llvm2lts}
+  (glob_files inputs/*.ll)
+  (glob_files scope/*.ll)
+  (glob_files passes/*.ll)
+  (glob_files translate/*.ll)
+  (glob_files termination/*.ll)
+  (glob_files arrays/*.ll)
+  (glob_files structs/*.ll)
+  (glob_files ptr2arr/*.ll)
+  (glob_files intmodes/*.ll)))

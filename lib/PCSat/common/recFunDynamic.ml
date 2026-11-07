@@ -78,11 +78,12 @@ let note_undecided (cl : Clause.t) =
 
 let has_pending () = Atomic.get on && not (Set.is_empty (Atomic.get pending))
 
-let solve ~(solve : PCSP.Problem.t -> State.output Or_error.t)
+let solve ?guarded_counter ~(solve : PCSP.Problem.t -> State.output Or_error.t)
     ~(candidates : ClauseSet.t) (p : PCSP.Problem.t) =
   let rec loop p remaining =
     let armed =
-      PCSP.RecFunGraph.encodable_clauses (PCSP.Problem.params_of p) remaining
+      PCSP.RecFunGraph.encodable_clauses ?guarded_counter
+        (PCSP.Problem.params_of p) remaining
     in
     Atomic.set encodable armed;
     Atomic.set pending Set.Poly.empty;
@@ -103,7 +104,7 @@ let solve ~(solve : PCSP.Problem.t -> State.output Or_error.t)
     match r with
     | Ok (PCSP.Problem.Unknown, _) when not (Set.is_empty chosen) ->
         let p', added =
-          PCSP.RecFunGraph.encode_clauses ~only:(Set.mem chosen)
+          PCSP.RecFunGraph.encode_clauses ?guarded_counter ~only:(Set.mem chosen)
             ~keep_functions:true p
         in
         if List.is_empty added then r

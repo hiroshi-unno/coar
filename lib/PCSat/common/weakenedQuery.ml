@@ -43,10 +43,12 @@ let unsat_in_copy ~id ~ms fenv phi =
 let model_extends ~id ~ms fenv refused model =
   let sub =
     Common.PhaseTime.with_phase "model-sub" @@ fun () ->
-    Map.Poly.of_alist_reduce ~f:(fun t _ -> t)
-    @@ List.filter_map model ~f:(function
-         | (x, _), Some t -> Some (x, t)
-         | _ -> None)
+    (* by name and sort over the conjuncts substituted into: the model answers
+       the other conjuncts, so a name of [refused] it holds is only evidence
+       at the sort [refused] uses it at *)
+    model_assigned_subst
+      ~target:(Set.Poly.union_list (List.map refused ~f:Formula.term_sort_env_of))
+      model
   in
   let holds c =
     let c' =

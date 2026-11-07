@@ -3,8 +3,8 @@
 # Until 2026-09-13 this file cloned github.com/hiroshi-unno/coar at the tag
 # CAV21AE, so the image contained the 2021 snapshot: the runner scripts in that
 # snapshot name configs that were renamed away years ago, while the maintained
-# copies in this repository (script/muval_dt_*_term_comp_20*) name configs that
-# exist, and its .gitmodules still called the benchmark submodule
+# copies in this repository (now cav21ae_dt/run.sh and the run table) name
+# configs that exist, and its .gitmodules still called the benchmark submodule
 # `benchmarks/term-comp20`, a name this repository dropped in 2022.  None of the
 # maintained files reached the image.  The decision of 2026-09-13 is that the
 # permanent version of each artifact lives on Zenodo, and that the copy in this
@@ -16,7 +16,7 @@
 #   sudo docker run --rm -it cav21ae:latest /bin/bash --login
 #
 # `Dockerfile.dockerignore` beside this file is what keeps `cav21ae_dt/` and the
-# needed parts of `script/` in the build context; the repository's root
+# two files of `script/` its runner reads in the build context; the repository's root
 # `.dockerignore` excludes both, for the released image's benefit.
 
 # ---------------------------------------------------------------------------
@@ -111,6 +111,6 @@ RUN wget -q -P /home/opam https://arxiv.org/pdf/2104.11463.pdf || \
 # Reproduce the experiments (inside the container)
 #
 # cd /home/opam/coar
-# script/muval_dt_eager_term_comp_20.sh | tee result_eager.csv
-# script/muval_dt_lazy_term_comp_20.sh  | tee result_lazy.csv
-# script/muval_dt_eager_term_comp_20_compare.sh result_eager.csv
+# cav21ae_dt/run.sh eager | tee result_eager.csv
+# cav21ae_dt/run.sh lazy  | tee result_lazy.csv
+# cav21ae_dt/compare.sh eager result_eager.csv

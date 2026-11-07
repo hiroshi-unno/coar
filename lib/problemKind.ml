@@ -23,6 +23,26 @@ type t =
   | PSGCL  (** SGCL Verification *)
   | PCLTL  (** LTL Verification of C Programs *)
   | PCCTL  (** CTL Verification of C Programs *)
+  | PCTerm
+      (** Termination Verification of C Programs, by Athena's route through
+          LLVM IR (a verification method of its own, not another reader of
+          [PCLTL]'s input: see lib/Athena/config.ml) *)
+  | PCSafe
+      (** Safety (unreach-call) Verification of C Programs, by Athena's route
+          through LLVM IR *)
+  | PCMemSafe
+      (** Memory-Safety Verification of C Programs (valid-deref, valid-free,
+          valid-memtrack as the configuration says), by Athena's route *)
+  | PCNoOverflow
+      (** No-Overflow Verification of C Programs (no signed operation
+          overflows), by Athena's route *)
+  | PCMemCleanup
+      (** Memory-Cleanup Verification of C Programs (every allocated block is
+          freed before the program ends), by Athena's route *)
+  | PCTermMemSafe
+      (** Termination Verification of C Programs without a reachable
+          memory-safety violation (termCOMP's C_MemorySafety), by Athena's
+          route *)
   | PLTSSafe of (* BV mode *) bool
       (** Safety Verification of Labeled Transition Systems *)
   | PLTSNSafe of (* BV mode *) bool
@@ -31,6 +51,12 @@ type t =
       (** Termination Verification of Labeled Transition Systems *)
   | PLTSNTerm of (* BV mode *) bool
       (** Non-Termination Verification of Labeled Transition Systems *)
+  | PLTSBuchi of (* BV mode *) bool
+      (** Universal Buechi Verification of Labeled Transition Systems: every run
+          visits the [BUCHI] locations infinitely often *)
+  | PLTSExBuchi of (* BV mode *) bool
+      (** Existential Buechi Verification of Labeled Transition Systems: some
+          run visits the [BUCHI] locations infinitely often *)
   | PLTSMuCal of (* BV mode *) bool
       (** Modal mu-Calculus Model Checking of Labeled Transition Systems *)
   | PLTSRel of (* BV mode *) bool
@@ -43,7 +69,22 @@ type t =
   | PPLTSNTerm
       (** Non-Termination Verification of Pushdown Labeled Transition Systems *)
   | POCaml  (** Refinement Type Inference of OCaml Programs *)
+  | PHFL
+      (** HFL(Z) Validity Checking: an HES ([.in], [.hfl]) or its OCaml
+          representation in RCaml's Boolean HFL mode ([.ml]) *)
+  | PQHFL
+      (** Quantitative HFL: bounds of lambda-HFL terms in RCaml's expectation
+          modes ([.ml]; [.qhfl] is reserved for a text syntax) *)
   | PBTOR2  (** Safety Verification of Word-Level Hardware Models in BTOR2 *)
+  | PLLVMSafe of (* BV mode *) bool
+      (** Safety (unreach-call) Verification of LLVM IR from C, translated
+          directly to muCLP *)
+  | PLLVMTerm of (* BV mode *) bool
+      (** Termination Verification of LLVM IR from C, translated directly to
+          muCLP *)
+  | PXMLType
+      (** Translation of Regular Tree Expression Types into Tree Automata (a
+          conversion with nothing to solve: only the printer accepts it) *)
 [@@deriving show, eq]
 
 (* Every problem with its display name (for the help string) and the names
@@ -88,6 +129,12 @@ let table : (t * string * string list) list =
     (PSGCL, "SGCL", [ "sgcl" ]);
     (PCLTL, "CLTL", [ "cltl"; "c-ltl" ]);
     (PCCTL, "CCTL", [ "cctl"; "c-ctl" ]);
+    (PCTerm, "Cterm", [ "cterm"; "c-term" ]);
+    (PCSafe, "Csafe", [ "csafe"; "c-safe" ]);
+    (PCMemSafe, "Cmemsafe", [ "cmemsafe"; "c-memsafe" ]);
+    (PCTermMemSafe, "Ctermmemsafe", [ "ctermmemsafe"; "c-term-memsafe" ]);
+    (PCNoOverflow, "Cnooverflow", [ "cnooverflow"; "c-no-overflow" ]);
+    (PCMemCleanup, "Cmemcleanup", [ "cmemcleanup"; "c-memcleanup" ]);
     (PLTSSafe false, "LTSsafe", [ "ltssafe"; "lts-safe" ]);
     (PLTSSafe true, "LTSsafeBV", [ "ltssafebv"; "lts-safe-bv" ]);
     (PLTSNSafe false, "LTSnsafe", [ "ltsnsafe"; "lts-nsafe" ]);
@@ -96,6 +143,10 @@ let table : (t * string * string list) list =
     (PLTSTerm true, "LTStermBV", [ "ltstermbv"; "lts-term-bv" ]);
     (PLTSNTerm false, "LTSnterm", [ "ltsnterm"; "lts-nterm" ]);
     (PLTSNTerm true, "LTSntermBV", [ "ltsntermbv"; "lts-nterm-bv" ]);
+    (PLTSBuchi false, "LTSbuchi", [ "ltsbuchi"; "lts-buchi" ]);
+    (PLTSBuchi true, "LTSbuchiBV", [ "ltsbuchibv"; "lts-buchi-bv" ]);
+    (PLTSExBuchi false, "LTSexbuchi", [ "ltsexbuchi"; "lts-exbuchi" ]);
+    (PLTSExBuchi true, "LTSexbuchiBV", [ "ltsexbuchibv"; "lts-exbuchi-bv" ]);
     (PLTSMuCal false, "LTSmucal", [ "ltsmucal"; "lts-mucal" ]);
     (PLTSMuCal true, "LTSmucalBV", [ "ltsmucalbv"; "lts-mucal-bv" ]);
     (PLTSRel false, "LTSrel", [ "ltsrel"; "lts-rel" ]);
@@ -107,7 +158,14 @@ let table : (t * string * string list) list =
     (PPLTSTerm, "PLTSterm", [ "pltsterm"; "plts-term" ]);
     (PPLTSNTerm, "PLTSnterm", [ "pltsnterm"; "plts-nterm" ]);
     (POCaml, "ML", [ "ml" ]);
+    (PHFL, "HFL", [ "hfl" ]);
+    (PQHFL, "QHFL", [ "qhfl" ]);
     (PBTOR2, "BTOR2", [ "btor2" ]);
+    (PLLVMSafe false, "LLVMsafe", [ "llvmsafe"; "llvm-safe" ]);
+    (PLLVMSafe true, "LLVMsafeBV", [ "llvmsafebv"; "llvm-safe-bv" ]);
+    (PLLVMTerm false, "LLVMterm", [ "llvmterm"; "llvm-term" ]);
+    (PLLVMTerm true, "LLVMtermBV", [ "llvmtermbv"; "llvm-term-bv" ]);
+    (PXMLType, "XMLType", [ "xmltype" ]);
   ]
 
 let all = List.map table ~f:(fun (p, _, _) -> p)

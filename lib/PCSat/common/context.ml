@@ -9,7 +9,6 @@
    a different problem without reading or overwriting the current version. *)
 open Core
 open Ast
-open Ident
 open Common.Ext
 
 type version = {
@@ -74,21 +73,47 @@ let push t =
   | Some version -> Stack.push t.version_stack version
   | None -> ()
 
+(* [remove_unused old_version new_version]: [new_version] (a fresh version of
+   the problem about to be solved) given the examples and truth tables of
+   [old_version] that are still about it.
+   Kept: the truth table of each unknown of both sort environments at the same
+   sort; the examples reachable from no vertex that the new problem lacks (a
+   clause of the old problem not in the new one, or the [Dummy] source) and
+   that mention only unknowns of both environments at the same sort, the
+   examples derived from a dropped one being dropped with it.
+   Guarantees: every example of the result mentions only unknowns of the new
+   problem, at their sorts there -- what the synthesizer assumes when it
+   files each example under the hypothesis space of its unknown.
+   Preserves: [old_version] is not modified; the pruning is done on a copy.
+   Why both criteria: dropping by reachability alone presumes that every
+   example is linked to the clauses it came from.  The budget of a bounded
+   solve ([Common.Timer]) raises asynchronously, and when it lands inside a
+   graph update -- a pruning cut short half-way through a chain of derived
+   examples, say -- it can leave an example linked to nothing, which no
+   pruning by reachability removes again; a later solve whose problem names
+   its unknowns afresh (a MuStrat refinement re-synthesises a ranking under a
+   new copy name) would then meet an example of an unknown it does not have,
+   for which it has no hypothesis space.  The unknowns criterion holds
+   whatever state the graph is in.  Why a copy: the pruning
+   itself can be cut short by the same budget, and a cut on the version the
+   context keeps would leave such a half-pruned graph behind for the next
+   solve. *)
 let remove_unused old_version new_version =
   (*We assume new_version has a pcsp problem *)
   let old_senv = old_version.senv in
   let new_senv = new_version.senv in
-  Map.Poly.iteri old_senv ~f:(fun ~key:(Tvar v) ~data ->
-      let tvar = Tvar v in
-      let pvar = Pvar v in
-      if
-        (not (Map.Poly.mem new_senv tvar))
-        || Stdlib.( <> ) (Map.Poly.find_exn new_senv tvar) data
-      then Hashtbl.Poly.remove old_version.truth_table pvar
-      else if Hashtbl.Poly.mem old_version.truth_table pvar then
-        Hashtbl.Poly.set ~key:pvar
-          ~data:(Hashtbl.Poly.find_exn old_version.truth_table pvar)
-          new_version.truth_table);
+  (* an unknown whose facts carry over: in both environments, at one sort *)
+  let carried tvar =
+    match (Map.Poly.find old_senv tvar, Map.Poly.find new_senv tvar) with
+    | Some s_old, Some s_new -> Stdlib.( = ) s_old s_new
+    | _ -> false
+  in
+  Map.Poly.iteri old_senv ~f:(fun ~key:tvar ~data:_ ->
+      let pvar = Ident.tvar_to_pvar tvar in
+      if carried tvar then
+        Option.iter (Hashtbl.Poly.find old_version.truth_table pvar)
+          ~f:(fun data ->
+            Hashtbl.Poly.set ~key:pvar ~data new_version.truth_table));
   let new_clauses =
     PCSP.Problem.clauses_of new_version.problem
     |> Set.Poly.map ~f:ClauseGraph.mk_clause
@@ -102,11 +127,18 @@ let remove_unused old_version new_version =
         not @@ Set.exists new_clauses ~f:(fun v1 -> ClauseGraph.V.equal v v1))
     |> fun vss -> Set.add vss ClauseGraph.Dummy
   in
-  (* print_endline @@ sprintf "rm_vertexs(clauses):%d" (Set.length rm_vertexs); *)
-  (* print_endline @@ sprintf "%s" (String.concat_map_set ~sep:"\n" ~f:(ClauseGraph.str_of_vertex old_senv) rm_vertexs); *)
-  Set.iter rm_vertexs ~f:(fun v ->
-      ClauseGraph.remove_succ old_version.senv old_version.graph v);
   let new_graph = ClauseGraph.clone old_version.graph in
+  Set.iter rm_vertexs ~f:(fun v ->
+      ClauseGraph.remove_succ old_version.senv new_graph v);
+  let foreign =
+    ClauseGraph.remove_examples_if old_version.senv new_graph ~f:(fun ex ->
+        Set.exists (ExClause.pvs_of ex) ~f:(fun p ->
+            not (carried (Ident.pvar_to_tvar p))))
+  in
+  (* one answer-neutral event per carry-over that had to drop such an
+     example, so a run shows whether the unknowns criterion acted *)
+  if foreign > 0 then Common.PhaseTime.event "context-dropped-foreign-examples";
+  ClauseGraph.refresh_example_sets new_graph;
   { new_version with graph = new_graph; senv = new_senv }
 
 let pop t =

@@ -1,10 +1,24 @@
 {
-    "upper_bound_rfun_coeff": null,
-    "upper_bound_rfun_const": null,
-    "upper_bound_disc_coeff": null,
-    "upper_bound_disc_const": null,
-    "threshold_rfun_coeff": null,
-    "threshold_rfun_const": null,
-    "threshold_disc_coeff": null,
-    "threshold_disc_const": null
+    "bounds": {
+        "rfun": {
+            "coeff": {
+                "initial": null,
+                "unbounded_above": null
+            },
+            "const": {
+                "initial": null,
+                "unbounded_above": null
+            }
+        },
+        "disc": {
+            "coeff": {
+                "initial": null,
+                "unbounded_above": null
+            },
+            "const": {
+                "initial": null,
+                "unbounded_above": null
+            }
+        }
+    }
 }

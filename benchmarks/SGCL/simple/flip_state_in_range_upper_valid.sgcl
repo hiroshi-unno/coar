@@ -1,0 +1,18 @@
+# The probability of the flip is the variable p, never assigned, so the bound is asked for
+# every initial p; the flip is reached only where 0 <= p <= 1, where p is a probability, so no
+# run reaches an out-of-range probability:
+#   wp(S, c) = p * 1 + (1 - p) * 0 = p   for 0 <= p <= 1,   and 1 elsewhere (c := 1),
+# so the upper bound 1 holds at every p.
+# Expected: valid.  The twin of flip_state_above_one_upper_unknown.sgcl: an upper bound on a
+# program whose probability is over program variables keeps its answer where that probability
+# is in range.
+c := 0;
+if 0 <= p and p <= 1 {
+	if flip(p) {
+		c := 1
+	}
+} else {
+	c := 1
+}
+return c
+?Ex[c] <= 1

@@ -1,0 +1,14 @@
+# r takes only negative values: a fair choice between r = -1.5 and r = -0.5.  The
+# post-expectation r + 2 is non-negative on both outcomes and
+#   wp(S, r + 2) = 1/2 * (-1.5 + 2) + 1/2 * (-0.5 + 2) = 1/2 * 0.5 + 1/2 * 1.5 = 1,
+# so the upper bound 1 is exact.  (pGCL has no unary minus; 0 - 1.5 is -1.5.)
+# Expected: valid.  Before the post of a loop-free program was substituted into the
+# preexpectation it was a function of r required to be non-negative at every real r, and the
+# bound was lost (unknown).
+real r;
+{
+	r := 0 - 1.5;
+}[1/2]{
+	r := 0 - 0.5;
+}
+?Ex [r + 2] <= 1

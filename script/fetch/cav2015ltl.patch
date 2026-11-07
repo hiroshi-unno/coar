@@ -1,0 +1,11 @@
+--- a/decision-predicates/13-windows_os_frag1.c
++++ b/decision-predicates/13-windows_os_frag1.c
+@@ -53,7 +53,7 @@
+ SERIAL_TIMEOUTS   CurrentTimeouts;
+ 
+ 
+-  A = R = 0; 
++  a = r = 0; 
+   status = STATUS_UNSUCCESSFUL; 
+   CurrentTimeouts = __VERIFIER_nondet_int();
+   k = __VERIFIER_nondet_int();

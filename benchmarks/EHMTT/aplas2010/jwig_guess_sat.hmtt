@@ -1,0 +1,675 @@
+%BEGING
+
+
+/*
+Start -> Wrap Guessdoc.
+*/
+
+/*
+Start x -> case x of text lf lf => Wrap (Again text). 
+*/
+
+Start -> 
+  br 
+    (Wrap (Recorddoc (text leaf)))
+    (ShowRecord (coerce qR (Wrap (Recorddoc (text leaf)))))
+.
+
+Wrap x -> 
+  html 
+    (head 
+      (title (text leaf leaf) leaf)
+      (body x leaf))
+    leaf
+.
+/*
+Guessdoc ->
+  div
+    (text
+      leaf
+      (form
+        (p
+          (input
+            leaf
+            (input leaf leaf)
+          )
+          leaf
+        )
+        leaf
+      )
+    )
+    leaf 
+.
+
+Again c ->
+  div
+    (text
+      leaf
+      (b
+        (c leaf leaf)
+        (text
+          leaf
+          (form
+            (p
+              (input
+                leaf
+                (input leaf leaf)
+              )
+              leaf
+            )
+            leaf
+          )
+        )
+      )
+    )
+    leaf 
+.
+*/
+Old n r z ->
+  text 
+    leaf 
+    (n 
+      leaf 
+      (text
+        leaf
+        (r
+          leaf
+          (text leaf z)
+        )
+      )
+    )
+.
+Recorddoc x ->
+  div
+    (p (text leaf leaf)
+      (x
+        (p 
+          (text leaf leaf)
+          (form
+            (div
+              (input leaf (input leaf leaf))
+              leaf
+            )
+            leaf
+          )
+        )
+      )
+    )
+    leaf
+.
+
+ShowRecord x -> case x of
+  html h lf =>
+  case h of
+  head t b =>
+  case b of
+  body dv lf =>
+  case dv of
+  div d lf =>
+  case d of
+  p t1 t2 =>
+  case t2 of
+  text lf z =>
+    html
+      (head 
+        (copy t)
+        (body
+          (div
+            (p
+              (copy t1)
+              (text leaf (Old text text (copy z)))
+            )
+            leaf
+          )
+          leaf
+        )
+      )
+      leaf
+.
+            
+
+%ENDG
+
+%BEGINA
+qT text -> qL qL.
+qL leaf -> .
+
+qR html -> q100 qL.
+q100 head -> q101 q102.
+q101 title -> qT qL.
+q102 body -> q103 qL.
+q103 div -> q104 qL.
+q104 p -> qT q105.
+q105 text -> qL q106.
+q106 p -> qT q107.
+q107 form -> q108 qL.
+q108 div -> q109 qL.
+q109 input -> qL q110.
+q110 input -> qL qL.
+
+q0 html -> q27 q26.
+q1 body -> q30 q26.
+q2 caption -> q11 q37.
+q2 col -> q26 q37.
+q2 colgroup -> q16 q37.
+q2 tbody -> q39 q15.
+q2 tfoot -> q39 q40.
+q2 thead -> q39 q38.
+q2 tr -> q41 q15.
+q3 caption -> q11 q45.
+q3 col -> q26 q45.
+q3 colgroup -> q16 q45.
+q3 tbody -> q47 q23.
+q3 tfoot -> q47 q48.
+q3 thead -> q47 q46.
+q3 tr -> q49 q23.
+q4 text -> q26 q26.
+q5 leaf -> .
+q5 base -> q26 q5.
+q5 link -> q26 q5.
+q5 meta -> q26 q5.
+q5 object -> q29 q5.
+q5 script -> q4 q5.
+q5 style -> q4 q5.
+q6 leaf -> .
+q6 a -> q13 q6.
+q6 abbr -> q11 q6.
+q6 acronym -> q11 q6.
+q6 address -> q11 q6.
+q6 b -> q11 q6.
+q6 bdo -> q11 q6.
+q6 big -> q11 q6.
+q6 blockquote -> q7 q6.
+q6 brk -> q26 q6.
+q6 button -> q6 q6.
+q6 cite -> q11 q6.
+q6 code -> q11 q6.
+q6 del -> q6 q6.
+q6 dfn -> q11 q6.
+q6 div -> q6 q6.
+q6 dl -> q36 q6.
+q6 em -> q11 q6.
+q6 fieldset -> q34 q6.
+q6 form -> q19 q6.
+q6 h1 -> q11 q6.
+q6 h2 -> q11 q6.
+q6 h3 -> q11 q6.
+q6 h4 -> q11 q6.
+q6 h5 -> q11 q6.
+q6 h6 -> q11 q6.
+q6 hr -> q26 q6.
+q6 i -> q11 q6.
+q6 img -> q26 q6.
+q6 input -> q26 q6.
+q6 ins -> q6 q6.
+q6 kbd -> q11 q6.
+q6 label -> q11 q6.
+q6 map -> q8 q6.
+q6 noscript -> q7 q6.
+q6 object -> q29 q6.
+q6 ol -> q35 q6.
+q6 p -> q11 q6.
+q6 pre -> q11 q6.
+q6 q -> q11 q6.
+q6 samp -> q11 q6.
+q6 select -> q31 q6.
+q6 small -> q11 q6.
+q6 span -> q11 q6.
+q6 strong -> q11 q6.
+q6 sub -> q11 q6.
+q6 sup -> q11 q6.
+q6 table -> q2 q6.
+q6 text -> q26 q6.
+q6 textarea -> q4 q6.
+q6 tt -> q11 q6.
+q6 ul -> q35 q6.
+q6 var -> q11 q6.
+q7 leaf -> .
+q7 address -> q11 q7.
+q7 blockquote -> q7 q7.
+q7 div -> q6 q7.
+q7 dl -> q36 q7.
+q7 fieldset -> q34 q7.
+q7 form -> q19 q7.
+q7 h1 -> q11 q7.
+q7 h2 -> q11 q7.
+q7 h3 -> q11 q7.
+q7 h4 -> q11 q7.
+q7 h5 -> q11 q7.
+q7 h6 -> q11 q7.
+q7 hr -> q26 q7.
+q7 noscript -> q7 q7.
+q7 ol -> q35 q7.
+q7 p -> q11 q7.
+q7 pre -> q11 q7.
+q7 table -> q2 q7.
+q7 ul -> q35 q7.
+q8 leaf -> .
+q8 address -> q11 q8.
+q8 area -> q26 q8.
+q8 blockquote -> q7 q8.
+q8 div -> q6 q8.
+q8 dl -> q36 q8.
+q8 fieldset -> q34 q8.
+q8 form -> q19 q8.
+q8 h1 -> q11 q8.
+q8 h2 -> q11 q8.
+q8 h3 -> q11 q8.
+q8 h4 -> q11 q8.
+q8 h5 -> q11 q8.
+q8 h6 -> q11 q8.
+q8 hr -> q26 q8.
+q8 noscript -> q7 q8.
+q8 ol -> q35 q8.
+q8 p -> q11 q8.
+q8 pre -> q11 q8.
+q8 table -> q2 q8.
+q8 ul -> q35 q8.
+q9 leaf -> .
+q9 optgroup -> q32 q9.
+q9 option -> q4 q9.
+q10 leaf -> .
+q10 option -> q4 q10.
+q11 leaf -> .
+q11 a -> q13 q11.
+q11 abbr -> q11 q11.
+q11 acronym -> q11 q11.
+q11 b -> q11 q11.
+q11 bdo -> q11 q11.
+q11 big -> q11 q11.
+q11 brk -> q26 q11.
+q11 button -> q6 q11.
+q11 cite -> q11 q11.
+q11 code -> q11 q11.
+q11 del -> q6 q11.
+q11 dfn -> q11 q11.
+q11 em -> q11 q11.
+q11 i -> q11 q11.
+q11 img -> q26 q11.
+q11 input -> q26 q11.
+q11 ins -> q6 q11.
+q11 kbd -> q11 q11.
+q11 label -> q11 q11.
+q11 map -> q8 q11.
+q11 object -> q29 q11.
+q11 q -> q11 q11.
+q11 samp -> q11 q11.
+q11 select -> q31 q11.
+q11 small -> q11 q11.
+q11 span -> q11 q11.
+q11 strong -> q11 q11.
+q11 sub -> q11 q11.
+q11 sup -> q11 q11.
+q11 text -> q26 q11.
+q11 textarea -> q4 q11.
+q11 tt -> q11 q11.
+q11 var -> q11 q11.
+q12 leaf -> .
+q12 abbr -> q13 q12.
+q12 acronym -> q13 q12.
+q12 address -> q11 q12.
+q12 b -> q13 q12.
+q12 bdo -> q13 q12.
+q12 big -> q13 q12.
+q12 blockquote -> q7 q12.
+q12 brk -> q26 q12.
+q12 button -> q12 q12.
+q12 cite -> q13 q12.
+q12 code -> q13 q12.
+q12 del -> q12 q12.
+q12 dfn -> q13 q12.
+q12 div -> q6 q12.
+q12 dl -> q36 q12.
+q12 em -> q13 q12.
+q12 fieldset -> q34 q12.
+q12 form -> q19 q12.
+q12 h1 -> q11 q12.
+q12 h2 -> q11 q12.
+q12 h3 -> q11 q12.
+q12 h4 -> q11 q12.
+q12 h5 -> q11 q12.
+q12 h6 -> q11 q12.
+q12 hr -> q26 q12.
+q12 i -> q13 q12.
+q12 img -> q26 q12.
+q12 ins -> q12 q12.
+q12 kbd -> q13 q12.
+q12 label -> q13 q12.
+q12 noscript -> q7 q12.
+q12 object -> q33 q12.
+q12 ol -> q35 q12.
+q12 p -> q11 q12.
+q12 pre -> q11 q12.
+q12 q -> q13 q12.
+q12 samp -> q13 q12.
+q12 small -> q13 q12.
+q12 span -> q13 q12.
+q12 strong -> q13 q12.
+q12 sub -> q13 q12.
+q12 sup -> q13 q12.
+q12 table -> q2 q12.
+q12 text -> q26 q12.
+q12 tt -> q13 q12.
+q12 ul -> q35 q12.
+q12 var -> q13 q12.
+q13 leaf -> .
+q13 abbr -> q13 q13.
+q13 acronym -> q13 q13.
+q13 b -> q13 q13.
+q13 bdo -> q13 q13.
+q13 big -> q13 q13.
+q13 brk -> q26 q13.
+q13 button -> q12 q13.
+q13 cite -> q13 q13.
+q13 code -> q13 q13.
+q13 del -> q12 q13.
+q13 dfn -> q13 q13.
+q13 em -> q13 q13.
+q13 i -> q13 q13.
+q13 img -> q26 q13.
+q13 ins -> q12 q13.
+q13 kbd -> q13 q13.
+q13 label -> q13 q13.
+q13 object -> q33 q13.
+q13 q -> q13 q13.
+q13 samp -> q13 q13.
+q13 small -> q13 q13.
+q13 span -> q13 q13.
+q13 strong -> q13 q13.
+q13 sub -> q13 q13.
+q13 sup -> q13 q13.
+q13 text -> q26 q13.
+q13 tt -> q13 q13.
+q13 var -> q13 q13.
+q14 leaf -> .
+q14 dd -> q6 q14.
+q14 dt -> q11 q14.
+q15 leaf -> .
+q15 tbody -> q39 q15.
+q15 tr -> q41 q15.
+q16 leaf -> .
+q16 col -> q26 q16.
+q17 leaf -> .
+q17 tr -> q41 q17.
+q18 leaf -> .
+q18 td -> q6 q18.
+q19 leaf -> .
+q19 address -> q11 q19.
+q19 blockquote -> q21 q19.
+q19 div -> q20 q19.
+q19 dl -> q44 q19.
+q19 fieldset -> q42 q19.
+q19 h1 -> q11 q19.
+q19 h2 -> q11 q19.
+q19 h3 -> q11 q19.
+q19 h4 -> q11 q19.
+q19 h5 -> q11 q19.
+q19 h6 -> q11 q19.
+q19 hr -> q26 q19.
+q19 noscript -> q21 q19.
+q19 ol -> q43 q19.
+q19 p -> q11 q19.
+q19 pre -> q11 q19.
+q19 script -> q4 q19.
+q19 table -> q3 q19.
+q19 ul -> q43 q19.
+q20 leaf -> .
+q20 a -> q13 q20.
+q20 abbr -> q11 q20.
+q20 acronym -> q11 q20.
+q20 address -> q11 q20.
+q20 b -> q11 q20.
+q20 bdo -> q11 q20.
+q20 big -> q11 q20.
+q20 blockquote -> q21 q20.
+q20 brk -> q26 q20.
+q20 button -> q6 q20.
+q20 cite -> q11 q20.
+q20 code -> q11 q20.
+q20 del -> q6 q20.
+q20 dfn -> q11 q20.
+q20 div -> q20 q20.
+q20 dl -> q44 q20.
+q20 em -> q11 q20.
+q20 fieldset -> q42 q20.
+q20 h1 -> q11 q20.
+q20 h2 -> q11 q20.
+q20 h3 -> q11 q20.
+q20 h4 -> q11 q20.
+q20 h5 -> q11 q20.
+q20 h6 -> q11 q20.
+q20 hr -> q26 q20.
+q20 i -> q11 q20.
+q20 img -> q26 q20.
+q20 input -> q26 q20.
+q20 ins -> q6 q20.
+q20 kbd -> q11 q20.
+q20 label -> q11 q20.
+q20 map -> q8 q20.
+q20 noscript -> q21 q20.
+q20 object -> q29 q20.
+q20 ol -> q43 q20.
+q20 p -> q11 q20.
+q20 pre -> q11 q20.
+q20 q -> q11 q20.
+q20 samp -> q11 q20.
+q20 select -> q31 q20.
+q20 small -> q11 q20.
+q20 span -> q11 q20.
+q20 strong -> q11 q20.
+q20 sub -> q11 q20.
+q20 sup -> q11 q20.
+q20 table -> q3 q20.
+q20 text -> q26 q20.
+q20 textarea -> q4 q20.
+q20 tt -> q11 q20.
+q20 ul -> q43 q20.
+q20 var -> q11 q20.
+q21 leaf -> .
+q21 address -> q11 q21.
+q21 blockquote -> q21 q21.
+q21 div -> q20 q21.
+q21 dl -> q44 q21.
+q21 fieldset -> q42 q21.
+q21 h1 -> q11 q21.
+q21 h2 -> q11 q21.
+q21 h3 -> q11 q21.
+q21 h4 -> q11 q21.
+q21 h5 -> q11 q21.
+q21 h6 -> q11 q21.
+q21 hr -> q26 q21.
+q21 noscript -> q21 q21.
+q21 ol -> q43 q21.
+q21 p -> q11 q21.
+q21 pre -> q11 q21.
+q21 table -> q3 q21.
+q21 ul -> q43 q21.
+q22 leaf -> .
+q22 dd -> q20 q22.
+q22 dt -> q11 q22.
+q23 leaf -> .
+q23 tbody -> q47 q23.
+q23 tr -> q49 q23.
+q24 leaf -> .
+q24 tr -> q49 q24.
+q25 leaf -> .
+q25 td -> q20 q25.
+q26 leaf -> .
+q27 head -> q28 q1.
+q28 base -> q26 q28.
+q28 link -> q26 q28.
+q28 meta -> q26 q28.
+q28 object -> q29 q28.
+q28 script -> q4 q28.
+q28 style -> q4 q28.
+q28 title -> q4 q5.
+q29 leaf -> .
+q29 a -> q13 q6.
+q29 abbr -> q11 q6.
+q29 acronym -> q11 q6.
+q29 address -> q11 q6.
+q29 b -> q11 q6.
+q29 bdo -> q11 q6.
+q29 big -> q11 q6.
+q29 blockquote -> q7 q6.
+q29 brk -> q26 q6.
+q29 button -> q6 q6.
+q29 cite -> q11 q6.
+q29 code -> q11 q6.
+q29 del -> q6 q6.
+q29 dfn -> q11 q6.
+q29 div -> q6 q6.
+q29 dl -> q36 q6.
+q29 em -> q11 q6.
+q29 fieldset -> q34 q6.
+q29 form -> q19 q6.
+q29 h1 -> q11 q6.
+q29 h2 -> q11 q6.
+q29 h3 -> q11 q6.
+q29 h4 -> q11 q6.
+q29 h5 -> q11 q6.
+q29 h6 -> q11 q6.
+q29 hr -> q26 q6.
+q29 i -> q11 q6.
+q29 img -> q26 q6.
+q29 input -> q26 q6.
+q29 ins -> q6 q6.
+q29 kbd -> q11 q6.
+q29 label -> q11 q6.
+q29 map -> q8 q6.
+q29 noscript -> q7 q6.
+q29 object -> q29 q6.
+q29 ol -> q35 q6.
+q29 p -> q11 q6.
+q29 param -> q26 q29.
+q29 pre -> q11 q6.
+q29 q -> q11 q6.
+q29 samp -> q11 q6.
+q29 select -> q31 q6.
+q29 small -> q11 q6.
+q29 span -> q11 q6.
+q29 strong -> q11 q6.
+q29 sub -> q11 q6.
+q29 sup -> q11 q6.
+q29 table -> q2 q6.
+q29 text -> q26 q6.
+q29 textarea -> q4 q6.
+q29 tt -> q11 q6.
+q29 ul -> q35 q6.
+q29 var -> q11 q6.
+q30 address -> q11 q7.
+q30 blockquote -> q7 q7.
+q30 div -> q6 q7.
+q30 dl -> q36 q7.
+q30 fieldset -> q34 q7.
+q30 form -> q19 q7.
+q30 h1 -> q11 q7.
+q30 h2 -> q11 q7.
+q30 h3 -> q11 q7.
+q30 h4 -> q11 q7.
+q30 h5 -> q11 q7.
+q30 h6 -> q11 q7.
+q30 hr -> q26 q7.
+q30 noscript -> q7 q7.
+q30 ol -> q35 q7.
+q30 p -> q11 q7.
+q30 pre -> q11 q7.
+q30 table -> q2 q7.
+q30 ul -> q35 q7.
+q31 optgroup -> q32 q9.
+q31 option -> q4 q9.
+q32 option -> q4 q10.
+q33 leaf -> .
+q33 abbr -> q13 q12.
+q33 acronym -> q13 q12.
+q33 address -> q11 q12.
+q33 b -> q13 q12.
+q33 bdo -> q13 q12.
+q33 big -> q13 q12.
+q33 blockquote -> q7 q12.
+q33 brk -> q26 q12.
+q33 button -> q12 q12.
+q33 cite -> q13 q12.
+q33 code -> q13 q12.
+q33 del -> q12 q12.
+q33 dfn -> q13 q12.
+q33 div -> q6 q12.
+q33 dl -> q36 q12.
+q33 em -> q13 q12.
+q33 fieldset -> q34 q12.
+q33 form -> q19 q12.
+q33 h1 -> q11 q12.
+q33 h2 -> q11 q12.
+q33 h3 -> q11 q12.
+q33 h4 -> q11 q12.
+q33 h5 -> q11 q12.
+q33 h6 -> q11 q12.
+q33 hr -> q26 q12.
+q33 i -> q13 q12.
+q33 img -> q26 q12.
+q33 ins -> q12 q12.
+q33 kbd -> q13 q12.
+q33 label -> q13 q12.
+q33 noscript -> q7 q12.
+q33 object -> q33 q12.
+q33 ol -> q35 q12.
+q33 p -> q11 q12.
+q33 param -> q26 q33.
+q33 pre -> q11 q12.
+q33 q -> q13 q12.
+q33 samp -> q13 q12.
+q33 small -> q13 q12.
+q33 span -> q13 q12.
+q33 strong -> q13 q12.
+q33 sub -> q13 q12.
+q33 sup -> q13 q12.
+q33 table -> q2 q12.
+q33 text -> q26 q12.
+q33 tt -> q13 q12.
+q33 ul -> q35 q12.
+q33 var -> q13 q12.
+q34 legend -> q11 q6.
+q35 li -> q6 q26.
+q36 dd -> q6 q14.
+q36 dt -> q11 q14.
+q37 col -> q26 q37.
+q37 colgroup -> q16 q37.
+q37 tbody -> q39 q15.
+q37 tfoot -> q39 q40.
+q37 thead -> q39 q38.
+q37 tr -> q41 q15.
+q38 tbody -> q39 q15.
+q38 tfoot -> q39 q40.
+q38 tr -> q41 q15.
+q39 tr -> q41 q17.
+q40 tbody -> q39 q15.
+q40 tr -> q41 q15.
+q41 td -> q6 q18.
+q42 legend -> q11 q20.
+q43 li -> q20 q26.
+q44 dd -> q20 q22.
+q44 dt -> q11 q22.
+q45 col -> q26 q45.
+q45 colgroup -> q16 q45.
+q45 tbody -> q47 q23.
+q45 tfoot -> q47 q48.
+q45 thead -> q47 q46.
+q45 tr -> q49 q23.
+q46 tbody -> q47 q23.
+q46 tfoot -> q47 q48.
+q46 tr -> q49 q23.
+q47 tr -> q49 q24.
+q48 tbody -> q47 q23.
+q48 tr -> q49 q23.
+q49 td -> q20 q25.
+%ENDA
+
+%BEGINT
+/*
+Start : q0. /* Guessdoc, Recorddoc */
+*/
+Start : q0. /* Guessdoc, Recorddoc */
+/*
+Start : qT -> q0. /* Again */
+*/
+%ENDT

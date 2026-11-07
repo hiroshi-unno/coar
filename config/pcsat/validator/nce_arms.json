@@ -1,0 +1,11 @@
+{
+    "examples": {
+        "diversify": {
+            "arms": true
+        }
+    },
+    "cex_strategy": [
+        "AllExamples"
+    ],
+    "check_part_sol_with_lbs": false
+}

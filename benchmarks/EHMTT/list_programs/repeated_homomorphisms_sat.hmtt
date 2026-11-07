@@ -1,0 +1,51 @@
+%BEGING
+A xa xb z -> xa z.
+B xa xb z -> xb z.
+Empty xa xb z -> z.
+Concat s1 s2 xa xb z -> s1 xa xb (s2 xa xb z).
+I2Str x xa xb z -> 
+	case x of e => Empty xa xb z
+	| a y => Concat A (I2Str y) xa xb z
+	| b y => Concat B (I2Str y) xa xb z
+.
+Str2O s -> s a b e.
+Hom sa sb s xa xb z -> s (sa xa xb) (sb xa xb) z.
+H s xa xb z -> Hom (Concat B B) A s xa xb z.
+H2 s xa xb z -> Hom B A s xa xb z.
+HomRep m n s -> F m n H H2 (I2Str s).
+F m n h h2 x -> 
+	case m of z => G n h2 x
+	| s k => F k n h h2 (h x) 
+.
+G n h x ->
+	case n of z => Str2O x
+	| s m => G m h (h x)
+.
+
+%ENDG
+
+%BEGINA
+qEven z -> .
+qEven s -> qOdd.
+qOdd s -> qEven.
+
+/* a*b*e */
+qAB a -> qAB.
+qAB b -> qB.
+qAB e -> .
+qB b -> qB.
+qB e -> .
+
+/* b*a*e */
+qBA b -> qBA.
+qBA a -> qA.
+qBA e -> .
+qA a -> qA.
+qA e -> .
+
+
+%ENDA
+
+%BEGINT
+HomRep : qEven -> qOdd -> qAB -> qBA.
+%ENDT

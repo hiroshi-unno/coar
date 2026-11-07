@@ -1,0 +1,17 @@
+/* The program outputs its own terminal argcheck__q1, which the automaton
+   has no transition for: unsat.  For a function-typed parameter of the main
+   type the reduction checks each argument under a terminal it adds per
+   state, readable from every state; when those terminals were named
+   argcheck__<state>, the program's argcheck__q1 was accepted. */
+%BEGING
+Main f x -> argcheck__q1 (f x) e.
+%ENDG
+
+%BEGINA
+q1 c -> q1.
+q1 e -> .
+%ENDA
+
+%BEGINT
+Main : (q1 -> q1) -> q1 -> q1.
+%ENDT

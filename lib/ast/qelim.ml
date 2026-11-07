@@ -19,6 +19,44 @@ open Common.Ext
 open Common.Combinator
 open Logic
 
+(* The largest tree a substitution [x := t] in [qelim_aux2] may produce, as the
+   size of [t] times the number of occurrences of [x] it replaces; [None] (the
+   default) bounds nothing.  The substitution places [t] physically at every
+   occurrence, so a chain of definitions each using the previous variable more
+   than once ([x2 = f x1 x1], [x3 = f x2 x2], ...) stays small in memory while
+   its tree doubles with each link -- and every consumer after it walks the
+   tree: the conversion between the two term representations, the evaluator,
+   the encoding into Z3.  Declining a candidate is sound: the disequality it
+   came from stays in the clause, and eliminating it is never required, so the
+   clause is the same constraint either way.  Process-wide once set. *)
+let max_subst_growth : int option Atomic.t = Atomic.make None
+
+(* [occurrences_up_to cap x t] is [min (number of free occurrences of x in t)
+   (cap + 1)], in time proportional to the part of [t] it walks until it stops:
+   it counts the tree, as the consumers of the substitution's result do *)
+let occurrences_up_to cap x t =
+  let exception Over in
+  let n = ref 0 in
+  let rec go bound = function
+    | Var (y, _) ->
+        if Stdlib.(x = y) && not (Set.mem bound y) then (
+          incr n;
+          if !n > cap then raise Over)
+    | Con _ -> ()
+    | App (t1, t2, _) ->
+        go bound t1;
+        go bound t2
+    | Let (y, _, t1, t2, _) ->
+        go bound t1;
+        go (Set.add bound y) t2
+    | Bin (_, y, _, t1, _) -> go (Set.add bound y) t1
+    | TyApp (t1, _, _) | TyLam (_, t1, _) -> go bound t1
+  in
+  try
+    go Set.Poly.empty t;
+    !n
+  with Over -> cap + 1
+
 let eqcs_of ?(only_bvs = None) phi =
   let eqcs, phis =
     List.partition_map (BoolTerm.disjuncts_of phi) ~f:(fun phi ->
@@ -39,8 +77,19 @@ let eqcs_of ?(only_bvs = None) phi =
               First (Set.Poly.of_list [ x1; x2 ], ty)
           | _ -> Second phi)
   in
-  let eqcs' =
-    fix (Set.Poly.of_list eqcs)
+  (* [merge] unions overlapping classes until they are pairwise disjoint.  A
+     round compares each class with every class kept so far, so a family of k
+     classes costs k^2 set operations a round; on a predicate body with a few
+     thousand argument equalities that was most of the time of this module.
+     Classes in different connected components of the graph whose edges are
+     the classes never meet in a round -- a kept class is a union of classes of
+     one component -- so [merge] runs on each component's classes separately,
+     and a component that is a single class is kept as it is (on such a family
+     [merge] returns its input after one round).  The result is the same
+     family, each merged class built by the same unions in the same order.
+     Union-find over the variables finds the components in near-linear time. *)
+  let merge eqcs =
+    fix eqcs
       ~f:
         (Set.fold ~init:Set.Poly.empty ~f:(fun eqcs (eqc2, ty2) ->
              let updated = ref false in
@@ -54,9 +103,63 @@ let eqcs_of ?(only_bvs = None) phi =
              if !updated then eqcs' else Set.add eqcs (eqc2, ty2)))
       ~equal:Set.eqlen
   in
+  let eqcs = Set.Poly.of_list eqcs in
+  let parent = Hashtbl.Poly.create () in
+  let rec find x =
+    match Hashtbl.find parent x with
+    | None -> x
+    | Some p ->
+        let r = find p in
+        Hashtbl.set parent ~key:x ~data:r;
+        r
+  in
+  Set.iter eqcs ~f:(fun (eqc, _) ->
+      match Set.to_list eqc with
+      | [] -> ()
+      | x :: xs ->
+          List.iter xs ~f:(fun y ->
+              let rx = find x and ry = find y in
+              if not (Ident.tvar_equal rx ry) then
+                Hashtbl.set parent ~key:rx ~data:ry));
+  let components = Hashtbl.Poly.create () in
+  Set.iter eqcs ~f:(fun ((eqc, _) as c) ->
+      Hashtbl.add_multi components ~key:(find (Set.min_elt_exn eqc)) ~data:c);
+  let eqcs' =
+    Hashtbl.fold components ~init:Set.Poly.empty ~f:(fun ~key:_ ~data acc ->
+        match data with
+        | [ c ] -> Set.add acc c
+        | cs -> Set.union acc (merge (Set.Poly.of_list cs)))
+  in
   (eqcs', phis)
 
-let elim_eqcls let_bounds bounds (uni_senv, defs, phi) =
+(* Does [t] contain a beta-redex, an application whose function is a lambda?
+   [Term.subst] reduces every redex it passes, whatever the substitution, so
+   only on a term without one is [Term.subst] by the empty map a renaming of
+   the bound variables.  Stops at the first redex and allocates nothing. *)
+let rec has_beta_redex = function
+  | App (Bin (Lambda, _, _, _, _), _, _) -> true
+  | App (t1, t2, _) | Let (_, _, t1, t2, _) -> has_beta_redex t1 || has_beta_redex t2
+  | Bin (_, _, _, t, _) | TyApp (t, _, _) | TyLam (_, t, _) -> has_beta_redex t
+  | Var _ | Con _ -> false
+
+(* [subst_all shortcuts sub (uni_senv, defs, phi)] applies [Term.subst sub] to
+   [defs] and [phi].  With [shortcuts] and an empty [sub] on terms without a
+   beta-redex it returns them unchanged: [Term.subst] would rebuild every node
+   and give each binder a fresh name (a draw from the global counter each), so
+   the two results are the same term up to the names of bound variables, and
+   only the counter differs.  On a large resolvent that rebuild was a large part
+   of each round of [qelim_aux1]. *)
+let subst_all ~shortcuts sub (uni_senv, defs, phi) =
+  if
+    shortcuts && Map.Poly.is_empty sub
+    && (not (has_beta_redex phi))
+    && not (List.exists defs ~f:has_beta_redex)
+  then (uni_senv, defs, phi)
+  else
+    Common.PhaseTime.with_phase "subst" @@ fun () ->
+    (uni_senv, List.map defs ~f:(Term.subst sub), Term.subst sub phi)
+
+let elim_eqcls ?(shortcuts = true) let_bounds bounds (uni_senv, defs, phi) =
   let eqcs, phis1 = eqcs_of phi in
   let sub, phis2 =
     Set.Poly.map eqcs ~f:(fun (eqc, ty) ->
@@ -90,9 +193,7 @@ let elim_eqcls let_bounds bounds (uni_senv, defs, phi) =
     |> Tuple2.map_both ~f1:List.concat ~f2:List.concat
   in
   let sub = Map.Poly.of_alist_exn sub in
-  ( uni_senv,
-    List.map defs ~f:(Term.subst sub),
-    Term.subst sub @@ BoolTerm.or_of @@ phis1 @ phis2 )
+  subst_all ~shortcuts sub (uni_senv, defs, BoolTerm.or_of @@ phis1 @ phis2)
 
 let consts_of bounds phi =
   match Term.let_apps phi with
@@ -115,9 +216,23 @@ let consts_of bounds phi =
       if Map.Poly.mem bounds x then Second phi else First (x, BoolTerm.True, ty)
   | _ -> Second phi
 
-let elim_consts bounds (uni_senv, defs, phi) =
+(* [elim_consts ~nnf bounds (uni_senv, defs, phi)] fixes the variables that a
+   disjunct of [phi] gives one value ([x], [not x], [x <> c], [x = true],
+   [x = false]) to the constant that falsifies that disjunct, and returns the
+   result with a flag: whether its formula is known to be a fixed point of
+   [BoolTerm.nnf_of] disjunct by disjunct.  [~nnf:false] asserts that of the
+   input (each disjunct of [phi] equal to its [nnf_of]), and then the disjuncts
+   are read as they are; the result is the same.
+   The flag is [true] exactly when no constant was substituted (or the clause
+   was found valid): the remaining disjuncts are [nnf_of] images, which [nnf_of]
+   leaves as they are.  A substituted constant can break that -- [x := true] in
+   a disjunct [not x /\ y] gives [not true /\ y], which [nnf_of] rewrites to
+   [false /\ y] -- so after a substitution the next call must normalise again. *)
+let elim_consts ?(shortcuts = true) ?(nnf = true) bounds (uni_senv, defs, phi) =
   let cm, phis1 =
-    List.map (BoolTerm.disjuncts_of phi) ~f:BoolTerm.nnf_of
+    Common.PhaseTime.with_phase "nnf" (fun () ->
+        if nnf then List.map (BoolTerm.disjuncts_of phi) ~f:BoolTerm.nnf_of
+        else BoolTerm.disjuncts_of phi)
     |> List.partition_map ~f:(consts_of bounds)
   in
   try
@@ -125,25 +240,43 @@ let elim_consts bounds (uni_senv, defs, phi) =
       List.fold ~init:Map.Poly.empty cm ~f:(fun acc (x, sym, _ty) ->
           Map.force_add acc x (Term.mk_con sym))
     in
-    ( uni_senv,
-      List.map defs ~f:(Term.subst sub),
-      Term.subst sub @@ BoolTerm.or_of phis1 )
+    ( subst_all ~shortcuts sub (uni_senv, defs, BoolTerm.or_of phis1),
+      Map.Poly.is_empty sub )
   with exn_ when not (Common.Timer.is_async exn_) ->
-    (uni_senv, [], BoolTerm.mk_bool true)
+    ((uni_senv, [], BoolTerm.mk_bool true), true)
 
 let reduce (uni_senv, defs, body) =
   let fvs = Set.Poly.union_list @@ List.map ~f:Term.fvs_of (body :: defs) in
   (Map.Poly.filter_keys uni_senv ~f:(Set.mem fvs), defs, body)
 
-let rec qelim_aux1 let_bounds bounds exi_senv (uni_senv, defs, phi) =
-  let uni_senv', defs', phi' =
+(* [qelim_aux1 ~shortcuts] gives, without [shortcuts], what the plain rounds
+   give, and with them the same result up to the names of bound variables (equal
+   wherever [phi] and [defs] have no binder).  The shortcuts: a substitution
+   that is empty is not performed ([subst_all]), and the negation normal form is
+   not recomputed for a formula already in it ([elim_consts]'s flag): after an
+   [elim_consts] that substituted nothing, since [elim_eqcls] substitutes a
+   variable for a variable and adds disequalities between variables, neither of
+   which [nnf_of] would change. *)
+let rec qelim_aux1 ?(shortcuts = true) ?(nnf = true) let_bounds bounds exi_senv
+    (uni_senv, defs, phi) =
+  let (uni_senv', defs', phi'), fixed =
     let bounds' = Map.force_merge_list [ exi_senv; let_bounds; bounds ] in
-    (uni_senv, defs, phi) |> elim_consts bounds'
-    |> elim_eqcls let_bounds bounds'
-    |> elim_consts bounds' |> reduce
+    let ph = Common.PhaseTime.with_phase in
+    let x, fixed1 =
+      ph "consts" (fun () ->
+          elim_consts ~shortcuts ~nnf bounds' (uni_senv, defs, phi))
+    in
+    let x = ph "eqcls" (fun () -> elim_eqcls ~shortcuts let_bounds bounds' x) in
+    let x, fixed2 =
+      ph "consts" (fun () ->
+          elim_consts ~shortcuts ~nnf:(not (shortcuts && fixed1)) bounds' x)
+    in
+    (ph "reduce" (fun () -> reduce x), fixed2)
   in
   if Map.Poly.length uni_senv > Map.Poly.length uni_senv' then
-    qelim_aux1 let_bounds bounds exi_senv (uni_senv', defs', phi')
+    qelim_aux1 ~shortcuts
+      ~nnf:(not (shortcuts && fixed))
+      let_bounds bounds exi_senv (uni_senv', defs', phi')
   else (uni_senv', defs', phi')
 
 let qelim_aux2 let_bounds bounds exi_senv (uni_senv, defs, phi0) =
@@ -256,8 +389,35 @@ let qelim_aux2 let_bounds bounds exi_senv (uni_senv, defs, phi0) =
      rounds, of which 922,328 reached the fallback that simplifies both sides
      of a disequality -- almost all of the search, repeated on disjuncts that
      had not changed since the round before. *)
+  (* a candidate is taken unless the bound above says its substitution would
+     build too large a tree over the disjuncts and definitions it rewrites; a
+     declined one is skipped, and the next disjunct's candidate is tried *)
+  let within_bound defs phis_c (x, t) =
+    match Atomic.get max_subst_growth with
+    | None -> true
+    | Some cap ->
+        let size = Term.ast_size_up_to cap t in
+        size <= 1
+        ||
+        let budget = cap / size in
+        let occ =
+          List.fold_until
+            (defs @ List.map ~f:fst phis_c)
+            ~init:0
+            ~f:(fun acc u ->
+              let acc = acc + occurrences_up_to (budget - acc) x u in
+              if acc > budget then Stop acc else Continue acc)
+            ~finish:Fn.id
+        in
+        occ <= budget
+  in
   let rec loop uni_senv defs phis_c =
-    let res = List.find_map phis_c ~f:snd in
+    let res =
+      List.find_map phis_c ~f:(fun (_, c) ->
+          match c with
+          | Some xt when within_bound defs phis_c xt -> Some xt
+          | _ -> None)
+    in
     let res =
       match res with
       | Some (x, t) -> Some (x, t)
@@ -315,7 +475,8 @@ let qelim_aux2 let_bounds bounds exi_senv (uni_senv, defs, phi0) =
     | Some (x, t) ->
         let uni_senv' = Map.Poly.remove uni_senv x in
         let sub =
-          Map.Poly.singleton x @@ ExtTerm.simplify_term exi_senv uni_senv' t
+          Common.PhaseTime.with_phase "aux2-simpterm" (fun () ->
+              Map.Poly.singleton x @@ ExtTerm.simplify_term exi_senv uni_senv' t)
         in
         if false then
           print_endline
@@ -340,9 +501,17 @@ let qelim_aux2 let_bounds bounds exi_senv (uni_senv, defs, phi0) =
             (* the sharing-preserving substitution rebuilds only the path down to
                the occurrences, where the ordinary one rebuilds every node and
                renames every binder it passes; the term is kept for the next
-               round, so what it leaves shared is what the next round skips *)
-            let t' = Term.subst_sharing sub t in
-            (t', cand_of merged' t')
+               round, so what it leaves shared is what the next round skips.
+               It also enters binders itself, renaming one only where it could
+               capture, so a disjunct with deeply nested binders costs one
+               traversal rather than one per binder *)
+            let t' =
+              Common.PhaseTime.with_phase "aux2-subst" (fun () ->
+                  Term.subst_sharing_linear sub t)
+            in
+            ( t',
+              Common.PhaseTime.with_phase "aux2-cand" (fun () ->
+                  cand_of merged' t') )
           else (t, c)
         in
         loop uni_senv'
@@ -403,19 +572,21 @@ let report_growth ~started phi phi2 phi3 =
       (Term.ast_size_up_to cap phi2)
       s3 (dag_size_up_to cap phi3) secs
 
-let app_qelim ?(simplify = true) let_bounds bounds exi_senv (uni_senv, defs, phi)
-    =
+(* [app_qelim_steps] is [app_qelim ~simplify:false] with a flag: [false] when
+   no free variable was left to eliminate and the input came back as it was
+   (in which case [app_qelim] does not simplify either), [true] when the
+   eliminations ran and [app_qelim] would simplify their result. *)
+let app_qelim_steps ?(shortcuts = true) let_bounds bounds exi_senv
+    (uni_senv, defs, phi) =
   let fvs =
+    Common.PhaseTime.with_phase "fvs" @@ fun () ->
     Set.diff (Term.fvs_of phi)
       (Map.key_set @@ Map.force_merge_list [ exi_senv; let_bounds; bounds ])
   in
   if Set.is_empty fvs then (
     if print_log then print_endline "[app_qelim] skipped";
-    (uni_senv, defs, phi))
-  else
-    let started = if growth_trace then Stdlib.Sys.time () else 0. in
-    let phi_in = phi in
-    (
+    (uni_senv, defs, phi, false))
+  else (
     if print_log then
       print_endline
       @@ sprintf "[app_qelim] begin eliminating %s in %s"
@@ -423,29 +594,41 @@ let app_qelim ?(simplify = true) let_bounds bounds exi_senv (uni_senv, defs, phi
            (LogicOld.Formula.str_of
            @@ Logic.ExtTerm.to_old_fml exi_senv uni_senv phi);
     let uni_senv, defs, phi1 =
-      qelim_aux1 let_bounds bounds exi_senv (uni_senv, defs, phi)
+      Common.PhaseTime.with_phase "aux1" (fun () ->
+          qelim_aux1 ~shortcuts let_bounds bounds exi_senv
+            (uni_senv, defs, phi))
     in
     if print_log then print_endline "  [app_qelim] qelim_aux1";
     let uni_senv, defs, phi2 =
-      qelim_aux2 let_bounds bounds exi_senv (uni_senv, defs, phi1)
+      Common.PhaseTime.with_phase "aux2" (fun () ->
+          qelim_aux2 let_bounds bounds exi_senv (uni_senv, defs, phi1))
     in
-    if print_log then print_endline "  [app_qelim] qelim_aux2";
+    if print_log then (
+      print_endline "  [app_qelim] qelim_aux2";
+      print_endline
+      @@ sprintf "[app_qelim] end: %s"
+           (LogicOld.Formula.str_of
+           @@ Logic.ExtTerm.to_old_fml exi_senv uni_senv phi2));
+    (uni_senv, defs, phi2, true))
+
+let app_qelim ?(simplify = true) ?(shortcuts = true) let_bounds bounds exi_senv
+    (uni_senv, defs, phi) =
+  let started = if growth_trace then Stdlib.Sys.time () else 0. in
+  let uni_senv, defs, phi2, ran =
+    app_qelim_steps ~shortcuts let_bounds bounds exi_senv (uni_senv, defs, phi)
+  in
+  if not ran then (uni_senv, defs, phi2)
+  else
     let phi3 =
       if simplify then
-        ExtTerm.simplify_formula exi_senv
-          (Map.force_merge let_bounds uni_senv)
-          phi2
+        Common.PhaseTime.with_phase "final-simplify" (fun () ->
+            ExtTerm.simplify_formula exi_senv
+              (Map.force_merge let_bounds uni_senv)
+              phi2)
       else phi2
     in
-    (if print_log then
-       let _fvs = Set.diff fvs (Term.fvs_of phi2) in
-       print_endline
-       @@ sprintf "[app_qelim] end: %s"
-            (*(String.concat_map_set ~sep:", " ~f:Ident.name_of_tvar fvs)*)
-            (LogicOld.Formula.str_of
-            @@ Logic.ExtTerm.to_old_fml exi_senv uni_senv phi2));
-    if growth_trace then report_growth ~started phi_in phi2 phi3;
-    (uni_senv, defs, phi3))
+    if growth_trace then report_growth ~started phi phi2 phi3;
+    (uni_senv, defs, phi3)
 
 (* Eliminate the free variables of [defs] and [phi] that are *implicitly*
    universally quantified -- a clause's own variables, not the ones a [Bind]
@@ -503,18 +686,164 @@ let rec elim_free_univ_vars ?(simplify = true) ?(let_bounds = Map.Poly.empty)
               Let (var, sort, def'', body', info) )
           else (uni_senv_body, defs', body'))
   | _ ->
-      reduce
-      @@ app_qelim ~simplify let_bounds bounds exi_senv (uni_senv, defs, phi)
+      let r = app_qelim ~simplify let_bounds bounds exi_senv (uni_senv, defs, phi) in
+      Common.PhaseTime.with_phase "reduce" (fun () -> reduce r)
 
 (* [elim_free_univ_vars] on the first-order term representation, converting in
    and out; the conversion is 0.08 s of 18 on the benchmark above, so it is not
    where this costs *)
-let elim_free_univ_vars_old ?(simplify = true) bounds exi_senv (uni_senv, phi) =
+(* [simplify_on_old_side] (on): see [elim_free_univ_vars_old].  Process-wide;
+   off only for the property check that compares the two routes. *)
+let simplify_on_old_side = Atomic.make true
+
+(* Set only by the property check: the first-order route then leaves out the
+   simplification, the mutant the check must tell apart.  Never set in a
+   solving run. *)
+let old_side_mutant = Atomic.make false
+
+let elim_free_univ_vars_old_via_logic ~simplify bounds exi_senv (uni_senv, phi)
+    =
   let uni_senv', _, phi' =
-    elim_free_univ_vars ~simplify bounds exi_senv
-      (uni_senv, [], ExtTerm.of_old_formula phi)
+    elim_free_univ_vars ~simplify bounds exi_senv (uni_senv, [], phi)
   in
-  (uni_senv', ExtTerm.to_old_fml exi_senv uni_senv' phi')
+  ( uni_senv',
+    Common.PhaseTime.with_phase "to-old" (fun () ->
+        ExtTerm.to_old_fml exi_senv uni_senv' phi') )
+
+(* [phi] with every quantifier block [Q x1 ... xn. body] written as the
+   nest [Q x1. ... Q xn. body], inside embedded formulas too: the form the
+   conversion to the higher-order representation and back gives a block,
+   since that representation binds one variable per node *)
+let rec nest_binder_blocks (phi : LogicOld.Formula.t) : LogicOld.Formula.t =
+  let open LogicOld in
+  match phi with
+  | Formula.Atom (atom, info) ->
+      let atom' = nest_atom atom in
+      if phys_equal atom atom' then phi else Formula.mk_atom ~info atom'
+  | Formula.UnaryOp (op, p, info) ->
+      let p' = nest_binder_blocks p in
+      if phys_equal p p' then phi else Formula.mk_unop ~info op p'
+  | Formula.BinaryOp (op, p1, p2, info) ->
+      let p1' = nest_binder_blocks p1 and p2' = nest_binder_blocks p2 in
+      if phys_equal p1 p1' && phys_equal p2 p2' then phi
+      else Formula.mk_binop ~info op p1' p2'
+  | Formula.Bind (binder, args, body, info) -> (
+      let body' = nest_binder_blocks body in
+      match args with
+      | [ _ ] when phys_equal body body' -> phi
+      | [ a ] -> Formula.mk_bind ~info binder [ a ] body'
+      | [] -> body'
+      | _ ->
+          List.fold_right args ~init:body' ~f:(fun a acc ->
+              Formula.mk_bind binder [ a ] acc))
+  | Formula.LetFormula (x, s, def, body, info) ->
+      let def' = nest_term def and body' = nest_binder_blocks body in
+      if phys_equal def def' && phys_equal body body' then phi
+      else Formula.mk_let_formula ~info x s def' body'
+  | Formula.LetRec _ -> phi
+
+and nest_atom (atom : LogicOld.Atom.t) : LogicOld.Atom.t =
+  let open LogicOld in
+  match atom with
+  | Atom.App (pred, args, info) ->
+      let args' = List.map args ~f:nest_term in
+      if List.for_all2_exn args args' ~f:phys_equal then atom
+      else Atom.mk_app ~info pred args'
+  | Atom.True _ | Atom.False _ -> atom
+
+and nest_term (t : LogicOld.Term.t) : LogicOld.Term.t =
+  let open LogicOld in
+  match t with
+  | Term.Var _ -> t
+  | Term.FunApp (T_bool.Formula phi, args, info) ->
+      let phi' = nest_binder_blocks phi in
+      let args' = List.map args ~f:nest_term in
+      if phys_equal phi phi' && List.for_all2_exn args args' ~f:phys_equal then t
+      else Term.mk_fsym_app ~info (T_bool.Formula phi') args'
+  | Term.FunApp (sym, args, info) ->
+      let args' = List.map args ~f:nest_term in
+      if List.for_all2_exn args args' ~f:phys_equal then t
+      else Term.mk_fsym_app ~info sym args'
+  | Term.LetTerm (x, s, def, body, info) ->
+      let def' = nest_term def and body' = nest_term body in
+      if phys_equal def def' && phys_equal body body' then t
+      else Term.mk_let_term ~info x s def' body'
+
+(* With [simplify] on, a formula with no [let] at its root and
+   [simplify_on_old_side] set: the eliminations run on the higher-order form
+   as always, and the simplification that ends them is the first-order
+   [Evaluator.simplify] of their result converted once, which is returned as
+   it is.  The route through [elim_free_univ_vars] converts that simplified
+   formula to the higher-order form ([ExtTerm.simplify_formula]) and back
+   again here, two whole-formula conversions per resolvent that measured a
+   third of this function's time on a large input.  The two routes give the
+   same formula when converting [Evaluator.simplify]'s output there and back
+   is the identity, and the same environment when the variables kept are
+   those free in it; the property check compares them, fresh-name draws
+   included, on random formulas and on every call of benchmark inputs, and
+   the route here falls back to the other one where it does not apply (a
+   root [let], a lambda root, an exception in the conversion, the growth
+   trace). *)
+let elim_free_univ_vars_old_main ?(simplify = true) bounds exi_senv (uni_senv, phi) =
+  let phi =
+    Common.PhaseTime.with_phase "of-old" (fun () -> ExtTerm.of_old_formula phi)
+  in
+  match phi with
+  | (Let _ | Bin (Lambda, _, _, _, _)) ->
+      elim_free_univ_vars_old_via_logic ~simplify bounds exi_senv (uni_senv, phi)
+  | _ when (not simplify) || growth_trace || not (Atomic.get simplify_on_old_side)
+    ->
+      elim_free_univ_vars_old_via_logic ~simplify bounds exi_senv (uni_senv, phi)
+  | _ -> (
+      let uni_senv1, defs, phi2, ran =
+        app_qelim_steps Map.Poly.empty bounds exi_senv (uni_senv, [], phi)
+      in
+      let via_logic_from_steps () =
+        (* the rest of [app_qelim] and [elim_free_univ_vars], as they would
+           have run *)
+        let phi3 =
+          if ran then
+            Common.PhaseTime.with_phase "final-simplify" (fun () ->
+                ExtTerm.simplify_formula exi_senv uni_senv1 phi2)
+          else phi2
+        in
+        let uni_senv', _, phi3 =
+          Common.PhaseTime.with_phase "reduce" (fun () ->
+              reduce (uni_senv1, defs, phi3))
+        in
+        ( uni_senv',
+          Common.PhaseTime.with_phase "to-old" (fun () ->
+              ExtTerm.to_old_fml exi_senv uni_senv' phi3) )
+      in
+      if not ran then via_logic_from_steps ()
+      else
+        match phi2 with
+        | Bin (Lambda, _, _, _, _) -> via_logic_from_steps ()
+        | _ -> (
+            match
+              Common.PhaseTime.with_phase "final-simplify" (fun () ->
+                  let ph = Common.PhaseTime.with_phase in
+                  ph "sf-to-old" (fun () ->
+                      ExtTerm.to_old_fml exi_senv uni_senv1 phi2)
+                  |> fun x ->
+                  if Atomic.get old_side_mutant then x
+                  else ph "sf-simplify" (fun () -> Evaluator.simplify x))
+            with
+            | exception e when not (Common.Timer.is_async e) ->
+                (* [ExtTerm.simplify_formula]'s own retry after its first
+                   attempt raised, then the rest as on the other route *)
+                let phi3 =
+                  try
+                    ExtTerm.to_old_fml exi_senv uni_senv1 phi2
+                    |> Evaluator.simplify |> ExtTerm.of_old_formula
+                  with exn_ when not (Common.Timer.is_async exn_) -> raise e
+                in
+                let uni_senv', _, phi3 = reduce (uni_senv1, defs, phi3) in
+                (uni_senv', ExtTerm.to_old_fml exi_senv uni_senv' phi3)
+            | phi_old ->
+                let phi_old = nest_binder_blocks phi_old in
+                let fvs = LogicOld.Formula.fvs_of phi_old in
+                (Map.Poly.filter_keys uni_senv1 ~f:(Set.mem fvs), phi_old)))
 
 (* let rec qelim_clause exi_senv (uni_senv, ps, ns, phi) =
    let senv = Map.force_merge exi_senv uni_senv in
@@ -530,3 +859,86 @@ let elim_free_univ_vars_old ?(simplify = true) bounds exi_senv (uni_senv, phi) =
    else (uni_senv', ps, ns, phi')
 
    let qelim_clause_set exi_senv = Set.Poly.map ~f:qelim_clause exi_senv *)
+
+(* A property check's instrument ([route_check], off): every call of
+   [elim_free_univ_vars_old] runs both routes -- [simplify_on_old_side] on,
+   then off -- each from the same fresh-name counters, and counts the calls,
+   those that drew fresh names, and those whose results (the environment as a
+   list, the formula, or the exception's text) or counters afterwards differ.
+   The counters are left where the first route left them, and its answer is
+   returned.  A test instrument only: the second run draws the names the
+   first drew again. *)
+let route_check = Atomic.make false
+let route_checked = Atomic.make 0
+let route_drew = Atomic.make 0
+let route_mismatched = Atomic.make 0
+
+let fresh_counters =
+  Ident.
+    [
+      tvar_count; dontcare_count; dummy_tvar_count; svar_count; evar_count;
+      rvar_count; pvar_count; parameter_cout; head_arg_count;
+    ]
+
+let elim_free_univ_vars_old ?(simplify = true) bounds exi_senv (uni_senv, phi) =
+  if not (Atomic.get route_check) then
+    elim_free_univ_vars_old_main ~simplify bounds exi_senv (uni_senv, phi)
+  else
+    let get () =
+      ( List.map fresh_counters ~f:Atomic.get,
+        Option.map (Stdlib.Domain.DLS.get Ident.replay_key) ~f:(fun (_, n) -> !n) )
+    in
+    let set (cs, r) =
+      List.iter2_exn fresh_counters cs ~f:Atomic.set;
+      match (Stdlib.Domain.DLS.get Ident.replay_key, r) with
+      | Some (_, n), Some v -> n := v
+      | _ -> ()
+    in
+    let saved_flag = Atomic.get simplify_on_old_side in
+    let run flag =
+      Atomic.set simplify_on_old_side flag;
+      let r =
+        try
+          Ok (elim_free_univ_vars_old_main ~simplify bounds exi_senv (uni_senv, phi))
+        with e when not (Common.Timer.is_async e) -> Error e
+      in
+      Atomic.set simplify_on_old_side saved_flag;
+      r
+    in
+    let start = get () in
+    let a = run true in
+    let after_a = get () in
+    set start;
+    let b = run false in
+    let after_b = get () in
+    set after_a;
+    Atomic.incr route_checked;
+    if Stdlib.(after_a <> start) then Atomic.incr route_drew;
+    let same_results =
+      match (a, b) with
+      | Ok (e1, p1), Ok (e2, p2) -> (
+          try
+            Stdlib.compare (Map.Poly.to_alist e1) (Map.Poly.to_alist e2) = 0
+            && Stdlib.compare p1 p2 = 0
+          with _ -> false)
+      | Error e1, Error e2 -> String.equal (Exn.to_string e1) (Exn.to_string e2)
+      | _ -> false
+    in
+    let same = Stdlib.(after_a = after_b) && same_results in
+    if not same then (
+      Atomic.incr route_mismatched;
+      (* [COAR_ROUTE_DIFF] (instrument only): the first differing pairs *)
+      if Option.is_some (Sys.getenv "COAR_ROUTE_DIFF")
+         && Atomic.get route_mismatched <= 3
+      then
+        let show = function
+          | Ok (e, p) ->
+              String.concat ~sep:","
+                (List.map (Map.Poly.to_alist e) ~f:(fun (x, srt) ->
+                     Ident.name_of_tvar x ^ ":" ^ Logic.ExtTerm.str_of_sort srt))
+              ^ " | " ^ LogicOld.Formula.str_of p
+          | Error e -> "raised " ^ Exn.to_string e
+        in
+        Printf.eprintf "[route-diff] counters equal %b\nA: %s\nB: %s\n%!"
+          Stdlib.(after_a = after_b) (show a) (show b));
+    match a with Ok r -> r | Error e -> raise e

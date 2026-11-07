@@ -1,0 +1,10 @@
+[
+    "EffCaml",
+    {
+        "verbose": true,
+        "solver": [
+            "Filename",
+            "./config/solver/dbg_trecs.json"
+        ]
+    }
+]

@@ -18,6 +18,16 @@ module Make (Cfg : Config.ConfigType) = struct
   module Debug =
     Debug.Make ((val Debug.Config.(if config.verbose then enable else disable)))
 
+  (* [integrate_all constrs]: every integral [unif r. F] of the constraints
+     replaced by its closed form ([QFL.Unif.integrate], which refuses an
+     integrand it cannot integrate exactly).  Applied to every constraint list
+     just before it becomes a PQE problem: by then each unknown has been
+     replaced by its template, so an integrand is a piecewise polynomial in
+     the integration variable, and no PQE solver sees the symbol.  The
+     closed form is exact, so a certificate for the integrated constraints is
+     one for the constraints with the integrals. *)
+  let integrate_all = List.map ~f:QFL.Unif.integrate_formula
+
   let pcsp_solver ~primal (* ToDo *) =
     let open Or_error in
     ExtFile.unwrap
@@ -31,11 +41,58 @@ module Make (Cfg : Config.ConfigType) = struct
 
   (** validity checking for Quantitative Fixpoint Logic *)
 
-  let underapprox_of (pred : QFL.Pred.t) =
+  (* [templates_for ~has_unif]: the template shapes of a bound check.  Without
+     an integral, exactly [config.qfl.templates]: a problem with no [unif] is
+     solved as the configuration says.  With one, the configuration's shapes
+     with every condition taken from the body's own guards -- no template
+     condition ([num_conds = 0]) in the pre-fixpoint, ranking and
+     post-fixpoint templates, the input's if-then-else kept ([use_orig_ite]),
+     and no guard in the under-approximation ([cond_degree = None]); the term
+     degrees and every other field are the configuration's.
+
+     Why: the closed form of [unif r. F] is exact only when each guard of the
+     integrand is [alpha + beta * r >= 0] with [beta] a constant, for then the
+     breakpoint [-alpha / beta] is a term of the state variables and the
+     integral splits there.  A template condition [c0 + c1 * x >= 0] with
+     unknown [c1], met at a point [x + 3r - 2], has [beta = 3 * c1]: the
+     breakpoint is a rational function of the template's parameters and the
+     integration refuses.  Inside a body-guard template every guard is one of
+     the input's own, instantiated at the point of application, so its
+     coefficient of [r] is a product of the input's constants and the
+     integral is computed exactly.  Guarantees: the template shapes, never the
+     verdict, change -- a certificate found under either is checked by the
+     same constraints, so soundness is the bound checker's.  A configuration
+     with conditions of degree 0 or an integral at a point free of [r] would
+     integrate without this; it is overridden anyway, since a problem's
+     integrals are the trigger, not their shapes. *)
+  let templates_for ~has_unif : QflConfig.templates =
+    if not has_unif then config.qfl.templates
+    else
+      let body_guards (t : QflConfig.quant_template) =
+        { t with num_conds = 0; use_orig_ite = true }
+      in
+      let templates = config.qfl.templates in
+      {
+        templates with
+        prefp = body_guards templates.prefp;
+        rank = body_guards templates.rank;
+        postfp = body_guards templates.postfp;
+        underapprox = { templates.underapprox with cond_degree = None };
+      }
+
+  (* [config] with its template shapes replaced by [templates]; the three
+     template-building functions below shadow [config] with it, so their
+     template shapes are the caller's per-problem choice and every other
+     field is the configuration's *)
+  let with_templates templates =
+    { config with qfl = { config.qfl with templates } }
+
+  let underapprox_of ~templates (pred : QFL.Pred.t) =
+    let config = with_templates templates in
     let cond, template =
       Templ.underapprox_of
-        ~cond_degree:config.quant_underapprox_templ_cond_degree
-        ~term_degree:config.quant_underapprox_templ_term_degree pred.args
+        ~cond_degree:config.qfl.templates.underapprox.cond_degree
+        ~term_degree:config.qfl.templates.underapprox.term_degree pred.args
         pred.body
     in
     ( cond,
@@ -116,7 +173,9 @@ module Make (Cfg : Config.ConfigType) = struct
     in
     fun v -> Set.mem (Lazy.force names) v
 
-  let gen_cache_constr for_prefp (preds : QFL.Pred.t list) fsub pareto_cache =
+  (* [num_conds], [cond_degree], [zero_reward]: the [QflConfig.Cache_after] payload *)
+  let gen_cache_constr ~num_conds ~cond_degree ~zero_reward for_prefp
+      (preds : QFL.Pred.t list) fsub pareto_cache =
     let rel =
       match for_prefp with First _ -> Formula.geq | Second _ -> Formula.leq
     in
@@ -193,7 +252,7 @@ module Make (Cfg : Config.ConfigType) = struct
                 fun v -> Set.mem (Lazy.force names) v
               in
               let r =
-                if config.pareto_cache_zero_reward then T_real.rzero ()
+                if zero_reward then T_real.rzero ()
                 else
                   Term.mk_var
                     (Ident.mk_fresh_tvar_avoiding ~prefix:"r" ~taken ())
@@ -244,7 +303,7 @@ module Make (Cfg : Config.ConfigType) = struct
                 else
                   let ps, ws =
                     List.unzip
-                    @@ List.init (config.pareto_cache_num_conds + 1)
+                    @@ List.init (num_conds + 1)
                          ~f:(fun _i ->
                            let p =
                              Term.mk_var
@@ -259,7 +318,7 @@ module Make (Cfg : Config.ConfigType) = struct
                   in
                   let wss =
                     List.map posts ~f:(fun _ ->
-                        List.init (config.pareto_cache_num_conds + 1)
+                        List.init (num_conds + 1)
                           ~f:(fun _i ->
                             let w = Ident.mk_fresh_tvar ~prefix:(Some "w") () in
                             pc_templ_params :=
@@ -269,11 +328,11 @@ module Make (Cfg : Config.ConfigType) = struct
                   in
                   let w_constrs =
                     let conds =
-                      List.init (config.pareto_cache_num_conds + 1)
+                      List.init (num_conds + 1)
                         ~f:(fun _i ->
                           let templ =
                             Templ.mk_affine
-                            @@ Templ.terms_of config.pareto_cache_cond_degree
+                            @@ Templ.terms_of cond_degree
                                  pred.args
                           in
                           pc_templ_params :=
@@ -297,7 +356,7 @@ module Make (Cfg : Config.ConfigType) = struct
                   (ps, ws, wss, w_constrs)
               in
               let pres =
-                (if config.pareto_cache_zero_reward then []
+                (if zero_reward then []
                  else [ Formula.geq r (T_real.rzero ()) ])
                 @ Formula.leq
                     (T_real.mk_rsum (T_real.rzero ()) ps)
@@ -427,18 +486,78 @@ module Make (Cfg : Config.ConfigType) = struct
     in
     (pc_constrs, !pc_templ_params)
 
-  let cgen_pqes_lb (qfl : QFL.Problem.t) ?accel_problem ~preds_for_fsub_domain
+  (** The environments of a set of PQEs: [exi_senv], the template parameters,
+      are the only unknowns, and there are no universally quantified variables
+      at the problem level (each constraint quantifies its own).
+
+      A template parameter is a CONSTANT to be found -- a nullary term of sort
+      [Real] (or [Int]) -- and its kind says so: [RealFun] (or [IntFun]).  The
+      kind is what a constraint solver dispatches on.  A backend that declares
+      every unknown as a real constant (PolyQEnt) reads the sort alone and is
+      indifferent to it; PCSat chooses a template by it, and an empty kind map
+      defaulted every parameter to an ordinary predicate, for which a
+      real-valued unknown has no template, so PCSat refused every PQE.  A
+      parameter of any other sort keeps the default kind. *)
+  let pqe_envs_of exi_senv =
+    SMT.Problem.
+      {
+        decl_reading = SMT.Problem.Synthesize;
+        lifted_universals = Map.Poly.empty;
+        candidates = Map.Poly.empty;
+        uni_sort = Set.Poly.empty;
+        uni_senv = Map.Poly.empty;
+        exi_senv;
+        dep_map = Map.Poly.empty;
+        kind_map =
+          Map.Poly.filter_map exi_senv ~f:(fun sort ->
+              if Term.is_real_sort sort then Some Kind.RealFun
+              else if Term.is_int_sort sort then Some Kind.IntFun
+              else None);
+        fenv = Map.Poly.empty;
+        dtenv = Map.Poly.empty;
+      }
+
+  (* Lower-bound constraints.  ASSUMES every body is nonnegative wherever the
+     recursive functions it applies are nonnegative, at every state: the
+     under-approximation replaces a body by [0] where its guard template is
+     negative, which is below the body only where the body is nonnegative, so
+     a negative reward breaks the certificate ([X =mu -1 + X/2], whose real
+     solution is [-2], was answered valid for [X >= 0] with every template
+     [0]).  [refuse_ill_formed] establishes the assumption for a query reached
+     through [solve_qfl]; a caller that builds a problem otherwise must
+     establish it itself. *)
+  (* [cgen_pqes_lb ... ~state_guard]: [state_guard name args] are hypotheses
+     on the state [args] of the function [name] (see [integer_state_guard]);
+     the post-fixpoint, pre-fixpoint, ranking, ordering and template
+     non-negativity obligations of [name] are stated under them, so a
+     certificate is checked at those states only.  Default: no hypothesis,
+     every obligation at every state. *)
+  (* [~max_cert]: the certificate of the bound is [max(0, L)] for the
+     post-fixpoint template [L], whose sign is left free.  This is sound when
+     the under-approximated body [Phi'] is monotone on real-valued functions
+     (what [refuse_unsound_query_shape] admits is: sums, non-negative factors,
+     [min], [max], conditionals with unknown-free guards, integrals) and
+     [Phi'(0) >= 0]: where [L <= 0], [max(0, L) = 0 <= Phi'(0) <=
+     Phi'(max(0, L))]; where [L > 0], [L <= Phi'(L) <= Phi'(max(0, L))].  So
+     the post-fixpoint obligation is required only under [L > 0], the
+     template's non-negativity is dropped, [Phi'(0) >= 0] is added, [L <= u]
+     still gives [max(0, L) <= u] since [u >= 0], and the query is asked of
+     [max(0, L)] itself.  The returned post-fixpoint is [max(0, L)]. *)
+  let cgen_pqes_lb ~templates (qfl : QFL.Problem.t) ?accel_problem
+      ?(state_guard = fun _ _ -> []) ?(max_cert = false) ~preds_for_fsub_domain
       query_fml fsub pareto_cache =
+    let config = with_templates templates in
     let query_fml = Formula.elim_min_max_list query_fml in
     let qfl_preds_for_templates =
       match accel_problem with
-      | Some accel_problem when config.enable_geometric_pla ->
+      | Some accel_problem when config.qfl.enable_geometric_pla ->
           let active_names = QFL.Accel.active_pred_names accel_problem in
           List.filter qfl.preds ~f:(fun pred -> Set.mem active_names pred.name)
       | _ -> qfl.preds
     in
     let conds, templ_paramss, templ_constrss, ua_preds =
-      List.unzip4 @@ List.map qfl_preds_for_templates ~f:underapprox_of
+      List.unzip4
+      @@ List.map qfl_preds_for_templates ~f:(underapprox_of ~templates)
     in
     Debug.print ~id:None
     @@ lazy
@@ -453,12 +572,15 @@ module Make (Cfg : Config.ConfigType) = struct
             match cond with
             | None -> (template.templ_params, template.quant_pred)
             | Some cond ->
+                (* [guard_complement_template]: where the guard is negative
+                   the value is an affine template too (of the pre-fixpoint
+                   template's term degree); off, it is zero *)
                 let templ_params, quant_pred =
-                  if false then
+                  if config.qfl.templates.guard_complement_template then
                     let templ =
                       Templ.mk_affine
                       @@ Templ.terms_of
-                           config.quant_prefp_templ_term_degree (*ToDo*)
+                           config.qfl.templates.prefp.term_degree (*ToDo*)
                            pred.args
                     in
                     (templ.templ_params, templ.quant_pred)
@@ -473,26 +595,38 @@ module Make (Cfg : Config.ConfigType) = struct
     in
     let prefp_templ_paramss, prefp_templ_preds =
       strengthen_guard
-        (Templ.gen_quant_template ~num_conds:config.quant_prefp_templ_num_conds
-           ~use_orig_ite:config.quant_prefp_templ_use_orig_ite
-           ~cond_degree:config.quant_prefp_templ_cond_degree
-           ~term_degree:config.quant_prefp_templ_term_degree)
+        (Templ.gen_quant_template ~num_conds:config.qfl.templates.prefp.num_conds
+           ~use_orig_ite:config.qfl.templates.prefp.use_orig_ite
+           ~annot_branches_follow_ite:
+             config.qfl.templates.prefp.annot_branches_follow_ite
+           ~cond_branches_follow_ite:
+             config.qfl.templates.prefp.cond_branches_follow_ite
+           ~cond_degree:config.qfl.templates.prefp.cond_degree
+           ~term_degree:config.qfl.templates.prefp.term_degree)
     in
     let rank_templ_paramss, rank_templ_preds =
       strengthen_guard
-        (Templ.gen_quant_template ~num_conds:config.quant_rank_templ_num_conds
-           ~use_orig_ite:config.quant_rank_templ_use_orig_ite
-           ~cond_degree:config.quant_rank_templ_cond_degree
-           ~term_degree:config.quant_rank_templ_term_degree)
+        (Templ.gen_quant_template ~num_conds:config.qfl.templates.rank.num_conds
+           ~use_orig_ite:config.qfl.templates.rank.use_orig_ite
+           ~annot_branches_follow_ite:
+             config.qfl.templates.rank.annot_branches_follow_ite
+           ~cond_branches_follow_ite:
+             config.qfl.templates.rank.cond_branches_follow_ite
+           ~cond_degree:config.qfl.templates.rank.cond_degree
+           ~term_degree:config.qfl.templates.rank.term_degree)
     in
     let coeffs = ref [] in
     let postfp_templ_paramss, postfp_templ_preds =
       strengthen_guard
         (Templ.gen_quant_template ~coeffs:(Some coeffs)
-           ~num_conds:config.quant_postfp_templ_num_conds
-           ~use_orig_ite:config.quant_postfp_templ_use_orig_ite
-           ~cond_degree:config.quant_postfp_templ_cond_degree
-           ~term_degree:config.quant_postfp_templ_term_degree)
+           ~num_conds:config.qfl.templates.postfp.num_conds
+           ~use_orig_ite:config.qfl.templates.postfp.use_orig_ite
+           ~annot_branches_follow_ite:
+             config.qfl.templates.postfp.annot_branches_follow_ite
+           ~cond_branches_follow_ite:
+             config.qfl.templates.postfp.cond_branches_follow_ite
+           ~cond_degree:config.qfl.templates.postfp.cond_degree
+           ~term_degree:config.qfl.templates.postfp.term_degree)
     in
     if not @@ List.is_empty prefp_templ_preds then
       Debug.print @@ lazy "[6. Template]";
@@ -519,17 +653,55 @@ module Make (Cfg : Config.ConfigType) = struct
     let original_postfixpoint_constrs =
       List.map ~f:(Formula.subst_funcs postfp_sub)
       @@ List.concat_map ua_preds ~f:(fun pred ->
-          List.map (Term.elim_min_max_list pred.body) ~f:(fun body ->
-              Formula.geq body
-                (Term.fvar_app_of_senv pred.name pred.args T_real.SReal)))
+          let head = Term.fvar_app_of_senv pred.name pred.args T_real.SReal in
+          let positive =
+            if max_cert then [ Formula.gt head (T_real.rzero ()) ] else []
+          in
+          List.concat_map (Term.elim_min_max_list pred.body) ~f:(fun body ->
+              QFL.Problem.imply_antecedents
+                (state_guard pred.name pred.args @ positive)
+              @@ Formula.geq body head))
+    in
+    (* [Phi'(0) >= 0], the premise of [max_cert] that QFL's well-formedness
+       does not give when a body subtracts *)
+    let body_at_zero_nonnegative_constrs =
+      if not max_cert then []
+      else
+        let zero_sub =
+          Map.Poly.of_alist_exn
+          @@ List.map ua_preds ~f:(fun (pred : QFL.Pred.t) ->
+              (pred.name, (pred.args, T_real.rzero ())))
+        in
+        List.concat_map ua_preds ~f:(fun pred ->
+            List.concat_map
+              (Term.elim_min_max_list (Term.subst_funcs zero_sub pred.body))
+              ~f:(fun body ->
+                QFL.Problem.imply_antecedents (state_guard pred.name pred.args)
+                @@ Formula.geq body (T_real.rzero ())))
+    in
+    let cert_of (name, (args, l)) =
+      if max_cert then
+        ( name,
+          ( args,
+            T_bool.mk_if_then_else
+              (T_bool.of_formula @@ Formula.geq l (T_real.rzero ()))
+              l (T_real.rzero ()) ) )
+      else (name, (args, l))
+    in
+    let query_sub =
+      Map.Poly.of_alist_exn @@ List.map postfp_templ_preds ~f:cert_of
+    in
+    let nonnegative_templ_preds =
+      if max_cert then [] else postfp_templ_preds
     in
     let original_prefixpoint_constrs =
       List.map ~f:(Formula.subst_funcs prefp_sub)
       @@ List.concat_map ua_preds ~f:(fun pred ->
-          List.map (Term.elim_min_max_list pred.body) ~f:(fun body ->
-              Formula.geq
-                (Term.fvar_app_of_senv pred.name pred.args T_real.SReal)
-                body))
+          List.concat_map (Term.elim_min_max_list pred.body) ~f:(fun body ->
+              QFL.Problem.imply_antecedents (state_guard pred.name pred.args)
+              @@ Formula.geq
+                   (Term.fvar_app_of_senv pred.name pred.args T_real.SReal)
+                   body))
     in
     let ua_preds_delta = delta_of ua_preds in
     Debug.print ~id:None
@@ -552,11 +724,12 @@ module Make (Cfg : Config.ConfigType) = struct
           let prefp_args, prefp_body =
             List.Assoc.find_exn ~equal:Stdlib.( = ) prefp_templ_preds name
           in
-          List.map
+          List.concat_map
             (Term.elim_min_max_list
             @@ Term.subst_funcs rank_sub ua_pred_delta.body)
             ~f:(fun body ->
-              Formula.leq
+              QFL.Problem.imply_antecedents (state_guard name rank_args)
+              @@ Formula.leq
                 (T_real.mk_radd
                    (Term.rename
                       (LogicOld.ren_of_sort_env_list ua_pred_delta.args
@@ -569,7 +742,7 @@ module Make (Cfg : Config.ConfigType) = struct
     in
     let accelerated_rank_constrs =
       match accel_problem with
-      | Some accel_problem when config.enable_geometric_pla ->
+      | Some accel_problem when config.qfl.enable_geometric_pla ->
           let active_names = QFL.Accel.active_pred_names accel_problem in
           let rank_template_env =
             QFL.Accel.template_env_of_prefp_templates templ_params
@@ -594,7 +767,7 @@ module Make (Cfg : Config.ConfigType) = struct
     in
     let ranking_constrs =
       match
-        (accel_problem, config.enable_geometric_pla, accelerated_rank_constrs)
+        (accel_problem, config.qfl.enable_geometric_pla, accelerated_rank_constrs)
       with
       | Some _, true, Some constrs -> constrs
       | Some _, true, None when rank_delta_is_trivial -> [ Formula.mk_false () ]
@@ -602,7 +775,7 @@ module Make (Cfg : Config.ConfigType) = struct
     in
     let prefixpoint_constrs =
       match accel_problem with
-      | Some accel_problem when config.enable_geometric_pla ->
+      | Some accel_problem when config.qfl.enable_geometric_pla ->
           let active_names = QFL.Accel.active_pred_names accel_problem in
           let accel_template_env =
             QFL.Accel.template_env_of_prefp_templates templ_params
@@ -626,7 +799,7 @@ module Make (Cfg : Config.ConfigType) = struct
     let postfixpoint_constrs =
       match accel_problem with
       | Some accel_problem
-        when config.enable_geometric_pla
+        when config.qfl.enable_geometric_pla
              && ((not rank_delta_is_trivial)
                 || Option.is_some accelerated_rank_constrs) ->
           let active_names = QFL.Accel.active_pred_names accel_problem in
@@ -647,7 +820,7 @@ module Make (Cfg : Config.ConfigType) = struct
                    %s\n"
                   accel_report);
           accel_postfixpoint_constrs
-      | Some _ when config.enable_geometric_pla ->
+      | Some _ when config.qfl.enable_geometric_pla ->
           Debug.print ~id:None
           @@ lazy
                "geometric PLA lower-bound acceleration not used for \
@@ -664,42 +837,49 @@ module Make (Cfg : Config.ConfigType) = struct
           original_postfixpoint_constrs
     in
     let template_nonnegative_constrs templ_preds =
-      List.concat_map templ_preds ~f:(fun (name, (_, quant_pred)) ->
+      List.concat_map templ_preds ~f:(fun (name, (args, quant_pred)) ->
           let pred =
             List.find_exn qfl_preds_for_templates ~f:(fun pred ->
                 Stdlib.( = ) pred.name name)
           in
           QFL.Accel.template_nonnegative_formulas quant_pred
-          |> List.concat_map ~f:(QFL.Problem.imply_antecedents pred.arg_constrs))
+          |> List.concat_map
+               ~f:
+                 (QFL.Problem.imply_antecedents
+                    (state_guard name args @ pred.arg_constrs)))
     in
     let constrs =
       List.concat templ_constrss
-      @ (if config.quant_postfp_force_non_const then
+      @ (if config.qfl.templates.postfp_force_non_const then
            [
              Formula.or_of
                (List.map !coeffs ~f:(fun c -> Formula.neq c (T_real.rzero ())));
            ]
          else [])
       @ template_nonnegative_constrs
-          (prefp_templ_preds @ rank_templ_preds @ postfp_templ_preds)
-      @ unfolded_nonnegative_constrs
-      @ List.map postfp_templ_preds
+          (prefp_templ_preds @ rank_templ_preds @ nonnegative_templ_preds)
+      @ unfolded_nonnegative_constrs @ body_at_zero_nonnegative_constrs
+      @ List.concat_map postfp_templ_preds
           ~f:(fun (name, (postfp_args, postfp_body)) ->
             let prefp_args, prefp_body =
               List.Assoc.find_exn ~equal:Stdlib.( = ) prefp_templ_preds name
             in
-            Formula.leq postfp_body
+            QFL.Problem.imply_antecedents (state_guard name postfp_args)
+            @@ Formula.leq postfp_body
               (Term.rename
                  (LogicOld.ren_of_sort_env_list prefp_args postfp_args)
                  prefp_body))
-      @ List.map ~f:(Formula.subst_funcs postfp_sub) query_fml
+      @ List.map ~f:(Formula.subst_funcs query_sub) query_fml
       @ postfixpoint_constrs @ prefixpoint_constrs @ ranking_constrs
     in
     let main, backup =
-      match config.enable_pareto_caching with
-      | Some thr when List.length pareto_cache >= thr ->
+      match config.qfl.pareto_cache with
+      | Cache_after { threshold; num_conds; cond_degree; zero_reward; _ }
+        when (not max_cert) && List.length pareto_cache >= threshold ->
+          (* not under [max_cert]: the cache reads post-fixpoints as
+             non-negative everywhere *)
           let pc_constrs, pc_templ_params =
-            gen_cache_constr
+            gen_cache_constr ~num_conds ~cond_degree ~zero_reward
               (Second
                  ( prefp_templ_preds,
                    rank_templ_preds,
@@ -729,64 +909,34 @@ module Make (Cfg : Config.ConfigType) = struct
                 prefp_templ_preds,
                 rank_templ_preds,
                 postfp_templ_preds ),
-              PCSP.Problem.make ~prefix:(Some "q") pc_constrs
-              @@ SMT.Problem.
-                   {
-                     decl_reading = SMT.Problem.Synthesize;
-                     candidates = Map.Poly.empty;
-                     uni_sort = Set.Poly.empty;
-                     uni_senv = Map.Poly.empty;
-                     exi_senv = Map.force_merge templ_params pc_templ_params;
-                     dep_map = Map.Poly.empty;
-                     kind_map = Map.Poly.empty (*ToDo*);
-                     fenv = Map.Poly.empty;
-                     dtenv = Map.Poly.empty;
-                   } ),
+              PCSP.Problem.make ~prefix:(Some "q") (integrate_all pc_constrs)
+              @@ pqe_envs_of (Map.force_merge templ_params pc_templ_params) ),
             Some
               ( ( Some ua_preds,
                   prefp_templ_preds,
                   rank_templ_preds,
                   postfp_templ_preds ),
-                PCSP.Problem.make ~prefix:(Some "q") constrs
-                @@ SMT.Problem.
-                     {
-                       decl_reading = SMT.Problem.Synthesize;
-                       candidates = Map.Poly.empty;
-                       uni_sort = Set.Poly.empty;
-                       uni_senv = Map.Poly.empty;
-                       exi_senv = templ_params;
-                       dep_map = Map.Poly.empty;
-                       kind_map = Map.Poly.empty (*ToDo*);
-                       fenv = Map.Poly.empty;
-                       dtenv = Map.Poly.empty;
-                     } ) )
+                PCSP.Problem.make ~prefix:(Some "q") (integrate_all constrs)
+                @@ pqe_envs_of templ_params ) )
       | _ ->
           ( ( ( Some ua_preds,
                 prefp_templ_preds,
                 rank_templ_preds,
-                postfp_templ_preds ),
-              PCSP.Problem.make ~prefix:(Some "q") constrs
-              @@ SMT.Problem.
-                   {
-                     decl_reading = SMT.Problem.Synthesize;
-                     candidates = Map.Poly.empty;
-                     uni_sort = Set.Poly.empty;
-                     uni_senv = Map.Poly.empty;
-                     exi_senv = templ_params;
-                     dep_map = Map.Poly.empty;
-                     kind_map = Map.Poly.empty (*ToDo*);
-                     fenv = Map.Poly.empty;
-                     dtenv = Map.Poly.empty;
-                   } ),
+                List.map postfp_templ_preds ~f:cert_of ),
+              PCSP.Problem.make ~prefix:(Some "q") (integrate_all constrs)
+              @@ pqe_envs_of templ_params ),
             None )
     in
     (main, backup)
 
-  let cgen_pqes_ub (qfl : QFL.Problem.t) accel_problem query_fml fsub
-      pareto_cache =
+  (* [state_guard] as in [cgen_pqes_lb], on the pre-fixpoint and template
+     non-negativity obligations *)
+  let cgen_pqes_ub ~templates (qfl : QFL.Problem.t) ?(state_guard = fun _ _ -> [])
+      accel_problem query_fml fsub pareto_cache =
+    let config = with_templates templates in
     let query_fml = Formula.elim_min_max_list query_fml in
     let qfl_preds_for_templates =
-      if config.enable_geometric_pla then
+      if config.qfl.enable_geometric_pla then
         let active_names = QFL.Accel.active_pred_names accel_problem in
         List.filter qfl.preds ~f:(fun pred -> Set.mem active_names pred.name)
       else qfl.preds
@@ -796,10 +946,14 @@ module Make (Cfg : Config.ConfigType) = struct
       @@ List.map qfl_preds_for_templates ~f:(fun pred ->
           let template =
             Templ.gen_quant_template
-              ~num_conds:config.quant_prefp_templ_num_conds
-              ~use_orig_ite:config.quant_prefp_templ_use_orig_ite
-              ~cond_degree:config.quant_prefp_templ_cond_degree
-              ~term_degree:config.quant_prefp_templ_term_degree pred.args
+              ~num_conds:config.qfl.templates.prefp.num_conds
+              ~use_orig_ite:config.qfl.templates.prefp.use_orig_ite
+              ~annot_branches_follow_ite:
+                config.qfl.templates.prefp.annot_branches_follow_ite
+              ~cond_branches_follow_ite:
+                config.qfl.templates.prefp.cond_branches_follow_ite
+              ~cond_degree:config.qfl.templates.prefp.cond_degree
+              ~term_degree:config.qfl.templates.prefp.term_degree pred.args
               pred.body pred.annots
           in
           (template.templ_params, (pred.name, (pred.args, template.quant_pred))))
@@ -820,7 +974,7 @@ module Make (Cfg : Config.ConfigType) = struct
       @@ List.map qfl_preds_for_templates ~f:(fun pred -> pred.name)
     in
     let pla_body_nonnegative_constrs =
-      if config.enable_geometric_pla then
+      if config.qfl.enable_geometric_pla then
         QFL.Accel.body_nonnegative_formulas ~active_pred_names ~fsub
           accel_problem
       else []
@@ -828,13 +982,14 @@ module Make (Cfg : Config.ConfigType) = struct
     let original_prefixpoint_constrs =
       List.map ~f:(Formula.subst_funcs prefp_sub)
       @@ List.concat_map qfl_preds_for_templates ~f:(fun pred ->
-          List.map (Term.elim_min_max_list pred.body) ~f:(fun body ->
-              Formula.geq
-                (Term.fvar_app_of_senv pred.name pred.args T_real.SReal)
-                body))
+          List.concat_map (Term.elim_min_max_list pred.body) ~f:(fun body ->
+              QFL.Problem.imply_antecedents (state_guard pred.name pred.args)
+              @@ Formula.geq
+                   (Term.fvar_app_of_senv pred.name pred.args T_real.SReal)
+                   body))
     in
     let prefixpoint_constrs =
-      if config.enable_geometric_pla then (
+      if config.qfl.enable_geometric_pla then (
         let accel_template_env =
           QFL.Accel.template_env_of_prefp_templates templ_params
             prefp_templ_preds
@@ -863,18 +1018,23 @@ module Make (Cfg : Config.ConfigType) = struct
     in
     let constrs =
       List.concat_map qfl_preds_for_templates ~f:(fun pred ->
-          let _, quant_pred = Map.Poly.find_exn prefp_sub pred.name in
+          let args, quant_pred = Map.Poly.find_exn prefp_sub pred.name in
           QFL.Accel.template_nonnegative_formulas quant_pred
-          |> List.concat_map ~f:(QFL.Problem.imply_antecedents pred.arg_constrs))
+          |> List.concat_map
+               ~f:
+                 (QFL.Problem.imply_antecedents
+                    (state_guard pred.name args @ pred.arg_constrs)))
       @ unfolded_nonnegative_constrs @ pla_body_nonnegative_constrs
       @ List.map ~f:(Formula.subst_funcs prefp_sub) query_fml
       @ prefixpoint_constrs
     in
     let main, backup =
-      match config.enable_pareto_caching with
-      | Some thr when List.length pareto_cache >= thr ->
+      match config.qfl.pareto_cache with
+      | Cache_after { threshold; num_conds; cond_degree; zero_reward; _ }
+        when List.length pareto_cache >= threshold ->
           let pc_constrs, pc_templ_params =
-            gen_cache_constr (First prefp_sub) qfl.preds fsub pareto_cache
+            gen_cache_constr ~num_conds ~cond_degree ~zero_reward
+              (First prefp_sub) qfl.preds fsub pareto_cache
           in
           let pc_constrs =
             List.concat_map qfl_preds_for_templates ~f:(fun pred ->
@@ -887,49 +1047,16 @@ module Make (Cfg : Config.ConfigType) = struct
             @ pc_constrs
           in
           ( ( (None, prefp_templ_preds, [], []),
-              PCSP.Problem.make pc_constrs
-              @@ SMT.Problem.
-                   {
-                     decl_reading = SMT.Problem.Synthesize;
-                     candidates = Map.Poly.empty;
-                     uni_sort = Set.Poly.empty;
-                     uni_senv = Map.Poly.empty;
-                     exi_senv = Map.force_merge templ_params pc_templ_params;
-                     dep_map = Map.Poly.empty;
-                     kind_map = Map.Poly.empty (*ToDo*);
-                     fenv = Map.Poly.empty;
-                     dtenv = Map.Poly.empty;
-                   } ),
+              PCSP.Problem.make (integrate_all pc_constrs)
+              @@ pqe_envs_of (Map.force_merge templ_params pc_templ_params) ),
             Some
               ( (None, prefp_templ_preds, [], []),
-                PCSP.Problem.make constrs
-                @@ SMT.Problem.
-                     {
-                       decl_reading = SMT.Problem.Synthesize;
-                       candidates = Map.Poly.empty;
-                       uni_sort = Set.Poly.empty;
-                       uni_senv = Map.Poly.empty;
-                       exi_senv = templ_params;
-                       dep_map = Map.Poly.empty;
-                       kind_map = Map.Poly.empty (*ToDo*);
-                       fenv = Map.Poly.empty;
-                       dtenv = Map.Poly.empty;
-                     } ) )
+                PCSP.Problem.make (integrate_all constrs)
+                @@ pqe_envs_of templ_params ) )
       | _ ->
           ( ( (None, prefp_templ_preds, [], []),
-              PCSP.Problem.make constrs
-              @@ SMT.Problem.
-                   {
-                     decl_reading = SMT.Problem.Synthesize;
-                     candidates = Map.Poly.empty;
-                     uni_sort = Set.Poly.empty;
-                     uni_senv = Map.Poly.empty;
-                     exi_senv = templ_params;
-                     dep_map = Map.Poly.empty;
-                     kind_map = Map.Poly.empty (*ToDo*);
-                     fenv = Map.Poly.empty;
-                     dtenv = Map.Poly.empty;
-                   } ),
+              PCSP.Problem.make (integrate_all constrs)
+              @@ pqe_envs_of templ_params ),
             None )
     in
     (main, backup)
@@ -938,19 +1065,7 @@ module Make (Cfg : Config.ConfigType) = struct
 
   let solve_constrs templ_params constrs =
     let pqes =
-      PCSP.Problem.make ~prefix:(Some "q") constrs
-      @@ SMT.Problem.
-           {
-             decl_reading = SMT.Problem.Synthesize;
-             candidates = Map.Poly.empty;
-             uni_sort = Set.Poly.empty;
-             uni_senv = Map.Poly.empty;
-             exi_senv = templ_params;
-             dep_map = Map.Poly.empty;
-             kind_map = Map.Poly.empty (*ToDo*);
-             fenv = Map.Poly.empty;
-             dtenv = Map.Poly.empty;
-           }
+      PCSP.Problem.make ~prefix:(Some "q") (integrate_all constrs) @@ pqe_envs_of templ_params
     in
     Debug.print ~id:None
     @@ lazy (sprintf "******* Generated PQEs:\n%s" @@ PCSP.Problem.str_of pqes);
@@ -1124,7 +1239,7 @@ module Make (Cfg : Config.ConfigType) = struct
                     consts = [];
                     terms = [];
                     quals = [];
-                    shp = config.quant_omega_regular_inv_shape;
+                    shp = config.qfl.templates.omega_regular.inv_shape;
                     ubc = None;
                     ubd = None;
                     s = Set.Poly.empty;
@@ -1144,10 +1259,14 @@ module Make (Cfg : Config.ConfigType) = struct
       @@ List.map preds ~f:(fun pred ->
           let template =
             Templ.gen_quant_template
-              ~num_conds:config.quant_rank_templ_num_conds
-              ~use_orig_ite:config.quant_rank_templ_use_orig_ite
-              ~cond_degree:config.quant_rank_templ_cond_degree
-              ~term_degree:config.quant_rank_templ_term_degree
+              ~num_conds:config.qfl.templates.rank.num_conds
+              ~use_orig_ite:config.qfl.templates.rank.use_orig_ite
+              ~annot_branches_follow_ite:
+                config.qfl.templates.rank.annot_branches_follow_ite
+              ~cond_branches_follow_ite:
+                config.qfl.templates.rank.cond_branches_follow_ite
+              ~cond_degree:config.qfl.templates.rank.cond_degree
+              ~term_degree:config.qfl.templates.rank.term_degree
               (param_senv @ pred.args) pred.body pred.annots
           in
           (template.templ_params, (pred.name, (pred.args, template.quant_pred))))
@@ -1409,6 +1528,38 @@ module Make (Cfg : Config.ConfigType) = struct
     in
     loop param_constrs Map.Poly.empty 1
 
+  (** [eps_weight_of tsub eps] is the rational value that the solved model
+      [tsub] gives the decrease weight [eps] of one predicate, or zero when that
+      value is not a numeral.
+
+      Assumes [eps] is a real-sorted template parameter of the last solved
+      problem. The value is read after [Evaluator.simplify_term], because a
+      template-based backend returns a parameter as an expression of its own
+      template rather than as a literal: PCSat gives a nullary unknown as a
+      selector over candidate terms, [case 0 [real(0)]], whose value is the
+      selected branch. Without the simplification, reading that value as a
+      literal raised an uncaught [Failure] and ended the run.
+
+      Guarantees: [Q.gt (eps_weight_of tsub eps) Q.zero] only when the model
+      gives [eps] that positive numeral. The fallback zero is the safe direction
+      for every caller: the weight decides only whether a predicate counts as
+      strictly ranked, which removes it from the predicates later steps must
+      rank, and scales its ranking function; a predicate kept leaves the later
+      problems as hard or harder, so the fallback can lose an answer but never
+      makes one. *)
+  let eps_weight_of tsub eps =
+    match
+      Evaluator.simplify_term @@ Term.subst tsub (Term.mk_var eps T_real.SReal)
+    with
+    | t when T_real.is_real t -> T_real.let_real t
+    | t when T_int.is_int t -> Q.of_bigint (T_int.let_int t)
+    | t ->
+        Debug.print
+        @@ lazy
+             (sprintf "the weight %s is not a numeral in the model: %s"
+                (Ident.name_of_tvar eps) (Term.str_of t));
+        Q.zero
+
   let synthesize_lexgssm (qfl : QFL.Problem.t)
       (init, invmap, param_senv, param_constrs) =
     let d_div_2 = div_ceil (QFL.Problem.depth_of qfl) 2 in
@@ -1517,10 +1668,7 @@ module Make (Cfg : Config.ConfigType) = struct
                         with
                         | None -> (rank, elimed)
                         | Some (_, eps) ->
-                            let eps =
-                              T_real.let_real
-                              @@ Term.subst tsub (Term.mk_var eps T_real.SReal)
-                            in
+                            let eps = eps_weight_of tsub eps in
                             if Q.gt eps Q.zero then
                               let rank =
                                 Evaluator.simplify_term
@@ -1680,10 +1828,7 @@ module Make (Cfg : Config.ConfigType) = struct
                     with
                     | None -> (rank, elimed)
                     | Some (_, eps) ->
-                        let eps =
-                          T_real.let_real
-                          @@ Term.subst tsub (Term.mk_var eps T_real.SReal)
-                        in
+                        let eps = eps_weight_of tsub eps in
                         if Q.gt eps Q.zero then
                           let rank =
                             Evaluator.simplify_term @@ Normalizer.normalize_term
@@ -1825,10 +1970,7 @@ module Make (Cfg : Config.ConfigType) = struct
                         with
                         | None -> (rank, elimed)
                         | Some (_, eps) ->
-                            let eps =
-                              T_real.let_real
-                              @@ Term.subst tsub (Term.mk_var eps T_real.SReal)
-                            in
+                            let eps = eps_weight_of tsub eps in
                             if Q.gt eps Q.zero then
                               let rank =
                                 Evaluator.simplify_term
@@ -2014,7 +2156,7 @@ module Make (Cfg : Config.ConfigType) = struct
 
   let synthesize_omega_regular_supermartingale qfl
       (init, param_senv, param_constrs) =
-    (match config.quant_omega_regular_supermartingale with
+    (match config.qfl.templates.omega_regular.supermartingale with
       | SSM -> synthesize_ssm qfl
       | GSSM -> synthesize_gssm qfl
       | LexGSSM -> synthesize_lexgssm qfl
@@ -2079,9 +2221,9 @@ module Make (Cfg : Config.ConfigType) = struct
          (match info with
          | Some n when config.output_iteration -> [ sprintf "%d" n ]
          | _ -> [])
-      @ (if config.output_time then [ time ] else [])
+      @ (if config.qfl.output_time then [ time ] else [])
       @ (match witness with
-        | Some w when config.output_witness -> [ w ]
+        | Some w when config.qfl.output_witness -> [ w ]
         | _ -> [])
       @ if weakened then [ "weakened by an earlier unsettled query" ] else []
 
@@ -2101,9 +2243,631 @@ module Make (Cfg : Config.ConfigType) = struct
                   if n = 0 then None
                   else Some (sprintf "%d %s" n (Verdict.str_of v))))
 
-  let check_bounds ~print_sol (i, sols, pareto_cache) qfl
+  (* Relaxing a QFL problem over integer-sorted states to one over the reals.
+
+     The bound checker builds its certificates (pre- and post-fixpoint
+     templates, ranking supermartingales) as polynomials over real-valued
+     states, and the constraints it generates quantify over real states.  A
+     problem whose functions take integer arguments (a pGCL [nat] variable, an
+     SGCL variable that only ever holds integers) is therefore relaxed by
+     [relax_to_reals] below, and by nothing else: every integer variable
+     becomes a real one, and every integer operation its real counterpart.  This is sound in one direction only.
+
+     - A certificate checked for every real state holds in particular for every
+       integer state, so it proves the bound for the integer problem PROVIDED
+       every operation maps integers to integers exactly as it does over the
+       reals: addition, subtraction, negation, multiplication, absolute value, a
+       power with a literal natural exponent, the comparisons and equality.
+       Integer division and remainder do not ([x div 2] is not [x / 2]: a
+       halving loop terminates on the integers and not on the reals), nor does a
+       conversion from real to integer; a problem using one is not relaxed, and
+       its query is answered [unknown] with the reason in the verbose trace.
+     - A failure to find a certificate over the reals, or a real state violating
+       the bound, says nothing about the integer problem, whose states are
+       fewer.  The checker below answers [valid] or nothing ([unknown],
+       [timeout]); it never refutes, so no refutation is drawn from a relaxed
+       problem.
+
+     A strict integer comparison [a < b] is rewritten to [a + 1 <= b] (and
+     [a > b] to [a >= b + 1]) on the way: the two agree on every integer state,
+     so the integer problem is unchanged, while the relaxed one no longer has
+     to be certified on the real states strictly between [a] and [a + 1], which
+     no integer state reaches.  A problem with no integer sort is returned
+     unchanged. *)
+  exception Not_relaxable of string
+
+  let relax_sort = function T_int.SInt -> T_real.SReal | s -> s
+  let relax_senv = List.map ~f:(fun (x, s) -> (x, relax_sort s))
+
+  let rec relax_term = function
+    | Term.Var (x, s, info) -> Term.mk_var ~info x (relax_sort s)
+    | FunApp (T_int.Int n, [], info) -> T_real.mk_real ~info (Q.of_bigint n)
+    | FunApp (T_int.Neg, [ t ], info) -> T_real.mk_rneg ~info (relax_term t)
+    | FunApp (T_int.Abs, [ t ], info) -> T_real.mk_rabs ~info (relax_term t)
+    | FunApp (T_int.Add, [ t1; t2 ], info) ->
+        T_real.mk_radd ~info (relax_term t1) (relax_term t2)
+    | FunApp (T_int.Sub, [ t1; t2 ], info) ->
+        T_real.mk_rsub ~info (relax_term t1) (relax_term t2)
+    | FunApp (T_int.Mul, [ t1; t2 ], info) ->
+        T_real.mk_rmul ~info (relax_term t1) (relax_term t2)
+    | FunApp (T_int.Power, [ t; FunApp (T_int.Int n, [], _) ], _)
+      when Z.(geq n zero) && Z.fits_int n ->
+        let t = relax_term t in
+        List.fold (List.init (Z.to_int n) ~f:(fun _ -> t))
+          ~init:(T_real.rone ()) ~f:T_real.mk_rmul
+    | FunApp (T_int.Div _, _, _) ->
+        raise (Not_relaxable "integer division is not real division")
+    | FunApp (T_int.Rem _, _, _) ->
+        raise (Not_relaxable "integer remainder has no real counterpart")
+    | FunApp (T_irb.IntToReal, [ t ], _) -> relax_term t
+    | FunApp
+        ( (( T_real.(Real _ | RNeg | RAbs | RAdd | RSub | RMul | RDiv | RPower)
+           | T_bool.IfThenElse ) as sym),
+          ts,
+          info ) ->
+        Term.mk_fsym_app ~info sym (List.map ts ~f:relax_term)
+    | FunApp (FVar (f, sargs, sret), ts, info) ->
+        Term.mk_fsym_app ~info
+          (FVar (f, List.map sargs ~f:relax_sort, relax_sort sret))
+          (List.map ts ~f:relax_term)
+    | FunApp (T_bool.Formula phi, [], info) ->
+        Term.mk_fsym_app ~info (T_bool.Formula (relax_formula phi)) []
+    | LetTerm (x, s, t1, t2, info) ->
+        Term.mk_let_term ~info x (relax_sort s) (relax_term t1) (relax_term t2)
+    | FunApp (sym, _, _) ->
+        raise
+          (Not_relaxable
+             (sprintf "the operation %s is not known to agree on the integers \
+                       and the reals"
+                (Term.str_of_funsym sym)))
+
+  and relax_atom = function
+    | (Atom.True _ | Atom.False _) as atom -> atom
+    | Atom.App (Predicate.Psym T_int.Lt, [ t1; t2 ], info) ->
+        Atom.mk_app ~info (Predicate.Psym T_real.RLeq)
+          [ T_real.mk_radd (relax_term t1) (T_real.rone ()); relax_term t2 ]
+    | Atom.App (Predicate.Psym T_int.Gt, [ t1; t2 ], info) ->
+        Atom.mk_app ~info (Predicate.Psym T_real.RGeq)
+          [ relax_term t1; T_real.mk_radd (relax_term t2) (T_real.rone ()) ]
+    | Atom.App (Predicate.Psym T_int.Leq, ts, info) ->
+        Atom.mk_app ~info (Predicate.Psym T_real.RLeq)
+          (List.map ts ~f:relax_term)
+    | Atom.App (Predicate.Psym T_int.Geq, ts, info) ->
+        Atom.mk_app ~info (Predicate.Psym T_real.RGeq)
+          (List.map ts ~f:relax_term)
+    | Atom.App
+        ( (Predicate.Psym
+             (T_bool.Eq | T_bool.Neq | T_real.(RLeq | RGeq | RLt | RGt)) as
+           pred),
+          ts,
+          info ) ->
+        Atom.mk_app ~info pred (List.map ts ~f:relax_term)
+    | Atom.App (Predicate.Var (p, sorts), ts, info) ->
+        Atom.mk_app ~info
+          (Predicate.Var (p, List.map sorts ~f:relax_sort))
+          (List.map ts ~f:relax_term)
+    | Atom.App (pred, _, _) ->
+        raise
+          (Not_relaxable
+             (sprintf "the predicate %s is not known to agree on the integers \
+                       and the reals"
+                (Predicate.str_of pred)))
+
+  and relax_formula = function
+    | Formula.Atom (atom, info) -> Formula.mk_atom ~info (relax_atom atom)
+    | UnaryOp (op, phi, info) -> Formula.mk_unop ~info op (relax_formula phi)
+    | BinaryOp (op, phi1, phi2, info) ->
+        Formula.mk_binop ~info op (relax_formula phi1) (relax_formula phi2)
+    | Bind (binder, senv, phi, info) ->
+        Formula.mk_bind ~info binder (relax_senv senv) (relax_formula phi)
+    | LetFormula (x, s, t, phi, info) ->
+        Formula.mk_let_formula ~info x (relax_sort s) (relax_term t)
+          (relax_formula phi)
+    | LetRec _ ->
+        raise (Not_relaxable "a fixpoint formula inside a QFL body")
+
+  (* whether an integer sort occurs anywhere: a variable, a binder, a function's
+     signature, an integer operation or comparison, or a conversion *)
+  let rec int_in_term = function
+    | Term.Var (_, s, _) -> Term.is_int_sort s
+    | FunApp (sym, ts, _) -> int_in_fun_sym sym || List.exists ts ~f:int_in_term
+    | LetTerm (_, s, t1, t2, _) ->
+        Term.is_int_sort s || int_in_term t1 || int_in_term t2
+
+  and int_in_fun_sym = function
+    | T_int.(Int _ | Neg | Nop | Abs | Add | Sub | Mul | Div _ | Rem _ | Power)
+    | T_int.Case _
+    | T_irb.(IntToReal | RealToInt | IntToBV _ | BVToInt _) ->
+        true
+    | FVar (_, sargs, sret) -> List.exists (sret :: sargs) ~f:Term.is_int_sort
+    | T_bool.Formula phi -> int_in_formula phi
+    | _ -> false
+
+  and int_in_formula = function
+    | Formula.Atom (Atom.App (Predicate.Psym T_int.(Leq | Geq | Lt | Gt), _, _), _)
+    | Formula.Atom (Atom.App (Predicate.Psym T_int.(PDiv | NotPDiv), _, _), _) ->
+        true
+    | Formula.Atom (Atom.App (Predicate.Var (_, sorts), ts, _), _) ->
+        List.exists sorts ~f:Term.is_int_sort || List.exists ts ~f:int_in_term
+    | Formula.Atom (Atom.App (_, ts, _), _) -> List.exists ts ~f:int_in_term
+    | Formula.Atom ((Atom.True _ | Atom.False _), _) -> false
+    | UnaryOp (_, phi, _) -> int_in_formula phi
+    | BinaryOp (_, phi1, phi2, _) -> int_in_formula phi1 || int_in_formula phi2
+    | Bind (_, senv, phi, _) ->
+        List.exists senv ~f:(snd >> Term.is_int_sort) || int_in_formula phi
+    | LetFormula (_, s, t, phi, _) ->
+        Term.is_int_sort s || int_in_term t || int_in_formula phi
+    | LetRec _ -> true
+
+  let mentions_int (qfl : QFL.Problem.t) =
+    let is_int (_, s) = Term.is_int_sort s in
+    let in_term = int_in_term in
+    let in_formula = int_in_formula in
+    List.exists qfl.preds ~f:(fun (pred : QFL.Pred.t) ->
+        List.exists pred.args ~f:is_int
+        || in_term pred.body
+        || List.exists (pred.annots @ pred.arg_constrs) ~f:in_formula)
+    ||
+    match qfl.query with
+    | Check q ->
+        List.exists q.params ~f:is_int
+        || List.exists (q.bound :: q.args) ~f:in_term
+        || Option.exists q.left ~f:in_formula
+    | DistCheck q ->
+        List.exists q.params ~f:is_int
+        || List.exists q.args ~f:in_term
+        || in_formula q.bound
+    | ASAT (init, senv, phi) ->
+        List.exists senv ~f:is_int
+        || in_formula phi
+        || Option.exists init ~f:(fun (_, ts) -> List.exists ts ~f:in_term)
+
+  (* [relax_to_reals qfl query] is [Ok] of the relaxed problem and query, the
+     input itself when it has no integer sort, or [Error] of the reason the
+     relaxation would not be sound; see the comment above [Not_relaxable] *)
+  let relax_to_reals (qfl : QFL.Problem.t) (query : QFL.Problem.check) =
+    if not (mentions_int qfl) then Ok (qfl, query)
+    else
+      try
+        let preds =
+          List.map qfl.preds ~f:(fun (pred : QFL.Pred.t) ->
+              {
+                pred with
+                args = relax_senv pred.args;
+                body = relax_term pred.body;
+                annots = List.map pred.annots ~f:relax_formula;
+                arg_constrs = List.map pred.arg_constrs ~f:relax_formula;
+              })
+        in
+        let query =
+          QFL.Problem.
+            {
+              query with
+              params = relax_senv query.params;
+              left = Option.map query.left ~f:relax_formula;
+              args = List.map query.args ~f:relax_term;
+              bound = relax_term query.bound;
+            }
+        in
+        let qfl = QFL.Problem.{ preds; query = Check query } in
+        Debug.print ~id:None
+        @@ lazy
+             (sprintf "relaxed from the integers to the reals: %s\n"
+             @@ QFL.Problem.str_of qfl);
+        Ok (qfl, query)
+      with Not_relaxable reason -> Error reason
+
+  (* Reading a relaxed problem at its integer states only.
+
+     [integer_states qfl query], on the problem BEFORE [relax_to_reals], is
+     [Some (positions, params)] when [config.qfl.integer_states] is on and
+     some function argument is integral or some query parameter is
+     integer-sorted: [positions] gives, per function, the indices of its
+     integral arguments ([integral_positions]: the integer-sorted ones, and
+     the real ones that hold an integer at every state the query reaches), and
+     [params] the query's integer parameters; otherwise [None], and the
+     checker states every obligation at every real state as before.
+
+     Why this is sound.  Let [I] be the set of states whose arguments at
+     [positions] are integers.  The relaxed problem agrees with the input at
+     every state of [I] (the contract of [relax_to_reals]), the query's state
+     is in [I], and a state of [I] applies the functions only at states of
+     [I] (the guarantee of [integral_positions]).  So on [I] the least
+     fixpoint is that of the equations restricted to [I] -- each value at a
+     state of [I] depends only on values at states of [I] -- and the query
+     reads it only there.  Park induction for an upper bound and the
+     post-fixpoint-with-ranking rule for a lower bound hold over any state
+     space, so their obligations need to hold on [I] only, and each
+     obligation of a function is stated under [is_int] of its integral
+     arguments ([integer_state_guard]).  An obligation left without the
+     hypothesis (the acceleration's, the Pareto cache's, the unfolded
+     functions' non-negativity) is only stronger.
+
+     Why it can matter.  On the reals the value of [X x =mu if x >= 1 then 1 +
+     X (x - 1) else 0] is [floor x] (for [x >= 0]), so no linear post-fixpoint
+     valid at every real state exceeds [x - 1], and [X 3 >= 3] cannot be
+     proved; at the integer states the post-fixpoint [x] proves it. *)
+  (* [integral ints t]: [t] is integer-valued whenever every variable of [ints]
+     is, judged by its shape: an integer-sorted term, an integral real
+     literal, a variable of [ints], a sum, difference, product or negation of
+     such, or a conditional whose two branches are such *)
+  let rec integral ints t =
+    Term.is_int_sort (Term.sort_of t)
+    ||
+    match t with
+    | Term.Var (x, _, _) -> Set.mem ints x
+    | FunApp (T_real.Real q, [], _) -> Z.equal (Q.den q) Z.one
+    | FunApp (T_irb.IntToReal, [ _ ], _) -> true
+    | FunApp (T_real.(RAdd | RSub | RMul), [ t1; t2 ], _) ->
+        integral ints t1 && integral ints t2
+    | FunApp (T_real.RNeg, [ t1 ], _) -> integral ints t1
+    | FunApp (T_bool.IfThenElse, [ _; t1; t2 ], _) ->
+        integral ints t1 && integral ints t2
+    | _ -> false
+
+  (* [binder_free t]: [t] binds no variable (no [let], no quantifier, no
+     integral binder, no symbol other than arithmetic, conditionals and
+     function applications), so a variable occurring in an argument of an
+     application in [t] is the enclosing equation's parameter of that name *)
+  let rec binder_free = function
+    | Term.Var _ -> true
+    | LetTerm _ -> false
+    | FunApp (sym, ts, _) ->
+        (match sym with
+        | T_real.(Real _ | RAdd | RSub | RMul | RNeg | RDiv)
+        | T_int.(Int _ | Add | Sub | Mul | Neg)
+        | T_irb.IntToReal | T_bool.IfThenElse | FVar _ ->
+            true
+        | T_bool.Formula phi -> binder_free_formula phi
+        | _ -> false)
+        && List.for_all ts ~f:binder_free
+
+  and binder_free_formula = function
+    | Formula.Atom ((Atom.True _ | Atom.False _), _) -> true
+    | Atom (Atom.App (Predicate.Psym _, ts, _), _) ->
+        List.for_all ts ~f:binder_free
+    | UnaryOp (_, phi, _) -> binder_free_formula phi
+    | BinaryOp (_, phi1, phi2, _) ->
+        binder_free_formula phi1 && binder_free_formula phi2
+    | _ -> false
+
+  (* [integral_positions qfl query]: per function, its arity and the indices
+     of the arguments that are integers at every state the query reaches:
+     every integer-sorted argument, and every real-sorted one for which the
+     query's argument is integral and so is the argument of every application
+     of the function, given the integral arguments of the equation it occurs
+     in.  Computed as a greatest fixpoint: start from every argument and drop
+     one whose application is not shown integral, until nothing changes.  A
+     real argument applied inside a body that binds variables is dropped.
+     Guarantees: the set of states whose arguments at these positions are
+     integers contains the query's state and is closed under the
+     applications of every body. *)
+  let integral_positions (qfl : QFL.Problem.t) (query : QFL.Problem.check) =
+    let cand = Hashtbl.Poly.create () in
+    List.iter qfl.preds ~f:(fun (pred : QFL.Pred.t) ->
+        Hashtbl.set cand ~key:pred.name
+          ~data:(Array.of_list_map pred.args ~f:(fun _ -> true)));
+    let drop ~ints name ts =
+      match Hashtbl.find cand name with
+      | Some a when Array.length a = List.length ts ->
+          List.foldi ts ~init:false ~f:(fun i changed t ->
+              if a.(i) && not (integral ints t) then (
+                a.(i) <- false;
+                true)
+              else changed)
+      | Some a ->
+          let changed = Array.exists a ~f:Fn.id in
+          Array.fill a ~pos:0 ~len:(Array.length a) false;
+          changed
+      | None -> false
+    in
+    let query_ints =
+      Set.Poly.of_list
+      @@ List.filter_map query.params ~f:(fun (x, s) ->
+          if Term.is_int_sort s then Some x else None)
+    in
+    ignore (drop ~ints:query_ints query.name query.args : bool);
+    let rec loop () =
+      let changed =
+        List.fold qfl.preds ~init:false ~f:(fun changed (pred : QFL.Pred.t) ->
+            let ints =
+              let a = Hashtbl.find_exn cand pred.name in
+              Set.Poly.of_list
+              @@ List.filter_mapi pred.args ~f:(fun i (x, s) ->
+                  if a.(i) || Term.is_int_sort s then Some x else None)
+            in
+            let ints =
+              if binder_free pred.body then ints
+              else Set.Poly.empty
+            in
+            Set.fold (Term.fvar_apps_of pred.body) ~init:changed
+              ~f:(fun changed -> function
+              | Term.FunApp (FVar (name, _, _), ts, _) ->
+                  drop ~ints name ts || changed
+              | _ -> changed))
+      in
+      if changed then loop ()
+    in
+    loop ();
+    List.filter_map qfl.preds ~f:(fun (pred : QFL.Pred.t) ->
+        let a = Hashtbl.find_exn cand pred.name in
+        match
+          List.filter_mapi pred.args ~f:(fun i (_, s) ->
+              if a.(i) || Term.is_int_sort s then Some i else None)
+        with
+        | [] -> None
+        | is -> Some (pred.name, (List.length pred.args, is)))
+
+  let integer_states (qfl : QFL.Problem.t) (query : QFL.Problem.check) =
+    if not config.qfl.integer_states then None
+    else
+      let positions = integral_positions qfl query in
+      let params =
+        List.filter_map query.params ~f:(fun (x, s) ->
+            if Term.is_int_sort s then Some x else None)
+      in
+      if List.is_empty positions && List.is_empty params then None
+      else Some (positions, params)
+
+  (* [integer_state_guard positions name args]: [is_int] of each argument of
+     [args] at an integer position of the function [name] *)
+  let integer_state_guard positions name args =
+    match List.Assoc.find positions ~equal:Ident.tvar_equal name with
+    | Some (arity, is) when List.length args = arity ->
+        List.map is ~f:(fun i ->
+            let x, s = List.nth_exn args i in
+            Formula.mk_atom @@ T_irb.mk_is_int @@ Term.mk_var x s)
+    | _ -> []
+
+  (* [refuse_unsound_query_shape ~fsub ~recursive query] refuses, through
+     [Common.Refusal], a bound query whose certificate below would not be one,
+     and returns [()] otherwise.
+
+     The checker certifies [F args ⋈ bound] by replacing EVERY recursive
+     function [G] (a predicate [unfold] keeps) by a template of the query's
+     direction: a pre-fixpoint [P_G >= lfp G] for an upper bound, a
+     post-fixpoint [Q_G <= lfp G] for a lower one.  That proves the query only
+     if the query is monotone in the replaced applications in the direction
+     that makes the approximation safe, so the contract, read after inlining
+     [fsub] into the query, is:
+     - [bound], [args] and the antecedent [left] apply no recursive function:
+       there the approximation goes the wrong way round (for [F 1 <= G 1] the
+       pre-fixpoint [P_G] over-approximates [G], and [F 1 <= P_G 1] says
+       nothing about [F 1 <= G 1]: with [F x = 1] and [G x =mu 0.5 * G x],
+       least fixpoint 0, the template [P_G = 1] satisfies every constraint and
+       the false bound was answered valid);
+     - the head [F args], once inlined, is nondecreasing in every recursive
+       application it contains, seen per branch of its conditionals (whose
+       conditions must be free of them): a branch is built from them by sums,
+       products with and divisions by a factor free of them that is not a
+       negative constant, and a subtraction of a term free of them, or it is
+       a combination of them whose constant coefficients, equal applications
+       summed, are all nonnegative ([1 - G x <= b] is a lower bound on [G],
+       again the wrong direction).
+     A comparison between two fixpoints needs the two sides approximated in
+     opposite directions in one certificate, which this checker does not
+     build.
+
+     The same test is applied to the body of every recursive equation in
+     [preds] (already inlined by [unfold]): Park induction -- a pre-fixpoint
+     [P >= Phi(P)] bounds [lfp Phi] from above (Knaster-Tarski) -- and the
+     post-fixpoint-with-ranking argument for lower bounds both need [Phi]
+     monotone, and the templates do not check it.  Without the test the
+     equation [X x =mu if x > 0 then 1 - X (x - 1) else 0], whose solution has
+     [X 1 = 1], admitted the pre-fixpoint [X = 1/2] ([1/2 >= 1 - 1/2],
+     [1/2 >= 0]), and the false bound [X 1 <= 1/2] was answered valid.  A
+     factor mentioning a variable is assumed nonnegative here as in the head:
+     that assumption is the program's obligation and is not checked. *)
+  let refuse_unsound_query_shape ~fsub ~recursive ~(preds : QFL.Pred.t list)
       (query : QFL.Problem.check) =
+    let applied t =
+      Set.Poly.filter_map (Term.fvar_apps_of t) ~f:(function
+        | Term.FunApp (FVar (name, _, _), _, _) when Set.mem recursive name ->
+            Some name
+        | _ -> None)
+    in
+    let free t = Set.is_empty (applied t) in
+    let constant t =
+      if free t && Set.is_empty (Term.tvs_of t) then
+        match Evaluator.simplify_term t with
+        | t when T_real.is_real t -> Some (T_real.let_real t)
+        | t when T_int.is_int t -> Some (Q.of_bigint (T_int.let_int t))
+        | _ -> None
+      else None
+    in
+    (* a factor free of recursive functions that is not a negative constant;
+       one that mentions a variable is taken to be nonnegative, the same
+       obligation every recursive body already carries (a choice weight [p] in
+       [p * G x + (1 - p) * G y] is a probability by the program's contract) *)
+    let factor t =
+      free t
+      && ((not (Set.is_empty (Term.tvs_of t)))
+         || Option.exists (constant t) ~f:(fun c -> Q.(geq c zero)))
+    in
+    (* [linear t]: [t] as a combination of recursive applications with
+       constant coefficients, each application keyed by its printed form so
+       that equal applications are summed, plus a part free of them; [None]
+       when [t] is not of that shape.  A head normalised to
+       [G a + G b * 1/2 - G a * 1/2] is nondecreasing although it subtracts
+       an application: the coefficient of [G a] is [1/2]. *)
+    let rec linear t =
+      let scale c = Map.Poly.map ~f:(fun d -> Q.(c * d)) in
+      let sum m1 m2 =
+        Map.Poly.merge m1 m2 ~f:(fun ~key:_ -> function
+          | `Both (c, d) -> Some Q.(c + d)
+          | `Left c | `Right c -> Some c)
+      in
+      if free t then Some Map.Poly.empty
+      else
+        match t with
+        | Term.FunApp (FVar (name, _, _), args, _)
+          when Set.mem recursive name && List.for_all args ~f:free ->
+            Some (Map.Poly.singleton (Term.str_of t) Q.one)
+        | Term.FunApp ((T_real.RAdd | T_int.Add | T_num.NAdd _), [ t1; t2 ], _)
+          ->
+            Option.map2 (linear t1) (linear t2) ~f:sum
+        | Term.FunApp ((T_real.RSub | T_int.Sub | T_num.NSub _), [ t1; t2 ], _)
+          ->
+            Option.map2 (linear t1) (linear t2) ~f:(fun m1 m2 ->
+                sum m1 (scale Q.minus_one m2))
+        | Term.FunApp ((T_real.RNeg | T_int.Neg | T_num.NNeg _), [ t1 ], _) ->
+            Option.map (linear t1) ~f:(scale Q.minus_one)
+        | Term.FunApp ((T_real.RMul | T_int.Mul | T_num.NMul _), [ t1; t2 ], _)
+          -> (
+            match (constant t1, constant t2) with
+            | Some c, _ -> Option.map (linear t2) ~f:(scale c)
+            | _, Some c -> Option.map (linear t1) ~f:(scale c)
+            | None, None -> None)
+        | Term.FunApp ((T_real.RDiv | T_num.NDiv _), [ t1; t2 ], _) -> (
+            match constant t2 with
+            | Some c when not (Q.equal c Q.zero) ->
+                Option.map (linear t1) ~f:(scale Q.(one / c))
+            | _ -> None)
+        | _ -> None
+    in
+    let rec monotone t =
+      free t
+      ||
+      match QFL.Unif.let_unif t with
+      | Some (_, body) ->
+          (* the integral is monotone in its integrand *)
+          monotone body
+      | None -> (
+      match t with
+      | Term.FunApp (FVar (name, _, _), args, _) when Set.mem recursive name ->
+          List.for_all args ~f:free
+      | Term.FunApp ((T_real.RAdd | T_int.Add | T_num.NAdd _), [ t1; t2 ], _) ->
+          monotone t1 && monotone t2
+      | Term.FunApp ((T_real.RSub | T_int.Sub | T_num.NSub _), [ t1; t2 ], _) ->
+          monotone t1 && free t2
+      | Term.FunApp ((T_real.RMul | T_int.Mul | T_num.NMul _), [ t1; t2 ], _) ->
+          (factor t1 && monotone t2) || (factor t2 && monotone t1)
+      | Term.FunApp ((T_real.RDiv | T_num.NDiv _), [ t1; t2 ], _) ->
+          monotone t1 && factor t2
+      | Term.FunApp (T_bool.IfThenElse, [ c; t1; t2 ], _) ->
+          free c && monotone t1 && monotone t2
+      | _ -> false)
+    in
+    let head =
+      Term.subst_funcs fsub
+      @@ Term.mk_fvar_app query.name
+           (List.map query.args ~f:(Fn.const T_real.SReal))
+           T_real.SReal query.args
+    in
+    let wrong_side =
+      Set.Poly.union_list
+      @@ List.map ~f:(Term.subst_funcs fsub >> applied)
+      @@ (query.bound :: query.args)
+      @ Option.to_list (Option.map query.left ~f:T_bool.of_formula)
+    in
+    match Set.min_elt wrong_side with
+    | Some name ->
+        Common.Refusal.refuse
+          "the bound or the antecedent of the query applies %s, a recursive \
+           function: the bound checker approximates every recursive function \
+           in the direction of the query, so a comparison between two \
+           fixpoints is not certified soundly"
+          (Ident.name_of_tvar name)
+    | None ->
+        let nondecreasing t =
+          monotone t
+          || Option.exists (linear t)
+               ~f:(Map.for_all ~f:(fun c -> Q.(geq c zero)))
+        in
+        let seen_nondecreasing t =
+          List.for_all (Term.elim_min_max_list t) ~f:(fun t ->
+              List.for_all (Term.elim_ite t) ~f:(fun (cond, t) ->
+                  free (T_bool.of_formula cond) && nondecreasing t))
+        in
+        if not (seen_nondecreasing head) then
+          Common.Refusal.refuse
+            "the query's function, once its non-recursive definition is \
+             inlined, is not seen to be nondecreasing in the recursive \
+             functions it applies (%s), so approximating them in the direction \
+             of the query does not bound it in that direction"
+            (Term.str_of head);
+        List.iter preds ~f:(fun (pred : QFL.Pred.t) ->
+            if not (seen_nondecreasing pred.body) then
+              Common.Refusal.refuse
+                "the body of %s is not seen to be nondecreasing in the \
+                 recursive functions it applies (%s): the bound checker's \
+                 certificates (a pre-fixpoint for an upper bound, a \
+                 post-fixpoint with a ranking function for a lower one) bound \
+                 a least fixpoint only of a monotone equation"
+                (Ident.name_of_tvar pred.name)
+                (Term.str_of pred.body))
+
+  (* whether an integral [unif r. F] occurs in the equations or the query *)
+  let mentions_unif (qfl : QFL.Problem.t) =
+    List.exists qfl.preds ~f:(fun (pred : QFL.Pred.t) ->
+        QFL.Unif.term_mentions pred.body
+        || List.exists (pred.annots @ pred.arg_constrs)
+             ~f:QFL.Unif.formula_mentions)
+    ||
+    match qfl.query with
+    | Check q ->
+        List.exists (q.bound :: q.args) ~f:QFL.Unif.term_mentions
+        || Option.exists q.left ~f:QFL.Unif.formula_mentions
+    | DistCheck q ->
+        List.exists q.args ~f:QFL.Unif.term_mentions
+        || QFL.Unif.formula_mentions q.bound
+    | ASAT (init, _, phi) ->
+        QFL.Unif.formula_mentions phi
+        || Option.exists init ~f:(fun (_, ts) ->
+               List.exists ts ~f:QFL.Unif.term_mentions)
+
+  (* [?int_states]: [integer_states] of the problem as read, for a caller
+     that relaxed it already; absent, it is computed here from [qfl] *)
+  let rec check_bounds ~print_sol ?int_states (i, sols, pareto_cache) qfl
+      (query : QFL.Problem.check) =
+    let int_states =
+      match int_states with
+      | Some int_states -> int_states
+      | None -> integer_states qfl query
+    in
+    match relax_to_reals qfl query with
+    | Ok (qfl', query') ->
+        check_bounds_over_reals ~print_sol ~int_states
+          (i, sols, pareto_cache) qfl' query'
+    | Error reason ->
+        Debug.print ~id:None
+        @@ lazy
+             (sprintf
+                "[8. Solver result]\n\
+                 result: unknown\n\
+                 reason: the problem is over the integers and cannot be \
+                 relaxed to the reals soundly: %s"
+                reason);
+        print_query_verdict ~print_sol ~top_level:(i >= 0)
+          ~weakened:(weakened_by_earlier sols) Verdict.Unknown "0.000000s";
+        Or_error.return (sols @ [ Verdict.Unknown ], pareto_cache @ [ None ])
+
+  and check_bounds_over_reals ~print_sol ~int_states (i, sols, pareto_cache)
+      qfl (query : QFL.Problem.check) =
     Timer.start ();
+    let state_guard, query =
+      match int_states with
+      | None -> ((fun _ _ -> []), query)
+      | Some (positions, params) ->
+          (* a quantified integer parameter of the query ranges over the
+             integers: [is_int] of it joins the query's antecedent *)
+          let param_guards =
+            List.filter_map query.params ~f:(fun (x, s) ->
+                if List.mem params x ~equal:Ident.tvar_equal then
+                  Some (Formula.mk_atom @@ T_irb.mk_is_int @@ Term.mk_var x s)
+                else None)
+          in
+          ( integer_state_guard positions,
+            if List.is_empty param_guards then query
+            else
+              {
+                query with
+                left =
+                  Some
+                    (Formula.and_of
+                       (param_guards @ Option.to_list query.left));
+              } )
+    in
     (* a refusal of the input, not an internal error: the bound checking below
        is built for least fixpoints only *)
     if not @@ QFL.Problem.has_only_mu qfl then
@@ -2111,8 +2875,30 @@ module Make (Cfg : Config.ConfigType) = struct
         "the QFL bound checker handles least fixpoints (=mu) only, and this \
          problem defines a greatest fixpoint (=nu)";
     let qfl_before_unfold = qfl in
+    let has_unif = mentions_unif qfl in
+    let templates = templates_for ~has_unif in
+    if has_unif && config.qfl.enable_geometric_pla then
+      Common.Refusal.refuse
+        "the geometric PLA acceleration does not read integrals (unif); run \
+         without enable_geometric_pla";
     let accel_problem = QFL.Accel.accelerate_applicable qfl_before_unfold in
     let fsub, qfl = QFL.Problem.unfold qfl_before_unfold in
+    let fsub, qfl =
+      if not has_unif then (fsub, qfl)
+      else
+        let unknowns = Set.Poly.of_list @@ QFL.Pred.pvars_of_list qfl.preds in
+        let rewrite = QFL.Unif.rewrite_min_max ~unknowns in
+        ( Map.Poly.map fsub ~f:(fun (args, body) -> (args, rewrite body)),
+          {
+            qfl with
+            preds =
+              List.map qfl.preds ~f:(fun (pred : QFL.Pred.t) ->
+                  { pred with body = rewrite pred.body });
+          } )
+    in
+    refuse_unsound_query_shape ~fsub
+      ~recursive:(Set.Poly.of_list @@ QFL.Pred.pvars_of_list qfl.preds)
+      ~preds:qfl.preds query;
     Debug.print ~id:None
     @@ lazy (sprintf "inlined: %s\n" @@ QFL.Problem.str_of ~fsub:(Some fsub) qfl);
     let ((ua_preds, prefp, rank, postfp), pqes), backup =
@@ -2122,7 +2908,7 @@ module Make (Cfg : Config.ConfigType) = struct
       match query.kind with
       | LB -> (
           match
-            if config.enable_geometric_pla then
+            if config.qfl.enable_geometric_pla then
               QFL.Accel.accelerated_problem_to_qfl_if_exact accel_problem
             else None
           with
@@ -2140,25 +2926,62 @@ module Make (Cfg : Config.ConfigType) = struct
                 Formula.subst_funcs fsub
                 @@ QFL.Problem.formula_of_query (Check query)
               in
-              cgen_pqes_lb qfl ~preds_for_fsub_domain query_fml fsub
+              cgen_pqes_lb ~templates qfl ~preds_for_fsub_domain query_fml fsub
                 pareto_cache
           | None ->
               Debug.print ~id:None
               @@ lazy
-                   (if config.enable_geometric_pla then
+                   (if config.qfl.enable_geometric_pla then
                       "geometric PLA lower-bound acceleration fallback: exact \
                        accelerated QFL body not available"
                     else "geometric PLA lower-bound acceleration disabled");
-              cgen_pqes_lb qfl
+              let state_guard, max_cert =
+                if
+                  (not config.qfl.lb_max_on_invariant)
+                  || config.qfl.enable_geometric_pla
+                then (state_guard, false)
+                else
+                  let is_valid phi =
+                    try
+                      Z3Smt.Z3interface.is_valid ~id:None
+                        ~timeout:(Some 5000) (LogicOld.get_fenv ()) phi
+                    with exn_ when not (Timer.is_async exn_) -> false
+                  in
+                  let head =
+                    Term.subst_funcs fsub
+                    @@ Term.mk_fvar_app query.name
+                         (List.map query.args ~f:(Fn.const T_real.SReal))
+                         T_real.SReal query.args
+                  in
+                  match
+                    QflReachInv.compute ~is_valid ~preds:qfl.preds
+                      ~query_params:query.params ~query_left:query.left head
+                  with
+                  | Some (inv, descr) ->
+                      Debug.print ~id:None
+                      @@ lazy (sprintf "reachable-state invariant: %s" descr);
+                      ( (fun name args -> state_guard name args @ inv name args),
+                        true )
+                  | None ->
+                      Debug.print ~id:None
+                      @@ lazy "reachable-state invariant: none proved";
+                      (state_guard, true)
+              in
+              cgen_pqes_lb ~templates qfl ~state_guard ~max_cert
                 ?accel_problem:
-                  (if config.enable_geometric_pla then Some accel_problem
+                  (if config.qfl.enable_geometric_pla then Some accel_problem
                    else None)
                 ~preds_for_fsub_domain:qfl_before_unfold.preds query_fml fsub
                 pareto_cache)
-      | UB -> cgen_pqes_ub qfl accel_problem query_fml fsub pareto_cache
+      | UB ->
+          cgen_pqes_ub ~templates qfl ~state_guard accel_problem query_fml fsub
+            pareto_cache
     in
     let timeout =
-      match backup with None -> None | Some _ -> config.pareto_cache_timeout
+      (* a backup problem is built only by the Pareto cache *)
+      match (backup, config.qfl.pareto_cache) with
+      | Some _, Cache_after { timeout; _ } -> timeout
+      | _ -> None
     in
     Debug.print ~id:None
     @@ lazy
@@ -2258,7 +3081,14 @@ module Make (Cfg : Config.ConfigType) = struct
         Or_error.return
           ( sols @ [ sol ],
             pareto_cache
-            @ [ (match backup with None -> Some fp | Some _ -> None) ] )
+            @ [
+                (match backup with
+                | None when not config.qfl.lb_max_on_invariant -> Some fp
+                | _ ->
+                    (* a [lb_max_on_invariant] certificate bounds the solution
+                       only on the reachable-state invariant of its query *)
+                    None);
+              ] )
     | sol0, _, _ -> (
         match backup with
         | None ->
@@ -2476,7 +3306,7 @@ module Make (Cfg : Config.ConfigType) = struct
       in
       match res with
       | None ->
-          if config.dist_bound_initialize_standard_basis then
+          if config.qfl.dist_bound.initialize_standard_basis then
             List.map ~f:(check ((*ToDo*) T_real.rone ()))
             @@ List.init (List.length q.params) ~f:(fun i ->
                 List.init (List.length q.params) ~f:(fun j ->
@@ -2527,7 +3357,7 @@ module Make (Cfg : Config.ConfigType) = struct
           ~init:
             ( Q.zero,
               List.init (List.length q.params) ~f:(fun _ -> Q.zero),
-              [ (Q.one, config.dist_bound_use_strict_bound) ] )
+              [ (Q.one, config.qfl.dist_bound.use_strict_bound) ] )
           ~f:(fun (eps, weight, bounds) ps ->
             if
               let sub =
@@ -2571,7 +3401,7 @@ module Make (Cfg : Config.ConfigType) = struct
               in
               let obj =
                 let f =
-                  if config.dist_bound_use_l1_norm then T_real.mk_rsub
+                  if config.qfl.dist_bound.use_l1_norm then T_real.mk_rsub
                   else fun ?(info = Dummy) p q ->
                     let d = T_real.mk_rsub p q in
                     T_real.mk_rmul ~info d d
@@ -2581,7 +3411,7 @@ module Make (Cfg : Config.ConfigType) = struct
               let fenv = Map.Poly.empty in
               Timer.start ();
               match
-                if config.dist_bound_use_optimathsat then
+                if config.qfl.dist_bound.use_optimathsat then
                   OptiMathSAT.Solver.minimize constrs obj
                 else
                   Z3Smt.Z3interface.check_opt ~id:None fenv constrs ~max:false
@@ -2617,7 +3447,7 @@ module Make (Cfg : Config.ConfigType) = struct
                   if Q.(eps < eps') then
                     let ws = List.map2_exn ps qs ~f:T_real.mk_rsub in
                     let bound =
-                      if config.dist_bound_use_l1_norm then Q.one
+                      if config.qfl.dist_bound.use_l1_norm then Q.one
                       else
                         let q_w =
                           T_real.mk_rsum (T_real.rzero ())
@@ -2628,8 +3458,8 @@ module Make (Cfg : Config.ConfigType) = struct
                         | q_w -> failwith ("q_w = " ^ Value.str_of q_w)
                     in
                     let bound =
-                      match config.dist_bound_relax with
-                      | None -> [ (bound, config.dist_bound_use_strict_bound) ]
+                      match config.qfl.dist_bound.relax with
+                      | None -> [ (bound, config.qfl.dist_bound.use_strict_bound) ]
                       | Some r ->
                           let bound' =
                             let p_w =
@@ -2641,7 +3471,7 @@ module Make (Cfg : Config.ConfigType) = struct
                             | p_w -> failwith ("p_w = " ^ Value.str_of p_w)
                           in
                           [
-                            (bound, config.dist_bound_use_strict_bound);
+                            (bound, config.qfl.dist_bound.use_strict_bound);
                             (Q.(min (bound + of_float r) bound'), true);
                           ]
                     in
@@ -2653,8 +3483,21 @@ module Make (Cfg : Config.ConfigType) = struct
                       bound )
                   else (eps, weight, bounds)
               | None ->
+                  (* No optimum was found for this generator: the optimiser
+                     left the question undecided (under the run's budget, or
+                     a solver's own unknown), or the constraints have no
+                     model.  Skipping the generator would be unsound: a
+                     refinement that skips every counterexample generator
+                     ends with [eps = 0], which this loop reads as the
+                     bound holding.  So the distance check is unsettled,
+                     which the caller reports as [unknown]. *)
                   opt_time := !opt_time +. Timer.stop ();
-                  assert false))
+                  Debug.print ~id:None
+                  @@ lazy
+                       "the optimiser found no closest point for a \
+                        counterexample generator; the distance check is \
+                        unsettled";
+                  raise Dist_check_unsettled))
       in
       if Q.(eps = zero) then None
       else (
@@ -2712,6 +3555,267 @@ module Make (Cfg : Config.ConfigType) = struct
     with Dist_check_unsettled ->
       report_unsettled_dist_check ~print_sol !ub_time !opt_time
 
+  (* [refuse_ill_formed qfl query] refuses, through [Common.Refusal], a bound
+     query outside the quantitative fixpoint logic of Kura, Unno and Tsukada,
+     "Supermartingales for Unique Fixed Points: A Unified Approach to Lower
+     Bound Verification" (PLDI 2026), and returns [()] otherwise.  There the
+     values are [[0, inf]] and a body is
+       F ::= X(e) | t | F1 + F2 | t * F | if phi then F1 else F2
+     with [t] a non-negative real term; an expectation of mixed sign is not
+     an input but two (its positive and negative parts, split before the
+     query is written).  Every certificate below reads its input that way:
+     the lower-bound under-approximation replaces a body by [0] where a guard
+     template is negative, which is below the body only where the body is
+     non-negative, and the ranking argument uses [lfp >= 0].  The equation
+     [X =mu -1 + 0.5 * X] (real solution [-2]) was answered valid on the
+     query [X >= 0] with every template [0].
+
+     The check, per equation and per query:
+     - a body is decomposed by the grammar, with [t / c] read as [(1/c) * F]
+       (so [c > 0] is required), [min] and [max] read as their arguments, and
+       [if phi then ... else ...] adding [phi] or its negation to the guards;
+       anything else applying an unknown (a subtraction or a negation of one,
+       a product of two, an unknown in a condition) is refused as outside the
+       grammar;
+     - every maximal subterm [t] free of unknowns (a divisor: [t > 0]; the
+       query's bound: under its antecedent [left]) is judged in two
+       strengths, where the guards are the enclosing conditions and the
+       equation's argument constraints:
+       (1) refused when [guards /\ t >= 0] has no model, i.e. [t] is negative
+           at every state satisfying the guards (a closed negative [t] under
+           no guard, such as [-1] in [X =mu -1 + 0.5 * X], is refused without
+           asking);
+       (2) accepted with a note on stderr, once per equation naming its
+           terms, when [t] may be negative at some such state (or the
+           question is undecided within 10 s): [guards => t >= 0] is not
+           shown valid, but some state makes [t] non-negative.
+       A [t] for which [guards => t >= 0] is valid (a closed one by
+       evaluation) is accepted silently.
+     CONTRACT.  When this returns [()], every body is in the grammar above
+     and every term in it is non-negative at some state satisfying its
+     guards; it is NOT established that each is non-negative at every such
+     state.  A verdict on an input accepted under (2) ASSUMES that every term
+     named in the note is non-negative at every state reachable from the
+     query, which is what the certificates rely on (the under-approximation
+     and [lfp >= 0] above); nothing checks it.  Requiring it at every
+     guard-satisfying state, as the paper's semantics does, refused 58
+     shipped inputs whose term (a counter or a coordinate returned at
+     termination, a reward [1/2 * b]) carries no sign guard and is never
+     negative on a reachable state.  The check runs on the input as written,
+     before the integers are relaxed to the reals, so an integer variable is
+     read as one. *)
+  let refuse_ill_formed (qfl : QFL.Problem.t) (query : QFL.Problem.check) =
+    let unknowns = Set.Poly.of_list @@ QFL.Pred.pvars_of_list qfl.preds in
+    (* a nullary unknown is read as a term variable, any other as an
+       application of a function variable *)
+    let free t =
+      Set.for_all (Term.tvs_of t) ~f:(Fn.non (Set.mem unknowns))
+      && Set.for_all (Term.fvar_apps_of t) ~f:(function
+           | Term.FunApp (FVar (name, _, _), _, _) ->
+               not (Set.mem unknowns name)
+           | _ -> true)
+    in
+    let zero_of t =
+      if Stdlib.( = ) (Term.sort_of t) T_int.SInt then T_int.zero ()
+      else T_real.rzero ()
+    in
+    let str_of_guards = function
+      | [] -> "true"
+      | guards -> Formula.str_of @@ Formula.and_of (List.rev guards)
+    in
+    (* the terms of the current equation accepted under strength (2), newest
+       first, each with its guards *)
+    let assumed = ref [] in
+    (* every question below gets at most 10 s (or the run's remaining budget
+       if smaller): an undecided one only costs the silent acceptance, never
+       a refusal *)
+    let budget () =
+      Some
+        (match Z3Smt.Z3interface.armed_budget_ms () with
+        | Some ms -> Int.min ms 10_000
+        | None -> 10_000)
+    in
+    (* a fresh solver: the question is asked before the integers are relaxed,
+       and asked in the pooled context it left the later solving of an input
+       over [y : int] (relaxed to [y : real]) not returning within 60 s where
+       it had answered in 5 s *)
+    let ask_valid phi =
+      if Z3Smt.Z3interface.may_not_return phi then
+        `Undecided "a question Z3 may not return from"
+      else
+        match
+          Z3Smt.Z3interface.check_valid ~fresh_solver:true ~timeout:(budget ())
+            ~id:None (LogicOld.get_fenv ()) phi
+        with
+        | `Valid -> `Valid
+        | `Invalid _ -> `Invalid
+        | `Timeout -> `Undecided "timeout"
+        | `Unknown reason -> `Undecided reason
+        | `Sat _ | `Unsat -> `Undecided "not a validity answer"
+    in
+    let ask_sat phi =
+      if Z3Smt.Z3interface.may_not_return phi then
+        `Undecided "a question Z3 may not return from"
+      else
+        match
+          Z3Smt.Z3interface.check_sat ~fresh_solver:true ~timeout:(budget ())
+            ~id:None (LogicOld.get_fenv ()) [ phi ]
+        with
+        | `Sat _ -> `Sat
+        | `Unsat -> `Unsat
+        | `Timeout -> `Undecided "timeout"
+        | `Unknown reason -> `Undecided reason
+        | _ -> `Undecided "not a satisfiability answer"
+    in
+    (* [show ~what ~strict guards t] judges [t > 0] (strict) or [t >= 0]
+       under [guards] in the two strengths of the contract above: returns
+       [()] when it holds at every guard-satisfying state, records [t] in
+       [assumed] when it holds at some, and refuses naming [t] and [guards]
+       when it holds at none *)
+    let show ~what ~strict guards t =
+      let goal = (if strict then Formula.gt else Formula.geq) t (zero_of t) in
+      let closed = Set.is_empty (Term.tvs_of t) in
+      let closed_value =
+        if not closed then None
+        else
+          try Some (Evaluator.eval goal)
+          with exn when not (Timer.is_async exn) -> None
+      in
+      let trace question answer =
+        Debug.print ~id:None
+        @@ lazy
+             (sprintf "[well-formedness] %s: %s" (Formula.str_of question)
+                answer)
+      in
+      let refuse () =
+        Common.Refusal.refuse
+          "not a QFL input: %s %s is %s at every state satisfying the guard \
+           %s (QFL values are in [0, inf]; split a mixed-sign expectation \
+           into its positive and negative parts)"
+          what (Term.str_of t)
+          (if strict then "non-positive" else "negative")
+          (str_of_guards guards)
+      in
+      let decided =
+        match closed_value with
+        | Some true -> `Valid
+        (* the shape decides strength (1): a closed term of the wrong sign
+           under no guard is wrong at every state *)
+        | Some false when List.is_empty guards -> `Never
+        | _ -> (
+            let valid_q = Formula.mk_imply (Formula.and_of guards) goal in
+            let valid_a = ask_valid valid_q in
+            trace valid_q
+              (match valid_a with
+              | `Valid -> "valid"
+              | `Invalid -> "invalid"
+              | `Undecided r -> "undecided: " ^ r);
+            match valid_a with
+            | `Valid -> `Valid
+            | (`Invalid | `Undecided _) as valid_a -> (
+                let sat_q = Formula.and_of (goal :: guards) in
+                let sat_a = ask_sat sat_q in
+                trace sat_q
+                  (match sat_a with
+                  | `Sat -> "sat"
+                  | `Unsat -> "unsat"
+                  | `Undecided r -> "undecided: " ^ r);
+                match (sat_a, valid_a) with
+                | `Unsat, _ -> `Never
+                | `Sat, _ -> `Sometimes
+                | `Undecided _, `Undecided r -> `Undecided r
+                | `Undecided r, `Invalid -> `Undecided r))
+      in
+      match decided with
+      | `Valid -> ()
+      | `Never -> refuse ()
+      | `Sometimes | `Undecided _ ->
+          assumed :=
+            sprintf "%s%s%s" (Term.str_of t)
+              (if strict then " > 0" else " >= 0")
+              (match guards with
+              | [] -> ""
+              | _ -> " under " ^ str_of_guards guards)
+            :: !assumed
+    in
+    (* one note per equation (or for the query's bound) accepted under
+       strength (2), naming its terms *)
+    let note ~whose =
+      match List.rev !assumed with
+      | [] -> ()
+      | terms ->
+          assumed := [];
+          Out_channel.output_string Out_channel.stderr
+            (sprintf
+               "note: QFL values are in [0, inf], and %s is not shown \
+                non-negative at every state: the answer assumes %s at every \
+                state reachable from the query\n"
+               whose
+               (String.concat ~sep:", " terms));
+          Out_channel.flush Out_channel.stderr
+    in
+    let scalar ~what guards t =
+      List.iter (Term.elim_min_max_list t) ~f:(show ~what ~strict:false guards)
+    in
+    (* a conditional is split before its freedom is asked, so that a refusal
+       names the offending branch and the guard that leads to it *)
+    let rec walk ~name guards t =
+      match QFL.Unif.let_unif t with
+      | Some _ when free t -> scalar ~what:"the term" guards (QFL.Unif.integrate t)
+      | Some (r, body) ->
+          (* an integral over [0, 1] of an integrand non-negative there is
+             non-negative *)
+          let rt = Term.mk_var r T_real.SReal in
+          walk ~name
+            (Formula.leq rt (T_real.rone ())
+            :: Formula.geq rt (T_real.rzero ())
+            :: guards)
+            body
+      | None -> (
+      match t with
+      | Term.FunApp (T_bool.IfThenElse, [ c; t1; t2 ], _) when free c ->
+          let c = Formula.of_bool_term c in
+          walk ~name (c :: guards) t1;
+          walk ~name (Formula.mk_neg c :: guards) t2
+      | _ when free t -> scalar ~what:"the term" guards t
+      | _ -> (
+        match t with
+        | Term.FunApp (FVar (f, _, _), _, _) when Set.mem unknowns f -> ()
+        | Term.Var (x, _, _) when Set.mem unknowns x -> ()
+        | Term.FunApp (FVar (Ident.Tvar ("min" | "max"), _, _), args, _) ->
+            List.iter args ~f:(walk ~name guards)
+        | Term.FunApp ((T_real.RAdd | T_int.Add | T_num.NAdd _), [ t1; t2 ], _)
+          ->
+            walk ~name guards t1;
+            walk ~name guards t2
+        | Term.FunApp ((T_real.RMul | T_int.Mul | T_num.NMul _), [ t1; t2 ], _)
+          when free t1 || free t2 ->
+            let c, f = if free t1 then (t1, t2) else (t2, t1) in
+            scalar ~what:"the factor" guards c;
+            walk ~name guards f
+        | Term.FunApp ((T_real.RDiv | T_num.NDiv _), [ t1; t2 ], _) when free t2
+          ->
+            List.iter (Term.elim_min_max_list t2)
+              ~f:(show ~what:"the divisor" ~strict:true guards);
+            walk ~name guards t1
+        | _ ->
+            Common.Refusal.refuse
+              "not a QFL input: %s in the body of %s applies an unknown \
+               outside the grammar X(e) | t | F + F | t * F | if phi then F \
+               else F (QFL values are in [0, inf]; split a mixed-sign \
+               expectation into its positive and negative parts)"
+              (Term.str_of t) name))
+    in
+    List.iter qfl.preds ~f:(fun (pred : QFL.Pred.t) ->
+        let name = Ident.name_of_tvar pred.name in
+        walk ~name (List.rev pred.arg_constrs) pred.body;
+        note ~whose:("a term of the body of " ^ name));
+    if free query.bound then (
+      scalar ~what:"the query's bound"
+        (Option.to_list query.left)
+        query.bound;
+      note ~whose:"the query's bound")
+
   let solve_qfl ?(print_sol = false) (qfls : QFL.Problem.t list) =
     Debug.print @@ lazy "======== MuVal ========";
     verdicts_printed := [];
@@ -2726,21 +3830,47 @@ module Make (Cfg : Config.ConfigType) = struct
           res >>= fun (sols, pareto_cache) ->
           Debug.print ~id:None
           @@ lazy (sprintf "input: %s\n" @@ QFL.Problem.str_of qfl);
+          (match qfl.query with
+          | Check query -> refuse_ill_formed qfl query
+          | ASAT _ | DistCheck _ ->
+              if mentions_unif qfl then
+                Common.Refusal.refuse
+                  "integrals (unif) are read by the bound checker only; the \
+                   almost-sure and distribution checks do not take them");
+          (* a bound query over integer states is relaxed to the reals before
+             anything else reads it, the acceleration's detection included
+             (see [relax_to_reals]); one that cannot be relaxed is kept as it
+             is, is not given to the detection, and [check_bounds] answers it
+             [unknown] *)
+          let int_states =
+            match qfl.query with
+            | Check query -> integer_states qfl query
+            | ASAT _ | DistCheck _ -> None
+          in
+          let qfl =
+            match qfl.query with
+            | Check query -> (
+                match relax_to_reals qfl query with
+                | Ok (qfl, _) -> qfl
+                | Error _ -> qfl)
+            | ASAT _ | DistCheck _ -> qfl
+          in
           let detections =
-            if config.enable_geometric_pla then QFL.Accel.detect_geometric qfl
+            if config.qfl.enable_geometric_pla && not (mentions_int qfl) then
+              QFL.Accel.detect_geometric qfl
             else []
           in
-          if config.enable_geometric_pla && not (List.is_empty detections) then
+          if config.qfl.enable_geometric_pla && not (List.is_empty detections) then
             Debug.print ~id:None
             @@ lazy
                  (let accel_problem = QFL.Accel.accelerate_applicable qfl in
                   let accel_template_config =
                     QFL.Accel.
                       {
-                        num_conds = config.quant_prefp_templ_num_conds;
-                        use_orig_ite = config.quant_prefp_templ_use_orig_ite;
-                        cond_degree = config.quant_prefp_templ_cond_degree;
-                        term_degree = config.quant_prefp_templ_term_degree;
+                        num_conds = config.qfl.templates.prefp.num_conds;
+                        use_orig_ite = config.qfl.templates.prefp.use_orig_ite;
+                        cond_degree = config.qfl.templates.prefp.cond_degree;
+                        term_degree = config.qfl.templates.prefp.term_degree;
                       }
                   in
                   sprintf
@@ -2770,7 +3900,8 @@ module Make (Cfg : Config.ConfigType) = struct
                 ~print_sol qfl
                 (init, param_senv, Formula.conjuncts_of param_constr)
           | Check query ->
-              check_bounds ~print_sol (i, sols, pareto_cache) qfl query
+              check_bounds ~print_sol ~int_states (i, sols, pareto_cache) qfl
+                query
           | DistCheck query -> check_dist_bounds ~print_sol qfl query)
     in
     print_run_summary ~print_sol;

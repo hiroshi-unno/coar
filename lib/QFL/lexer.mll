@@ -36,11 +36,18 @@ rule main = parse
 | "-" { Parser.MINUS }
 | "+" { Parser.ADD }
 | "*" { Parser.MULT }
-| "/" | "div" { Parser.DIV }
-| "%" { Parser.MOD }
+(* This format's [/] and [%] are the truncated pair.  [tdiv] and [rem] are
+   the spellings the shared term printer writes for that pair, accepted so
+   that a printed problem reads back as the same one. *)
+| "/" | "div" | "tdiv" { Parser.DIV }
+| "%" | "rem" { Parser.MOD }
 | "mod" { Parser.MOD }
 | "max" { Parser.MAX}
+(* [unif r. F]: the integral of [F] over [r] in [0, 1] *)
+| "unif" { Parser.UNIF }
 | "min" { Parser.MIN }
+(* [F (x : int) : real requires x >= 0 =mu ...]: the domain of an equation *)
+| "requires" { Parser.REQUIRES }
 | ">=" { Parser.PREDSYM (T_num.NGeq (Ast.Ident.mk_fresh_svar ())) }
 | ">" { Parser.PREDSYM (T_num.NGt (Ast.Ident.mk_fresh_svar ())) }
 | "<=" { Parser.PREDSYM (T_num.NLeq (Ast.Ident.mk_fresh_svar ())) }

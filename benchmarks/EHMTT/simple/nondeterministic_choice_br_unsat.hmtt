@@ -1,0 +1,16 @@
+/* The input language reserves the terminal br for nondeterministic choice:
+   br a b stands for the outputs a and b, and the specification must hold of
+   both.  q0 accepts a but not b, so the output b violates it: unsat.  The
+   program is linear and has no coercion, but it writes br, for which the
+   reduction's completeness is not established, so the refutation is
+   reported only because running the program confirms it. */
+%BEGING
+Main -> br a b.
+%ENDG
+%BEGINA
+q0 a -> .
+q1 b -> .
+%ENDA
+%BEGINT
+Main : q0.
+%ENDT

@@ -1,0 +1,11 @@
+%BEGING
+Main -> copy (coerce r success__).
+%ENDG
+%BEGINA
+q0 success__ -> .
+q0 b -> .
+r b -> .
+%ENDA
+%BEGINT
+Main : q0.
+%ENDT

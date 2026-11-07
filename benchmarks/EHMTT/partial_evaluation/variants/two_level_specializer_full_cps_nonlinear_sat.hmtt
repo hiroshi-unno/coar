@@ -1,0 +1,162 @@
+%BEGING
+Specialize e env k -> case e of
+  terr => k terr
+| var x =>
+    k (Lookup x env)
+| let x e1 e2 =>
+    Specialize e1 env (KK x e2 env k)
+| abs x e1 =>
+    k (vclosure (copy x) (copy e1))
+| app e1 e2 =>
+    Specialize e1 env (K1 e2 env k)
+| fix x e1 =>
+    Specialize e1 (Extend x (fix (copy x) (copy e1)) env) k
+| const c =>
+    (case c of true => k vtrue | false => k vfalse)
+| if e1 e2 e3 =>
+    Specialize e1 env (K3 e2 e3 env k)
+| ulet x e1 e2 =>
+    Specialize e1 env (KKK x e2 env k)
+| uabs x e1 =>
+    Specialize e1 env (K4 x k)
+| uapp e1 e2 =>
+    Specialize e1 env (K5 e2 env k)
+| ufix x e1 =>
+    Specialize e1 env (K7 x k)
+| uconst c =>
+    k (const (copy c))
+| uif e1 e2 e3 =>
+    Specialize e1 env (K8 e2 e3 env k)
+| lift e1 =>
+    Specialize e1 env (K11 k)
+.
+KK x e2 env k ret -> Specialize e2 (Extend x ret env) k.
+KKK x e2 env k ret -> Specialize e2 env (KKKK x k ret).
+KKKK x k ret1 ret2 -> let (copy x) ret1 ret2.
+K1 e2 env k ret -> F1 e2 env k (coerce q0p ret).
+F1 e env k w -> case w of
+  terr => k terr
+| vclosure x e1 => Specialize e env (K2 x e1 env k)
+| vtrue => k terr
+| vfalse => k terr
+| var x => k terr
+| let x e1 e2 => k terr
+| abs x e1 => k terr
+| app e1 e2 => k terr
+| fix x e1 => k terr
+| const c => k terr
+| if e1 e2 e3 => k terr
+| ulet x e1 e2 => k terr
+| uabs x e1 => k terr
+| uapp e1 e2 => k terr
+| ufix x e1 => k terr
+| uconst c => k terr
+| uif e1 e2 e3 => k terr
+| lift e1 => k terr
+.
+K2 x e1 env k ret -> Specialize e1 (Extend x ret env) k.
+K3 e2 e3 env k ret -> F2 e2 e3 env k (coerce q0p ret).
+F2 et ef env k w -> case w of
+  terr => k terr
+| vclosure x e1 => k terr
+| vtrue => Specialize et env k
+| vfalse => Specialize ef env k
+| var x => k terr
+| let x e1 e2 => k terr
+| abs x e1 => k terr
+| app e1 e2 => k terr
+| fix x e1 => k terr
+| const c => k terr
+| if e1 e2 e3 => k terr
+| ulet x e1 e2 => k terr
+| uabs x e1 => k terr
+| uapp e1 e2 => k terr
+| ufix x e1 => k terr
+| uconst c => k terr
+| uif e1 e2 e3 => k terr
+| lift e1 => k terr
+.
+K4 x k ret -> k (abs (copy x/*???*/) ret).
+K5 e2 env k ret -> Specialize e2 env (K6 k ret).
+K6 k ret1 ret2 -> k (app ret1 ret2).
+K7 x k ret -> k (fix (copy x) ret).
+K8 e2 e3 env k ret -> Specialize e2 env (K9 e3 env k ret).
+K9 e3 env k ret1 ret2 -> Specialize e3 env (K10 k ret1 ret2).
+K10 k ret1 ret2 ret3 -> k (if ret1 ret2 ret3).
+K11 k ret -> k (F3 (coerce q0p ret)).
+F3 e -> case e of
+  terr => terr
+| vclosure x e1 => terr
+| vtrue => const true
+| vfalse => const false
+| var x => terr
+| let x e1 e2 => terr
+| abs x e1 => terr
+| app e1 e2 => terr
+| fix x e1 => terr
+| const c => terr
+| if e1 e2 e3 => terr
+| ulet x e1 e2 => terr
+| uabs x e1 => terr
+| uapp e1 e2 => terr
+| ufix x e1 => terr
+| uconst c => terr
+| uif e1 e2 e3 => terr
+| lift e1 => terr
+.
+Empty y -> terr.
+Extend x v env y -> Eq x y v (env y).
+Eq x y t f ->
+ case x of
+    z => Eq1 y t f
+  | s x1 => Eq2 y t f x1.
+Eq1 y t f -> case y of z => t | s y1 => f.
+Eq2 y t f x1 ->case y of z => f | s y1 => Eq x1 y1 t f.
+Lookup x env -> env x.
+S e -> Specialize e Empty K0.
+K0 ret -> ret.
+%ENDG
+
+%BEGINA
+q0 var -> q1.
+q0 let -> q1 q0 q0.
+q0 abs -> q1 q0.
+q0 app -> q0 q0.
+q0 fix -> q1 q0.
+q0 const -> q2.
+q0 if -> q0 q0 q0.
+q0 ulet -> q1 q0 q0.
+q0 uabs -> q1 q0.
+q0 uapp -> q0 q0.
+q0 ufix -> q1 q0.
+q0 uconst -> q2.
+q0 uif -> q0 q0 q0.
+q0 lift -> q0.
+q1 z -> .
+q1 s -> q1.
+q2 true -> .
+q2 false -> .
+
+q0p terr -> .
+q0p vclosure -> q1 q0.
+q0p vtrue -> .
+q0p vfalse -> .
+q0p var -> q1.
+q0p let -> q1 q0p q0p.
+q0p abs -> q1 q0p.
+q0p app -> q0p q0p.
+q0p fix -> q1 q0p.
+q0p const -> q2.
+q0p if -> q0p q0p q0p.
+q0p ulet -> q1 q0p q0p.
+q0p uabs -> q1 q0p.
+q0p uapp -> q0p q0p.
+q0p ufix -> q1 q0p.
+q0p uconst -> q2.
+q0p uif -> q0p q0p q0p.
+q0p lift -> q0p.
+%ENDA
+
+%BEGINT
+S : q0 -> q0p.
+%ENDT

@@ -112,8 +112,64 @@ module Make (Config : Config.ConfigType) : SolverType = struct
       let find_of s = RSFD.Nonterm (find s) in
       let carry_of s = RSFD.Nonterm (carry s) in
       let compare_of s = RSFD.Nonterm (compare s) in
+      let input = HOSAT.Problem.term_of hosat in
+      (* A bound variable becomes a parameter of the generated rules, which
+         the model checker reads by its spelling: a parameter spelled like a
+         terminal ([and], [or], [xor], ...) would be confused with it, and one
+         that is not an identifier of the scheme's syntax (the [#tvar] names
+         capture-avoiding substitution draws, a prime) cannot be read at all,
+         and one that shadows an enclosing binder of the same name would make
+         a rule with two parameters of one name, so the inner reference could
+         be read as the outer value.  Such a binder is renamed apart from
+         every name of the input; all other names are kept, so the scheme
+         stays readable.  Nonterminals are capitalised and cannot coincide
+         with a parameter. *)
+      let input_names =
+        let rec names acc = function
+          | Var (x, _) -> Set.add acc x
+          | Con _ -> acc
+          | App (t1, t2, _) -> names (names acc t1) t2
+          | Bin (_, x, _, t, _) -> names (Set.add acc x) t
+          | Let (x, _, t1, t2, _) -> names (names (Set.add acc x) t1) t2
+          | TyApp (t, _, _) | TyLam (_, t, _) -> names acc t
+        in
+        names Set.Poly.empty input
+      in
+      let binder senv tvar t =
+        let s = Ast.Ident.name_of_tvar tvar in
+        if
+          (not (List.Assoc.mem senv ~equal:Ast.Ident.tvar_equal tvar))
+          && (not (String.is_empty s))
+          && Char.is_lowercase s.[0]
+          && String.for_all s ~f:(fun c -> Char.is_alphanum c || Char.equal c '_')
+          && not (List.Assoc.mem spec_arity ~equal:String.equal s)
+        then (tvar, t)
+        else
+          let tvar' =
+            Ast.Ident.mk_fresh_tvar_avoiding ~prefix:"v"
+              ~taken:(Set.mem input_names) ()
+          in
+          (tvar', Term.rename (Map.Poly.singleton tvar tvar') t)
+      in
+      (* [aux senv (t, args)] translates the application of [t] to [args]
+         under the binders [senv] (outermost first), each of which is a
+         parameter of every rule generated below it.  It assumes every
+         variable of [t] and [args] is bound in [senv] and that a variable of
+         sort [bool] is not applied: the input is closed below, and a variable
+         that is free anyway would be printed as a name the scheme does not
+         declare, which the model checker reads as an unknown tree constructor
+         rather than as a quantified value, so it is refused instead. *)
       let rec aux senv = function
         | Var (x, _), args ->
+            (match List.Assoc.find senv ~equal:Ast.Ident.tvar_equal x with
+            | None ->
+                failwithf "[aux] variable %s is not bound by a quantifier"
+                  (Ast.Ident.name_of_tvar x) ()
+            | Some BoolTerm.SBool when not (List.is_empty args) ->
+                failwithf "[aux] the Boolean variable %s is applied to %d \
+                           argument(s)"
+                  (Ast.Ident.name_of_tvar x) (List.length args) ()
+            | Some _ -> ());
             let ts, ruless, sortss =
               List.unzip3 @@ List.map args ~f:(fun t -> aux senv (t, []))
             in
@@ -179,6 +235,7 @@ module Make (Config : Config.ConfigType) : SolverType = struct
                 Set.union sorts1 sorts2 )
         | App (t1, t2, _), args -> aux senv (t1, t2 :: args)
         | Bin (Forall, tvar, BoolTerm.SBool, t, _), [] ->
+            let tvar, t = binder senv tvar t in
             let senv' = senv @ [ (tvar, BoolTerm.SBool) ] in
             let t, rules, sorts = aux senv' (t, []) in
             let nt = Ast.Ident.mk_fresh_tvar ~prefix:(Some "S") () in
@@ -190,6 +247,7 @@ module Make (Config : Config.ConfigType) : SolverType = struct
               (nt, (List.map senv' ~f:fst, t)) :: rules,
               sorts )
         | Bin (Forall, tvar, s, t, _), [] ->
+            let tvar, t = binder senv tvar t in
             let senv' = senv @ [ (tvar, s) ] in
             let t, rules, sorts = aux senv' (t, []) in
             let nt = Ast.Ident.mk_fresh_tvar ~prefix:(Some "S") () in
@@ -219,6 +277,7 @@ module Make (Config : Config.ConfigType) : SolverType = struct
               :: rules,
               Set.add sorts s )
         | Bin (Exists, tvar, BoolTerm.SBool, t, _), [] ->
+            let tvar, t = binder senv tvar t in
             let senv' = senv @ [ (tvar, BoolTerm.SBool) ] in
             let t, rules, sorts = aux senv' (t, []) in
             let nt = Ast.Ident.mk_fresh_tvar ~prefix:(Some "S") () in
@@ -230,6 +289,7 @@ module Make (Config : Config.ConfigType) : SolverType = struct
               (nt, (List.map senv' ~f:fst, t)) :: rules,
               sorts )
         | Bin (Exists, tvar, s, t, _), [] ->
+            let tvar, t = binder senv tvar t in
             let senv' = senv @ [ (tvar, s) ] in
             let t, rules, sorts = aux senv' (t, []) in
             let nt = Ast.Ident.mk_fresh_tvar ~prefix:(Some "S") () in
@@ -280,23 +340,146 @@ module Make (Config : Config.ConfigType) : SolverType = struct
             if true then
               failwith
               @@ sprintf "[aux] type application is not supported: %s"
-                   (Term.str_of term)
+                   (ExtTerm.str_of term)
             else aux senv (term, args) (* ToDo: use [sort] *)
         | Let (tvar, _sort, def, body, _), args ->
             (* ToDo *)
             aux senv (Term.subst (Map.Poly.singleton tvar def) body, args)
         | term, args ->
             failwith
-            @@ sprintf "[aux] unknown term: %s(%s)" (Term.str_of term)
-                 (String.concat_map_list ~sep:"," args ~f:Term.str_of)
+            @@ sprintf "[aux] unknown term: %s(%s)" (ExtTerm.str_of term)
+                 (String.concat_map_list ~sep:"," args ~f:ExtTerm.str_of)
       in
-      let t, rules, sorts =
-        aux []
-          ( (*Ast.Logic.ExtTerm.simplify_formula Map.Poly.empty Map.Poly.empty
-              @@*)
-            HOSAT.Problem.term_of hosat,
-            [] )
+      (* The sorts of HOSAT are [bool] and arrows between them; two are equal
+         when their argument and value sorts are, effects being absent. *)
+      let rec is_hosat_sort = function
+        | BoolTerm.SBool -> true
+        | Sort.SArrow (s, c) -> is_hosat_sort s && is_hosat_sort c.val_type
+        | _ -> false
       in
+      let rec equal_sort s1 s2 =
+        match (s1, s2) with
+        | BoolTerm.SBool, BoolTerm.SBool -> true
+        | Sort.SArrow (a1, c1), Sort.SArrow (a2, c2) ->
+            equal_sort a1 a2 && equal_sort c1.val_type c2.val_type
+        | _ -> false
+      in
+      let rec str_of_hosat_sort = function
+        | BoolTerm.SBool -> "bool"
+        | Sort.SArrow (s, c) ->
+            (if Sort.is_arrow s then sprintf "(%s)" else Fn.id)
+              (str_of_hosat_sort s)
+            ^ " -> "
+            ^ str_of_hosat_sort c.val_type
+        | s -> ExtTerm.str_of_sort s
+      in
+      let bb = Sort.mk_arrow BoolTerm.SBool BoolTerm.SBool in
+      let bbb = Sort.mk_arrow BoolTerm.SBool bb in
+      (* [sort_of senv t] is the sort of [t] when every variable of [t] is
+         bound in [senv] (innermost last) at the sort its binder declares,
+         and otherwise refuses the input through [Common.Refusal]:
+         - an application [t1(t2)] is accepted only when [t1] has an arrow
+           sort whose argument sort equals the sort of [t2], so a head is
+           never applied to more arguments than its sort takes, and an
+           argument of the wrong sort -- a formula where a function is
+           expected, a function of the wrong arity -- is refused with the
+           application and both sorts named;
+         - a quantifier's binder has a sort of [bool] and arrows, and its body
+           is of sort [bool].
+         A partial application is checked like any other term, so passing
+         one where its (arrow) sort is expected is accepted.  The check reads
+         the input and builds nothing, so a well-sorted input reaches [aux]
+         unchanged; it does not promise that [aux] can translate every
+         well-sorted term (a lambda or a connective passed as an argument
+         still is not), only that [aux] never meets an ill-sorted one. *)
+      let rec sort_of senv = function
+        | Var (x, _) -> (
+            match List.Assoc.find senv ~equal:Ast.Ident.tvar_equal x with
+            | Some s -> s
+            | None ->
+                Common.Refusal.refuse
+                  "-p hosat: the variable %s is not bound by a quantifier"
+                  (Ast.Ident.name_of_tvar x))
+        | Con ((BoolTerm.True | BoolTerm.False), _) -> BoolTerm.SBool
+        | Con (BoolTerm.Not, _) -> bb
+        | Con
+            ( ( BoolTerm.And | BoolTerm.Or | BoolTerm.Imply | BoolTerm.Iff
+              | BoolTerm.Xor ),
+              _ )
+        | TyApp
+            (Con ((BoolTerm.Eq | BoolTerm.Neq), _), BoolTerm.SBool, _) ->
+            bbb
+        | TyApp (Con (BoolTerm.IfThenElse, _), BoolTerm.SBool, _) ->
+            Sort.mk_arrow BoolTerm.SBool bbb
+        | App (t1, t2, _) as t -> (
+            match sort_of senv t1 with
+            | Sort.SArrow (sarg, c) ->
+                let s2 = sort_of senv t2 in
+                if equal_sort sarg s2 then c.val_type
+                else
+                  Common.Refusal.refuse
+                    "-p hosat: ill-sorted application %s: its argument %s has \
+                     sort %s where %s of sort %s expects %s"
+                    (ExtTerm.str_of t) (ExtTerm.str_of t2) (str_of_hosat_sort s2)
+                    (ExtTerm.str_of t1)
+                    (str_of_hosat_sort (Sort.SArrow (sarg, c)))
+                    (str_of_hosat_sort sarg)
+            | s1 ->
+                Common.Refusal.refuse
+                  "-p hosat: ill-sorted application %s: %s has sort %s, which \
+                   takes no argument, and is applied to %s of sort %s"
+                  (ExtTerm.str_of t) (ExtTerm.str_of t1) (str_of_hosat_sort s1)
+                  (ExtTerm.str_of t2)
+                  (str_of_hosat_sort (sort_of senv t2)))
+        | Bin (((Forall | Exists) as q), x, s, body, _) ->
+            if not (is_hosat_sort s) then
+              Common.Refusal.refuse
+                "-p hosat: the quantified variable %s has sort %s, which is \
+                 not built from bool and arrows"
+                (Ast.Ident.name_of_tvar x) (str_of_hosat_sort s);
+            let sb = sort_of (senv @ [ (x, s) ]) body in
+            if not (equal_sort sb BoolTerm.SBool) then
+              Common.Refusal.refuse
+                "-p hosat: the body of %s %s has sort %s where bool is expected"
+                (match q with Forall -> "forall" | _ -> "exists")
+                (Ast.Ident.name_of_tvar x) (str_of_hosat_sort sb);
+            BoolTerm.SBool
+        | Bin (Lambda, x, s, body, _) ->
+            if not (is_hosat_sort s) then
+              Common.Refusal.refuse
+                "-p hosat: the lambda-bound variable %s has sort %s, which is \
+                 not built from bool and arrows"
+                (Ast.Ident.name_of_tvar x) (str_of_hosat_sort s);
+            Sort.mk_arrow s (sort_of (senv @ [ (x, s) ]) body)
+        | Let (x, s, def, body, _) ->
+            let sd = sort_of senv def in
+            if not (equal_sort sd s) then
+              Common.Refusal.refuse
+                "-p hosat: let %s is declared of sort %s and defined by %s of \
+                 sort %s"
+                (Ast.Ident.name_of_tvar x) (str_of_hosat_sort s)
+                (ExtTerm.str_of def) (str_of_hosat_sort sd);
+            sort_of (senv @ [ (x, s) ]) body
+        | t ->
+            Common.Refusal.refuse "-p hosat: unsupported term %s"
+              (ExtTerm.str_of t)
+      in
+      let closed =
+        (* a free variable is quantified existentially outside the formula,
+           the convention [HOSAT.Problem.of_sat] and [of_dqsat] already
+           follow, at sort [bool]: one that is applied is refused by the sort
+           check below *)
+        BoolTerm.exists
+          (List.map (Set.to_list @@ Term.fvs_of input) ~f:(fun x ->
+               (x, BoolTerm.SBool)))
+          input
+      in
+      (let s = sort_of [] closed in
+       if not (equal_sort s BoolTerm.SBool) then
+         Common.Refusal.refuse
+           "-p hosat: the input has sort %s where a formula (bool) is expected"
+           (str_of_hosat_sort s));
+      let t, rules, sorts = aux [] (closed, []) in
       let sorts =
         let rec expand_sort = function
           | BoolTerm.SBool -> Set.Poly.singleton BoolTerm.SBool
@@ -380,24 +563,33 @@ module Make (Config : Config.ConfigType) : SolverType = struct
                           RSFD.apps bif [ yt; ltt; eqt ];
                         ]
                   | Sort.SArrow (sarg, cret) ->
+                      (* [Compare x y z lt eq gt] compares the functions [x]
+                         and [y] on the arguments from [z] up to the maximal
+                         one, the larger argument the more significant digit
+                         (the order [Succ] counts in), and continues with [eq]
+                         when they agree there.  So the comparison at [z] is
+                         the [eq] continuation of the comparison above [z], and
+                         at the maximal argument it is the whole answer:
+                         answering [eq] there instead skipped the most
+                         significant digit, so [Carry] took two different
+                         arguments for one and the enumeration of a function
+                         sort whose argument is itself a function visited only
+                         some of its functions (4 of the 16 of
+                         [(bool -> bool) -> bool]). *)
+                      let here =
+                        RSFD.apps (compare_of cret.val_type)
+                          ([ RSFD.app xt zt; RSFD.app yt zt ]
+                          @ (match cret.val_type with
+                            | Sort.SArrow (s1, _) -> [ zero_of s1 ]
+                            | _ -> [])
+                          @ [ ltt; eqt; gtt ])
+                      in
                       RSFD.apps bif
                         [
                           RSFD.app (ismax_of sarg) zt;
-                          eqt;
+                          here;
                           RSFD.apps (compare_of s)
-                            [
-                              xt;
-                              yt;
-                              RSFD.app (succ_of sarg) zt;
-                              ltt;
-                              RSFD.apps (compare_of cret.val_type)
-                                ([ RSFD.app xt zt; RSFD.app yt zt ]
-                                @ (match cret.val_type with
-                                  | Sort.SArrow (s1, _) -> [ zero_of s1 ]
-                                  | _ -> [])
-                                @ [ ltt; eqt; gtt ]);
-                              gtt;
-                            ];
+                            [ xt; yt; RSFD.app (succ_of sarg) zt; ltt; here; gtt ];
                         ]
                   | _ -> failwith "not supported" ) );
             ]

@@ -1,0 +1,13 @@
+[
+    "MuVal",
+    {
+        "fixpoint_reduction": [
+            "Parity_progress_measure",
+            {
+                "loop_levels_from": [
+                    "First_rankable_shape_failure"
+                ]
+            }
+        ]
+    }
+]

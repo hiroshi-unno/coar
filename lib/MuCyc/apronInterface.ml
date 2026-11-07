@@ -29,9 +29,11 @@ let mk_expr env = Apron.Linexpr1.make env
 (* The two [of_*_psym] tables below accept only what [Normalizer.normalize_psym]
    leaves behind: for integers [Geq]/[Eq]/[Neq] ([Leq] and [Lt] are swapped into
    [Geq]/[Gt] and [Gt] into [Geq] with the bound shifted by one), for reals
-   [RGeq]/[RGt]/[Eq]/[Neq].  So **the caller must normalise first**, and the one
-   caller does ([MuVal.QflSolver]'s [generators_of] maps [Normalizer.normalize_atom]
-   over the atoms).  The [assert false] arms are that precondition, stated as a
+   [RGeq]/[RGt]/[Eq]/[Neq].  Callers must normalise first. Besides
+   [MuVal.QflSolver.generators_of], [MuCyc.Pqsat] builds polyhedra here;
+   its regional procedures normalise strategy atoms, and its splitting
+   procedures normalise added constraints. The [assert false] arms are
+   that precondition, stated as a
    crash: nothing checks it, and reaching one says the input was not normalised
    rather than that anything is wrong here. *)
 let of_real_psym psym =

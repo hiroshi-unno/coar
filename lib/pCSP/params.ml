@@ -82,6 +82,10 @@ type t = {
   candidate_atoms : (Ident.tvar, candidate_atoms) Map.Poly.t;
       (* atoms the input declared as candidates for an unknown (hints for the
          hypothesis space, never constraints); see [candidate_atoms_at] *)
+  dq_universals : dq_universals;
+      (* the dependency structure of a problem built in memory with universal
+         symbols (a functor verified against its signature); see
+         [dq_universals] *)
 }
 
 (* The candidate atoms declared for one unknown: a parameter list and atoms
@@ -102,6 +106,40 @@ type t = {
    signature is caught by comparing sorts at the use site, and the atoms are
    then not used rather than read at the wrong positions. *)
 and candidate_atoms = LogicOld.sort_env_list * LogicOld.Formula.t list
+
+(* The universal symbols of a problem whose clauses already carry them in
+   their solved form, recorded so that the problem can be written back in the
+   syntax that states them ([declare-forall-sort], [declare-forall-fun],
+   [declare-dep-exists-fun]).
+
+   The clauses do not need this record to mean what they mean: a universal
+   function is an ordinary term variable of every clause that mentions it
+   (array-sorted when it has arguments), universally quantified there, and an
+   unknown that depends on it takes it as a leading argument -- which is the
+   form the SMT-LIB2 reader builds from the declarations.  A universal sort is
+   a sort variable of the clauses.  What the clauses alone cannot say is which
+   leading arguments are dependencies, so a printer without this record writes
+   an equivalent plain Horn problem over array-sorted arguments.
+
+   Contract: every unknown [p] in [dep_args] is applied, in every clause, with
+   the variables of [dep_args p] (in that order, at the sorts [forall_funs]
+   gives them) as its first arguments; every name in [dep_args p] is in
+   [forall_funs]; [forall_sorts] are sort variables no step may instantiate.
+   A step that changes an unknown's arguments (argument filtering in
+   preprocessing) breaks the first clause, and the printer checks it rather
+   than trusting it.  Empty for every problem not built that way. *)
+and dq_universals = {
+  forall_sorts : Ident.svar list;
+  forall_funs : LogicOld.sort_env_list;
+  dep_args : (Ident.tvar, Ident.tvar list) Map.Poly.t;
+}
+
+let empty_dq_universals =
+  { forall_sorts = []; forall_funs = []; dep_args = Map.Poly.empty }
+
+let is_empty_dq_universals u =
+  List.is_empty u.forall_sorts && List.is_empty u.forall_funs
+  && Map.Poly.is_empty u.dep_args
 
 let id = Atomic.make 0
 let new_id () = Option.some (Atomic.fetch_and_add id 1 + 1)
@@ -149,6 +187,7 @@ let empty =
     partial_sol_targets = Map.Poly.empty;
     dep_graph = Map.Poly.empty;
     candidate_atoms = Map.Poly.empty;
+    dq_universals = empty_dq_universals;
   }
 
 let make ?(arg_original_names = Map.Poly.empty) ?(kind_map = Map.Poly.empty)
@@ -158,7 +197,8 @@ let make ?(arg_original_names = Map.Poly.empty) ?(kind_map = Map.Poly.empty)
     ?(elimination_reasons = Map.Poly.empty) ?(sol_for_resolved = Map.Poly.empty)
     ?(erasure_trail = Map.Poly.empty) ?(stable_clauses = Set.Poly.empty)
     ?(partial_sol_targets = Map.Poly.empty) ?(dep_graph = Map.Poly.empty)
-    ?(candidate_atoms = Map.Poly.empty) senv =
+    ?(candidate_atoms = Map.Poly.empty)
+    ?(dq_universals = empty_dq_universals) senv =
   let kind_map =
     Map.Poly.fold senv ~init:kind_map ~f:(fun ~key ~data:_ acc ->
         if Map.Poly.mem acc key then acc
@@ -182,6 +222,7 @@ let make ?(arg_original_names = Map.Poly.empty) ?(kind_map = Map.Poly.empty)
     partial_sol_targets;
     dep_graph;
     candidate_atoms;
+    dq_universals;
   }
 
 (* Drop the positions [keep] rejects from a candidate-atom entry: the parameter

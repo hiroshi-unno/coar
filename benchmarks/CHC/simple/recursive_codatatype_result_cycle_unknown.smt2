@@ -1,0 +1,5 @@
+(set-logic HORN)
+(declare-codatatypes ((S 0)) (((snil) (scons (shd Int) (stl S)))))
+(define-fun-rec g ((x Int)) S (scons 0 (g x)))
+(assert true)
+(check-sat)

@@ -5,7 +5,7 @@
             "Filename",
             "./config/pcsat/qualifier/interval.json"
         ],
-        "strategy": [
+        "selection": [
             "First"
         ]
     }

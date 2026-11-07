@@ -1,0 +1,6 @@
+/* The twin of positive_disjunction_flip_valid.hes: the same negate-and-flip
+   route on [P 1 \/ P 3].  Invalid: P holds exactly at the even non-negative
+   integers, and neither 1 nor 3 is one. */
+P 1 \/ P 3
+s.t.
+P (x: int): bool =mu x = 0 \/ (x > 0 /\ P (x - 2));

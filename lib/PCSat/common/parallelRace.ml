@@ -50,8 +50,25 @@ open Core
    - With the phase account ([Common.PhaseTime]) on, a won copy reports its
      own phases from the fork, labelled as the copy's, at its exit or on a
      termination signal, which the process passes on to it; the process's own
-     report follows the copy's, never interleaved with it.  With the account
-     off nothing of this happens.
+     report follows the copy's, never interleaved with it.  The process's
+     report is [start]'s [report], by default the account's own report
+     ([Common.PhaseTime.report], reason [copy-answered]; [sigterm] when a
+     termination signal is being handled), printed once whichever of the
+     hand-over's exit and the account's signal watcher reaches it first.
+     With the account off nothing of this happens.
+   - How a termination signal reaches the run after a hand-over.  The copy
+     is in a process group of its own, so a signal sent to the run's group
+     reaches the process only; with the account off the process has no
+     handler, dies at once and the copy dies with it ([Common.ForkGuard]).
+     With the account on, the process's signal watcher passes the signal on
+     ([hand_over], [forward_signals]); that watcher is an OCaml thread, so
+     the signal reaches the copy only once the process's main thread is at
+     a safe point or inside a call that released the runtime lock.  The main
+     thread parks at its next phase boundary or solver check after the
+     hand-over ([Common.ForkGuard.park_if_handed]), so the delay is the rest
+     of the native call the main thread is in, if that call keeps the lock;
+     the copy's answer itself is taken only once such a call returns, the
+     watcher that reads the copy's pipe needing the same lock.
 
    - Several races at once.  A process may have several copies racing at the
      same time, each started by its own [start] (the races nest: each one's
@@ -99,6 +116,23 @@ open Core
    hook) ends the run with its status, as with one claim, unless a final copy
    was given the verdict first.
 
+   The caller's budget.  A race may be started inside
+   a caller's [Common.Timer.enable_timeout] budget (PCSat run by MuStrat for
+   a strategy check, by RCaml with a timeout, by MuVal's interactive mode).
+   The fork gives the copy no alarm, so a copy that takes the run over would
+   otherwise compute without a budget for as long as it likes.  So the copy,
+   once given the computation, arms the alarm for what is left of the budget
+   at that moment ([Common.Timer.resume_budget_in_copy]); its [Timeout] is
+   raised where the process's would have been and reaches the same handlers,
+   which give the same timed-out answer the process would have given, and the
+   copy exits with that answer's status as the run.  The process, having
+   handed the run over, cancels its own alarm and ignores SIGALRM
+   ([Common.Timer.disarm_for_hand_over]), so that it cannot raise [Timeout]
+   in its parked main thread and print a timed-out answer beside the copy's.
+   With no budget armed nothing of this happens.  The copy's raced
+   computation ([f]) itself runs without the alarm, as before: it ends by its
+   own means or is killed by [finish].
+
    What it relies on: the process has one running domain (as [ForkedQuery]
    does); the watcher is a system thread, which runs while the main thread is
    inside a solver call because the Z3 bindings release the runtime lock
@@ -106,6 +140,18 @@ open Core
    written twice. *)
 
 type state = Racing | Process_won | Copy_won | Copy_done
+
+(* Which verdict a race's copy can answer with, which decides in which
+   direction [Duplicate] may find the copy a duplicate of the process (see
+   [Duplicate.covers_for]):
+   - [`Sat]: the copy answers only with a solution (a probe's [sat]);
+   - [`Unsat]: the copy answers only with a refutation;
+   - [`Both]: either;
+   - [`None]: the copy is never compared, whatever it answers -- for a copy
+     that differs from the process by its solver, its budget or its scope
+     rather than by its problem, so that no inclusion of problems says the
+     process gives the copy's answer. *)
+type reads = [ `Sat | `Unsat | `Both | `None ]
 
 type t = {
   pid : Pid.t;
@@ -117,6 +163,15 @@ type t = {
       (** the path stem of the two files [checkpoint] compares through *)
   log : string -> unit;  (** the race's own log line *)
   owner : Pid.t;  (** the process that started the race (the copy's parent) *)
+  probe_depth : int;
+      (** [Duplicate.probe_depth ()] when the race started: [Duplicate.checkpoint]
+          writes the process's digest for this race only at that depth *)
+  reads : reads;
+      (** what the copy answers with; the direction of [Duplicate.covers_for] *)
+  settle_by : float option;
+      (** [Some d]: a process whose own answer is not a verdict waits for this
+          copy until [d] ([Common.PhaseTime.now]'s clock) before it kills it
+          ([settle_then_finish]); [None]: it is killed at once *)
 }
 
 (* [two_claims]: see "Two claims" above; only ever turned on *)
@@ -167,6 +222,22 @@ let wait_forever () =
   wait ()
 let quietly g = try g () with exn when not (Common.Timer.is_async exn) -> ()
 
+(* [remove_own_files ()]: remove the comparison files of every race this very
+   process started and has not finished ([Duplicate.remove_owned], installed
+   there; a no-op until then).  [exit_now code] runs it and then ends the
+   process at once: every way out of this module that ends a process without
+   [finish] -- a hand-over, a copy leaving, a copy whose process died -- goes
+   through it, since [finish] (which removes a race's files) never runs
+   there. *)
+let remove_own_files : (unit -> unit) ref = ref (fun () -> ())
+
+let exit_now code =
+  quietly (fun () -> !remove_own_files ());
+  (* a copy under COAR_COPY_REPORT that leaves prints its report; nothing
+     otherwise *)
+  Common.PhaseTime.copy_end ~reason:(Printf.sprintf "copy-exits-%d" code);
+  Common.ProcessExit.immediately code
+
 let exit_status_code = function
   | Ok () -> 0
   | Error (`Exit_non_zero n) -> n
@@ -189,7 +260,8 @@ let claim_verdict () =
       | Some (to_parent, grants) ->
           (try
              ignore (Core_unix.single_write_substring to_parent ~buf:"V" : int)
-           with _ -> Core_unix.exit_immediately 1);
+           with _ (* catch-all-ok: the copy ends here whatever failed *) ->
+             exit_now 1);
           while Atomic.get grants < 2 do
             Caml_threads.Thread.delay 0.01
           done;
@@ -197,14 +269,35 @@ let claim_verdict () =
 
 let () = Common.ForkGuard.verdict_hook := claim_verdict
 
+(* in the process, under COAR_COPY_REPORT only ([Common.ForkGuard.copy_report]):
+   the races it started, newest first, so that when it exits on a copy's
+   behalf the copies still racing are first given their grace to print their
+   reports ([stop_racing_copies]) rather than dying silently with it; always
+   empty without the variable, and emptied in every copy at its fork *)
+let started_races : t list Atomic.t = Atomic.make []
+
+(* the copies of [started_races] not yet reaped, under COAR_COPY_REPORT:
+   SIGTERM to each and its group, and up to the grace for them to end
+   ([Common.ForkGuard.term_first]); nothing without the variable.  Called
+   only on the process's way out, where these copies die anyway.  The grace
+   is the 2 s a forwarded termination signal is given ([forward_signals]):
+   a copy busy in a solver call that keeps the runtime lock reports only once
+   the call returns, and at the default grace a copy that had raced the whole
+   run was seen to die unreported. *)
+let stop_racing_copies () =
+  Common.ForkGuard.term_first ~group:true ~grace:2.
+    (List.filter_map (Atomic.get started_races) ~f:(fun t ->
+         if Atomic.get t.reaped then None else Some (Pid.to_int t.pid)))
+
 (* in the process, after the run was given to a copy that has now exited
    with [status]: kill this process's own forked questions, flush, report
    and exit with the copy's status *)
 let exit_as_copy ~report status =
   ForkedQuery.kill_live ();
+  stop_racing_copies ();
   (try Stdlib.flush_all () with _ -> ());
   report ();
-  Core_unix.exit_immediately (exit_status_code status)
+  exit_now (exit_status_code status)
 
 (* with the phase account on, a termination signal is passed on to the copy,
    whose own account then reports, and the process prints its report only
@@ -234,6 +327,8 @@ let forward_signals t =
    its status *)
 let hand_over ~report ~log t =
   log "the copy answered; handing over";
+  (* the copy carries the caller's budget from here (see "The caller's budget" above) *)
+  Common.Timer.disarm_for_hand_over ();
   (* with the phase account on, a termination signal is passed on to the copy,
      whose own account then reports, and the process prints its report only
      once the copy has been reaped (or 2 s later): the copy was put in a group
@@ -260,9 +355,10 @@ let hand_over ~report ~log t =
   let status = Core_unix.waitpid t.pid in
   Atomic.set t.reaped true;
   ForkedQuery.kill_live ();
+  stop_racing_copies ();
   (try Stdlib.flush_all () with _ -> ());
   report ();
-  Core_unix.exit_immediately (exit_status_code status)
+  exit_now (exit_status_code status)
 
 (* in the process, with [two_claims]: the copy of [t] (holding the
    computation only) is superseded by a copy given the verdict; kill it and
@@ -270,6 +366,8 @@ let hand_over ~report ~log t =
    given. *)
 let kill_superseded t =
   t.log "a copy with a final answer is given the verdict; the copy that took over is killed";
+  (* under COAR_COPY_REPORT the copy is first given its grace to report *)
+  Common.ForkGuard.term_first ~group:true [ Pid.to_int t.pid ];
   quietly (fun () -> Signal_unix.send_i Signal.kill (`Group t.pid));
   quietly (fun () -> Signal_unix.send_i Signal.kill (`Pid t.pid))
 
@@ -292,6 +390,7 @@ let answer_final ~report ~log t =
    a final copy has the verdict (as with one claim). *)
 let continue_copy ~report ~log t =
   log "the copy takes the computation over; handing it over";
+  Common.Timer.disarm_for_hand_over ();
   Atomic.set computing (Some t);
   forward_signals t;
   quietly (fun () ->
@@ -417,6 +516,50 @@ let read_copy_two t =
               Atomic.decr racing);
             `Nothing)
 
+(* [has_spoken t]: whether the copy of [t] has written to its pipe and the
+   process has not read it yet -- an answer ('S', 'C') or that it found
+   nothing ('N'), or end of file.  Non-blocking; [false] when the pipe cannot
+   be polled. *)
+let has_spoken t =
+  match
+    Core_unix.select ~restart:true ~read:[ t.from_copy ] ~write:[] ~except:[]
+      ~timeout:`Immediately ()
+  with
+  | exception exn when not (Common.Timer.is_async exn) -> false
+  | ready -> not (List.is_empty ready.read)
+
+(* [take_announced t]: in the process that started [t], before it kills the
+   copy of [t] for a reason other than having its own answer (the copy found
+   a duplicate, the process's wait for it ended): when the copy has already
+   written to its pipe, wait until the watcher thread has read what it wrote
+   and moved the race on -- to [Copy_won], when it was an answer, and the run
+   is then the copy's; to [Copy_done], when it was none -- and return [true];
+   [false] when the copy had said nothing, or the race is no longer
+   [Racing], at the call.
+   Why: the watcher reads the pipe once every 50 ms, so a copy's answer can
+   sit there unread while the main thread decides to kill the copy; without
+   this, a copy was killed 13 ms after it had announced a sound [sat] that was
+   the run's only route to an answer, and the process then went on to the end
+   of its budget without one.
+   Guarantee: when it returns [true] the race has left [Racing], unless the
+   watcher has not read a readable pipe within 2 s (it reads within 50 ms of
+   being scheduled; the main thread waits without the runtime lock, so the
+   watcher can run).  An answer written after this call has looked is not
+   seen: the decision the caller makes next is the instant at which an answer
+   counts as announced. *)
+let take_announced t =
+  (match Atomic.get t.state with Racing -> true | _ -> false)
+  && has_spoken t
+  &&
+  let deadline = Common.PhaseTime.now () +. 2. in
+  while
+    (match Atomic.get t.state with Racing -> true | _ -> false)
+    && Float.(Common.PhaseTime.now () < deadline)
+  do
+    Caml_threads.Thread.delay 0.005
+  done;
+  true
+
 let spawn_process_watcher ~report ~log t =
   let rec loop () =
     match Atomic.get t.state with
@@ -434,7 +577,14 @@ let spawn_process_watcher ~report ~log t =
           loop ())
     | _ -> ()
   in
-  ignore (Caml_threads.Thread.create loop () : Caml_threads.Thread.t)
+  ignore
+    (Caml_threads.Thread.create
+       (fun () ->
+         (* the run's timer signals belong to the main thread *)
+         Common.Timer.keep_off_this_thread ();
+         loop ())
+       ()
+      : Caml_threads.Thread.t)
 
 (* in the copy: watch the process; on its death kill the copy's group, on 'g'
    count a grant in [go] *)
@@ -443,7 +593,7 @@ let spawn_copy_watcher ~parent ~from_process (go : int Atomic.t) =
   let die () =
     quietly (fun () ->
         Signal_unix.send_i Signal.kill (`Group (Core_unix.getpid ())));
-    Core_unix.exit_immediately 1
+    exit_now 1
   in
   let rec loop () =
     if not (Pid.equal (Core_unix.getppid_exn ()) parent) then die ();
@@ -461,7 +611,14 @@ let spawn_copy_watcher ~parent ~from_process (go : int Atomic.t) =
             loop ()
         | _ | (exception _) -> die ())
   in
-  ignore (Caml_threads.Thread.create loop () : Caml_threads.Thread.t)
+  ignore
+    (Caml_threads.Thread.create
+       (fun () ->
+         (* the run's timer signals belong to the main thread *)
+         Common.Timer.keep_off_this_thread ();
+         loop ())
+       ()
+      : Caml_threads.Thread.t)
 
 (* [lower_priority n]: in a copy just forked, add [n] to its niceness (the
    Unix [nice]), so that on a CPU it shares with processes of lower niceness
@@ -497,13 +654,21 @@ let lower_priority n =
    The process writes [d] beside each race it has running ([stem].p), the copy
    beside its own race ([stem].c), each through a rename so that the other
    side never reads half a file.  Whichever side writes second finds the other
-   side's digest: when the copy's covers the process's, the copy leaves silently (as a probe
-   that found nothing does) if it is the second, and the process kills and
-   reaps it if the process is.  Neither side waits for the other.
+   side's digest: when every answer the copy can give is an answer of the
+   process's problem ([covers_for], in the direction the race's [reads]
+   names), the copy leaves silently (as a probe that found nothing does) if
+   it is the second, and the process kills and reaps it if the process is.
+   Neither side waits for the other.  Only the two sides of a race compare:
+   the copy itself until it is given the run (not a process it forks, and
+   not afterwards), and the process that started the race (not a process it
+   forks).
 
    Contract.  Only a copy is ever stopped, and a copy that is stopped has
-   given no answer: the process's answers are those of the sequential order
-   in which the probe found nothing, which is one the race can always give.
+   given no answer -- not even one still unread in its pipe: the process
+   kills a copy only when, at its decision, the copy has written nothing
+   there ([drop]), so an announced answer is never discarded.  The
+   process's answers are those of the sequential order in which the probe
+   found nothing, which is one the race can always give.
    So the switch changes no answer the run can give, only whether a second
    process works on the same problem.  A digest collision between different
    problems can only drop a copy that might have answered first; it cannot
@@ -514,8 +679,15 @@ module Duplicate = struct
   (* in the process: the races started and not yet finished, newest first *)
   let active : t list ref = ref []
 
-  (* in a copy: its race's stem, and how the copy leaves *)
-  let mine : (string * (unit -> unit)) option ref = ref None
+  (* in a copy, while it has not been given the run: its race's stem, how
+     the copy leaves, the copy's own pid, and what the copy answers with.
+     Invariant: [Some (_, _, pid, reads)] only in the process [pid], with
+     [reads <> `None], between the fork and the grant of the computation
+     ([start] resets it then); [None] everywhere else -- in the process, in
+     a process forked from a copy (it inherits the value but not the pid),
+     and in a copy that has been handed the run, which is no longer a copy
+     that may be dropped but the run itself. *)
+  let mine : (string * (unit -> unit) * Pid.t * reads) option ref = ref None
 
   (* in a copy: the checkpoints ([checkpoint ~at]) at which it has compared
      with the copy's race, each once *)
@@ -532,8 +704,30 @@ module Duplicate = struct
      besides the final one after the whole preprocessing.  Those passes return
      the problem they are given unless they refute it, so a copy whose problem
      there is the process's would only ask the process's refutation questions
-     again; set from the PCSat configuration ([race_drop_duplicates_early]) *)
+     again; set from the PCSat configuration ([races.duplicates = Drop_early_and_end]) *)
   let early = ref false
+
+  (* Probe scope.  A probe run in the process's sequential order (a
+     re-reading of the input with unknowns defined or relaxed, solved under a
+     budget, of whose answers one verdict only is read and everything else
+     discarded) solves at depth 1 too, so it passes the checkpoints the
+     problem as given passes.  Its problem is not one the process goes on to
+     solve to the end: a copy whose problem covers the probe's may well find
+     the [sat] that the probe, discarding [sat] or stopped by its budget, never
+     returns, and the process then solves the given problem, where nothing
+     says it reaches that [sat] in the copy's time.  So a race compares only
+     with checkpoints at the probe depth at which it started: the races
+     started outside every probe with the problem the process solves as its
+     own answer, a race started inside a probe (a copy forked by the probe's
+     preprocessing) with that probe's problem, whose answer is the one its
+     race's continuation returns.  [enter_probe]/[leave_probe] bracket every
+     probe of the caller; the depth is per domain, as the solving is. *)
+  let probe_depth_key =
+    Domain.DLS.new_key ~split_from_parent:(fun r -> ref !r) (fun () -> ref 0)
+
+  let probe_depth () = !(Domain.DLS.get probe_depth_key)
+  let enter_probe () = incr (Domain.DLS.get probe_depth_key)
+  let leave_probe () = decr (Domain.DLS.get probe_depth_key)
 
   (* the number of copies dropped by [checkpoint], on either side; read by the
      tests *)
@@ -549,12 +743,117 @@ module Duplicate = struct
          (Core_unix.getpid () |> Pid.to_int)
          !counter)
 
-  let register t = if !drop_duplicates then active := t :: !active
+  (* The comparison files.  Contract: a race's files are named
+     [coar_race_<pid>_<n>] in the temporary directory, [pid] being the
+     process that started the race ([owner]), followed by one of
+     [suffixes]; only [checkpoint] writes them (the process the [.p] ones,
+     the copy the [.c] ones), and only while the race is [Racing].  They are
+     removed
+     - when the race ends in the process: [finish] ([forget]), [drop], and
+       a copy leaving as a duplicate;
+     - when the process ends without finishing it: every exit of this module
+       ([exit_now]: a hand-over, a copy leaving or dying with its process),
+       an ordinary exit, through [at_exit], and a termination signal with the phase
+       account on ([Common.PhaseTime.at_signal]) remove the files of every
+       race the exiting process itself started ([remove_owned]);
+     - when nothing could: a process killed outright (SIGKILL, or SIGTERM
+       without the phase account) leaves its files, and the first race a
+       later process registers removes every file of this scheme whose pid
+       no process has ([sweep_dead]).
+     Losing a file never changes an answer: a side that reads no file
+     compares nothing ([read] gives [None]), so the worst a removal racing
+     with a live run can do is keep a copy that would have been dropped. *)
+  (* [checkpoint ~at] writes [stem ^ "." ^ side ^ at] through a temporary
+     [... ^ ".tmp"] ([write]); [at] is [""] or ["e"], the only
+     checkpoint names in use -- a new one must be added here, or its files
+     are neither removed nor swept *)
+  let suffixes =
+    List.concat_map [ ""; "e" ] ~f:(fun at ->
+        List.concat_map [ ".p"; ".c" ] ~f:(fun side ->
+            [ side ^ at; side ^ at ^ ".tmp" ]))
 
   let remove_files stem =
-    List.iter [ ""; "e" ] ~f:(fun at ->
-        List.iter [ ".p"; ".c"; ".p.tmp"; ".c.tmp" ] ~f:(fun ext ->
-            quietly (fun () -> Core_unix.unlink (stem ^ ext ^ at))))
+    List.iter suffixes ~f:(fun sfx ->
+        quietly (fun () -> Core_unix.unlink (stem ^ sfx)))
+
+  (* the files of the races this very process started and has not finished;
+     a process forked from it inherits [active] but owns none of them *)
+  let remove_owned () =
+    let me = Core_unix.getpid () in
+    List.iter !active ~f:(fun t ->
+        if Pid.equal t.owner me then remove_files t.stem)
+
+  let () = remove_own_files := remove_owned
+
+  (* [pid_of_race_file name]: [Some pid] when [name] is exactly
+     [coar_race_<pid>_<n>] followed by one of [suffixes], both numbers
+     non-empty runs of decimal digits; [None] for any other name *)
+  let pid_of_race_file name =
+    let digits s =
+      (not (String.is_empty s)) && String.for_all s ~f:Char.is_digit
+    in
+    match String.chop_prefix name ~prefix:"coar_race_" with
+    | None -> None
+    | Some rest -> (
+        match String.lsplit2 rest ~on:'_' with
+        | None -> None
+        | Some (pid, tail) ->
+            let ok_tail =
+              List.exists suffixes ~f:(fun sfx ->
+                  match String.chop_suffix tail ~suffix:sfx with
+                  | Some n -> digits n
+                  | None -> false)
+            in
+            if digits pid && ok_tail && String.length pid <= 9 then
+              Some (Int.of_string pid)
+            else None)
+
+  (* [sweep_dead ()]: remove from the temporary directory every file of this
+     naming scheme ([pid_of_race_file]) whose pid no process has, by
+     [kill(pid, 0)] failing with ESRCH; returns the number removed.  A pid
+     that answers, or that the system refuses to say anything of (EPERM),
+     keeps its files: a pid reused by a live process keeps a dead run's files
+     (left for a later sweep), never the other way round.  One directory
+     listing and one signal-0 probe per distinct pid.  The caveat is a
+     temporary directory shared across pid namespaces, where a live run's
+     pid can look dead here; by the contract above that can only keep a copy
+     alive, never change an answer. *)
+  let sweep_dead () =
+    let dir = Filename.temp_dir_name in
+    match Sys_unix.ls_dir dir with
+    | exception exn when not (Common.Timer.is_async exn) -> 0
+    | names ->
+        let dead = Hashtbl.create (module Int) in
+        let is_dead pid =
+          Hashtbl.find_or_add dead pid ~default:(fun () ->
+              pid > 0
+              &&
+              match Signal_unix.send Signal.zero (`Pid (Pid.of_int pid)) with
+              | `No_such_process -> true
+              | `Ok -> false
+              | exception exn when not (Common.Timer.is_async exn) -> false)
+        in
+        List.count names ~f:(fun name ->
+            match pid_of_race_file name with
+            | Some pid when is_dead pid -> (
+                match Core_unix.unlink (Filename.concat dir name) with
+                | () -> true
+                | exception exn when not (Common.Timer.is_async exn) -> false)
+            | Some _ | None -> false)
+
+  (* set at the first race registered in a process (and inherited by every
+     process forked after it): the exit hooks are installed and the sweep
+     has run, once per run *)
+  let set_up = ref false
+
+  let register t =
+    if !drop_duplicates then (
+      if not !set_up then (
+        set_up := true;
+        at_exit (fun () -> quietly remove_owned);
+        Common.PhaseTime.at_signal (fun () -> quietly remove_owned);
+        ignore (sweep_dead () : int));
+      active := t :: !active)
 
   let forget t =
     if !drop_duplicates then (
@@ -562,12 +861,20 @@ module Duplicate = struct
       remove_files t.stem)
 
   (* in the child, right after the fork: the races inherited from the
-     process are not the copy's; the copy compares with its own race only *)
-  let in_copy ~stem ~leave =
+     process are not the copy's; the copy compares with its own race only,
+     and not at all when its race reads [`None] *)
+  let in_copy ~stem ~leave ~reads =
     active := [];
     written := [];
     checked := [];
-    if !drop_duplicates then mine := Some (stem, leave) else mine := None
+    match reads with
+    | (`Sat | `Unsat | `Both) when !drop_duplicates ->
+        mine := Some (stem, leave, Core_unix.getpid (), reads)
+    | `Sat | `Unsat | `Both | `None -> mine := None
+
+  (* in a copy given the computation: from here it is the run, and the run
+     is never dropped -- a copy leaves only while it has given no answer *)
+  let handed_the_run () = mine := None
 
   let write file d =
     quietly (fun () ->
@@ -579,11 +886,19 @@ module Duplicate = struct
     | s -> Some s
     | exception exn when not (Common.Timer.is_async exn) -> None
 
-  (* in the process: kill and reap a racing copy found to be a duplicate.
-     The claim is the same one [finish] and the watcher make, so a copy that
-     has just answered is left to its hand-over. *)
+  (* in the process: kill and reap a racing copy found to be a duplicate;
+     [true] when it did.  The claim is the same one [finish] and the watcher
+     make, so a copy whose answer the watcher has read is left to its
+     hand-over; and a copy that has written to its pipe, read or not, is never
+     killed here ([take_announced]): its answer, if it was one, is taken, and
+     if the watcher has not read it yet the copy is kept (keeping a copy is
+     always allowed: it only costs a core).  So a copy dropped here had
+     announced nothing when the process decided. *)
   let drop t =
-    if Atomic.compare_and_set t.state Racing Copy_done then (
+    if take_announced t || has_spoken t then false
+    else if Atomic.compare_and_set t.state Racing Copy_done then (
+      (* under COAR_COPY_REPORT the copy is first given its grace to report *)
+      Common.ForkGuard.term_first ~group:true [ Pid.to_int t.pid ];
       quietly (fun () -> Signal_unix.send_i Signal.kill (`Group t.pid));
       quietly (fun () -> Signal_unix.send_i Signal.kill (`Pid t.pid));
       quietly (fun () ->
@@ -591,7 +906,9 @@ module Duplicate = struct
       Atomic.set t.reaped true;
       Atomic.decr racing;
       Atomic.incr dropped;
-      remove_files t.stem)
+      remove_files t.stem;
+      true)
+    else false
 
   (* whether [checkpoint] would read its digest: the switch on, not yet
      checked, and a race to compare with *)
@@ -609,19 +926,62 @@ module Duplicate = struct
         && List.for_all ps ~f:(fun l -> List.mem cs l ~equal:String.equal)
     | _ -> false
 
+  (* [covers_for reads ~copy ~process]: whether a copy that answers with
+     [reads] and whose problem has digest [copy] may be dropped beside a
+     process whose problem has digest [process] (the same environments
+     throughout).  Contract: it holds only when every answer the copy can
+     give is an answer of the process's problem:
+     - [`Sat]: the copy's constraints include the process's, so every
+       solution the copy can return solves the process's problem;
+     - [`Unsat]: the process's constraints include the copy's, so a
+       refutation of the copy's problem uses only constraints the process
+       has, and the process's problem is unsatisfiable too;
+     - [`Both]: the two sets are equal, so both of the above hold;
+     - [`None]: never.
+     What it does not establish is that the process reaches that answer in
+     the copy's time: that is the assumption every caller passing [reads]
+     other than [`None] makes, and a caller whose copy reaches its answer by
+     a procedure the process does not run on its problem passes [`None]. *)
+  let covers_for (reads : reads) ~copy ~process =
+    match reads with
+    | `Sat -> covers ~copy ~process
+    | `Unsat -> covers ~copy:process ~process:copy
+    | `Both -> covers ~copy ~process && covers ~copy:process ~process:copy
+    | `None -> false
+
+  (* the races the process compares with here: started by this very process
+     (a process forked from it inherits [active], but its races are not its
+     own and it is neither side of them), racing, comparing at all, started
+     at this probe depth, and not yet written for at this checkpoint *)
   let pending ~at =
+    let depth = probe_depth () in
+    let me = Core_unix.getpid () in
     List.filter !active ~f:(fun t ->
-        (match Atomic.get t.state with Racing -> true | _ -> false)
+        Pid.equal t.owner me
+        && (match Atomic.get t.state with Racing -> true | _ -> false)
+        && (match t.reads with `None -> false | `Sat | `Unsat | `Both -> true)
+        && t.probe_depth = depth
         && not
              (List.mem !written (t.stem, at) ~equal:(fun (a, b) (c, d) ->
                   String.equal a c && String.equal b d)))
 
   let copy_unchecked ~at = not (List.mem !checked at ~equal:String.equal)
 
+  (* in a copy not yet given the run: its stem, how it leaves and what it
+     reads, when this process is that copy itself and has not compared at
+     [at]; [None] in a process forked from the copy, which inherits [mine]
+     but whose leaving would end the copy's work on the strength of a
+     comparison the copy never made *)
+  let mine_here ~at =
+    match !mine with
+    | Some (stem, leave, pid, reads)
+      when Pid.equal pid (Core_unix.getpid ()) && copy_unchecked ~at ->
+        Some (stem, leave, reads)
+    | Some _ | None -> None
+
   let wanted ~at =
     !drop_duplicates
-    && ((Option.is_some !mine && copy_unchecked ~at)
-       || not (List.is_empty (pending ~at)))
+    && (Option.is_some (mine_here ~at) || not (List.is_empty (pending ~at)))
 
   (* [at] names the checkpoint ([""], the final one, by default); the two
      sides compare digests written at checkpoints of the same name only *)
@@ -629,36 +989,75 @@ module Duplicate = struct
       (digest : string Lazy.t) =
     if wanted ~at then (
       let d = Lazy.force digest in
-      (match !mine with
-      | Some (stem, leave) when copy_unchecked ~at -> (
+      (match mine_here ~at with
+      | Some (stem, leave, reads) -> (
           checked := at :: !checked;
           write (stem ^ ".c" ^ at) d;
           match read (stem ^ ".p" ^ at) with
-          | Some d' when covers ~copy:d ~process:d' ->
+          | Some d' when covers_for reads ~copy:d ~process:d' ->
               Atomic.incr dropped;
               remove_files stem;
               leave ()
           | _ -> ())
-      | _ -> ());
+      | None -> ());
       List.iter (pending ~at) ~f:(fun t ->
           written := (t.stem, at) :: !written;
           match Atomic.get t.state with
           | Racing -> (
               write (t.stem ^ ".p" ^ at) d;
               match read (t.stem ^ ".c" ^ at) with
-              | Some d' when covers ~copy:d' ~process:d ->
+              | Some d' when covers_for t.reads ~copy:d' ~process:d ->
                   let where = if String.is_empty at then "" else " (at " ^ at ^ ")" in
-                  log ("a raced copy solves the same problem; dropped" ^ where);
-                  t.log ("the copy solves the process's problem; dropped" ^ where);
-                  drop t
+                  if drop t then (
+                    log ("a raced copy solves the same problem; dropped" ^ where);
+                    t.log ("the copy solves the process's problem; dropped" ^ where))
+                  else (
+                    (* the copy had spoken before the process decided: its
+                       answer, if it was one, is the run's *)
+                    Common.PhaseTime.event_here "race-duplicate-kept/copy-spoke";
+                    t.log
+                      ("the copy solves the process's problem but had already \
+                        spoken; not dropped" ^ where))
               | _ -> ())
           | Process_won | Copy_won | Copy_done -> ()))
 end
 
-let start ?(report = fun () -> ()) ?(log = fun (_ : string) -> ()) ?(nice = 0)
-    ?(final = fun (_ : 'a) -> true) (f : unit -> 'a option) :
+(* The memory a race may take.  [start] forks only when the copy fits the
+   memory budget shared by every copy of the run alive at once
+   ([Common.ForkGuard.fits]): the copy's duplicate heap plus [growth], beside
+   what the copies already racing (or asking questions) may still add.  The
+   copy of a race may be handed the whole run, beside a parked process that
+   keeps its own memory, so [growth] is by default the excess of the
+   process's own peak heap over its current one
+   ([Common.ForkGuard.peak_excess_bytes]): such a copy may need again what the
+   process once needed.  A race that does not fit is [`Not_started], which
+   every caller already handles by running the raced computation in its
+   sequential place (or, where the caller says so, not at all); the refusal
+   is logged through [log] and counted ([Common.ForkGuard.refused]).  This
+   changes when a raced computation runs, never which answers the race can
+   give: a race's possible answers are those of the sequential order.
+   [reads] (default [`Sat]) says which verdict the copy answers with, and so
+   in which direction [Duplicate] may drop it (see [reads] and
+   [Duplicate.covers_for]); a caller whose copy's answer is not an answer of
+   the process's problem by an inclusion of constraints passes [`None]. *)
+let start
+    ?(report = fun () -> Common.PhaseTime.report ~reason:"copy-answered")
+    ?(log = fun (_ : string) -> ()) ?(nice = 0) ?settle_by
+    ?growth ?(final = fun (_ : 'a) -> true) ?(reads = (`Sat : reads))
+    (f : unit -> 'a option) :
     [ `Racing of t | `Won of 'a | `Not_started ] =
   Stdlib.flush_all ();
+  let growth =
+    match growth with
+    | Some g -> g
+    | None -> Common.ForkGuard.peak_excess_bytes ()
+  in
+  if not (Common.ForkGuard.fits ~growth ()) then (
+    Atomic.incr Common.ForkGuard.refused;
+    Common.PhaseTime.event_here "race-refused/memory";
+    log "not started: the copy does not fit the memory budget";
+    `Not_started)
+  else
   match (Core_unix.pipe (), Core_unix.pipe ()) with
   | exception exn when not (Common.Timer.is_async exn) -> `Not_started
   | (c_rd, c_wr), (p_rd, p_wr) -> (
@@ -668,12 +1067,16 @@ let start ?(report = fun () -> ()) ?(log = fun (_ : string) -> ()) ?(nice = 0)
       in
       let parent = Core_unix.getpid () in
       let stem = Duplicate.fresh_stem () in
-      match Common.PhaseTime.around_fork Common.ForkGuard.fork with
+      let bytes = Common.ForkGuard.copy_need ~growth () in
+      match
+        Common.PhaseTime.around_fork (Common.ForkGuard.fork_reserving ~bytes)
+      with
       | exception exn when not (Common.Timer.is_async exn) ->
           close_all ();
           `Not_started
       | `In_the_child ->
           (* the claims of the process are not the copy's *)
+          Atomic.set started_races [];
           Atomic.set verdict_given false;
           Atomic.set computing None;
           pending_verdict := None;
@@ -685,18 +1088,21 @@ let start ?(report = fun () -> ()) ?(log = fun (_ : string) -> ()) ?(nice = 0)
               let me = Core_unix.getpid () in
               Core_unix.setpgid ~of_:me ~to_:me);
           lower_priority nice;
+          (* under COAR_PHASE_OPEN_DIR, where the copy is, written once a
+             second, for a copy killed without a chance to report *)
+          Common.PhaseTime.track_in_copy ();
           let go = Atomic.make 0 in
           spawn_copy_watcher ~parent ~from_process:p_rd go;
           let say c =
             ignore (Core_unix.single_write_substring c_wr ~buf:c : int)
           in
           (* the copy compares with this race's process only, and once *)
-          Duplicate.in_copy ~stem
+          Duplicate.in_copy ~stem ~reads
             ~leave:(fun () ->
               log "the copy is a duplicate of the process; it leaves";
               ForkedQuery.kill_live ();
               quietly (fun () -> say "N");
-              Core_unix.exit_immediately 0);
+              exit_now 0);
           (* every exception ends the copy: one that escaped would run the
              process's continuation in the copy without an answer *)
           let answer = try f () with _ -> None in
@@ -706,20 +1112,29 @@ let start ?(report = fun () -> ()) ?(log = fun (_ : string) -> ()) ?(nice = 0)
           (match answer with
           | None ->
               quietly (fun () -> say "N");
-              Core_unix.exit_immediately 0
+              exit_now 0
           | Some v -> (
               let letter = if !two_claims && not (final v) then "C" else "S" in
-              try say letter with _ -> Core_unix.exit_immediately 1));
+              try say letter
+              with _ (* catch-all-ok: the copy ends here whatever failed *) ->
+                exit_now 1));
           while Atomic.get go < 1 do
             Caml_threads.Thread.delay 0.01
           done;
+          (* given the computation, the copy is the run: a later checkpoint
+             (the rest of the preprocessing after a raced pass, a later solve)
+             must not find it a duplicate of a process that has parked, or the
+             run would end with neither side answering *)
+          Duplicate.handed_the_run ();
           (* given the computation only: the verdict is asked for later *)
           (match answer with
           | Some v when !two_claims && not (final v) ->
               pending_verdict := Some (c_wr, go)
           | _ -> ());
           (* the copy is now the run: it answers and leaves through the
-             ordinary exit path *)
+             ordinary exit path, within what is left of the caller's budget
+             (see "The caller's budget" above) *)
+          Common.Timer.resume_budget_in_copy ();
           (* with the process's phase account on, the copy's own account
              takes over from here: it reports the copy's phases at its exit
              or on a termination signal, labelled as the copy's *)
@@ -738,9 +1153,14 @@ let start ?(report = fun () -> ()) ?(log = fun (_ : string) -> ()) ?(nice = 0)
               stem;
               log;
               owner = parent;
+              probe_depth = Duplicate.probe_depth ();
+              reads;
+              settle_by;
             }
           in
           Duplicate.register t;
+          if Common.ForkGuard.copy_report then
+            Atomic.set started_races (t :: Atomic.get started_races);
           Atomic.incr racing;
           Atomic.incr started;
           spawn_process_watcher ~report ~log t;
@@ -765,6 +1185,23 @@ let park_if_lost t =
       wait_forever ()
   | Racing | Process_won | Copy_done -> ()
 
+(* [wait_settled t ~ms]: in the process, wait until the copy of [t] has said
+   what it found or [ms] milliseconds have passed, whichever is first, and
+   return.  It decides nothing itself: a copy that answers within the wait is
+   handed the run by the watcher thread, and the caller's [finish] then never
+   returns; a copy that found nothing has left; a copy still at work is killed
+   by the caller's [finish].  For a caller whose own computation has given up
+   (a solver's budget spent) while a copy with the same budget, started a
+   moment later, may still be about to answer. *)
+let wait_settled t ~ms =
+  let deadline = Common.PhaseTime.now () +. (Float.of_int ms /. 1000.) in
+  while
+    (match Atomic.get t.state with Racing -> true | _ -> false)
+    && Float.(Common.PhaseTime.now () < deadline)
+  do
+    Caml_threads.Thread.delay 0.02
+  done
+
 (* [finish t]: the process keeps its own answer, killing and reaping the copy;
    after a lost race -- this one or another of the process's -- it never
    returns *)
@@ -776,6 +1213,8 @@ let finish t =
     quietly (fun () -> Core_unix.close t.from_copy);
     quietly (fun () -> Core_unix.close t.to_copy))
   else if Atomic.compare_and_set t.state Racing Process_won then (
+    (* under COAR_COPY_REPORT the copy is first given its grace to report *)
+    Common.ForkGuard.term_first ~group:true [ Pid.to_int t.pid ];
     quietly (fun () -> Signal_unix.send_i Signal.kill (`Group t.pid));
     quietly (fun () -> Signal_unix.send_i Signal.kill (`Pid t.pid));
     quietly (fun () ->
@@ -793,3 +1232,93 @@ let finish t =
         quietly (fun () -> Core_unix.close t.from_copy);
         quietly (fun () -> Core_unix.close t.to_copy);
         if Atomic.get handed then wait_forever ()
+
+(* [settle_then_finish ~verdict t]: [finish t], after waiting for the copy
+   ([wait_settled]) until [t.settle_by] when [verdict] is false.
+   For the caller whose race stands for a refutation-only computation that the
+   sequential order would have run to the end before giving its own answer:
+   - [verdict] true (the process answered [sat] or [unsat]): finished at once.
+     A sound [sat] says there was no refutation for the copy to find; an
+     [unsat] is the verdict the copy's refutation would give.
+   - [verdict] false (an [unknown], an error, an exception): the copy is given
+     until [settle_by], which the caller sets to where its own budget for the
+     computation ends, so a refutation the sequential order would have found
+     within that budget is still handed the run, and printed.
+   The wait never outlasts the armed budget ([Common.Timer.remaining_budget]):
+   a process that has spent it (a [Timeout] raised, or answered as one) does
+   not wait, since a copy that has not answered by then refutes, if at all,
+   later than the sequential order could have printed within that budget; and
+   an alarm that arrives during the wait ends it, as it would have ended the
+   computation in its sequential place.  With [verdict] false, an answer the
+   copy has written to its pipe by the end of the wait is taken before the
+   kill ([take_announced]), whatever the watcher's poll.  Guarantees:
+   no copy outlives the call in the process; after a copy answered, the call
+   never returns (as [finish]). *)
+let settle_then_finish ~verdict t =
+  Common.Timer.protect ~finally:(fun () -> finish t) @@ fun () ->
+  match t.settle_by with
+  | Some d when (not verdict) && Pid.equal t.owner (Core_unix.getpid ()) ->
+      (* only the process that started the race waits: a copy forked later
+         inherits the record but not the watcher that moves its state, so it
+         would wait out the whole time for nothing *)
+      let left = d -. Common.PhaseTime.now () in
+      let left =
+        match Common.Timer.remaining_budget () with
+        | Some b -> Float.min left b
+        | None -> left
+      in
+      let ms = Float.iround_up_exn (Float.max 0. left *. 1000.) in
+      if ms > 0 then (
+        t.log (sprintf "the process has no verdict; waiting up to %d ms" ms);
+        wait_settled t ~ms);
+      (* an answer the copy announced by now is taken, not killed unread *)
+      ignore (take_announced t : bool)
+  | _ when (not verdict) && Pid.equal t.owner (Core_unix.getpid ()) ->
+      ignore (take_announced t : bool)
+  | _ -> ()
+
+(* [decide_in_copy ?log ~ms ~decisive f] computes [f ()] in a forked copy and
+   waits for it at most [ms] milliseconds, for a caller whose own [f ()] might
+   not return within any budget it sets (a solver call that ignores its
+   cancel flag), and whose decisive value cannot be sent back ([Marshal] does
+   not carry extensible variants, see the header).
+   - [`Decided v], returned IN THE COPY: [f ()] gave [v] with [decisive v]
+     there, the copy was given the run, and it continues from this call as
+     the process would have continued from [f ()] returning [v]; the process
+     exits with the copy's status (see the contract of [start]).
+   - [`Undecided `Answered], returned in the process: the copy's [f ()] was
+     not decisive, or raised, within [ms] milliseconds;
+     [`Undecided `Killed]: the copy had not answered within [ms]
+     milliseconds and was killed and reaped.  An answer the copy has written
+     to its pipe by the deadline is taken ([take_announced]), not killed
+     unread; one written after the process has looked is killed.
+   - [`Not_started]: no copy was made (a domain running, the memory budget,
+     a failed fork); [f] has run nowhere, and the caller may run it here.
+   Contract: [`Decided v] carries only a value [f ()] computed with
+   [decisive v]; the process never returns past this call once its copy has
+   been given the run; no copy outlives the call in the process (the kill
+   runs on every exit, a timeout of the caller's own included, through
+   [Common.Timer.protect]).  So a caller that reads every non-decisive value
+   of [f] as undecided gets from this call the answers of [f ()] itself,
+   bounded in time, and loses only answers [f ()] would have given after
+   [ms]. *)
+let decide_in_copy ?log ~ms ~decisive f =
+  match
+    start ?log (fun () ->
+        let v = f () in
+        if decisive v then Some v else None)
+  with
+  | `Won v -> `Decided v
+  | `Not_started -> `Not_started
+  | `Racing t ->
+      Common.Timer.protect
+        ~finally:(fun () -> finish t)
+        (fun () ->
+          wait_settled t ~ms;
+          ignore (take_announced t : bool);
+          (* read before [finish], which sets [Process_won] on a copy still
+             racing; a copy that has answered is [Copy_done] (nothing) or
+             [Copy_won] (then [finish] never returns) *)
+          match Atomic.get t.state with
+          | Copy_done -> `Undecided `Answered
+          | Racing | Process_won | Copy_won -> `Undecided `Killed)

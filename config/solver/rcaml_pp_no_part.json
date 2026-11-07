@@ -1,0 +1,11 @@
+[
+    "RCaml",
+    {
+        "cgen_config": {
+            "can_fail_only_at_total_apps": true,
+            "enable_pred_poly_for_constructors": true,
+            "enable_pred_poly_for_ref_types": true
+        },
+        "verbose": false
+    }
+]

@@ -1,0 +1,16 @@
+[
+    "MuCyc",
+    {
+        "muclp_preprocessing": [
+            "Optimize",
+            {}
+        ],
+        "pcsp_solver": [
+            "Filename",
+            "./config/solver/spacer_sol.json"
+        ],
+        "refinement_strategy": [
+            "Solve"
+        ]
+    }
+]

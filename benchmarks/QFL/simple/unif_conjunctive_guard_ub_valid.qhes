@@ -1,0 +1,4 @@
+X 0.0 <= 0.1875
+s.t.
+// the integral of 2 r over r in [1/4, 1/2] is 3/16 = 0.1875, and x * x is 0 at x = 0
+X (x : real) : real =mu unif r. if r >= 0.25 and r <= 0.5 then r * 2.0 + x * x else x * x;

@@ -1,0 +1,5 @@
+/* The main formula's free variable x is universally closed (ReTHFL's reading
+   of an unbound integer in the first equation).  hflmc2 dialect. */
+%HES
+Main =v x < 0 || App (\y. y >= 0) x.
+App p y =v p y.

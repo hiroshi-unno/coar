@@ -1,0 +1,23 @@
+[
+    "MuCyc",
+    {
+        "verbose": true,
+
+        "muclp_preprocessing": [
+            "Optimize",
+            {
+                "optimizer": [
+                    "Filename",
+                    "./config/muclp/optimizer/dbg_enable.json"
+                ]
+            }
+        ],
+        "pcsp_solver": [
+            "Filename",
+            "./config/solver/spacer_sol.json"
+        ],
+        "refinement_strategy": [
+            "Solve"
+        ]
+    }
+]

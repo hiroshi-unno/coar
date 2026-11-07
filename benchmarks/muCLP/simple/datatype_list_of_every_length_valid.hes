@@ -1,0 +1,6 @@
+/* Every non-negative length has a list: an existential over a
+   datatype-sorted variable, whose witness is a list built from n. */
+(declare-datatypes ((L 0)) (((nil) (cons (hd Int) (tl L)))))
+forall (n: int). n >= 0 => (exists (l: L). Len l n)
+s.t.
+Len (l: L) (n: int) : bool =mu (is_nil l /\ n = 0) \/ (is_cons l /\ Len (tl l) (n - 1));

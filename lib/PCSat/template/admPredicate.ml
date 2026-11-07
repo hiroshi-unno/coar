@@ -33,26 +33,66 @@ open Ast.LogicOld
 open Function
 
 module Config = struct
+  (* the coefficient bounds of the synthesized templates, by role *)
+  type coeff_bound = {
+    initial : int option; [@default Some 1]
+        (** the starting bound on the sum of the absolute values of the coefficients
+            ([None]: unbounded); a failure can raise it *)
+    unbounded_above : int option; [@default None]
+        (** once the coefficient bound has reached this value, raising it drops it
+            altogether ([None]: it is raised by one each time) *)
+  }
+  [@@deriving yojson]
+
+  type const_bound = {
+    initial : int option; [@default Some 0]
+        (** the starting bound on the sum of the absolute values of the constants
+            ([None]: unbounded); a failure can raise it *)
+    unbounded_above : int option; [@default None]
+        (** once the constant bound has reached this value, raising it drops it
+            altogether ([None]: it is raised by one each time) *)
+    seeds : int list option; [@default None]
+        (** the seed constants of the template ([None]: zero alone) *)
+  }
+  [@@deriving yojson]
+
+  type role_bounds = {
+    coeff : coeff_bound; [@default Common.Util.config_default coeff_bound_of_yojson "{}"]
+    const : const_bound; [@default Common.Util.config_default const_bound_of_yojson "{}"]
+  }
+  [@@deriving yojson]
+
+  type bounds = {
+    expr : role_bounds; [@default Common.Util.config_default role_bounds_of_yojson "{}"]
+        (** the bounds on the result expressions' coefficients and constants *)
+    cond : role_bounds; [@default Common.Util.config_default role_bounds_of_yojson "{}"]
+        (** the bounds on the branch conditions' coefficients and constants *)
+  }
+  [@@deriving yojson]
+
   type t = {
     verbose : bool; [@default false]
     number_of_expr : int; [@default 1]
     number_of_cond_conj : int; [@default 1]
-    depth : int; [@default 0]
-    ext : int; [@default 0]
-    upper_bound_expr_coeff : int option; [@default Some 1]
-    upper_bound_expr_const : int option; [@default Some 0]
-    expr_seeds : int list option; [@default None]
-    upper_bound_cond_coeff : int option; [@default Some 1]
-    upper_bound_cond_const : int option; [@default Some 0]
-    cond_seeds : int list option; [@default None]
+    term_depth : int; [@default 0]
+    extra_terms : int; [@default 0]
+    bounds : bounds; [@default Common.Util.config_default bounds_of_yojson "{}"]
+        (** the coefficient bounds of the synthesized templates *)
     max_number_of_cond_conj : int option; [@default None]
-    threshold_expr_coeff : int option; [@default None]
-    threshold_expr_const : int option; [@default None]
-    threshold_cond_coeff : int option; [@default None]
-    threshold_cond_const : int option; [@default None]
-    ignore_bool : bool; [@default true]
+    branch_on_bool_args : bool; [@default false]
+        (** offer the boolean parameters as branch conditions of the
+            template ([Templ.gen_fun_bool_branch]) *)
     enable_lhs_param : bool; [@default true]
     fix_shape : bool; [@default true]
+    exact_affine_coefficient : bool; [@default false]
+        (** when a qualifier is solved for the unknown's result to give a
+            candidate result term, read the result's coefficient exactly
+            ([AffineTerm.exact_coeff_of]).  Off, the coefficient is taken to
+            be 1 whatever it is, so a qualifier [-1 + y - r = 0] offers
+            [1 - y] (not a root) and one with coefficient 2 or more offers a
+            term too; on, only roots are offered and a qualifier whose
+            coefficient is not 1 or -1 offers none.  Changes the candidate
+            terms, so the search, on every path that reads qualifiers. *)
   }
   [@@deriving yojson]
 
@@ -77,7 +117,9 @@ module type ArgType = sig
   val sorts : Sort.t list
   val fenv : LogicOld.FunEnv.t
   val id : int option
-  val with_cond : bool
+  val adm : Kind.adm
+      (** the truth-value domain of the unknown's answer value, which selects
+          the template shape admissible in that domain's order *)
 end
 
 (*
@@ -160,18 +202,18 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
       {
         nd = config.number_of_expr;
         nc = config.number_of_cond_conj;
-        depth = config.depth;
-        ext = config.ext;
-        ubec = Option.map config.upper_bound_expr_coeff ~f:Z.of_int;
-        ubed = Option.map config.upper_bound_expr_const ~f:Z.of_int;
+        depth = config.term_depth;
+        ext = config.extra_terms;
+        ubec = Option.map config.bounds.expr.coeff.initial ~f:Z.of_int;
+        ubed = Option.map config.bounds.expr.const.initial ~f:Z.of_int;
         es =
-          (match config.expr_seeds with
+          (match config.bounds.expr.const.seeds with
           | None -> Set.Poly.singleton Z.zero
           | Some ds -> Set.Poly.of_list @@ List.map ds ~f:Z.of_int);
-        ubcc = Option.map config.upper_bound_cond_coeff ~f:Z.of_int;
-        ubcd = Option.map config.upper_bound_cond_const ~f:Z.of_int;
+        ubcc = Option.map config.bounds.cond.coeff.initial ~f:Z.of_int;
+        ubcd = Option.map config.bounds.cond.const.initial ~f:Z.of_int;
         cs =
-          (match config.cond_seeds with
+          (match config.bounds.cond.const.seeds with
           | None -> Set.Poly.singleton Z.zero
           | Some ds -> Set.Poly.of_list @@ List.map ds ~f:Z.of_int);
       }
@@ -205,8 +247,8 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
       }
 
   let name_of () = Arg.name
-  let kind_of () = Kind.str_of (Kind.Adm Arg.with_cond)
-  let kind = Kind.Adm Arg.with_cond
+  let kind_of () = Kind.str_of (Kind.Adm Arg.adm)
+  let kind = Kind.Adm Arg.adm
   let flexible = false
   let sort_of () = Sort.mk_fun @@ Arg.sorts @ [ T_bool.SBool ]
   let params_of () = sort_env_list_of_sorts Arg.sorts
@@ -243,6 +285,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     let params = params_of () in
     let quals', terms' =
       Qual.extract_terms_from_quals
+        ~exact_affine_coeff:config.exact_affine_coefficient
         ~qelim:(Z3Smt.Z3interface.qelim ~id ~fenv:Arg.fenv)
         params quals
     in
@@ -258,8 +301,8 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
   let gen_template ~ucore:_ (hspace : HypSpace.hspace) =
     let template =
       Function.refuse_without_template @@ fun () ->
-      Templ.gen_adm_predicate ~print:Debug.print ~with_cond:Arg.with_cond
-        ~ignore_bool:config.ignore_bool
+      Templ.gen_adm_predicate ~print:Debug.print ~adm:Arg.adm
+        ~ignore_bool:(not config.branch_on_bool_args)
         ~enable_lhs_param:config.enable_lhs_param
         {
           consts = Set.to_list hspace.consts;
@@ -675,23 +718,29 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
           labels
     | ExprCoeff :: labels ->
         inner
-          (increase_expr_coeff config.threshold_expr_coeff param_actions)
+          (increase_expr_coeff config.bounds.expr.coeff.unbounded_above param_actions)
           labels
     | ExprConst :: labels ->
         inner
-          (increase_expr_const config.threshold_expr_const param_actions)
+          (increase_expr_const config.bounds.expr.const.unbounded_above param_actions)
           labels
     | CondCoeff :: labels ->
         inner
-          (increase_cond_coeff config.threshold_cond_coeff param_actions)
+          (increase_cond_coeff config.bounds.cond.coeff.unbounded_above param_actions)
           labels
     | CondConst :: labels ->
         inner
-          (increase_cond_const config.threshold_cond_const param_actions)
+          (increase_cond_const config.bounds.cond.const.unbounded_above param_actions)
           labels
     | QualDep :: labels -> inner param_actions labels
     | TimeOut :: _labels -> param_actions (* z3 may unexpectedly time out*)
-    | _ -> assert false
+    | _ ->
+        (* another template module's label: excluded by the contract of
+           [Function.Type.update_with_labels] *)
+        assert false
+
+  let coeff_labels = [ ExprCoeff; CondCoeff ]
+  let const_labels = [ ExprConst; CondConst ]
 
   let actions_of labels =
     (snd @@ inner (!param, []) @@ Set.to_list labels) @ [ "end" ]

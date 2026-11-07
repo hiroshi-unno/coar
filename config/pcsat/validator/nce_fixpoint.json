@@ -3,6 +3,12 @@
         "AllExamples"
     ],
     "check_part_sol_with_lbs": false,
-    "houdini_before_synthesis": false,
-    "smt_timeout_quantified": null
+    "houdini": {
+        "schedule": [
+            "Off"
+        ]
+    },
+    "questions": {
+        "quantified_timeout_ms": null
+    }
 }

@@ -1,0 +1,8 @@
+(lang dune 3.13)
+(name frama-c-ptr2arr)
+(using dune_site 0.1)
+
+(package
+ (name frama-c-ptr2arr)
+ (synopsis "Ptr2Arr: replace C pointers by array indices, on Frama-C")
+ (allow_empty))

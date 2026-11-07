@@ -34,6 +34,10 @@ type envs = {
   dep_map : (Ident.tvar, sort_env_list) Map.Poly.t;
   kind_map : Ast.Kind.map;
   fenv : FunEnv.t;
+  lifted_universals : (Ident.tvar, sort_env_list) Map.Poly.t;
+      (** trailing implicit parameters of recursive definitions in this reader
+          environment; retained with their definitions across independent reads
+      *)
   dtenv : DTEnv.t;
   candidates : (Ident.tvar, sort_env_list * Formula.t list) Map.Poly.t;
       (** candidate atoms declared per unknown by [(set-info :candidates ...)]:
@@ -49,7 +53,10 @@ type incsol =
   | IncUnsat of (t -> incsol)
   | IncUnknown of (t -> incsol)
 
-let str_of_solution = function
-  | Sat model -> "sat\nmodel: " ^ str_of_model model
+(* [fun_values] are the decoded interpretations of the model's functions,
+   printed in place of the don't-care mark a function's entry otherwise shows
+   (see [LogicOld.str_of_model]). *)
+let str_of_solution ?fun_values = function
+  | Sat model -> "sat\nmodel: " ^ str_of_model ?fun_values model
   | Unsat -> "unsat"
   | Unknown -> "unknown"

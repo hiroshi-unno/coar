@@ -1,0 +1,17 @@
+[
+    "MuVal",
+    {
+        "fixpoint_reduction": [
+            "Parity_progress_measure",
+            {}
+        ],
+        "pcsp_solver_primal": [
+            "Filename",
+            "./config/solver/pcsat_fixpoint_cnfdeftrig.json"
+        ],
+        "pcsp_solver_dual": [
+            "Filename",
+            "./config/solver/pcsat_fixpoint_cnfdeftrig.json"
+        ]
+    }
+]

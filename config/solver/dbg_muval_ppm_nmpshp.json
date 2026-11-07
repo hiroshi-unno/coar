@@ -1,0 +1,36 @@
+[
+    "MuVal",
+    {
+        "optimizer": [
+            "Filename",
+            "./config/muclp/optimizer/dbg_enable.json"
+        ],
+        "fixpoint_reduction": [
+            "Parity_progress_measure",
+            {
+                "loop_levels_from": [
+                    "Reduction"
+                ]
+            }
+        ],
+        "pcsp_solver_primal": [
+            "Filename",
+            "./config/solver/dbg_pcsat_muval.json"
+        ],
+        "pcsp_solver_dual": [
+            "Filename",
+            "./config/solver/dbg_pcsat_muval.json"
+        ],
+        "qelim": {
+            "verbose": true
+        },
+        "verbose": true,
+        "name_multiplied_parts": 100,
+        "name_args": [
+            "Shared_args"
+        ],
+        "name_sides": [
+            "Primal_only"
+        ]
+    }
+]

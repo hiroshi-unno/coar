@@ -1,0 +1,5 @@
+(library
+ (name Bitwuzla)
+ (public_name CoAR.Bitwuzla)
+ (libraries core core_unix core_unix.filename_unix core_unix.sys_unix CoAR.common CoAR.ast CoAR.SMT CoAR.Z3Smt z3)
+ (modules interpolant))

@@ -3,6 +3,66 @@ open Common.Ext
 open Common.Combinator
 open Logic
 
+(* A parity family's priorities: the number of ranking components, the
+   priority of each tag, the truncation of a priority to the number of
+   components it compares, and the accepting priorities -- the four the
+   parity template is generated from. *)
+type priorities =
+  int * (Ident.tvar, int) Map.Poly.t * (int -> int) * int Set.Poly.t
+
+(* A second priority function a family may take during the search
+   ([priority_switch] of [nwf]).  [switched] is false until the search takes
+   it, and never returns to false.
+
+   Contract, which the producer of a switch must establish: the family is
+   one whose initial priorities and [target] both make every parity
+   relation sound (every infinite chain of a relation satisfying either
+   condition is accepted by the family's own fixpoint reading), and a closed
+   walk of the family's tags (a cycle of its relations' arguments) visits a
+   rejecting least priority under the initial priorities exactly when it does
+   under [target].  Under that contract a fact learned from the clauses or
+   from a refuted cycle before the switch holds after it, so the search may
+   keep its examples, and a relation found under either priority function
+   proves what the family is to prove.  A loop-hierarchy priority function
+   against alternation depth's, on a component with no greatest fixpoint,
+   is such a pair. *)
+type priority_switch = {
+  target : priorities;
+  switched : bool Stdlib.Atomic.t;
+  gate : switch_gate;
+}
+
+(* When a shape failure takes the switch.  [Any_shape_failure]: the family's
+   first shape failure does.  [Rankable_shape_failure]: a shape failure does
+   only while the family's transitions, read off the clauses with every other
+   unknown dropped and ranked with [target]'s strictness, are not known to
+   lack a lexicographic linear ranking function; when they are known to lack
+   one (the test is exact for its class and depends on the clauses only), no
+   shape failure takes the switch and the family keeps its initial
+   priorities throughout.  The reason: what [target] adds is a ranking
+   component per nested loop, which helps only a ranking those transitions
+   can carry; when they carry none, the solution needs invariants the bare
+   transitions do not have, or there is none and the run is to end in a
+   refutation, and in both cases the wider template only delays the search
+   the initial priorities were making.  Soundness does not depend on the
+   gate: either priority function's relation proves what the family is to
+   prove, and the two refute the same closed walks.
+   [Unrankable_at_start]: no shape failure takes the switch; the search takes
+   it before the family's first template is generated, exactly when the
+   family's transitions (read as for [Rankable_shape_failure]) are known to
+   lack a lexicographic linear ranking function under the {e initial}
+   priorities' strictness, and never otherwise.  It is meant for a family
+   whose initial priorities are the loop-hierarchy ones and whose [target] is
+   alternation depth's: the family then searches exactly as without a switch
+   unless the test answers no, and then searches with alternation depth's
+   single component from its first round.  The decision reads the clauses
+   only, so it is the same for every unknown of the family and every
+   round. *)
+and switch_gate =
+  | Any_shape_failure
+  | Rankable_shape_failure
+  | Unrankable_at_start
+
 type nwf = {
   name : Ident.tvar;
   sorts_shared : Sort.t list;
@@ -11,6 +71,11 @@ type nwf = {
   sigma : (Ident.tvar, int) Map.Poly.t; (* priority function *)
   trunc : int -> int; (* truncation function *)
   acc_set : int Set.Poly.t (* accepting states I *);
+  priority_switch : priority_switch option;
+      (* the priorities the family may move to during the search (at a
+         shape failure, or before its first template; see [switch_gate]);
+         [max_pri], [sigma], [trunc] and [acc_set] above stay the initial
+         ones, and the unknowns' names are made from [sigma] *)
 }
 
 let dummy_nwf =
@@ -22,7 +87,31 @@ let dummy_nwf =
     sigma = Map.Poly.empty;
     trunc = Fn.id;
     acc_set = Set.Poly.empty;
+    priority_switch = None;
   }
+
+(* [active_priorities nwf]: the priorities the family's template is to be
+   generated from now: [target] once the switch is taken, the initial ones
+   otherwise.  A reader deciding whether a ranking certificate has the shape
+   the family requires must use these; a reader deciding whether a closed
+   walk is refuted may use either (the switch's contract makes them agree). *)
+let active_priorities nwf : priorities =
+  match nwf.priority_switch with
+  | Some { target; switched; _ } when Stdlib.Atomic.get switched -> target
+  | _ -> (nwf.max_pri, nwf.sigma, nwf.trunc, nwf.acc_set)
+
+(* [take_priority_switch nwf]: takes the family's switch if it has one not
+   yet taken, and says whether this call took it (at most one call per family
+   returns [true], also across domains). *)
+let take_priority_switch nwf =
+  match nwf.priority_switch with
+  | Some { switched; _ } -> Stdlib.Atomic.compare_and_set switched false true
+  | None -> false
+
+let priority_switched nwf =
+  match nwf.priority_switch with
+  | Some { switched; _ } -> Stdlib.Atomic.get switched
+  | None -> false
 
 (* A kind is a condition on an individual solution, as against a constraint, which relates
    several.  That is what makes this class an extension of predicate constraint satisfaction
@@ -103,9 +192,42 @@ let provenance_of_string = function
   | "least-model" -> Some LeastModel
   | _ -> None
 
+(* The truth-value domain an admissible unknown's answer value ranges over,
+   which decides what admissible means for it (a set containing the domain's
+   least element and closed under suprema of omega-chains, in the domain's own
+   order) and so which template family has only admissible members.
+   - [Adm_expectation]: [0, infinity] with the usual order; fixed points are
+     least and the admissible refinements are upper bounds.
+   - [Adm_conditional]: pairs, [0, infinity] times [0, 1] with the opposite
+     order in the second component (a value and the probability of the valid
+     runs).
+   - [Adm_probability]: [0, 1] with the usual order; least fixed points, upper
+     bounds, every value at most 1.
+   - [Adm_liberal]: [0, 1] with the opposite order, whose least element is 1:
+     a fixed point is the greatest in the usual order (a liberal
+     pre-expectation, divergence counted as success) and the admissible
+     refinements are lower bounds closed under infima of descending chains. *)
+type adm = Adm_expectation | Adm_conditional | Adm_probability | Adm_liberal
+
+let adm_with_cond = function Adm_conditional -> true | _ -> false
+
+let equal_adm a1 a2 =
+  match (a1, a2) with
+  | Adm_expectation, Adm_expectation
+  | Adm_conditional, Adm_conditional
+  | Adm_probability, Adm_probability
+  | Adm_liberal, Adm_liberal ->
+      true
+  | _, _ -> false
+
 type t =
   | Ord
   | FN
+      (** functional: the graph of a total function from the other positions
+          to the last, i.e. [Uniq] at the last position together with [Tot]
+          over all the others.  Stronger than the usual mathematical
+          "functional relation", which asks single-valuedness only; the name
+          follows the pfwCSP kind of Unno, Terauchi and Koskinen, CAV 2021. *)
   | Uniq of int * provenance
       (** single-valued in argument position [j] (0-based): two tuples that
           agree everywhere else agree at [j]; no totality.  [FN] is [Uniq] at
@@ -118,13 +240,35 @@ type t =
   | DWF
   | NWF of nwf * (Ident.tvar * Ident.tvar)
   | Parity of nwf * (Ident.tvar * Ident.tvar)
-  | Adm of (* conditioning *) bool
+  | Adm of adm
   | Integ
   | IntFun
   | RealFun
   | RegEx
 
 type map = (Ident.tvar, t) Map.Poly.t
+
+(* [drop_priority_switches kind_map]: [kind_map] with every parity family's
+   switch removed, so that each family keeps its initial priorities for the
+   whole search, and whether any family had one.  Postcondition: every other
+   kind, and every family's name, tags, sorts and initial priorities, are
+   unchanged; the relations of one family share one family record afterwards
+   as before (one copy per family name), since a reader may key a cache on
+   the family.  A family without a switch is returned as it was. *)
+let drop_priority_switches (kind_map : map) : map * bool =
+  let copies = Hashtbl.Poly.create () in
+  let had = ref false in
+  let kind_map =
+    Map.Poly.map kind_map ~f:(function
+      | Parity (({ priority_switch = Some _; _ } as nwf), lr) ->
+          had := true;
+          Parity
+            ( Hashtbl.Poly.find_or_add copies nwf.name ~default:(fun () ->
+                  { nwf with priority_switch = None }),
+              lr )
+      | kind -> kind)
+  in
+  (kind_map, !had)
 
 let is_ord = function Ord -> true | _ -> false
 let is_fn = function FN -> true | _ -> false
@@ -136,7 +280,8 @@ let is_dwf = function DWF -> true | _ -> false
 let is_nwf = function NWF _ -> true | _ -> false
 let is_parity = function Parity _ -> true | _ -> false
 let is_adm = function Adm _ -> true | _ -> false
-let is_adm_with_cond = function Adm true -> true | _ -> false
+let is_adm_with_cond = function Adm Adm_conditional -> true | _ -> false
+let adm_of = function Adm a -> Some a | _ -> None
 let is_integ = function Integ -> true | _ -> false
 let is_int_fun = function IntFun -> true | _ -> false
 let is_real_fun = function RealFun -> true | _ -> false
@@ -151,7 +296,7 @@ let is_pred = function
 let str_of = function
   (* predicates *)
   | Ord -> "ordinary predicate"
-  | FN -> "functional predicate"
+  | FN -> "functional predicate (single-valued and total)"
   | Uniq (j, p) ->
       sprintf "single-valued predicate at position %d (%s)" j (str_of_provenance p)
   | Tot u ->
@@ -161,8 +306,10 @@ let str_of = function
   | DWF -> "disjunctively well-founded predicate"
   | NWF _ -> "global well-founded predicate"
   | Parity _ -> "parity predicate"
-  | Adm true -> "admissible predicate w/ conditioning"
-  | Adm false -> "admissible predicate w/o conditioning"
+  | Adm Adm_conditional -> "admissible predicate w/ conditioning"
+  | Adm Adm_expectation -> "admissible predicate w/o conditioning"
+  | Adm Adm_probability -> "admissible predicate over [0,1]"
+  | Adm Adm_liberal -> "admissible predicate over [0,1]^op"
   | Integ -> "integrable predicate"
   (* functions *)
   | IntFun -> "integer function"
@@ -179,8 +326,10 @@ let short_str_of = function
   | DWF -> "DWF"
   | NWF _ -> "NWF"
   | Parity _ -> "Prty"
-  | Adm true -> "AdmC"
-  | Adm false -> "Adm"
+  | Adm Adm_conditional -> "AdmC"
+  | Adm Adm_expectation -> "Adm"
+  | Adm Adm_probability -> "AdmP"
+  | Adm Adm_liberal -> "AdmL"
   | Integ -> "Itg"
   (* functions *)
   | IntFun -> "Int"
@@ -208,7 +357,7 @@ let equal k1 k2 =
   | NWF (n1, (l1, r1)), NWF (n2, (l2, r2))
   | Parity (n1, (l1, r1)), Parity (n2, (l2, r2)) ->
       equal_nwf n1 n2 && Ident.tvar_equal l1 l2 && Ident.tvar_equal r1 r2
-  | Adm b1, Adm b2 -> Bool.equal b1 b2
+  | Adm a1, Adm a2 -> equal_adm a1 a2
   | Tot u1, Tot u2 -> List.equal Int.equal u1 u2
   (* the provenance is part of the value: the same position obtained two ways
      licenses different answers, so a predicate declared both ways is a

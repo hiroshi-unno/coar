@@ -11,29 +11,36 @@
    against those timers, and a duration taken on it includes every step that
    fell inside it.
 
-   [set_monotonic true] moves every reader below to CLOCK_MONOTONIC.  It is a
-   process-wide switch, off by default, meant to be set once before solving
-   starts (from the solver's configuration, which every solve of a process
-   shares).  Its contract:
+   Every reader below reads CLOCK_MONOTONIC.  Its contract:
 
-   - off: each reader returns exactly what the call it replaced returned
-     ([now_s] is [Core_unix.gettimeofday ()], [now_float] is
-     [Time_float.now ()], [now_ns] is [Time_ns.now ()], [time_s] is
-     [Core_unix.time ()]), unless a test has installed a source of the time of
-     day with [set_time_of_day_source], in which case all four are derived
-     from it;
-   - on: all four read CLOCK_MONOTONIC, so the difference of two readings is
-     elapsed time that no time-of-day step enters; the values are seconds (or
-     a [Time_float.t]/[Time_ns.t]) from an arbitrary origin, so they mean
-     nothing as dates and must only be compared with or subtracted from other
-     readings of this module.
+   - the four readers ([now_s], [now_float], [now_ns], [time_s]) return the
+     same instant of CLOCK_MONOTONIC, as seconds, a [Time_float.t] or a
+     [Time_ns.t] from an arbitrary origin (the boot), so the values mean
+     nothing as dates and must only be compared with or subtracted from
+     other readings of this module;
+   - for two readings [a] then [b] of this module, [b -. a] is the time
+     that elapsed between them, and no step of the time of day enters it.
 
-   Hence every reading that is compared with another reading (a deadline
-   against a later [now], a start against an end) must come from this module
-   and from the same setting of the switch; changing the switch while a
-   deadline taken under the other setting is live makes that deadline
-   meaningless.  A timestamp meant for a person (a date in a log) is not a
-   duration and is read from the time of day directly, not from here. *)
+   Exactness of a budget.  A budget of [n] seconds is a start reading [s] and
+   the test [now () >= s +. n] (or [now () -. s >= n]).  Both sides are
+   readings of this one clock, so the test holds exactly when [n] seconds
+   have elapsed since [s] -- the meaning the budget always had, now without
+   the time of day's steps, which made a deadline fire up to one step early
+   against `timeout`, [alarm] and a solver's own budget, all of which count
+   on CLOCK_MONOTONIC too.  Nothing may compare a reading of this module
+   with a time-of-day value: a timestamp meant for a person (a date in a
+   log) is not a duration and is read from the time of day directly, never
+   from here and never against a reading from here.
+
+   The time of day is kept for tests only: [set_monotonic false] moves the
+   readers back to it (each then returns exactly what the call it replaced
+   returned: [now_s] [Core_unix.gettimeofday ()], [now_float]
+   [Time_float.now ()], [now_ns] [Time_ns.now ()], [time_s]
+   [Core_unix.time ()]), or to a stand-in installed with
+   [set_time_of_day_source], which is how a test injects a stepped or fixed
+   clock.  A test that switches restores the setting before any solver
+   reading is taken; switching while a deadline taken under the other
+   setting is live makes that deadline meaningless. *)
 
 open Core
 
@@ -41,22 +48,11 @@ external monotonic_s : unit -> (float[@unboxed])
   = "coar_monotonic_seconds" "coar_monotonic_seconds_unboxed"
 [@@noalloc]
 
-let monotonic = ref false
+let monotonic = ref true
 
-(* set before the readings it affects are taken (see above) *)
+(* for tests only (see above): set before the readings it affects are taken *)
 let set_monotonic b = monotonic := b
 
-(* [configure b]: the setting a solver's configuration asks for.  Only the
-   first call of a process has an effect, so that a nested solve whose own
-   configuration says otherwise cannot switch clocks under the deadlines the
-   outer solve has already taken; [set_monotonic] (for tests) is not bound by
-   it. *)
-let configured = ref false
-
-let configure b =
-  if not !configured then (
-    configured := true;
-    monotonic := b)
 let is_monotonic () = !monotonic
 
 (* for tests only: a stand-in for the time of day, in seconds *)
@@ -89,7 +85,7 @@ let now_ns () =
     | None -> Time_ns.now ()
     | Some f -> ns_of_s (f ())
 
-(* whole seconds, as [Core_unix.time] gives when off *)
+(* whole seconds under the time of day, as [Core_unix.time] gives them *)
 let time_s () =
   if !monotonic then monotonic_s ()
   else

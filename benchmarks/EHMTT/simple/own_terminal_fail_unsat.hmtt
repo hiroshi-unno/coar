@@ -1,0 +1,17 @@
+/* A program's own terminal fail is an ordinary terminal, distinct from the
+   failure a case analysis produces for a constructor it has no branch for.
+   On the input b, Main's case has no branch, so the run fails; the
+   automaton accepts the program's own fail from q1, which must not make
+   that failure acceptable: unsat. */
+%BEGING
+Main x -> case x of a => ok.
+%ENDG
+%BEGINA
+q0 a -> .
+q0 b -> .
+q1 ok -> .
+q1 fail -> .
+%ENDA
+%BEGINT
+Main : q0 -> q1.
+%ENDT

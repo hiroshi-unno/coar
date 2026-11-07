@@ -1,0 +1,7 @@
+c forall x1. exists x2. x2 <=> x1: true (x2 = x1).
+c The same matrix with x2 free is false: free_variable_outermost_unsat.qdimacs.
+p cnf 2 2
+a 1 0
+e 2 0
+-2 1 0
+2 -1 0

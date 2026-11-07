@@ -1,0 +1,7 @@
+/* Predicates and variables are two name spaces: G's parameter is named H,
+   and H (H + 1) applies the predicate H to it.  G 0 reaches G 2, where
+   H 3 holds. */
+G 0
+s.t.
+G (H: int) : bool =mu H (H + 1) \/ G (H + 1);
+H (x: int) : bool =mu x >= 3;

@@ -1,0 +1,6 @@
+/* a ground query whose reachable predicate keeps a quantifier: outside the
+   ground class, so a ground solve declines it and the reduction proves it
+   (the greatest fixpoint holds everywhere: a larger y always exists) */
+P 0
+s.t.
+P (x: int): bool =nu exists (y: int). y > x /\ P y;

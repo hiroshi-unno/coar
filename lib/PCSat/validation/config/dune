@@ -1,0 +1,7 @@
+(library
+ (name validatorConfig)
+ (public_name CoAR.PCSat.validation.config)
+ (preprocess
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
+ (libraries core yojson CoAR.common CoAR.PCSat.qualifier CoAR.houdini.config)
+ (modules validatorConfig))

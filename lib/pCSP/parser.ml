@@ -396,7 +396,7 @@ let unknown_mention_tests_scoped unknown_tvar =
    that rebuilds a side condition per disjunction it passes; both give the
    same relaxation up to the numbering of fresh variables (see
    [occurrences_linear]).  Process-wide, set by the solver from its configuration
-   ([lower_bound_relax_linear_walk]). *)
+   (PCSat's [probes.relax_linear_walk]). *)
 let lower_bound_linear_walk = ref false
 
 (* Whether [lower_bound_relax]'s one-point elimination ([close]) keeps each condition's
@@ -408,21 +408,34 @@ let lower_bound_linear_walk = ref false
    conditions, and a clause of a thousand conjuncts took 20-60 s per occurrence there. *)
 let lower_bound_one_point_incremental = ref true
 
+(* Whether [lower_bound_relax] builds what it does not read only on demand:
+   each occurrence's side conditions and its closed disjunct are delayed until
+   a later round's side condition or the relaxation of the constraints reads
+   the unknown's bound.  Only the targets' bounds are read at the end, and a
+   non-target's only where a later round's side condition meets it at a
+   negative position, so most closings of every unknown in every round were
+   never read.  The result is the eager construction's up to the names of
+   fresh variables: a delayed closing or substitution draws its fresh names
+   later, so they are numbered differently.  The disjuncts of one bound are
+   kept in the eager order, so a bound is the eager one with its fresh names
+   renamed.  [false]: the eager construction, closing every occurrence as it
+   is walked. *)
+let lower_bound_lazy = ref true
+
 (* [one_point_by_rescan ~point conds]: while some condition is a point ([point c = Some (y, t)],
    an equation defining the bound [y] by [t]), take the first, drop it and substitute [t] for [y]
    in every other condition; the conditions left.  The order of the remaining conditions is
    theirs in [conds]. *)
-let rec one_point_by_rescan ~point conds =
-  let open Ast.LogicOld in
+let rec one_point_by_rescan ?(subst = Ast.LogicOld.Formula.subst) ~point conds =
   match
     List.find_mapi conds ~f:(fun i c -> Option.map (point c) ~f:(fun r -> (i, r)))
   with
   | None -> conds
   | Some (i, (y, t)) ->
       let sub = Map.Poly.singleton y t in
-      one_point_by_rescan ~point
+      one_point_by_rescan ~subst ~point
         (List.filter_mapi conds ~f:(fun j c ->
-             if j = i then None else Some (Formula.subst sub c)))
+             if j = i then None else Some (subst sub c)))
 
 (* [one_point_incremental ~point conds]: [one_point_by_rescan ~point conds], computed by keeping
    each condition's current form, the set of positions whose form is a point, and for each
@@ -432,14 +445,14 @@ let rec one_point_by_rescan ~point conds =
    hence the points agree with the rescan's at every step.  Contract: the same list as
    [one_point_by_rescan], provided [Formula.subst] returns a formula equal to its argument when the
    substituted variable is not free in it. *)
-let one_point_incremental ~point conds =
+let one_point_incremental ?(subst = Ast.LogicOld.Formula.subst) ~point conds =
   let open Ast.LogicOld in
   let forms = Array.of_list conds in
   let n = Array.length forms in
   let alive = Array.create ~len:n true in
   let occurs = Hashtbl.Poly.create () in
   let index j =
-    Set.iter (Formula.tvs_of forms.(j)) ~f:(fun v ->
+    Set.iter (Formula.fvs_of forms.(j)) ~f:(fun v ->
         Hashtbl.add_multi occurs ~key:v ~data:j)
   in
   let points = ref Int.Set.empty in
@@ -459,14 +472,14 @@ let one_point_incremental ~point conds =
         alive.(i) <- false;
         points := Set.remove !points i;
         let sub = Map.Poly.singleton y t in
-        let tvs_t = Term.tvs_of t in
+        let tvs_t = Term.fvs_of t in
         let touched = Hashtbl.find_multi occurs y in
         Hashtbl.remove occurs y;
         List.iter
           (List.dedup_and_sort touched ~compare:Int.compare)
           ~f:(fun j ->
-            if alive.(j) && Set.mem (Formula.tvs_of forms.(j)) y then (
-              forms.(j) <- Formula.subst sub forms.(j);
+            if alive.(j) && Set.mem (Formula.fvs_of forms.(j)) y then (
+              forms.(j) <- subst sub forms.(j);
               Set.iter tvs_t ~f:(fun v -> Hashtbl.add_multi occurs ~key:v ~data:j);
               classify j));
         loop ()
@@ -485,6 +498,305 @@ let lower_bound_mention_memo_scoped = ref true
    whose messages are lazy and which a caller that wants only these lines
    would otherwise have to force, the whole input's diagnostics included. *)
 let stage_trace : (string -> unit) ref = ref (fun _ -> ())
+
+(* Whether [close_existential]'s constructor-point rule keeps each
+   condition's answer between steps ([constructor_point_rule_kept]) instead of searching
+   every condition against every bound variable again after each removal;
+   both give the same conditions.  [false]: the rescan, kept as the reference
+   the property test compares against. *)
+let close_existential_kept_cpoints = ref true
+
+(* The constructor-point rule of [close_existential], repeated while it
+   removes a bound variable: the first condition (in list order) that is an
+   equation [u = t] (either way round) with, for the first variable [y] of
+   [bound] that [t] contains along one constructor path and [u] does not,
+   [Problem.solve_constructor_point y u t = Some (s, guards)]; that condition
+   is replaced by [guards] at the front, [s] is substituted for [y] in every
+   other condition by [subst], and the rule is applied again.  [subst] may
+   raise; whatever it raises is passed on.  The conditions are equivalent to
+   the input's conjunction under [exists y] for each removed [y]. *)
+let rec constructor_point_rule_rescan ~bound ~subst conds =
+  let open Ast.LogicOld in
+  let found =
+    List.find_mapi conds ~f:(fun i c ->
+        if not (Formula.is_eq c) then None
+        else
+          let t1, t2, _ = Formula.let_eq c in
+          List.find_map bound ~f:(fun (y, _) ->
+              let occurs t = Set.mem (Evaluator.scalar_occurrences_of_term t) y in
+              let try_ lhs rhs =
+                match rhs with
+                | Term.Var _ -> None
+                | _ when occurs lhs || not (occurs rhs) -> None
+                | _ ->
+                    Option.map (Problem.solve_constructor_point y lhs rhs)
+                      ~f:(fun (s, guards) -> (i, y, s, guards))
+              in
+              match try_ t1 t2 with Some r -> Some r | None -> try_ t2 t1))
+  in
+  match found with
+  | None -> conds
+  | Some (i, y, s, guards) ->
+      let sub = Map.Poly.singleton y s in
+      constructor_point_rule_rescan ~bound ~subst
+        (guards
+        @ List.filter_mapi conds ~f:(fun j c ->
+              if j = i then None else Some (subst sub c)))
+
+(* [constructor_point_rule_rescan ~bound ~subst conds], computed keeping per
+   condition its free variables, its substitution scope and whether it is
+   known to hold no constructor point.  Whether a condition holds a point
+   depends only on the condition and on [bound], which the rule never
+   changes.  A condition that does not mention the variable just removed and
+   whose scope admits the substitution (no binder of it is named by a free
+   variable of the replacement, no function head or binder sort conflicts) is
+   kept as it is: [Formula.subst] leaves such a condition equal to itself (it
+   renames a binder only when the replacement mentions the binder's name), so
+   its earlier answer stands.  Every other condition is given to [subst] as
+   the rescan gives it.  Each step thus asks only the conditions that are new
+   or changed, and the two sides of an equation have their variables
+   collected once rather than once per bound variable.  Contract: the same
+   list as the rescan, in the same order, and [subst] raising in the same
+   cases, provided [subst] is [Formula.subst] behind a check that refuses at
+   least what [Evaluator.scalar_substitution_is_safe] refuses.
+   [unchecked_unchanged] (only for the property test's mutant) keeps an
+   unchanged condition without the scope check. *)
+let constructor_point_rule_kept ?(unchecked_unchanged = false) ~bound ~subst
+    conds =
+  let open Ast.LogicOld in
+  let candidate c =
+    if not (Formula.is_eq c) then None
+    else
+      let t1, t2, _ = Formula.let_eq c in
+      let v1 = Evaluator.scalar_occurrences_of_term t1 and v2 = Evaluator.scalar_occurrences_of_term t2 in
+      List.find_map bound ~f:(fun (y, _) ->
+          let try_ lhs vl rhs vr =
+            match rhs with
+            | Term.Var _ -> None
+            | _ when Set.mem vl y || not (Set.mem vr y) -> None
+            | _ ->
+                Option.map (Problem.solve_constructor_point y lhs rhs)
+                  ~f:(fun (s, guards) -> (y, s, guards))
+          in
+          match try_ t1 v1 t2 v2 with
+          | Some r -> Some r
+          | None -> try_ t2 v2 t1 v1)
+  in
+  let entry phi =
+    ( phi,
+      lazy (Formula.fvs_of phi),
+      lazy
+        (Evaluator.scalar_substitution_scope_of
+           (Term.mk_fsym_app (T_bool.Formula phi) [])),
+      ref false )
+  in
+  let rec find before = function
+    | [] -> None
+    | ((phi, _, _, none) as e) :: rest -> (
+        if !none then find (e :: before) rest
+        else
+          match candidate phi with
+          | None ->
+              none := true;
+              find (e :: before) rest
+          | Some r -> Some (List.rev before, r, rest))
+  in
+  let rec loop entries =
+    match find [] entries with
+    | None -> List.map entries ~f:(fun (phi, _, _, _) -> phi)
+    | Some (before, (y, s, guards), after) ->
+        let sub = Map.Poly.singleton y s in
+        let admits scope =
+          unchecked_unchanged
+          ||
+          try
+            Evaluator.scalar_substitution_is_safe_in_scope (Lazy.force scope)
+              sub
+          with exn_ when not (Common.Timer.is_async exn_) -> false
+        in
+        let update ((phi, fvs, scope, _) as e) =
+          if (not (Set.mem (Lazy.force fvs) y)) && admits scope then e
+          else entry (subst sub phi)
+        in
+        let rest = List.map before ~f:update @ List.map after ~f:update in
+        loop (List.map guards ~f:entry @ rest)
+  in
+  loop (List.map conds ~f:entry)
+
+(* [close_existential bound conds] is [exists bound. /\ conds] after the
+   one-point rule on the equations that define a bound variable, then
+   simplified; equivalent to it in every model of the background theory.
+   [split_secs], [elim_secs] and [simplify_secs] accumulate the seconds spent
+   splitting the conditions, in the one-point elimination and in the
+   simplifier, for a stage trace.
+
+   With [constructor_points], a bound variable that an equation determines
+   through a path of constructor applications ([u = C(.., y, ..)], [u] free of
+   [y]) is also removed, by [Problem.solve_constructor_point]: the equation is
+   [y = s /\ guards] with [s] reading [y]'s position off [u] by selectors,
+   then [exists y. y = s /\ phi] is [phi[s/y]] -- exact too.  Without it an
+   equation such as [f = mut(tuple(mut a b), c)] with [a b c] bound keeps all
+   three bound, and the closed formula keeps a quantifier the one-point rule
+   could have removed. *)
+let close_existential ?(constructor_points = false) ~split_secs ~elim_secs
+    ~simplify_secs bound conds =
+  let open Ast.LogicOld in
+  let exception Unsafe_substitution in
+  let fallback = Formula.mk_exists bound (Formula.and_of conds) in
+  let subst sub phi =
+    if Evaluator.scalar_substitution_is_safe sub phi then Formula.subst sub phi
+    else raise Unsafe_substitution
+  in
+  try
+  (* with [constructor_points], a bound variable of a datatype with one
+     constructor is replaced by that constructor over fresh bound variables,
+     one per field (every value of the sort is so built, so [exists y. phi] is
+     [exists y1 .. yn. phi[C(y1, .., yn)/y]]), nested fields included up to a
+     depth of four; the one-point rules then reach a variable that only
+     selectors read, which no equation of its own defines *)
+  let bound, conds =
+    if not constructor_points then (bound, conds)
+    else
+      let single = function
+        | T_dt.SDT dt when Datatype.is_dt dt -> (
+            match Datatype.conses_of dt with
+            | [ cons ] -> Some (dt, cons)
+            | _ -> None)
+        | _ -> None
+      in
+      let rec expand depth bound conds =
+        if depth <= 0 then (bound, conds)
+        else
+          let changed = ref false in
+          let bound', sub =
+            List.fold bound ~init:([], []) ~f:(fun (acc, sub) (y, sort) ->
+                match single sort with
+                | Some (dt, cons) ->
+                    changed := true;
+                    let sorts = Datatype.sorts_of_cons dt cons in
+                    let ys =
+                      List.map sorts ~f:(fun s -> (Ident.mk_fresh_tvar (), s))
+                    in
+                    ( List.rev_append ys acc,
+                      ( y,
+                        T_dt.mk_cons dt (Datatype.name_of_cons cons)
+                          (List.map ys ~f:(fun (z, s) -> Term.mk_var z s)) )
+                      :: sub )
+                | None -> ((y, sort) :: acc, sub))
+          in
+          if not !changed then (bound, conds)
+          else
+            let sub = Map.Poly.of_alist_exn sub in
+            expand (depth - 1) (List.rev bound')
+              (List.map conds ~f:(subst sub))
+      in
+      Common.PhaseTime.with_phase "ce-expand" (fun () -> expand 4 bound conds)
+  in
+  let is_bound y = List.exists bound ~f:(fun (x, _) -> Stdlib.( = ) x y) in
+  let point c =
+    if not (Formula.is_eq c) then None
+    else
+      let t1, t2, _ = Formula.let_eq c in
+      let var a t =
+        match a with
+        | Term.Var (y, _, _)
+          when is_bound y && not (Set.mem (Evaluator.scalar_occurrences_of_term t) y) ->
+            Some (y, t)
+        | _ -> None
+      in
+      match var t1 t2 with
+      | Some r -> Some r
+      | None -> (
+          match var t2 t1 with
+          | Some r -> Some r
+          | None when constructor_points -> (
+              (* [0 = y - t] and [0 = t - y] (the simplifier's form of
+                 [y = t] over integers) define [y] as [t] too *)
+              let diff = function
+                | Term.FunApp (T_int.Sub, [ a; b ], _) -> Some (a, b)
+                | _ -> None
+              in
+              let zero t = T_int.is_zero t in
+              let lin z d =
+                if not (zero z) then None
+                else
+                  match diff d with
+                  | Some (a, b) -> (
+                      match var a b with Some r -> Some r | None -> var b a)
+                  | None -> None
+              in
+              match lin t1 t2 with Some r -> Some r | None -> lin t2 t1)
+          | None -> None)
+  in
+  let elim conds =
+    if !lower_bound_one_point_incremental then
+      one_point_incremental ~subst ~point conds
+    else one_point_by_rescan ~subst ~point conds
+  in
+  (* an equation between two applications of datatype constructors is
+     the equations of their arguments when the constructors agree and
+     [false] when they differ (constructors are injective and
+     disjoint), so the arguments become equations the one-point rule can
+     use *)
+  let rec decompose c =
+    if not (Formula.is_eq c) then [ c ]
+    else
+      match Formula.let_eq c with
+      | ( Term.FunApp (T_dt.DTCons (n1, _, _), ts1, _),
+          Term.FunApp (T_dt.DTCons (n2, _, _), ts2, _),
+          _ ) ->
+          if not (String.equal n1 n2) then [ Formula.mk_false () ]
+          else (
+            match List.map2 ts1 ts2 ~f:Formula.eq with
+            | List.Or_unequal_lengths.Ok eqs ->
+                List.concat_map eqs ~f:decompose
+            | List.Or_unequal_lengths.Unequal_lengths -> [ c ])
+      | _ -> [ c ]
+  in
+  let cpoints conds =
+    if !close_existential_kept_cpoints then
+      constructor_point_rule_kept ~bound ~subst conds
+    else constructor_point_rule_rescan ~bound ~subst conds
+  in
+  (* twice: the simplification turns equations into the variable-defining
+     form the second pass can use *)
+  let pass conds =
+    let t = Common.Clock.now_s () in
+    let split =
+      List.concat_map conds ~f:(fun c ->
+          List.concat_map (Formula.conjuncts_list_of c) ~f:decompose)
+    in
+    (* with [constructor_points], a variable an equation defines directly is
+       removed first, so that the constructor rule is left the equations
+       through constructors *)
+    let split =
+      if constructor_points then
+        Common.PhaseTime.with_phase "ce-cpoints" (fun () ->
+            cpoints
+              (Common.PhaseTime.with_phase "ce-elim" (fun () -> elim split)))
+      else split
+    in
+    let t1 = Common.Clock.now_s () in
+    let body =
+      Common.PhaseTime.with_phase "ce-elim" (fun () ->
+          Formula.and_of @@ elim split)
+    in
+    let t2 = Common.Clock.now_s () in
+    let r =
+      Common.PhaseTime.with_phase "ce-simplify" (fun () ->
+          try Evaluator.simplify body
+          with exn_ when not (Common.Timer.is_async exn_) -> body)
+    in
+    let t3 = Common.Clock.now_s () in
+    split_secs := !split_secs +. (t1 -. t);
+    elim_secs := !elim_secs +. (t2 -. t1);
+    simplify_secs := !simplify_secs +. (t3 -. t2);
+    r
+  in
+  let body = pass [ pass conds ] in
+  let fvs = Formula.fvs_of body in
+  Formula.exists (List.filter bound ~f:(fun (x, _) -> Set.mem fvs x)) body
+  with Unsafe_substitution -> fallback
 
 (* [lower_bound_relax ~rounds ~max_size names phis envs] is a relaxation of
    [phis] in which each unknown named in [names] that is Boolean-valued and of
@@ -546,8 +858,19 @@ let lower_bound_relax ?(print = fun _ -> ()) ?(rounds = 2) ?(max_size = 4000)
         (m, t, fun () -> ())
     in
     (* the bound of [p] at [ts]; [None] stands for [false] *)
-    let at bounds p ts =
+    (* a round's bound of an unknown is its parameters and a delayed body,
+       [None] when no disjunct was kept, which stands for [false] as an absent
+       bound does *)
+    let find_bound bounds p =
       match Map.Poly.find bounds p with
+      | None -> None
+      | Some (params, body) -> (
+          match Lazy.force body with
+          | None -> None
+          | Some body -> Some (params, body))
+    in
+    let at bounds p ts =
+      match find_bound bounds p with
       | None -> None
       | Some (params, body) ->
           Some
@@ -605,7 +928,7 @@ let lower_bound_relax ?(print = fun _ -> ()) ?(rounds = 2) ?(max_size = 4000)
         match phi with
         | Formula.Atom (Atom.App (Predicate.Var (p, sorts), ts, _), _)
           when unknown p && not (List.exists ts ~f:term_mentions_unknown) ->
-            acc := (p, sorts, ts, bound, conds) :: !acc
+            acc := (p, sorts, ts, bound, Lazy.from_val conds) :: !acc
         | Formula.BinaryOp (Formula.And, a, b, _) ->
             walk bound conds a;
             walk bound conds b
@@ -685,12 +1008,16 @@ let lower_bound_relax ?(print = fun _ -> ()) ?(rounds = 2) ?(max_size = 4000)
         match phi with
         | Formula.Atom (Atom.App (Predicate.Var (p, sorts), ts, _), _)
           when unknown p && not (List.exists ts ~f:term_mentions_unknown) ->
+            let forced () =
+              timed walk_force_secs (fun () -> List.map conds ~f:Lazy.force)
+            in
             acc :=
               ( p,
                 sorts,
                 ts,
                 bound,
-                timed walk_force_secs (fun () -> List.map conds ~f:Lazy.force) )
+                if !lower_bound_lazy then Lazy.from_fun forced
+                else Lazy.from_val (forced ()) )
               :: !acc
         | Formula.BinaryOp (Formula.And, a, b, _) ->
             walk bound conds a;
@@ -727,69 +1054,7 @@ let lower_bound_relax ?(print = fun _ -> ()) ?(rounds = 2) ?(max_size = 4000)
     (* [exists bound. /\ conds], after the one-point rule on the equations
        that define a bound variable (exact) *)
     let close bound conds =
-      let is_bound y = List.exists bound ~f:(fun (x, _) -> Stdlib.( = ) x y) in
-      let point c =
-        if not (Formula.is_eq c) then None
-        else
-          let t1, t2, _ = Formula.let_eq c in
-          let var a t =
-            match a with
-            | Term.Var (y, _, _)
-              when is_bound y && not (Set.mem (Term.tvs_of t) y) ->
-                Some (y, t)
-            | _ -> None
-          in
-          match var t1 t2 with Some r -> Some r | None -> var t2 t1
-      in
-      let elim conds =
-        if !lower_bound_one_point_incremental then
-          one_point_incremental ~point conds
-        else one_point_by_rescan ~point conds
-      in
-      (* an equation between two applications of datatype constructors is
-         the equations of their arguments when the constructors agree and
-         [false] when they differ (constructors are injective and
-         disjoint), so the arguments become equations the one-point rule can
-         use *)
-      let rec decompose c =
-        if not (Formula.is_eq c) then [ c ]
-        else
-          match Formula.let_eq c with
-          | ( Term.FunApp (T_dt.DTCons (n1, _, _), ts1, _),
-              Term.FunApp (T_dt.DTCons (n2, _, _), ts2, _),
-              _ ) ->
-              if not (String.equal n1 n2) then [ Formula.mk_false () ]
-              else (
-                match List.map2 ts1 ts2 ~f:Formula.eq with
-                | List.Or_unequal_lengths.Ok eqs ->
-                    List.concat_map eqs ~f:decompose
-                | List.Or_unequal_lengths.Unequal_lengths -> [ c ])
-          | _ -> [ c ]
-      in
-      (* twice: the simplification turns equations into the variable-defining
-         form the second pass can use *)
-      let pass conds =
-        let t = Common.Clock.now_s () in
-        let split =
-          List.concat_map conds ~f:(fun c ->
-              List.concat_map (Formula.conjuncts_list_of c) ~f:decompose)
-        in
-        let t1 = Common.Clock.now_s () in
-        let body = Formula.and_of @@ elim split in
-        let t2 = Common.Clock.now_s () in
-        let r =
-          try Evaluator.simplify body
-          with exn_ when not (Common.Timer.is_async exn_) -> body
-        in
-        let t3 = Common.Clock.now_s () in
-        split_secs := !split_secs +. (t1 -. t);
-        elim_secs := !elim_secs +. (t2 -. t1);
-        simplify_secs := !simplify_secs +. (t3 -. t2);
-        r
-      in
-      let body = pass [ pass conds ] in
-      let fvs = Formula.tvs_of body in
-      Formula.exists (List.filter bound ~f:(fun (x, _) -> Set.mem fvs x)) body
+      close_existential ~split_secs ~elim_secs ~simplify_secs bound conds
     in
     let nnfs =
       List.map phis ~f:(fun phi ->
@@ -807,6 +1072,9 @@ let lower_bound_relax ?(print = fun _ -> ()) ?(rounds = 2) ?(max_size = 4000)
     let walk_secs = ref 0. and close_secs = ref 0. and n_occ = ref 0 in
     let round bounds =
       let params = Hashtbl.Poly.create () in
+      (* per unknown, its occurrences' disjuncts in order, each closed (or
+         dropped: [None]) at once or, with [lower_bound_lazy], when the
+         unknown's bound is first read *)
       let disjuncts = Hashtbl.Poly.create () in
       walk_secs := 0.;
       close_secs := 0.;
@@ -836,9 +1104,19 @@ let lower_bound_relax ?(print = fun _ -> ()) ?(rounds = 2) ?(max_size = 4000)
                 List.map2_exn xs ts ~f:(fun (x, s) t ->
                     Formula.eq (Term.mk_var x s) t)
               in
-              let d = close bound (eqs @ List.rev conds) in
-              if (not (Formula.is_false d)) && Formula.ast_size d <= max_size
-              then Hashtbl.add_multi disjuncts ~key:p ~data:d);
+              let closed () =
+                let t = Common.Clock.now_s () in
+                let d = close bound (eqs @ List.rev (Lazy.force conds)) in
+                if !lower_bound_lazy then
+                  close_secs := !close_secs +. (Common.Clock.now_s () -. t);
+                if (not (Formula.is_false d)) && Formula.ast_size d <= max_size
+                then Some d
+                else None
+              in
+              Hashtbl.add_multi disjuncts ~key:p
+                ~data:
+                  (if !lower_bound_lazy then Lazy.from_fun closed
+                   else Lazy.from_val (closed ())));
           let closed = Common.Clock.now_s () -. t in
           close_secs := !close_secs +. closed;
           if Float.(closed > 1.) then
@@ -853,7 +1131,12 @@ let lower_bound_relax ?(print = fun _ -> ()) ?(rounds = 2) ?(max_size = 4000)
            !walk_secs !close_secs);
       Map.Poly.of_alist_exn
       @@ List.map (Hashtbl.to_alist disjuncts) ~f:(fun (p, ds) ->
-          (p, (Hashtbl.find_exn params p, Formula.or_of (List.rev ds))))
+          ( p,
+            ( Hashtbl.find_exn params p,
+              lazy
+                (match List.filter_map (List.rev ds) ~f:Lazy.force with
+                | [] -> None
+                | ds -> Some (Formula.or_of ds)) ) ))
     in
     stage "negation normal forms";
     let bounds =
@@ -864,7 +1147,7 @@ let lower_bound_relax ?(print = fun _ -> ()) ?(rounds = 2) ?(max_size = 4000)
         let p = Ident.tvar_to_pvar key in
         print
         @@ lazy
-             (match Map.Poly.find bounds p with
+             (match find_bound bounds p with
              | None ->
                  sprintf "[lower-bound relax] %s: false" (Ident.name_of_pvar p)
              | Some (params, body) ->
@@ -919,7 +1202,7 @@ let lower_bound_relax ?(print = fun _ -> ()) ?(rounds = 2) ?(max_size = 4000)
       Map.Poly.keys targets,
       List.filter_map (Map.Poly.keys targets) ~f:(fun x ->
           Option.map
-            (Map.Poly.find bounds (Ident.tvar_to_pvar x))
+            (find_bound bounds (Ident.tvar_to_pvar x))
             ~f:(fun b -> (x, b))) )
 
 (* [lower_bound_define ~rounds names phis envs] is [phis] with each unknown
@@ -939,6 +1222,15 @@ let lower_bound_relax ?(print = fun _ -> ()) ?(rounds = 2) ?(max_size = 4000)
    postcondition that a library loop assumes for every element, whose least
    solution is what the closure's body gives.  With [qf_only] (the default)
    a bound keeps only its quantifier-free disjuncts when it has any. *)
+(* Conservative definition admission: reject non-parameter ambient variables,
+   including implicit universals not present in the target's dependency
+   arguments. Background known heads retain their separate identity; their
+   parameter-closed defining contexts are a caller premise. This is not a
+   complete dependency analysis through arbitrary known-function contexts. *)
+let bound_definition_is_closed (params, body) =
+  Ast.Evaluator.known_function_body_is_closed params
+    (Ast.LogicOld.T_bool.of_formula body)
+
 let lower_bound_define ?(print = fun _ -> ()) ?(qf_only = true) ~rounds names phis
     (envs : SMT.Problem.envs) =
   let open Ast.LogicOld in
@@ -973,12 +1265,13 @@ let lower_bound_define ?(print = fun _ -> ()) ?(qf_only = true) ~rounds names ph
                 ( mk_fresh_sort_env_list
                     (Sort.args_of (Map.Poly.find_exn envs.exi_senv x)),
                   Formula.mk_false () ) ))
+      |> List.filter ~f:(fun (_, d) -> bound_definition_is_closed d)
     in
     let psub =
       Map.Poly.of_alist_exn
       @@ List.map defs ~f:(fun (x, d) -> (Ident.tvar_to_pvar x, d))
     in
-    let keep x = not (List.mem targets x ~equal:Ident.tvar_equal) in
+    let keep x = not (List.Assoc.mem defs x ~equal:Ident.tvar_equal) in
     ( List.map phis ~f:(Formula.subst_preds psub),
       {
         envs with
@@ -987,6 +1280,432 @@ let lower_bound_define ?(print = fun _ -> ()) ?(qf_only = true) ~rounds names ph
         dep_map = Map.Poly.filter_keys envs.dep_map ~f:keep;
       },
       defs )
+
+(* [define_formulas defs phis envs] is [phis] with each unknown [x] of [defs]
+   replaced at every occurrence by its definition [(params, body)], and
+   removed from the signature, as if the input had defined it so. Definitions
+   must be parameter-closed; a non-parameter ambient dependency is rejected.
+   Assuming parameter-closed background definitions, a solution of the result
+   together with [defs] is a solution of [phis]; nothing else transfers. *)
+let define_formulas defs phis (envs : SMT.Problem.envs) =
+  let open Ast.LogicOld in
+  if not (List.for_all defs ~f:(fun (_, d) -> bound_definition_is_closed d)) then
+    invalid_arg "define_formulas: non-parameter ambient variables in definition";
+  let psub =
+    Map.Poly.of_alist_exn
+    @@ List.map defs ~f:(fun (x, d) -> (Ident.tvar_to_pvar x, d))
+  in
+  let keep x = not (List.Assoc.mem defs x ~equal:Ident.tvar_equal) in
+  ( List.map phis ~f:(Formula.subst_preds psub),
+    {
+      envs with
+      exi_senv = Map.Poly.filter_keys envs.exi_senv ~f:keep;
+      kind_map = Map.Poly.filter_keys envs.kind_map ~f:keep;
+      dep_map = Map.Poly.filter_keys envs.dep_map ~f:keep;
+    } )
+
+(* [upper_bound_definitions ~rounds ~max_size names phis envs]: for each
+   unknown named in [names] that [define_true_targets] admits (Boolean-valued,
+   of the ordinary kind) and that occurs at a negative position, its upper
+   bound [U_q] (parameters and body) and a list of candidate definitions, each its
+   parameters and an unknown-free body, every one of which implies the upper
+   bound [U_q] below at every argument.  The list holds the generalisations
+   of [U_q] (below), parameter by parameter, then [U_q] itself, the
+   quantifier-free ones first; [true], [false] and repeats are left out.
+
+   The upper bounds.  For an unknown [q], each occurrence [not q(t)] at a
+   negative position of a constraint (in its negation normal form), reached
+   through conjunctions, disjunctions, universals and lets (no existential),
+   gives the conjunct [not (exists y. x = t /\ not S'_1 /\ ... /\ not S'_k)],
+   where [y] are the universals and let-variables on the path and [S'_j] the
+   disjuncts met beside the path made larger: an unknown's atom at a positive
+   position [r(s)] becomes [U_r(s)] with the bound of the previous round, one
+   at a negative position becomes [true], and anything else that mentions an
+   unknown becomes [true].  [U_q] is the conjunction of these, starting from
+   [true] and iterated [rounds] times; a conjunct larger than [max_size] is
+   dropped, which only weakens the bound.  It is [lower_bound_relax]'s
+   construction with the polarities exchanged.
+
+   Why they are upper bounds.  Fix a model and an interpretation [I]
+   satisfying [phis].  By induction on the round each [U_r] of the previous
+   round is implied by [I(r)], so each [S_j] implies [S'_j] under [I]; where
+   the path condition holds and every [S'_j] is false, every [S_j] is false,
+   and the constraint, which holds for every value of the path's universals,
+   forces [not I(q)(t)].  So [I(q)(x)] implies each conjunct.
+
+   The generalisations.  For a parameter [x_i] of [q], the conjunction of the
+   same conjuncts with [x_i] made one more bound variable ([forall x_i. U_q]
+   in effect), and, when [x_i]'s sort is a datatype with one constructor of
+   several fields, for each field [j], the same with the field's argument
+   bound ([forall z. U_q(.., C(sel_1 x_i, .., z, .., sel_n x_i), ..)]).  Each
+   implies [U_q].  Why they are worth trying: a precondition of a function
+   that takes a mutable borrow is read by the encoding at its argument's
+   current value and a prophecy of its final value, and the function's body
+   gives an upper bound that holds vacuously unless the prophecy is the one
+   the body produces; a caller that assumes the precondition where the
+   prophecy is fixed to the current value then learns nothing from [U_q],
+   while the field-generalised bound over the prophecy is the condition on the
+   current value alone -- the contract the source would write.
+
+   Contract. A candidate respecting [q]'s dependencies is one admissible
+   choice of [q]: a problem with [q] defined by it, solved [sat], gives with
+   the definition a solution of [phis]; its [unsat] says nothing. Implying
+   the necessary upper bound makes a candidate a plausible guess, but does
+   not order it below every solution's [q]. Definition admission and solving
+   the substituted original obligations are separate proof premises. *)
+(* Whether [upper_bound_definitions] builds what it does not read only on
+   demand: each round's bound of an unknown, and each occurrence's side
+   conditions, are delayed until a later round's occurrence or the targets'
+   candidates read them.  The bounds and candidates of the targets are the
+   eager construction's up to the names of fresh variables (a delayed
+   construction draws its fresh names later, so they are numbered
+   differently, and a disjunction ordered by names can come out in another
+   order); what is never read is never built.  Every unknown's bound used to
+   be closed in every round although only the targets' are returned and only
+   the unknowns met in a later round's side conditions are read: on one
+   Thrust input 352 closings, about 8 s, of which 92 are read.  [false]: the
+   eager construction. *)
+let upper_bound_lazy = ref true
+
+let upper_bound_definitions ?(print = fun _ -> ()) ?(rounds = 2)
+    ?(max_size = 4000) names phis (envs : SMT.Problem.envs) =
+  let open Ast.LogicOld in
+  let targets = define_true_targets names envs in
+  if Map.Poly.is_empty targets then []
+  else
+    let unknown (Ident.Pvar n) = Map.Poly.mem envs.exi_senv (Ident.Tvar n) in
+    let unknown_tvar x = Map.Poly.mem envs.exi_senv x in
+    let mentions_unknown, term_mentions_unknown, clear_mentions =
+      unknown_mention_tests_scoped unknown_tvar
+    in
+    (* a value built when first read ([upper_bound_lazy]) or at once *)
+    let delay f = if !upper_bound_lazy then Lazy.from_fun f else Lazy.from_val (f ()) in
+    let at bounds p ts =
+      match Map.Poly.find bounds p with
+      | None -> None
+      | Some (params, body) ->
+          let body = Lazy.force body in
+          let sub = Map.Poly.of_alist_exn
+            (List.map2_exn params ts ~f:(fun (x, _) t -> (x, t))) in
+          if Evaluator.scalar_substitution_is_safe sub body then
+            Some (Formula.subst sub body)
+          else None
+    in
+    (* a formula in negation normal form made larger and unknown-free *)
+    let rec enlarge bounds phi =
+      if not (mentions_unknown phi) then phi
+      else
+        match phi with
+        | Formula.Atom (Atom.App (Predicate.Var (p, _), ts, _), _)
+          when unknown p && not (List.exists ts ~f:term_mentions_unknown) -> (
+            match at bounds p ts with
+            | Some u -> u
+            | None -> Formula.mk_true ())
+        | Formula.BinaryOp (Formula.And, a, b, _) ->
+            Formula.mk_and (enlarge bounds a) (enlarge bounds b)
+        | Formula.BinaryOp (Formula.Or, a, b, _) ->
+            Formula.mk_or (enlarge bounds a) (enlarge bounds b)
+        | Formula.Bind (((Formula.Forall | Formula.Exists) as b), senv, body, _)
+          ->
+            Formula.mk_bind b senv (enlarge bounds body)
+        | Formula.LetFormula (x, s, d, body, info)
+          when not (term_mentions_unknown d) ->
+            Formula.mk_let_formula ~info x s d (enlarge bounds body)
+        | _ -> Formula.mk_true ()
+    in
+    let rename senv body =
+      let fresh =
+        List.map senv ~f:(fun (_, s) -> (Ident.mk_fresh_tvar (), s))
+      in
+      let sub = Map.Poly.of_alist_exn
+        (List.map2_exn senv fresh ~f:(fun (x, _) (y, s) ->
+           (x, Term.mk_var y s))) in
+      if Evaluator.scalar_substitution_is_safe sub body then
+        Some (fresh, Formula.subst sub body)
+      else None
+    in
+    (* each occurrence of an unknown at a negative position reached without
+       an existential: the unknown, its argument sorts and arguments, the
+       path's variables and the path condition (innermost first) *)
+    let occurrences bounds phi =
+      let acc = ref [] in
+      let rec walk bound conds phi =
+        match phi with
+        | Formula.UnaryOp
+            ( Formula.Not,
+              Formula.Atom (Atom.App (Predicate.Var (p, sorts), ts, _), _),
+              _ )
+          when unknown p && not (List.exists ts ~f:term_mentions_unknown) ->
+            acc := (p, sorts, ts, bound, conds) :: !acc
+        | Formula.BinaryOp (Formula.And, a, b, _) ->
+            walk bound conds a;
+            walk bound conds b
+        | Formula.BinaryOp (Formula.Or, a, b, _) ->
+            let side s =
+              delay (fun () ->
+                  Formula.nnf_of @@ Formula.mk_neg @@ enlarge bounds s)
+            in
+            if mentions_unknown a then walk bound (side b :: conds) a;
+            if mentions_unknown b then walk bound (side a :: conds) b
+        | Formula.Bind (Formula.Forall, senv, body, _) ->
+            (match rename senv body with
+             | Some (fresh, body) -> walk (bound @ fresh) conds body
+             | None -> ())
+        | Formula.LetFormula (x, s, d, body, _)
+          when not (term_mentions_unknown d) ->
+            (match rename [ (x, s) ] body with
+             | Some (fresh, body) ->
+                 let y, _ = List.hd_exn fresh in
+                 walk (bound @ fresh)
+                   (Lazy.from_val (Formula.eq (Term.mk_var y s) d) :: conds)
+                   body
+             | None -> ())
+        | _ -> ()
+      in
+      walk [] [] phi;
+      !acc
+    in
+    let secs () = (ref 0., ref 0., ref 0.) in
+    (* [exists bound. /\ conds] with each existential conjunct of [conds]
+       (a larger side's negation, holding a previous round's bound) pulled out
+       with its variables renamed apart -- exact -- so that the one-point rules
+       reach the equations beneath it *)
+    let close bound conds =
+      let rec flatten (bound, acc) c =
+        match c with
+        | Formula.Bind (Formula.Exists, ys, body, _) ->
+            (match rename ys body with
+             | Some (fresh, body) ->
+                 List.fold (Formula.conjuncts_list_of body) ~init:(bound @ fresh, acc)
+                   ~f:flatten
+             | None -> (bound, c :: acc))
+        | Formula.BinaryOp (Formula.And, a, b, _) ->
+            flatten (flatten (bound, acc) a) b
+        | c -> (bound, c :: acc)
+      in
+      let bound, conds = List.fold conds ~init:(bound, []) ~f:flatten in
+      let split_secs, elim_secs, simplify_secs = secs () in
+      close_existential ~constructor_points:true ~split_secs ~elim_secs
+        ~simplify_secs bound (List.rev conds)
+    in
+    let nnfs =
+      List.filter_map phis ~f:(fun phi ->
+          try Some (Formula.nnf_of phi)
+          with exn_ when not (Common.Timer.is_async exn_) -> None)
+    in
+    (* one round: the new bounds, and each unknown's parameters and
+       occurrences (bound variables, equations, conditions) *)
+    let round bounds =
+      let params = Hashtbl.Poly.create () in
+      let occs_of = Hashtbl.Poly.create () in
+      List.iter nnfs ~f:(fun phi ->
+          clear_mentions ();
+          List.iter
+            (List.rev
+               (Common.PhaseTime.with_phase "occurrences" (fun () ->
+                    occurrences bounds phi)))
+            ~f:(fun (p, sorts, ts, bound, conds) ->
+              let xs =
+                Hashtbl.find_or_add params p ~default:(fun () ->
+                    List.map sorts ~f:(fun s -> (Ident.mk_fresh_tvar (), s)))
+              in
+              let eqs =
+                List.map2_exn xs ts ~f:(fun (x, s) t ->
+                    Formula.eq (Term.mk_var x s) t)
+              in
+              Hashtbl.add_multi occs_of ~key:p
+                ~data:(bound, eqs, List.rev conds)));
+      let conj_of occs =
+        Formula.and_of
+        @@ List.filter_map occs ~f:(fun (bound, eqs, conds) ->
+               let d =
+                 Common.PhaseTime.with_phase "close" (fun () ->
+                     close bound (eqs @ List.map conds ~f:Lazy.force))
+               in
+               if Formula.is_false d || Formula.ast_size d > max_size then None
+               else Some (Formula.mk_neg d))
+      in
+      ( Map.Poly.of_alist_exn
+        @@ List.map (Hashtbl.to_alist occs_of) ~f:(fun (p, occs) ->
+               (p, (Hashtbl.find_exn params p, delay (fun () -> conj_of (List.rev occs))))),
+        params,
+        occs_of,
+        conj_of )
+    in
+    let rec iterate k bounds =
+      let bounds', params, occs_of, conj_of = round bounds in
+      if k <= 1 then (bounds', params, occs_of, conj_of)
+      else iterate (k - 1) bounds'
+    in
+    let bounds, params, occs_of, conj_of =
+      Common.PhaseTime.with_phase "rounds" (fun () ->
+          iterate (max 1 rounds) Map.Poly.empty)
+    in
+    let simplify phi =
+      try Evaluator.simplify phi
+      with exn_ when not (Common.Timer.is_async exn_) -> phi
+    in
+    List.filter_map (Map.Poly.keys targets) ~f:(fun x ->
+        let p = Ident.tvar_to_pvar x in
+        match (Map.Poly.find bounds p, Hashtbl.find params p) with
+        | None, _ | _, None -> None
+        | Some (_, u), Some xs ->
+            let u = Lazy.force u in
+            let occs = List.rev (Hashtbl.find_exn occs_of p) in
+            (* the conjunction over [occs] with the [i]-th equation
+               replaced: its parameter, or one field of it, made bound *)
+            let generalised i =
+              let xi, si = List.nth_exn xs i in
+              let with_eq f =
+                List.map occs ~f:(fun (bound, eqs, conds) ->
+                    let extra, eq = f (List.nth_exn eqs i) in
+                    ( bound @ extra,
+                      List.mapi eqs ~f:(fun j e -> if j = i then eq else e),
+                      conds ))
+              in
+              let whole =
+                with_eq (fun e ->
+                    let z = Ident.mk_fresh_tvar () in
+                    ( [ (z, si) ],
+                      Formula.subst
+                        (Map.Poly.singleton xi (Term.mk_var z si))
+                        e ))
+              in
+              let fields =
+                match si with
+                | T_dt.SDT dt when Datatype.is_dt dt -> (
+                    match Datatype.conses_of dt with
+                    | [ cons ] ->
+                        let name = Datatype.name_of_cons cons in
+                        let n = List.length (Datatype.sorts_of_cons dt cons) in
+                        if n < 2 then []
+                        else
+                          List.init n ~f:(fun j ->
+                              let sj =
+                                List.nth_exn (Datatype.sorts_of_cons dt cons) j
+                              in
+                              with_eq (fun e ->
+                                  let z = Ident.mk_fresh_tvar () in
+                                  let v =
+                                    T_dt.mk_cons dt name
+                                      (List.init n ~f:(fun k ->
+                                           if k = j then Term.mk_var z sj
+                                           else
+                                             T_dt.mk_sel_by_cons dt name k
+                                               (Term.mk_var xi si)))
+                                  in
+                                  ( [ (z, sj) ],
+                                    Formula.subst (Map.Poly.singleton xi v) e )))
+                    | _ -> [])
+                | _ -> []
+              in
+              fields @ [ whole ]
+            in
+            let cands =
+              Common.PhaseTime.with_phase "generalised" (fun () ->
+                  List.concat (List.init (List.length xs) ~f:generalised)
+                  |> List.map ~f:conj_of)
+            in
+            let seen = Hash_set.Poly.create () in
+            let defs =
+              (* the quantifier-free candidates first, each group in its
+                 order: a quantified definition puts a quantifier into every
+                 constraint the unknown occurs in, beneath which the
+                 zero-unknown check instantiates rather than decides *)
+              List.stable_sort
+                ~compare:(fun (_, a) (_, b) ->
+                  Bool.compare
+                    (not (Formula.is_quantifier_free a))
+                    (not (Formula.is_quantifier_free b)))
+              @@ List.filter_map (cands @ [ u ]) ~f:(fun body ->
+                  let body = simplify body in
+                  let key = Formula.str_of body in
+                  if
+                    Formula.is_true body || Formula.is_false body
+                    || Hash_set.mem seen key
+                  then None
+                  else (
+                    Hash_set.add seen key;
+                    Some (xs, body)))
+            in
+            List.iteri defs ~f:(fun k (_, body) ->
+                print
+                @@ lazy
+                     (sprintf "[upper-bound definitions] %s #%d: %s"
+                        (Ident.name_of_tvar x) k (Formula.str_of body)));
+            Some (x, (xs, simplify u), defs))
+
+(* [upper_bound_candidates ~refuted names phis envs]: [upper_bound_definitions]
+   of the named unknowns (two rounds: each target, its upper bound and its
+   candidates), each target's list without the
+   candidates that cannot be a solution's: [refuted] decides that a formula
+   with no unknown is invalid (a countermodel found; anything else decides
+   nothing), and a candidate [D] is dropped when [L(x) => D(x)] is refuted for
+   the lower bound [L] [lower_bound_relax] derives (two rounds; its
+   quantifier-free disjuncts, a subset of a lower bound being one too; no
+   filter when it has none, since a question about a quantified bound over
+   sequences is one Z3 does not decide).  Every solution's [q] contains [L], so a definition
+   not containing [L] is no solution; dropping it loses no [sat] the probe
+   could give. *)
+let upper_bound_candidates ?(print = fun _ -> ()) ~refuted names phis envs =
+  let open Ast.LogicOld in
+  let cands =
+    Common.PhaseTime.with_phase "ub-definitions" (fun () ->
+        upper_bound_definitions ~print ~rounds:2 names phis envs)
+    |> List.map ~f:(fun (x, bound, defs) ->
+         (x, bound, List.filter defs ~f:(fun (params, body) ->
+              bound_definition_is_closed (params, body))))
+  in
+  if List.is_empty cands then []
+  else
+    let _, _, _, lower =
+      Common.PhaseTime.with_phase "ub-lower-bound" (fun () ->
+          lower_bound_relax ~rounds:2 names phis envs)
+    in
+    List.iter lower ~f:(fun (x, (_, body)) ->
+        print
+        @@ lazy
+             (sprintf "[upper-bound definitions] lower bound of %s: %s"
+                (Ident.name_of_tvar x) (Formula.str_of body)));
+    List.map cands ~f:(fun (x, u, defs) ->
+        match List.Assoc.find lower x ~equal:Ident.tvar_equal with
+        | None -> (x, u, defs)
+        | Some (lparams, lbody) ->
+            let qf =
+              List.filter (Formula.disjuncts_list_of lbody) ~f:(fun d ->
+                  let _, b, _ = Formula.let_exists_or_formula d in
+                  Formula.is_quantifier_free b)
+            in
+            if List.is_empty qf then (x, u, defs)
+            else
+              let l = Formula.or_of qf in
+              (* [L => forall z. phi] is valid exactly when [L => phi] is,
+                 [z] not free in [L]: a leading universal is asked about free *)
+              let rec strip = function
+                | Formula.Bind (Formula.Forall, _, b, _) -> strip b
+                | b -> b
+              in
+              ( x,
+                u,
+                List.filteri defs ~f:(fun k (params, body) ->
+                    let body =
+                      Formula.subst
+                        (Map.Poly.of_alist_exn
+                        @@ List.map2_exn params lparams ~f:(fun (y, _) (z, s) ->
+                               (y, Term.mk_var z s)))
+                        body
+                    in
+                    let r =
+                      Common.PhaseTime.with_phase "ub-filter" (fun () ->
+                          refuted (Formula.mk_imply l (strip body)))
+                    in
+                    print
+                    @@ lazy
+                         (sprintf "[upper-bound definitions] %s #%d %s"
+                            (Ident.name_of_tvar x) k
+                            (if r then "refuted by the lower bound; dropped"
+                             else "kept"));
+                    not r) ))
 
 (* [define_true_sexps names sexps] is the input with the declaration of each
    unknown named in [names] -- [declare-fun] or [declare-dep-exists-fun] of a
@@ -1030,20 +1749,335 @@ let define_true_sexps names sexps =
         definition name args
     | sexp -> sexp)
 
+(* Which eligible definitions [opaque_definitions_sexps] makes universal.
+   [Bodies { keep_quantifier_free }]: every eligible one, or with
+   [keep_quantifier_free] only those whose body has a quantifier.
+   [Goal_congruence]: those applied on both sides of a goal assertion -- one
+   whose conclusion applies no unknown -- closed under the definitions their
+   bodies apply ([goal_congruence_definitions]); whether a body has a
+   quantifier does not enter.  [Goal_cone_congruence]: as [Goal_congruence],
+   with a goal's premises extended by the premises of the clauses that
+   define the unknowns its premises apply (one step; see
+   [goal_congruence_definitions]).  [Bodies_or_goal_congruence
+   { keep_quantifier_free }]: those either [Bodies] or [Goal_congruence]
+   chooses. *)
+type opaque_selection =
+  | Bodies of { keep_quantifier_free : bool }
+  | Goal_congruence
+  | Goal_cone_congruence
+  | Bodies_or_goal_congruence of { keep_quantifier_free : bool }
+
+(* [goal_congruence_definitions ~cone ~unknowns ~defined sexps]: the names in
+   [defined] applied both in a premise and in the conclusion of some goal
+   assertion of [sexps], closed under the names in [defined] that the bodies
+   ([defined]'s data) of the names already chosen contain.  A goal assertion
+   is [(assert F)] where [F], below its universal quantifiers and [!]
+   annotations, is [(=> P C)] or [(not P)] (read as [(=> P false)]) and [C]
+   contains no name of [unknowns].  Its conjuncts are those of [P] with
+   nested [and]s flattened; a conjunct [(not Q)] is moved to the conclusion,
+   since [P' /\ not Q => C] is [P' => C \/ Q], so the conclusion is [C] with
+   every such [Q] and the premises are the other conjuncts.  A name is
+   applied in a part when it occurs as an atom there (bound names included,
+   which can only choose more).
+   With [cone], a goal's premises also include the premises of every clause
+   -- an assertion of the same shape, conclusion unrestricted -- whose
+   conclusion is an application of an unknown applied in the goal's
+   premises: the facts that reach the goal through that unknown, which
+   Thrust writes as [(=> (and facts) (p args))] beside the goal
+   [(=> (and (p args') ...) C)].  Without it such a goal has no definition
+   on its premise side and nothing is chosen.  Only one step is taken:
+   the defining clauses' own premise unknowns are not followed.  Any subset of the eligible definitions may
+   be made universal (the argument at [opaque_definitions_sexps] holds for
+   each one separately), so this chooses what to abstract, not whether the
+   answer may be read. *)
+let goal_congruence_definitions ~cone ~unknowns ~defined sexps =
+  let module S = Ppx_sexp_conv_lib.Sexp in
+  let rec atoms acc = function
+    | S.Atom a -> Set.add acc a
+    | S.List l -> List.fold l ~init:acc ~f:atoms
+  in
+  let rec strip = function
+    | S.List [ S.Atom "forall"; _; body ] -> strip body
+    | S.List (S.Atom "!" :: body :: _) -> strip body
+    | f -> f
+  in
+  let rec conjuncts = function
+    | S.List (S.Atom "and" :: l) -> List.concat_map l ~f:conjuncts
+    | f -> [ f ]
+  in
+  let names_in fs =
+    Set.filter ~f:(Map.mem defined)
+      (List.fold fs ~init:String.Set.empty ~f:atoms)
+  in
+  let clauses =
+    List.filter_map sexps ~f:(function
+      | S.List [ S.Atom "assert"; f ] -> (
+          match strip f with
+          | S.List [ S.Atom "=>"; p; c ] -> Some (p, c)
+          | S.List [ S.Atom "not"; p ] -> Some (p, S.Atom "false")
+          | _ -> None)
+      | _ -> None)
+  in
+  (* with [cone]: each unknown to the names in [defined] occurring in the
+     premises of the clauses whose conclusion applies it *)
+  let defining_premises =
+    if not cone then String.Map.empty
+    else
+      List.fold clauses ~init:String.Map.empty ~f:(fun acc (p, c) ->
+          match strip c with
+          | (S.Atom u | S.List (S.Atom u :: _)) when Set.mem unknowns u ->
+              Map.update acc u ~f:(fun old ->
+                  Set.union (names_in [ p ])
+                    (Option.value old ~default:String.Set.empty))
+          | _ -> acc)
+  in
+  let both =
+    List.fold clauses ~init:String.Set.empty ~f:(fun acc (p, c) ->
+        if Set.exists (atoms String.Set.empty c) ~f:(Set.mem unknowns) then acc
+        else
+          let negated, premises =
+            List.partition_map (conjuncts p) ~f:(function
+              | S.List [ S.Atom "not"; q ] -> Either.First q
+              | q -> Either.Second q)
+          in
+          let premise_names =
+            if not cone then names_in premises
+            else
+              Set.fold
+                (Set.filter ~f:(Set.mem unknowns)
+                   (List.fold premises ~init:String.Set.empty ~f:atoms))
+                ~init:(names_in premises)
+                ~f:(fun acc u ->
+                  match Map.find defining_premises u with
+                  | None -> acc
+                  | Some names -> Set.union acc names)
+          in
+          Set.union acc (Set.inter premise_names (names_in (c :: negated))))
+  in
+  let rec close chosen = function
+    | [] -> chosen
+    | n :: rest ->
+        let added =
+          match Map.find defined n with
+          | None -> []
+          | Some body -> Set.to_list (Set.diff (names_in [ body ]) chosen)
+        in
+        close (List.fold added ~init:chosen ~f:Set.add) (added @ rest)
+  in
+  close both (Set.to_list both)
+
+(* [opaque_definitions_sexps ~selection sexps] is [(sexps', names)]:
+   the input with each eligible [define-fun] replaced, in its place, by a
+   [declare-forall-fun] of the same name, argument sorts and result sort (its
+   body dropped), and each such name added to the dependency set of every
+   later [declare-dep-exists-fun] that already holds every universal function
+   the definition's body reaches; [names] are the definitions so replaced.
+   A definition is eligible when it has at least one parameter, its body
+   reaches no unknown (a [declare-fun], [declare-dep-exists-fun] or
+   [declare-rel] name), directly or through the bodies of the definitions it
+   applies; of the eligible ones, [selection] ([opaque_selection]) says which
+   are replaced.
+   What a body reaches is over-approximated by every atom it contains, bound
+   names included, which only makes fewer definitions eligible and fewer
+   dependencies added.
+
+   Why only a [sat] of the result may be read, and why it is one of the
+   input.  Write [P(f)] for the result read with the universal [f] in place of
+   the definition [d].  [P(f)] satisfiable means: for every model of the
+   theories and every interpretation of the universal functions (each lawful
+   one, for those with a law), there are interpretations of the unknowns, each
+   depending only on its dependency set, satisfying the clauses.  The input is
+   [P(d)], and [d], read in a model, is one interpretation of [f], a function
+   of the model and of the universal functions its body reaches.  So
+   instantiating [f] by it gives interpretations of the unknowns for [P(d)];
+   an unknown whose set holds [f] now depends on [d]'s value, a function of the
+   universals in its body, which its set holds too by the condition above,
+   and an unknown whose set does not hold [f] did not depend on it.  A law
+   premise is attached to the assertions that reach its function through the
+   bodies of the definitions they apply, so dropping a body can only drop
+   premises, which makes the result stronger.  An [unsat] or an undecided
+   answer of [P(f)] says nothing about [P(d)]: the definition constrains [f]
+   to one interpretation, and the result asks for all.  Interpretation-
+   dependent terms inside a body (a division by zero, an out-of-range
+   sequence read) are interpreted per model, as the body is, so the argument
+   holds per model of the theories.  Nothing in the argument depends on
+   which eligible definitions are replaced: each is instantiated by its own
+   body, and a kept definition that applies a replaced one is again the
+   input's definition once that one is instantiated. *)
+let opaque_definitions_sexps ~selection sexps =
+  let module S = Ppx_sexp_conv_lib.Sexp in
+  let rec atoms acc = function
+    | S.Atom a -> Set.add acc a
+    | S.List l -> List.fold l ~init:acc ~f:atoms
+  in
+  let rec has_quantifier = function
+    | S.Atom _ -> false
+    | S.List (S.Atom ("forall" | "exists") :: _) -> true
+    | S.List l -> List.exists l ~f:has_quantifier
+  in
+  (* every name a [declare-*] command other than a universal function's, a
+     sort's or a datatype's introduces: the unknowns of every kind, and the
+     clause variables of [declare-var], which a definition must not reach
+     either *)
+  let unknowns =
+    List.fold sexps ~init:String.Set.empty ~f:(fun acc -> function
+      | S.List
+          (S.Atom
+             ( "declare-forall-fun" | "declare-forall-sort" | "declare-sort"
+             | "declare-datatype" | "declare-datatypes"
+             | "declare-codatatypes" )
+          :: _) ->
+          acc
+      | S.List (S.Atom cmd :: S.Atom name :: _)
+        when String.is_prefix cmd ~prefix:"declare-" ->
+          Set.add acc name
+      | _ -> acc)
+  in
+  let universals =
+    List.fold sexps ~init:String.Set.empty ~f:(fun acc -> function
+      | S.List (S.Atom "declare-forall-fun" :: S.Atom name :: _) ->
+          Set.add acc name
+      | _ -> acc)
+  in
+  (* the atoms each definition reaches, its own body's and those of the
+     definitions it applies, in input order *)
+  let reach = String.Table.create () in
+  let reaches_of body =
+    let own = atoms String.Set.empty body in
+    Set.fold own ~init:own ~f:(fun acc a ->
+        match Hashtbl.find reach a with
+        | Some r -> Set.union acc r
+        | None -> acc)
+  in
+  List.iter sexps ~f:(function
+    | S.List [ S.Atom ("define-fun" | "define-fun-rec"); S.Atom name; _; _; body ]
+    | S.List [ S.Atom "define-const"; S.Atom name; _; body ] ->
+        Hashtbl.set reach ~key:name ~data:(reaches_of body)
+    | _ -> ());
+  let by_body ~keep_quantifier_free body =
+    (not keep_quantifier_free) || has_quantifier body
+  in
+  let by_goal ~cone () =
+    let defined =
+      List.fold sexps ~init:String.Map.empty ~f:(fun acc -> function
+        | S.List [ S.Atom "define-fun"; S.Atom name; S.List (_ :: _); _; body ]
+          ->
+            Map.set acc ~key:name ~data:body
+        | _ -> acc)
+    in
+    Set.mem (goal_congruence_definitions ~cone ~unknowns ~defined sexps)
+  in
+  let selected =
+    match selection with
+    | Bodies { keep_quantifier_free } ->
+        fun _name body -> by_body ~keep_quantifier_free body
+    | Goal_congruence ->
+        let chosen = by_goal ~cone:false () in
+        fun name _body -> chosen name
+    | Goal_cone_congruence ->
+        let chosen = by_goal ~cone:true () in
+        fun name _body -> chosen name
+    | Bodies_or_goal_congruence { keep_quantifier_free } ->
+        let chosen = by_goal ~cone:false () in
+        fun name body -> by_body ~keep_quantifier_free body || chosen name
+  in
+  let opaque = String.Table.create () in
+  (* in input order, so that a dependency set is extended only by the
+     definitions made universal before it *)
+  let rewrite = function
+    | S.List [ S.Atom "define-fun"; S.Atom name; S.List (_ :: _ as params); ret; body ]
+      as sexp -> (
+        let r = Option.value (Hashtbl.find reach name) ~default:String.Set.empty in
+        if
+          Set.exists r ~f:(Set.mem unknowns) || not (selected name body)
+        then sexp
+        else
+          match
+            List.map params ~f:(function
+              | S.List [ S.Atom _; sort ] -> Some sort
+              | _ -> None)
+            |> Option.all
+          with
+          | None -> sexp
+          | Some sorts ->
+              Hashtbl.set opaque ~key:name ~data:(Set.inter r universals);
+              S.List [ S.Atom "declare-forall-fun"; S.Atom name; S.List sorts; ret ])
+    | S.List
+        [ S.Atom "declare-dep-exists-fun"; S.Atom name; S.List deps; args; ret ]
+      ->
+        let held =
+          List.fold deps ~init:String.Set.empty ~f:(fun acc -> function
+            | S.Atom a -> Set.add acc a
+            | _ -> acc)
+        in
+        let added =
+          Hashtbl.fold opaque ~init:[] ~f:(fun ~key ~data acc ->
+              if Set.is_subset data ~of_:held then key :: acc else acc)
+        in
+        S.List
+          [
+            S.Atom "declare-dep-exists-fun";
+            S.Atom name;
+            S.List
+              (deps
+              @ List.map ~f:(fun a -> S.Atom a)
+                  (List.sort added ~compare:String.compare));
+            args;
+            ret;
+          ]
+    | sexp -> sexp
+  in
+  (* a [define-funs-rec] body is not looked into, so nothing is made
+     universal in an input that has one *)
+  if
+    List.exists sexps ~f:(function
+      | S.List (S.Atom "define-funs-rec" :: _) -> true
+      | _ -> false)
+  then (sexps, [])
+  else
+    let rewritten =
+      List.rev @@ List.fold sexps ~init:[] ~f:(fun acc c -> rewrite c :: acc)
+    in
+    (rewritten, List.sort (Hashtbl.keys opaque) ~compare:String.compare)
+
+(* [opaque_definitions_of_file ~selection file]: the names
+   [opaque_definitions_sexps] would make universal in [file], read without
+   building a problem (the parse only); [[]] when the file does not parse *)
+let opaque_definitions_of_file ~selection filename =
+  try
+    let sexps =
+      In_channel.with_file filename ~f:(fun ic ->
+          let lexbuf = Lexing.from_channel ic in
+          SMT.Parser.program SMT.Lexer.token lexbuf)
+    in
+    snd (opaque_definitions_sexps ~selection sexps)
+  with exn when not (Common.Timer.is_async exn) -> []
+
 (* Whether [from_smt2_file] names the input's quantified premises by fresh unknowns before
    [Problem.make] skolemises them ([name_quantified_premises]).  Process-wide, off by default;
    only ever turned on by a caller (the solver, from its configuration), so that every later
    reading in the process gives the same problem. *)
 let name_quantified_premises = ref false
 
-(* The fresh unknowns [name_quantified_premises] introduced in every reading of this process so
-   far.  They are of the ordinary kind; what sets them apart is that no preprocessing step may
-   eliminate them ([premise_unknowns_of]). *)
-let premise_names : Ident.tvar Set.Poly.t ref = ref Set.Poly.empty
+(* The fresh unknowns that name a part of a clause so that its clausal form does not multiply:
+   those [name_quantified_premises] introduced in every reading of this process so far, and those
+   a fixpoint-logic reduction added ([add_premise_names]).  They are of the ordinary kind; what
+   sets them apart is that no preprocessing step may eliminate them ([premise_unknowns_of]):
+   resolving one away substitutes the part it names back and rebuilds the product.  Atomic,
+   because a primal and a dual reduction run in two domains at once and both may add names while
+   the other side's preprocessing reads the set. *)
+let premise_names : Ident.tvar Set.Poly.t Atomic.t = Atomic.make Set.Poly.empty
 
-(* the unknowns of [senv] that a reading named a quantified premise with *)
+(* adds [names] to [premise_names]; safe from any domain (a lost update would let a named part be
+   resolved away, so the set is replaced only by compare-and-set) *)
+let rec add_premise_names names =
+  let old = Atomic.get premise_names in
+  if not (Atomic.compare_and_set premise_names old (Set.union old names)) then
+    add_premise_names names
+
+(* the unknowns of [senv] that name a quantified premise or a multiplied part of a clause *)
 let premise_unknowns_of (senv : (Ident.tvar, 'a) Map.Poly.t) =
-  Set.filter !premise_names ~f:(Map.Poly.mem senv)
+  Set.filter (Atomic.get premise_names) ~f:(Map.Poly.mem senv)
 
 (* the counter the fresh names of [name_quantified_premises] are drawn from *)
 let premise_counter = ref 0
@@ -1230,7 +2264,9 @@ let premise_definitions phis (envs : SMT.Problem.envs) =
 (** the problem of an SMT-LIB2 file; with [define_true], the named unknowns
     are read as defined to be [true] ([define_true] above), and their names
     are recorded in [defined_true]; with [define_true_witness_causing], so are
-    the unknowns [witness_causing_unknowns] reports, beside the named ones *)
+    the unknowns [witness_causing_unknowns] reports, beside the named ones; with
+    [define_true_all], so is every unknown the file declares (the targets are
+    still only the Boolean-valued unknowns of the ordinary kind) *)
 (* The last reading of a file by [from_smt2_file] that applied none of its optional
    transformations (no unknown defined as [true] or by a lower bound, no relaxation, the
    synthesis reading, empty initial environments), with the reader's four process-wide
@@ -1250,6 +2286,7 @@ type plain_read = {
   law_dedup_premises : bool;
   onepoint_constructor_binders : bool;
   name_quantified_premises : bool;
+  premise_witness_disjuncts : bool;
 }
 
 let last_plain_read : plain_read option ref = ref None
@@ -1261,9 +2298,10 @@ let record_relaxable = ref false
 
 type relaxable = {
   file : string;
-  switches : bool * bool * bool * bool;
-      (** [law_reaches_dependents], [law_dedup_premises], [onepoint_constructor_binders] and
-          [name_quantified_premises] at the reading's start *)
+  switches : bool * bool * bool * bool * bool;
+      (** [law_reaches_dependents], [law_dedup_premises], [onepoint_constructor_binders],
+          [name_quantified_premises] and [SMT.Smtlib2.premise_witness_disjuncts] at the
+          reading's start *)
   defined : string list;  (** the unknowns the reading defined as [true], sorted *)
   targets : string list;
       (** the witness-causing unknowns of the assertions as read with [defined] defined that
@@ -1296,7 +2334,8 @@ let relaxable_switches () =
   ( !SMT.Smtlib2.law_reaches_dependents,
     !SMT.Smtlib2.law_dedup_premises,
     !Problem.onepoint_constructor_binders,
-    !name_quantified_premises )
+    !name_quantified_premises,
+    !SMT.Smtlib2.premise_witness_disjuncts )
 
 (* Whether a plain reading (as [last_plain_read] records one) also keeps its assertions as read,
    for [forced_true_of_last_read].  Off by default: the assertions are as large as the problem,
@@ -1383,26 +2422,35 @@ let least_definition_problem ?(print = fun _ -> ()) ~rounds ~lower_bound_defined
   Problem.make ~skolem_pred:true phis envs
 
 let from_smt2_file ~print ~inline ?(skolem_pred = false) ?(define_true_names = [])
-    ?(define_true_witness_causing = false) ?(defined_true = ref [])
+    ?(define_true_witness_causing = false) ?(define_true_all = false)
+    ?(defined_true = ref [])
     ?(define_forced_true : (Ast.LogicOld.Formula.t -> bool) option)
     ?(define_true_known : Ident.tvar list option)
     ?(lower_bound_names = []) ?(lower_bound_witness_causing = false)
     ?(lower_bound_rounds = 2) ?(relaxed = ref []) ?(lower_bounds = ref [])
     ?(define_lower_bound_witness_causing = false)
     ?(define_lower_bound_rounds = 3) ?(lower_bound_defined = ref [])
+    ?(define_upper_bound : (int * (Ast.LogicOld.Formula.t -> bool)) option)
+    ?(upper_bound_defined = ref []) ?(upper_bound_count = ref 0)
+    ?(upper_bounds = ref [])
     ?(decl_reading = SMT.Problem.Synthesize)
     ?(uni_sort = Set.Poly.empty)
     ?(uni_senv = Map.Poly.empty) ?(exi_senv = Map.Poly.empty)
     ?(dep_map = Map.Poly.empty) ?(kind_map = Map.Poly.empty)
-    ?(fenv = Map.Poly.empty) ?(dtenv = Map.Poly.empty) filename =
+    ?(fenv = Map.Poly.empty) ?(dtenv = Map.Poly.empty)
+    ?(opaque_definitions : (opaque_selection * string list ref) option)
+    filename =
   let plain =
-    List.is_empty define_true_names
+    Option.is_none opaque_definitions
+    && List.is_empty define_true_names
     && (not define_true_witness_causing)
+    && (not define_true_all)
     && Option.is_none define_forced_true
     && Option.is_none define_true_known
     && List.is_empty lower_bound_names
     && (not lower_bound_witness_causing)
     && (not define_lower_bound_witness_causing)
+    && Option.is_none define_upper_bound
     && Stdlib.(decl_reading = SMT.Problem.Synthesize)
     && Set.is_empty uni_sort && Map.is_empty uni_senv && Map.is_empty exi_senv
     && Map.is_empty dep_map && Map.is_empty kind_map && Map.is_empty fenv
@@ -1417,6 +2465,7 @@ let from_smt2_file ~print ~inline ?(skolem_pred = false) ?(define_true_names = [
       !Problem.onepoint_constructor_binders )
   in
   let name_premises_at_start = !name_quantified_premises in
+  let witness_premises_at_start = !SMT.Smtlib2.premise_witness_disjuncts in
   let relaxable_switches_at_start = relaxable_switches () in
   last_relaxable := None;
   let record_relaxable_now phis envs defined =
@@ -1436,6 +2485,7 @@ let from_smt2_file ~print ~inline ?(skolem_pred = false) ?(define_true_names = [
           }
   in
   let sexps =
+    Common.PhaseTime.with_phase "parse" @@ fun () ->
     In_channel.with_file filename ~f:(fun ic ->
         let lexbuf = Lexing.from_channel ic in
         Lexing.set_filename lexbuf filename;
@@ -1444,11 +2494,26 @@ let from_smt2_file ~print ~inline ?(skolem_pred = false) ?(define_true_names = [
           LexingHelper.print_error_information lexbuf;
           raise e)
   in
+  SMT.Smtlib2.warn_if_several_checks ~filename sexps;
+  (* [opaque_definitions = Some (selection, made)]: the selected eligible
+     definitions read as universal functions ([opaque_definitions_sexps]),
+     their names recorded in [made]; only a [sat] of such a reading may be
+     read as one of the input *)
+  let sexps =
+    match opaque_definitions with
+    | None -> sexps
+    | Some (selection, made) ->
+        let sexps, names = opaque_definitions_sexps ~selection sexps in
+        made := names;
+        sexps
+  in
   let read sexps =
     let phis, envs =
+      Common.PhaseTime.with_phase "toplevel" @@ fun () ->
       SMT.Smtlib2.toplevel ~print ~inline []
         {
           decl_reading;
+          lifted_universals = Map.Poly.empty;
           candidates = Map.Poly.empty;
           uni_sort;
           uni_senv;
@@ -1460,7 +2525,8 @@ let from_smt2_file ~print ~inline ?(skolem_pred = false) ?(define_true_names = [
         }
         sexps
     in
-    ( Typeinf.typeinf ~print
+    ( Common.PhaseTime.with_phase "typeinf" @@ fun () ->
+      Typeinf.typeinf ~print
         ~rigid:(SMT.Smtlib2.rigid_of envs.uni_sort)
           (* A sort the inference cannot resolve becomes [Int], silently.
            The alternative -- [None], i.e. leave it unresolved and let the
@@ -1487,7 +2553,7 @@ let from_smt2_file ~print ~inline ?(skolem_pred = false) ?(define_true_names = [
     if not name_premises_at_start then (phis, envs)
     else
       let phis, envs, names = premise_definitions phis envs in
-      premise_names := Set.union !premise_names (Set.Poly.of_list names);
+      add_premise_names (Set.Poly.of_list names);
       read_stage
         (sprintf "%d quantified premise(s) named" (List.length names));
       (phis, envs)
@@ -1529,6 +2595,12 @@ let from_smt2_file ~print ~inline ?(skolem_pred = false) ?(define_true_names = [
   let define_true_names =
     if not define_true_witness_causing then define_true_names
     else define_true_names @ witness_causing_unknowns phis envs
+  in
+  let define_true_names =
+    if not define_true_all then define_true_names
+    else
+      define_true_names
+      @ List.map (Map.Poly.keys envs.exi_senv) ~f:Ident.name_of_tvar
   in
   (* [define_lower_bound_witness_causing] reads a closure's precondition,
      assumed by an unguarded universal, as [true] before the lower bounds of
@@ -1579,6 +2651,33 @@ let from_smt2_file ~print ~inline ?(skolem_pred = false) ?(define_true_names = [
       lower_bound_defined := defs;
       (phis, envs)
   in
+  (* [define_upper_bound = Some (k, refuted)]: the witness-causing unknowns
+     replaced at every occurrence by their [k]-th candidate of
+     [upper_bound_candidates] (none replaced when a target has fewer); one
+     choice of them, of which only a [sat] may be read.  [upper_bound_count]
+     is the largest number of candidates a target has, so a caller knows
+     which [k] to try, and [upper_bounds] each target's upper bound *)
+  let phis, envs =
+    match define_upper_bound with
+    | None -> (phis, envs)
+    | Some (k, refuted) ->
+        let cands =
+          upper_bound_candidates ~print ~refuted
+            (witness_causing_unknowns phis envs)
+            phis envs
+        in
+        upper_bounds := List.map cands ~f:(fun (x, u, _) -> (x, u));
+        upper_bound_count :=
+          List.fold cands ~init:0 ~f:(fun m (_, _, ds) ->
+              max m (List.length ds));
+        let defs =
+          List.filter_map cands ~f:(fun (x, _, ds) ->
+              Option.map (List.nth ds k) ~f:(fun d -> (x, d)))
+        in
+        upper_bound_defined := defs;
+        if List.is_empty defs then (phis, envs)
+        else define_formulas defs phis envs
+  in
   (* the named unknowns are replaced by their lower bounds where they are
      assumed and by [true] where they are demanded ([lower_bound_relax]): a
      relaxation, of which only an [unsat] may be read *)
@@ -1603,7 +2702,10 @@ let from_smt2_file ~print ~inline ?(skolem_pred = false) ?(define_true_names = [
   read_stage "relaxations done";
   let phis, envs = name_premises phis envs in
   Ast.LogicOld.set_input_assertions phis;
-  let pcsp = Problem.make ~skolem_pred phis envs in
+  let pcsp =
+    Common.PhaseTime.with_phase "make" (fun () ->
+        Problem.make ~skolem_pred phis envs)
+  in
   read_stage "problem made";
   (let reach, dedup, onepoint = switches_at_start in
    if plain then
@@ -1617,6 +2719,7 @@ let from_smt2_file ~print ~inline ?(skolem_pred = false) ?(define_true_names = [
            law_dedup_premises = dedup;
            onepoint_constructor_binders = onepoint;
            name_quantified_premises = name_premises_at_start;
+           premise_witness_disjuncts = witness_premises_at_start;
          });
   pcsp
 
@@ -1638,10 +2741,12 @@ let from_gzipped_smt2_file ~print ~inline ?(skolem_pred = false)
               LexingHelper.print_error_information lexbuf;
               raise e))
   in
+  SMT.Smtlib2.warn_if_several_checks ~filename sexps;
   let phis, envs =
     SMT.Smtlib2.toplevel ~print ~inline []
       {
         decl_reading;
+        lifted_universals = Map.Poly.empty;
         candidates = Map.Poly.empty;
         uni_sort;
         uni_senv;
@@ -1788,6 +2893,7 @@ let oracle_of_smt2_file ~print ~problem_file oracle_file =
     SMT.Smtlib2.toplevel ~print ~inline:true []
       {
         decl_reading = SMT.Problem.Synthesize;
+        lifted_universals = Map.Poly.empty;
         candidates = Map.Poly.empty;
         uni_sort = Set.Poly.empty;
         uni_senv = Map.Poly.empty;

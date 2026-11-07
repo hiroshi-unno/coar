@@ -1,0 +1,16 @@
+/* qnone has no transition, so it accepts no tree; the output wrap a puts a
+   node below wrap, which qo sends to qnone, so the specification is
+   violated on every input.  A state named only as a child of a transition
+   is a state of the automaton like any other. */
+%BEGING
+F x -> wrap a.
+%ENDG
+
+%BEGINA
+qa a -> .
+qo wrap -> qnone.
+%ENDA
+
+%BEGINT
+F : qa -> qo.
+%ENDT

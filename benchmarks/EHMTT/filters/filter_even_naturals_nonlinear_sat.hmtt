@@ -1,0 +1,34 @@
+/* Keeping the even naturals of a list: an element n is kept when Even n
+   holds and output as Copy n, so the result is a list of even naturals.
+   Nonlinear: a kept element is analysed twice, by Even and by Copy. */
+%BEGING
+Filter xs = case xs of
+  nil => nil
+| cons n xs' => Even n (cons (Copy n) (Filter xs')) (Filter xs').
+Even n t f = case n of
+  z => t
+| s n' => Odd n' t f.
+Odd n t f = case n of
+  z => f
+| s n' => Even n' t f.
+Copy n = case n of
+  z => z
+| s n' => s (Copy n').
+%ENDG
+
+%BEGINA
+q0 nil -> .
+q0 cons -> qnat q0.
+qnat z -> .
+qnat s -> qnat.
+
+q1 nil -> .
+q1 cons -> qeven q1.
+qeven z -> .
+qeven s -> qodd.
+qodd s -> qeven.
+%ENDA
+
+%BEGINT
+Filter : q0 -> q1.
+%ENDT

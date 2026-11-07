@@ -49,6 +49,19 @@ let with_shared_normalize f =
         Exn.protect ~f ~finally:(fun () ->
             Stdlib.Domain.DLS.set normalize_scope None)
 
+(* [without_shared_normalize f]: [f ()] with this domain's scope of
+   [with_shared_normalize] closed during [f] and reopened, its tables as they
+   were, afterwards; the same values and draws as in the scope (the memo
+   changes only sharing), and nothing [f] normalises is kept alive by the
+   tables (see [Evaluator.without_shared_simplify]). *)
+let without_shared_normalize f =
+  match Stdlib.Domain.DLS.get normalize_scope with
+  | None -> f ()
+  | Some _ as scope ->
+      Stdlib.Domain.DLS.set normalize_scope None;
+      Exn.protect ~f ~finally:(fun () ->
+          Stdlib.Domain.DLS.set normalize_scope scope)
+
 let rec int_monomials_of (coeff : Value.t) = function
   | Term.Var _ as term -> Map.Poly.singleton (Map.Poly.singleton term 1) coeff
   | FunApp (T_int.Int n, [], _) ->
@@ -166,10 +179,8 @@ and real_monomials_of (coeff : Value.t) = function
   | Term.Var _ as term -> Map.Poly.singleton (Map.Poly.singleton term 1) coeff
   | FunApp (T_real.Real n, [], _) ->
       Map.Poly.singleton Map.Poly.empty (Value.rmul coeff (Value.Real n))
-  | FunApp (T_real.Alge n, [ t ], _) ->
-      Map.Poly.singleton
-        (Map.Poly.singleton (T_real.mk_alge (normalize_term t) n) 1)
-        coeff
+  | FunApp (T_real.Alge _, [], _) as alge ->
+      Map.Poly.singleton (Map.Poly.singleton alge 1) coeff
   | FunApp (T_real.RNeg, [ t ], _) -> real_monomials_of (Value.neg coeff) t
   | FunApp (T_real.RAbs, [ t1 ], _) ->
       Map.Poly.singleton

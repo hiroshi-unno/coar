@@ -1,0 +1,15 @@
+/* The main type gives F an input tree, which only a case analysis may
+   read, but F's rule returns its parameter as its output: F's parameter is
+   an output tree.  The program does not type, and is refused. */
+%BEGING
+F x -> x.
+%ENDG
+
+%BEGINA
+qa a -> .
+qo b -> .
+%ENDA
+
+%BEGINT
+F : qa -> qo.
+%ENDT

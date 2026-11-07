@@ -76,7 +76,11 @@ let pvar_args (atm : Atom.t) =
     made at the substituted arguments: exact, and it keeps the variables of a
     fact or step that only name an argument out of the formula *)
 let close_exists ?(solve_linear = false) ?(l = fun _ _ -> Formula.mk_true ())
-    params conjs bodies =
+    ?(univ = []) params conjs bodies =
+  (* [univ]: variables of [bodies] read universally, [forall univ. /\_j
+     l(ts_j)] under the existential; none of them may occur in [conjs], so the
+     one-point rule below never removes one, and none is closed existentially *)
+  let univ_names = Set.Poly.of_list (List.map univ ~f:fst) in
   let params = Set.Poly.of_list (List.map params ~f:fst) in
   (* with [solve_linear], an integer equation [t1 = t2] whose difference is
      [a y + r] for a bound [y] with [a] = 1 or -1 and [r] a linear sum of
@@ -122,7 +126,14 @@ let close_exists ?(solve_linear = false) ?(l = fun _ _ -> Formula.mk_true ())
   let rec elim conjs bodies =
     match
       List.find_mapi conjs ~f:(fun i c ->
-          Option.map (point c) ~f:(fun r -> (i, r)))
+          Option.bind (point c) ~f:(fun ((y, t) as r) ->
+              let sub = Map.Poly.singleton y t in
+              if List.for_all conjs ~f:(Evaluator.scalar_substitution_is_safe sub)
+                 && List.for_all bodies ~f:(List.for_all ~f:(fun term ->
+                        Evaluator.scalar_substitution_is_safe_in_scope
+                          (Evaluator.scalar_substitution_scope_of term) sub))
+              then Some (i, r)
+              else None))
     with
     | None -> (conjs, bodies)
     | Some (i, (y, t)) ->
@@ -135,11 +146,23 @@ let close_exists ?(solve_linear = false) ?(l = fun _ _ -> Formula.mk_true ())
   let conjs, bodies =
     elim (List.concat_map conjs ~f:Formula.conjuncts_list_of) bodies
   in
-  let body = Formula.and_of (conjs @ List.mapi bodies ~f:l) in
+  let body =
+    if List.is_empty univ then Formula.and_of (conjs @ List.mapi bodies ~f:l)
+    else
+      Formula.and_of
+        (conjs @ [ Formula.forall univ (Formula.and_of (List.mapi bodies ~f:l)) ])
+  in
+  (* Function heads belong to the fixed background, including nullary
+     functions whose signature has the same shape as a scalar sort. *)
+  let background =
+    Set.Poly.map (Formula.fvar_apps_of body) ~f:(fun app ->
+        let name, args, ret, _, _ = Term.let_fvar_app app in
+        (name, Sort.mk_fun (args @ [ ret ])))
+  in
   let ys =
     Set.to_list
-    @@ Set.filter (Formula.term_sort_env_of body) ~f:(fun (x, _) ->
-        not (Set.mem params x))
+    @@ Set.filter (Set.diff (Formula.term_sort_env_of body) background)
+         ~f:(fun (x, _) -> not (Set.mem params x || Set.mem univ_names x))
   in
   Formula.exists ys body
 
@@ -202,9 +225,48 @@ let size_up_to cap (phi : Formula.t) =
 let exceeds max_size phi =
   match max_size with None -> false | Some m -> size_up_to m phi > m
 
+(** The results [v] of the functional body atoms [fns] of a step of [p] with
+    head arguments [h], body arguments [bodies] and pure part [phi], with their
+    sorts, when the step may be read with them universally quantified: every
+    functional atom's last argument is a variable [v] occurring in no other
+    argument of any functional atom, in no other functional atom's result, in
+    no head argument and not in [phi].  [None] otherwise.
+
+    Why that reading is sound.  A functional unknown is total in every
+    solution: at the arguments [a] some [w] has [F(a, w)].  So in a solution
+    whose [p] includes the level below at every [v], the step's premise holds
+    at [v = w] (the [F] atom by totality, the [p] atoms by the level, the pure
+    part and the head do not read [v]), and the head follows.  Single-valuedness
+    is not used, so the reading holds for any total unknown read the same way. *)
+let fn_results fns h phi =
+  let results =
+    List.map fns ~f:(fun (_, sorts, ts) ->
+        match (List.last ts, List.last sorts) with
+        | Some (Term.Var (v, _, _)), Some s -> Some (v, s)
+        | _ -> None)
+    |> Option.all
+  in
+  Option.bind results ~f:(fun vs ->
+      let names = List.map vs ~f:fst in
+      let other_args =
+        Set.Poly.union_list
+          (Formula.tvs_of phi
+           :: List.concat_map h ~f:(fun t -> [ Term.tvs_of t ])
+          @ List.concat_map fns ~f:(fun (_, _, ts) ->
+                List.map (List.drop_last_exn ts) ~f:Term.tvs_of))
+      in
+      if
+        List.contains_dup names ~compare:Ident.tvar_compare
+        || List.exists names ~f:(Set.mem other_args)
+      then None
+      else Some vs)
+
 (** the classification of one clause: [`Fact (p, sorts, u, phi)],
-    [`Step (p, h, bodies, phi)], [`Goal (atoms, phi)] or [`Other] *)
-let classify unknowns (c : ClauseOld.t) =
+    [`Step (p, h, bodies, phi)], [`Goal (atoms, phi)] or [`Other]; with
+    [is_fn], also [`FnStep (p, h, bodies, vs, phi)], a step whose body also
+    holds functional atoms read through [fn_results] ([vs] their results,
+    [bodies] the arguments of the [p] atoms only, at least one) *)
+let classify ?is_fn unknowns (c : ClauseOld.t) =
   let _, ps, ns, phi = c in
   if not (pure_known unknowns phi) then `Other
   else
@@ -215,9 +277,66 @@ let classify unknowns (c : ClauseOld.t) =
     | Some [ (p, _, h) ], Some (_ :: _ as bodies)
       when List.for_all bodies ~f:(fun (q, _, _) -> Ident.pvar_equal p q) ->
         `Step (p, h, List.map bodies ~f:trd3, phi)
+    | Some [ (p, _, h) ], Some (_ :: _ as bodies) -> (
+        match is_fn with
+        | None -> `Other
+        | Some is_fn -> (
+            let own, fns =
+              List.partition_tf bodies ~f:(fun (q, _, _) -> Ident.pvar_equal p q)
+            in
+            if
+              List.is_empty own
+              || not (List.for_all fns ~f:(fun (q, _, _) -> is_fn q))
+            then `Other
+            else
+              match fn_results fns h phi with
+              | Some vs -> `FnStep (p, h, List.map own ~f:trd3, vs, phi)
+              | None -> `Other))
     | Some [], Some (_ :: _ as atoms) ->
         `Goal (List.map atoms ~f:(fun (q, _, t) -> (q, t)), phi)
     | _ -> `Other
+
+(* This first-order unfolding path freshens only clause universals.  The
+   legacy all-symbol rename also changes predicate and background heads.
+   Unsupported namespace overlap is omitted before it can contribute a
+   purported lower approximation; losing a fact/step only weakens refutation. *)
+let clause_scope_names (senv, ps, ns, phi) =
+  let terms = T_bool.of_formula phi :: List.map (Set.to_list (Set.union ps ns))
+    ~f:(fun atom -> T_bool.of_formula (Formula.mk_atom atom)) in
+  List.fold terms ~init:(Map.key_set senv) ~f:(fun names term ->
+      let scope = Evaluator.scalar_substitution_scope_of term in
+      Set.Poly.union_list
+        [ names; scope.bound_names; scope.function_heads; Term.fvs_of term ])
+
+let clauses_scope_names clauses =
+  Set.Poly.union_list (List.map clauses ~f:clause_scope_names)
+
+let rec fresh_avoiding avoid () =
+  let name = Ident.mk_fresh_tvar () in
+  if Set.mem avoid name then fresh_avoiding avoid () else name
+
+let refresh_clause_scalars ~avoid ((senv, ps, ns, phi) : ClauseOld.t) =
+  let atoms = Set.to_list (Set.union ps ns) in
+  if Map.Poly.exists senv ~f:(fun sort ->
+         Sort.is_arrow (Logic.ExtTerm.to_old_sort sort))
+     || List.exists atoms ~f:(fun atom ->
+          match pvar_args atom with
+          | Some (_, sorts, _) -> List.exists sorts ~f:Sort.is_arrow
+          | None -> false) then None
+  else
+    let terms = T_bool.of_formula phi :: List.map atoms ~f:(fun atom ->
+        T_bool.of_formula (Formula.mk_atom atom)) in
+    let fresh = fresh_avoiding avoid in
+    let names = Map.Poly.map senv ~f:(fun _ -> fresh ()) in
+    let sub = Map.Poly.mapi senv ~f:(fun ~key ~data ->
+        Term.mk_var (Map.Poly.find_exn names key) (Logic.ExtTerm.to_old_sort data)) in
+    if List.for_all terms ~f:(fun term ->
+           Evaluator.scalar_substitution_is_safe_in_scope
+             (Evaluator.scalar_substitution_scope_of term) sub) then
+      Some (Map.rename_keys_map names senv,
+            Set.Poly.map ps ~f:(Atom.subst sub),
+            Set.Poly.map ns ~f:(Atom.subst sub), Formula.subst sub phi)
+    else None
 
 (** [x = u], argument by argument *)
 let eqs (xs : sort_env_list) (us : Term.t list) =
@@ -401,12 +520,23 @@ let counter_depth facts steps =
     comment), so keeping fewer levels only loses refutations that need a
     deeper one.  Each comes with the depth it was unfolded to: [depth], or
     with [counter_cap = Some c] the deeper [counter_depth] of the unknown's
-    clauses, at most [c], with [max_size] scaled by the same factor. *)
+    clauses, at most [c], with [max_size] scaled by the same factor.
+
+    With [exact], level [i] is [D_i] instead of [L_i]: the derivations of
+    exactly [i] levels, [D_1 = L_1] and [D_(i+1)] the steps applied to [D_i]
+    alone, without [L_1] beside them.  [D_i] implies [L_i], so it implies the
+    unknown in every solution of its facts and steps, and resolving with it is
+    sound for the same reason; the point is that a level is then one
+    derivation shape rather than a disjunction of all shapes up to [i]. *)
 let levels_with_depth ?(print = fun _ -> ()) ?max_size ?counter_cap
-    ?(solve_linear = false) ?(keep_fitting = false) ~linear ~depth ~max_copies
-    unknowns (clauses : ClauseOld.t list) =
+    ?(solve_linear = false) ?(keep_fitting = false) ?(exact = false) ?is_fn
+    ~linear ~depth
+    ~max_copies unknowns (clauses : ClauseOld.t list) =
+  let avoid = clauses_scope_names clauses in
+  let fresh = fresh_avoiding avoid in
   let classified =
-    List.map clauses ~f:(fun c -> classify unknowns (ClauseOld.refresh_tvar c))
+    List.filter_map clauses ~f:(fun c ->
+        Option.map (refresh_clause_scalars ~avoid c) ~f:(classify ?is_fn unknowns))
   in
   let facts =
     List.filter_map classified ~f:(function
@@ -414,16 +544,19 @@ let levels_with_depth ?(print = fun _ -> ()) ?max_size ?counter_cap
       | _ -> None)
     |> Map.Poly.of_alist_multi
   in
+  (* [vs]: the results of the step's functional atoms, read universally
+     ([fn_results]); empty for a step of [p] alone *)
   let steps =
     List.filter_map classified ~f:(function
-      | `Step (p, h, bodies, phi) -> Some (p, (h, bodies, phi))
+      | `Step (p, h, bodies, phi) -> Some (p, (h, bodies, [], phi))
+      | `FnStep (p, h, bodies, vs, phi) -> Some (p, (h, bodies, vs, phi))
       | _ -> None)
     |> Map.Poly.of_alist_multi
   in
   let exception Too_large of int * Formula.t list in
   Map.Poly.filter_mapi facts ~f:(fun ~key:p ~data:fs ->
       let sorts = fst3 (List.hd_exn fs) in
-      let xs = mk_fresh_sort_env_list sorts in
+      let xs = List.map sorts ~f:(fun sort -> (fresh (), sort)) in
       let level1 =
         Formula.or_of
         @@ List.map fs ~f:(fun (_, u, phi) ->
@@ -437,7 +570,10 @@ let levels_with_depth ?(print = fun _ -> ()) ?max_size ?counter_cap
         match counter_cap with
         | None -> (depth, max_size)
         | Some cap -> (
-            match counter_depth fs steps with
+            match
+              counter_depth fs
+                (List.map steps ~f:(fun (h, bodies, _, phi) -> (h, bodies, phi)))
+            with
             | Some d when d > depth ->
                 let d = Int.min d cap in
                 print
@@ -457,7 +593,7 @@ let levels_with_depth ?(print = fun _ -> ()) ?max_size ?counter_cap
         List.sum
           (module Int)
           steps
-          ~f:(fun (_, bodies, _) -> if linear then 1 else List.length bodies)
+          ~f:(fun (_, bodies, _, _) -> if linear then 1 else List.length bodies)
       in
       let at (l : Formula.t) (ts : Term.t list) =
         (* with [solve_linear] the arguments are integer terms over the
@@ -479,33 +615,61 @@ let levels_with_depth ?(print = fun _ -> ()) ?max_size ?counter_cap
         else
           let l' =
             Formula.or_of
-            @@ level1
-               :: List.map steps ~f:(fun (h, bodies, phi) ->
+            @@ (if exact then Fn.id else List.cons level1)
+            @@ List.filter_map steps ~f:(fun (h, bodies, vs, phi) ->
                    (* each level renames the step's variables, so that no
                       binder of a lower level is captured *)
+                   let step_terms = T_bool.of_formula phi :: List.concat (h :: bodies) in
+                   let background_heads = Set.Poly.union_list
+                     (List.map step_terms ~f:(fun term ->
+                        (Evaluator.scalar_substitution_scope_of term).function_heads)) in
                    let ren =
                      Map.Poly.of_alist_exn
                      @@ List.map
                           (Set.to_list
-                          @@ Set.Poly.union_list
+                          @@ Set.diff (Set.Poly.union_list
                                (Formula.tvs_of phi
                                :: List.map (h :: bodies)
                                     ~f:
                                       (Set.Poly.union_list
-                                     <<< List.map ~f:Term.tvs_of)))
-                          ~f:(fun x -> (x, Ident.mk_fresh_tvar ()))
+                                     <<< List.map ~f:Term.tvs_of))) background_heads)
+                          ~f:(fun x -> (x, fresh ()))
                    in
-                   let h = List.map h ~f:(Term.rename ren) in
+                   (* Keep independent predicate heads fixed too. The
+                      refreshed scalar domain is disjoint from FVar heads. *)
+                   let env = Set.Poly.union_list
+                     (Formula.term_sort_env_of phi
+                      :: List.map (h :: bodies) ~f:(fun args ->
+                           Set.Poly.union_list (List.map args ~f:Term.term_sort_env_of))) in
+                   let sub = Map.Poly.mapi ren ~f:(fun ~key ~data ->
+                       let sort = snd (Set.find_exn env ~f:(fun (name, _) ->
+                           Ident.tvar_equal name key)) in
+                       Term.mk_var data sort) in
+                   if not (Evaluator.scalar_substitution_is_safe sub phi
+                     && List.for_all (h :: bodies) ~f:(List.for_all ~f:(fun term ->
+                          Evaluator.scalar_substitution_is_safe_in_scope
+                            (Evaluator.scalar_substitution_scope_of term) sub)))
+                   then None
+                   else
+                   let h = List.map h ~f:(Term.subst sub) in
                    let bodies =
-                     List.map bodies ~f:(List.map ~f:(Term.rename ren))
+                     List.map bodies ~f:(List.map ~f:(Term.subst sub))
                    in
-                   let phi = Formula.rename ren phi in
-                   close_exists ~solve_linear
+                   let phi = Formula.subst sub phi in
+                   (* the functional results, renamed with the step: each
+                      occurs in [bodies], so [ren] renamed it *)
+                   let univ =
+                     List.map vs ~f:(fun (v, s) ->
+                         match Map.Poly.find sub v with
+                         | Some (Term.Var (v', _, _)) -> (v', s)
+                         | _ -> (v, s))
+                   in
+                   Some (close_exists ~solve_linear ~univ
                      ~l:(fun j ts ->
                        if linear && j > 0 then at level1 ts else at l ts)
                      xs
                      (Evaluator.simplify_neg phi :: eqs xs h)
-                     bodies)
+                     bodies))
           in
           go (i + 1) next_copies acc l'
       in
@@ -533,10 +697,10 @@ let levels_with_depth ?(print = fun _ -> ()) ?max_size ?counter_cap
     [(params, formula, depth)]: [levels_with_depth]'s deepest level.  Without
     [keep_fitting] an unknown one of whose levels is over [max_size] gets
     none. *)
-let unfoldings_with_depth ?print ?max_size ?counter_cap ?solve_linear ~linear
-    ~depth ~max_copies unknowns clauses =
-  levels_with_depth ?print ?max_size ?counter_cap ?solve_linear ~linear ~depth
-    ~max_copies unknowns clauses
+let unfoldings_with_depth ?print ?max_size ?counter_cap ?solve_linear ?is_fn
+    ~linear ~depth ~max_copies unknowns clauses =
+  levels_with_depth ?print ?max_size ?counter_cap ?solve_linear ?is_fn ~linear
+    ~depth ~max_copies unknowns clauses
   |> Map.Poly.map ~f:(fun (xs, levels, d) -> (xs, List.last_exn levels, d))
 
 (** [unfoldings_with_depth] without the depth each unknown was unfolded to *)
@@ -568,11 +732,11 @@ let resolvents unfoldings unknowns (clauses : ClauseOld.t list) =
 (** the first [(i, formula, model)] for which [ask] answers [`Invalid model]
     about the [i]-th resolvent, asking nothing once [expired ()] and nothing
     about a resolvent of more than [max_size] nodes *)
-let refute ?(print = fun _ -> ()) ?max_size ?counter_cap ?solve_linear ~linear
-    ~depth ~max_copies ~expired ~ask unknowns clauses =
+let refute ?(print = fun _ -> ()) ?max_size ?counter_cap ?solve_linear ?is_fn
+    ~linear ~depth ~max_copies ~expired ~ask unknowns clauses =
   let unf =
-    unfoldings_with_depth ~print ?max_size ?counter_cap ?solve_linear ~linear
-      ~depth ~max_copies unknowns clauses
+    unfoldings_with_depth ~print ?max_size ?counter_cap ?solve_linear ?is_fn
+      ~linear ~depth ~max_copies unknowns clauses
   in
   (* a resolvent over an unknown whose depth a counter raised may be larger
      by the same factor *)
@@ -647,10 +811,10 @@ let refute ?(print = fun _ -> ()) ?max_size ?counter_cap ?solve_linear ~linear
     never refutes it, and the doubling form at depth 12 is over the size bound
     from level 4, while the doubling form at depth 3 refutes it in about a
     second. *)
-let refute_fitting ?(print = fun _ -> ()) ?max_size ?solve_linear ~linear
-    ~depth ~max_copies ~expired ~ask unknowns clauses =
+let refute_fitting ?(print = fun _ -> ()) ?max_size ?solve_linear ?is_fn
+    ~linear ~depth ~max_copies ~expired ~ask unknowns clauses =
   let levels =
-    levels_with_depth ~print ?max_size ?solve_linear ~keep_fitting:true
+    levels_with_depth ~print ?max_size ?solve_linear ?is_fn ~keep_fitting:true
       ~linear ~depth ~max_copies unknowns clauses
   in
   if Map.Poly.is_empty levels then (0, None)
@@ -715,6 +879,87 @@ let refute_fitting ?(print = fun _ -> ()) ?max_size ?solve_linear ~linear
                 match res with
                 | `Invalid model -> Some (i, phi, model)
                 | _ -> None)) )
+
+(** [refute]'s search over the levels of exactly [k] derivation levels
+    ([levels_with_depth ~exact:true ~keep_fitting:true]), shallowest first, for
+    the goals whose resolvent has a free sequence ([SeqPin.free_sequences]):
+    the first [(i, formula, model)] for which [ask] answers [`Invalid model]
+    about the [i]-th goal at some level, asking nothing once [expired ()] and
+    nothing about a resolvent of more than [max_size] nodes.  A goal with
+    several atoms is asked with every atom at the same level [k] (an unknown
+    with fewer levels at its deepest).  Sound for [refute]'s reason, since
+    [D_k] implies the unknown; it never concludes [sat].
+
+    Why.  [ask] answers a resolvent with free sequences by pinning their
+    lengths to those of a model of a quantifier-free relaxation of its
+    negation.  Against [L_d], a disjunction of every derivation of up to [d]
+    levels, that model picks one disjunct by draw and leaves the sequences of
+    the others at any length: the lengths it gives can belong to the
+    derivation of no levels (where a wrong count is still right), to no
+    derivation at all, or to the deepest one, whose pinned negation has the
+    most fresh elements.  Against [D_k] there is one derivation shape, so the
+    lengths a sequence built by concatenation along the derivation takes are
+    those of that derivation, and asking [k = 1, 2, ...] in turn reaches the
+    shortest refutation first.  A sequence argument that every level extends
+    -- a loop's history of the items it has visited -- is that shape. *)
+let refute_exact_levels ?(print = fun _ -> ()) ?max_size ?solve_linear ?is_fn
+    ~linear ~depth ~max_copies ~expired ~ask unknowns clauses =
+  let levels =
+    levels_with_depth ~print ?max_size ?solve_linear ?is_fn ~keep_fitting:true
+      ~exact:true ~linear ~depth ~max_copies unknowns clauses
+  in
+  if Map.Poly.is_empty levels then (0, None)
+  else
+    let deepest =
+      Map.Poly.fold levels ~init:0 ~f:(fun ~key:_ ~data:(_, ls, _) acc ->
+          Int.max acc (List.length ls))
+    in
+    let at_level k =
+      Map.Poly.map levels ~f:(fun (xs, ls, _) ->
+          (xs, List.nth_exn ls (Int.min k (List.length ls) - 1)))
+    in
+    let goals =
+      List.filter_map clauses ~f:(fun c ->
+          match classify unknowns c with
+          | `Goal (atoms, _)
+            when List.for_all atoms ~f:(fun (q, _) -> Map.Poly.mem levels q) ->
+              Some c
+          | _ -> None)
+    in
+    let rec over_levels k =
+      if k > deepest || expired () then None
+      else
+        match
+          List.find_mapi goals ~f:(fun i c ->
+              if expired () then None
+              else
+                match resolvents (at_level k) unknowns [ c ] with
+                | [ phi ]
+                  when (not (exceeds max_size phi))
+                       && not (List.is_empty (SeqPin.free_sequences phi)) -> (
+                    let started = Common.Clock.now_s () in
+                    let res = ask phi in
+                    print
+                    @@ lazy
+                         (sprintf
+                            "[unfold-refute] exact level %d, goal %d (%d \
+                             nodes): %s in %.2f s"
+                            k i
+                            (size_up_to Int.max_value phi)
+                            (match res with
+                            | `Valid -> "valid"
+                            | `Invalid _ -> "invalid"
+                            | _ -> "undecided")
+                            (Common.Clock.now_s () -. started));
+                    match res with
+                    | `Invalid model -> Some (i, phi, model)
+                    | _ -> None)
+                | _ -> None)
+        with
+        | Some r -> Some r
+        | None -> over_levels (k + 1)
+    in
+    (List.length goals, over_levels 1)
 
 (** The negation of [phi] with each [(s, se, k)] of [pins] fixed to a literal of
     [k] fresh units: [s] is substituted by the literal, reads over it are split
@@ -790,9 +1035,16 @@ let prepare phi =
     which was the whole cost of the pass.  Only refutations whose relaxation
     takes longer than [guess_ms] are lost.  [print] reports the stage reached
     and its time, flushed, so that a copy killed later still shows where its
-    time went. *)
-let ask ?(print = fun _ -> ()) ?step_ms ?guess_ms ?(hoist = false) ~timeout ~id
-    phi =
+    time went.
+
+    [fresh_native]: the validity question asked natively is asked in a
+    context of its own ([fresh_solver:true]) instead of a pooled one; the
+    relaxation and the pinned negation always are.  The question and the
+    reading of its answer are the same; a pooled context can have been pushed
+    and hold every registered definition, and Z3 then answers a quantified
+    goal with its incremental core alone. *)
+let ask ?(print = fun _ -> ()) ?step_ms ?guess_ms ?(hoist = false)
+    ?(guess_retries = 0) ?(fresh_native = false) ~timeout ~id phi =
   let t0 = Common.Clock.now_s () in
   (* the stage reached and its time since the question started, flushed, so
      that a copy killed later still shows where its time went *)
@@ -858,7 +1110,7 @@ let ask ?(print = fun _ -> ()) ?step_ms ?guess_ms ?(hoist = false) ~timeout ~id
         None
   in
   let native () =
-    Z3Smt.Z3interface.check_valid ~timeout ~fresh_solver:false
+    Z3Smt.Z3interface.check_valid ~timeout ~fresh_solver:fresh_native
       ~id fenv phi
   in
   let pinned pins () =
@@ -870,7 +1122,40 @@ let ask ?(print = fun _ -> ()) ?step_ms ?guess_ms ?(hoist = false) ~timeout ~id
   | None ->
       stage "no free sequence, asking the question itself";
       within native
-  | Some (q, named) -> (
+  | Some (q0, named) ->
+  (* [tries] more guesses after this one: a guess whose pinned negation has
+     no countermodel is excluded from the relaxation ([seq.len s] differs
+     from it at some [s]) and the lengths are guessed again.  The relaxation
+     drops the quantified parts, so a model of it fixes lengths a countermodel
+     need not have (a visited prefix of one element where the refutation
+     needs the empty one), and each guess is one draw.  A pinned negation
+     killed at [step_ms] is excluded and guessed again in the same way: a
+     draw on which the solver neither finds a countermodel nor shows there is
+     none within the step's budget is as useless as one with no countermodel,
+     and in one run a longer budget did not rescue it (on the Rust-derived iterator
+     input the bad draw ran out a 30 s step as it ran out a 10 s one), while
+     another draw is answered in under a second.  Each retry costs at most
+     one more [step_ms] plus a relaxation, inside the caller's kill *)
+  let rec attempt tries q =
+    match attempt_once q with
+    | `Unknown
+        (( "no countermodel at the guessed lengths"
+         | "undecided within the step's budget" ) as why),
+      Some pins
+      when tries > 0 ->
+        stage (sprintf "%s; guessing again" why);
+        let block =
+          Formula.mk_neg
+          @@ Formula.and_of
+          @@ List.filter_map pins ~f:(fun (s, _, k) ->
+                 Option.map
+                   (List.find named ~f:(fun (s', _, _) -> Ident.tvar_equal s s'))
+                   ~f:(fun (_, _, n) ->
+                     Formula.eq (Term.mk_var n T_int.SInt) (T_int.from_int k)))
+        in
+        attempt (tries - 1) (Formula.and_of [ q; block ])
+    | res, _ -> res
+  and attempt_once q =
       stage (sprintf "relaxation built (%d nodes)" (Formula.ast_size q));
       (* the lengths the relaxation's model gives, as [(s, se, k)]; with
          [guess_ms], asked in a forked copy killed after [guess_ms] ms, which
@@ -908,12 +1193,34 @@ let ask ?(print = fun _ -> ()) ?step_ms ?guess_ms ?(hoist = false) ~timeout ~id
       match lengths with
       | None ->
           stage "relaxation answered without a model";
-          `Unknown "the relaxation gave no lengths"
+          (`Unknown "the relaxation gave no lengths", None)
       | Some lengths -> (
-          stage "relaxation answered";
+          stage
+            (sprintf "relaxation answered, lengths [%s]"
+               (String.concat ~sep:"; "
+                  (List.map lengths ~f:(fun (s, _, k) ->
+                       sprintf "%s=%d" (Ident.name_of_tvar s) k))));
           match lengths with
-          | [] -> within native
-          | pins -> within (pinned pins)))
+          | [] -> (within native, None)
+          | pins -> (
+              (* [within] answers a killed copy and a pinned negation with
+                 no model alike; only the second is worth another guess, so
+                 the copy here sends back which of the two it was *)
+              match step_ms with
+              | None -> (pinned pins (), Some pins)
+              | Some ms -> (
+                  match
+                    ForkedQuery.run ~ms (fun () ->
+                        match pinned pins () with
+                        | `Invalid _ -> `I
+                        | `Unknown _ -> `N)
+                  with
+                  | Some `I -> (`Invalid [], Some pins)
+                  | Some `N ->
+                      (`Unknown "no countermodel at the guessed lengths", Some pins)
+                  | None -> (`Unknown "undecided within the step's budget", Some pins))))
+  in
+  attempt guess_retries q0
 
 (** [ask_forked ~ms ~id phi] is [ask ~timeout:None ~id phi] asked in a forked
     copy killed after [ms] milliseconds ([ForkedQuery.run]): [`Invalid []] when
@@ -931,13 +1238,36 @@ let ask ?(print = fun _ -> ()) ?step_ms ?guess_ms ?(hoist = false) ~timeout ~id
     asks with no Z3 timer, the thread serving one not existing in a forked
     process; the kill is the budget.
 
+    [clear_contexts]: the copy drops every pooled Z3 context it inherited
+    ([Z3interface.clear_instance_pool], and the per-arithmetic-solver pools)
+    before its first question, so that
+    every question of the copy is asked in a context made inside it.  Without
+    it a pooled question is asked in whatever context the process left in the
+    pool before the fork, and its answer is then a function of the process's
+    earlier questions as well as of its own text: two runs asking identical
+    texts were answered differently (one refuted in under 2 s, one undecided
+    within the step's budget) when what the process had asked before the fork
+    differed.  With it the answers depend only on [phi] and the copy's own
+    earlier questions (up to what Z3 keeps outside a context).  Clearing is
+    confined to the copy: the process's pool is untouched.
+
     Contract: [`Invalid _] only if [ask] answered [`Invalid] in the copy, so a
     caller reading only [`Invalid] loses only refutations [ask] would have
-    found after [ms]. *)
-let ask_forked ?print ?step_ms ?guess_ms ?hoist ~ms ~id phi =
+    found after [ms]; [clear_contexts] and [fresh_native] change where the
+    questions are asked, never which questions or how an answer is read. *)
+let ask_forked ?print ?step_ms ?guess_ms ?hoist ?guess_retries
+    ?(clear_contexts = false) ?fresh_native ~ms ~id phi =
   match
     ForkedQuery.run ~ms (fun () ->
-        match ask ?print ?step_ms ?guess_ms ?hoist ~timeout:None ~id phi with
+        (* the pools of every arithmetic-solver setting too: a question
+           asked under one is taken from a pool of its own *)
+        if clear_contexts then (
+          Z3Smt.Z3interface.clear_instance_pool ();
+          Hashtbl.Poly.clear Z3Smt.Z3interface.arith_solver_pools);
+        match
+          ask ?print ?step_ms ?guess_ms ?hoist ?guess_retries ?fresh_native
+            ~timeout:None ~id phi
+        with
         | `Invalid _ -> `I
         | `Timeout -> `T
         | `Unknown r -> `K r
@@ -1021,21 +1351,23 @@ module GroundCensus = struct
       ~of_:v
 
   let report ~out ~label unknowns clauses =
-    let started = Core_unix.gettimeofday () in
+    let avoid = clauses_scope_names clauses in
+    let started = Common.Clock.now_s () in
     let build ~depth ~counter_cap =
       unfoldings_with_depth ~max_size:20000 ?counter_cap ~solve_linear:true
         ~linear:true ~depth ~max_copies:4096 unknowns clauses
     in
     let unf = build ~depth:12 ~counter_cap:(Some 128) in
     let first = build ~depth:1 ~counter_cap:None in
-    let build_s = Core_unix.gettimeofday () -. started in
+    let build_s = Common.Clock.now_s () -. started in
     (* Datalog-evaluable: the facts alone are ground tuples and every step of
        the unknown is [step_evaluable] *)
     let steps_of =
       List.filter_map clauses ~f:(fun c ->
-          match classify unknowns (ClauseOld.refresh_tvar c) with
-          | `Step (p, h, bodies, phi) -> Some (p, (h, bodies, phi))
-          | _ -> None)
+          Option.bind (refresh_clause_scalars ~avoid c) ~f:(fun c ->
+              match classify unknowns c with
+              | `Step (p, h, bodies, phi) -> Some (p, (h, bodies, phi))
+              | _ -> None))
       |> Map.Poly.of_alist_multi
     in
     let dl =

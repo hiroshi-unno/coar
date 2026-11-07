@@ -1,0 +1,4 @@
+/* a greatest fixpoint (an invariant) that a closed run leaves at x = 6 */
+S 0
+s.t.
+S (x: int): bool =nu x <= 5 /\ S (x + 1);

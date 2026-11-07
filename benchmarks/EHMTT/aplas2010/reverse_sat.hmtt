@@ -1,0 +1,32 @@
+%BEGING
+Append x y -> case x of
+  e => y
+| a x' => a (Append x' y)
+| b x' => b (Append x' y).
+Reverse x -> case x of
+  e => e
+| a x' => Append (coerce q2 (Reverse x')) (a e)
+| b x' => Append (coerce q1 (Reverse x')) (b e).
+%ENDG
+
+/*Reverse : a*b*e -> b*a*e*/
+
+%BEGINA
+/* a*b* */
+q0 a -> q0.
+q0 e -> .
+q0 b -> q1.
+/* b* */
+q1 b -> q1.
+q1 e -> .
+/* b*a* */
+q2 b -> q2.
+q2 e -> .
+q2 a -> q3.
+q3 a -> q3.
+q3 e -> .
+%ENDA
+
+%BEGINT
+Reverse : q0 -> q2.
+%ENDT

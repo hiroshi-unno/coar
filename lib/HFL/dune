@@ -1,0 +1,16 @@
+(menhir
+ (modules hflParser))
+
+(ocamllex
+ (modules hflLexer))
+
+(library
+ (name HFL)
+ (public_name CoAR.HFL)
+ (libraries core compiler-libs.common CoAR.common CoAR.ast CoAR.muCLP)
+ (preprocess
+  (pps ppx_compare))
+ (modules hflSyntax hflNeg hflParseState hflLexer hflParser hflTyping
+  hflReader hflPrinter hflToOCaml hflOfOCaml hflToMuCLP)
+ (synopsis
+  "HFL(Z) hierarchical equation systems: syntax, the tools' dialects, simple types, and the translations to RCaml's OCaml representation and to muCLP"))

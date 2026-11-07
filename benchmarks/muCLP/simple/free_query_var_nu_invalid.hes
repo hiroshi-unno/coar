@@ -1,0 +1,6 @@
+/* The query mentions a term variable x that no binder binds; a free query
+   variable is universally quantified, so this reads as forall x. Q x.
+   Invalid: x = -1 fails x >= 0 at once (every x >= 0 satisfies Q). */
+Q x
+s.t.
+Q (x: int): bool =nu x >= 0 /\ Q (x + 1);

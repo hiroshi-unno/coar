@@ -1,0 +1,17 @@
+# The probability of the flip is the variable p, never assigned, so the bound is asked for
+# every initial p; the flip is reached only where 0 <= p <= 1, where p is a probability, so no
+# run reaches an out-of-range probability:
+#   wlp(S, [c = 1]) = p   for 0 <= p <= 1,   and 0 elsewhere,
+# so the cwlp upper bound 0.75 fails only where p > 0.75; the guard keeps p <= 0.5 there.
+# Expected: valid.  The twin of flip_state_above_one_cwlp_upper_unknown.sgcl: the shifted
+# error arm of the reduced lower bound costs no bound where the probability is in range.
+c := 0;
+if 0 <= p and p <= 0.5 {
+	if flip(p) {
+		c := 1
+	}
+} else {
+	c := 0
+}
+return c
+?Ex[[c = 1]] <= 0.75 cwlp

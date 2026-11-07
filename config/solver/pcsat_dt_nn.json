@@ -7,7 +7,7 @@
     ],
     "coordinator": [
       "Filename",
-      "./config/pcsat/coordinator/dt_nn_eager.json"
+      "./config/pcsat/coordinator/dt_nn.json"
     ],
     "sol_printer": [
       "Filename",

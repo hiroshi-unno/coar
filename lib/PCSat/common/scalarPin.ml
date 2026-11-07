@@ -40,9 +40,13 @@ open Common.Ext
       closed value (a literal, not a term mentioning a variable) for each;
       where the model leaves an integer, real or Boolean variable unassigned
       it takes 0, 0 or false ([default_value]; with [default_compound] also a
-      tuple or datatype variable, built from such values), and where it
-      leaves any other variable unassigned or gives it an open value the
-      point is dropped.
+      tuple or datatype variable, built from such values); where it leaves
+      unassigned a variable whose sort has exactly one value (a unit such as
+      the [tuple] of a Rust-derived [()], or a tuple of such sorts) it takes
+      that value whatever [default_compound] says, since every model gives it
+      that value and so the point is the same point; and where it leaves any
+      other variable unassigned or gives it an open value the point is
+      dropped.
    3. Prove.  [Q = not P[point]] is then a sentence.  It is proved VALID,
       one conjunct at a time (quantifier-free conjuncts first, so a point at
       which the conclusion holds is dropped by its cheapest question): each
@@ -158,13 +162,26 @@ let rename_apart senv phi =
 
 (** the binder-free relaxation of [not piece] (see above), or [None] when
     the result is not quantifier-free *)
-let binder_free_relaxation piece =
+(* Whether the bound [max_int_instances] counts the instances of a universal
+   together with those of the universals it is nested in ([chain_bound]), or
+   of each block alone, the original reading.  Off by default; set by the
+   coordinator.  Why: a Rust-derived clause writes one variable per [forall],
+   so each block passes the per-block bound and the instances multiply along
+   the chain -- a 33,000-node piece with four nested integer blocks was
+   predicted at 4e8 nodes and its build ran 42 s before the run was killed. *)
+let binder_free_chain_bound = ref false
+
+let binder_free_relaxation ?(log = fun (_ : string lazy_t) -> ()) piece =
+  let ph = Common.PhaseTime.with_phase in
   let neg =
     Formula.nnf_of @@ Formula.mk_neg
     @@ Ast.Evaluator.elim_onepoint_and_split_binders piece
   in
   let ints = int_literal_candidates neg in
-  let rec go phi =
+  (* [outer]: the number of instances the universals enclosing [phi] were
+     replaced by, counted only with [binder_free_chain_bound] *)
+  let rec go ?(outer = 1) phi =
+    let go = go ~outer in
     match phi with
     | Formula.BinaryOp (((Formula.And | Formula.Or) as op), p, q, _) ->
         Formula.mk_binop op (go p) (go q)
@@ -176,12 +193,15 @@ let binder_free_relaxation piece =
         in
         let body = rename_apart others body in
         let n = List.length is in
+        let start = if !binder_free_chain_bound then outer else 1 in
         let count =
-          List.fold is ~init:1 ~f:(fun acc _ ->
+          List.fold is ~init:start ~f:(fun acc _ ->
               if acc > max_int_instances then acc else acc * List.length ints)
         in
+        let go = if !binder_free_chain_bound then go_at count else go in
         if n = 0 || List.is_empty ints || count > max_int_instances then
-          go (rename_apart is body)
+          (if !binder_free_chain_bound then go_at outer else go)
+            (rename_apart is body)
         else
           let rec combos = function
             | [] -> [ [] ]
@@ -197,8 +217,55 @@ let binder_free_relaxation piece =
     | Formula.Bind (_, _, _, _) -> Formula.mk_true ()
     | _ when Formula.is_quantifier_free phi -> phi
     | _ -> Formula.mk_true ()
-  in
-  let r = Ast.Evaluator.simplify (go neg) in
+  and go_at outer phi = go ~outer phi in
+  (* the size [go neg] will have, computed without building it, and the
+     deepest nesting of universals it instantiates: each instantiated
+     universal multiplies its body by its instance count *)
+  let rec predicted ?(outer = 1) phi =
+    let predicted = predicted ~outer in
+    match phi with
+    | Formula.BinaryOp ((Formula.And | Formula.Or), p, q, _) ->
+        let a, d1 = predicted p and b, d2 = predicted q in
+        (1. +. a +. b, max d1 d2)
+    | Formula.Bind (Formula.Exists, _, body, _) -> predicted body
+    | Formula.Bind (Formula.Forall, senv, body, _) ->
+        let n =
+          List.count senv ~f:(fun (_, s) -> Stdlib.( = ) s T_int.SInt)
+        in
+        let start = if !binder_free_chain_bound then outer else 1 in
+        let count =
+          List.fold (List.init n ~f:Fn.id) ~init:start ~f:(fun acc _ ->
+              if acc > max_int_instances then acc else acc * List.length ints)
+        in
+        if n = 0 || List.is_empty ints || count > max_int_instances then
+          predicted body
+        else
+          let b, d =
+            if !binder_free_chain_bound then predicted_at count body
+            else predicted body
+          in
+          (Float.of_int (count / start) *. (b +. 1.), d + 1)
+    | Formula.Bind (_, _, _, _) -> (1., 0)
+    | _ when Formula.is_quantifier_free phi ->
+        (Float.of_int (Formula.ast_size phi), 0)
+    | _ -> (1., 0)
+  and predicted_at outer phi = predicted ~outer phi in
+  log
+  @@ lazy
+       (let size, depth = predicted neg in
+        sprintf
+          "[scalar pin] binder-free relaxation to build: negation %d nodes, %d \
+           integer candidates, predicted %.3g nodes, instantiated universals \
+           nested %d deep"
+          (Formula.ast_size neg) (List.length ints) size depth);
+  let built = ph "relax-binder-free-build" (fun () -> go neg) in
+  let r = ph "relax-binder-free-simplify" (fun () -> Ast.Evaluator.simplify built) in
+  log
+  @@ lazy
+       (sprintf
+          "[scalar pin] binder-free relaxation: negation %d nodes, built %d, \
+           simplified %d"
+          (Formula.ast_size neg) (Formula.ast_size built) (Formula.ast_size r));
   if Formula.is_quantifier_free r then Some r else None
 
 (* The relaxations instantiate the piece without splitting reads of
@@ -263,7 +330,7 @@ let relaxations_until ?expired piece =
 (** [relaxations_until], with [binder_free] the binder-free relaxation
     first (built only when reached, and only when [expired] has not
     fired) *)
-let relaxations_with ?expired ~binder_free piece =
+let relaxations_with ?log ?expired ~binder_free piece =
   let rest = relaxations_until ?expired piece in
   if not binder_free then rest
   else
@@ -272,7 +339,11 @@ let relaxations_with ?expired ~binder_free piece =
         (lazy
           (if match expired with Some f -> f () | None -> false then
              Sequence.empty
-           else Sequence.of_list (Option.to_list (binder_free_relaxation piece))))
+           else
+             Sequence.of_list
+               (Option.to_list
+                  (Common.PhaseTime.with_phase "relax-binder-free" (fun () ->
+                       binder_free_relaxation ?log piece)))))
     in
     Sequence.append first rest
 
@@ -358,20 +429,30 @@ let opaque_vars vars = List.filter vars ~f:(fun (_, s) -> opaque_sort s)
     model of [not piece] too), so no pin can act on such a piece *)
 let cheapest_relaxation piece = drop_quantified (Formula.nnf_of (Formula.mk_neg piece))
 
-(** the point [model] gives [vars], each a closed value, or [None] *)
+(** the point [model] gives [vars], each a closed value, or [None].  A
+    variable the model leaves unassigned takes [default_value] and, where that
+    is [None], the only value of its sort when the sort has exactly one
+    ([SeqInstantiation.singleton_value], exact where it answers): such a
+    variable has that value in every model, so filling it in adds no choice
+    and the point is the one the model gives.  Without this, a free variable
+    of a one-value sort that nothing in the relaxation mentions -- which a
+    model leaves unassigned, as when a single-constructor split turns a
+    tuple's unit field into a variable of its own -- dropped every guess.
+    The event [unique-value] counts the variables so filled. *)
 let point_of ?(default_compound = false) vars (model : model) =
   Option.all
   @@ List.map vars ~f:(fun (x, s) ->
-      let given =
-        List.find_map model ~f:(fun ((y, _), t) ->
-            if Ast.Ident.tvar_equal x y then Some t else None)
-      in
+      let given = model_find model (x, s) in
       match given with
       | Some (Some t) ->
           if Set.is_empty (Term.tvs_of t) then Some ((x, s), t) else None
-      | Some None | None ->
-          Option.map (default_value ~compound:default_compound s)
-            ~f:(fun t -> ((x, s), t)))
+      | Some None | None -> (
+          match default_value ~compound:default_compound s with
+          | Some t -> Some ((x, s), t)
+          | None ->
+              Option.map (SeqInstantiation.singleton_value s) ~f:(fun t ->
+                  Common.PhaseTime.event_here "unique-value";
+                  ((x, s), t))))
 
 let excluding point =
   Formula.mk_neg
@@ -556,7 +637,7 @@ let refute ?(log = fun (_ : string lazy_t) -> ()) ?(default_compound = false)
           None
       | Some vars ->
           Sequence.find_map
-            (relaxations_with ?expired ~binder_free:binder_free_relaxation
+            (relaxations_with ~log ?expired ~binder_free:binder_free_relaxation
                piece) ~f:(fun relaxed ->
               log
               @@ lazy
@@ -580,11 +661,7 @@ let refute ?(log = fun (_ : string lazy_t) -> ()) ?(default_compound = false)
                                         (Ast.Ident.name_of_tvar x)
                                         (Term.str_of_sort s)
                                         (match
-                                           List.find_map model
-                                             ~f:(fun ((y, _), t) ->
-                                               if Ast.Ident.tvar_equal x y
-                                               then Some t
-                                               else None)
+                                           model_find model (x, s)
                                          with
                                         | None -> "(absent)"
                                         | Some None -> "(unassigned)"

@@ -1,0 +1,6 @@
+c the universal x1 occurs in no clause; the matrix x2 and not x2 is false
+p cnf 2 2
+a 1 0
+e 2 0
+2 0
+-2 0

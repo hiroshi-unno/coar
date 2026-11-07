@@ -93,6 +93,27 @@ let split_seq_reads phi =
   then Evaluator.rewrite_seq_read_over_concat phi
   else phi
 
+(* [mentions_open_term fenv phis]: whether a term the background theory
+   leaves open (a division by a divisor that is not a non-zero literal, a
+   sequence read not put in range, a selector off its constructor) occurs in
+   [phis] or in a body of [fenv].  The preprocessing checks ask whether a
+   preprocessed clause or definition follows from the original problem in
+   EVERY model of the theory, while an [unsat] answer claims only that SOME
+   model admits no interpretation of the unknowns, and a preprocessor may
+   derive what holds in that model alone: from [P (div 5 0)] and
+   [P y => y = 0] it derives [false], which follows in each model where
+   [div 5 0] is not 0, and the answer is right.  With such a term a
+   countermodel shows only that the step does not hold in every model, which
+   is no accusation, so the step is reported unchecked; without one every
+   background value the question reads is the same in every model and a
+   countermodel is a failure.  The test over-approximates -- every division
+   and every application of a function variable counts in [phis] -- which
+   only turns a failure into unchecked. *)
+let mentions_open_term fenv phis =
+  List.exists phis ~f:ClauseOld.interpretation_dependent
+  || List.exists (Map.Poly.data fenv) ~f:(fun (_, _, body, _, _) ->
+         ClauseOld.has_theory_open_term body)
+
 (* ---- sat: the model satisfies every original constraint ---- *)
 
 (* A second attempt at a constraint the solver left undecided, used only to
@@ -296,7 +317,8 @@ let valid_by_instances ?(seq_as_array = false) ?matched ?ladder
      over a sequence, whose call a budget does not bound); then as a separate
      [z3] process ([./z3] or [z3] on PATH), whose wall clock does bound it; and
    - of cvc5 ([./cvc5] or [cvc5] on PATH) with enumerative instantiation
-     ([--enum-inst]).
+     ([--enum-inst]), and with [--arrays-exp] when the text holds a constant
+     array, which cvc5 1.4.2 refuses without it ([Cvc5Proof.options_for]).
    The two processes read Z3's own SMT-LIB2 printing of these assertions with
    reached definitions only. This is not generally the complete original
    defining context: omitted equations need not admit a model extension.
@@ -337,6 +359,9 @@ let unsat_by_process tool args text =
       with e when not (Common.Timer.is_async e) -> ())
     ~f:(fun () ->
       Out_channel.write_all file ~data:text;
+      (* counted only: an external checker process is started; changes nothing *)
+      if String.equal tool "cvc5" then
+        Common.PhaseTime.event_here "cvc5-call/checker";
       match
         Common.Util.Command.sync_command "timeout"
           ([
@@ -354,10 +379,21 @@ let unsat_by_process tool args text =
       | [] -> false
       | exception e when not (Common.Timer.is_interrupt e) -> false)
 
+(* With [Cvc5Proof.unindex_recursive] set, Z3's indexed spelling of a
+   recursive function's application is rewritten first
+   ([Cvc5Proof.unindex_recursive_text]); a text that rewrite declines is not
+   asked, which reads as no answer like any other refusal. *)
 let unsat_by_cvc5 text =
-  unsat_by_process "cvc5"
-    [ "--enum-inst"; sprintf "--tlimit=%d" retry_budget_ms ]
-    (text ^ "(check-sat)\n")
+  match
+    if !Cvc5Proof.unindex_recursive then Cvc5Proof.unindex_recursive_text text
+    else Some text
+  with
+  | None -> false
+  | Some text ->
+      unsat_by_process "cvc5"
+        ([ "--enum-inst"; sprintf "--tlimit=%d" retry_budget_ms ]
+        @ Cvc5Proof.options_for text)
+        (text ^ "(check-sat)\n")
 
 let unsat_by_z3_process text =
   unsat_by_process "z3"
@@ -386,9 +422,10 @@ let valid_by_stronger_routes ~id phi =
    but an asynchronous exception, and decides nothing -- it only reports.
    Split out of [check_sat_solution] so that a caller holding a solution whose
    constraints it has already checked in its own way (a mid-level solver that
-   accepts a PCSat answer) can ask for the kinds alone. *)
-let check_kind_constraints ~id ?(certs = Map.Poly.empty) pcsp
-    (sol : Logic.term_subst_map) r =
+   accepts a PCSat answer) can ask for the kinds alone.  [only] restricts the
+   check to the unknowns whose kind it accepts (default: every kind). *)
+let check_kind_constraints ~id ?(certs = Map.Poly.empty) ?(only = fun _ -> true)
+    pcsp (sol : Logic.term_subst_map) r =
   let senv = PCSP.Problem.senv_of pcsp in
   let fenv = get_fenv () in
   (* kind constraints on the model: FN — functionality and totality, Tot —
@@ -442,6 +479,14 @@ let check_kind_constraints ~id ?(certs = Map.Poly.empty) pcsp
       Set.length (Set.Poly.of_list (List.map params ~f:fst))
       <> List.length params
     then Some "duplicate ranking parameters"
+    else if
+      List.exists cert.levels ~f:(fun (px, py) ->
+          match List.map (px @ py) ~f:snd with
+          | [] -> false
+          | first :: rest ->
+              let width = List.length first in
+              List.exists rest ~f:(fun tuple -> List.length tuple <> width))
+    then Some "ranking tuple widths differ within a level"
     else
       let check_side which params pieces =
         let allowed = Set.Poly.of_list (List.map params ~f:fst) in
@@ -461,6 +506,51 @@ let check_kind_constraints ~id ?(certs = Map.Poly.empty) pcsp
           | Some why -> Some why
           | None -> check_side "right" (cert.params_shared @ cert.params_y) py)
   in
+  (* A ranking's partition must describe the relation's actual state halves,
+     rather than a partition chosen by the certificate. Tagged families alone
+     have a shared prefix, whose sorts and state sorts come from the kind. *)
+  let same_sorts a b =
+    try
+      List.equal
+        (fun a b ->
+          phys_equal a b
+          || Sexp.equal (Datatype.structural_sort_key a)
+               (Datatype.structural_sort_key b))
+        a b
+    with exn when not (Common.Timer.is_async exn) -> false
+  in
+  let ranking_partition_error pv (cert : KindCert.ranking) =
+    try
+      let declared =
+        List.map (Logic.Sort.args_of (Map.Poly.find_exn senv pv))
+          ~f:Logic.ExtTerm.to_old_sort
+      in
+      let expected =
+        match PCSP.Problem.kind_of pcsp pv with
+        | Kind.WF | Kind.DWF ->
+            let left, right = List.split_n declared (List.length declared / 2) in
+            if same_sorts left right then Some ([], left, right) else None
+        | Kind.NWF (nwf, (l, r)) | Kind.Parity (nwf, (l, r)) -> (
+            match
+              (Hashtbl.Poly.find nwf.Kind.sorts_map l,
+               Hashtbl.Poly.find nwf.Kind.sorts_map r)
+            with
+            | Some left, Some right ->
+                let old = List.map ~f:Logic.ExtTerm.to_old_sort in
+                Some (old nwf.Kind.sorts_shared, old left, old right)
+            | _ -> None)
+        | _ -> None
+      in
+      match expected with
+      | Some (shared, left, right)
+        when same_sorts declared (shared @ left @ right)
+             && same_sorts (List.map cert.params_shared ~f:snd) shared
+             && same_sorts (List.map cert.params_x ~f:snd) left
+             && same_sorts (List.map cert.params_y ~f:snd) right -> None
+      | _ -> Some "ranking parameter partition or sorts differ from the predicate kind"
+    with exn when not (Common.Timer.is_async exn) ->
+      Some "ranking parameter partition or sorts could not be checked"
+  in
   (* the meta-theorem behind the decrease check needs one ranking
      function per tag — the left side of every certificate of a P_{t,_} and
      the right side of every certificate of a P_{_,t} must be the same
@@ -469,8 +559,8 @@ let check_kind_constraints ~id ?(certs = Map.Poly.empty) pcsp
      candidates of a tag are compared semantically, piece by piece. *)
   let check_families r =
     (* The same fresh name denotes an argument position on every side.
-       Avoid bound names too: [Formula.rename] does not avoid capture under
-       a discriminator's binders. *)
+       Reserve all spelled names, including independent callable heads and
+       binders nested in discriminator or rank terms. *)
     let max_arity, taken =
       Map.Poly.fold certs ~init:(0, Set.Poly.empty)
         ~f:(fun ~key:_ ~data:cert (max_arity, taken) ->
@@ -489,8 +579,9 @@ let check_kind_constraints ~id ?(certs = Map.Poly.empty) pcsp
                 List.fold rk.levels ~init:taken ~f:(fun taken (px, py) ->
                     List.fold (px @ py) ~init:taken ~f:(fun taken (disc, rs) ->
                         Set.Poly.union_list
-                          (taken :: Formula.tvs_of disc
-                          :: List.map rs ~f:Term.tvs_of)))
+                          (taken :: Formula.names_spelled_in disc
+                          :: List.map rs ~f:(fun term ->
+                                 Formula.names_spelled_in (Formula.eq term term)))))
               in
               (max_arity, taken)))
     in
@@ -511,21 +602,33 @@ let check_kind_constraints ~id ?(certs = Map.Poly.empty) pcsp
         | `Y -> cert.params_shared @ cert.params_y
       in
       let arg k = List.nth_exn canonical k in
-      let ren =
-        Map.Poly.of_alist_exn (List.mapi ps ~f:(fun k (x, _) -> (x, arg k)))
+      let raw, bools, calls =
+        List.foldi ps
+          ~init:(Map.Poly.empty, Map.Poly.empty, Map.Poly.empty)
+          ~f:(fun k (raw, bools, calls) (x, sort) ->
+            let y = arg k in
+            ( Map.Poly.set raw ~key:x ~data:y,
+              (if Term.is_bool_sort sort then Map.Poly.set bools ~key:x ~data:y
+               else bools),
+              if Sort.is_arrow sort then Map.Poly.set calls ~key:(x, sort) ~data:y
+              else calls ))
       in
+      let rename = Formula.alpha_rename_term_vars raw bools calls in
       let canon = List.mapi ps ~f:(fun k (_, s) -> (arg k, s)) in
       ( canon,
         List.map cert.levels ~f:(fun (px, py) ->
             List.map
               (match which with `X -> px | `Y -> py)
               ~f:(fun (d, rs) ->
-                (Formula.rename ren d, List.map rs ~f:(Term.rename ren)))) )
+                (T_bool.let_formula (rename (T_bool.of_formula d)),
+                 List.map rs ~f:rename))) )
     in
     let groups =
       Map.Poly.fold certs ~init:Map.Poly.empty
         ~f:(fun ~key:pv ~data:(cert : KindCert.t) groups ->
-          if List.exists cert ~f:(fun rk -> Option.is_some (ranking_support_error rk))
+          if List.exists cert ~f:(fun rk ->
+                 Option.is_some (ranking_support_error rk)
+                 || Option.is_some (ranking_partition_error pv rk))
           then groups
           else
           let name = Ident.name_of_tvar in
@@ -561,7 +664,16 @@ let check_kind_constraints ~id ?(certs = Map.Poly.empty) pcsp
                else List.map2_exn r0 r1 ~f:Formula.eq)))
     in
     Map.Poly.fold groups ~init:r ~f:(fun ~key:tag ~data:sides r ->
-        match List.rev sides with
+        (* A shorter side constrains only its recorded prefix. Use a longest
+           side as the common representative, so every level recorded by two
+           sides is compared. An arbitrary short representative would leave
+           longer sides' remaining levels unrelated. *)
+        let sides =
+          List.stable_sort (List.rev sides)
+            ~compare:(fun (_, _, (_, levels0)) (_, _, (_, levels1)) ->
+              Int.compare (List.length levels1) (List.length levels0))
+        in
+        match sides with
         | [] | [ _ ] -> r
         | (pv0, w0, (canon0, lv0)) :: rest ->
             let side w = match w with `X -> "left" | `Y -> "right" in
@@ -629,6 +741,7 @@ let check_kind_constraints ~id ?(certs = Map.Poly.empty) pcsp
   in
   Map.Poly.fold senv ~init:r ~f:(fun ~key:pv ~data:_ r ->
       match PCSP.Problem.kind_of pcsp pv with
+      | kind when not (only kind) -> r
       | Kind.Ord -> r
       | Kind.FN -> (
           match body_of pv with
@@ -735,14 +848,17 @@ let check_kind_constraints ~id ?(certs = Map.Poly.empty) pcsp
              certificate: one level for WF/DWF/NWF; for Parity as many levels
              as the truncation of the left tag's priority, accepting iff the
              priority itself -- not its truncation -- is in the accepting set
-             (Kura & Unno, Def. 7.8) *)
+             (Kura & Unno, Def. 7.8).  The priorities are the family's
+             active ones: a family that took its priority switch had its
+             template, and so its certificate, generated from the switched
+             priorities *)
           let kind_name = Kind.short_str_of kind in
           let expected =
             match kind with
             | Kind.Parity (nwf, (tag_l, _)) -> (
-                match Map.Poly.find nwf.Kind.sigma tag_l with
-                | Some p ->
-                    Some (nwf.Kind.trunc p, Set.mem nwf.Kind.acc_set p)
+                let _, sigma, trunc, acc_set = Kind.active_priorities nwf in
+                match Map.Poly.find sigma tag_l with
+                | Some p -> Some (trunc p, Set.mem acc_set p)
                 | None -> None)
             | _ -> Some (1, false)
           in
@@ -775,7 +891,10 @@ let check_kind_constraints ~id ?(certs = Map.Poly.empty) pcsp
               in
               let bad_shape =
                 List.find_map cert ~f:(fun (rk : KindCert.ranking) ->
-                    match ranking_support_error rk with
+                    match
+                      Option.first_some (ranking_support_error rk)
+                        (ranking_partition_error pv rk)
+                    with
                     | Some why ->
                         Some
                           (sprintf "%s predicate %s: malformed ranking certificate: %s"
@@ -802,6 +921,10 @@ let check_kind_constraints ~id ?(certs = Map.Poly.empty) pcsp
                            kind_name (Ident.name_of_tvar pv)
                            (List.length (KindCert.params_of rk))
                            (List.length params))
+                    else if
+                      not (same_sorts (List.map (KindCert.params_of rk) ~f:snd)
+                             (List.map params ~f:snd))
+                    then Some "ranking parameter sorts differ from the solution's"
                     else None)
               in
               (* a union of rankings certifies only DWF: a finite union of
@@ -823,18 +946,56 @@ let check_kind_constraints ~id ?(certs = Map.Poly.empty) pcsp
                 match bad_shape with
                 | Some msg -> add r (Unchecked msg)
                 | None -> (
+                    (* Compare both bodies over fresh common arguments. Mapping
+                       certificate arguments straight to solution arguments can
+                       capture a nested binder in the certificate. The typed
+                       scope maps also leave independent function and predicate
+                       heads with the same spelling untouched. *)
+                    let decs = List.map cert ~f:KindCert.dec_of_ranking in
+                    let taken =
+                      ref
+                        (Set.Poly.union_list
+                           (Formula.names_spelled_in phi
+                           :: List.map decs ~f:Formula.names_spelled_in
+                           @ [ Set.Poly.of_list (List.map params ~f:fst);
+                               Set.Poly.of_list
+                                 (List.concat_map cert ~f:(fun rk ->
+                                      List.map (KindCert.params_of rk) ~f:fst)) ]))
+                    in
+                    let common =
+                      List.map params ~f:(fun (_, sort) ->
+                          let x =
+                            Ident.mk_fresh_tvar_avoiding ~prefix:"#kind"
+                              ~taken:(Set.mem !taken) ()
+                          in
+                          taken := Set.add !taken x;
+                          (x, sort))
+                    in
+                    let align source body =
+                      let raw, bools, calls =
+                        List.fold2_exn source common
+                          ~init:(Map.Poly.empty, Map.Poly.empty, Map.Poly.empty)
+                          ~f:(fun (raw, bools, calls) (x, sort) (y, _) ->
+                            (Map.Poly.set raw ~key:x ~data:y,
+                             (if Term.is_bool_sort sort then
+                                Map.Poly.set bools ~key:x ~data:y
+                              else bools),
+                             if Sort.is_arrow sort then
+                               Map.Poly.set calls ~key:(x, sort) ~data:y
+                             else calls))
+                      in
+                      T_bool.let_formula
+                        (Formula.alpha_rename_term_vars raw bools calls
+                           (T_bool.of_formula body))
+                    in
                     let dec =
                       Formula.or_of
-                      @@ List.map cert ~f:(fun rk ->
-                          let ren =
-                            Map.Poly.of_alist_exn
-                              (List.map2_exn (KindCert.params_of rk) params
-                                 ~f:(fun (c, _) (p, _) -> (c, p)))
-                          in
-                          Formula.rename ren (KindCert.dec_of_ranking rk))
+                        (List.map2_exn cert decs ~f:(fun rk body ->
+                             align (KindCert.params_of rk) body))
                     in
+                    let phi = align params phi in
                     match
-                      valid (Formula.forall params (Formula.mk_imply phi dec))
+                      valid (Formula.forall common (Formula.mk_imply phi dec))
                     with
                     | `Valid -> passed_kind r kind_name
                     | `Invalid ->
@@ -919,8 +1080,8 @@ let substituted_size_up_to cap (sizes : (Ident.tvar, int) Map.Poly.t) phi =
   with Over -> cap + 1
 
 (* [seq_as_array]: each constraint, and each instantiated form of one, is
-   asked first as arrays plus a length when its sequences are concat-free and
-   its reads range-guarded ([Z3interface.check_sat_seq_as_array], an
+   asked first as arrays plus a length when its sequence terms are in the
+   translation's fragment (no [seq.extract]) and its reads range-guarded ([Z3interface.check_sat_seq_as_array], an
    equisatisfiable translation, so a pass or a failure means what it means
    untranslated); off, the questions are asked as they are. *)
 let check_sat_solution ?(seq_as_array = false) ?(retry = false) ?matched
@@ -941,6 +1102,23 @@ let check_sat_solution ?(seq_as_array = false) ?(retry = false) ?matched
   (* one substitution for every constraint: the free variables of the
      solution's terms are collected once, not once per constraint *)
   let subst = Logic.Term.subst_rename_on_capture within in
+  (* The variables free in the solution's terms other than unknowns.  A
+     solution is a closed term per unknown, so this is empty for every
+     well-formed one; a term variable left free in it (a template parameter
+     that was never instantiated, say) has no value the answer states.  When
+     such a name is also a universal variable of a constraint, substitution
+     identifies the two, and the constraint is asked about a different
+     solution: [P := fun x -> x = z] put into the constraint [P(z)] reads
+     [z = z] and was passed, while the answer read with [z] standing for
+     anything is no solution.  Such a constraint is reported unchecked, never
+     passed; a free name occurring in no constraint makes the conversion fail
+     and is reported unchecked there. *)
+  let sol_free =
+    Map.Poly.fold within ~init:Set.Poly.empty ~f:(fun ~key:_ ~data acc ->
+        Set.union acc
+          (Set.filter (Logic.Term.fvs_of data) ~f:(fun x ->
+               not (Map.Poly.mem senv x))))
+  in
   let r =
     Set.fold (PCSP.Problem.formulas_of pcsp) ~init:empty
       ~f:(fun r (uni_senv, phi) ->
@@ -952,6 +1130,11 @@ let check_sat_solution ?(seq_as_array = false) ?(retry = false) ?matched
            that way, the substitution below well under a second *)
         let phi' = lazy (subst phi) in
         if spent () then add r (Unchecked "checker budget spent")
+        else if Set.exists sol_free ~f:(Map.Poly.mem uni_senv) then
+          add r
+            (Unchecked
+               "the solution has a free variable named like a variable of the \
+                constraint")
         else if substituted_size_up_to max_nodes sizes phi > max_nodes then
           add r (Unchecked "constraint too large once the solution is substituted")
         else
@@ -1983,9 +2166,11 @@ let rec check_unsat_witness ~id pcsp (w : UnsatWitness.t) =
         | `Sat _ -> Passed
         | `Unsat -> Failed "the recorded model does not falsify the formula"
         | _ ->
+            (* the witness terms are searched for here, the first place
+               that needs them (see [UnsatWitness.Countermodel]) *)
             if
               countermodel_falsifies_a_clause ~timeout ~id fenv formula model
-                witnesses
+                (UnsatWitness.force_witnesses witnesses)
             then Passed
             else Unchecked "Z3 undecided on the countermodel")
   | UnsatWitness.External what -> add empty (Unchecked ("external: " ^ what))
@@ -2055,7 +2240,15 @@ and check_preprocessing ~id orig (w : UnsatWitness.t) =
          The replacement is exact, so applying it to both sides of a consequence
          question changes no answer that was available and makes some available
          that were not.  Preprocessing does the same to the problem it hands on;
-         doing it here as well is what keeps the two sides comparable. *)
+         doing it here as well is what keeps the two sides comparable.
+
+         Closes over [uni_senv] only.  A name free in [term] beyond it and
+         [senv] stays free, and that is sound on this side, unlike a solution's
+         free variable in a sat check: every question here is an entailment
+         asked as "premises and the negated goal are unsatisfiable", in which a
+         free name is one constant of the query, so a passed definition or
+         clause has been shown for every value of that name and any reading of
+         it as a premise is one of those values. *)
       let closed senv (uni_senv, term) =
         let phi = Logic.ExtTerm.to_old_fml senv uni_senv term in
         Evaluator.elim_seq_existentials
@@ -2460,6 +2653,14 @@ and check_preprocessing ~id orig (w : UnsatWitness.t) =
                   with e when not (Common.Timer.is_interrupt e) -> Error (Exn.to_string e)
               with
               | Ok `Unsat -> add r Passed
+              | Ok `Sat when mentions_open_term fenv query ->
+                  add r
+                    (Unchecked
+                       (sprintf
+                          "preprocessed clause is not a consequence in every \
+                           model, and the question has a term the theory \
+                           leaves open: %s"
+                          (Clause.str_of csenv c)))
               | Ok `Sat ->
                   add r
                     (Failed
@@ -2624,19 +2825,30 @@ and check_preprocessing ~id orig (w : UnsatWitness.t) =
         | Some (((PCSP.Params.Forced | LbValid | UbUnsat) as reason), order)
           -> (
             (* implied by the original clauses: one query decides it *)
+            let query =
+              originals
+              @ kind_axioms (Map.key_set osenv)
+              @ earlier_defs order
+              @ [ Formula.negate def ]
+            in
             match
               try
                 Ok
                   (Z3Smt.Z3interface.check_sat_with_preds ~timeout ~id fenv
-                     (List.map ~f:split_seq_reads
-                        (originals
-                        @ kind_axioms (Map.key_set osenv)
-                        @ earlier_defs order
-                        @ [ Formula.negate def ])))
+                     (List.map ~f:split_seq_reads query))
               with e when not (Common.Timer.is_interrupt e) -> Error (Exn.to_string e)
             with
             | Ok `Unsat ->
                 passed_kind r ("def: " ^ PCSP.Params.str_of_elim_reason reason)
+            | Ok `Sat when mentions_open_term fenv query ->
+                add r
+                  (Unchecked
+                     (sprintf
+                        "the definition of %s (%s) does not follow in every \
+                         model, and the question has a term the theory leaves \
+                         open"
+                        name
+                        (PCSP.Params.str_of_elim_reason reason)))
             | Ok `Sat ->
                 add r
                   (Failed
@@ -2778,93 +2990,115 @@ and check_finite_instance ~id orig (fi : UnsatWitness.finite_instance) =
         | Some data' -> same data data'
         | None -> false)
   in
-  let is_fin name =
-    CellQual.is_finite_sort_instance
-      (T_dt.SDT (Datatype.make name [ Datatype.mk_dt name [] ] Datatype.FDt))
-  in
-  let osenv = PCSP.Problem.senv_of orig in
-  if fi.size < 1 || Map.Poly.is_empty fi.smap then unchecked "no finite sort"
-  else if not (Map.Poly.for_all fi.smap ~f:enumeration) then
-    unchecked "a substituted sort is not an enumeration of that size"
-  else if
-    not
-      (Map.Poly.for_alli fi.smap ~f:(fun ~key:_ ~data ->
-           match data with
-           | T_dt.SDT dt -> (
-               match Map.Poly.find fi.dtenv (Datatype.name_of dt) with
-               | Some dt' -> same dt dt'
-               | None -> false)
-           | _ -> false))
-  then unchecked "an enumeration is not the one the environment defines"
-  else if
-    not
-      (agrees fi.dtenv (get_dtenv ()) ~skip:(fun name ->
-           Set.mem enumeration_names name || is_fin name)
-      && agrees fi.fenv (get_fenv ()) ~skip:(fun _ -> false))
-  then
-    unchecked
-      "the environments it was substituted from disagree with this process's"
-  else if
-    not
-      (Map.Poly.for_alli (PCSP.Problem.senv_of fi.source) ~f:(fun ~key ~data:_ ->
-           Map.Poly.mem osenv key
-           && String.equal
-                (Kind.str_of (PCSP.Problem.kind_of fi.source key))
-                (Kind.str_of (PCSP.Problem.kind_of orig key))))
-  then unchecked "an unknown's kind differs from the original problem's"
-  else if not (try_enter_env_bracket ()) then
-    unchecked "the global environments are held elsewhere"
-  else
-    (* the instance is read in its own environments, installed process-wide
-       as the nested solve had them, and every pooled solver context is
-       dropped on the way in and on the way out: a context keeps the datatypes
-       it has declared, and the instance uses the original names at other
-       sorts *)
-    let saved_dtenv = get_dtenv () and saved_fenv = get_fenv () in
-    let restore () =
-      set_fenv saved_fenv;
-      set_dtenv saved_dtenv;
-      Z3Smt.Z3interface.clear_instance_pool ();
-      leave_env_bracket ()
+  (* Validate against the snapshots taken under the same cooperative ownership
+     that protects installation and restoration. A busy owner declines before
+     the checker reads a temporarily substituted environment. *)
+  let validate current_dtenv current_fenv =
+    (* A recorded certificate may mix legacy and tagged entries. Conflicting
+       definitions are a failed validation obligation, not a checker exception. *)
+    let normalized_datatypes =
+      try Some (DTEnv.normalize_keys fi.dtenv, DTEnv.normalize_keys current_dtenv)
+      with exn when not (Common.Timer.is_async exn) -> None
     in
-    let run () =
-      let dtenv_substituted, fenv_substituted =
-        Preprocessing.Preprocessor.finite_instance_envs fi.smap fi.dtenv fi.fenv
-      in
-      set_dtenv dtenv_substituted;
-      set_fenv fenv_substituted;
-      Z3Smt.Z3interface.clear_instance_pool ();
-      let instance =
-        Preprocessing.Preprocessor.finite_instance_problem fi.smap
-          ~dtenv_substituted ~fenv_substituted fi.source
-      in
-      ( check_unsat_witness ~id instance fi.nested,
-        check_preprocessing ~id instance fi.nested )
+    let agrees_datatypes recorded current =
+      Map.Poly.for_alli recorded
+        ~f:(fun ~key ~data ->
+          let name = Datatype.name_of data in
+          (Set.mem enumeration_names name
+           && Map.Poly.exists fi.smap ~f:(function
+                | T_dt.SDT enumeration -> same data enumeration
+                | _ -> false))
+          || match Map.Poly.find current key with
+             | Some data' -> same data data'
+             | None -> false)
     in
-    match run () with
-    | exception e when Common.Timer.is_async e ->
-        restore ();
-        raise e
-    | exception e ->
-        restore ();
-        unchecked ("the nested check raised: " ^ Exn.to_string e)
-    | r1, r2 -> (
-        restore ();
-        let first r =
-          match (r.failed, r.unchecked) with
-          | msg :: _, _ -> Some ("failed: " ^ msg)
-          | [], (why, _) :: _ -> Some why
-          | [], [] -> None
+    let osenv = PCSP.Problem.senv_of orig in
+    if fi.size < 1 || Map.Poly.is_empty fi.smap then unchecked "no finite sort"
+    else if not (Map.Poly.for_all fi.smap ~f:enumeration) then
+      unchecked "a substituted sort is not an enumeration of that size"
+    else if Option.is_none normalized_datatypes then
+      unchecked "the datatype environments contain conflicting definitions"
+    else if
+      not
+        (Map.Poly.for_alli fi.smap ~f:(fun ~key:_ ~data ->
+             match data with
+             | T_dt.SDT dt -> (
+                 let recorded, _ = Option.value_exn normalized_datatypes in
+                 let registered =
+                   match DTEnv.look_up_dt recorded (Datatype.name_of dt) with
+                   | Some _ as found -> found
+                   | None -> Map.Poly.find recorded (Datatype.instance_key dt)
+                 in
+                 match registered with
+                 | Some dt' -> same dt dt'
+                 | None -> false)
+             | _ -> false))
+    then unchecked "an enumeration is not the one the environment defines"
+    else if
+      not
+        ((let recorded, current = Option.value_exn normalized_datatypes in
+          agrees_datatypes recorded current)
+        && agrees fi.fenv current_fenv ~skip:(fun _ -> false))
+    then
+      unchecked
+        "the environments it was substituted from disagree with this process's"
+    else if
+      not
+        (Map.Poly.for_alli (PCSP.Problem.senv_of fi.source) ~f:(fun ~key ~data:_ ->
+             Map.Poly.mem osenv key
+             && String.equal
+                  (Kind.str_of (PCSP.Problem.kind_of fi.source key))
+                  (Kind.str_of (PCSP.Problem.kind_of orig key))))
+    then unchecked "an unknown's kind differs from the original problem's"
+    else
+      (* the instance is read in its own environments, installed process-wide
+         as the nested solve had them, and every pooled solver context is
+         dropped on the way in and on the way out: a context keeps the datatypes
+         it has declared, and the instance uses the original names at other
+         sorts *)
+      let run () =
+        let dtenv_substituted, fenv_substituted =
+          Preprocessing.Preprocessor.finite_instance_envs fi.smap fi.dtenv fi.fenv
         in
-        match (first r1, first r2) with
-        | Some why, _ -> unchecked ("the nested refutation is not certified: " ^ why)
-        | None, Some why ->
-            unchecked
-              ("the nested refutation's clauses are not shown to follow from \
-                the instance: " ^ why)
-        | None, None ->
-            if r1.passed = 0 then unchecked "the nested check checked nothing"
-            else Passed)
+        set_dtenv dtenv_substituted;
+        set_fenv fenv_substituted;
+        Z3Smt.Z3interface.clear_instance_pool ();
+        let instance =
+          Preprocessing.Preprocessor.finite_instance_problem fi.smap
+            ~dtenv_substituted ~fenv_substituted fi.source
+        in
+        ( check_unsat_witness ~id instance fi.nested,
+          check_preprocessing ~id instance fi.nested )
+      in
+      match run () with
+      | exception e when Common.Timer.is_async e ->
+          raise e
+      | exception e ->
+          unchecked ("the nested check raised: " ^ Exn.to_string e)
+      | r1, r2 -> (
+          let first r =
+            match (r.failed, r.unchecked) with
+            | msg :: _, _ -> Some ("failed: " ^ msg)
+            | [], (why, _) :: _ -> Some why
+            | [], [] -> None
+          in
+          match (first r1, first r2) with
+          | Some why, _ -> unchecked ("the nested refutation is not certified: " ^ why)
+          | None, Some why ->
+              unchecked
+                ("the nested refutation's clauses are not shown to follow from \
+                  the instance: " ^ why)
+          | None, None ->
+              if r1.passed = 0 then unchecked "the nested check checked nothing"
+              else Passed)
+  in
+  match
+    Preprocessing.Preprocessor.with_finite_instance_scope ~reset_pool:true
+      ~names:[] (fun current_dtenv current_fenv ->
+        `Restore (validate current_dtenv current_fenv))
+  with
+  | None -> unchecked "the global environments are held elsewhere"
+  | Some result -> result
 
 let check ?(seq_as_array = false) ?(retry = false) ?matched ?ladder ~id pcsp
     (solution, (info : State.info)) =

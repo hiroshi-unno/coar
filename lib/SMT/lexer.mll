@@ -7,9 +7,12 @@
      The octal prefix is an existing reader extension, not SMT-LIB syntax. *)
   let quoted_atom str =
     let name = String.sub str 1 (String.length str - 2) in
+    let is_digit c = c >= '0' && c <= '9' in
     let starts_literal =
       String.length name > 0 &&
-      ((name.[0] >= '0' && name.[0] <= '9') || name.[0] = '"' || name.[0] = ':' ||
+      (is_digit name.[0] || name.[0] = '"' || name.[0] = ':' ||
+       (* a negative numeral spelling: bare, it is the number *)
+       (String.length name >= 2 && name.[0] = '-' && is_digit name.[1]) ||
        (String.length name >= 2 && name.[0] = '#' &&
         (name.[1] = 'x' || name.[1] = 'b' || name.[1] = 'o')))
     in
@@ -48,11 +51,16 @@ rule token = parse
 }
 (* SMT-LIB's only escape inside a string literal is a DOUBLED quotation mark,
    which denotes one quotation mark and does not end the literal.  Without the
-   first alternative the literal ended at the first of the two, so a string
-   containing a quote was split into pieces and `"a b""c d"` became two atoms.
-   The backslash-quote alternative is not SMT-LIB and is kept because files here
-   have used it. *)
-| '"' ("\"\"" | "\\\"" | [^'"'])* '"' {
+   first alternative the literal ended at the first of the two, so a literal
+   holding a b, a quotation mark and c d was split into two atoms.
+   A backslash is an ordinary character of a literal, so the literal made of a
+   quotation mark, a, a backslash and a quotation mark is the two-character
+   string a, backslash.  Reading backslash-quote as an escape (a non-standard
+   alternative this rule once had) made such a literal run on to the next
+   quotation mark in the file, swallowing the commands between.
+   (No quotation mark is written in this comment: ocamllex reads string
+   literals inside comments, so one ending in a backslash never closes.) *)
+| '"' ("\"\"" | [^'"'])* '"' {
     ATOM(Lexing.lexeme lexbuf)
   }
 | [^' ' '\t' '\r' '\n' '(' ')' ';']+ {

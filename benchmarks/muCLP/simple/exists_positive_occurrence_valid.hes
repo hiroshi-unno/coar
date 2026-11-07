@@ -1,0 +1,6 @@
+/* A closed query whose only predicate occurrence is positive and under an
+   existential: exists a. a > 0 /\ P (3 * a).  Valid: a = 1 gives P 3, and
+   counting down by three from 3 reaches 0. */
+exists (a: int). a > 0 /\ P (a + 2 * a)
+s.t.
+P (x: int): bool =mu x = 0 \/ (x > 0 /\ P (x - 3));

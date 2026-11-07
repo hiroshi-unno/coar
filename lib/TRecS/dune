@@ -2,6 +2,6 @@
  (name TRecS)
  (public_name CoAR.TRecS)
  (preprocess
-  (pps ppx_deriving_yojson))
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
  (libraries core CoAR.HOMC)
  (modules config solver))

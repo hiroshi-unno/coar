@@ -46,19 +46,46 @@ end = struct
          (PCSP.Problem.old_formulas_of APCSP.problem)
          ~f:LogicOld.abs_num_literals_of_formula)
 
-  (* the selective counterpart of [generalise_matching]: open only what the
-     problem does not state.  Applied to the substitution the model produced,
+  (* [Invented_values], the selective counterpart of [Matching]: open only
+     what the problem does not state.  Applied to the substitution the model produced,
      whose values then reach the derived example both in its atoms and, through
      [Formula.subst sub phi] below, in its guard -- which is what keeps a fresh
      parameter constrained and the model's own value its witness. *)
   let generalise_invented sub =
-    if not config.generalise_invented_values then sub
-    else
+    match config.generalise with
+    | Model_values | Matching -> sub
+    | Invented_values | Matching_and_invented_values ->
       let f = LogicOld.make_generaliser ~stated:(Lazy.force stated_literals) in
       Map.Poly.map sub ~f
 
+  (* whether [generalise] opens every variable of the matching condition *)
+  let opens_matching : SMTResolver.Config.generalise -> bool = function
+    | Matching | Matching_and_invented_values -> true
+    | Model_values | Invented_values -> false
+
   module Debug =
     Debug.Make ((val Debug.Config.(if config.verbose then enable else disable)))
+
+  (* the problem-clause site: on by its field, and off on a problem whose
+     unknowns take only scalar arguments when
+     [problem_clause_structured_args_only] asks; every read of the site goes
+     through this, so the depth-bounded self-loop steps, the sign
+     canonicalisation of derived examples and the resolvent filter switch off
+     with it *)
+  let problem_clause_site =
+    lazy
+      (config.resolve_against_problem_clauses
+      &&
+      if
+        config.problem_clause_structured_args_only
+        && PCSatCommon.ScalarArgs.unknowns_take_only_scalars APCSP.problem
+      then (
+        Debug.print
+        @@ lazy
+             "[problem-clause site] off: every unknown takes only scalar \
+              arguments";
+        false)
+      else true)
 
   let _ = Debug.set_id id
   let old_dpos = ref Set.Poly.empty
@@ -87,6 +114,22 @@ end = struct
      a spelling the key does not identify counts as depth 0, which weakens the
      bound and does not change what is sound. *)
   let loop_depths : ExClause.t LoopDepth.t ref = ref LoopDepth.empty
+
+  (* With [hyperresolve_positive]: the decided examples whose derivation
+     depends on a hyperresolvent -- the examples [acquire] took from one, and
+     every example derived later from a premise that is in this set.  Read
+     and written only when the switch is on.  [hyperresolve] takes neither its
+     units nor its resolvents from here (see there).  Keyed on the example
+     clause as [acquire] adds it ([ExClause.normalize_params] form); an
+     example that comes back in another spelling counts as independent, which
+     weakens the restriction and does not change what is sound. *)
+  let hyper_derived : ExClause.t Set.Poly.t ref = ref Set.Poly.empty
+
+  let cites_hyper_derived source =
+    (not (Set.is_empty !hyper_derived))
+    && Set.exists source ~f:(function
+         | ClauseGraph.Example ex, _ -> Set.mem !hyper_derived ex
+         | _ -> false)
 
   (* [COAR_LOOP_DEPTH_COUNT=1] prints, per round, what the depth bound withheld
      and recorded, so that a run shows the bound was read and fired *)
@@ -142,13 +185,13 @@ end = struct
      goes from 12 iterations to hundreds). *)
   let cite ex = Set.Poly.singleton (ClauseGraph.mk_example ex, false)
 
-  (* [inherit_goal_reads]: file under the derived negative atom the records of
+  (* [goal_reads.inherit]: file under the derived negative atom the records of
      the decided negative examples of its own predicate among the derivation's
      sources, each joined with the resolved clause's reads at the instance
      [via].  Returns how many records were filed; any failure costs the
      records, never the example. *)
   let inherit_goal_reads exi_senv ~source ~origin ~via (cl : ExClause.t) =
-    if not config.inherit_goal_reads then 0
+    if not config.goal_reads.inherit_ then 0
     else
       match Set.to_list cl.ExClause.negative with
       | [ derived ] when Set.is_empty cl.ExClause.positive -> (
@@ -196,36 +239,9 @@ end = struct
 
   exception E
 
-  let unifiable = function
-    | Atom.True _, Atom.True _ | False _, False _ -> Some (Formula.mk_true ())
-    | App (pred, terms, _), App (pred', terms', _)
-      when Stdlib.( = ) pred pred' && List.length terms = List.length terms'
-      -> (
-        try
-          Some
-            (Formula.and_of
-            @@ List.filter_map (List.zip_exn terms terms') ~f:(function
-              | FunApp (T_int.Int n1, [], _), FunApp (T_int.Int n2, [], _) ->
-                  if Z.Compare.( = ) n1 n2 then None else raise E
-              | FunApp (T_real.Real r1, [], _), FunApp (T_real.Real r2, [], _)
-                ->
-                  if Q.( = ) r1 r2 then None else raise E
-              | ( FunApp (T_bool.Formula (Formula.Atom (atm1, _)), [], _),
-                  FunApp (T_bool.Formula (Formula.Atom (atm2, _)), [], _) )
-                when (Atom.is_true atm1 || Atom.is_false atm1)
-                     && (Atom.is_true atm2 || Atom.is_false atm2) ->
-                  if
-                    (Atom.is_true atm1 && Atom.is_true atm2)
-                    || (Atom.is_false atm1 && Atom.is_false atm2)
-                  then None
-                  else raise E
-              | t1, t2 -> Some (Formula.eq t1 t2)))
-        with E -> None)
-    | _ -> None
-
-  (* [unifiable] returns the equations under which two atoms agree, and every
-     one of them is then handed to a solver, which answers with one arbitrary
-     solution.  An equation with a PARAMETER on one side does not need a
+  (* [AtomMatching.matching_condition_of] returns the equations under which
+     two atoms agree, and every one of them is then handed to a solver, which
+     answers with one arbitrary solution.  An equation with a PARAMETER on one side does not need a
      solver: it is a binding, and realising it is what lets one example's
      parameter meet another's -- which is what a refutation needs, since two
      distinct parameters no more meet than two distinct constants do.  Only the
@@ -262,7 +278,11 @@ end = struct
     let sub, rest = collect Map.Poly.empty [] (Formula.conjuncts_list_of phi) in
     (sub, Formula.and_of rest)
 
-  let verbose = false
+  (* A compile-time trace gate, separate from [config.verbose]: it opens the
+     per-step account of why a resolution step produced nothing (the
+     contradiction checks and their outcomes, a failed unification, each
+     resolvent), which a verbose configuration does not show. *)
+  let print_log = false
 
   (* THE RESOLUTION PHASE'S OWN SOLVER QUESTIONS.
      Both rules below decide from a model of a formula built out of a clause and
@@ -400,20 +420,23 @@ end = struct
     | _ -> ());
     r
 
-  (* With [solve_store_chain_eqs], a question is asked with each write chain
-     equated to an array term solved for its variable ([Ast.StoreChainEq]): an
+  (* Unless [store_chain_eqs] is [Unsolved], a question is asked with each
+     write chain equated to an array term solved for its variable
+     ([Ast.StoreChainEq]): an
      equisatisfiable question whose models are the original's once the fresh
      variables it adds are dropped, which is done here, so a caller reads the
      answer as an answer about [phis]. *)
   let resolution_check_sat ?(refuse = true) ~site fenv phis =
     if refuse && resolution_query_refused ~site phis then `Unknown "refused"
-    else if not config.solve_store_chain_eqs then
-      resolution_sat ~site ~timeout:config.resolution_query_timeout fenv phis
     else
+      match config.store_chain_eqs with
+      | Unsolved ->
+        resolution_sat ~site ~timeout:config.resolution_query_timeout fenv phis
+      | (Top_level | Contextual) as mode ->
       let solve =
-        if config.solve_store_chain_eqs_contextual then
-          StoreChainEq.solve_contextual
-        else StoreChainEq.solve
+        match mode with
+        | Contextual -> StoreChainEq.solve_contextual
+        | Top_level | Unsolved -> StoreChainEq.solve
       in
       match solve phis with
       | _, [] ->
@@ -504,7 +527,7 @@ end = struct
     ignore graph;
     residual := Formula.mk_true ();
     try
-      if verbose then
+      if print_log then
         Debug.print
         @@ lazy
              ("  checking contradiction: "
@@ -516,12 +539,13 @@ end = struct
             @@ Set.Poly.filter_map atms ~f:(fun (atm', (src, e)) ->
                 let _param_senv (*ToDo*), atm' = Atom.refresh_tvar atm' in
                 Option.map ~f:(fun x -> (x, src, e))
-                @@ unifiable
+                @@ AtomMatching.matching_condition_of
                      (Logic.ExtTerm.to_old_atm exi_senv uni_senv atm, atm'))
           in
           if List.is_empty xs then raise E
           else (Formula.or_of xs, Set.Poly.union_list srcs, exs)
         in
+        Common.PhaseTime.with_phase "r-match" @@ fun () ->
         List.unzip3 @@ Set.to_list
         @@ Set.union
              (Set.Poly.map c_pos ~f:(f negative))
@@ -551,7 +575,7 @@ end = struct
         Formula.exists (Set.to_list bvs)
           phi (* unbound variables are non-predicate function variables *)
       in
-      if verbose then
+      if print_log then
         Debug.print
         @@ lazy
              ("    sufficient condition: " ^ Formula.str_of cond ^ " is valid?");
@@ -573,7 +597,7 @@ end = struct
         (* without non-predicate function variables*)
         match resolution_check_sat ~site:"contradicts" fenv [ phi ] with
         | `Sat model ->
-            if verbose then Debug.print @@ lazy "    yes";
+            if print_log then Debug.print @@ lazy "    yes";
             let sub =
               (* A Z3 model describes every symbol its solver knows, and the
                  solvers are pooled and reused, so the model can carry
@@ -641,7 +665,7 @@ end = struct
               (* two independent halves.  [unify_parameters] realises the
                  matching equations that a binding can realise, which is what
                  lets one example's parameter meet another's;
-                 [generalise_matching] then turns what is left open into
+                 [generalise = Matching] then turns what is left open into
                  parameters rather than taking the model's values for them, and
                  is the half measured to cost answers. *)
               let bound =
@@ -670,7 +694,7 @@ end = struct
               | `Left v | `Right v -> Some v
               | `Both (v, _) -> Some v)
           in
-              if not config.generalise_matching then sub
+              if not (opens_matching config.generalise) then sub
               else
                 Set.fold fvs ~init:sub ~f:(fun acc (x, srt) ->
                     if Map.Poly.mem bound x then acc
@@ -738,7 +762,7 @@ end = struct
               && Set.is_empty (Formula.term_sort_env_of !residual)
               && not (ClauseOld.interpretation_dependent !residual)
             then (
-              if verbose then
+              if print_log then
                 Debug.print
                 @@ lazy
                      ("    no: the model does not satisfy the condition --                        residue " ^ Formula.str_of !residual);
@@ -770,7 +794,7 @@ end = struct
                       (*failwith (Ident.name_of_tvar x ^ ":" ^ LogicOld.Term.str_of v1 ^ ":" ^ LogicOld.Term.str_of v2)*)
                       raise E))
         | _ ->
-            if verbose then Debug.print @@ lazy "    no";
+            if print_log then Debug.print @@ lazy "    no";
             None)
       else if Set.are_disjoint (Set.Poly.map ~f:fst bvs) params then
         (* with function variables and without parameters *)
@@ -785,18 +809,101 @@ end = struct
                        ~timeout:config.resolution_query_timeout fenv phi))
             cond
         then
-          let _ = if verbose then Debug.print @@ lazy "    yes!" in
+          let _ = if print_log then Debug.print @@ lazy "    yes!" in
           Some theta
         else
-          let _ = if verbose then Debug.print @@ lazy "    no!" in
+          let _ = if print_log then Debug.print @@ lazy "    no!" in
           None
       else None
     with E ->
-      if verbose then Debug.print @@ lazy "    unification failed";
+      if print_log then Debug.print @@ lazy "    unification failed";
       None
+
+  let resolvent_order =
+    match config.refutation_resolvent_order with
+    | Set_order -> ClauseGraph.Whole_set
+    | Generation_order -> ClauseGraph.Generation
+
+  (* The unknowns that have a decided unit among [exs], as [contradicts] reads
+     them: the atoms of [decided_atoms exs], by predicate name. *)
+  let decided_pvars exs =
+    Set.Poly.filter_map exs ~f:(fun (e, _src) ->
+        match ExClause.old_atom_of_uclause e with
+        | Some (_, Atom.App (Predicate.Var (pv, _), _, _)) ->
+            Some (Ident.pvar_to_tvar pv)
+        | _ -> None)
+
+  (* Whether some resolvent of the unit [atm] against [cl] may contradict the
+     decided examples, judged by predicate names only.  [`Forward]: the unit is
+     assumed positive and resolved against a body atom of [cl]; [`Backward]:
+     assumed negative and resolved against a head atom.  [contradicts] matches
+     every head atom of the resolvent against a decided NEGATIVE unit and every
+     body atom against a decided POSITIVE unit, only of the same predicate
+     ([AtomMatching.matching_condition_of] compares predicates first), and
+     answers [None] at the first literal with no match; resolving substitutes
+     terms only, so the resolvent's literals have the predicates of [cl]'s
+     literals less the one resolved.  So [false] here means every resolvent of
+     [cl] answers [None]: a necessary condition, never a reason to drop a clause
+     that could answer.  A literal that is not an application of an unknown,
+     and a unit that is not one, are not judged ([true]).
+
+     Assumes [pos_pvars] and [neg_pvars] are [decided_pvars] of the very sets
+     [contradicts] is handed as [positive] and [negative]. *)
+  let may_contradict exi_senv ~mode ~pos_pvars ~neg_pvars atm
+      (((_, c_pos, c_neg, _), _) : _ * _) =
+    let pvar_of papp =
+      match Logic.Term.let_apps papp with
+      | Logic.Var (p, _), _ when Map.Poly.mem exi_senv p -> Some p
+      | _ -> None
+    in
+    let has decided papp =
+      match pvar_of papp with Some p -> Set.mem decided p | None -> true
+    in
+    match atm with
+    | Atom.App (Predicate.Var (pv, _), _, _) ->
+        let unit_p = Ident.pvar_to_tvar pv in
+        let resolved, same_side, other_side, other_decided =
+          match mode with
+          | `Forward -> (c_neg, pos_pvars, c_pos, neg_pvars)
+          | `Backward -> (c_pos, neg_pvars, c_neg, pos_pvars)
+        in
+        Set.for_all other_side ~f:(has other_decided)
+        && Set.exists resolved ~f:(fun papp' ->
+            (match pvar_of papp' with
+             | Some p -> Ident.tvar_equal p unit_p
+             | None -> true)
+            && Set.for_all (Set.remove resolved papp') ~f:(has same_side))
+    | _ -> true
+
+  (* [cs] narrowed by [config.refutation_precheck] for one step that resolves
+     the unit [atm] in [mode]: unchanged when the check is off; empty when no
+     clause passes [may_contradict] (the step answers [None] either way); and
+     otherwise unchanged, or the passing clauses only under
+     [Drop_hopeless_clauses]. *)
+  let precheck_clauses exi_senv ~mode ~dpos ~dneg atm cs =
+    match config.refutation_precheck with
+    | Precheck_off -> cs
+    | Skip_hopeless_calls | Drop_hopeless_clauses ->
+        Common.PhaseTime.with_phase "r-precheck" @@ fun () ->
+        let pos_pvars = decided_pvars dpos and neg_pvars = decided_pvars dneg in
+        let passing =
+          Set.filter cs
+            ~f:(may_contradict exi_senv ~mode ~pos_pvars ~neg_pvars atm)
+        in
+        if Set.is_empty passing then (
+          Common.PhaseTime.event "precheck-step-skipped";
+          passing)
+        else (
+          match config.refutation_precheck with
+          | Drop_hopeless_clauses ->
+              if Set.length passing < Set.length cs then
+                Common.PhaseTime.event "precheck-clauses-dropped";
+              passing
+          | Precheck_off | Skip_hopeless_calls -> cs)
 
   let contradicts_assuming_pos ~dpos ~dneg ~graph fenv exi_senv cs
       ((param_senv, atm), source) =
+    let cs = precheck_clauses exi_senv ~mode:`Forward ~dpos ~dneg atm cs in
     let dms =
       Set.Poly.of_list @@ List.map ~f:fst @@ LogicOld.get_dummy_term_senv ()
     in
@@ -804,19 +911,25 @@ end = struct
       Set.filter (Atom.fvs_of atm) ~f:(fun x ->
           (not (Map.Poly.mem exi_senv x)) && not (Set.mem dms x))
     in
-    ClauseGraph.resolve_one_step_all
-      ~print:(if verbose then Debug.print ~id:None else fun _ -> ())
+    let decided =
+      lazy
+        (Common.PhaseTime.with_phase "r-decided-atoms" (fun () ->
+             (decided_atoms dpos, decided_atoms dneg)))
+    in
+    Common.PhaseTime.with_phase "r-one-step" @@ fun () ->
+    ClauseGraph.resolve_find_map ~order:resolvent_order
+      ~print:(if print_log then Debug.print ~id:None else fun _ -> ())
       (Set.Poly.singleton
          ( (Logic.of_old_sort_env_map param_senv, Logic.ExtTerm.of_old_atom atm),
            source ))
       Set.Poly.empty exi_senv cs
-    |> fun resolvents ->
-    let positive = decided_atoms dpos and negative = decided_atoms dneg in
-    resolvents
-    |> Set.find_map ~f:(fun (c, sub, origin) ->
+      ~f:(fun (c, sub, origin) ->
+        let positive, negative = Lazy.force decided in
         Option.map ~f:(fun (r, srcs, premises, cond, premise) ->
             (r, srcs, origin, sub, premises, cond, premise))
-        @@ contradicts ~positive ~negative ~graph fenv exi_senv
+        @@ Common.PhaseTime.with_phase "r-contradicts"
+        @@ fun () ->
+        contradicts ~positive ~negative ~graph fenv exi_senv
              ( c,
                params,
                (* all parameters need to be substituted *)
@@ -834,6 +947,7 @@ end = struct
 
   let contradicts_assuming_neg ~dpos ~dneg ~graph fenv exi_senv cs
       ((param_senv, atm), source) =
+    let cs = precheck_clauses exi_senv ~mode:`Backward ~dpos ~dneg atm cs in
     let dms =
       Set.Poly.of_list @@ List.map ~f:fst @@ LogicOld.get_dummy_term_senv ()
     in
@@ -841,20 +955,26 @@ end = struct
       Set.filter (Atom.fvs_of atm) ~f:(fun x ->
           (not (Map.Poly.mem exi_senv x)) && not (Set.mem dms x))
     in
-    ClauseGraph.resolve_one_step_all
-      ~print:(if verbose then Debug.print ~id:None else fun _ -> ())
+    let decided =
+      lazy
+        (Common.PhaseTime.with_phase "r-decided-atoms" (fun () ->
+             (decided_atoms dpos, decided_atoms dneg)))
+    in
+    Common.PhaseTime.with_phase "r-one-step" @@ fun () ->
+    ClauseGraph.resolve_find_map ~order:resolvent_order
+      ~print:(if print_log then Debug.print ~id:None else fun _ -> ())
       Set.Poly.empty
       (Set.Poly.singleton
          ( (Logic.of_old_sort_env_map param_senv, Logic.ExtTerm.of_old_atom atm),
            source ))
       exi_senv cs
-    |> fun resolvents ->
-    let positive = decided_atoms dpos and negative = decided_atoms dneg in
-    resolvents
-    |> Set.find_map ~f:(fun (c, sub, origin) ->
+      ~f:(fun (c, sub, origin) ->
+        let positive, negative = Lazy.force decided in
         Option.map ~f:(fun (r, srcs, premises, cond, premise) ->
             (r, srcs, origin, sub, premises, cond, premise))
-        @@ contradicts ~positive ~negative ~graph fenv exi_senv
+        @@ Common.PhaseTime.with_phase "r-contradicts"
+        @@ fun () ->
+        contradicts ~positive ~negative ~graph fenv exi_senv
              ( c,
                params,
                (* all parameters need to be substituted *)
@@ -927,7 +1047,7 @@ end = struct
      renaming merges them.  It is applied only where that site is on, so a run
      without it keeps the spelling -- and hence the trajectory -- it had. *)
   let canon_derived_signs cl =
-    if config.resolve_against_problem_clauses then ExClause.canon_eq_signs cl
+    if Lazy.force problem_clause_site then ExClause.canon_eq_signs cl
     else cl
 
   let prove ~dpos ~dneg ~graph fenv exi_senv cs ((param_senv, atm), source) =
@@ -1034,7 +1154,7 @@ end = struct
           let inherited =
             inherit_goal_reads exi_senv ~source:source' ~origin ~via cl
           in
-          (if config.record_goal_reads && inherited = 0 then
+          (if config.goal_reads.record && inherited = 0 then
              match Set.to_list cl.ExClause.negative with
              | [ derived ] -> (
                  match GoalReads.key_of_atom derived with
@@ -1159,7 +1279,7 @@ end = struct
                positive ones keep the solver's arbitrary values, so the two
                still cannot meet -- which is what a refutation needs them to
                do. *)
-            if not config.generalise_matching then sub
+            if not (opens_matching config.generalise) then sub
             else
               Set.fold (Formula.term_sort_env_of phi) ~init:sub
                 ~f:(fun acc (x, srt) ->
@@ -1201,7 +1321,8 @@ end = struct
      arguments a solver chose, which never collapse and so never become the
      negative example the refutation needs.
 
-     They collapse under a CONDITION, and [unifiable] already computes it: if
+     They collapse under a CONDITION, and
+     [AtomMatching.matching_condition_of] already computes it: if
      [c] makes the arguments agree then the two literals are one literal, and
      the clause [not a1 \\/ not a2 \\/ pure] is [not a1 \\/ pure] wherever [c]
      holds -- which as a clause is [not a1 \\/ pure \\/ not c].  So the collapse
@@ -1221,14 +1342,16 @@ end = struct
           let old = Logic.ExtTerm.to_old_atm exi_senv uni_senv in
           let a0 = old a in
           let conds =
-            List.map (List.tl_exn l) ~f:(fun b -> unifiable (a0, old b))
+            List.map (List.tl_exn l) ~f:(fun b ->
+                AtomMatching.matching_condition_of (a0, old b))
           in
           if List.exists conds ~f:Option.is_none then (
             None)
           else
             let c = Formula.and_of @@ List.filter_map conds ~f:Fn.id in
-            (* [unifiable] returns the equations under which the arguments
-               agree and does NOT ask whether they can: it compares two
+            (* [AtomMatching.matching_condition_of] returns the equations
+               under which the arguments agree and does NOT ask whether they
+               can: it compares two
                constants only when they ARE the argument, so
                [seq.unit 6 = seq.unit 8] comes back as an equation to satisfy
                rather than as a failure.  Collapsing on an unsatisfiable
@@ -1262,10 +1385,136 @@ end = struct
       match cond_of neg with Some r -> rebuild false r | None -> (((uni_senv, pos, neg, pure), source), rest)
     else (((uni_senv, pos, neg, pure), source), rest)
 
+  (* Hyperresolution of ONE positive example into a resolvent.  [acquire]
+     turns only unit resolvents into examples, and a one-step resolvent keeps
+     every body atom the step did not resolve, so a clause such as
+     [not p(c, x) \\/ not p(c, y) \\/ q(g c, x + y)] together with the decided
+     [p(c, 2)] derives nothing: each round resolves the example into one atom
+     of the original clause and drops what is left.  Here each decided
+     positive example [u] with no guard is resolved into the resolvent again,
+     by the same [ClauseGraph.resolve_one_step] the one-step phase uses, and
+     again into what that leaves, until no body atom unifies with [u]; the
+     result is kept when at least one atom was resolved and it is a unit
+     clause, the only shape [acquire] uses.
+
+     Assumes: [dpos] holds decided positive examples, i.e. each atom of [u]
+     holds in every solution of the problem; [cs] are resolvents in
+     [acquire]'s form, [theta] a substitution of [origin]'s variables.
+     Guarantees: each clause returned is a consequence of the clause it was
+     built from and of the examples it cites (sound by construction): every
+     step is one binary resolution of the current clause against the unit
+     clause [u] under a most general unifier, whose resolvent is a consequence
+     of the two, and consequence is transitive; the source set grows by [u]'s
+     at each step (the union in [resolve_one_step]).  The premises are renamed
+     apart: every step resolves a fresh copy of [u], whose parameters are new
+     [$]-names.  Without it the clause and [u] could hold the same parameter
+     name -- [cs] are resolvents of earlier one-step resolutions, which keep
+     the parameters of the example they resolved, and examples number their
+     parameters from [$1] -- and [resolve_one_step] merges the two sort
+     environments: at two sorts that raised [Failure "force_merge"] (a [$1]
+     of a list sort in the resolvent against a [$1 : int] of [u]), and at one
+     sort it silently identified two independent variables, a sound but less
+     general instance.  Preserves: the theta returned is
+     the composition of the steps' unifiers with the incoming one, so it is
+     still a substitution of [origin]'s variables and [clause_subst] re-derives
+     the instance the example was read from.
+
+     One level only: no premise of a hyperresolution step depends on a
+     hyperresolvent.  The units exclude [hyper_derived], and a resolvent that
+     cites an example of [hyper_derived] is not hyperresolved; [acquire] puts
+     every example taken from a hyperresolvent, and every example derived
+     from a premise already there, into [hyper_derived].  Without it the rule
+     fed on itself: on a recursive generator [g(x) /\ g(y) => g(c(x, y))]
+     each round's hyperresolvents became the next round's units and the
+     resolver enumerated the generator's least model -- 2, 6, 12, 37, 156,
+     858 and then 24,106 hyperresolvents per round, nearly all distinct
+     ground facts, and a solve the default finishes in a second timed out.
+     With the restriction a round hyperresolves at most (resolvents not
+     depending on a hyperresolvent) x (units not depending on one), and the
+     derivations it is for -- two decided base facts resolved into a
+     two-call clause to give the head a goal clause refutes -- are one level
+     deep.  What it gives up is a hyperresolvent built on another
+     hyperresolvent; examples derived from hyperresolvents still take part
+     in every other rule, so a refutation through them is still found. *)
+  let hyperresolve exi_senv dpos cs =
+    let units =
+      Set.filter dpos ~f:(fun (ex, _src) ->
+          Option.is_some (ExClause.atom_of_uclause ex)
+          && not (Set.mem !hyper_derived ex))
+    in
+    (* a copy of [ex]'s unit atom whose parameters are fresh, cited as [ex]
+       itself (its renaming is the same example) *)
+    let fresh_unit (ex, _src) =
+      let map =
+        Map.Poly.map (ExClause.params_of ex) ~f:(fun _ ->
+            Ident.mk_fresh_dontcare "")
+      in
+      Option.value_exn
+      @@ insert_source (cite ex)
+      @@ ExClause.atom_of_uclause (ExClause.rename map ex)
+    in
+    let bvs = Map.key_set exi_senv in
+    let compose theta1 theta2 =
+      Map.Poly.merge (Map.Poly.map theta1 ~f:(Term.subst theta2)) theta2
+        ~f:(fun ~key:_ -> function `Left v | `Right v | `Both (v, _) -> Some v)
+    in
+    let rec saturate u (cl_src, theta) n =
+      match
+        Set.choose
+        @@ ClauseGraph.resolve_one_step ~print:(fun _ -> ()) ~bvs `Forward
+             (fresh_unit u) exi_senv cl_src
+      with
+      | None -> (cl_src, theta, n)
+      | Some (cl_src', theta', _) ->
+          saturate u (cl_src', compose theta theta') (n + 1)
+    in
+    Set.concat_map cs ~f:(fun ((((_, pos, neg, _), source) as cl_src), (theta, origin)) ->
+        if Set.is_empty neg || Set.length pos > 1 || cites_hyper_derived source
+        then Set.Poly.empty
+        else
+          Set.Poly.filter_map units ~f:(fun u ->
+              let ((((_, pos', neg', phi'), _) as cl_src'), theta', n) =
+                saturate u (cl_src, theta) 0
+              in
+              if
+                n >= 1
+                && Set.length pos' + Set.length neg' = 1
+                && not (Logic.BoolTerm.is_true phi')
+              then (
+                Debug.print
+                @@ lazy
+                     ("  hyperresolvent: " ^ Clause.str_of exi_senv (fst cl_src'));
+                Some (cl_src', (theta', origin)))
+              else None))
+
+  (* [hyper_derived]'s bookkeeping for an example [cl] that [acquire] has just
+     derived: [tainted] when the resolvent was a hyperresolvent or cites an
+     example of [hyper_derived], [src] the sources [acquire_papp] adds.  An
+     example already decided independently stays independent; one derived
+     independently now leaves the set. *)
+  let note_derived ~decided ~tainted src cl =
+    if config.hyperresolve_positive then
+      if tainted || cites_hyper_derived src then (
+        if
+          not
+            (Set.exists decided ~f:(fun (ex, _) -> Stdlib.compare ex cl = 0))
+        then hyper_derived := Set.add !hyper_derived cl)
+      else hyper_derived := Set.remove !hyper_derived cl
+
   let acquire fenv exi_senv ~dpos ~dneg ~und ~graph cs =
+    (* each resolvent paired with whether it depends on a hyperresolvent *)
+    let cs =
+      if config.hyperresolve_positive then
+        let hyper = hyperresolve exi_senv dpos cs in
+        Set.union
+          (Set.Poly.map cs ~f:(fun ((_, source), _ as c) ->
+               (c, cites_hyper_derived source)))
+          (Set.Poly.map hyper ~f:(fun c -> (c, true)))
+      else Set.Poly.map cs ~f:(fun c -> (c, false))
+    in
     let cs =
       if config.collapse_same_pred then
-        Set.Poly.map cs ~f:(collapse_same_pred fenv exi_senv)
+        Set.Poly.map cs ~f:(fun (c, t) -> (collapse_same_pred fenv exi_senv c, t))
       else cs
     in
     if Set.is_empty cs then (dpos, dneg, und)
@@ -1275,12 +1524,12 @@ end = struct
       @@ lazy
            (PCSP.Problem.str_of
               (PCSP.Problem.of_clauses ~params:(PCSP.Params.make exi_senv)
-              @@ Set.Poly.map ~f:(fst >> fst) cs));
+              @@ Set.Poly.map ~f:(fst >> fst >> fst) cs));
       Debug.print @@ lazy "";
       Set.fold cs ~init:(dpos, dneg, und)
         ~f:(fun
             (dpos, dneg, und)
-            (((uni_senv, pos, neg, pure), source), (theta, origin))
+            ((((uni_senv, pos, neg, pure), source), (theta, origin)), tainted)
           ->
           match (Set.to_list pos, Set.to_list neg) with
           | [ atm ], [] | [], [ atm ] ->
@@ -1349,6 +1598,7 @@ end = struct
                                ("  add positive example " ^ ExClause.str_of cl);
                           !record cl ~via:(Some origin) ~premises:[]
                             (clause_subst exi_senv origin theta sub);
+                          note_derived ~decided:dpos ~tainted src cl;
                           (Set.add dpos (cl, Set.union src source), dneg, und)))
                 else if
                   (* negative unit clause *)
@@ -1397,6 +1647,7 @@ end = struct
                              ~source:(Set.union src source) ~origin ~via cl
                             : int);
                         !record cl ~via:(Some origin) ~premises:[] via;
+                        note_derived ~decided:dneg ~tainted src cl;
                         (dpos, Set.add dneg (cl, Set.union src source), und)))
               else (* with function variables *) (dpos, dneg, und)
           | [], [] -> (
@@ -1587,6 +1838,30 @@ end = struct
      novelty condition, that the head derived is not one already known, which
      is the same idea as this module's own [enforce_new]. *)
 
+  (* The positive example a forward step derives from the head atom
+     [head] of a clause, after the model's substitution.
+
+     Assumes: [head] is an atom over the clause's universal variables, the
+     unknowns of [exi_senv] and the fresh don't-care variables the model's
+     unassigned entries became.  Guarantees: every parameter of the example is
+     a canonical don't-care name ([$1], [$2], ... in order of occurrence), as for
+     every other example this module derives, so no parameter is named like a
+     universal variable of any clause.  Preserves the example's meaning: a
+     parameter is implicitly universally quantified, and the renaming is a
+     bijection onto names that occur nowhere else in it.
+
+     Why the renaming is needed: the model restricts only the variables it
+     mentions, so a head variable the query left unconstrained keeps the
+     clause's own name.  Resolving the example later against another clause that
+     binds the same name merges the two sort environments; at different sorts
+     that raised a [Failure] out of the resolution phase, and at one sort the
+     unifier would silently identify the example's parameter with the clause's
+     variable. *)
+  let forward_example_of_head exi_senv head =
+    canon_derived_signs
+    @@ ExClause.normalize_params (Map.key_set exi_senv)
+    @@ ExClause.mk_unit_pos (ExAtom.normalize head)
+
   (* One forward-chaining step over
      *every* pairing of the clause's body atoms with known positives, rather
      than one pairing. *)
@@ -1608,7 +1883,7 @@ end = struct
     let rec iter assigns pairs =
       match pairs with
       | [] -> begin
-        let result = resolution_sat ~site:"forward-pairing" ~timeout:config.eager_smt_timeout fenv [ phi; assigns; goal_constraint ] in
+        let result = resolution_sat ~site:"forward-pairing" ~timeout:(SMTResolver.Config.eager_timeout_ms config.eager_positive_examples) fenv [ phi; assigns; goal_constraint ] in
         match result with
         | `Sat model -> begin
           Debug.print @@ lazy "Sat";
@@ -1616,8 +1891,14 @@ end = struct
             let t_str = Option.value_map t ~default:"None" ~f:LogicOld.Term.str_of in
             Debug.print @@ lazy (sprintf "%s => %s" (Ident.str_of_tvar tv) t_str);
           );
-          let sub = LogicOld.remove_dontcare ~freshvar:true model |> Map.Poly.of_alist_exn in
           let head_term = Logic.ExtTerm.to_old_term exi_senv uni_senv head_term [] in
+          (* the model as a substitution over the term it is applied to, read
+             by name and sort: an entry a pooled context holds at another sort
+             says nothing about the head's variable *)
+          let sub =
+            LogicOld.model_subst ~freshvar:true
+              ~target:(LogicOld.Term.term_sort_env_of head_term) model
+          in
           Debug.print @@ lazy (sprintf "head_term1: %s" (LogicOld.Term.str_of head_term));
           let head_term = LogicOld.Term.subst sub head_term in
           Debug.print @@ lazy (sprintf "head_term2: %s" (LogicOld.Term.str_of head_term));
@@ -1626,8 +1907,7 @@ end = struct
           let head_atom = Logic.ExtTerm.to_old_atom exi_senv uni_senv head_term [] in
           Debug.print @@ lazy (sprintf "head_atom: %s" (LogicOld.Atom.str_of head_atom));
           let head = ExAtom.of_old_atom exi_senv (LogicOld.Formula.mk_true ()) head_atom in
-          let head = ExAtom.normalize head in
-          let ex = ExClause.mk_unit_pos head in
+          let ex = forward_example_of_head exi_senv head in
           Debug.print @@ lazy ("obtained example:" ^ ExClause.str_of ex);
           examples := (ex, [(ClauseGraph.Clause clause, true)]) :: !examples;
           end
@@ -1798,7 +2078,7 @@ end = struct
       in
       Debug.print @@ lazy (sprintf "goal constraint: %s" (LogicOld.Formula.str_of goal_constraint));
 
-      let result = resolution_sat ~site:"forward-one-query" ~timeout:config.eager_smt_timeout fenv [ phi; assign; goal_constraint ] in
+      let result = resolution_sat ~site:"forward-one-query" ~timeout:(SMTResolver.Config.eager_timeout_ms config.eager_positive_examples) fenv [ phi; assign; goal_constraint ] in
       match result with
       | `Sat model -> begin
         Debug.print @@ lazy "Sat";
@@ -1810,16 +2090,19 @@ end = struct
           in
           Debug.print @@ lazy (sprintf "%s => %s" (Ident.str_of_tvar tv) t_str);
         );
-        let sub = LogicOld.remove_dontcare ~freshvar:true model |> Map.Poly.of_alist_exn in
         let head_term = Logic.ExtTerm.to_old_term exi_senv uni_senv head_term [] in
+        (* read by name and sort, as at the forward pairing above *)
+        let sub =
+          LogicOld.model_subst ~freshvar:true
+            ~target:(LogicOld.Term.term_sort_env_of head_term) model
+        in
         let head_term = LogicOld.Term.subst sub head_term in
         Debug.print @@ lazy (sprintf "head_term1: %s" (LogicOld.Term.str_of head_term));
         let head_term = Logic.ExtTerm.of_old_term head_term in
         Debug.print @@ lazy (sprintf "head_term2: %s" (Logic.ExtTerm.str_of head_term));
         let head_atom = Logic.ExtTerm.to_old_atom exi_senv uni_senv head_term [] in
         let head = ExAtom.of_old_atom exi_senv (LogicOld.Formula.mk_true ()) head_atom in
-        let head = ExAtom.normalize head in
-        let ex = ExClause.mk_unit_pos head in
+        let ex = forward_example_of_head exi_senv head in
         Debug.print @@ lazy ("obtained example:" ^ ExClause.str_of ex);
         (* let _ = Stdlib.read_line () in *)
         examples := (ex, [(ClauseGraph.Clause cl, true)]) :: !examples
@@ -1965,7 +2248,7 @@ end = struct
            [check_clause_nonparam_smt], which negates what it is given: the
            formula here is already the negation, so that call would ask about
            its negation instead. Hence the direct [check_sat]. *)
-        let result = resolution_sat ~site:"reduction1" ~timeout:config.eager_smt_timeout fenv [ neg_phi; assign ] in
+        let result = resolution_sat ~site:"reduction1" ~timeout:(SMTResolver.Config.eager_timeout_ms config.eager_positive_examples) fenv [ neg_phi; assign ] in
         match result with
         | `Sat _model -> Debug.print @@ lazy "Sat"
         | `Unsat -> Debug.print @@ lazy "Unsat"
@@ -2022,12 +2305,17 @@ end = struct
         | _ -> `Unknown)
     | _ -> `Unknown
 
-  (* the firing condition of [fact_goal_structured_only], decided once from the
-     problem's sort environments *)
+  (* the firing condition of [fact_goal_clauses]' [structured_only], decided
+     once from the problem's sort environments *)
   let factgoal_fires =
+    let enabled, structured_only =
+      match config.fact_goal_clauses with
+      | SMTResolver.Config.No_fact_goal_pass -> (false, true)
+      | Decide { structured_only } | Dry_run { structured_only } ->
+          (true, structured_only)
+    in
     lazy
-      (FactGoal.fires ~enabled:config.decide_by_fact_goal_clauses
-         ~structured_only:config.fact_goal_structured_only
+      (FactGoal.fires ~enabled ~structured_only
          (PCSP.Problem.senv_of APCSP.problem)
          (PCSP.Problem.clauses_of APCSP.problem))
 
@@ -2089,7 +2377,11 @@ end = struct
                             (* the dry-run control stops at the same point
                                and records nothing; the counts then say what
                                would have been derived *)
-                            if not config.fact_goal_dry_run then begin
+                            if
+                              match config.fact_goal_clauses with
+                              | Dry_run _ -> false
+                              | No_fact_goal_pass | Decide _ -> true
+                            then begin
                             let ex' =
                               ExClause.normalize_params (Map.key_set exi_senv)
                               @@ ExClause.normalize ex
@@ -2134,16 +2426,28 @@ end = struct
   let witness_groups =
     lazy
       (FactGoal.wgroups_of_problem
+         ~foreign_heads:config.witness_groups_foreign_heads
          ~fnpvs:(PCSP.Problem.fnpvs_of APCSP.problem)
+         (PCSP.Problem.senv_of APCSP.problem)
+         (PCSP.Problem.clauses_of APCSP.problem))
+
+  (* the problem's fact clauses and one-atom goal clauses as atom parts, read
+     by rule W's foreign members beside the decided examples *)
+  let witness_clause_parts =
+    lazy
+      (FactGoal.clause_parts
          (PCSP.Problem.senv_of APCSP.problem)
          (PCSP.Problem.clauses_of APCSP.problem))
 
   (* Rule W of [FactGoal] over the witness groups: a head atom of an undecided
      example, or of a decided negative one (a conflict), is asked of each group
      of its predicate; a group without a head is asked once per count of
-     decided positives.  The decided positives are the unit positive examples,
-     which are consequences of the problem.  A question is cached with the
-     number of decided positives it saw, since more positives can only make it
+     decided positives (and negatives).  The decided positives are the unit
+     positive examples, which are consequences of the problem; with
+     [witness_groups_foreign_heads] the problem's fact clauses join them, and
+     the unit negative examples and one-atom goal clauses are read for the
+     foreign members' heads.  A question is cached with the numbers of decided
+     positives and negatives it saw, since more of either can only make it
      valid; budget and cap as for the fact-goal pass. *)
   let decide_by_witness_groups vs dpos0 dneg0 und0 =
     if not config.decide_by_witness_groups then Set.Poly.empty
@@ -2160,14 +2464,22 @@ end = struct
         let pos =
           Set.to_list pos_atoms |> List.filter_map ~f:FactGoal.parts_of_atom
         in
-        let npos = List.length pos in
         let neg = atoms_of dneg0 in
+        let pos, negparts =
+          if config.witness_groups_foreign_heads then
+            let fpos, fneg = Lazy.force witness_clause_parts in
+            ( pos @ fpos,
+              (Set.to_list neg |> List.filter_map ~f:FactGoal.parts_of_atom)
+              @ fneg )
+          else (pos, [])
+        in
+        let npos = List.length pos and nneg = List.length negparts in
         let und = Set.diff (atoms_of und0) (Set.union pos_atoms neg) in
         let asked = ref 0 and derived = ref [] and n_dec = ref 0 in
         let t0 = Common.Clock.now_s () in
         let ask i (g : FactGoal.wgroup) atm =
           let key =
-            sprintf "wg#%d#%d#%s" i npos
+            sprintf "wg#%d#%d#%d#%s" i npos nneg
               (Option.value_map atm ~default:"-" ~f:ExAtom.str_of)
           in
           if Hashtbl.mem factgoal_cache key || !asked >= factgoal_queries_per_round
@@ -2175,7 +2487,7 @@ end = struct
           else (
             incr asked;
             let answer =
-              FactGoal.decide_witness ~id ~timeout:factgoal_timeout
+              FactGoal.decide_witness ~neg:negparts ~id ~timeout:factgoal_timeout
                 vs.VersionSpace.fenv g pos atm
             in
             Hashtbl.set factgoal_cache ~key ~data:true;
@@ -2227,6 +2539,42 @@ end = struct
                 (Common.Clock.now_s () -. t0)
                 !n_dec npos);
         Set.Poly.of_list !derived
+
+  (* phase timers over the resolution steps, read in the phase-time report;
+     each only times the call it wraps *)
+  let ph name f x = Common.PhaseTime.with_phase name (fun () -> f x)
+
+  let decide_by_fact_goal vs dpos0 dneg0 und0 =
+    Common.PhaseTime.with_phase "fact-goal" (fun () ->
+        decide_by_fact_goal vs dpos0 dneg0 und0)
+
+  let decide_by_witness_groups vs dpos0 dneg0 und0 =
+    Common.PhaseTime.with_phase "witness-groups" (fun () ->
+        decide_by_witness_groups vs dpos0 dneg0 und0)
+
+  let prove ~dpos ~dneg ~graph fenv exi_senv cs x =
+    Common.PhaseTime.with_phase "prove" (fun () ->
+        prove ~dpos ~dneg ~graph fenv exi_senv cs x)
+
+  let refute ~dpos ~dneg ~graph fenv exi_senv cs x =
+    Common.PhaseTime.with_phase "refute" (fun () ->
+        refute ~dpos ~dneg ~graph fenv exi_senv cs x)
+
+  let acquire fenv exi_senv ~dpos ~dneg ~und ~graph cs =
+    Common.PhaseTime.with_phase "acquire" (fun () ->
+        acquire fenv exi_senv ~dpos ~dneg ~und ~graph cs)
+
+  let parametric_positive_examples clauses =
+    Common.PhaseTime.with_phase "parametric-positive" (fun () ->
+        parametric_positive_examples clauses)
+
+  let forward_chain_one_query clauses vs =
+    Common.PhaseTime.with_phase "forward-chain" (fun () ->
+        forward_chain_one_query clauses vs)
+
+  let forward_chain_enumerating clauses vs =
+    Common.PhaseTime.with_phase "forward-chain-enum" (fun () ->
+        forward_chain_enumerating clauses vs)
 
   let resolve e =
     (* the counters this phase owns, registered before it does anything, so the
@@ -2303,11 +2651,12 @@ end = struct
         else (to_be_refuted, to_be_proved)
       in
       let bvs = Map.key_set exi_senv in
-      Set.union
-        (Set.Poly.map ~f:(fun a -> (false, a))
-        @@ ExAtomSet.reduce_with_source bvs to_be_refuted)
-        (Set.Poly.map ~f:(fun a -> (true, a))
-        @@ ExAtomSet.reduce_with_source bvs to_be_proved)
+      Common.PhaseTime.with_phase "reduce-with-source" (fun () ->
+          Set.union
+            (Set.Poly.map ~f:(fun a -> (false, a))
+            @@ ExAtomSet.reduce_with_source bvs to_be_refuted)
+            (Set.Poly.map ~f:(fun a -> (true, a))
+            @@ ExAtomSet.reduce_with_source bvs to_be_proved))
       |> Set.Poly.map ~f:(fun (b, ((param_senv, atm), source)) ->
           (Map.Poly.length param_senv, b, ((param_senv, atm), source)))
       |> Set.to_list
@@ -2341,8 +2690,8 @@ end = struct
       (if config.only_diff then d_und else und0)
       |> src_exs_of true
       |> ExClauseSet.refresh_params_with_src exi_senv
-      |> ClauseGraph.to_clause_set_with_src exi_senv
-      |> ClauseGraph.resolve_one_step_all
+      |> ph "to-clause-set" @@ ClauseGraph.to_clause_set_with_src exi_senv
+      |> ph "one-step" @@ ClauseGraph.resolve_one_step_all
            ~print:(fun _ -> () (*Debug.print*))
            (Set.Poly.filter_map dpos ~f:(fun (ex, _src) ->
                 insert_source (cite ex) @@ ExClause.atom_of_uclause ex))
@@ -2379,7 +2728,7 @@ end = struct
     in
     let dpos_in, dneg_in, und_in = (dpos, dneg, und) in
     let dpos, dneg, und =
-      (if config.resolve_against_problem_clauses then cs else Set.Poly.empty)
+      (if Lazy.force problem_clause_site then cs else Set.Poly.empty)
       |> (let parametric (ex, _src) =
             not (Map.Poly.is_empty (ExClause.params_of ex))
           in
@@ -2389,10 +2738,11 @@ end = struct
                 else insert_source (cite ex) @@ ExClause.atom_of_uclause ex)
           in
           let resolve ~only_parametric cs =
-            ClauseGraph.resolve_one_step_all
-              ~print:(fun _ -> () (*Debug.print*))
-              (atoms ~only_parametric dpos) (atoms ~only_parametric dneg)
-              exi_senv cs
+            Common.PhaseTime.with_phase "one-step-split" (fun () ->
+                ClauseGraph.resolve_one_step_all
+                  ~print:(fun _ -> () (*Debug.print*))
+                  (atoms ~only_parametric dpos) (atoms ~only_parametric dneg)
+                  exi_senv cs)
           in
           fun cs ->
             let loops, others =
@@ -2424,12 +2774,16 @@ end = struct
                cannot synthesise its way out, and left off otherwise.  A run
                whose synthesis keeps succeeding never sets that flag and pays
                nothing. *)
-            if config.unit_prop || (config.unit_prop_when_stalled && !(vs.VersionSpace.synthesis_stalled))
+            if
+              match config.unit_prop with
+              | Always -> true
+              | When_stalled -> !(vs.VersionSpace.synthesis_stalled)
+              | Never -> false
             then
               Set.Poly.map ~f:(fun ((cl, _) as c) -> (c, (Map.Poly.empty, cl)))
               @@ Set.filter cs ~f:(fun (cl, _c) -> Clause.is_unit cl)
             else Set.Poly.empty)
-      |> ClauseGraph.simplify_with
+      |> ph "simplify-with" @@ ClauseGraph.simplify_with
            (Set.Poly.filter_map dpos ~f:(fun (ex, _src) ->
                 insert_source (cite ex) @@ ExClause.atom_of_uclause ex))
            (Set.Poly.filter_map dneg ~f:(fun (ex, _src) ->
@@ -2443,7 +2797,7 @@ end = struct
     let dpos, dneg, und =
       if
         not
-          (config.resolve_against_problem_clauses
+          (Lazy.force problem_clause_site
           && config.problem_clause_self_loop_depth_bound)
       then (dpos, dneg, und)
       else
@@ -2494,7 +2848,7 @@ end = struct
               ~print:(fun _ -> ())
               (atoms_of true srcs) (atoms_of false srcs) exi_senv loops
             |> Set.Poly.map ~f:(fun (c, theta, origin) -> (c, (theta, origin)))
-            |> ClauseGraph.simplify_with
+            |> ph "simplify-with" @@ ClauseGraph.simplify_with
                  (Set.Poly.filter_map dpos ~f:(fun (ex, _src) ->
                       insert_source (cite ex) @@ ExClause.atom_of_uclause ex))
                  (Set.Poly.filter_map dneg ~f:(fun (ex, _src) ->
@@ -2539,15 +2893,18 @@ end = struct
         state
     in
     (* Of what that site added, the ground points are dropped when asked: an
-       example present before it ran is kept whatever it is. *)
+       example present before it ran is kept whatever it is, and with the site
+       off nothing is dropped *)
     let dpos, dneg, und =
-      if not config.problem_clause_resolvents_parametric_only then (dpos, dneg, und)
-      else
-        let keep before =
-          Set.filter ~f:(fun ((ex, _) as e) ->
-              Set.mem before e || not (Map.Poly.is_empty (ExClause.params_of ex)))
-        in
-        (keep dpos_in dpos, keep dneg_in dneg, keep und_in und)
+      let keep before =
+        ProblemClauseFilter.keep
+          ~site_on:(Lazy.force problem_clause_site)
+          ~parametric_only:config.problem_clause_resolvents_parametric_only
+          ~parametric:(fun (ex, _) ->
+            not (Map.Poly.is_empty (ExClause.params_of ex)))
+          ~before
+      in
+      (keep dpos_in dpos, keep dneg_in dneg, keep und_in und)
     in
     let added =
       Set.diff
@@ -2563,8 +2920,9 @@ end = struct
     (* The forward rule contributes to the same set as the resolution rules
        above, so that both kinds of derivation leave this phase together. *)
     let eager =
-      if not config.eager_positive_examples then Set.Poly.empty
-      else
+      match config.eager_positive_examples with
+      | No_forward_chaining -> Set.Poly.empty
+      | Enumerating _ | One_query _ ->
         (* one strategy, not both: they are the same rule and running the two
            derives each example twice, at two solver calls apiece.  Which one
            is better is unmeasured, so the enumerating form is the default
@@ -2573,8 +2931,10 @@ end = struct
         @@ Set.Poly.union_list
              [
                parametric_positive_examples clauses;
-               (if config.eager_one_query then forward_chain_one_query clauses vs
-                else forward_chain_enumerating clauses vs);
+               (match config.eager_positive_examples with
+               | One_query _ -> forward_chain_one_query clauses vs
+               | No_forward_chaining | Enumerating _ ->
+                   forward_chain_enumerating clauses vs);
              ]
     in
     Ok

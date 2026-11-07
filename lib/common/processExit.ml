@@ -27,6 +27,22 @@
 
 external flush_c_stdio : unit -> unit = "coar_flush_c_stdio"
 
+(* [immediately code]: as [exit], but without the OCaml [at_exit] handlers;
+   the replacement for [Core_unix.exit_immediately] wherever another thread or
+   domain may still be running.  [exit_immediately] skips the OCaml handlers
+   but still ends with the C [exit], so it runs the C exit handlers and the
+   static destructors of the linked libraries (libgfortran's, libz3's) while
+   the main thread may be inside a Z3 call: a race that had already printed
+   its answer and handed over to its copy aborted once in twenty runs with
+   glibc's "corrupted double-linked list" from inside libgfortran's
+   destructor, the main thread being in [Z3_solver_check].  In a forked copy
+   the C [exit] would also run the handlers the parent registered, which are
+   the parent's to run.  OCaml channels are not flushed: a caller with output
+   pending flushes it first, as before. *)
+let immediately code =
+  flush_c_stdio ();
+  Unix._exit code
+
 let exit code =
   Stdlib.do_at_exit ();
   flush_c_stdio ();

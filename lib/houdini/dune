@@ -1,0 +1,5 @@
+(library
+ (name houdini)
+ (public_name CoAR.houdini)
+ (libraries core CoAR.ast CoAR.common CoAR.pCSP CoAR.Z3Smt CoAR.PCSat.common CoAR.PCSat.qualifier CoAR.PCSat.template CoAR.PCSat.validation.config CoAR.houdini.config)
+ (modules candidates byModel window fixedPoint))

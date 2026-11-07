@@ -1,0 +1,80 @@
+%BEGING
+Split x -> case x of person g n c => (
+	case c of children cs => (
+		case g of gender gend => (
+			case gend of
+			  m => Make man (copy n) (coerce qPair (MakePair cs nil nil))
+			| f => Make woman (copy n) (coerce qPair (MakePair cs nil nil))
+		)
+	)
+).
+MakePair ps ms fs -> 
+	case ps of
+	  nil => pair ms fs
+	| cons p sib => (
+		case p of person g n c => (
+			case g of gender gend => (
+				case gend of
+				  m => MakePair sib (cons (person (gender m) (copy n) (copy c)) ms) fs
+				| f =>MakePair sib ms (cons (person (gender f) (copy n) (copy c)) fs)
+			)
+		)
+	)
+.
+
+Make tag name sdpair ->
+	case sdpair of pair s d => (
+		tag name (sons (Map Split (coerce qMPs (Rev s nil)) )) (daughters (Map Split (coerce qFPs (Rev d nil)) ))
+	)
+.
+
+Map f l -> case l of
+	  nil => nil
+	| cons x xs => cons (f x) (Map f xs)
+.
+
+Rev l z -> case l of
+	  nil => z
+	| cons x xs => Rev xs (cons (copy x) z)
+.
+%ENDG
+
+%BEGINA
+qP person -> qG qN qC.
+qMP person -> qGM qN qC.
+qFP person -> qGF qN qC.
+qMPs cons -> qMP qMPs.
+qMPs nil -> .
+qFPs cons -> qFP qFPs.
+qFPs nil -> .
+qG gender -> qMF.
+qGM gender -> qMale.
+qGF gender -> qFemale.
+qMF m -> .
+qMF f -> .
+qMale m -> .
+qFemale f -> .
+qN name -> qT.
+qT text -> .
+qC children -> qPs.
+qPs cons -> qP qPs.
+qPs nil -> .
+
+qPair pair -> qMPs qFPs.
+
+qMW man -> qN qSs qDs.
+qMW woman -> qN qSs qDs.
+qMan man -> qN qSs qDs.
+qWoman woman -> qN qSs qDs.
+qSs sons -> qMen.
+qDs daughters -> qWomen.
+qMen cons -> qMan qMen.
+qMen nil -> .
+qWomen cons -> qWoman qWomen.
+qWomen nil -> .
+
+%ENDA
+
+%BEGINT
+Split : qP -> qMW.
+%ENDT

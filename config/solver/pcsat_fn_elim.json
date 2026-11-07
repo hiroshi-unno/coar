@@ -1,0 +1,13 @@
+[
+    "PCSat",
+    {
+        "coordinator": [
+            "Filename",
+            "./config/pcsat/coordinator/tbq_ar.json"
+        ],
+        "preprocessor": [
+            "Filename",
+            "./config/pcsat/preprocessor/enable_fn_elim_verbose.json"
+        ]
+    }
+]

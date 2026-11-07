@@ -1,5 +1,6 @@
-;; not solved -- but see below
-;; it is solved after all; it just takes a while
+;; sat.  The commented invariant below, min(a[0..i]) = m, is a solution.
+;; Because the last clause mentions only i = 0 and i = 1, a quantifier-free one is too:
+;;   I(a, i, m) = i >= 2 \/ (0 <= i <= 1 /\ m = a[0]) \/ (i = 1 /\ m = a[1])
 
 (set-logic HORN)
 
@@ -10,9 +11,10 @@
 ;;	    (and
 ;;	     (>= i 0)
 ;;	     (forall ((j Int))
-;;		     (=> (<= j i) (>= (select a j) min)))
+;;		     (=> (and (<= 0 j) (<= j i)) (>= (select a j) min)))
 ;;	     (exists ((j Int))
 ;;		     (and
+;;		      (<= 0 j)
 ;;		      (<= j i)
 ;;		      (= (select a j) min)))))
 

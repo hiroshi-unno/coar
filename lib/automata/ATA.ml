@@ -53,6 +53,32 @@ let rec make (trs : pre_trs) : trs =
       in
       (id, x :: t) :: make f
 
+(* [merge_duplicates trs] is [trs] with, for each state, all transitions on
+   one terminal joined into one whose formula is the disjunction of theirs
+   (the transitions' DNFs concatenated, in order), placed where the first of
+   them was; it also answers the [(q, a)] pairs that had more than one
+   transition.  The automaton accepts the same trees: a run at a node picks
+   one transition for its state and terminal, which is picking one disjunct
+   of the joined formula, and [false] (the empty DNF) is the unit of the
+   join.  A checker that reads only the first transition for a pair needs
+   this form. *)
+let merge_duplicates (trs : trs) : trs * (string * string) list =
+  let merged = ref [] in
+  let trs =
+    List.map trs ~f:(fun (q, body) ->
+        let rec go = function
+          | [] -> []
+          | (a, dest) :: rest ->
+              let same, others =
+                List.partition_tf rest ~f:(fun (a', _) -> String.equal a a')
+              in
+              if not (List.is_empty same) then merged := (q, a) :: !merged;
+              (a, dest @ List.concat_map same ~f:snd) :: go others
+        in
+        (q, go body))
+  in
+  (trs, List.rev !merged)
+
 let pr pr_id ppf (trs : trs) =
   List.iter trs ~f:(fun (q, xs) ->
       List.iter xs ~f:(fun (a, qss) ->

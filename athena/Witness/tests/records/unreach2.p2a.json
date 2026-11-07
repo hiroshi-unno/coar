@@ -1,0 +1,15 @@
+{
+  "input": { "path": "unreach2.c", "sha256": "3c967bdbb07f415c25a5ca5e9df2eeb26e5e7f8919ed2955184476b4f3a7bd83", "frama_c": "33.0 (Arsenic)", "args": [], "machdep": "gcc_x86_64" },
+  "source_map": {
+    "input_file": "unreach2.c",
+    "statements": [
+    { "output_line": 15, "output_column": 3, "function": "check", "role": "branch", "input": { "line": 7, "column": 3, "function": "check" }, "property": null, "cond_negated": false },
+    { "output_line": 15, "output_column": 14, "function": "check", "role": "target", "input": { "line": 7, "column": 16, "function": "check" }, "property": "unreach-call", "cond_negated": null },
+    { "output_line": 21, "output_column": 3, "function": "main", "role": "call", "input": { "line": 11, "column": 3, "function": "main" }, "property": null, "cond_negated": null },
+    { "output_line": 23, "output_column": 3, "function": "main", "role": "branch", "input": { "line": 12, "column": 3, "function": "main" }, "property": null, "cond_negated": false },
+    { "output_line": 23, "output_column": 16, "function": "main", "role": "target", "input": { "line": 13, "column": 5, "function": "main" }, "property": "unreach-call", "cond_negated": null },
+    { "output_line": 24, "output_column": 3, "function": "main", "role": "call", "input": { "line": 15, "column": 3, "function": "main" }, "property": null, "cond_negated": null },
+    { "output_line": 25, "output_column": 3, "function": "main", "role": "other", "input": { "line": 16, "column": 3, "function": "main" }, "property": null, "cond_negated": null }
+    ]
+  }
+}

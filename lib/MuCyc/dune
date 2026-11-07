@@ -2,7 +2,7 @@
  (name MuCyc)
  (public_name CoAR.MuCyc)
  (preprocess
-  (pps ppx_deriving_yojson))
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
  (libraries
   core
   yojson
@@ -12,16 +12,24 @@
   CoAR.SMT
   CoAR.Z3Smt
   CoAR.PCSPSolver
-  CoAR.muCLP)
+  CoAR.muCLP
+  minisat
+  CoAR.interpolation)
  (modules
   config
   sequent
-  lemma
-  proofTree
+  entailmentLemma
+  entailmentProofTree
   problem
-  proofSearch
-  relProofSearch
+  frameSearch
+  inductiveEntailmentSearch
   apronInterface
+  bitFrame
   qsat
   solver)
+ (foreign_stubs
+  (language cxx)
+  (include_dirs minisat_headers)
+  (flags :standard -fPIC -std=c++11 -Wno-parentheses)
+  (names bitFrame_stubs))
  (synopsis "A fixpoint logic validity checker based on cyclic-proof search"))

@@ -2,7 +2,7 @@
  (name regression)
  (public_name CoAR.PCSat.regression)
  (preprocess
-  (pps ppx_deriving_yojson))
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
  (libraries
   core
   yojson

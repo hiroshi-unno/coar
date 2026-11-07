@@ -1,32 +1,28 @@
 {
     "num_labelings": 1,
-    "strategy": [
+    "labeling": [
         "Mixed",
         [
-            [
-                [
+            {
+                "strategy": [
                     "POS_BIASED_SAT"
-                ],
-                true
-            ],
-            [
-                [
+                ]
+            },
+            {
+                "strategy": [
                     "NEG_BIASED_SAT"
-                ],
-                true
-            ],
-            [
-                [
+                ]
+            },
+            {
+                "strategy": [
                     "SAT"
                 ],
-                false
-            ]
+                "sample_examples": false
+            }
         ]
     ],
     "sat_solver": [
         "Filename",
         "./config/solver/minisat_dim_red.json"
-    ],
-    "conflict_by_unification": false,
-    "discharge_guards_globally": false
+    ]
 }

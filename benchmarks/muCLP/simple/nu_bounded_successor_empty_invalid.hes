@@ -1,0 +1,8 @@
+/* Every x in inv has x <= 2 and x + 1 in inv, and every x in inv has x <= 5.  From 0 the
+   required successors are 1, 2, 3, and 3 has none (3 <= 2 fails), so the greatest fixpoint
+   is empty: the unfoldings shrink inv to x <= 2, then x <= 1, x <= 0, x <= -1 ... and the
+   pruning reaches 0 after three steps, so inv 0 is false and the query is invalid.  The dual
+   (a least fixpoint) is refuted by the ranking 3 - x on the chain 0, 1, 2, 3. */
+forall (x: int). x = 0 => INV x
+s.t.
+INV (x: int): bool =nu (exists (xp: int). x <= 2 /\ xp = x + 1 /\ INV xp) /\ x <= 5;

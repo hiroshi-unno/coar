@@ -1,0 +1,32 @@
+[
+    "MuCyc",
+    {
+        "pcsp_solver": [
+            "Filename",
+            "./config/solver/spacer_sol.json"
+        ],
+        "refinement_strategy": [
+            "Refine",
+            [
+                "MBP",
+                1
+            ],
+            [
+                "Or"
+            ]
+        ],
+        "projection_lets": [
+            "Name_subterms",
+            {}
+        ],
+        "interpolant_post": [
+            [
+                "Word_regroup",
+                {
+                    "max_queries": 150,
+                    "timeout": 2000
+                }
+            ]
+        ]
+    }
+]

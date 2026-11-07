@@ -11,8 +11,9 @@
    function chosen is kept as a certificate ([kind_cert_template]).
    [gen_template] returns the template with its bound constraints, each
    labelled so that an unsat core says which bound to raise; a shape label
-   grows pieces, components and depth together ([increase_lexico_piece_conj]),
-   and [restart] returns to one piece and the smallest bounds. *)
+   grows pieces, components and depth ([increase_lexico_piece_conj], in the
+   order [Config.shape_growth] chooses), and [restart] returns to one piece
+   and the smallest bounds. *)
 open Core
 open Common
 open Common.Ext
@@ -23,29 +24,139 @@ open Ast.LogicOld
 open Function
 
 module Config = struct
+  (* the coefficient bounds of the synthesized templates, by role *)
+  type coeff_bound = {
+    initial : int option; [@default Some 1]
+        (** the starting bound on the sum of the absolute values of the coefficients
+            ([None]: unbounded); a failure can raise it *)
+    lower : int option; [@default None]
+        (** a lower bound on the sum of the absolute values of the coefficients *)
+    per_coefficient : int option; [@default None]
+        (** a bound on the absolute value of each coefficient *)
+    unbounded_above : int option; [@default Some 3]
+        (** once the coefficient bound has reached this value, raising it drops it
+            altogether ([None]: it is raised by one each time) *)
+  }
+  [@@deriving yojson]
+
+  type rfun_const_bound = {
+    initial : int option; [@default Some 0]
+        (** the starting bound on the sum of the absolute values of the constants
+            ([None]: unbounded); a failure can raise it *)
+    unbounded_above : int option; [@default Some 3]
+        (** once the constant bound has reached this value, raising it drops it
+            altogether ([None]: it is raised by one each time) *)
+  }
+  [@@deriving yojson]
+
+  type disc_const_bound = {
+    initial : int option; [@default Some 0]
+        (** the starting bound on the sum of the absolute values of the constants
+            ([None]: unbounded); a failure can raise it *)
+    unbounded_above : int option; [@default Some 3]
+        (** once the constant bound has reached this value, raising it drops it
+            altogether ([None]: it is raised by one each time) *)
+    seeds : int list option; [@default None]
+        (** the seed constants of the template ([None]: zero alone) *)
+  }
+  [@@deriving yojson]
+
+  type rfun_bounds = {
+    coeff : coeff_bound; [@default Common.Util.config_default coeff_bound_of_yojson "{}"]
+    const : rfun_const_bound; [@default Common.Util.config_default rfun_const_bound_of_yojson "{}"]
+  }
+  [@@deriving yojson]
+
+  type disc_bounds = {
+    coeff : coeff_bound; [@default Common.Util.config_default coeff_bound_of_yojson "{}"]
+    const : disc_const_bound; [@default Common.Util.config_default disc_const_bound_of_yojson "{}"]
+  }
+  [@@deriving yojson]
+
+  type bounds = {
+    rfun : rfun_bounds; [@default Common.Util.config_default rfun_bounds_of_yojson "{}"]
+        (** the bounds on the ranking functions' coefficients and constants *)
+    disc : disc_bounds; [@default Common.Util.config_default disc_bounds_of_yojson "{}"]
+        (** the bounds on the discriminators' coefficients and constants *)
+  }
+  [@@deriving yojson]
+
+  (** How a shape failure grows the template.  Every shape can express what
+      a shape smaller in both [nl] and [np] can (a further component can be
+      constant, a further piece can repeat another), so each policy below
+      only decides in which order shapes are tried, and each eventually
+      tries a shape at least as large as any given one; none changes what a
+      candidate is checked against. *)
+  type shape_growth =
+    | Diagonal
+        (** one more component on every failure, and a piece and a
+            discriminator conjunct with it once [nl >= 2 * np] (the first
+            failure takes both to two), a level of depth once
+            [nl >= 3 * (depth + 1)].  After the first failure [nl >= np]
+            holds for good, so a ranking that needs many pieces and one
+            component (a rank constant on each of four regions) is only
+            reachable inside a shape whose synthesis query grows with
+            [nl * np] and is then too large to solve *)
+    | Cost_ordered_lexicos_first
+        (** each failure moves to the next shape in increasing order of
+            [nl * np] (the factor the synthesis query grows with), over the
+            shapes at least as large as the configured one, the shape with
+            more components first among those of equal product: from one
+            component and one piece, [(2,1)], [(1,2)], [(3,1)], [(1,3)],
+            [(4,1)], [(2,2)], [(1,4)], ...  The discriminator conjuncts
+            follow the pieces (one per piece beyond the configured count) and
+            the depth follows the components as in [Diagonal]; the depth
+            never decreases *)
+    | Cost_ordered_pieces_first
+        (** as [Cost_ordered_lexicos_first] with the shape with more pieces
+            first among those of equal product: [(1,2)], [(2,1)], [(1,3)],
+            [(3,1)], [(1,4)], [(2,2)], [(4,1)], ... *)
+    | Orthant_pieces
+        (** the first growth from one component and one piece goes to one
+            component and [2^k] pieces with no discriminator conjunct, [k]
+            the number of real-sorted state coordinates of the template (at
+            most three, so at most eight pieces), and every other growth is
+            [Diagonal]'s.  Over the reals the decrease a template states is
+            the bounded [r(x) >= r(y) + 1], and under a linear update that
+            commutes with scaling (a rotation, a reflection) every affine
+            rank changes by an amount that shrinks to zero near the origin,
+            so a rank must be piecewise with pieces bounded by hyperplanes
+            through the origin; the coordinate orthants are the coarsest such
+            partition that the qualifiers [v >= 0] and [v <= 0] (reflected
+            halfspaces) name without an affine discriminator conjunct.  In
+            the well-founded template, a core blaming the orthant shape
+            raises the ranking function's coefficient and constant bounds
+            instead until both are unbounded ([held_labels]).  A template
+            with no real-sorted coordinate grows as [Diagonal] *)
+  [@@deriving yojson]
+
   type t = {
     verbose : bool; [@default false]
     number_of_rfun_pieces : int; [@default 1]
     number_of_disc_conj : int; [@default 0]
     number_of_rfun_lexicos : int; [@default 1]
-    depth : int; [@default 0]
-    upper_bound_rfun_coeff : int option; [@default Some 1]
-    upper_bound_rfun_const : int option; [@default Some 0]
-    upper_bound_disc_coeff : int option; [@default Some 1]
-    upper_bound_disc_const : int option; [@default Some 0]
-    disc_seeds : int list option; [@default None]
-    norm_type : int; [@default 1]
+    term_depth : int; [@default 0]
+    bounds : bounds; [@default Common.Util.config_default bounds_of_yojson "{}"]
+        (** the coefficient bounds of the synthesized templates *)
+    ranking_extra_terms : Ast.Templ.ranking_extra_terms;
+        [@default
+          Common.Util.config_default Ast.Templ.ranking_extra_terms_of_yojson
+            "{}"]
+        (** the terms the simplified ranking-function templates are offered
+            beyond the parameters (absolute differences, the wrap-around
+            distance, constants); the default is the measured selection *)
+    norm_type : Ast.Templ.norm_type; [@default Ast.Templ.L1]
+        (** the norm the ranking functions' coefficient bounds constrain *)
     use_ifte : bool; [@default false]
-    lower_bound_rfun_coeff : int option; [@default None]
-    lower_bound_disc_coeff : int option; [@default None]
-    bound_each_rfun_coeff : int option; [@default None]
-    bound_each_disc_coeff : int option; [@default None]
-    threshold_rfun_coeff : int option; [@default Some 3]
-    threshold_rfun_const : int option; [@default Some 3]
-    threshold_disc_coeff : int option; [@default Some 3]
-    threshold_disc_const : int option; [@default Some 3]
-    ignore_bool : bool; [@default true]
+    branch_on_bool_args : bool; [@default false]
+        (** read by nothing here: the ranking-function template builds no
+            boolean branch (the field keeps the term templates' spelling) *)
     fix_shape : bool; [@default false]
+    shape_growth : shape_growth; [@default Diagonal]
+        (** the order in which a shape failure (an unsat core naming the
+            template's shape) grows the number of lexicographic components
+            [nl] and of pieces [np]; read by the well-founded, the
+            nested-well-founded and the parity-predicate templates alike *)
   }
   [@@deriving yojson]
 
@@ -63,6 +174,64 @@ module Config = struct
     let name = "WFPredicate"
     let instantiate = instantiate_ext_files
   end)
+end
+
+(* The shape-growth policies of [Config.shape_growth] other than [Diagonal],
+   as functions of the shape alone, shared by the well-founded,
+   nested-well-founded and parity-predicate templates (each moves its own
+   parameter record with its own named actions, which the
+   reinforcement-learning interface reads). *)
+module ShapeGrowth = struct
+  (* [next_by_cost ~lexicos_first ~nl0 ~np0 (nl, np)] is the least shape
+     [(l, p)] with [l >= nl0], [p >= np0] whose key [(l * p, tie)] is
+     greater than the key of [(nl, np)], where [tie] is [-l] when
+     [lexicos_first] (more components first among equal products) and [l]
+     otherwise.  Requires [nl >= 1], [np >= 1], [nl0 >= 1], [np0 >= 1].
+     Guarantees: the result's key is greater than the argument's, so
+     iterating from any shape enumerates, in key order, every shape of the
+     quadrant whose key is greater; and no shape of the quadrant has a key
+     strictly between the two.  [(nl + 1, np)] has a greater key (its
+     product is larger), so the least lies at product at most
+     [(nl + 1) * np] and the search below is finite. *)
+  let next_by_cost ~lexicos_first ~nl0 ~np0 (nl, np) =
+    let key (l, p) = (l * p, if lexicos_first then -l else l) in
+    let lt (a1, b1) (a2, b2) = a1 < a2 || (a1 = a2 && b1 < b2) in
+    let cur = key (nl, np) in
+    let cap = (nl + 1) * np in
+    let best = ref (nl + 1, np) in
+    for l = max 1 nl0 to cap do
+      for p = max 1 np0 to cap / l do
+        let k = key (l, p) in
+        if lt cur k && lt k (key !best) then best := (l, p)
+      done
+    done;
+    !best
+
+  (* the depth the cost-ordered policies give [nl] components: as
+     [Diagonal], which adds a level each time [nl] passes [3 * (depth + 1)],
+     and never below the current depth *)
+  let depth_for ~depth0 ~cur_depth nl = max cur_depth (depth0 + ((nl - 1) / 3))
+
+  (* the discriminator conjuncts the cost-ordered policies give [np] pieces:
+     one per piece beyond the configured count, as [Diagonal] adds one with
+     each piece *)
+  let disc_conj_for ~ndc0 ~np0 np = max 0 (ndc0 + np - np0)
+
+  (* [orthant_pieces sorts] is [Some (2^k)] for the [k >= 1] real-sorted
+     sorts among [sorts] (a template's state coordinates), [k] capped at 3,
+     and [None] when there is none *)
+  let orthant_pieces sorts =
+    let k =
+      List.count sorts ~f:(function T_real.SReal -> true | _ -> false)
+    in
+    if k = 0 then None else Some (1 lsl Int.min k 3)
+
+  (* [move ~inc ~dec cur target pa] applies [inc] [target - cur] times or
+     [dec] [cur - target] times, so that a template moves to a shape through
+     its named single-step actions *)
+  let move ~inc ~dec cur target pa =
+    if target >= cur then Fn.apply_n_times ~n:(target - cur) inc pa
+    else Fn.apply_n_times ~n:(cur - target) dec pa
 end
 
 module type ArgType = sig
@@ -143,13 +312,13 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
         np = config.number_of_rfun_pieces;
         ndc = config.number_of_disc_conj;
         nl = config.number_of_rfun_lexicos;
-        depth = config.depth;
-        ubrc = Option.map config.upper_bound_rfun_coeff ~f:Z.of_int;
-        ubrd = Option.map config.upper_bound_rfun_const ~f:Z.of_int;
-        ubdc = Option.map config.upper_bound_disc_coeff ~f:Z.of_int;
-        ubdd = Option.map config.upper_bound_disc_const ~f:Z.of_int;
+        depth = config.term_depth;
+        ubrc = Option.map config.bounds.rfun.coeff.initial ~f:Z.of_int;
+        ubrd = Option.map config.bounds.rfun.const.initial ~f:Z.of_int;
+        ubdc = Option.map config.bounds.disc.coeff.initial ~f:Z.of_int;
+        ubdd = Option.map config.bounds.disc.const.initial ~f:Z.of_int;
         ds =
-          (match config.disc_seeds with
+          (match config.bounds.disc.const.seeds with
           | None -> Set.Poly.singleton Z.zero
           | Some ds -> Set.Poly.of_list @@ List.map ds ~f:Z.of_int);
       }
@@ -225,7 +394,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     HypSpace.qualifiers_of ~fenv:Arg.fenv !param.depth hspace
 
   let last_cert : Templ.kind_cert_templ option ref = ref None
-  let kind_cert_template () = !last_cert
+  let kind_cert_template () = Option.map !last_cert ~f:List.return
 
   let gen_template ~ucore:_ (hspace : HypSpace.hspace) =
     assert (List.length hspace.params mod 2 = 0);
@@ -255,11 +424,12 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
           ds = !param.ds;
         }
         {
+          extra_terms = config.ranking_extra_terms;
           norm_type = config.norm_type;
-          lbrc = Option.map config.lower_bound_rfun_coeff ~f:Z.of_int;
-          lbdc = Option.map config.lower_bound_disc_coeff ~f:Z.of_int;
-          berc = Option.map config.bound_each_rfun_coeff ~f:Z.of_int;
-          bedc = Option.map config.bound_each_disc_coeff ~f:Z.of_int;
+          lbrc = Option.map config.bounds.rfun.coeff.lower ~f:Z.of_int;
+          lbdc = Option.map config.bounds.disc.coeff.lower ~f:Z.of_int;
+          berc = Option.map config.bounds.rfun.coeff.per_coefficient ~f:Z.of_int;
+          bedc = Option.map config.bounds.disc.coeff.per_coefficient ~f:Z.of_int;
         }
         hspace.params
     in
@@ -622,7 +792,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
       res)
     else g ()*)
 
-  let increase_lexico_piece_conj (param, actions) =
+  let diagonal_step (param, actions) =
     if param.nl <= 1 && param.np <= 1 then
       increase_disc_conj @@ increase_rfun_pieces
       @@ increase_rfun_lexicos (param, actions)
@@ -633,6 +803,52 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
           else Fn.id)
       @@ increase_rfun_lexicos (param, actions)
 
+  (* moves to the shape [(nl, np, ndc, depth)] by single-step actions *)
+  let move_shape (nl, np, ndc, depth) ((param, _) as pa) =
+    let open ShapeGrowth in
+    pa
+    |> move ~inc:increase_rfun_lexicos ~dec:decrease_rfun_lexicos param.nl nl
+    |> move ~inc:increase_rfun_pieces ~dec:decrease_rfun_pieces param.np np
+    |> move ~inc:increase_disc_conj ~dec:decrease_disc_conj param.ndc ndc
+    |> move ~inc:increase_depth ~dec:decrease_depth param.depth depth
+
+  let cost_step ~lexicos_first ((param, _) as pa) =
+    let nl, np =
+      ShapeGrowth.next_by_cost ~lexicos_first
+        ~nl0:config.number_of_rfun_lexicos ~np0:config.number_of_rfun_pieces
+        (param.nl, param.np)
+    in
+    move_shape
+      ( nl,
+        np,
+        ShapeGrowth.disc_conj_for ~ndc0:config.number_of_disc_conj
+          ~np0:config.number_of_rfun_pieces np,
+        ShapeGrowth.depth_for ~depth0:config.term_depth ~cur_depth:param.depth
+          nl )
+      pa
+
+  (* the source half of the arguments are the state coordinates *)
+  let orthant_pieces =
+    ShapeGrowth.orthant_pieces
+    @@ fst
+    @@ List.split_n Arg.sorts (List.length Arg.sorts / 2)
+
+  let increase_lexico_piece_conj ((param, _) as pa) =
+    match config.shape_growth with
+    | Diagonal -> diagonal_step pa
+    | Cost_ordered_lexicos_first -> cost_step ~lexicos_first:true pa
+    | Cost_ordered_pieces_first -> cost_step ~lexicos_first:false pa
+    | Orthant_pieces -> (
+        match orthant_pieces with
+        | Some n when param.nl <= 1 && param.np <= 1 && n > param.np ->
+            Debug.print
+            @@ lazy
+                 (sprintf "************* orthant pieces for %s: %d pieces"
+                    (Ident.name_of_tvar Arg.name)
+                    n);
+            move_shape (param.nl, n, param.ndc, param.depth) pa
+        | _ -> diagonal_step pa)
+
   let rec inner param_actions = function
     | [] -> param_actions
     | (LexicoPieceConj | Shape) :: labels ->
@@ -642,29 +858,71 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
           labels
     | RFunCoeff :: labels ->
         inner
-          (increase_rfun_coeff config.threshold_rfun_coeff param_actions)
+          (increase_rfun_coeff config.bounds.rfun.coeff.unbounded_above param_actions)
           labels
     | RFunConst :: labels ->
         inner
-          (increase_rfun_const config.threshold_rfun_const param_actions)
+          (increase_rfun_const config.bounds.rfun.const.unbounded_above param_actions)
           labels
     | DiscCoeff :: labels ->
         inner
-          (increase_disc_coeff config.threshold_disc_coeff param_actions)
+          (increase_disc_coeff config.bounds.disc.coeff.unbounded_above param_actions)
           labels
     | DiscConst :: labels ->
         inner
-          (increase_disc_const config.threshold_disc_const param_actions)
+          (increase_disc_const config.bounds.disc.const.unbounded_above param_actions)
           labels
     | TimeOut :: _labels -> param_actions (* z3 may unexpectedly time out*)
     | QualDep :: labels -> inner param_actions labels
-    | _ -> assert false
+    | _ ->
+        (* another template module's label: excluded by the contract of
+           [Function.Type.update_with_labels] *)
+        assert false
+
+  let coeff_labels = [ RFunCoeff; DiscCoeff ]
+  let const_labels = [ RFunConst; DiscConst ]
+
+  (* Under [Orthant_pieces], at the orthant shape (one component, [2^k]
+     pieces), a core that names the shape grows the ranking function's
+     coefficient and constant bounds instead, as long as either is finite.
+     The orthant certificate (a rank constant on each orthant, 3/2/1/0 for
+     a rotation by a quarter turn) needs constants up to the number of
+     pieces minus one, and the shape is blamed before they are reached: a
+     core names the shape together with the constant bound, or the shape
+     alone when the examples that refute the candidate are disjunctions with
+     another unknown whose own template is still too weak (an invariant that
+     has not yet excluded the origin, where no rank decreases).  Growing the
+     shape there left the orthant shape for a larger one with the bounds
+     still too small, where the synthesis query is too large to solve.
+     Terminates: each bound reaches its threshold and becomes unbounded
+     after finitely many raises ([increase_rfun_coeff], [increase_rfun_const]),
+     after which the shape grows as [Diagonal]'s.  Every other policy and
+     shape reads the labels unchanged. *)
+  let held_labels param labels =
+    let is_shape = function LexicoPieceConj | Shape -> true | _ -> false in
+    match (config.shape_growth, orthant_pieces) with
+    | Orthant_pieces, Some n
+      when param.nl <= 1 && param.np = n
+           && (Option.is_some param.ubrc || Option.is_some param.ubrd)
+           && List.exists labels ~f:is_shape ->
+        let rest = List.filter labels ~f:(Fn.non is_shape) in
+        let add_if finite l acc =
+          if finite && not (List.mem acc l ~equal:Stdlib.( == )) then
+            l :: acc
+          else acc
+        in
+        rest
+        |> add_if (Option.is_some param.ubrc) RFunCoeff
+        |> add_if (Option.is_some param.ubrd) RFunConst
+    | _ -> labels
 
   let actions_of labels =
-    (snd @@ inner (!param, []) @@ Set.to_list labels) @ [ "end" ]
+    (snd @@ inner (!param, []) @@ held_labels !param @@ Set.to_list labels)
+    @ [ "end" ]
 
   let update_with_labels labels =
-    param := fst @@ inner (!param, []) @@ Set.to_list labels
+    param := fst @@ inner (!param, []) @@ held_labels !param
+      @@ Set.to_list labels
 
   (* called on failure, ignore config.fix_shape *)
   let rl_action labels =

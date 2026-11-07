@@ -591,13 +591,25 @@ let shapes ?infeasible ?(by_length_vectors = false) ~guess ~relaxed seqs =
               Formula.leq (nvar n) (T_int.mk_int (Z.of_int max_length));
             ])
     in
+    (* Contract: [Some k] only with [0 <= k <= max_length], the bounds every
+       question below states for [n] in [links], so each length handed on to
+       [pinned_negation] (and so to [SeqPin.literal_of], which needs
+       [k >= 0]) is a length.  A value outside them is not read at all: it
+       proves the model is not a model of the question, so nothing in it can
+       be trusted, and the shape is declined as an undecided guess is.  This
+       is not hypothetical: Z3 5.1.0 to 5.3.4 answered one such question
+       [sat] with [n = -1] beside [n = seq.len s], [n >= 0] and [s] empty
+       (its own [model_validate=true] rejects that model), and the negative
+       length, built into a literal, ended the solve with an exception. *)
     let value_of model n =
-      List.find_map model ~f:(fun ((y, _), t) ->
-          if Ast.Ident.tvar_equal n y then t else None)
+      model_value model (n, T_int.SInt)
       |> Option.bind ~f:(function
-        (* the query bounds each length by [max_length]; a value outside a
-           native int would break that bound and is declined *)
-        | Term.FunApp (T_int.Int z, [], _) when Z.fits_int z -> Some (Z.to_int z)
+        | Term.FunApp (T_int.Int z, [], _)
+          when Z.(geq z zero && leq z (of_int max_length)) ->
+            Some (Z.to_int z)
+        | Term.FunApp (T_int.Int _, [], _) ->
+            Common.PhaseTime.event_here "shape-model-out-of-bounds";
+            None
         | _ -> None)
     in
     (* every per-sum question below is this one with conjuncts added, so
@@ -683,7 +695,16 @@ let mentions_relation c =
     strengthens, and must hold only when that formula is unsatisfiable (then
     the piece has no shape and its guesses are not asked, which is what they
     would all have answered); [ask] is a satisfiability question whose model, when there
-    is one, is the countermodel. Clauses whose index [already_valid] holds are
+    is one, is the countermodel.  At most [max_attempts] pinned negations are
+    asked over all clauses and pieces, or, with [attempts_per_piece], at most
+    [max_attempts] per piece: the first pieces can take every attempt on
+    shapes that do not refute them (a piece that holds is unsatisfiable at
+    every shape), and a refutable later piece -- one whose conclusion states
+    that a relation is functional, say, so that its negation names two outputs
+    of the relation for one input as ground facts -- is then never asked.
+    Only models are read either way, so a countermodel found is one as
+    without the option; it only lets more pieces be asked.  Clauses whose
+    index [already_valid] holds are
     skipped, and nothing is asked when [enabled] is false.  With [expired],
     no further clause or piece is started once [expired ()] holds (a piece's
     relaxations, two sequence instantiations, are the costly part of it), and
@@ -698,15 +719,19 @@ let mentions_relation c =
     could refute.  [by_length_vectors] is [shapes]'s. *)
 let refute ?(log = fun (_ : string lazy_t) -> ()) ?expired ?infeasible
     ?by_length_vectors ?(skip_relation_free_clauses = false) ?cheap_infeasible
-    ~enabled
+    ?(attempts_per_piece = false) ~enabled
     ~already_valid
     ~(guess : Formula.t -> model option) ~(ask : Formula.t -> model option)
     clauses =
   if not enabled then None
   else
     let attempts = ref 0 in
+    (* pinned negations asked over all clauses, to mark (event
+       [past-shared-cap]) each one that the shared cap would not have asked *)
+    let asked = ref 0 in
     let try_piece piece =
       Common.PhaseTime.event_here ~in_copy:false "piece";
+      if attempts_per_piece then attempts := 0;
       match ScalarPin.free_vars piece with
       | None -> None
       | Some vars ->
@@ -759,6 +784,10 @@ let refute ?(log = fun (_ : string lazy_t) -> ()) ?expired ?infeasible
                   | None -> None
                   | Some (q, tuples, symbolic) -> (
                       incr attempts;
+                      incr asked;
+                      if !asked > max_attempts then
+                        Common.PhaseTime.event_here ~in_copy:false
+                          "past-shared-cap";
                       log
                       @@ lazy
                            (sprintf "[relation pin] lengths %s"

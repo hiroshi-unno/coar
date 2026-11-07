@@ -1,0 +1,8 @@
+# A fair coin conditioned on heads: the conditional expectation of x (cwp, the default) is
+# wp(S, x) / wlp(S, 1) = (1/2) / (1/2) = 1, so the upper bound 1 holds.
+# Expected: valid.  The reduction asks wp_1(S, x) <= 1, where a run blocked by the observation
+# is worth the bound 1: 1/2 * 1 + 1/2 * 1 = 1.
+x ~ Bernoulli(1/2);
+observe x = 1;
+return x
+?Ex[x] <= 1

@@ -1,0 +1,9 @@
+/* A predicate declared without parameters is applied bare (`reach_0`), in
+   parentheses (`(reach_1 )`) or with an empty argument list (`reach_2 ()`);
+   the three are one application.  The forms are those SPROUT's generator
+   writes for a protocol without registers. */
+reach_0
+s.t.
+reach_0 : bool =mu (reach_1 ) /\ reach_2 ();
+reach_1 : bool =nu reach_1 \/ true;
+reach_2 : bool =mu true \/ !(reach_0);

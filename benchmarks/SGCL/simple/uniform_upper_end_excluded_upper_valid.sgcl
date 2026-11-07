@@ -1,0 +1,8 @@
+# UniformDisc(a, b) draws from a..b-1, the upper end excluded (Diabolo's reading: its
+# benchmarks draw a fair die as UniformDisc(1, 7)). UniformDisc(0, 2) is a fair coin on
+# {0, 1} with mean 1/2, so this upper bound holds.
+# Expected: valid. Read with b included, the draw was uniform on {0, 1, 2} with mean 1,
+# and the bound did not hold.
+x ~ UniformDisc(0, 2);
+return x
+?Ex[x] <= 0.5

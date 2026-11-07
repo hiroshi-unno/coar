@@ -1,0 +1,18 @@
+[
+    "MuCyc",
+    {
+        "verbose": true,
+
+        "pcsp_solver": [
+            "Filename",
+            "./config/solver/spacer_sol.json"
+        ],
+        "refinement_strategy": [
+            "Solve"
+        ],
+
+        "backtrack_strategy": [
+            "Deepest_own_variable"
+        ]
+    }
+]

@@ -1,0 +1,11 @@
+[
+    "RCaml",
+    {
+        "cgen_config": {
+            "can_fail_only_at_total_apps": true,
+            "can_cause_temp_eff_only_at_total_apps": true,
+            "enable_temp_eff": true
+        },
+        "verbose": false
+    }
+]

@@ -1,0 +1,12 @@
+/* Every integer has a floor half: forall x. exists y. 2y <= x <= 2y + 1.
+   Valid.  The existential side's only Skolem function is floor(x / 2), which
+   no finite set of affine terms with integer coefficients covers: each term
+   a x + b with a <> 1/2 meets the condition at finitely many x.  So a
+   strategy check of the existential side over affine term alternatives is
+   lost on every turn, and the universal side never wins a check either (the
+   formula is valid).  A strategy-iteration run over affine terms can
+   therefore answer only "unknown" or not stop; which one depends on the
+   terms each refinement returns. */
+forall (x: int). H x
+s.t.
+H (x: int): bool =mu exists (y: int). 2 * y <= x /\ x <= 2 * y + 1;

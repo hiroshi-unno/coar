@@ -1,0 +1,2 @@
+(* g sees x only, and x xor y changes with y *)
+_exists g : bool -> bool. _forall x : bool. _forall y : bool. (g(x) <=> (|x ()| <> |y ()|))

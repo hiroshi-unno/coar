@@ -1,5 +1,5 @@
 {
-  "strategy": [
+  "synthesizer": [
     "Template",
     {
       "verbose": true,
@@ -65,11 +65,7 @@
           ]
         ],
         "verbose": true,
-        "candidate_select_constant_cases": false,
-        "false_probe_on_negative_examples": false,
-        "keep_timeout_budget_across_rebuild": true,
-        "max_synthesis_timeout": 1000000000,
-        "synthesis_arith_solver": null
+        "max_synthesis_timeout": 1000000000
       }
     }
   ],

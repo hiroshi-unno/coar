@@ -1,0 +1,5 @@
+(* g(true) and g(false) are partial applications of a binary g, each a function of sort
+   bool -> bool passed to f.  Taking g to be conjunction makes g(true) the identity and
+   g(false) the constant false, and f(k) := k(true) tells them apart, so the formula is true. *)
+_exists f : (bool -> bool) -> bool. _exists g : bool -> bool -> bool.
+(f(|g(|true|)|) && not (f(|g(|false|)|)))

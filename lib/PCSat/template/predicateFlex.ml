@@ -12,16 +12,49 @@ open Ast.LogicOld
 open Function
 
 module Config = struct
+  (* the coefficient bounds of the synthesized templates, by role *)
+  type coeff_bound = {
+    initial : int option; [@default Some 1]
+        (** the starting bound on the sum of the absolute values of the coefficients
+            ([None]: unbounded); a failure can raise it *)
+    per_coefficient : int option; [@default None]
+        (** a bound on the absolute value of each coefficient *)
+    unbounded_above : int option; [@default None]
+        (** once the coefficient bound has reached this value, raising it drops it
+            altogether ([None]: it is raised by one each time) *)
+  }
+  [@@deriving yojson]
+
+  type const_bound = {
+    initial : int option; [@default Some 0]
+        (** the starting bound on the sum of the absolute values of the constants
+            ([None]: unbounded); a failure can raise it *)
+    unbounded_above : int option; [@default Some 3]
+        (** once the constant bound has reached this value, raising it drops it
+            altogether ([None]: it is raised by one each time) *)
+    seeds : int list option; [@default None]
+        (** the seed constants of the template ([None]: zero alone) *)
+  }
+  [@@deriving yojson]
+
+  type role_bounds = {
+    coeff : coeff_bound; [@default Common.Util.config_default coeff_bound_of_yojson "{}"]
+    const : const_bound; [@default Common.Util.config_default const_bound_of_yojson "{}"]
+  }
+  [@@deriving yojson]
+
+  type bounds = {
+    atom : role_bounds; [@default Common.Util.config_default role_bounds_of_yojson "{}"]
+        (** the bounds on the affine atoms' coefficients and constants *)
+  }
+  [@@deriving yojson]
+
   type t = {
     verbose : bool; [@default false]
     shape : int list; [@default [ 1 ]]
-    depth : int; [@default 0]
-    upper_bound_coeff : int option; [@default Some 1]
-    upper_bound_const : int option; [@default Some 0]
-    seeds : int list option; [@default None]
-    bound_each_coeff : int option; [@default None]
-    threshold_coeff : int option; [@default None]
-    threshold_const : int option; [@default Some 3]
+    term_depth : int; [@default 0]
+    bounds : bounds; [@default Common.Util.config_default bounds_of_yojson "{}"]
+        (** the coefficient bounds of the synthesized templates *)
     disj_first : bool; [@default true]
     fix_shape : bool; [@default false]
     eq_atom : bool; [@default false]
@@ -92,11 +125,11 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
     ref
       {
         shp = config.shape;
-        depth = config.depth;
-        ubc = Option.map config.upper_bound_coeff ~f:Z.of_int;
-        ubd = Option.map config.upper_bound_const ~f:Z.of_int;
+        depth = config.term_depth;
+        ubc = Option.map config.bounds.atom.coeff.initial ~f:Z.of_int;
+        ubd = Option.map config.bounds.atom.const.initial ~f:Z.of_int;
         s =
-          (match config.seeds with
+          (match config.bounds.atom.const.seeds with
           | None -> Set.Poly.singleton Z.zero
           | Some s -> Set.Poly.of_list @@ List.map s ~f:Z.of_int);
       }
@@ -158,7 +191,7 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
           ubd = !param.ubd;
           s = !param.s;
         }
-        { bec = Option.map config.bound_each_coeff ~f:Z.of_int }
+        { bec = Option.map config.bounds.atom.coeff.per_coefficient ~f:Z.of_int }
         hspace.params
     in
     Debug.print
@@ -410,13 +443,19 @@ module Make (Cfg : Config.ConfigType) (Arg : ArgType) : Function.Type = struct
            else increase_depth_disj_conj param_actions)
           labels
     | Coeff :: labels ->
-        inner (increase_coeff config.threshold_coeff param_actions) labels
+        inner (increase_coeff config.bounds.atom.coeff.unbounded_above param_actions) labels
     | Const :: labels ->
-        inner (increase_const config.threshold_const param_actions) labels
+        inner (increase_const config.bounds.atom.const.unbounded_above param_actions) labels
     | Qual :: labels -> inner param_actions (*ToDo*) labels
     | QualDep :: labels -> inner param_actions labels
     | TimeOut :: _labels -> param_actions (* z3 may unexpectedly time out*)
-    | _ -> assert false
+    | _ ->
+        (* another template module's label: excluded by the contract of
+           [Function.Type.update_with_labels] *)
+        assert false
+
+  let coeff_labels = [ Coeff ]
+  let const_labels = [ Const ]
 
   let actions_of labels =
     (snd @@ inner (!param, []) @@ Set.to_list labels) @ [ "end" ]

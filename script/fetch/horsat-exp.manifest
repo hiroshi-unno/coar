@@ -1,0 +1,28 @@
+# HORS/koba: the HorSat benchmark suite, exp.zip of https://www-kb.is.s.u-tokyo.ac.jp/~koba/horsat/ (sha256 pinned in
+# script/fetch_benchmarks.sh), its selected/ directory placed at benchmarks/HORS/koba.
+# source	destination	sha256
+selected/cfa/cfa-life2.hrs	benchmarks/HORS/koba/cfa/cfa-life2.hrs	c0cd334e32b4627bf42bb81c45ea3f92bbf6dc7be5ce571fda86fb23f7e532f1
+selected/cfa/cfa-matrix-1.hrs	benchmarks/HORS/koba/cfa/cfa-matrix-1.hrs	bf4bd522eb41081d8d3d17e0633b1d22c73704ecb2ce6058d5a40b6e9cf70fbd
+selected/cfa/cfa-psdes.hrs	benchmarks/HORS/koba/cfa/cfa-psdes.hrs	54504481c225b5e7d67619f6845ebe4f3d8e10177d42014d0239ec59e91717ee
+selected/cfa/tak.hrs	benchmarks/HORS/koba/cfa/tak.hrs	7041abddb242fb91097a5cd300b0475d1bdb522a8b0797ae061c744b2f1ad663
+selected/compress/dna.hrs	benchmarks/HORS/koba/compress/dna.hrs	a827262de253623a739ba198b40202ac2dd98f49ffd4992e02c3f183b2a10c75
+selected/compress/fibstring.hrs	benchmarks/HORS/koba/compress/fibstring.hrs	fe8bd4b7cba5f87fb544490394be3c2bc62067fd90f94b5a67bdb58c69a8eb4b
+selected/compress/g45.hrs	benchmarks/HORS/koba/compress/g45.hrs	7d879edfb9fa3b203824d7c4f36e9cea8d380e2cb33d6e1bc90e359ce65b8071
+selected/compress/l.hrs	benchmarks/HORS/koba/compress/l.hrs	60af513dc5cf37a2390343b675e5be9d2736e4192725081581bd9e6b338eae32
+selected/hmtt/jwig-cal_main.hrs	benchmarks/HORS/koba/hmtt/jwig-cal_main.hrs	9c51e25b80687cff90da8e4d71a230f41d3b5f8e3f1fa0d8e28e15f10f38a7b2
+selected/hmtt/specialize_cps_coerce1-c.hrs	benchmarks/HORS/koba/hmtt/specialize_cps_coerce1-c.hrs	9f759a0998f2ab9f1f71a530eef0028fb54a43c988b5626b5133ef7f498ee3da
+selected/hmtt/xhtmlf-div-2.hrs	benchmarks/HORS/koba/hmtt/xhtmlf-div-2.hrs	4a2d37649b802412848035c012fa123cb3d97b11116c4bd094708b6d9b23fa16
+selected/hmtt/xhtmlf-m-church.hrs	benchmarks/HORS/koba/hmtt/xhtmlf-m-church.hrs	4a39df22d23baad17382fe50183c890e96aa94cb15fd2e9cfca2db37efdde574
+selected/mochi/fold_fun_list.hrs	benchmarks/HORS/koba/mochi/fold_fun_list.hrs	9ecb98cc8157e2ed10e98b8f2ba84abc246c1433a313f099cac31d212e76831b
+selected/mochi/fold_right.hrs	benchmarks/HORS/koba/mochi/fold_right.hrs	f4ccd1b285f98c91124f41d4b41a8d66716f98a9b873fb6e2f7e12e45f20c20d
+selected/mochi/search-e-church.hrs	benchmarks/HORS/koba/mochi/search-e-church.hrs	79d71f9c6aef409744ac089ed4c2689aa2ee579ff4c759213b051040e908ff12
+selected/mochi/zip.hrs	benchmarks/HORS/koba/mochi/zip.hrs	f625d1fb65f09bf51069d4d7b322f92e81fe4e1c7f9dbac8484e6cb5754212b8
+selected/pmrs/filepath.hrs	benchmarks/HORS/koba/pmrs/filepath.hrs	261e0d5a9b94507f632882953f2823167a210dfdeb8715d94683e79f47de2017
+selected/pmrs/filter-nonzero-1.hrs	benchmarks/HORS/koba/pmrs/filter-nonzero-1.hrs	19283927822b60bccb7f36228c83ee4ce50ef5b3b309f160fd3879db536ae4d2
+selected/pmrs/filter-nonzero.hrs	benchmarks/HORS/koba/pmrs/filter-nonzero.hrs	166dde7ad7700c6cc9f031411a1b28b2ee44f8704b900b81597469d65ee5cc4a
+selected/pmrs/map-plusone-2.hrs	benchmarks/HORS/koba/pmrs/map-plusone-2.hrs	0f56da5ac6f0bfccf43d805a5a32b1b206303be63c22a23938aaf67618e5e69d
+selected/readme.txt	benchmarks/HORS/koba/readme.txt	fc0210a8c7f4589c6352cf36a1230296da10d6a44948c9de5fafc49dad97e61c
+selected/ruv/fileocamlc.hrs	benchmarks/HORS/koba/ruv/fileocamlc.hrs	bcce8df68ad66d8b85ee786af153e6a46d1de5868784bb9a3d661b2fce8ad6b9
+selected/ruv/filewrong.hrs	benchmarks/HORS/koba/ruv/filewrong.hrs	6c4a2a6a71a1d29f3d5a78cd4022ffc249601633180f346bba83acc8df61d120
+selected/ruv/lock2.hrs	benchmarks/HORS/koba/ruv/lock2.hrs	f1c82c2fc89d9913d2b29c46697e9d160af807a50acfb8326eca73146a33d5d9
+selected/ruv/order5.hrs	benchmarks/HORS/koba/ruv/order5.hrs	9fbd349f8f57ae417b643b81d96dba5cafb89ac3131dc7d8a9b41b70a77495b0

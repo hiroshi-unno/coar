@@ -1,0 +1,15 @@
+/* Wang, Fu, Goharshady, Chatterjee, Qin and Shi, "Cost Analysis of Nondeterministic Probabilistic
+   Programs", PLDI 2019, Fig. 3 (Bitcoin mining), negative (reward) part of the cost from x = 100:
+   each round, with probability p = 0.0005 the puzzle is solved; then with probability p' = 0.99 the
+   reward 5000 is paid, and otherwise a nondeterministic choice decides between the reward and
+   nothing.  This file asks a lower bound over all schedulers, so the scheduler withholds the
+   reward (min); exact value 247.5 = 2.475 per round.
+   The files wang19_fig3_neg_{lb,ub}.qhes pay the reward on both arms of that choice (the
+   reward-granting scheduler); this one keeps the choice as in the paper. */
+X 100.0 >= 247.5
+s.t.
+X (x : real) : real =mu
+  if x >= 1.0 then
+    0.0005 * (0.99 * (X (x - 1.0) + 5000.0) + 0.01 * min (X (x - 1.0) + 5000.0) (X (x - 1.0))) +
+    0.9995 * X (x - 1.0)
+  else 0.0;

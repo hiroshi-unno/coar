@@ -5,9 +5,9 @@
             "Filename",
             "./config/solver/dbg_pcsat_tb_gvc.json"
         ],
-        "optimizer": [
+        "chc_optimizer": [
             "Filename",
-            "./config/solver/dbg_optpcsat_nc_tb.json"
+            "./config/solver/dbg_optpcsat_nc_pcsat_improver.json"
         ]
     }
 ]

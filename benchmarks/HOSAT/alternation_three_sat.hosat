@@ -1,0 +1,2 @@
+(* forall x. exists y. forall z: y = not x satisfies both clauses whatever z is *)
+_forall x : bool. _exists y : bool. _forall z : bool. ((x () || y () || z ()) && (not (x ()) || not (y ()) || z ()))

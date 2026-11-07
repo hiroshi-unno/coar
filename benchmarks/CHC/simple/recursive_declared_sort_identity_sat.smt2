@@ -1,0 +1,5 @@
+(set-logic ALL)
+(declare-sort U 0)
+(define-fun-rec f ((u U)) Int (f u))
+(assert true)
+(check-sat)

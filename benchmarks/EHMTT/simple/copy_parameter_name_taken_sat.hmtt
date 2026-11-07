@@ -1,0 +1,25 @@
+/* A rule with two function parameters f and f_2, in a program with a
+   coercion.  The reduction's coercion problem gives each function parameter
+   a second copy; when the copy of f was named f_2 it took the name of the
+   other parameter. The program is true: the coercion holds (it coerces a
+   copy of the input, a list of a, to q0) and the output is a list of a. */
+%BEGING
+Main x -> G Id Id x.
+G f f_2 x -> f (f_2 (H (coerce q0 (Copy x)))).
+H y -> case y of
+  a y' => a (H y')
+| e => e.
+Id y -> y.
+Copy x -> case x of
+  a x' => a (Copy x')
+| e => e.
+%ENDG
+
+%BEGINA
+q0 a -> q0.
+q0 e -> .
+%ENDA
+
+%BEGINT
+Main : q0 -> q0.
+%ENDT

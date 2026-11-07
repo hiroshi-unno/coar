@@ -1,0 +1,19 @@
+/* qs has no leaf transition, so every tree it accepts is infinite: the
+   streams cons(a, cons(a, ...)).  Input trees may be infinite and qs is
+   not empty, so F is run on such a stream; it looks two cells deep and
+   returns bad, which qo rejects.  The violation exists only through an
+   infinite input tree. */
+%BEGING
+F xs -> case xs of
+  cons y ys => (case ys of cons z zs => bad).
+%ENDG
+
+%BEGINA
+qs cons -> qa qs.
+qa a -> .
+qo ok -> .
+%ENDA
+
+%BEGINT
+F : qs -> qo.
+%ENDT

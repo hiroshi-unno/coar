@@ -98,11 +98,25 @@ let str_of_fronts fronts =
          sprintf "  %s -> %s" (name_of_tvar p) (ExtTerm.str_of term))
   |> sprintf "{\n%s\n}"
 
+(* The reading of a plain CHC file as an optimisation problem ([-p chcmax]):
+   every predicate the input declares with arguments and uses is maximised,
+   by priority in the order of [Map.Poly.keys] (alphabetical).
+
+   Only bool-valued unknowns of kind [Ord] are objectives.  The reader adds
+   unknowns of its own -- an existential head is skolemised into a functional
+   predicate ([FN]) -- and these are not the input's: made a target, such a
+   predicate was maximised ahead of every declared one (its name sorts first),
+   and since preprocessing renames it the optimizer could not find it again
+   and answered unknown on a problem whose optimum it otherwise finds.  An
+   unknown whose sort does not return bool is not a predicate and has no
+   direction at all.  Nullary predicates are not objectives either. *)
 let of_pcsp pcsp =
   let delta = PCSP.Problem.senv_of @@ PCSP.Problem.remove_unused_params pcsp in
   let dir_map =
-    Map.Poly.filter_map delta ~f:(fun s ->
-        if Sort.is_arrow s then Some DUp else None)
+    Map.Poly.filter_mapi delta ~f:(fun ~key ~data:s ->
+        if Sort.is_arrow s && PCSP.Problem.is_bool_valued_ord_pred pcsp key
+        then Some DUp
+        else None)
   in
   let fronts = Map.Poly.empty in
   let priority = topological_sort (Map.Poly.keys dir_map) [] in

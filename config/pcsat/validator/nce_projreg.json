@@ -1,0 +1,12 @@
+{
+    "cex_strategy": [
+        "AllExamples"
+    ],
+    "check_part_sol_with_lbs": false,
+    "examples": {
+        "projected_regions": [
+            "Projected_regions",
+            {}
+        ]
+    }
+}

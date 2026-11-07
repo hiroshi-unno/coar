@@ -55,6 +55,7 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
     | SSPACER of (module SPACER.Solver.SolverType)
     | SHoice of (module Hoice.Solver.SolverType)
     | SPolyQEnt of (module PolyQEnt.Solver.SolverType)
+    | SPolyQEntTempl of (module PolyQEntTempl.Solver.SolverType)
     | SForward
     | SPrinter of (module Printer.Solver.SolverType)
 
@@ -64,6 +65,8 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
     | Config.PCSat cfg -> SPCSat (PCSat.Solver.make cfg)
     | Config.Hoice cfg -> SHoice (Hoice.Solver.make cfg)
     | Config.PolyQEnt cfg -> SPolyQEnt (PolyQEnt.Solver.make cfg)
+    | Config.PolyQEntTempl cfg ->
+        SPolyQEntTempl (PolyQEntTempl.Solver.make cfg)
     | Config.Forward -> SForward
     | Config.Printer cfg -> SPrinter (Printer.Solver.make cfg)
 
@@ -115,6 +118,11 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
           fun ?bpvs ?(print_sol = false) pcsp ->
             ignore bpvs;
             PolyQEnt.solve ~timeout ~print_sol pcsp >>= fun sol -> Ok (sol, -1)
+      | SPolyQEntTempl (module PolyQEntTempl) ->
+          fun ?bpvs ?(print_sol = false) pcsp ->
+            ignore bpvs;
+            PolyQEntTempl.solve ~timeout ~print_sol pcsp >>= fun sol ->
+            Ok (sol, -1)
       | SForward ->
           fun ?bpvs ?(print_sol = false) pcsp ->
             ignore bpvs;

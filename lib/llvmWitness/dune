@@ -1,0 +1,11 @@
+; What a correctness witness needs from the direct LLVM frontend that does not
+; need LLVM: the map from its loop-head predicates to the C program, and the
+; rewriting of a solution of those predicates into invariants of that
+; program.  Kept apart from lib/LLVMFront, which is optional, so that the
+; top-level program and its tests build without the LLVM bindings.
+
+(library
+ (name LLVMWitness)
+ (public_name CoAR.LLVMWitness)
+ (libraries core zarith CoAR.common CoAR.ast)
+ (synopsis "Loop invariants of the C program from a solution of the direct LLVM translation"))

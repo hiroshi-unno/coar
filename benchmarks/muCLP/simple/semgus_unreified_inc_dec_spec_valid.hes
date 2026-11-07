@@ -1,0 +1,6 @@
+/* A SemGuS verification query in Muse's encoding before reification (Murphy et al., PLDI 2025): the
+   semantics takes the program as a datatype argument; the program Inc;Inc;Dec;Inc adds 2. */
+(declare-datatypes ((Prog 0)) (((Nil) (Inc (inext Prog)) (Dec (dnext Prog)))))
+forall (x: int) (y: int). Sem (Inc (Inc (Dec (Inc Nil)))) x y => y = x + 2
+s.t.
+Sem (p: Prog) (x: int) (y: int) : bool =mu (p = Nil /\ y = x) \/ (exists (q: Prog). p = (Inc q) /\ Sem q (x + 1) y) \/ (exists (q: Prog). p = (Dec q) /\ Sem q (x - 1) y);

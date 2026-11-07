@@ -1,0 +1,4 @@
+c A quantifier line holds one block closed by a single 0; 0 is not a variable.
+p cnf 2 1
+a 1 0 2 0
+1 2 0

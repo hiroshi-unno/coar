@@ -1,0 +1,26 @@
+/* An even natural times any natural is even.  The multiplication passes its
+   second argument to every addition, so the program is not linear. */
+%BEGING
+Mult x y = case x of
+	  zero => zero
+	| succ z => Add y (Mult z y)
+.
+Add x y = case x of
+	  zero => y
+	| succ z => succ (Add z y)
+.
+%ENDG
+
+%BEGINA
+/* qe : even, qo : odd */
+qe succ -> qo.
+qe zero -> .
+qo succ -> qe.
+/* qn : any natural */
+qn succ -> qn.
+qn zero -> .
+%ENDA
+
+%BEGINT
+Mult : qe -> qn -> qe.
+%ENDT

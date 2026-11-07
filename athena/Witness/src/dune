@@ -1,0 +1,5 @@
+; The witness composer as a library, so that the tests can call its parts.
+
+(library
+ (name athena_witness)
+ (libraries unix yojson yaml zarith))

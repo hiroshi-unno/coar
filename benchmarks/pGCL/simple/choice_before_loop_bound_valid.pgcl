@@ -1,0 +1,22 @@
+# A fair choice between starting the count at 0 or at 2, then a geometric count with mean 1:
+# the expectation of c is 1/2 * 1 + 1/2 * 3 = 2, so the bound holds.
+# Expected: valid under the PolyQEnt configuration (the loop needs a template).
+# The reduction used to require the query's expectation to be a single loop application
+# and raised "problem_of: missing predicate for query" on the weighted sum a choice before
+# the loop gives.
+nat b;
+nat c;
+b := 1;
+{
+	c := 0;
+}[1/2]{
+	c := 2;
+}
+while (b = 1) {
+	{
+		b := 0;
+	}[1/2]{
+		c := c + 1;
+	}
+}
+?Ex [c] <= 2

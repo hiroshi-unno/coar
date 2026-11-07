@@ -1,0 +1,27 @@
+# Context filter for `docker build -f pldi26ae_lower/Dockerfile ..` (from inside pldi26ae_lower/, as its README says),
+# read by BuildKit in preference to the repository's root `.dockerignore`, which it REPLACES
+# rather than extends -- so this file repeats the root's entries, leaves out only `pldi26ae_lower`
+# itself, and re-admits the three files under `script/` that `pldi26ae_lower/run.sh` runs.  Without it
+# the root file removes both from the context and the image cannot run the experiment; until
+# 2026-11-03 the README worked round that by copying the old runner to the top directory
+# before the build.  Requires BuildKit (the default since Docker 23.0).
+
+.git
+_build
+.vscode
+
+cav21ae_dt
+cav21ae_rel
+popl24ae
+icfp24ae
+oopsla25ae
+pldi26ae_omega
+cav26ae
+script/starexec
+learner
+script
+
+# what run.sh runs (the root file excludes all of script/)
+!script/run_corpus.sh
+!script/bench_runs.txt
+!script/run_bench.sh

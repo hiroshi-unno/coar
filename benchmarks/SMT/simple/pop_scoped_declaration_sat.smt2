@@ -1,0 +1,10 @@
+; pop also removes the declarations made since the push, so y may be declared again with another sort.
+(set-logic ALL)
+(push 1)
+(declare-const y Bool)
+(assert (not y))
+(pop 1)
+(declare-const y Int)
+(assert (= y 3))
+(check-sat)
+(exit)

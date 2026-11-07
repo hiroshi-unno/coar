@@ -1,0 +1,15 @@
+/* Termination of a nested loop whose inner loop head is listed before the outer
+   one, the order the TermCOMP ITS translation gives From_T2/bf10 and bsort100:
+     i = 0;
+     while (i < n) { j = 0; while (j < n) { j++; } i++; }
+   Valid.  L11 is the outer loop head and L9 the inner one; the outer guard
+   i < n sits on the call L11 -> L9 and the outer update i + 1 on the call
+   L9 -> L11.  L11 is called only from predicates listed before it (L0 and L9)
+   and does not call itself, so substituting its body for its occurrences is
+   exact and leaves L9 calling itself directly, with the guard and the update
+   on one call. */
+forall (n: int). L0 n
+s.t.
+L0 (n: int): bool =mu L11 0 n;
+L9 (i: int) (j: int) (n: int): bool =mu (j < n \/ L11 (i + 1) n) /\ (j >= n \/ L9 i (j + 1) n);
+L11 (i: int) (n: int): bool =mu i >= n \/ L9 i 0 n;

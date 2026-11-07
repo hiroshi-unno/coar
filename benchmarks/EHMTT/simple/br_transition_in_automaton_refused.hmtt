@@ -1,0 +1,16 @@
+/* The input language reserves br for nondeterministic choice, which every
+   state reads into itself on both children.  An automaton that gives br a
+   transition of its own would give it a second meaning and make the output
+   automaton nondeterministic, so the input is refused with an error naming
+   the reason. */
+%BEGING
+Main -> br a a.
+%ENDG
+%BEGINA
+q0 br -> qbad qbad.
+q0 a -> .
+qbad b -> .
+%ENDA
+%BEGINT
+Main : q0.
+%ENDT

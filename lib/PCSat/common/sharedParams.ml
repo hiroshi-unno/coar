@@ -723,6 +723,19 @@ let counts () =
    compares against.  The open reads are bound after simplification, which is
    where an open term over a literal or a grounded parameter first appears as
    one. *)
+(* how many atom shares [constraint_of] reused and how many it computed *)
+let share_hits = Atomic.make 0
+let share_misses = Atomic.make 0
+
+(* the crosscheck's verdicts ([COAR_SHARED_CHECK] below), and the time the
+   assembly and the whole-formula path it replaces took on the same clauses
+   (a measurement instrument: read by the domain that runs constraint
+   generation) *)
+let check_assembled_s = ref 0.
+let check_whole_s = ref 0.
+let check_equal = Atomic.make 0
+let check_different = Atomic.make 0
+
 (* step times of [constraint_of], accumulated only while [profile_on] (the
    constraint generation's COAR_CGEN_PROFILE); a measurement instrument *)
 (* evaluated now: a [lazy] forced by two domains at once raises [Lazy.Undefined] *)
@@ -740,10 +753,21 @@ let profile_times = Array.create ~len:(Array.length profile_names) 0.
 let profile_reset () =
   Array.fill profile_times ~pos:0 ~len:(Array.length profile_times) 0.
 
+(* the step times, then the shares reused and computed by [constraint_of]
+   (cumulative over the run) *)
 let profile_report () =
   String.concat ~sep:" "
   @@ Array.to_list
-  @@ Array.mapi profile_names ~f:(fun i n -> sprintf "%s %.3f" n profile_times.(i))
+       (Array.mapi profile_names ~f:(fun i n ->
+            sprintf "%s %.3f" n profile_times.(i)))
+  @ [
+      sprintf
+        "share-hits %d share-misses %d check-equal %d check-DIFFERENT %d \
+         check-assembled-s %.3f check-whole-s %.3f"
+        (Atomic.get share_hits) (Atomic.get share_misses)
+        (Atomic.get check_equal) (Atomic.get check_different)
+        !check_assembled_s !check_whole_s;
+    ]
 
 let ptime i f =
   if not (Lazy.force profile_on) then f ()
@@ -754,26 +778,152 @@ let ptime i f =
           profile_times.(i)
           +. Time_float.Span.to_sec (Time_float.diff (Common.Clock.now_float ()) t0))
 
+(* An atom's share of the clause constraints [constraint_of] builds, kept with
+   the caller's memo entry for that atom constraint so that clauses mentioning
+   the same atom constraint convert and simplify it once.
+
+   [leaves] maps a key to [disjuncts_of (simplify l)] summed over the leaves
+   [l] of the top disjunction chain of the atom constraint's conversion, after
+   the renaming and the grounding substitution.  The key is everything that
+   conversion reads: whether the renaming was applied, the renaming restricted
+   to the constraint's free variables [F], the grounding substitution
+   restricted to [G] (the variables free after renaming: [F] and the
+   renaming's images), and the conversion's environment restricted to [G] and
+   the free variables of those substitution images.  A substitution reads its
+   map only at the free variables of the term it is applied to, and the
+   conversion reads its environment only at the variables free in the term
+   (a binder inside the term extends the environment itself), so two
+   occurrences with equal keys give the same share.  A slot is valid for the
+   lifetime of the memo entry it hangs on (one constraint generation), during
+   which the datatype environment the conversion consults does not change. *)
+type leaf_key =
+  bool
+  * (Ident.tvar * Logic.term) list
+  * (Ident.tvar * Logic.term) list
+  * (Ident.tvar * Logic.Sort.t) list
+
+type slot = {
+  mutable slot_fvs : Ident.tvar Set.Poly.t option;
+  mutable leaves : (leaf_key * Formula.t Set.Poly.t) list;
+}
+
+let new_slot () = { slot_fvs = None; leaves = [] }
+
+(* [COAR_SHARED_CHECK]: beside every clause assembled from shares, the
+   whole-formula conversion and simplification it replaces is also run and
+   the two results compared ([check_counts]); a measurement instrument *)
+let check_on =
+  Lazy.from_val
+    (match Sys.getenv "COAR_SHARED_CHECK" with
+    | None | Some "" -> false
+    | Some _ -> true)
+
+let check_counts () =
+  ( Atomic.get check_equal,
+    Atomic.get check_different,
+    Atomic.get share_hits,
+    Atomic.get share_misses )
+
+let restrict m vs =
+  Set.fold vs ~init:[] ~f:(fun acc x ->
+      match Map.Poly.find m x with Some d -> (x, d) :: acc | None -> acc)
+  |> List.rev
+
+let fvs_of_range binds =
+  Set.Poly.union_list @@ List.map binds ~f:(fun (_, t) -> Logic.Term.fvs_of t)
+
+(* The share of one atom constraint [c] for this clause, from [slot] when an
+   occurrence with the same key computed it.  [rename] says whether the
+   renaming is applied to [c] (the atom is symbolic and the renaming is not
+   empty).  Contract: the result is the union, over the leaves [l] of the top
+   [Or] chain of [to_old_fml uni_senv (subst sub (rename c))], of
+   [disjuncts_of (simplify l)] -- up to the fresh names a hit does not draw
+   again.  Raises what the conversion or the simplification raises. *)
+let share_of ~subst ~renaming_sub ~sub ~uni_senv ~rename slot c =
+  let fvs =
+    match slot.slot_fvs with
+    | Some fvs -> fvs
+    | None ->
+        let fvs = Logic.Term.fvs_of c in
+        slot.slot_fvs <- Some fvs;
+        fvs
+  in
+  let ren = if rename then restrict renaming_sub fvs else [] in
+  let g = Set.union fvs (fvs_of_range ren) in
+  let sub_g = restrict sub g in
+  let env = restrict uni_senv (Set.union g (fvs_of_range sub_g)) in
+  let key = (rename, ren, sub_g, env) in
+  match List.Assoc.find slot.leaves ~equal:Stdlib.( = ) key with
+  | Some d ->
+      Atomic.incr share_hits;
+      d
+  | None ->
+      Atomic.incr share_misses;
+      let t = if rename then ptime 1 (fun () -> subst renaming_sub c) else c in
+      let t =
+        if List.is_empty sub_g then t
+        else ptime 2 (fun () -> subst (Map.Poly.of_alist_exn sub_g) t)
+      in
+      let old =
+        ptime 3 (fun () -> Logic.ExtTerm.to_old_fml Map.Poly.empty uni_senv t)
+      in
+      let d =
+        ptime 4 (fun () ->
+            Set.Poly.union_list
+            @@ List.map (Evaluator.disj_leaves [] old) ~f:(fun leaf ->
+                   Formula.disjuncts_of @@ Evaluator.simplify leaf))
+      in
+      slot.leaves <- (key, d) :: slot.leaves;
+      d
+
 (* [subst] is [Logic.Term.subst] or a substitution alpha-equivalent to it on
    beta-normal input (the atoms' constraints and the maps here are); the
-   result is then the same up to the names of bound variables. *)
-let constraint_of ?(subst = fun env t -> Logic.Term.subst env t) ~temp_param_senv ~ground
-    ~atom_constr analysis (clause : ExClause.t) : Logic.term option =
+   result is then the same up to the names of bound variables.
+
+   [atom_slot], when given, replaces [atom_constr] and also returns the slot
+   the atom constraint's shares are kept in ([None]: no slot, computed for
+   this clause alone).  With it, a clause of at least two atom constraints,
+   none a Boolean literal, is converted and simplified as
+   [simplify_or] of the union of its atoms' shares instead of as one formula.
+   That is the formula the whole-clause [simplify (to_old_fml uni_senv
+   (subst sub (or_of atoms)))] gives, because:
+   - [subst] rebuilds an application node from its substituted children, and
+     [or_of]'s nodes apply the constant [Or], so the substituted chain is the
+     chain of the substituted atoms (the renaming, too, is applied per atom);
+   - the conversion converts an [Or] node by converting both children under
+     the same environment and joining them with [Formula.mk_binop];
+   - [Evaluator.simplify] of an [Or] chain is [simplify_or] of the union,
+     over the chain's leaves ([disj_leaves]), of [disjuncts_of] of each leaf
+     simplified; a set, so grouping and order do not enter.
+   [or_of] drops or stops at a Boolean literal, and with one atom there is no
+   chain, so those clauses take the whole-formula path.  A failure of either
+   path is a failure of the other: the whole conversion converts every atom
+   and the whole simplification simplifies every leaf. *)
+let constraint_of ?(subst = fun env t -> Logic.Term.subst env t) ?atom_slot
+    ~temp_param_senv ~ground ~atom_constr analysis (clause : ExClause.t) :
+    Logic.term option =
   let renaming_sub =
     Map.Poly.map analysis.renaming ~f:(fun v -> Logic.Term.mk_var v)
   in
-  let lit polarity a =
+  let raw polarity a =
     let symbolic = is_symbolic analysis polarity a in
-    let c = ptime 0 (fun () -> atom_constr ~symbolic polarity a) in
-    if symbolic && not (Map.Poly.is_empty renaming_sub) then
-      ptime 1 (fun () -> subst renaming_sub c)
-    else c
+    let rename = symbolic && not (Map.Poly.is_empty renaming_sub) in
+    let c, slot =
+      ptime 0 (fun () ->
+          match atom_slot with
+          | Some f -> f ~symbolic polarity a
+          | None -> (atom_constr ~symbolic polarity a, None))
+    in
+    (c, slot, rename)
   in
-  let disj =
-    Logic.BoolTerm.or_of
-    @@ List.map (Set.to_list clause.ExClause.positive) ~f:(lit true)
-    @ List.map (Set.to_list clause.ExClause.negative) ~f:(lit false)
+  let raws =
+    List.map (Set.to_list clause.ExClause.positive) ~f:(raw true)
+    @ List.map (Set.to_list clause.ExClause.negative) ~f:(raw false)
   in
+  let renamed (c, _, rename) =
+    if rename then ptime 1 (fun () -> subst renaming_sub c) else c
+  in
+  let disj = lazy (Logic.BoolTerm.or_of @@ List.map raws ~f:renamed) in
   let params = ExClause.params_of clause in
   let sub, kept =
     Map.Poly.fold params ~init:(Map.Poly.empty, Map.Poly.empty)
@@ -784,10 +934,6 @@ let constraint_of ?(subst = fun env t -> Logic.Term.subst env t) ~temp_param_sen
           | Some t -> (Map.Poly.set sub ~key ~data:t, kept)
           | None -> (sub, Map.Poly.set kept ~key ~data))
   in
-  let term =
-    if Map.Poly.is_empty sub then disj
-    else ptime 2 (fun () -> subst sub disj)
-  in
   let bound =
     Map.Poly.merge_skewed ~combine:(fun ~key:_ a _ -> a) kept analysis.vars
   in
@@ -797,9 +943,53 @@ let constraint_of ?(subst = fun env t -> Logic.Term.subst env t) ~temp_param_sen
       temp_param_senv
       (Logic.of_old_sort_env_map bound)
   in
-  match
-    let old = ptime 3 (fun () -> Logic.ExtTerm.to_old_fml Map.Poly.empty uni_senv term) in
+  let whole () =
+    let disj = Lazy.force disj in
+    let term =
+      if Map.Poly.is_empty sub then disj
+      else ptime 2 (fun () -> subst sub disj)
+    in
+    let old =
+      ptime 3 (fun () -> Logic.ExtTerm.to_old_fml Map.Poly.empty uni_senv term)
+    in
     ptime 4 (fun () -> Evaluator.simplify old)
+  in
+  let assembled =
+    Option.is_some atom_slot
+    && List.length raws >= 2
+    && List.for_all raws ~f:(function
+         | Logic.Con ((Logic.BoolTerm.True | Logic.BoolTerm.False), _), _, _ ->
+             false
+         | _ -> true)
+  in
+  match
+    if not assembled then whole ()
+    else
+      let t0 = Common.Clock.now_float () in
+      let shares =
+        List.map raws ~f:(fun (c, slot, rename) ->
+            let slot = match slot with Some s -> s | None -> new_slot () in
+            share_of ~subst ~renaming_sub ~sub ~uni_senv ~rename slot c)
+      in
+      let phi =
+        ptime 4 (fun () -> Evaluator.simplify_or @@ Set.Poly.union_list shares)
+      in
+      (if Lazy.force check_on then
+         let since t =
+           Time_float.Span.to_sec
+             (Time_float.diff (Common.Clock.now_float ()) t)
+         in
+         check_assembled_s := !check_assembled_s +. since t0;
+         let t1 = Common.Clock.now_float () in
+         let res =
+           try Ok (whole ())
+           with exn_ when not (Common.Timer.is_async exn_) -> Error exn_
+         in
+         check_whole_s := !check_whole_s +. since t1;
+         match res with
+         | Ok phi' when Stdlib.compare phi phi' = 0 -> Atomic.incr check_equal
+         | _ -> Atomic.incr check_different);
+      phi
   with
   | exception exn_ when not (Common.Timer.is_async exn_) ->
       Atomic.incr declined_observation;

@@ -1,0 +1,8 @@
+[
+    "OptPCSat",
+    {
+        "side_conditions": [
+            "NoSideCond"
+        ]
+    }
+]

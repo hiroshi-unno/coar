@@ -1918,6 +1918,125 @@ let ground_varying ~arrays ~sequences ~width ~at_args ?growing ?round ~inst
         }
 
 (* ------------------------------------------------------------------
+   A body atom over an OPEN sequence, read no stronger than it is.
+
+   A celled predicate [P] is read back as
+     [P(s, x..) := phi(-1, d, x..) /\ forall j. 0 <= j < seq.len s => phi(j, seq.nth s j, x..)].
+   An example clause's BODY atom [P(t, x..)] is an assumption, so the clause
+   demands [not P(t, x..)] (or a head); the expansion states that demand as
+   [not (/\ over the offered cells of phi)].  That is the demand itself only
+   when the cells cover every position of [t]; with fewer it is STRONGER,
+   since a conjunction over fewer cells is weaker and its negation stronger.
+   A stronger demand can reject a candidate whose read-back meets the
+   example, the intended solution included, and nothing later puts it back.
+
+   An OPEN sequence -- one whose elements the term does not state, such as
+   [d ++ [0] ++ [-1]] with [d] a parameter or a dummy constant -- offers the
+   sentinel alone, so its body atom demands [not phi(-1, d, x..)]: the
+   candidate false at the sentinel for every value of the open part.  The
+   read-back that holds the positions to [s.start + j] and the length to
+   [o.start - s.start] meets the example (at [|d| = 2] the element at index
+   2 is 0, not 2) and fails that demand (the sentinel instance is the scalar
+   facts, which hold at [|d| = 2]).
+
+   The repair grounds the open part instead: every sequence-sorted parameter
+   or dummy constant inside a celled body atom's open sequence is replaced,
+   in the whole clause at once, by the EMPTY sequence.  An example clause
+   holds at every value of its parameters (and the synthesis query reads a
+   dummy as an arbitrary value of its sort), so the result is an instance of
+   the example, hence implied by it: never stronger.  Its body sequences are
+   then literals whose positions the reader offers all of, so its expansion
+   is the instance exactly, provided they fit the reader's cap.  The empty
+   sequence is chosen because it adds no position, so a literal that fits
+   before grounding fits after it.  A parameter the clause's conditions
+   mention is not grounded (its instance could falsify the condition the
+   example was recorded under, as [ground_varying] also refuses), and a
+   clause whose body still has an open celled sequence after grounding --
+   an open part that is neither a parameter nor a dummy, or an extraction at
+   a symbolic bound -- is DROPPED from the celled query: no constraint is
+   the weakest reading, and it never rejects a solution.
+
+   [celled atom] says whether the atom's predicate has a template with cell
+   columns; an atom of any other predicate is not expanded into cells and is
+   left alone. *)
+
+(* The sequence values an atom's celled sequence paths reach, each with
+   whether its elements are stated ([Some elems]) or not ([None]). *)
+let sequence_readings (atom : ExAtom.t) :
+    (LogicOld.Term.t * LogicOld.Term.t list option) list =
+  match ExAtom.pvar_sorts_of atom, ExAtom.args_of atom with
+  | Some (_, sorts), Some args ->
+      List.filter_map (array_paths_of_sorts ~sequences:true sorts) ~f:(fun path ->
+          if not (CellQual.is_sequence path) then None
+          else
+            let t = array_of_path path (List.nth_exn args path.CellQual.param) in
+            Some (t, seq_elements_old t))
+  | _ -> []
+
+type open_body_grounding =
+  | Unchanged  (** no celled body atom reads an open sequence *)
+  | Grounded of ExClause.t  (** an instance whose body sequences are literals *)
+  | Dropped  (** no instance of that kind; the clause gives no constraint *)
+
+let ground_open_body_sequences ~(celled : ExAtom.t -> bool) (clause : ExClause.t) :
+    open_body_grounding =
+  let open LogicOld in
+  let celled_body clause = List.filter (Set.to_list clause.ExClause.negative) ~f:celled in
+  let open_terms clause =
+    List.concat_map (celled_body clause) ~f:(fun atom ->
+        List.filter_map (sequence_readings atom) ~f:(function
+          | t, None -> Some t
+          | _, Some _ -> None))
+  in
+  match open_terms clause with
+  | [] -> Unchanged
+  | opens ->
+      let params = ExClause.params_of clause in
+      let cond_vars =
+        Set.fold
+          (Set.union clause.ExClause.positive clause.ExClause.negative)
+          ~init:Set.Poly.empty ~f:(fun acc -> function
+          | ExAtom.FCon (_, phi) -> Set.union acc (Formula.tvs_of phi)
+          | ExAtom.PPApp ((_, cond), _) -> Set.union acc (Formula.tvs_of cond)
+          | ExAtom.PApp _ -> acc)
+      in
+      let sub =
+        Map.Poly.of_alist_reduce ~f:(fun a _ -> a)
+        @@ List.filter_map ~f:(fun (x, sort) ->
+               match sort with
+               | T_seq.SSeq se
+                 when (Map.Poly.mem params x && not (Set.mem cond_vars x))
+                      || is_dummy_term x None ->
+                   Some (x, T_seq.mk_empty se)
+               | _ -> None)
+        @@ List.concat_map opens ~f:(fun t -> Set.to_list (Term.term_sort_env_of t))
+      in
+      if Map.Poly.is_empty sub then Dropped
+      else
+        let term t = Evaluator.simplify_term (Term.subst sub t) in
+        let apply = function
+          | ExAtom.PApp ((pvar, sorts), terms) ->
+              ExAtom.mk_papp pvar sorts (List.map terms ~f:term)
+          | ExAtom.FCon (senv, phi) ->
+              ExAtom.mk_fcon
+                ( Map.Poly.filter_keys senv ~f:(fun x -> not (Map.Poly.mem sub x)),
+                  Evaluator.simplify @@ Formula.subst sub phi )
+          | ExAtom.PPApp ((senv, cond), ((pvar, sorts), terms)) ->
+              ExAtom.mk_ppapp
+                ( Map.Poly.filter_keys senv ~f:(fun x -> not (Map.Poly.mem sub x)),
+                  Evaluator.simplify @@ Formula.subst sub cond )
+                pvar sorts (List.map terms ~f:term)
+        in
+        let grounded =
+          ExClause.canon
+            {
+              ExClause.positive = Set.Poly.map clause.ExClause.positive ~f:apply;
+              ExClause.negative = Set.Poly.map clause.ExClause.negative ~f:apply;
+            }
+        in
+        if List.is_empty (open_terms grounded) then Grounded grounded else Dropped
+
+(* ------------------------------------------------------------------
    Keeping the cell route inert where it has nothing to act on.
 
    A predicate from which no array or sequence is reachable gets no cell

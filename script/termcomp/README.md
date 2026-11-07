@@ -95,3 +95,18 @@ Benchmark results are written to the following files.
 - `termcomp_bench_results/C_muval_"%Y-%m-%d_%H-%M-%S_error.log`: stderr output
 - `termcomp_bench_results/C_muval_"%Y-%m-%d_%H-%M-%S.csv`: benchmark results (YES/NO/timeout/abort)
 - `termcomp_bench_results/C_muval_"%Y-%m-%d_%H-%M-%S_sorted.csv`: sorted benchmark results
+## The rewritten C pipeline (`solver_llvm2lts.sh`)
+`solver_llvm2lts.sh` takes the same arguments as `solver.sh` and answers the C categories through the rewritten
+pipeline: the new Ptr2Arr (`athena/Ptr2ArrFC`), clang 19.1.7 and llvm2lts (`athena/llvm2lts`), then MuVal with the
+same configuration as `solver.sh`, all in one run of CoAR under an Athena configuration the script writes
+(`-p cterm`; CoAR built with Frama-C 33 and the LLVM 19 OCaml bindings). `C` and `C_assume` read integers as
+mathematical integers, `C_Mod` adds `--wrap-integers` (unsigned arithmetic wraps as in C), and `C_BV` reads every value
+as a bit-vector. `C_MemorySafety` is `-p ctermmemsafe`: termination, unless an invalid dereference or free is
+reachable (Ptr2Arr `--memory-safety --violation-markers=reach-error --memtrack-check=none`; a leak is not checked),
+which gives `MAYBE`. Other categories answer `abort`. The tools are given by `COAR_EXE`, `CLANG19`,
+`FRAMAC_SITE_SHARE`, `CONFIG_DIR` and `WORKING_DIR` (the script's head lists the defaults).
+
+```bash
+CLANG19=<clang-19> COAR_EXE=$PWD/_build/default/main.exe CONFIG_DIR=$PWD/config WORKING_DIR=$PWD \
+  FRAMAC_SITE_SHARE=$(opam var share)/frama-c script/termcomp/solver_llvm2lts.sh --category=C input.c
+```

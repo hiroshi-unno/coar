@@ -1,0 +1,5 @@
+/* Counting down from any x reaches x <= 0: a least fixed point that holds
+   everywhere (termination). */
+%HES
+Main x =μ Down x.
+Down x =μ x <= 0 || Down (x - 1).

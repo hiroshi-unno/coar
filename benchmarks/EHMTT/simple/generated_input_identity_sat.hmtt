@@ -1,0 +1,22 @@
+%BEGING
+S -> Isort (gen q0).
+Isort x -> case x of
+  e => e
+| a x' => a (Isort x').
+%ENDG
+
+%BEGINA
+/* a* */
+q0 a -> q0.
+q0 e -> .
+/* a*b* */
+q1 a -> q1.
+q1 e -> .
+q1 b -> q2.
+q2 b -> q2.
+q2 e -> .
+%ENDA
+
+%BEGINT
+S : q1.
+%ENDT

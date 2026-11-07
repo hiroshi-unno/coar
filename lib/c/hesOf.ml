@@ -203,6 +203,16 @@ let rec hes_of_c_rep_phi prev_env (env, preds_rev) phi stmt =
     let preds_rev = preds_rev @ [ func ] in
     (env, preds_rev))
 
+(* The query: [phi] holds at every initial state.  A program satisfies a CTL
+   formula when every initial state of its Kripke structure does, and the
+   initial states are all valuations that the initial assignments and
+   assumptions allow -- a variable [init] leaves unassigned is any value.  So
+   the free variables are bound universally and an initial assumption guards
+   the formula, whatever the formula's outermost path quantifier: [E] chooses
+   a path from a state, never the state.  Binding them existentially when
+   [phi] began with [EF]/[EG] answered "some initial state", and with the
+   guard written as an implication [exists x. x > 0 => P x] held by picking
+   an [x] the assumption excludes, so any such property was valid. *)
 let query_of_c prev_env env (phi, _, inits, stmt) =
   let env, pvar, state = get_funinfo prev_env env phi stmt in
   let state = List.fold_left ~f:Init.update_state ~init:state inits in
@@ -212,8 +222,7 @@ let query_of_c prev_env env (phi, _, inits, stmt) =
     Formula.tvs_of fml |> Set.to_list
     |> List.map ~f:(fun tvar -> (tvar, T_int.SInt))
   in
-  let binder = if Ctl.is_e phi then Formula.Exists else Formula.Forall in
-  (env, Formula.mk_bind_if_bounded binder bounds fml)
+  (env, Formula.mk_bind_if_bounded Formula.Forall bounds fml)
 
 let hes_of_cctl ~print (phi, decls, inits, stmt) =
   let stmt = LinkedStatement.of_statement stmt in
@@ -226,7 +235,7 @@ let hes_of_cctl ~print (phi, decls, inits, stmt) =
   print @@ lazy "vvvvvvvvvvvvv Optimized Linked C vvvvvvvvvvvvv";
   print @@ lazy (LinkedStatement.string_of stmt);
   print @@ lazy "";
-  let prev_env = Util.get_prev_env stmt in
+  let prev_env = StmtGraph.get_prev_env stmt in
   let env, preds = hes_of_c_rep_phi prev_env ([], []) phi stmt in
   let _, query = query_of_c prev_env env (phi, decls, inits, stmt) in
   let preds = List.rev preds in
@@ -244,7 +253,7 @@ let hes_of_chmes ~print (hmes, decls, inits, query_stmt) =
   print @@ lazy "vvvvvvvvvvvvv Optimized Linked C vvvvvvvvvvvvv";
   print @@ lazy (LinkedStatement.string_of query_stmt);
   print @@ lazy "";
-  let prev_env = Util.get_prev_env query_stmt in
+  let prev_env = StmtGraph.get_prev_env query_stmt in
   let stmts = LinkedStatement.get_all_statements query_stmt in
   (* make a table for stmt -> id *)
   let stmt_to_id = LinkedStatementHashtbl.create 1234 in

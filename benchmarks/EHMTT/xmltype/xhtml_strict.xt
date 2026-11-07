@@ -1,0 +1,30 @@
+type Html = html[Head,Body]
+type Head = head[(Base|Link|Meta|Object|Script|Style)*,Title,(Base|Link|Meta|Object|Script|Style)*]
+type Base = base[]
+type Link = link[]
+type Meta = meta[]
+type Object = object[(Param)*,(Inl|Block|Text)*]
+type Script = script[Text]
+type Style = style[Text]
+type Title = title[Text]
+type Param = param[]
+type Body = body[(Block|Inl),(Block|Inl)*]
+type Inl =
+     A
+    |Object
+    |Hilight
+    |brk[]
+    |Script
+    |img[]
+type Hilight =
+     hl[(Inl|Text)*]
+type InlButA =
+     hl[(InlButA|Text)*]
+    |Object
+    |brk[]
+    |Script
+    |img[]
+type A = a[InlButA*]
+type Block =
+     div[(Inl|Text|Block)*]
+type Text = text[]

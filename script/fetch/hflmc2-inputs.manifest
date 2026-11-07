@@ -1,0 +1,22 @@
+# HFL/fetched/hflmc2: hflmc2's (PaHFL's) HES inputs under input/ at 79e20958159ecb2cdd06188c2a4ae3c3694f9465; the
+# repository carries no licence, so they are fetched, never shipped.  Read by -p hfl.
+# source	destination	sha256
+input/ok/invalid/1-e.in	benchmarks/HFL/fetched/hflmc2/input/ok/invalid/1-e.in	0203d7e75faaf57a9647686361162a1689a627e551dbeede243cc1205d4744f1
+input/ok/valid/1-annot.in	benchmarks/HFL/fetched/hflmc2/input/ok/valid/1-annot.in	f3c32ca468cb34355f4c2ecf36ad124a8b9106ec03bb68d8615147bdb0592a74
+input/ok/valid/1.in	benchmarks/HFL/fetched/hflmc2/input/ok/valid/1.in	1193c81a0a18bdebc9ed2160bdbd158716b43e821329e4e637cefbef9fef2418
+input/ok/valid/2.in	benchmarks/HFL/fetched/hflmc2/input/ok/valid/2.in	0d0ee5be79d3c21fb72ebba205fe240881f4b17f97893d4cecfdcf53e8e648c4
+input/ok/valid/3-annot.in	benchmarks/HFL/fetched/hflmc2/input/ok/valid/3-annot.in	5f01d88e367c3c670f1e5f1624752400d0f0571bfa839ff04de50a130b56e4bb
+input/ok/valid/3.in	benchmarks/HFL/fetched/hflmc2/input/ok/valid/3.in	8ba19ef842a152fe187391c79447cfcaf3c4db283731266b6ae9d28f4da82027
+input/ok/valid/apply.in	benchmarks/HFL/fetched/hflmc2/input/ok/valid/apply.in	21c2ce5b1eca855fed17afab94cc7d0e31abac5311315635ed71e05c361af5e4
+input/ok/valid/apply2.in	benchmarks/HFL/fetched/hflmc2/input/ok/valid/apply2.in	79f7a351d40fbc12b946e4434cff3695555204a9e1d5f6ee3e57e92e2dc19946
+input/ok/valid/or3-2.in	benchmarks/HFL/fetched/hflmc2/input/ok/valid/or3-2.in	f55dd7252c4c3985b044d949f023c0c246e7229efd00432c1714868949337efb
+input/ok/valid/or3-3.in	benchmarks/HFL/fetched/hflmc2/input/ok/valid/or3-3.in	88e49eeea9a275a25ef88226fa72403052e4ce279b406ab607e1f0232a292185
+input/ok/valid/or3.in	benchmarks/HFL/fetched/hflmc2/input/ok/valid/or3.in	9cb0ec5b01c9678e12c7d0d3c5b277430bf408349fbe8aacbb59b4933f7aea24
+input/ok/valid/pldi2009.in	benchmarks/HFL/fetched/hflmc2/input/ok/valid/pldi2009.in	0eed406bc4a1ba2af9882dd846ef6d2d505ad715c1e68fffd205a16bf8136484
+input/ok/valid/sign.in	benchmarks/HFL/fetched/hflmc2/input/ok/valid/sign.in	3c4a93d7e359701376ce9c9ae25813defaa3cc65b85354c0831fb9ac04516533
+input/ok/valid/sum.in	benchmarks/HFL/fetched/hflmc2/input/ok/valid/sum.in	e0ff917166a977b1dd1548f18dff79b30d7f5866a59e7dbc3f800923a534ede7
+input/ok/valid/sum2.in	benchmarks/HFL/fetched/hflmc2/input/ok/valid/sum2.in	33190904d2d487c151931607273b31873b94db62b396193ce0015c1f1b6b530b
+input/ok/valid/twice-neg-eq-annot.in	benchmarks/HFL/fetched/hflmc2/input/ok/valid/twice-neg-eq-annot.in	a33b91363bfc8cdacfaa39d71e585be3aaf9a9a6a5eac783512fc929a56b8e7c
+input/ok/valid/twice-neg-eq.in	benchmarks/HFL/fetched/hflmc2/input/ok/valid/twice-neg-eq.in	b9f6b187d65b484e702c96e13673ef9c07ecbec984b37b119731079842b6abef
+input/ok/valid/twice-neg-pos-annot.in	benchmarks/HFL/fetched/hflmc2/input/ok/valid/twice-neg-pos-annot.in	ec014342cc205620c7139182e9a029a4af72b3dd40a7cee966b0621fda698c9e
+input/ok/valid/twice-neg-pos.in	benchmarks/HFL/fetched/hflmc2/input/ok/valid/twice-neg-pos.in	df1cd9e991f2144f47efeb9fe99e8b7918cd65776e4ab065771e6ac9431dd51f

@@ -13,29 +13,29 @@ S43 f g x y k h -> iff (k h) (h y).
 ZeroLLBBRBRB x1 -> ff.
 IsMaxLLBBRBRB x -> IsMaxRecLLBBRBRB x ZeroLBBRB.
 SuccLLBBRBRB x x1 -> FindLLBBRBRB x ZeroLBBRB x1.
-CompareLLBBRBRB x y z lt eq gt -> if (IsMaxLBBRB z) eq (CompareLLBBRBRB x y (SuccLBBRB z) lt (CompareB (x z) (y z) lt eq gt) gt).
+CompareLLBBRBRB x y z lt eq gt -> if (IsMaxLBBRB z) (CompareB (x z) (y z) lt eq gt) (CompareLLBBRBRB x y (SuccLBBRB z) lt (CompareB (x z) (y z) lt eq gt) gt).
 IsMaxRecLLBBRBRB x y -> and (IsMaxB (x y)) (if (IsMaxLBBRB y) tt (IsMaxRecLLBBRBRB x (SuccLBBRB y))).
 FindLLBBRBRB x y x1 -> if (IsMaxB (x y)) (if (IsMaxLBBRB y) ZeroB (FindLLBBRBRB x (SuccLBBRB y) x1)) (CarryLLBBRBRB x y x1).
 CarryLLBBRBRB x y x1 -> CompareLBBRB y x1 ZeroBB (x x1) (SuccB (x x1)) ZeroB.
 ZeroLBBRB x1 -> ff.
 IsMaxLBBRB x -> IsMaxRecLBBRB x ZeroBB.
 SuccLBBRB x x1 -> FindLBBRB x ZeroBB x1.
-CompareLBBRB x y z lt eq gt -> if (IsMaxBB z) eq (CompareLBBRB x y (SuccBB z) lt (CompareB (x z) (y z) lt eq gt) gt).
+CompareLBBRB x y z lt eq gt -> if (IsMaxBB z) (CompareB (x z) (y z) lt eq gt) (CompareLBBRB x y (SuccBB z) lt (CompareB (x z) (y z) lt eq gt) gt).
 IsMaxRecLBBRB x y -> and (IsMaxB (x y)) (if (IsMaxBB y) tt (IsMaxRecLBBRB x (SuccBB y))).
 FindLBBRB x y x1 -> if (IsMaxB (x y)) (if (IsMaxBB y) ZeroB (FindLBBRB x (SuccBB y) x1)) (CarryLBBRB x y x1).
 CarryLBBRB x y x1 -> CompareBB y x1 ZeroB (x x1) (SuccB (x x1)) ZeroB.
 ZeroBLLBBRBRB x1 x2 -> ff.
 IsMaxBLLBBRBRB x -> and (IsMaxLLBBRBRB (x tt)) (IsMaxLLBBRBRB (x ff)).
 SuccBLLBBRBRB x x1 x2 -> if (IsMaxLLBBRBRB (x ff)) (if x1 (SuccLLBBRBRB (x x1) x2) (ZeroLLBBRBRB x2)) (if x1 (x x1 x2) (SuccLLBBRBRB (x x1) x2)).
-CompareBLLBBRBRB x y z lt eq gt -> if (IsMaxB z) eq (CompareBLLBBRBRB x y (SuccB z) lt (CompareLLBBRBRB (x z) (y z) ZeroLBBRB lt eq gt) gt).
+CompareBLLBBRBRB x y z lt eq gt -> if (IsMaxB z) (CompareLLBBRBRB (x z) (y z) ZeroLBBRB lt eq gt) (CompareBLLBBRBRB x y (SuccB z) lt (CompareLLBBRBRB (x z) (y z) ZeroLBBRB lt eq gt) gt).
 ZeroBBB x1 x2 -> ff.
 IsMaxBBB x -> and (IsMaxBB (x tt)) (IsMaxBB (x ff)).
 SuccBBB x x1 x2 -> if (IsMaxBB (x ff)) (if x1 (SuccBB (x x1) x2) (ZeroBB x2)) (if x1 (x x1 x2) (SuccBB (x x1) x2)).
-CompareBBB x y z lt eq gt -> if (IsMaxB z) eq (CompareBBB x y (SuccB z) lt (CompareBB (x z) (y z) ZeroB lt eq gt) gt).
+CompareBBB x y z lt eq gt -> if (IsMaxB z) (CompareBB (x z) (y z) ZeroB lt eq gt) (CompareBBB x y (SuccB z) lt (CompareBB (x z) (y z) ZeroB lt eq gt) gt).
 ZeroBB x1 -> ff.
 IsMaxBB x -> and (IsMaxB (x tt)) (IsMaxB (x ff)).
 SuccBB x x1 -> if (IsMaxB (x ff)) (if x1 (SuccB (x x1)) ZeroB) (if x1 (x x1) (SuccB (x x1))).
-CompareBB x y z lt eq gt -> if (IsMaxB z) eq (CompareBB x y (SuccB z) lt (CompareB (x z) (y z) lt eq gt) gt).
+CompareBB x y z lt eq gt -> if (IsMaxB z) (CompareB (x z) (y z) lt eq gt) (CompareBB x y (SuccB z) lt (CompareB (x z) (y z) lt eq gt) gt).
 ZeroB -> ff.
 IsMaxB x -> x.
 SuccB x -> tt.

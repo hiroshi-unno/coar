@@ -1,0 +1,19 @@
+%BEGING
+AccFile cmds = case cmds of
+	  e => close
+	| r cmds' => read(AccFile cmds')
+	| w cmds' => write(AccFile cmds').
+%ENDG
+
+%BEGINA
+/* qi0 : r* e */
+qi0 r -> qi0.
+qi0 e -> .
+/* q0 : read* close */
+q0 read -> q0.
+q0 close -> .
+%ENDA
+
+%BEGINT
+AccFile : qi0 -> q0.
+%ENDT

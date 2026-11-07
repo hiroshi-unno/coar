@@ -1,0 +1,20 @@
+[
+    "MuVal",
+    {
+        "fixpoint_reduction": [
+            "Parity_progress_measure",
+            {
+                "loop_levels": false,
+                "loop_levels_from": [
+                    "Reduction"
+                ]
+            }
+        ],
+        "ground_query_solve": [
+            "No_ground_solve"
+        ],
+        "guarded_disjunctions": [
+            "Factor_exclusive_guards"
+        ]
+    }
+]

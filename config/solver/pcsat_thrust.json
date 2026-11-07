@@ -1,0 +1,51 @@
+[
+    "PCSat",
+    {
+        "preprocessor": [
+            "Filename",
+            "./config/pcsat/preprocessor/enable_thrust.json"
+        ],
+        "coordinator": [
+            "Filename",
+            "./config/pcsat/coordinator/tbq_ar_step_preimages.json"
+        ],
+        "sol_printer": [
+            "Filename",
+            "./config/pcsat/sol_printer/enable.json"
+        ],
+        "probes": {
+            "all_true": {
+                "mode": [
+                    "Raced"
+                ]
+            },
+            "repeated_premises": {
+                "mode": [
+                    "Raced"
+                ],
+                "budget_ms": 300000
+            },
+            "opaque_definitions": {
+                "also_raced": [
+                    [
+                        "Goal_cone_congruence"
+                    ]
+                ]
+            }
+        },
+        "reader": {
+            "premise_witness_disjuncts": true,
+            "fold_inlined_selector_reads": true
+        },
+        "simplifier": {
+            "truth_table_long_sequence_bound": 1000
+        },
+        "recursive_functions": {
+            "definitions": {
+                "residual_contexts": [
+                    "Residual_clean_pool"
+                ]
+            }
+        }
+    }
+]

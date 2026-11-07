@@ -1,0 +1,27 @@
+// A byte counter c that wraps at 256 and runs until it equals a byte target t, compared after
+// zero extension to 32 bits: for (c = c1; c != t; c++) over unsigned char.  It terminates with the
+// ranking function (zext(t) - zext(c)) mod 256.  The loop test is written counter-first, as the
+// LLVM-based front end prints it, so the qualifier is [zext(t) = zext(c)] read with the counter on
+// the right.  Expected: YES under -p ltstermbv, NO under -p ltsntermbv.
+START: 0;
+TYPE c: bv(8);
+TYPE t: bv(8);
+
+FROM: 0;
+c := nondet();
+t := nondet();
+tz := zero_extend(8, 32, t);
+TO: 1;
+
+FROM: 1;
+cz := zero_extend(8, 32, c);
+TO: 2;
+
+FROM: 2;
+assume(cz != tz);
+c := c + 1;
+TO: 1;
+
+FROM: 2;
+assume(cz == tz);
+TO: 3;

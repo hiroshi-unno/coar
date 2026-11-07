@@ -34,3 +34,5 @@ Benchmark results are written under `script/chccomp2025/bench_results/`.
 - `<solver>_"%Y-%m-%d_%H-%M-%S/<track>_"%Y-%m-%d_%H-%M-%S_error.log`: stderr output
 - `<solver>_"%Y-%m-%d_%H-%M-%S/<track>_"%Y-%m-%d_%H-%M-%S.csv`: benchmark results (YES/NO/timeout/abort)
 - `<solver>_"%Y-%m-%d_%H-%M-%S/<track>_"%Y-%m-%d_%H-%M-%S_sorted.csv`: sorted benchmark results
+`run_bench_pcsat.sh` and `run_bench_mucyc.sh` are `run_tracks.sh pcsat` and `run_tracks.sh mucyc`; each solver's
+configuration and track list are in `run_tracks.sh`.

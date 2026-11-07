@@ -1,5 +1,9 @@
 {
-    "resolution_threshold": 4,
-    "num_elim_bool_vars": 0,
-    "propagate_lb_ub": true
+    "elimination": {
+        "resolution_threshold": 4,
+        "bool_vars": 0
+    },
+    "clauses": {
+        "propagate_lb_ub": true
+    }
 }

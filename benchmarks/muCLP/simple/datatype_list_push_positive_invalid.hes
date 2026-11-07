@@ -1,0 +1,6 @@
+/* As datatype_list_push_positive_valid.hes, but pushing n - 1, so the
+   list reaches a head 0 when n = 1. */
+(declare-datatypes ((L 0)) (((nil) (cons (hd Int) (tl L)))))
+forall (n: int). P nil n
+s.t.
+P (l: L) (n: int) : bool =nu (is_cons l => (hd l) >= 1) /\ (n > 0 => P (cons (n - 1) l) (n - 1));

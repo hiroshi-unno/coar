@@ -1,0 +1,19 @@
+# benchmarks/OCaml/recheck, the 16 OCaml programs of the ReCheck artifact (Hamana and Emoto, TACAS 2026;
+# Zenodo record 17493184, reck.zip, BSD-3-Clause), the inputs its authors gave MoCHi and RCaml.  source <TAB>
+# destination <TAB> sha256; each placed file is upstream's bytes.
+reck/others/benchmarks/McCarthy91.ml	benchmarks/OCaml/recheck/McCarthy91.ml	59a16be62ba7bc255274a4f4bbd3b6b731aede4d812b43211129f655e3ca5012
+reck/others/benchmarks/assoc.ml	benchmarks/OCaml/recheck/assoc.ml	d075e70b548a353a3cd9bdd3c4626d9685b5745dfe8903a6d33f104f7a5803c6
+reck/others/benchmarks/assocOp.ml	benchmarks/OCaml/recheck/assocOp.ml	8479d78be6d890ceced3db13d4d27c7535670ca75489fea47e17f7fab3b8d45d
+reck/others/benchmarks/conj.ml	benchmarks/OCaml/recheck/conj.ml	5e9b2c906f58444189393689f5a0e9a3a7664d19b18be4ebb507a743e965d61a
+reck/others/benchmarks/copy-copy_int.ml	benchmarks/OCaml/recheck/copy-copy_int.ml	7cf42aa959c1d5dfae59a41e6e41e7a40d7b9b4268b65a96ad60b91d94711fdf
+reck/others/benchmarks/copy-copy_nat.ml	benchmarks/OCaml/recheck/copy-copy_nat.ml	d2f0448eee8f0a29c758294e15e3964debc4a799bd1f25bbdd19d004d07a0756
+reck/others/benchmarks/even.ml	benchmarks/OCaml/recheck/even.ml	f8cc9cc6a868b85a8cbef4122bdfe54d0066c4a5f8f024fd70343d1fa98165ce
+reck/others/benchmarks/filter-exists.ml	benchmarks/OCaml/recheck/filter-exists.ml	9f553b94d1e5b2a5419e7f12b3446b5a27cf6689c146f8d3b2aba7feefdc6f4d
+reck/others/benchmarks/lenPlus.ml	benchmarks/OCaml/recheck/lenPlus.ml	c92bc19a46220f2923e50d37610bb38a3935652ffc214c0668ff0fe049336d36
+reck/others/benchmarks/makelist_int.ml	benchmarks/OCaml/recheck/makelist_int.ml	99567f667c9cf89d7592fe7b5b0ebec8a560445e3055507f62d95cbf3ba76fe5
+reck/others/benchmarks/makelist_nat.ml	benchmarks/OCaml/recheck/makelist_nat.ml	801448e043043a8b5ddd6e4f528d1e1f65f7e073576f61c1f25dbb3a5f76fc5d
+reck/others/benchmarks/mapappend.ml	benchmarks/OCaml/recheck/mapappend.ml	8fb05ffc93096b57b89a0334463bf0a7327953084088a89a1c478c6a8bb55e75
+reck/others/benchmarks/mapmap.ml	benchmarks/OCaml/recheck/mapmap.ml	5a5890396d91825682e82df78b237511b1cb3395c903fca12eaec606a2e6f222
+reck/others/benchmarks/ones.ml	benchmarks/OCaml/recheck/ones.ml	8f63857396b35f2fe0b8e9071189a97ec62b34443400de627ef988fa84d3296f
+reck/others/benchmarks/refine.ml	benchmarks/OCaml/recheck/refine.ml	084958ba3f206b43d6c6b740f686d87e86ae1796403f2f589bfb56669eef5dc6
+reck/others/benchmarks/revrev.ml	benchmarks/OCaml/recheck/revrev.ml	06a7764c78fbfd61f7032c2b04d89518978a886e220ccb818377394abd767af1

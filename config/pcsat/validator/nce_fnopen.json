@@ -1,0 +1,9 @@
+{
+  "cex_strategy": [
+    "AllExamples"
+  ],
+  "check_part_sol_with_lbs": false,
+  "examples": {
+    "fn_results_open": true
+  }
+}

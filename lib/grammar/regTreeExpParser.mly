@@ -25,10 +25,15 @@
 
 %%
 
+/* A file is a sequence of type definitions and nothing after them. */
 regtreeexpdefs:
+  defs EOF
+    { $1 }
+
+defs:
   /* empty */
     { [] }
-| regtreeexpdef regtreeexpdefs EOF
+| regtreeexpdef defs
     { $1::$2 }
 
 regtreeexpdef:

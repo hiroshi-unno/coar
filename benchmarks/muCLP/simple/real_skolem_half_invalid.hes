@@ -1,0 +1,5 @@
+/* In-house regression: the least fixpoint contains only x >= 0.5.
+   The universal query is false; negative values decrease forever. */
+forall (x: real). I x
+s.t.
+I (x: real): bool =mu x >= 0.5 \/ I (x - 1.0);

@@ -1,0 +1,19 @@
+[
+    "RCaml",
+    {
+        "solver": [
+            "Filename",
+            "./config/solver/dbg_pcsat.json"
+        ],
+        "chc_optimizer": [
+            "Filename",
+            "./config/solver/dbg_optpcsat_nc_pcsat_improver.json"
+        ],
+        "cgen_config": {
+            "never_fail": true,
+            "can_fail_only_at_total_apps": true,
+            "enable_pred_poly_for_constructors": true,
+            "enable_pred_poly_for_ref_types": true
+        }
+    }
+]

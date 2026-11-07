@@ -60,7 +60,12 @@ let free_sequences phi =
       Ast.Ident.tvar_compare x y)
 
 (** [unit c1 ++ (unit c2 ++ ... unit ck)] over fresh [c_i : se], or the
-    empty sequence when [k = 0] *)
+    empty sequence when [k = 0].  Precondition: [k >= 0] (raises
+    [Invalid_argument] otherwise).  A length read from a solver's model must
+    be range-checked by the caller before it gets here ([lengths_of_model]
+    keeps [0 <= k <= max_model_length]; the relation pin's shape reader keeps
+    its own bounds): a solver has returned a model that violated the very
+    bound [n >= 0] the question stated. *)
 let literal_of se k =
   List.fold_right
     (List.init k ~f:(fun _ ->
@@ -151,8 +156,7 @@ let length_guess_query clauses =
     integer literal in [0, max_model_length] *)
 let lengths_of_model named (model : model) =
   List.filter_map named ~f:(fun (s, se, n) ->
-      List.find_map model ~f:(fun ((y, _), t) ->
-          if Ast.Ident.tvar_equal n y then t else None)
+      model_value model (n, T_int.SInt)
       |> Option.bind ~f:(function
         | Term.FunApp (T_int.Int k, [], _)
           when Z.(geq k zero && leq k (of_int max_model_length)) ->
@@ -193,11 +197,32 @@ let length_pinned_negation pins clauses =
     without a model without one, so each fixed-length question with those
     disjuncts left out has the same models, read on the variables it still
     mentions, as the question with them; and no per-clause question is
-    asked about such a clause, since it could only be [unsat]. *)
-let refute ?guess ?classify ?(already_valid = fun (_ : int) -> false) ~enabled
-    ~(ask : Formula.t -> model option) clauses =
+    asked about such a clause, since it could only be [unsat].
+
+    [fixed_per_clause] (default false): the fixed lengths are asked of each
+    live clause on its own -- for each length in turn, each clause in turn --
+    rather than of their conjunction, when more than one clause is live.  The
+    models are the same in total: the negation of the conjunction pinned at a
+    length is the disjunction of the clauses' negations pinned at it, so a
+    model of the conjunction's question is a model of some clause's, and each
+    clause's question is itself a strengthening of the negation.  What changes
+    is which questions are asked: one clause whose question the solver does
+    not decide no longer takes the others' with it, at the price of up to
+    [3k] questions for [k] live clauses in place of 3.  With one live clause
+    the questions are the conjunction's.
+
+    [askable] (default: every question): a pinned or fixed-length
+    negation for which it is [false] is not handed to [ask] and counts as
+    undecided; the relaxations [guess] and [classify] are asked as before.
+    Leaving a question out only removes models, so whatever is returned is
+    still a countermodel; a refutation that question would have given is
+    lost. *)
+let refute ?guess ?classify ?(already_valid = fun (_ : int) -> false)
+    ?(fixed_per_clause = false) ?(askable = fun (_ : Formula.t) -> true)
+    ~enabled ~(ask : Formula.t -> model option) clauses =
   if not enabled then None
   else
+    let ask q = if askable q then ask q else None in
     let indexed = List.filteri clauses ~f:(fun i _ -> not (already_valid i)) in
     let hopeless = Hash_set.Poly.create () in
     let classify =
@@ -239,10 +264,22 @@ let refute ?guess ?classify ?(already_valid = fun (_ : int) -> false) ~enabled
         in
         if Hash_set.length hopeless > 0 then
           Common.PhaseTime.event_here ~in_copy:false "skip-infeasible";
+        let per_clause = fixed_per_clause && List.length live > 1 in
+        let groups =
+          if per_clause then List.map live ~f:(fun c -> [ c ]) else [ live ]
+        in
         List.find_map lengths ~f:(fun length ->
-            Option.bind (strengthened_negation ~length live) ~f:(fun q ->
-                Common.PhaseTime.event_here ~in_copy:false "fixed";
-                ask q))
+            List.find_map groups ~f:(fun group ->
+                Option.bind (strengthened_negation ~length group) ~f:(fun q ->
+                    Common.PhaseTime.event_here ~in_copy:false "fixed";
+                    (* counted for the act set of a batch: a fixed-length
+                       question about one clause of several, which the
+                       conjunction's questions replace without
+                       [fixed_per_clause]; raised before the question is
+                       handed to [ask], deciding nothing *)
+                    if per_clause then
+                      Common.PhaseTime.event_here "fixed-per-clause";
+                    ask q)))
 
 
 (* The one sequence-length question worth asking before a long stage.

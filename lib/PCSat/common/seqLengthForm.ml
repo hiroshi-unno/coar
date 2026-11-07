@@ -18,14 +18,35 @@ open Ast.LogicOld
    ([0 <= 13705 - seq.len (d ++ [0] ++ [0])] asked valid: its negation needs
    [len d >= 13704]).  cvc5 answers the same query at once.
 
+   The same holds of a sequence equality whose countermodel must be long: a
+   cell whose two arguments are suffixes of one free sequence at constant
+   offsets asks [seq.extract d 12279 (len d - 12279) = seq.extract d 24388
+   (len d - 24388)] valid; its negation needs [len d > 12279], and Z3 5.1.0
+   asked it without a budget grew past 6 GB in about 100 s, and a 2 s budget
+   that holds when the query is replayed alone was ignored in one run of two
+   inside a long-lived solving process.
+
    What.  [decide ~ask phi] translates [phi] when every sequence-sorted term
-   in it is a concatenation of free sequence variables, units and empties
-   occurring directly under [seq.len] or [seq.nth], and [phi] has no binder.
-   A variable [d] of sort [Seq E] becomes a length [l_d >= 0] and an array
-   [A_d : Int -> E]; [seq.len t] becomes the sum of its pieces' lengths
-   ([l_d], or 1 for a unit); [seq.nth t i] becomes the value of the piece
-   holding index [i] ([A_d[i - off]] or the unit's element) when [i] is in
-   range, and a fresh variable of sort [E] (one per occurrence) otherwise.
+   in it is a concatenation of pieces -- free sequence variables, units,
+   empties, and [seq.extract d i n] of a free variable [d] -- occurring
+   directly under [seq.len] or [seq.nth] or as a side of an equality that
+   occurs only positively (a disequality only negatively), and [phi] has no
+   binder.  A variable [d] of sort [Seq E] becomes a length [l_d >= 0] and an
+   array [A_d : Int -> E]; [seq.extract d i n] becomes the slice of [A_d]
+   from [i] of length [ite (0 <= i < l_d /\ 0 < n) (min n (l_d - i)) 0],
+   which is SMT-LIB's [str.substr] rule (empty unless the offset is in range
+   and the count positive, else as much as remains); [seq.len t] becomes the
+   sum of its pieces' lengths (1 for a unit); [seq.nth t i] becomes the value
+   of the piece holding index [i] ([A_d[base + i - off]] or the unit's
+   element) when [i] is in range, and a fresh variable of sort [E] (one per
+   occurrence) otherwise.  An equality [t1 = t2] becomes
+   [L1 = L2 /\ (0 <= j < L1 -> t1[j] = t2[j])] with [j] a fresh integer (one
+   per occurrence) and [t[j]] the in-range read as above.  The equality is
+   [forall j] of that; at a positive occurrence the universal moves to the
+   front of [phi] (no other part mentions [j]), and a validity question is
+   the same with [j] free, so the free [j] is exact there and only there: a
+   negative occurrence would need an existential under the negation the
+   questions below ask, and is refused.
    Then, with [phi'] the translation:
    - [ask [not phi' /\ l >= 0]] unsatisfiable: [phi] is valid.  Every model
      and assignment falsifying [phi] gives one of [not phi'] (the lengths, the
@@ -49,8 +70,14 @@ exception Refuse
 
 let is_seq_sort s = match s with T_seq.SSeq _ -> true | _ -> false
 
-type piece = PVar of Term.t (* length *) * Term.t (* array *) * Sort.t
+(* [PArr (len, arr, elem, base)]: the elements [arr[base]] .. [arr[base +
+   len - 1]], a free variable ([base] 0) or a slice of one *)
+type piece = PArr of Term.t * Term.t * Sort.t * Term.t
            | PUnit of Term.t
+
+type polarity = Pos | Neg | Both
+
+let flip = function Pos -> Neg | Neg -> Pos | Both -> Both
 
 (* the free sequence variables of [phi] *)
 let has_free_seq_var phi =
@@ -61,6 +88,11 @@ let translate phi =
   let lens = ref [] in
   let reads = ref [] in
   let oor = ref 0 in
+  let fresh_oor elem =
+    incr oor;
+    Term.mk_var (Ident.Tvar (sprintf "#sqlf_oor_%d" !oor)) elem
+  in
+  let idx = ref 0 in
   let var_of x elem =
     match Hashtbl.Poly.find vars x with
     | Some v -> v
@@ -82,60 +114,106 @@ let translate phi =
     | Term.FunApp (T_seq.SqNth _, [ s; i ], _) ->
         let elem = Term.sort_of t in
         let i = term i in
-        let ps = pieces s in
-        let total, branches =
-          List.fold ps ~init:(T_int.zero (), []) ~f:(fun (off, acc) p ->
-              let len = len_of p in
-              let next = T_int.mk_add off len in
-              let b =
-                match p with
-                | PVar (_, a, e) ->
-                    ( Formula.and_of
-                        [
-                          Formula.leq off i;
-                          Formula.lt i next;
-                        ],
-                      T_array.mk_select T_int.SInt e a (T_int.mk_sub i off) )
-                | PUnit v -> (Formula.eq i off, v)
-              in
-              (next, b :: acc))
-        in
-        incr oor;
-        let o = Term.mk_var (Ident.Tvar (sprintf "#sqlf_oor_%d" !oor)) elem in
+        let total, v = read_at (pieces s) elem i in
         reads :=
           Formula.and_of [ Formula.leq (T_int.zero ()) i; Formula.lt i total ]
           :: !reads;
-        (* branches are in reverse order; the default is the out-of-range
-           value *)
-        List.fold branches ~init:o ~f:(fun acc (c, v) -> T_bool.ifte c v acc)
+        v
     | Term.FunApp (T_bool.Formula phi, [], info) ->
-        Term.mk_fsym_app ~info (T_bool.Formula (formula phi)) []
+        Term.mk_fsym_app ~info (T_bool.Formula (formula Both phi)) []
     | Term.FunApp (T_array.ALambda _, _, _) -> raise Refuse
     | Term.FunApp (sym, args, info) ->
         if is_seq_sort (Term.sort_of t) then raise Refuse
         else Term.mk_fsym_app ~info sym (List.map args ~f:term)
     | Term.LetTerm _ -> raise Refuse
-  and len_of = function PVar (l, _, _) -> l | PUnit _ -> T_int.one ()
+  (* the total length of [ps], and the element at [i]: the piece holding it
+     when [0 <= i < total], a fresh variable of sort [elem] otherwise *)
+  and read_at ps elem i =
+    let total, branches =
+      List.fold ps ~init:(T_int.zero (), []) ~f:(fun (off, acc) p ->
+          let len = len_of p in
+          let next = T_int.mk_add off len in
+          let b =
+            match p with
+            | PArr (_, a, e, base) ->
+                ( Formula.and_of [ Formula.leq off i; Formula.lt i next ],
+                  T_array.mk_select T_int.SInt e a
+                    (T_int.mk_add base (T_int.mk_sub i off)) )
+            | PUnit v -> (Formula.eq i off, v)
+          in
+          (next, b :: acc))
+    in
+    (* branches are in reverse order; the default is the out-of-range
+       value *)
+    ( total,
+      List.fold branches ~init:(fresh_oor elem) ~f:(fun acc (c, v) ->
+          T_bool.ifte c v acc) )
+  and len_of = function PArr (l, _, _, _) -> l | PUnit _ -> T_int.one ()
   and pieces s =
     match s with
     | Term.Var (x, T_seq.SSeq e, _) ->
         let l, a = var_of x e in
-        [ PVar (l, a, e) ]
+        [ PArr (l, a, e, T_int.zero ()) ]
+    | Term.FunApp
+        (T_seq.SqExtract _, [ (Term.Var (x, T_seq.SSeq e, _)); i; n ], _) ->
+        let l, a = var_of x e in
+        let i = term i and n = term n in
+        let in_range =
+          Formula.and_of
+            [
+              Formula.leq (T_int.zero ()) i;
+              Formula.lt i l;
+              Formula.lt (T_int.zero ()) n;
+            ]
+        in
+        let len =
+          T_bool.ifte in_range (T_int.mk_min n (T_int.mk_sub l i)) (T_int.zero ())
+        in
+        [ PArr (len, a, e, i) ]
     | Term.FunApp (T_seq.SqEmpty _, [], _) -> []
     | Term.FunApp (T_seq.SqUnit _, [ v ], _) -> [ PUnit (term v) ]
     | Term.FunApp (T_seq.SqConcat _, [ a; b ], _) -> pieces a @ pieces b
     | _ -> raise Refuse
-  and formula phi =
+  (* [t1 = t2] over sequences, at a positive occurrence (see the header) *)
+  and seq_eq t1 t2 =
+    match Term.sort_of t1 with
+    | T_seq.SSeq elem ->
+        incr idx;
+        let j = Term.mk_var (Ident.Tvar (sprintf "#sqlf_idx_%d" !idx)) T_int.SInt in
+        let l1, v1 = read_at (pieces t1) elem j in
+        let l2, v2 = read_at (pieces t2) elem j in
+        Formula.and_of
+          [
+            Formula.eq l1 l2;
+            Formula.mk_imply
+              (Formula.and_of [ Formula.leq (T_int.zero ()) j; Formula.lt j l1 ])
+              (Formula.eq v1 v2);
+          ]
+    | _ -> raise Refuse
+  and formula pol phi =
     match phi with
+    | Formula.Atom (Atom.App (Predicate.Psym T_bool.Eq, [ t1; t2 ], _), _)
+      when is_seq_sort (Term.sort_of t1) -> (
+        match pol with Pos -> seq_eq t1 t2 | Neg | Both -> raise Refuse)
+    | Formula.Atom (Atom.App (Predicate.Psym T_bool.Neq, [ t1; t2 ], _), _)
+      when is_seq_sort (Term.sort_of t1) -> (
+        match pol with
+        | Neg -> Formula.mk_neg (seq_eq t1 t2)
+        | Pos | Both -> raise Refuse)
     | Formula.Atom (Atom.App (pred, args, ainfo), info) ->
         Formula.mk_atom ~info (Atom.mk_app ~info:ainfo pred (List.map args ~f:term))
     | Formula.Atom (_, _) -> phi
-    | Formula.UnaryOp (op, p, info) -> Formula.mk_unop ~info op (formula p)
-    | Formula.BinaryOp (op, p, q, info) ->
-        Formula.mk_binop ~info op (formula p) (formula q)
+    | Formula.UnaryOp (op, p, info) ->
+        Formula.mk_unop ~info op (formula (flip pol) p)
+    | Formula.BinaryOp (((Formula.And | Formula.Or) as op), p, q, info) ->
+        Formula.mk_binop ~info op (formula pol p) (formula pol q)
+    | Formula.BinaryOp (Formula.Imply, p, q, info) ->
+        Formula.mk_binop ~info Formula.Imply (formula (flip pol) p) (formula pol q)
+    | Formula.BinaryOp (((Formula.Iff | Formula.Xor) as op), p, q, info) ->
+        Formula.mk_binop ~info op (formula Both p) (formula Both q)
     | Formula.Bind _ | Formula.LetRec _ | Formula.LetFormula _ -> raise Refuse
   in
-  match formula phi with
+  match formula Pos phi with
   | phi' ->
       let nonneg =
         List.map !lens ~f:(fun l -> Formula.leq (T_int.zero ()) l)
@@ -160,7 +238,7 @@ let decide ~ask phi =
             | _ -> None)
         | _ -> None)
 
-(* The switch, set from [PCSat.Config.truth_table_seq_length_form] (on by
+(* The switch, set from [PCSat.Config.simplifier.truth_table_seq_length_form] (on by
    default there); off here so that a process that reads no PCSat
    configuration asks as before. *)
 let enabled = Atomic.make false

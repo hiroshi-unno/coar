@@ -7,7 +7,7 @@
     ],
     "coordinator": [
       "Filename",
-      "./config/pcsat/coordinator/dt_svm_eager.json"
+      "./config/pcsat/coordinator/dt_svm.json"
     ],
     "sol_printer": [
       "Filename",

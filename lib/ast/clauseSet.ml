@@ -20,9 +20,53 @@ open Logic
 type t = Clause.t Set.Poly.t
 
 let of_old_clause_set = Set.Poly.map ~f:Clause.of_old_clause
-let to_old_clause_set exi_senv cls =
+let to_old_clause_set_unshared exi_senv cls =
   Clause.with_dt_scope @@ fun () ->
   Set.Poly.map cls ~f:(Clause.to_old_clause exi_senv)
+
+(* set (to anything) to convert each clause separately, as before the shared
+   scope below *)
+let to_old_clause_set_unshared_env =
+  Option.is_some (Sys.getenv "COAR_TO_OLD_CLAUSE_SET_OLD")
+
+(* set to convert both ways and report on stderr whether they agree *)
+let to_old_clause_set_crosscheck_env =
+  Option.is_some (Sys.getenv "COAR_TO_OLD_CLAUSE_SET_CROSSCHECK")
+
+(* [to_old_clause_set exi_senv cls] is the set of the old forms of the clauses
+   of [cls] ([Clause.to_old_clause] on each).
+   Contract: the same set, element for element under polymorphic comparison,
+   and the same fresh-name draws, as converting each clause on its own; only
+   physical sharing differs.  The conversion runs in one exact term-conversion
+   scope ([ExtTerm.with_exact_term_conversion]), so a subterm physically
+   shared between clauses is converted once and its image shared.  Why: a
+   clausal form multiplies alternatives, so its thousands of clauses are
+   built from the same physical subformulas; converting each clause on its
+   own copied every shared subformula once per clause -- on a 30,000-clause
+   dual of a termination problem the copies doubled the result to half a
+   gigabyte, and the conversion took about a millisecond per clause, most of
+   it allocation and the collections it forced. *)
+let to_old_clause_set exi_senv cls =
+  if to_old_clause_set_unshared_env then to_old_clause_set_unshared exi_senv cls
+  else
+    let shared () =
+      ExtTerm.with_exact_term_conversion @@ fun () ->
+      Clause.with_dt_scope @@ fun () ->
+      Set.Poly.map cls ~f:(Clause.to_old_clause exi_senv)
+    in
+    if not to_old_clause_set_crosscheck_env then shared ()
+    else
+      let old = to_old_clause_set_unshared exi_senv cls in
+      let res = shared () in
+      let same =
+        Set.length old = Set.length res
+        && List.for_all2_exn (Set.to_list old) (Set.to_list res)
+             ~f:(fun a b -> Stdlib.compare a b = 0)
+      in
+      prerr_endline
+      @@ sprintf "[to-old-crosscheck] clauses %d same %b" (Set.length res) same;
+      res
+
 let svs_of = Set.concat_map ~f:Clause.svs_of
 let pvs_of = Set.concat_map ~f:Clause.pvs_of
 let fvs_of = Set.concat_map ~f:Clause.fvs_of
@@ -67,11 +111,25 @@ let to_formula clauses (*ToDo: rename*) =
 
 let to_formulas clauses = Set.Poly.map ~f:Clause.to_senv_formula clauses
 
+(* Every clause of one formula carries that formula's environment, rebuilt
+   in canonical shape once and shared physically by all of them: the value
+   [Clause.canon] gives each clause, without a copy per clause.  Why: a
+   clausal form of a few formulas has tens of thousands of clauses, and a copy
+   of the environment per clause made every comparison of two of them (set
+   insertion here and in every later set of them) walk two equal maps node by
+   node, and defeated the physical test by which a shared term conversion
+   reuses an image under the same environment.  [COAR_TO_OLD_CLAUSE_SET_OLD]
+   restores the copy per clause. *)
 let of_formulas exi_senv phis =
   Set.concat_map phis ~f:(fun (uni_senv, phi) ->
-      Set.Poly.map ~f:(fun (ps, ns, phi) ->
-          Clause.canon (uni_senv, ps, ns, phi))
-      @@ BoolTerm.cnf_of exi_senv uni_senv phi)
+      let cnf = BoolTerm.cnf_of exi_senv uni_senv phi in
+      if to_old_clause_set_unshared_env then
+        Set.Poly.map cnf ~f:(fun (ps, ns, phi) ->
+            Clause.canon (uni_senv, ps, ns, phi))
+      else
+        let senv = Map.canon uni_senv in
+        Set.Poly.map cnf ~f:(fun (ps, ns, phi) ->
+            (senv, Set.canon ps, Set.canon ns, phi)))
 
 (* rebuilds every clause, and the set, in canonical shape (see
    [Common.Ext.Set.canon]); two members that were the same clause in two

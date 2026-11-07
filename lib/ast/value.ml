@@ -266,11 +266,17 @@ let div_of = function
   | Flooring -> Z.fdiv
   | Ceiling -> Z.cdiv
 
+(* The remainder that pairs with [div_of m]: [x = y * div_of m x y + rem_of m x
+   y] for every [y <> 0], in each mode, and a division by zero raises as the
+   quotient does.  The flooring and ceiling remainders are written through that
+   identity because Zarith has no primitive for them; leaving them unimplemented
+   made the simplifier's literal fold raise out of simplification on a ground
+   [frem] or [crem], which the fixpoint-logic reader accepts. *)
 let rem_of = function
   | Euclidean -> Z.erem
   | Truncated -> Z.rem
-  | Flooring -> failwith "not implemented"
-  | Ceiling -> failwith "not implemented"
+  | Flooring -> fun x y -> Z.(x - (y * fdiv x y))
+  | Ceiling -> fun x y -> Z.(x - (y * cdiv x y))
 
 let add t1 t2 = Int Z.(int_of t1 + int_of t2)
 let radd t1 t2 = Real Q.(cast_real_of t1 + cast_real_of t2)

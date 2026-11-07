@@ -2,7 +2,7 @@
  (name PCSPSolver)
  (public_name CoAR.PCSPSolver)
  (preprocess
-  (pps ppx_deriving_yojson))
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
  (libraries
   core
   yojson
@@ -13,5 +13,6 @@
   CoAR.SPACER
   CoAR.Hoice
   CoAR.PolyQEnt
+  CoAR.PolyQEntTempl
   CoAR.Printer)
  (modules solver config))

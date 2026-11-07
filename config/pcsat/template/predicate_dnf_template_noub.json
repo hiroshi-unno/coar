@@ -1,4 +1,12 @@
 {
-    "upper_bound_coeff": null,
-    "upper_bound_const": null
+    "bounds": {
+        "atom": {
+            "coeff": {
+                "initial": null
+            },
+            "const": {
+                "initial": null
+            }
+        }
+    }
 }

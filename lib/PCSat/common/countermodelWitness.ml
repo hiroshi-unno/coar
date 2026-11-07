@@ -78,12 +78,15 @@ let rec hoist opened = function
 
 (** Witness terms [(x, sort, t)] for existential binders [x] of the negation of
     a clause of [formula] that [model] falsifies, found as described above, or
-    [[]]. Each solver question carries [timeout]. *)
-let find ~timeout formula model =
+    [[]]. Each solver question carries [timeout].  [fenv] is the function
+    environment the formula is read in, the process-wide one when omitted; a
+    caller that runs the search later than it builds its arguments passes the
+    one current when it built them. *)
+let find ?fenv ~timeout formula model =
   let asg = assignment_of model in
   if Map.Poly.is_empty asg then []
   else
-    let fenv = get_fenv () in
+    let fenv = match fenv with Some fenv -> fenv | None -> get_fenv () in
     List.find_map (Formula.conjuncts_list_of formula) ~f:(fun c ->
         match ground_clause asg c with
         | None -> None
@@ -107,13 +110,11 @@ let find ~timeout formula model =
                         | `Sat m ->
                             Some
                               (List.filter_map !opened ~f:(fun (x, s) ->
-                                   List.find_map m ~f:(fun ((y, _), t) ->
-                                       match t with
-                                       | Some t
-                                         when Ident.tvar_equal x y
-                                              && Set.is_empty (Term.tvs_of t) ->
-                                           Some (x, s, t)
-                                       | _ -> None)))
+                                   match model_value m (x, s) with
+                                   | Some t when Set.is_empty (Term.tvs_of t)
+                                     ->
+                                       Some (x, s, t)
+                                   | _ -> None))
                         | _ -> None
                         | exception exn when not (Common.Timer.is_async exn) ->
                             None)

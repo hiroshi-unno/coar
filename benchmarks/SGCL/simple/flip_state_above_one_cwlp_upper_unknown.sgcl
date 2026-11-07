@@ -1,0 +1,17 @@
+# The probability of the flip is the variable p, never assigned, so the bound is asked for
+# every initial p.  Where p >= 2 the flip is reached with a probability outside [0, 1]: such a
+# run is an error from which no bound may be proved, worth +oo against this cwlp upper bound,
+# so the bound fails at every p >= 2.  Elsewhere c = 0 and wlp(S, [c = 1]) = 0 <= 1.
+# Expected: unknown.  The reduction asks the lower bound wp(S, 1 - [c = 1]) >= 1 - 1 = 0, and
+# an error arm written as the bound minus 1 was the negative constant -1, which the QFL checker
+# refuses for the whole input (an error, not an answer).
+c := 0;
+if p >= 2 {
+	if flip(p) {
+		c := 1
+	}
+} else {
+	c := 0
+}
+return c
+?Ex[[c = 1]] <= 1 cwlp

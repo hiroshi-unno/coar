@@ -1,0 +1,31 @@
+%BEGING
+MergeAddr x y = case x of
+	  doc x1 => doc(MergeAddr x1 y)
+	| addr x1 x2 => addr (M x1) (MergeAddr x2 y)
+	| e => M y
+	| pc => pc
+.
+M x = case x of
+	  doc x1 => M x1
+	| addr x1 x2 => addr (M x1) (M x2)
+	| e => e
+	| pc => pc
+.
+%ENDG
+
+%BEGINA
+/* qi0 : doc(addr(pc)*) */
+qi0 doc -> qi1.
+qi1 addr -> qi2 qi1.
+qi1 e -> .
+qi2 pc -> .
+/* q0 : doc(addr(pc)*) */
+q0 doc -> q1.
+q1 addr -> q2 q1.
+q1 e -> .
+q2 pc -> .
+%ENDA
+
+%BEGINT
+MergeAddr : qi0 -> qi0 -> q0.
+%ENDT

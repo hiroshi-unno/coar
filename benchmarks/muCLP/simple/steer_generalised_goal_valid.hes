@@ -1,0 +1,17 @@
+/* Stay or step down by two from a ground goal: P 0, where from x the prover
+   either stops (x <= -1) or moves to y = x - 2 or to y = x.  Valid: the
+   prover steps once to -2 and stops; the visits 0, -2 are ranked by x.
+
+   It tests a refinement that picks the prover's move on a counter-play whose
+   goal has been generalised.  Let the opponent's check return the play
+   0, 0, -2 (stay, step, stop).  Its chain pairs include (0, 0), which no
+   well-founded ranking contains.  With the goal's 0 replaced by a fresh r,
+   the ranking x - 1 together with the moves forces r = 3, and the play
+   3, 1, -1 decreases under it; a refinement that installs the ranking x - 1
+   with any move selected there loses from 0: the stop fails at 0, the
+   prover must move, and x - 1 is negative at 0, so the move is not ranked.
+   A refinement whose installed ranking contains the pairs of the play it is
+   checked on, at the ground goal, cannot install x - 1 here. */
+P 0
+s.t.
+P (x: int): bool =mu x <= -1 \/ (exists (y: int). (y = x - 2 \/ y = x) /\ P y);

@@ -1,0 +1,8 @@
+/* Invalid: P x holds exactly when x > 150 (every k >= x must differ from
+   150), so x = 121 is a counterexample.  The counterexamples are exactly
+   121..150, all beyond 100, so a dual problem whose existential (the negated
+   universal) is searched for in [-100, 100] only is refutable although the
+   dual itself is valid: that refutation must not be flipped into valid. */
+forall (x: int). x <= 120 \/ P x
+s.t.
+P (x: int): bool =nu x != 150 /\ P (x + 1);

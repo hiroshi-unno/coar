@@ -1,0 +1,11 @@
+; (optional): needs the ocaml-lp modelling library `lp`, a depopt of CoAR.opam,
+; so `dune build` skips this library when `lp` is not installed.  It builds
+; linear problems only; which engine solves them is CoAR.MIPSolver's choice.
+(library
+ (name MIP)
+ (public_name CoAR.MIP)
+ (optional)
+ (preprocess
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
+ (libraries core lp CoAR.ast CoAR.common)
+ (modules problem))

@@ -1,0 +1,7 @@
+X 1.0 >= 1.0
+s.t.
+// X = 1 everywhere (the walk stops almost surely), but X is applied at a
+// point that depends on r; under templates whose conditions have unknown
+// coefficients the integrand is piecewise in r with a parametric breakpoint,
+// which the bound checker does not integrate
+X (x : real) : real =mu if x >= 0.0 then unif r. X (x - r) else 1.0;

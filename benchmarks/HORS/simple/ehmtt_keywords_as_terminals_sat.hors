@@ -1,0 +1,14 @@
+/* case, of, coerce, copy and gen are ordinary names in a recursion scheme;
+   only the EHMTT language reserves them.  The tree copy (gen case)
+   (coerce of) is accepted from q0. */
+%BEGING
+S -> copy (gen case) (coerce of).
+%ENDG
+
+%BEGINA
+q0 copy -> q1 q0.
+q1 gen -> q0.
+q0 case -> .
+q0 coerce -> q0.
+q0 of -> .
+%ENDA

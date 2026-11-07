@@ -1,0 +1,9 @@
+c the matrix of henkin_cross_dependency_unsat with each Henkin variable seeing what it copies
+p cnf 4 4
+a 1 2 0
+d 3 2 0
+d 4 1 0
+-3 2 0
+3 -2 0
+-4 1 0
+4 -1 0

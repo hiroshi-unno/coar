@@ -1,0 +1,11 @@
+{
+    "elimination": {
+        "resolution_threshold": 4611686018427387903,
+        "bool_vars": 4
+    },
+    "argument_reduction": {
+        "reduce": [
+            "No_arg_reduction"
+        ]
+    }
+}

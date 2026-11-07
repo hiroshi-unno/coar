@@ -1,0 +1,40 @@
+[
+    "MuVal",
+    {
+        "optimizer": [
+            "Filename",
+            "./config/muclp/optimizer/dbg_enable.json"
+        ],
+        "fixpoint_reduction": [
+            "Parity_progress_measure",
+            {}
+        ],
+        "guarded_disjunctions": [
+            "Merge_witnesses_and_factor"
+        ],
+        "pcsp_solver_primal": [
+            "Filename",
+            "./config/solver/dbg_pcsat_muval.json"
+        ],
+        "pcsp_solver_dual": [
+            "Filename",
+            "./config/solver/dbg_pcsat_muval.json"
+        ],
+        "qelim": {
+            "share_witnesses": [
+                "Same_body_or_disjunct"
+            ],
+            "verbose": true
+        },
+        "dual_witness_refutation": [
+            "Seed_primal_labeling",
+            {
+                "seed_keep": [
+                    "Refutation_cone"
+                ],
+                "stop_after_fruitless": 5
+            }
+        ],
+        "verbose": true
+    }
+]

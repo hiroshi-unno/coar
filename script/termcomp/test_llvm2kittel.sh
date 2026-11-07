@@ -17,4 +17,4 @@ tail ${base_name}_llvm2kittel.t2
 
 output_t2_dir=$(pwd)
 echo "solve using MuVal:"
-cd /opt/coar && coar -c "/opt/coar/config/solver/muval_term_comp_parallel_exc_tbq_ar.json" -p "ltsterm" "$output_t2_dir/${base_name}_llvm2kittel.t2"
+cd /opt/coar && coar -c "/opt/coar/config/solver/muval_yesno.json" -p "ltsterm" "$output_t2_dir/${base_name}_llvm2kittel.t2"

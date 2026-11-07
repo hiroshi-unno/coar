@@ -1,0 +1,9 @@
+# x is never assigned, so the bound is asked for every initial x; x is compared only with
+# integers, so it is an integer, no state satisfies 0 < x and x < 1, and c stays 0.
+# Expected: valid.  Read with x a real, the guard held at x = 1/2 and the answer was unknown.
+c := 0;
+if 0 < x and x < 1 {
+	c := 1
+}
+return c
+?Ex[c] <= 0

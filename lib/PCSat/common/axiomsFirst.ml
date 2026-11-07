@@ -17,3 +17,38 @@
    loses time only. *)
 let ask ~enabled ~applies ~prove ~native phi =
   if enabled && applies phi && prove phi then `Valid else native phi
+
+(* The switch [zero_unknown.axioms.first_after_fallback_proof]: [ask]'s
+   [enabled] decided per verdict from what that verdict's earlier questions
+   showed.  One value per verdict ([create]); [note] is told how each
+   fresh-context question went, and [enabled t ~fresh] is what the next
+   question passes to [ask] as [enabled], [fresh] being the configured
+   [axioms.first.fresh].
+
+   Contract:
+   - [enabled t ~fresh] is [fresh] until [note] has been told, with [on] set,
+     of a question that was asked natively, whose native question ran out of
+     its budget, and which the sequence-axiom fallback then proved; from then
+     on it is [true] for this value ([armed]), and [note] returns [true]
+     exactly once, at that question;
+   - with [on] false, [enabled t ~fresh] is always [fresh] and [note] never
+     returns [true], so the questions are asked exactly as without the
+     switch.
+   Since [ask] reads only a proof from the axiomatised form whatever
+   [enabled] is, the switch changes when an answer is reached, never which
+   answer is right. *)
+module After_fallback_proof = struct
+  type t = { on : bool; mutable armed : bool }
+
+  let create ~on = { on; armed = false }
+  let armed t = t.armed
+  let enabled t ~fresh = fresh || t.armed
+
+  let note t ~asked_natively ~native_ran_out ~fallback_proved =
+    if t.on && (not t.armed) && asked_natively && native_ran_out
+       && fallback_proved
+    then (
+      t.armed <- true;
+      true)
+    else false
+end

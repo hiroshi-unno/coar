@@ -1,0 +1,6 @@
+(lang dune 3.13)
+(name athena-witness)
+
+(package
+ (name athena-witness)
+ (synopsis "Writes SV-COMP verification witnesses for athena's results"))

@@ -1,0 +1,14 @@
+[
+    "RCaml",
+    {
+        "solver": [
+            "Filename",
+            "./config/solver/dbg_spacer_flat.json"
+        ],
+        "chc_optimizer": [
+            "Filename",
+            "./config/solver/dbg_optpcsat_nc_tb_ar.json"
+        ],
+        "enable_pvar_elim": false
+    }
+]

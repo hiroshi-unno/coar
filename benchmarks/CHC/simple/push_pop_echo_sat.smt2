@@ -1,5 +1,5 @@
 ; Ordinary SMT-LIB commands the parser used to abort on.
-; push/pop/echo/get-info/get-value/get-model are skipped (scopes are not modelled).  Expected: sat.
+; echo/get-info/get-value/get-model are skipped; the check is asked inside the push, so the pop after it retracts nothing it sees.  Expected: sat.
 (set-logic HORN)
 (set-info :status sat)
 (declare-fun P (Int) Bool)

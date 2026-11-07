@@ -17,18 +17,12 @@ The file `muval_pldi26ae_lower.tar` is a Docker image for the `linux/arm64` plat
 If you are using the `linux/amd64` platform, please use `muval_pldi26ae_lower_linux_amd64.tar` instead.
 
 ### Option 2: Building Docker Image
-Run the following commands:
+From this repository (the image is built from the current source; the version the paper used is the Zenodo archive,
+whose source zip is built the same way after `unzip muval_pldi26ae_lower_src.zip && cd muval_pldi26ae_lower_src`, with the
+experiment script copied to the top directory first, `cp script/prob_bounds/run.sh .`):
 ```bash
-# Unzip the source code
-unzip muval_pldi26ae_lower_src.zip
-
-# Go to the the source code directory
-cd muval_pldi26ae_lower_src
-
-# Copy the experiment script to the top directory
-cp script/prob_bounds/run.sh .
-
-# Build the Docker image
+# Build the Docker image (BuildKit, the default since Docker 23.0, reads
+# pldi26ae_lower/Dockerfile.dockerignore, which keeps this directory and the runner in the context)
 cd pldi26ae_lower
 sudo docker build -f Dockerfile -t muval_pldi26ae_lower ../
 ```
@@ -51,7 +45,7 @@ Then run the following commands inside the container:
 source .venv/bin/activate
 
 # Run the experiment script
-./run.sh
+./pldi26ae_lower/run.sh
 ```
 This command reproduces the results in Table 2 in the paper.
 
@@ -63,13 +57,13 @@ If you want to run the tool on a single benchmark, use the following command.
 source .venv/bin/activate
 
 # Run the tool on ./benchmarks/QFL/ert_random_walk_2nd_lb.qhes
-./_build/default/main.exe -c ./config/solver/muval_quant_polyqent_deg3.json -p qfl ./benchmarks/QFL/ert_random_walk_2nd_lb.qhes
+./_build/default/main.exe -c ./config/solver/muval_qfl_polyqent_deg3.json -p qfl ./benchmarks/QFL/ert_random_walk_2nd_lb.qhes
 ```
-Here, `./config/solver/muval_quant_polyqent_deg3.json` is a configuration file.
+Here, `./config/solver/muval_qfl_polyqent_deg3.json` is a configuration file.
 
 If you would like to see debug output (including synthesized certificates), use a debug configuration:
 ```bash
-./_build/default/main.exe -c ./config/solver/dbg_muval_quant_polyqent_deg3.json -p qfl ./benchmarks/QFL/ert_random_walk_2nd_lb.qhes
+./_build/default/main.exe -c ./config/solver/dbg_muval_qfl_polyqent_deg3.json -p qfl ./benchmarks/QFL/ert_random_walk_2nd_lb.qhes
 ```
 
 After the (potentially long) debug output, the synthesized certificates (cf. Theorem 4.1 in the paper) appear at the very end of the output:
@@ -97,28 +91,33 @@ Note that conditionals in the debug output are enclosed by `(<` and `>)`.
 
 ## Expected Results
 
-For each benchmark file, `run.sh` prints output of the following form.
+`run.sh` runs the benchmarks configuration by configuration, one at a time with a limit of 180 seconds each, and
+for each configuration prints a heading and one CSV row per benchmark, for example
 ```
-./benchmarks/QFL/ert_coin_flip_lb.qhes
-Config A
-valid, 1.045869s, P  |-> real(1)
-
-real	0m0.209s
-user	0m1.066s
-sys	0m0.077s
+Config A (muval_qfl_polyqent_deg3)
+./benchmarks/QFL/ert_coin_flip_lb.qhes,valid,0.209,
 ```
+It also writes the rows to `results/pldi26ae_lower/<config>.csv` and keeps each run's full output, including the
+verified bound, in `results/pldi26ae_lower/logs/<config>/<benchmark>.log`.
 
 The correspondence to Table 2 in the paper is as follows.
-- The first line shows the name of the benchmark file. File names with suffix `_lb` correspond to lower-bound verification, while `_ub` corresponds to upper-bound verification.
-- The second line corresponds to the "Config" column in Table 2.
-- The third line corresponds to the "Result" column in Table 2: `valid` indicates that the tool successfully verified the specified lower / upper bound.
-- The remaining lines are produced by the `time` command. The `real` time corresponds to the "Time (sec)" column in Table 2.
+- The heading corresponds to the "Config" column in Table 2.
+- The first field is the benchmark file. File names with suffix `_lb` correspond to lower-bound verification,
+  while `_ub` corresponds to upper-bound verification.
+- The second field corresponds to the "Result" column: `valid` indicates that the tool verified the specified
+  lower / upper bound; `timeout` that the limit was reached.
+- The third field is the wall-clock time in seconds, the "Time (sec)" column.
+
+Each configuration is a run of corpus `pldi26ae_lower` in the repository's table of runs, `script/bench_runs.txt`
+(its files, configuration and limit), run by `script/run_corpus.sh` through the shared runner `script/run_bench.sh`;
+`script/run_corpus.sh pldi26ae_lower` lists the five runs and `script/run_corpus.sh --dry-run pldi26ae_lower
+muval_qfl_polyqent_deg3_180` prints a run's command. `timeout=60 ./pldi26ae_lower/run.sh` shortens the limit.
 
 
 The benchmark
 `benchmarks/QFL/chatterjee22_fig23_lb.qhes`
-raises the following exception:
-`Uncaught exception: "failed to solve Problem 1"`.
+raised the following exception when the paper was written:
+`Uncaught exception: "failed to solve Problem 1"`, which the runner records as `abort`.
 This is indicated as "unknown" in Table 2.
 
 

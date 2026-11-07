@@ -12,7 +12,10 @@ open Ast.LogicOld
    budget (SIGTERM) and one second later still (SIGKILL), so the call returns
    whatever cvc5 does.  This helper uses the explicit [ms] only; it does not
    read [SolveDeadline].  A caller that honours a cooperative deadline must
-   check expiry and cap its budget before asking.  Default options otherwise:
+   check expiry and cap its budget before asking.  Default options otherwise,
+   beside [--arrays-exp] for a text with a constant array ([options_for])
+   and, with [unindex_recursive], [--enum-inst] for a text that defines a
+   recursive function ([recursive_options]):
    a form of the zero-unknown
    verdict that Z3 left undecided at 30 s was proved by cvc5 so in 3.5-15 s,
    while [--enum-inst] is the checker's choice for its own constraints.
@@ -33,14 +36,84 @@ open Ast.LogicOld
    - a text holding [seq.nth_u] (Z3's read out of range, open even where the
      index is in range) is not asked, since [seq.nth] would fix it there;
    - Z3 prints the conversions between integers and bit-vectors by their
-     SMT-LIB 2.7 names [(_ int_to_bv n)] and [ubv_to_int], which cvc5 1.0.4
-     does not know; they are printed as cvc5's [(_ int2bv n)] and [bv2nat],
-     which denote the same functions (the residue modulo [2^n], the unsigned
-     value), so the question is the same.  [sbv_to_int] has no cvc5 1.0.4
-     name and is left to fail;
+     SMT-LIB 2.7 names [(_ int_to_bv n)] and [ubv_to_int]; they are printed
+     as [(_ int2bv n)] and [bv2nat], which denote the same functions (the
+     residue modulo [2^n], the unsigned value), so the question is the same.
+     cvc5 reads the SMT-LIB 2.7 names (and [sbv_to_int]) from 1.3.0 on and
+     still reads the older ones, which it has deprecated; releases before
+     1.3.0 know only the older ones, and there [sbv_to_int] is left to fail;
    - a symbol cvc5 does not know is a parse error, which reads as [false]. *)
 
 let file_count = Atomic.make 0
+
+(* The options a text needs so that cvc5 reads it at all.  A constant array
+   [((as const (Array I E)) v)] -- Z3 prints one for every array literal and
+   every array value a model fixes -- is refused by cvc5 1.4.2 unless its
+   array theory with constant arrays is enabled ([--arrays-exp]): "Cannot
+   handle assertion with term of kind STORE_ALL in this configuration".  1.0.4
+   reads such a text with or without the option.  The option is passed only
+   when the text spells [as const], so every other question is asked with the
+   options it was asked with before; it changes which texts cvc5 reads, not
+   what an [unsat] means. *)
+let options_for text =
+  if String.is_substring text ~substring:"(as const" then [ "--arrays-exp" ]
+  else []
+
+(* Whether [cvc5_text] renames a symbol the input declares that cvc5 also
+   reads as one of its own ([cvc5_reserved]).  Off by default; set by the
+   coordinator from its configuration, process-wide. *)
+let rename_reserved = ref false
+
+(* Symbols cvc5 predefines beyond SMT-LIB, which it refuses as the name of
+   a datatype constructor or selector the text declares.  [tuple] is its
+   tuple constructor: in 1.0.4 a datatype that declares a nullary constructor
+   [tuple] (the unit type of a Rust-derived input) makes every use of it
+   ambiguous ("Overloaded constants must be type cast"), so no question of
+   such an input reached cvc5 at all; 1.4.2 reads a nullary [tuple] but still
+   refuses one with fields, and refuses [tuple.unit] and the [nullable.*]
+   operators of its nullable sorts (added in 1.1.2), each probed as a
+   declared constructor.  Renaming a name nobody predefines is harmless, so
+   the list is the union over the versions. *)
+let cvc5_reserved =
+  [
+    "tuple";
+    "tuple.unit";
+    "nullable.null";
+    "nullable.some";
+    "nullable.val";
+    "nullable.is_null";
+    "nullable.is_some";
+    "nullable.lift";
+  ]
+
+(* Whether a question asked of cvc5 first has Z3's indexed spelling of a
+   recursive function's application rewritten ([unindex_recursive_text]).
+   Off by default; set by the coordinator from its configuration,
+   process-wide. *)
+let unindex_recursive = ref false
+
+(* [unindex_recursive_text text] rewrites every [(_ f k)] of [text] to [f]
+   when [f] is a function the text defines recursively and [k] is 0 or 1;
+   [None] when the rewrite could change the meaning.  The contract is
+   [Common.SmtlibRecursive.unindex_recursive_text]'s, where it is defined so
+   that the solver interface's own dumps can use it too. *)
+let unindex_recursive_text = Common.SmtlibRecursive.unindex_recursive_text
+
+(* The options a retry adds for a text that defines a recursive function,
+   when [unindex_recursive] is set: [--enum-inst] (enumerative
+   instantiation, the solution checker's own option).  cvc5's default
+   instantiation does not unfold a recursive definition under a universal far
+   enough: a 1.5 kB ladder question with a recursive count under a universal
+   ran out of a 20 s budget with the defaults and was proved [unsat] with this
+   option.  An option of the search, not of the reading, so an [unsat] means
+   what it meant; every other text keeps its options. *)
+let recursive_options text =
+  if
+    !unindex_recursive
+    && (String.is_substring text ~substring:"define-fun-rec"
+       || String.is_substring text ~substring:"define-funs-rec")
+  then [ "--enum-inst" ]
+  else []
 
 (* Rewrite only operator positions in parsed SMT-LIB. Source spans preserve
    literals, comments, quoted/user names, whitespace and opaque metadata.
@@ -155,10 +228,55 @@ let cvc5_text z3_text =
         List.iter bodies ~f:term
     | _ -> ()
   in
+  (* A symbol of [cvc5_reserved] that the text declares in a datatype is
+     renamed at every occurrence (quoted or not) to a name no token of the
+     text spells.  A uniform renaming of a declared symbol to a fresh one is
+     the same question. *)
+  let rec atoms acc = function
+    | S.Atom _ as node -> node :: acc
+    | S.List (_, _, nodes) -> List.fold nodes ~init:acc ~f:atoms
+  in
+  let rec datatype_names acc = function
+    | S.List (_, _, head :: rest)
+      when is head "declare-datatype" || is head "declare-datatypes" ->
+        List.fold rest ~init:acc ~f:atoms
+    | S.List (_, _, nodes) -> List.fold nodes ~init:acc ~f:datatype_names
+    | S.Atom _ -> acc
+  in
+  let rename_reserved_symbols nodes =
+    if !rename_reserved then
+      let spelled =
+        Set.Poly.of_list
+        @@ List.filter_map (List.fold nodes ~init:[] ~f:atoms) ~f:(fun n ->
+               Option.map (token n) ~f:(String.strip ~drop:(Char.equal '|')))
+      in
+      let declared =
+        Set.Poly.of_list
+        @@ List.filter_map (List.fold nodes ~init:[] ~f:datatype_names)
+             ~f:(fun n ->
+               Option.map (token n) ~f:(String.strip ~drop:(Char.equal '|')))
+      in
+      List.iter cvc5_reserved ~f:(fun name ->
+          if Set.mem declared name then
+            let rec fresh i =
+              let c = sprintf "%s_cvc5_%d" name i in
+              if Set.mem spelled c then fresh (i + 1) else c
+            in
+            let target = fresh 0 in
+            List.iter (List.fold nodes ~init:[] ~f:atoms) ~f:(function
+              | S.Atom (a, b) as n
+                when Option.equal String.equal
+                       (Option.map (token n)
+                          ~f:(String.strip ~drop:(Char.equal '|')))
+                       (Some name) ->
+                  changes := (a, b, target) :: !changes
+              | _ -> ()))
+  in
   try
     let nodes = S.parse z3_text in
     List.iter nodes ~f:declarations;
     List.iter nodes ~f:command;
+    rename_reserved_symbols nodes;
     if !refused then None
     else
       let buffer = Buffer.create length in
@@ -230,6 +348,9 @@ let unsat_within ?(trace = fun _ -> ()) ?rlimit ?(site = "ladder") ?size ~ms
     sprintf "temp_ladder_cvc5_p%d_%d.smt2" (Pid.to_int @@ Core_unix.getpid ()) n
   in
   let logging = Option.is_some (log_file ()) in
+  (* counted only: a cvc5 process is started (a batch reads which inputs ask
+     cvc5 at all); changes nothing *)
+  Common.PhaseTime.event_here "cvc5-call/ladder";
   (match dump_dir () with
   | None -> ()
   | Some dir -> (
@@ -272,6 +393,8 @@ let unsat_within ?(trace = fun _ -> ()) ?rlimit ?(site = "ladder") ?size ~ms
              Common.Util.Command.resolve_tool "cvc5";
              sprintf "--tlimit=%d" ms;
            ]
+          @ options_for text
+          @ recursive_options text
           @ Option.value_map rlimit ~default:[] ~f:(fun r ->
               [ sprintf "--rlimit-per=%d" r ])
           @ (if logging then [ "--stats"; "--stats-internal" ] else [])
@@ -311,7 +434,7 @@ let unsat_within ?(trace = fun _ -> ()) ?rlimit ?(site = "ladder") ?size ~ms
    printing it, and answers a text it has already had a definite answer to
    ([unsat] or [sat]) from that answer instead of starting cvc5 again.  Set by
    the coordinator from its configuration
-   ([ladder_proof_shortcuts_no_unknown_query]); process-wide.  [false] asks
+   ([zero_unknown.external.proof_shortcuts]); process-wide.  [false] asks
    every text.
 
    Exactness.  [true] is valid in every model, and its negation prints as
@@ -389,7 +512,30 @@ let unsat_within_memo ?trace ?rlimit ?site ?size ~ms text =
         | _ -> ());
         v
 
-let valid_within ?(trace = fun _ -> ()) ?rlimit ?site ~ms ~id fenv phi =
+(* [hoist_sort_declarations text]: [text] with every line that is a whole
+   [(declare-sort NAME 0)] command moved to just after its first line (the
+   [set-logic] that [Z3interface.elimination_query_text] prints first).  Z3
+   prints an uninterpreted sort's declaration where it first meets the sort,
+   which can be after a datatype declaration that already uses it; Z3 reads
+   that order back and cvc5 refuses it ("not declared as a type").  A nullary
+   sort declaration depends on nothing, so moving it earlier declares the same
+   signature and the text asks the same question. *)
+let hoist_sort_declarations text =
+  let lines = String.split_lines text in
+  let is_sort_decl l =
+    let l = String.strip l in
+    String.is_prefix l ~prefix:"(declare-sort "
+    && String.is_suffix l ~suffix:" 0)"
+    && not (String.contains (String.drop_prefix l 1) '(')
+  in
+  match lines with
+  | [] -> text
+  | first :: rest ->
+      let sorts, others = List.partition_tf rest ~f:is_sort_decl in
+      String.concat ~sep:"\n" ((first :: sorts) @ others) ^ "\n"
+
+let valid_within ?(trace = fun _ -> ()) ?(hoist_sorts = false) ?rlimit ?site
+    ~ms ~id fenv phi =
   if !shortcuts && Formula.is_true phi then (
     Atomic.incr true_shortcuts;
     trace "proved without asking: the formula is [true]";
@@ -402,7 +548,14 @@ let valid_within ?(trace = fun _ -> ()) ?rlimit ?site ~ms ~id fenv phi =
         trace "not asked: the question could not be printed";
         false
     | z3_text -> (
-        match cvc5_text z3_text with
+        let z3_text =
+          if hoist_sorts then hoist_sort_declarations z3_text else z3_text
+        in
+        match
+          if !unindex_recursive then
+            Option.bind (unindex_recursive_text z3_text) ~f:cvc5_text
+          else cvc5_text z3_text
+        with
         | None ->
             trace "not asked: the text cannot be translated safely for cvc5";
             false
@@ -412,3 +565,24 @@ let valid_within ?(trace = fun _ -> ()) ?rlimit ?site ~ms ~id fenv phi =
               else None
             in
             unsat_within_memo ~trace ?rlimit ?site ?size ~ms text)
+
+(* The confirmer [Z3interface.certify_shared_native_result] asks before it
+   reads Z3's native [unsat] on a question over sequences of sequences, where
+   Z3's sequence theory has answered [unsat] to satisfiable assertions: the
+   conjunction of [phis] is unsatisfiable when cvc5 proves its negation valid
+   ([valid_within]: only cvc5's own [unsat] counts) within [nested_seq_ms].
+   Anything else -- [sat], [unknown], a timeout, a text cvc5 cannot read, no
+   cvc5 at all -- leaves the native [unsat] unconfirmed, which the caller
+   reads as undecided.  So a confirmation is a proof by a second, independent
+   procedure, and a missing one can lose a refutation but not make one.  The
+   budget is far above what the questions that met the defect took (cvc5
+   answered them in well under a second) and is a bound, not a tuning. *)
+let nested_seq_ms = 5000
+
+let () =
+  Atomic.set Z3Smt.Z3interface.nested_sequence_refutation_confirmer
+    (Some
+       (fun ~id fenv phis ->
+         valid_within ~hoist_sorts:true ~site:"nested-seq" ~ms:nested_seq_ms
+           ~id fenv
+           (Formula.negate (Formula.and_of phis))))

@@ -2,12 +2,13 @@
  (name HOMCSolver)
  (public_name CoAR.HOMCSolver)
  (preprocess
-  (pps ppx_deriving_yojson))
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
  (libraries
   core
   yojson
   CoAR.common
   CoAR.ast
+  CoAR.automata
   CoAR.HOMC
   CoAR.TRecS
   CoAR.HorSat2)

@@ -1,0 +1,8 @@
+/* ground_parity_choice_valid with the choice given to the refuter: a
+   conjunction lets it take the cycle through B and C, whose outermost
+   predicate B is a least fixpoint: the query is false */
+B 0
+s.t.
+A (x: int): bool =nu B 0;
+B (x: int): bool =mu x = 0 /\ C x /\ A x;
+C (x: int): bool =nu B 0;

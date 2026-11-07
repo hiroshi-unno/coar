@@ -4,10 +4,11 @@
    with each assertion universally closed and headless clauses routed through
    a fresh nullary query predicate, is piped to the [hoice] process, and the
    first verdict line of its output is read back.  Only the verdict is read:
-   [sat] carries an empty solution and [unsat] no refutation.  A problem with
-   any predicate kind but the ordinary one is refused before translation, and
-   an error report or unparsable output from HoIce raises rather than becoming
-   a verdict; a failure to run the process becomes an [Error]. *)
+   [sat] carries an empty solution and [unsat] no refutation; HoIce's
+   [unknown] and [timeout] are answered as such.  A problem with any predicate
+   kind but the ordinary one is refused before translation, and an error
+   report, unparsable output, output with no verdict and a failure to run the
+   process each become an [Error], never a verdict. *)
 open Core
 open Common
 open Common.Ext
@@ -26,7 +27,27 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
   module Debug =
     Debug.Make ((val Debug.Config.(if config.verbose then enable else disable)))
 
-  let ctx =
+  (* A NEW context and a NEW fixedpoint for every call.
+
+     The fixedpoint was once created with the module: each call registered its
+     relations and appended its rules to the same object, and the export is
+     built by printing that object, so the second problem's file carried the
+     first problem's rules as well.  Two problems each satisfiable on their own
+     -- one asserting P(0), the other its negation -- came back sat and then
+     unsat, the second having been handed both.  This is not an incremental
+     API: [solve] takes a whole problem.
+
+     The context is per call too.  A module is made where a solver
+     configuration is loaded, which can be one domain, and [solve] can then
+     run in another (a task domain of a parallel portfolio); a context shared
+     by the module would be given handles in both domains' heaps, and the Z3
+     OCaml bindings delete a context when a finalizer reads its handle count
+     at zero in a read separate from the decrement, so two domains sweeping
+     in parallel can delete it twice.  A context made by the call stays in
+     the domain running the call.  It also gives each problem's recursive
+     functions a context in which they are declared once, as Z3 5.x
+     requires. *)
+  let mk_ctx () =
     let options =
       match config.timeout with
       | None -> []
@@ -34,51 +55,53 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
     in
     Z3.mk_context options
 
-  (* A NEW fixedpoint for every call, and that is the whole of it.  This one used
-     to be created once with the module: each call registered its relations and
-     appended its rules to the same object, and the export is built by printing
-     that object, so the second problem's file carried the first problem's rules
-     as well.  Two problems each satisfiable on their own -- one asserting P(0),
-     the other its negation -- came back sat and then unsat, the second having
-     been handed both.  This is not an incremental API: `solve` takes a whole
-     problem, and a fresh module answers the second one correctly, which is what
-     says the state is the bug rather than the use.  The context is still shared,
-     since what accumulates is the fixedpoint's rules. *)
-  let fresh_solver () = Z3.Fixedpoint.mk_fixedpoint ctx
-
-  let rec get_status_from_hoice_output = function
-    | [] -> failwith "no result"
-    | "sat" :: _ ->
-        PCSP.Problem.Sat Map.Poly.empty (* ToDo: return a solution *)
-    | "unsat" :: _ -> PCSP.Problem.Unsat None (* ToDo *)
-    | "timeout" :: _ -> PCSP.Problem.Timeout
-    | msg :: tail as result ->
-        if Str.string_match (Str.regexp "^(error \\\"$") msg 0 then
-          let rec read_error errors = function
-            | [] ->
-                failwith
-                @@ sprintf "can't read error from %s"
-                @@ String.concat ~sep:"\n" result
-            | "\")" :: tail -> (errors, tail)
-            | error :: tail -> read_error (error :: errors) tail
-          in
-          let errors, tail = read_error [] tail in
-          try
-            let _ = get_status_from_hoice_output tail in
-            raise @@ Z3.Error (String.concat ~sep:"\n" errors)
-          with Z3.Error error ->
-            raise @@ Z3.Error (String.concat ~sep:"\n" errors ^ "\n\n" ^ error)
-        else if Str.string_match (Str.regexp "^; |===| Warning:") msg 0 then
-          let rec read_warning = function
-            | [] ->
-                failwith
-                @@ sprintf "can't read warning from %s"
-                @@ String.concat ~sep:"\n" result
-            | "; |===|" :: tail -> tail
-            | _ :: tail -> read_warning tail
-          in
-          get_status_from_hoice_output @@ read_warning tail
-        else failwith @@ sprintf "unknown result: %s" msg
+  (* The answer to the one [(check-sat)] of the script, read from HoIce's
+     output (standard error merged in), which is a sequence of
+     - warning blocks, a line starting "; |===| Warning:" up to a line
+       "; |===|", which are skipped;
+     - error reports, a line [(error "] up to a line [")], one per command
+       HoIce could not execute;
+     - the verdict line: [sat], [unsat], [unknown] or [timeout] (the last when
+       its [--timeout] expires), after which nothing is read (a proof, when
+       one was asked for, follows it).
+     Guarantees: the result is a verdict only if the first line that is
+     neither blank nor part of a warning block is one of those four words, so
+     no error report precedes it.  An error before the verdict is an [Error]
+     even when a verdict follows, because the command HoIce failed on may have
+     been a declaration or an assertion, and a [sat] about a script with an
+     assertion dropped is not an answer about this problem.  An error report,
+     an unrecognised line and output that ends before a verdict are each an
+     [Error] carrying the output, never an exception: this function used to
+     raise on all three, and on HoIce's own [unknown], so the run ended in an
+     uncaught exception instead of an answer. *)
+  let get_status_from_hoice_output output =
+    let whole () = String.concat ~sep:"\n" output in
+    let rec read_error errors = function
+      | [] -> Or_error.errorf "unterminated error report from hoice:\n%s" (whole ())
+      | "\")" :: _ ->
+          Or_error.errorf "hoice reported an error:\n%s"
+            (String.concat ~sep:"\n" (List.rev errors))
+      | line :: tail -> read_error (line :: errors) tail
+    in
+    let rec skip_warning = function
+      | [] -> Or_error.errorf "unterminated warning from hoice:\n%s" (whole ())
+      | "; |===|" :: tail -> read tail
+      | _ :: tail -> skip_warning tail
+    and read = function
+      | [] -> Or_error.errorf "hoice printed no verdict:\n%s" (whole ())
+      | line :: tail -> (
+          match String.strip line with
+          | "" -> read tail
+          | "sat" -> Ok (PCSP.Problem.Sat Map.Poly.empty (* ToDo: a solution *))
+          | "unsat" -> Ok (PCSP.Problem.Unsat None (* ToDo *))
+          | "unknown" -> Ok PCSP.Problem.Unknown
+          | "timeout" -> Ok PCSP.Problem.Timeout
+          | "(error \"" -> read_error [] tail
+          | s when String.is_prefix s ~prefix:"; |===| Warning:" ->
+              skip_warning tail
+          | s -> Or_error.errorf "unrecognised output from hoice: %s" s)
+    in
+    read output
 
   let solve ?(print_sol = false) pcsp =
     (* This backend solves CHC only, and `-p chc`, `-p pfwcsp`, `-p dqchc` … are
@@ -97,7 +120,8 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
        both fixtures that violate it came back sat.  Naming the one kind that
        IS supported cannot go stale that way. *)
     PCSP.Problem.refuse_non_ord_kinds ~backend:"Hoice" pcsp;
-    let solver = fresh_solver () in
+    let ctx = mk_ctx () in
+    let solver = Z3.Fixedpoint.mk_fixedpoint ctx in
     let pcsp = PCSP.Problem.to_cnf @@ PCSP.Problem.to_nnf pcsp in
     let dtenv =
       Z3Smt.Z3interface.z3_dtenv_of_dtenv ctx @@ PCSP.Problem.dtenv_of pcsp
@@ -232,9 +256,9 @@ module Make (Cfg : Config.ConfigType) : SolverType = struct
     try
       Util.Command.sync_command (Util.Command.resolve_tool "hoice") args inputs
       |> get_status_from_hoice_output
-      |> fun res ->
-      if print_sol then print_endline (PCSP.Problem.str_of_solution res);
-      Or_error.return res
+      |> Or_error.map ~f:(fun res ->
+             if print_sol then print_endline (PCSP.Problem.str_of_solution res);
+             res)
     with Util.Command.Shell_error error ->
       Debug.print @@ lazy (sprintf "Shell Error in hoice: %s\n" error);
       Or_error.error_string error

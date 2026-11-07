@@ -37,6 +37,22 @@ module Make
     (Config : Config.ConfigType)
     (APCSP : PCSP.Problem.ProblemType) : sig
   val run_phase : int -> State.u -> State.u Or_error.t
+
+  module For_test : sig
+    val gen_uclause_c1 :
+      Logic.sort_env_map ->
+      ExClauseSet.t ->
+      ClauseSet.t ->
+      ExClauseSet.t * ExClauseSet.t ->
+      ExClauseSet.t * ExClauseSet.t
+
+    val gen_uclause_c0x1 :
+      Logic.sort_env_map ->
+      ExClauseSet.t ->
+      ClauseSet.t ->
+      ExClauseSet.t * ExClauseSet.t ->
+      (ExClauseSet.t * ExClauseSet.t) option
+  end
 end = struct
   let config = Config.config
 
@@ -48,7 +64,8 @@ end = struct
   let old_dpos = ref Set.Poly.empty
   let old_dneg = ref Set.Poly.empty
 
-  (* Assuming that only papp_x may have term variables. *)
+  (* Only clause parameters may be instantiated. Eligibility below declines
+     independently parameterized examples, and shared unknowns stay rigid. *)
   let unify bvs papp_x papp_c = LogicOld.Atom.unify bvs papp_x papp_c
   (*(* assume that papp_c has no term variable and papp_x is of the form P(x_1,...,x_n) where x_i's are distinct *)
     let unify papp_x papp_c =
@@ -90,35 +107,38 @@ end = struct
   let gen_uclause_c1 exi_senv _undecided c1
       ((pos : ExClauseSet.t), (neg : ExClauseSet.t)) :
       ExClauseSet.t * ExClauseSet.t =
-    let is_eligible ex pure withvars =
-      let rec inner ex pure withvars =
-        match (ex, withvars) with
-        | _, [] -> refuted pure
-        | [], _ :: _ -> false
-        | e :: ex, w :: withvars -> (
-            match ExClause.old_atom_of_uclause e with
-            | None -> inner ex pure (w :: withvars)
-            | Some (_param_senv (*ToDo*), e) -> (
-                match
-                  unify
-                    Set.Poly.empty (*ToDo: is it OK with function varibles?*)
-                    (Logic.ExtTerm.to_old_atm exi_senv (*ToDo*) Map.Poly.empty w)
-                    e
-                with
-                | Some theta ->
-                    (* TODO: simplified version *)
-                    let theta =
-                      Map.Poly.map theta ~f:Logic.ExtTerm.of_old_term
-                    in
-                    inner ex
-                      (Logic.Term.subst theta pure)
-                      (List.map ~f:(Logic.Term.subst theta) withvars)
-                | None -> inner ex pure (w :: withvars)))
+    let is_eligible pos neg c_senv pure with_tvar_neg with_tvar_pos =
+      let obligations =
+        List.map (Set.to_list with_tvar_neg) ~f:(fun w -> (true, w))
+        @ List.map (Set.to_list with_tvar_pos) ~f:(fun w -> (false, w))
       in
-      inner (Set.to_list ex) pure (Set.to_list withvars)
+      let rec inner pure = function
+        | [] -> refuted pure
+        | (positive, w) :: rest -> (
+            let examples = if positive then pos else neg in
+            let theta =
+              List.find_map (Set.to_list examples) ~f:(fun ex ->
+                  match ExClause.old_atom_of_uclause ex with
+                  | Some (params, e) when Map.is_empty params ->
+                      unify (Map.key_set exi_senv)
+                        (Logic.ExtTerm.to_old_atm exi_senv c_senv w)
+                        e
+                  | _ -> None)
+            in
+            match theta with
+            | None -> false
+            | Some theta ->
+                let theta = Map.Poly.map theta ~f:Logic.ExtTerm.of_old_term in
+                (* One clause instance must satisfy both polarity obligations. *)
+                inner
+                  (Logic.Term.subst theta pure)
+                  (List.map rest ~f:(fun (positive, w) ->
+                       (positive, Logic.Term.subst theta w))))
+      in
+      inner pure obligations
     in
     Set.fold c1 ~init:(pos, neg)
-      ~f:(fun (pos, neg) (_c_senv, c_pos, c_neg, c_pure) ->
+      ~f:(fun (pos, neg) (c_senv, c_pos, c_neg, c_pure) ->
         let with_tvar_neg =
           Set.filter ~f:(Fn.non @@ is_ground_atom exi_senv) c_neg
         in
@@ -129,9 +149,7 @@ end = struct
         | None ->
             (* c1 will be a negative unit clause *)
             let candidate = Set.find_exn ~f:(is_ground_atom exi_senv) c_neg in
-            if
-              is_eligible pos c_pure with_tvar_neg
-              && is_eligible neg c_pure with_tvar_pos
+            if is_eligible pos neg c_senv c_pure with_tvar_neg with_tvar_pos
             then
               ( pos,
                 Set.add neg
@@ -146,9 +164,7 @@ end = struct
             else (pos, neg)
         | Some candidate ->
             (* c1 will be a positive unit clause *)
-            if
-              is_eligible pos c_pure with_tvar_neg
-              && is_eligible neg c_pure with_tvar_pos
+            if is_eligible pos neg c_senv c_pure with_tvar_neg with_tvar_pos
             then
               ( Set.add pos
                   {
@@ -171,14 +187,15 @@ end = struct
           Set.Poly.union_list
             [ acc; ex.ExClause.positive; ex.ExClause.negative ])
     in
-    let is_eligible papp pure undecided_app =
+    let is_eligible c_senv papp pure undecided_app =
       match ExAtom.to_atom undecided_app with
       | None -> false
-      | Some (_param_senv (*ToDo*), papp') -> (
+      | Some (param_senv, _) when not (Map.is_empty param_senv) -> false
+      | Some (_, papp') -> (
           match
-            unify Set.Poly.empty (*ToDo: is it OK with function varibles?*)
-              (Logic.ExtTerm.to_old_atm exi_senv (*ToDo*) Map.Poly.empty papp)
-              (Logic.ExtTerm.to_old_atm exi_senv (*ToDo*) Map.Poly.empty papp')
+            unify (Map.key_set exi_senv)
+              (Logic.ExtTerm.to_old_atm exi_senv c_senv papp)
+              (Logic.ExtTerm.to_old_atm exi_senv Map.Poly.empty papp')
           with
           | None -> false
           | Some theta ->
@@ -187,7 +204,7 @@ end = struct
     in
     Set.fold c0x1
       ~init:(Some (pos, neg))
-      ~f:(fun acc (_c_senv, c_pos, c_neg, c_pure) ->
+      ~f:(fun acc (c_senv, c_pos, c_neg, c_pure) ->
         let open Option in
         match
           ( Set.find ~f:(Fn.non @@ is_ground_atom exi_senv) c_pos,
@@ -200,10 +217,10 @@ end = struct
             Set.fold undecided_papps ~init:acc ~f:(fun acc undecided ->
                 acc >>= fun (pos, neg) ->
                 if
-                  Set.exists ~f:(is_eligible papp c_pure)
+                  Set.exists ~f:(is_eligible c_senv papp c_pure)
                   @@ ExClauseSet.exatoms_of neg
                 then None (* unsat *)
-                else if is_eligible papp c_pure undecided then
+                else if is_eligible c_senv papp c_pure undecided then
                   Some (Set.add pos @@ ExClause.mk_unit_pos undecided, neg)
                 else acc)
         | None, Some papp ->
@@ -211,10 +228,10 @@ end = struct
             Set.fold undecided_papps ~init:acc ~f:(fun acc undecided ->
                 acc >>= fun (pos, neg) ->
                 if
-                  Set.exists ~f:(is_eligible papp c_pure)
+                  Set.exists ~f:(is_eligible c_senv papp c_pure)
                   @@ ExClauseSet.exatoms_of pos
                 then None
-                else if is_eligible papp c_pure undecided then
+                else if is_eligible c_senv papp c_pure undecided then
                   Some (pos, Set.add neg @@ ExClause.mk_unit_neg undecided)
                 else acc))
 
@@ -299,4 +316,9 @@ end = struct
     |> fun e -> Ok e
 
   let run_phase _iters = resolve
+
+  module For_test = struct
+    let gen_uclause_c1 = gen_uclause_c1
+    let gen_uclause_c0x1 = gen_uclause_c0x1
+  end
 end

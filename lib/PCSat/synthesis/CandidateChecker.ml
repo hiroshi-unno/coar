@@ -73,10 +73,11 @@ struct
                 with exn_ when not (Common.Timer.is_async exn_) -> None)
             | _ -> None)
         in
+        (* read by name and sort over the example clause substituted into *)
         let sub =
-          List.fold model ~init:Map.Poly.empty ~f:(fun ret -> function
-            | (tvar, _), Some term -> Map.Poly.add_exn ret ~key:tvar ~data:term
-            | _ -> ret)
+          model_assigned_subst
+            ~target:(Set.Poly.of_list @@ Map.Poly.to_alist @@ fst @@ ExClause.to_old_formula cl)
+            model
         in
         let unknowns = Map.key_set exi_senv in
         let res =

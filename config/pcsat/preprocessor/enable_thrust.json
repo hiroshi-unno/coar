@@ -1,0 +1,30 @@
+{
+    "elimination": {
+        "resolution_threshold": 4,
+        "bool_vars": 0
+    },
+    "condensation": {
+        "up_to_linear": true,
+        "unify_negated_linear": true
+    },
+    "refute_by_unfolding": [
+        "Unfold",
+        {
+            "contexts": [
+                "Cleared_contexts"
+            ]
+        }
+    ],
+    "clauses": {
+        "split_single_cons": [
+            "Split_single_cons",
+            {
+                "selected_only": true,
+                "outside_upper_bound_probe": true,
+                "outside_early_pins": true
+            }
+        ],
+        "dedup_alpha_equivalent_clauses": true,
+        "merge_concatenated_sequence_existentials": true
+    }
+}

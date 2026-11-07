@@ -53,3 +53,25 @@
 [submodule "benchmarks/SGCL/diabolo"]
 	path = benchmarks/SGCL/diabolo
 	url = https://github.com/fzaiser/diabolo.git
+[submodule "benchmarks/aeval"]
+	path = benchmarks/aeval
+	url = https://github.com/grigoryfedyukovich/aeval.git
+	branch = term
+[submodule "benchmarks/fse2022-termination"]
+	path = benchmarks/fse2022-termination
+	url = https://github.com/FSE2022benchmarks/-FSE-2022-Termination.git
+[submodule "benchmarks/infinite-state-reactive-synthesis-benchmarks"]
+	path = benchmarks/infinite-state-reactive-synthesis-benchmarks
+	url = https://github.com/phheim/infinite-state-reactive-synthesis-benchmarks.git
+[submodule "benchmarks/CHC/ADTRem"]
+	path = benchmarks/CHC/ADTRem
+	url = https://github.com/chc-comp/ADTRem.git
+[submodule "benchmarks/sprout"]
+	path = benchmarks/sprout
+	url = https://github.com/nyu-acsys/sprout.git
+[submodule "benchmarks/evdrift"]
+	path = benchmarks/evdrift
+	url = https://github.com/nyu-acsys/drift.git
+[submodule "benchmarks/LinearArbitrary-SeaHorn"]
+	path = benchmarks/LinearArbitrary-SeaHorn
+	url = https://github.com/GaloisInc/LinearArbitrary-SeaHorn.git

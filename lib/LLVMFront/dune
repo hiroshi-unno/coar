@@ -1,0 +1,56 @@
+; The direct translation of LLVM IR to muCLP.  (optional): the LLVM 19 OCaml bindings (opam llvm.19-static) are
+; not a dependency of CoAR, so a build without them skips this library, and
+; lib/llvmEntry.none.ml answers -p llvm* with a refusal instead.
+
+(library
+ (name LLVMFront)
+ (public_name CoAR.LLVMFront)
+ (optional)
+ (preprocess
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
+ (libraries
+  yojson
+  zarith
+  CoAR.ast
+  CoAR.muCLP
+  CoAR.LLVMWitness
+  llvm
+  llvm.irreader
+  llvm.debuginfo
+  llvm.analysis
+  llvm.passbuilder
+  llvm.target
+  llvm_X86)
+ (foreign_stubs
+  (language c)
+  (names llvmfront_stubs)
+  (flags
+   (:standard
+    (:include c_flags.sexp))))
+ (foreign_stubs
+  (language cxx)
+  (names llvmfront_cxx_stubs)
+  (flags
+   (:include cxx_flags.sexp)))
+ (synopsis "LLVM IR to muCLP"))
+
+; The LLVM headers the stubs include, and for the C++ stub the flags LLVM was
+; built with (it is built without RTTI), from the LLVM the bindings were built
+; against.  The rules run only when the library is built, that is, when the
+; bindings are installed.
+
+(rule
+ (targets c_flags.sexp)
+ (enabled_if %{lib-available:llvm})
+ (action
+  (with-stdout-to
+   %{targets}
+   (system "printf '(-I%s)' \"$(llvm-config-19 --includedir)\""))))
+
+(rule
+ (targets cxx_flags.sexp)
+ (enabled_if %{lib-available:llvm})
+ (action
+  (with-stdout-to
+   %{targets}
+   (system "printf '(-fPIC %s)' \"$(llvm-config-19 --cxxflags)\""))))

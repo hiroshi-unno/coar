@@ -1,0 +1,6 @@
+type MFPair = pair[Mperson*,Fperson*]
+type Person = person[gender[f[]|m[]],Name,Children]
+type Fperson = person[gender[f[]],Name,Children]
+type Mperson = person[gender[m[]],Name,Children]
+type Children = children[Person*]
+type Name = name[text[]]

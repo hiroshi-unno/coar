@@ -1,0 +1,8 @@
+(set-logic HORN)
+(declare-datatypes ((Color 0) (Coin 0) (|9k| 0)) (((red) (green)) ((head) (tail)) ((n9a) (n9b))))
+(declare-fun P (Color Coin |9k| Int) Bool)
+(assert (forall ((c Color) (d Coin) (e |9k|) (x Int)) (=> (and (= c red) (= d head) (= e n9a) (= x 0)) (P c d e x))))
+(assert (forall ((c Color) (d Coin) (e |9k|) (x Int)) (=> (P c d e x) (P green tail n9b (+ x 1)))))
+(assert (forall ((c Color) (d Coin) (e |9k|) (x Int)) (=> (and (P c d e x) (= c red)) (and (= d head) (= e n9a) (= x 0)))))
+(assert (forall ((c Color) (d Coin) (e |9k|) (x Int)) (=> (P c d e x) (>= x 0))))
+(check-sat)

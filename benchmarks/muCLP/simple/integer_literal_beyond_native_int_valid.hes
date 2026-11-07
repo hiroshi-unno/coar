@@ -1,0 +1,5 @@
+/* Integer literals are unbounded: 4611686018427387904 is 2^62, one past
+   the largest native OCaml integer. */
+F 4611686018427387904
+s.t.
+F (x: int) : bool =mu x > 4611686018427387903 /\ x < 99999999999999999999;

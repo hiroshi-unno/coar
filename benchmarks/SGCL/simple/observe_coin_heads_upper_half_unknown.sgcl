@@ -1,0 +1,9 @@
+# A fair coin conditioned on heads: the conditional expectation of x (cwp, the default) is 1,
+# while the unnormalised one, where the failed observation contributes 0, is 1/2.
+# Expected: not valid (the bound is false).  The reduction asks wp_q(S, x) <= q for q = 1/2,
+# a blocked run being worth q: 1/2 * 1 + 1/2 * 1/2 = 3/4 > 1/2.  Reducing to the unnormalised
+# expectation, the upper bound 1/2 used to be proved.
+x ~ Bernoulli(1/2);
+observe x = 1;
+return x
+?Ex[x] <= 0.5

@@ -1,0 +1,9 @@
+/* Termination of a single loop that havocs a variable, the shape of the
+   TermCOMP ITS file From_T2/bf15.t2_fixed:
+     i = 0; while (i < n) { x = nondet(); i++; }
+   Valid.  Erasing the self-call's quantifier makes a fresh copy of L that
+   replaces L in the recursion (L itself is left calling the copy once), so the
+   problem keeps one recursion. */
+forall (n: int) (x: int). L 0 n x
+s.t.
+L (i: int) (n: int) (x: int): bool =mu i >= n \/ (forall (x': int). L (i + 1) n x');

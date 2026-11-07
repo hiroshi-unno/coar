@@ -1,0 +1,16 @@
+[
+    "PCSat",
+    {
+        "coordinator": [
+            "Filename",
+            "./config/pcsat/coordinator/tbq_ar.json"
+        ],
+        "probes": {
+            "inner_skolem": {
+                "mode": [
+                    "Raced"
+                ]
+            }
+        }
+    }
+]

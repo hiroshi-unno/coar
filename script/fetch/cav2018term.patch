@@ -1,0 +1,22 @@
+--- a/term_02.c
++++ b/term_02.c
+@@ -4,7 +4,7 @@
+ {
+   int x = __VERIFIER_nondet_int();
+   int y = __VERIFIER_nondet_int();
+-  int y = __VERIFIER_nondet_int();
++  int z = __VERIFIER_nondet_int();
+ 
+   while (x > y && y > z)
+   {
+--- a/term_03.c
++++ b/term_03.c
+@@ -4,7 +4,7 @@
+ {
+   int x = __VERIFIER_nondet_int();
+   int y = __VERIFIER_nondet_int();
+-  int y = __VERIFIER_nondet_int();
++  int z = __VERIFIER_nondet_int();
+ 
+   while (x > y || y > z)
+   {

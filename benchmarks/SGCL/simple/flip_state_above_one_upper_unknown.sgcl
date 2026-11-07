@@ -1,0 +1,16 @@
+# The probability of the flip is the variable p, never assigned, so the bound is asked for
+# every initial p.  Where p >= 2 the flip is reached with a probability outside [0, 1]: such a
+# run is an error from which no bound may be proved, so against an upper bound it is worth +oo
+# and the bound fails at every p >= 2.  Elsewhere c = 0 and the bound holds.
+# Expected: unknown.  When an out-of-range probability made the run abort (worth 0 in both
+# directions) the preexpectation was 0 at p >= 2 and the bound was proved (valid).
+c := 0;
+if p >= 2 {
+	if flip(p) {
+		c := 1
+	}
+} else {
+	c := 0
+}
+return c
+?Ex[c] <= 0.5

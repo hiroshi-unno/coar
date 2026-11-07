@@ -1,0 +1,9 @@
+[
+    "EffCaml",
+    {
+        "solver": [
+            "Filename",
+            "./config/solver/trecs.json"
+        ]
+    }
+]

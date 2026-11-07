@@ -5,10 +5,42 @@ open Ast.Logic
 
 type t
 
+(* A counterexample of PPDP 2009's procedure (Unno and Kobayashi,
+   "Dependent Type Inference with Interpolants"): the unsatisfiable system
+   unfolded along one derivation.  Each node is a clause instance: its head
+   and body applications and its formula part, with the clause's variables
+   renamed to the instance's own; a node's [i]-th child is the instance
+   whose head derives the node's [i]-th body application, the two argument
+   lists equal under [model].  [model] gives every variable of the
+   derivation a value under which every instance holds, so no assignment of
+   relations to the predicates satisfies the clauses ([counterexample_holds]
+   checks it by evaluation).  [condition] is the refuted goal's body under
+   the least solution, projected onto [vocabulary] (the goal's own
+   variables, or those asked for); [model] restricted to [vocabulary]
+   satisfies it.  [expansion] names the unfolding that was refuted. *)
+type cex_node = {
+  head : (Ident.pvar * LogicOld.Term.t list) option;
+  body : (Ident.pvar * LogicOld.Term.t list) list;
+  constr : LogicOld.Formula.t;
+  sources : string list;
+      (** where the clause was generated, when its producer recorded it *)
+  children : cex_node list;
+}
+
+type counterexample = {
+  condition : LogicOld.Formula.t;
+  vocabulary : LogicOld.sort_env_list;
+  model : (LogicOld.sort_bind * LogicOld.Term.t) list;
+  derivation : cex_node;
+  expansion : string;
+}
+
 type refutation =
   | Formula of LogicOld.Formula.t
   | Proof of Refutation.t
   | External of string
+  | Counterexample of counterexample
+      (** PPDP 2009's counterexample: a derivation and its model *)
 
 type solution =
   | Sat of term_subst_map
@@ -24,7 +56,39 @@ type oracle = CandSolOld.t option
 
 val lts_str_of_solution : solution -> string
 
+val counterexample_holds : counterexample -> bool
+(** every instance of the derivation holds under the model, by evaluation,
+    and the root is a goal *)
+
+val str_of_counterexample : counterexample -> string list
+
+
 type bounds = (Ident.tvar, int * (sort_env_map * term)) Map.Poly.t
+
+(** [GroundSeeds]' payload: each seed is a binder's name and its values;
+    each atom a predicate's name and a value (or nothing) per argument, an
+    application the seeds make ground where the binders' names are lost;
+    [choice_values] are the values of every other integer variable;
+    [atom_budget] and [max_combos] bound the instances the receiver builds;
+    [trace] asks the receiver for a stderr line per seed message and per
+    refutation holding seeded examples; [synthesis_reads] says whether the
+    receiver's template synthesis reads the instances and what is derived
+    from them (when false only resolution and labeling do);
+    [refutation_cone] says whether the receiver keeps only the instances a
+    labeling refutation of the message's instances can use;
+    [stop_after_fruitless] ([Some k]) asks the receiver to unfold no further
+    message once [k] consecutive messages kept no instance *)
+type ground_seeds = {
+  seeds : (string * Ast.Value.t list) list;
+  atoms : (string * Ast.Value.t option list) list;
+  choice_values : Ast.Value.t list;
+  atom_budget : int;
+  max_combos : int;
+  trace : bool;
+  synthesis_reads : bool;
+  refutation_cone : bool;
+  stop_after_fruitless : int option;
+}
 
 type Common.Messenger.info +=
   | CandidateSolution of
@@ -36,6 +100,10 @@ type Common.Messenger.info +=
         option)
   | LowerBounds of bounds
   | UpperBounds of bounds
+  | GroundSeeds of ground_seeds
+      (** values for some of the problem's variables, named by the binders
+          they came from: the receiver may hold ground instances of its own
+          clauses at those values as examples, and nothing else *)
 
 module type ProblemType = sig
   val problem : t
@@ -68,6 +136,13 @@ val dedup_alpha_equivalent_disjuncts : ?print:(string lazy_t -> unit) -> t -> t
     removing them. Runs before any pass that expands a quantifier, so that the
     copies are not expanded as well. A problem stating no quantifier is returned
     untouched without a walk. *)
+
+val dedup_alpha_equivalent_clauses : t -> t * int
+(** [(p', n)]: [p] in clausal form without the [n] clauses that print, with
+    their sort environments, as an earlier clause does once the binders of
+    their formulas are renamed; exact, since a repeated conjunct changes no
+    constraint set. A [Raw] problem, or one with no such clause, is returned as
+    it is with [n = 0]; the stable clauses are not touched. *)
 
 val instantiate_quantified_premises : ?max_instances:int -> t -> t
 val to_cnf : t -> t
@@ -182,8 +257,13 @@ val is_nwf_pred : t -> Ident.tvar -> bool
 val is_parity_pred : t -> Ident.tvar -> bool
 val is_adm_pred : t -> Ident.tvar -> bool
 val is_adm_pred_with_cond : t -> Ident.tvar -> bool
+val adm_of : t -> Ident.tvar -> Kind.adm option
 val is_integ_pred : t -> Ident.tvar -> bool
 val is_int_fun : t -> Ident.tvar -> bool
+
+(** kind [RealFun] and a [Real] return sort, as [is_int_fun] is for [Int] *)
+val is_real_fun : t -> Ident.tvar -> bool
+
 val is_regex : t -> Ident.tvar -> bool
 (** the synthesizer has no template for an unknown of this kind at this sort --
     an SMT-LIB [declare-const] of a bit-vector or integer sort read as a
@@ -243,6 +323,16 @@ val map_old_where :
   t ->
   t
 
+(** [map_old] for an [f] that returns [None] on a formula it leaves as it is:
+    such a formula is kept without a round trip, and the problem itself is
+    returned when [f] changes nothing. *)
+val map_old_changed :
+  f:
+    (LogicOld.sort_env_map * LogicOld.Formula.t ->
+    (LogicOld.sort_env_map * LogicOld.Formula.t) option) ->
+  t ->
+  t
+
 val concat_map_old :
   f:
     (LogicOld.sort_env_map * LogicOld.Formula.t ->
@@ -263,7 +353,11 @@ val str_of : t -> string
 val str_of_info : t -> string
 val str_of_solution : solution -> string
 val str_of_sol_with_witness : solution -> string
-val str_of_sygus_solution : solution -> string
+val str_of_sygus_solution :
+  ?signature:SyGuS.Printer.signature -> solution -> string
+(** the answer in the SyGuS output format; with the [signature] of a SyGuS
+    input, a [Sat] answer defines exactly the functions it requests, or is
+    the format's line for no answer *)
 val to_yojson : t -> Yojson.Safe.t
 val add_non_emptiness : LogicOld.pred_bind -> t -> t
 val add_formula : sort_env_map * term -> t -> t
@@ -290,7 +384,7 @@ val of_lts : LTS.Problem.t -> t
 val share_unused_params_fvs : bool Atomic.t
 val triv_fn_linear : bool Atomic.t
 (** when set, [remove_unused_params] reads a raw problem's free variables
-    with [Logic.Term.fvs_of_shared], once per physical node, deciding the
+    with [Logic.Term.fvs_within], kept to the parameters' names, deciding the
     same membership *)
 
 val remove_unused_params : t -> t
@@ -337,7 +431,23 @@ val update_params_dtenv : t -> t
     applies them.  Written before solving only. *)
 val reconstructed_functions : Ident.tvar Set.Poly.t Atomic.t
 
+(** The environment's functions a reconstruction pass found equal to one it
+    reconstructed (PCSat's [reuse_equal_functions]): read by the bounded
+    reconstructed-function vocabulary and kept by
+    [prune_unreached_definitions] like the names above, but never removed
+    from the hypothesis space.  Written before solving only. *)
+val reconstruction_aliases : Ident.tvar Set.Poly.t Atomic.t
+
 val prune_unreached_definitions : t -> t
+
+(** [known_functions_read_by_constraints ~applied_only fenv pcsp]: the names
+    of [fenv] that a constraint of [pcsp] (stable clauses included) reads
+    where no unknown, universal variable or binder shadows them, and with
+    [~applied_only:true] only those it applies to an argument.  Read on the
+    constraints as they are, never through the process-global function
+    environment, so it holds for a caller that restored that environment. *)
+val known_functions_read_by_constraints :
+  applied_only:bool -> Ast.LogicOld.FunEnv.t -> t -> Ast.Ident.tvar Set.Poly.t
 val set_params_sol_space : t -> SolSpace.t -> t
 val normalize_uni_senv : t -> t
 
@@ -347,6 +457,12 @@ val recover_elimed_params_of_sol :
   term_subst_map
 
 val sol_of_candidate : t -> CandSol.t -> term_subst_map
+val subst_formula : term_subst_map -> term -> term
+(** [subst_formula sub phi] is what [subst] does to each constraint: [phi]
+    itself when no variable of [sub] is free in it, and otherwise
+    [Logic.Term.subst sub phi] up to the names of bound variables (where
+    [phi] and [sub]'s range are beta-normal; beta-equivalent otherwise). *)
+
 val subst : ?bpvs:Ident.tvar_set -> ?elim:bool -> term_subst_map -> t -> t
 val cochc_subst_of : t -> term_subst_map
 (** The substitution [cochc_to_chc] applies: each [Ord] predicate to its
@@ -408,3 +524,19 @@ val onepoint_constructor_binders : bool ref
 
 (** exact in every model; exposed for its test *)
 val elim_constructor_points : Ast.LogicOld.Formula.t -> Ast.LogicOld.Formula.t
+
+(** [solve_constructor_point x lhs rhs]: when [rhs] holds [x] along one path
+    of constructor applications of inductive datatypes and [lhs] does not hold
+    [x], [Some (s, guards)] with [lhs = rhs] equivalent, in every model of the
+    background theory, to [x = s /\ guards]; neither [s] nor a guard holds
+    [x] *)
+val solve_constructor_point :
+  Ast.Ident.tvar ->
+  Ast.LogicOld.Term.t ->
+  Ast.LogicOld.Term.t ->
+  (Ast.LogicOld.Term.t * Ast.LogicOld.Formula.t list) option
+
+(** off unless a caller switches it on: a witness [make] skolemises takes only
+    the universals its existential's body mentions (and the universal functions
+    a dependency set can name), not every universal in scope *)
+val skolem_body_variables_only : bool ref

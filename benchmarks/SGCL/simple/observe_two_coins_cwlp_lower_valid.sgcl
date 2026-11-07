@@ -1,0 +1,10 @@
+# Two fair coins (1 is heads) observed to show at least one head, the terminating branch of
+# Olmedo et al., TOPLAS 2018, Example 4.9 (p. 4:20).  Three of the four runs pass, two of them
+# with y = 1, so cwlp of the indicator [y = 1] is 2/3 (with no loop it equals cwp).
+# Expected: valid.  The reduction is the dual: wp_(1-q)(S, 1 - [y = 1]) <= 1 - q for q = 0.6,
+# 1/4 + 0.4/4 = 0.35 <= 0.4.
+x ~ Bernoulli(1/2);
+y ~ Bernoulli(1/2);
+observe x = 1 or y = 1;
+return y
+?Ex[[y = 1]] >= 0.6 cwlp

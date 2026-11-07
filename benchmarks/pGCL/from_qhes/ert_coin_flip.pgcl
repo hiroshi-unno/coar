@@ -1,6 +1,14 @@
+# Rendering of QFL/ert_coin_flip_{lb,ub}.qhes, P = 0.5 * 0 + 0.5 * (1 + P), whose least
+# solution is 1: a tick is paid only on the flip that does not stop the loop.  A tick
+# before the choice would pay every flip, an expected runtime of 2.
+# The query is the upper source's bound P <= 1 as an expected-runtime bound; the source's
+# P is the runtime from x = 0, and from any other x the loop does not run (runtime 0), so
+# the bound 1 holds at every initial state exactly when it holds at x = 0.  The lower
+# source, P >= 1, reads ?Ert [0] >= [x = 0] here.
 nat x;
 
 while(x = 0) {
-	tick (1.0);
-	{x := 1}[0.5]{};
+	{x := 1}[0.5]{tick (1.0)};
 }
+
+?Ert [0] <= 1

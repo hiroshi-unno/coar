@@ -5,6 +5,8 @@ Technical details are explained in the following paper.
 
 Satoshi Kura, Hiroshi Unno, and Ichiro Hasuo. Decision Tree Learning in CEGIS-Based Termination Analysis. CAV 2021.
 
+The paper-time configuration and tool are in the Zenodo archive; this directory is kept current: it runs today's strongest version of the paper's own method, MuVal's termination analysis with decision-tree learning in its CEGIS loop (the eager and the lazy strategy, with the paper's `Nu` quantifier elimination and the prove/disprove race), whose PCSat parts under the decision-tree synthesizer are today's, and follows CoAR's current defaults in everything that is not that method.
+
 ## Getting Started
 
 ### Using Dockerfile
@@ -25,8 +27,8 @@ Satoshi Kura, Hiroshi Unno, and Ichiro Hasuo. Decision Tree Learning in CEGIS-Ba
     ```
     The build context is the repository root, not this directory, and BuildKit
     (the default since Docker 23.0) is required: `cav21ae_dt/Dockerfile.dockerignore`
-    beside the Dockerfile is what keeps this directory and the runner scripts
-    under `script/` in the context.
+    beside the Dockerfile is what keeps this directory and the two files under
+    `script/` its runner reads (`run_corpus.sh`, `bench_runs.txt`) in the context.
     This will make a docker image tagged with `cav21ae:latest`.
 
 3. Run the image
@@ -64,39 +66,42 @@ Before proceeding, make sure that the following files and directories are in the
 - `coar`: directory of our artifact
 - `llvm2kittel`: directory of llvm2kittel
 
-1. Install a text editor (e.g. vim)
-    ```bash
-    sudo apt install vim
-    ```
+1. Select which benchmarks to use
 
-2. Select which benchmarks to use
-
-    Edit the configuration file `script/muval_dt_term_comp_20rc` and comment out some of benchmarks if you want to exclude them. To comment out a line, add # at the beginning.
+    `cav21ae_dt/run.sh` runs all 335 inputs. To run a selection, print the full command and call the loop on the
+    files you want:
     ```bash
     cd /home/opam/coar
-    vim script/muval_dt_term_comp_20rc
+    script/run_corpus.sh --dry-run cav21ae_dt dt_eager_300
+    timeout=300 options='-p ltsterm' \
+      prove_config=./config/solver/muval_dt_prove_nu_eager_yesno.json \
+      disprove_config=./config/solver/muval_dt_disprove_nu_eager_yesno.json \
+      cav21ae_dt/prove_disprove_bench.sh benchmarks/term-comp/C_Integer/Stroeder_15/A*.c | tee result_eager.csv
     ```
 
-3. Conduct experiments
+2. Conduct experiments
 
-    There are two scripts for conducting experiments.
-
-    - `script/muval_dt_eager_term_comp_20.sh` (solves the termination problem and the non-termination problem in parallel using the eager strategy described in the paper)
-    - `script/muval_dt_lazy_term_comp_20.sh` (similar to `script/muval_dt_eager_term_comp_20.sh` but using the lazy strategy)
+    `cav21ae_dt/run.sh eager` solves the termination problem and the non-termination problem in parallel using the
+    eager strategy described in the paper, and `cav21ae_dt/run.sh lazy` does the same with the lazy strategy.
+    Each is a run of the repository's table of runs, `script/bench_runs.txt` (corpus `cav21ae_dt`, runs
+    `dt_eager_300` and `dt_lazy_300`: the strategy's prove and disprove configurations, the 300-second limit, the
+    inputs `benchmarks/term-comp/C_Integer/{Stroeder_15,Ton_Chanh_15}/*.c`), which `script/run_corpus.sh` runs
+    through the loop `cav21ae_dt/prove_disprove_bench.sh`; the race of the two configurations on one input is
+    `cav21ae_dt/para_muval_prove_disprove.sh`, which first translates the C file with clang and llvm2kittel.
 
     To conduct experiments with the eager strategy, run the following command.
     ```bash
-    script/muval_dt_eager_term_comp_20.sh | tee result_eager.csv
+    cav21ae_dt/run.sh eager | tee result_eager.csv
     ```
     This will output a csv file `result_eager.csv` where each line corresponds to one benchmark.
 
     For the lazy strategy, replace `eager` with `lazy` and do the same thing.
 
-4. Compare the results with `cav21ae_dt/term-comp20.csv`
+3. Compare the results with `cav21ae_dt/term-comp20.csv`
 
     Assume that the results obtained from the artifact are saved in `result_eager.csv`.
 
-    `result_eager.csv` has 3 columns.
+    `result_eager.csv` has 3 or 4 columns.
 
     - Column 1 contains file names of benchmarks.
     - Column 2 contains answers (YES/NO/timeout) for the termination problems.
@@ -107,21 +112,22 @@ Before proceeding, make sure that the following files and directories are in the
     `cav21ae_dt/term-comp20.csv` has 11 columns.
 
     - Column 1 contains names of benchmarks.
-    - Column 2-6 contain answers (YES/NO/MAYBE) for the termination problems obtained by AProve/irankfinder v1.3.2/Ultimate Automizer/Muval (eagar)/Muval (lazy), respectively.
-    - Column 7-11 contain elapsed time to solve. The order of solvers are the same as Column 2-6 (AProve/irankfinder v1.3.2/Ultimate Automizer/Muval (eagar)/Muval (lazy)).
+    - Column 2-6 contain elapsed time to solve, by AProve/irankfinder v1.3.2/Ultimate Automizer/Muval (eager)/Muval (lazy), respectively.
+    - Column 7-11 contain answers (YES/NO/MAYBE) for the termination problems. The order of solvers is the same as Column 2-6.
 
-    For example, to compare the elapsed time for "`C_Integer/Ton_Chanh_15/2Nested_false-termination.c`", you should compare Column 3 of `result_eager.csv` and Column 10 of `cav21ae_dt/term-comp20.csv`.
+    For example, to compare the elapsed time for "`C_Integer/Ton_Chanh_15/2Nested_false-termination.c`", you should compare Column 3 of `result_eager.csv` and Column 5 of `cav21ae_dt/term-comp20.csv`.
     ```bash
     grep "C_Integer/Ton_Chanh_15/2Nested_false-termination.c" result_eager.csv | cut -d , -f 3
-    grep "C_Integer/Ton_Chanh_15/2Nested_false-termination.c" cav21ae_dt/term-comp20.csv | cut -d , -f 10
+    grep "C_Integer/Ton_Chanh_15/2Nested_false-termination.c" cav21ae_dt/term-comp20.csv | cut -d , -f 5
     ```
 
     We provide a script to make such comparisons easy.
     ```bash
-    script/muval_dt_eager_term_comp_20_compare.sh result_eager.csv
+    cav21ae_dt/compare.sh eager result_eager.csv
     ```
     This script compares the results of our experiments on StarExec (`cav21ae_dt/term-comp20.csv`) and the results on your computer (`result_eager.csv`).
-    The script checks whether answers (YES/NO/MAYBE) are the same and generates a scatter plot `compare_eager.eps` for comparing elapsed time to solve.
+    The script checks whether answers (YES/NO/MAYBE) are the same and generates a scatter plot `compare_eager.eps` for comparing elapsed time to solve
+    (`cav21ae_dt/compare.sh lazy result_lazy.csv` for the lazy strategy).
     Note that results may be slightly different due to the difference in environments.
 
     Make sure that answers (YES/NO/MAYBE) on your local computer are consistent with those on StarExec except for a small amount of difference caused by environmental difference.
@@ -164,10 +170,14 @@ Assume that we want to solve the termination (or non-termination) problem for `I
     ```
     Possible choices for `CONFIG.json` are as follows.
 
-    - `./config/solver/muval_term_comp_prove_nu_dt_eager.json` for the termination problem with the eager strategy
-    - `./config/solver/muval_term_comp_disprove_nu_dt_eager.json` for eager non-termination
-    - `./config/solver/muval_term_comp_prove_dt_lazy_thr.json` for lazy termination
-    - `./config/solver/muval_term_comp_disprove_dt_lazy_thr.json` for lazy non-termination
+    - `./config/solver/muval_dt_prove_nu_eager_yesno.json` for the termination problem with the eager strategy
+    - `./config/solver/muval_dt_disprove_nu_eager_yesno.json` for eager non-termination
+    - `./config/solver/muval_dt_prove_nu_lazy_yesno.json` for lazy termination
+    - `./config/solver/muval_dt_disprove_nu_lazy_yesno.json` for lazy non-termination
+
+    (the configurations `cav21ae_dt/run.sh eager|lazy` runs; the lazy ones with threshold templates,
+    `muval_term_comp_{prove,disprove}_dt_lazy_thr.json`, were deleted on 2026-11-03 and are restored with
+    `git checkout 2b2bc865cc -- config/solver/muval_term_comp_{prove,disprove}_dt_lazy_thr.json`)
 
 ## On StarExec
 

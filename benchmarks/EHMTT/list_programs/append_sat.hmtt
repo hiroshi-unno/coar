@@ -1,0 +1,18 @@
+%BEGING
+Append x y = case x of
+  e => copy y
+| a x' => a (Append x' y)
+| b x' => b (Append x' y).
+%ENDG
+
+%BEGINA
+/* q0 : a*b*e */
+q0 a -> q0. q0 e -> . q0 b -> q1.
+/* q1 : b*e */
+q1 b -> q1. q1 e -> .
+%ENDA
+
+%BEGINT
+/* Append : a*b*e -> b*e -> a*b*e */
+Append : q0 -> q1 -> q0.
+%ENDT

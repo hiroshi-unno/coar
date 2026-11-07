@@ -3,8 +3,53 @@
 #include <fstream>
 #include <regex>
 #include <sstream>
+#include <algorithm>
+#include <vector>
+
+#include "clang/AST/RecursiveASTVisitor.h"
 
 namespace {
+// The C type an SV-COMP nondeterministic-value function returns, read from its name, or the empty
+// string for a name whose type the convention does not fix by name alone (typedef-named results
+// such as loff_t, and anything unknown), which is then left alone.
+std::string NondetReturnType(const std::string &name) {
+    static const std::vector<std::pair<std::string, std::string>> table = {
+        {"bool", "_Bool"},          {"char", "char"},
+        {"uchar", "unsigned char"}, {"short", "short"},
+        {"ushort", "unsigned short"}, {"int", "int"},
+        {"uint", "unsigned int"},   {"unsigned", "unsigned int"},
+        {"long", "long"},           {"ulong", "unsigned long"},
+        {"longlong", "long long"},  {"ulonglong", "unsigned long long"},
+    };
+    const std::string prefix = "__VERIFIER_nondet_";
+    if (name.rfind(prefix, 0) != 0) return "";
+    const std::string suffix = name.substr(prefix.size());
+    for (const auto &entry : table)
+        if (entry.first == suffix) return entry.second;
+    return "";
+}
+
+// Collects, in order of first call, the __VERIFIER_nondet_<t> functions the program calls without
+// declaring them. Such a call is an implicit declaration: C gives the function the type `int ()`,
+// so the compiled call returns a 32-bit int whatever <t> is, and every later pass that reads the
+// call's type (the IR-level type annotation, the rewrite of a declared nondet function's result
+// type) sees a different program from the one a declared call gives. A declaration is all that
+// differs, so supplying it from the name makes the program the one the convention means.
+class UndeclaredNondetCollector : public clang::RecursiveASTVisitor<UndeclaredNondetCollector> {
+public:
+    std::vector<std::string> names;
+    bool VisitCallExpr(clang::CallExpr *CE) {
+        const clang::FunctionDecl *FD = CE->getDirectCallee();
+        if (!FD) return true;
+        const std::string name = FD->getNameAsString();
+        if (NondetReturnType(name).empty()) return true;
+        for (const clang::FunctionDecl *R : FD->redecls())
+            if (!R->isImplicit()) return true;
+        if (std::find(names.begin(), names.end(), name) == names.end()) names.push_back(name);
+        return true;
+    }
+};
+
 bool AddNoReturnAttributeToReachError(std::string &content) {
     const std::regex reachErrorNoReturnPattern(
         R"((?:noreturn|__noreturn__)[^\n;{]*\breach_error\b|\breach_error\s*\([^)]*\)[^\n;{]*(?:noreturn|__noreturn__))");
@@ -53,8 +98,12 @@ bool AddNoReturnAttributeToReachError(std::string &content) {
 void CodeConsumer::HandleTranslationUnit(clang::ASTContext &Context) {
     clang::TranslationUnitDecl *TU = Context.getTranslationUnitDecl();
 
+    UndeclaredNondetCollector undeclaredNondets;
+    undeclaredNondets.TraverseDecl(TU);
+
     VisitorAndRewriter.runPreCheck(TU);
     VisitorAndRewriter.TraverseDecl(TU);
+    VisitorAndRewriter.applyDeferredInsertions();
 
     std::error_code EC;
     auto outputPath = outputSourcePath;
@@ -73,6 +122,13 @@ void CodeConsumer::HandleTranslationUnit(clang::ASTContext &Context) {
     if (pos != std::string::npos) {
         content.erase(pos, intr_func.length());
     }
+
+    // Inserted before the reach_error declaration below, which is then placed above them: the
+    // output is then the one the same program with these declarations written at its top gives.
+    std::string nondetDecls;
+    for (const std::string &name : undeclaredNondets.names)
+        nondetDecls += "extern " + NondetReturnType(name) + " " + name + "(void);\n";
+    content.insert(0, nondetDecls);
 
     if (VisitorAndRewriter.requiresReachErrorDeclaration()) {
         const std::string reachErrorDecl =

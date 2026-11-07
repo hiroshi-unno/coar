@@ -1,0 +1,12 @@
+/* The nu-only muCLP encoding of the E-CHC  inv(0);  inv(x) => exists x'. x <= 2 /\ x' = x + 1 /\ inv(x');
+   inv(x) => x <= 5,  as script/qarmc_to_smt2.py --hes writes it: each clause's variables are bound
+   by a universal guarded by an equation with the predicate's parameter (x_p0 = x_X).  From 0 the
+   required successors are 1, 2, 3, and 3 has none, so the greatest fixpoint is empty and the query
+   is invalid; the dual is refuted by the ranking 3 - x.  The same system without the guarded
+   universals is nu_bounded_successor_empty_invalid.hes.  Kept unsimplified on purpose: negated
+   for the dual, each guarded universal becomes an existential whose witness is the parameter
+   itself, and a solver that Skolemises it instead of substituting the parameter has to
+   synthesise the identity function three times beside the ranking. */
+((forall (x_X: int). (((x_X = 0)) => ((P_inv (x_X))))))
+s.t.
+P_inv (x_p0: int): bool =nu ((forall (x_X: int). (((x_p0 = x_X)) => (exists (x_Xp: int). ((x_X <= 2) /\ (x_Xp = (x_X + 1)) /\ (P_inv (x_Xp)))))) /\ (forall (x_X: int). (((x_p0 = x_X)) => ((x_X <= 5)))));

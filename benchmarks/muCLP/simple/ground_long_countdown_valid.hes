@@ -1,0 +1,6 @@
+/* a closed loop of a million steps: its ground part exceeds any small atom
+   budget, so a ground solve hands it on and the reduction proves it with a
+   ranking function */
+L 0
+s.t.
+L (x: int): bool =mu x >= 1000000 \/ L (x + 1);

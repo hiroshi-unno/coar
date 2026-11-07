@@ -1,0 +1,31 @@
+[
+    "MuStrat",
+    {
+        "optimizer": [
+            "Filename",
+            "./config/muclp/optimizer/enable_erase_query_onept.json"
+        ],
+        "chc_solver": [
+            "Filename",
+            "./config/solver/gspacer_cex_noconc.json"
+        ],
+        "backup_chc_solver": [
+            "Filename",
+            "./config/solver/spacer_cex.json"
+        ],
+        "pcsp_solver": [
+            "Filename",
+            "./config/solver/pcsat_mustrat.json"
+        ],
+        "pcsp_solver_determ": [
+            "Filename",
+            "./config/solver/strat_synth_determ_forward.json"
+        ],
+        "bounded_counterplay": [
+            "Reask_beyond",
+            [
+                "Largest_literal"
+            ]
+        ]
+    }
+]

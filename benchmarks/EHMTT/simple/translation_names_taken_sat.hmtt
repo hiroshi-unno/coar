@@ -1,0 +1,26 @@
+/* The parameter names below spell the names a translation of the generated
+   problems for an alternating-automaton checker would draw first (fd__y<k>,
+   and FdVal_ becomes FdVal__1 after the reduction's renaming), so the
+   translation must draw others.  Same program as higher_order_result_sat. */
+%BEGING
+FdVal_ fd__y1 fd__y2 -> c (fd__y1 fd__y2).
+Copy fd__y3 -> case fd__y3 of
+	 e => e
+| a fd__y0 => a (Copy fd__y0)
+| b fd__y0 => b (Copy fd__y0)
+| c fd__y0 => c (Copy fd__y0)
+| d fd__y0 => d (Copy fd__y0).
+%ENDG
+
+%BEGINA
+q0 a -> q0.
+q0 b -> q0.
+q0 e -> .
+q1 c -> q1.
+q1 d -> q1.
+q1 e -> .
+%ENDA
+
+%BEGINT
+FdVal_ : (q0 -> q1) -> q0 -> q1.
+%ENDT

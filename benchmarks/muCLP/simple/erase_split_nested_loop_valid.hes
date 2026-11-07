@@ -1,0 +1,14 @@
+/* Termination of a nested loop whose inner loop havocs a variable, the shape of
+   the TermCOMP ITS file From_T2/bf10:
+     i = 0;
+     while (i < n) { j = 0; while (j < n) { x = nondet(); j++; } i++; }
+   Valid.  L11 is the outer loop head and L9 the inner one; the inner loop's
+   self-call is quantified over the havocked x.  Erasing that quantifier makes a
+   fresh copy of L9 whose body unfolds L9 and, through the exit to L11, a fresh
+   copy of L11 that calls the copy of L9 again: the copies form a recursion of
+   their own, while the original cycle L9 -> L11 -> L9 stays reachable beside
+   it, so the problem has the outer loop twice. */
+forall (n: int) (x: int). L11 0 n x
+s.t.
+L11 (i: int) (n: int) (x: int): bool =mu i >= n \/ L9 i 0 n x;
+L9 (i: int) (j: int) (n: int) (x: int): bool =mu (j < n \/ L11 (i + 1) n x) /\ (j >= n \/ (forall (x': int). L9 i (j + 1) n x'));

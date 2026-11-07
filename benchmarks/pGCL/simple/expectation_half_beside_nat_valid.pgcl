@@ -1,0 +1,8 @@
+# x is a nat variable equal to 0, and 1/2 inside the expectation is exact rational division
+# whatever sort its context gives it: the expectation of x + 1/2 is 1/2, so the lower bound
+# 1/2 holds.
+# Expected: valid.  Read with the numerals taking the sort of x, 1/2 was integer division,
+# the expectation was 0, and the bound was not proved.
+nat x;
+x := 0;
+?Ex [x + 1/2] >= 1/2

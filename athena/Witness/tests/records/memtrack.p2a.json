@@ -1,0 +1,13 @@
+{
+  "input": { "path": "memtrack.c", "sha256": "86b82214ace6b7e29835d676199da03811017e9f63ac7d0445a288042efab0ff", "frama_c": "33.0 (Arsenic)", "args": [], "machdep": "gcc_x86_64" },
+  "source_map": {
+    "input_file": "memtrack.c",
+    "statements": [
+    { "output_line": 43, "output_column": 3, "function": "__p2a_main", "role": "other", "input": { "line": 5, "column": 3, "function": "main" }, "property": null, "cond_negated": null },
+    { "output_line": 51, "output_column": 3, "function": "__p2a_main", "role": "call", "input": { "line": 6, "column": 3, "function": "main" }, "property": null, "cond_negated": null },
+    { "output_line": 52, "output_column": 3, "function": "__p2a_main", "role": "branch", "input": { "line": 6, "column": 3, "function": "main" }, "property": null, "cond_negated": false },
+    { "output_line": 53, "output_column": 5, "function": "__p2a_main", "role": "other", "input": { "line": 7, "column": 5, "function": "main" }, "property": null, "cond_negated": null },
+    { "output_line": 66, "output_column": 3, "function": "main", "role": "target", "input": { "line": 9, "column": 3, "function": "main" }, "property": "valid-memtrack", "cond_negated": null }
+    ]
+  }
+}

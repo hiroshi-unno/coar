@@ -1,0 +1,32 @@
+START: s;
+ERROR: err;
+
+FROM: s;
+skip;
+TO: a;
+
+FROM: a;
+u := nondet();
+TO: b;
+
+FROM: b;
+v := nondet();
+TO: c;
+
+FROM: b;
+w := nondet();
+assume(x < 0);
+TO: exitb;
+
+FROM: c;
+skip;
+TO: a;
+
+FROM: c;
+w := nondet();
+assume(x < 0);
+TO: exitc;
+
+FROM: exitc;
+assume(x > 0);
+TO: err;

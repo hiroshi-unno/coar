@@ -90,9 +90,9 @@ let instr_time f =
   match instr_file with
   | None -> (f (), 0.)
   | Some _ ->
-      let t0 = Core_unix.gettimeofday () in
+      let t0 = Common.Clock.now_s () in
       let r = f () in
-      (r, Core_unix.gettimeofday () -. t0)
+      (r, Common.Clock.now_s () -. t0)
 
 let max_terms_per_binder = 10
 let max_extra_terms = 4
@@ -706,6 +706,82 @@ let pointwise_concat_candidates_for ~whole x se body =
               ~f:(concat_right se)))
       max_pointwise_concat_candidates
 
+(* Whether a positive sequence existential whose element sort has exactly one
+   value is also offered one-item extensions of the clause's sequences of
+   that sort ([singleton_extension_candidates_for]). *)
+let singleton_extension_candidates = ref false
+
+let max_singleton_extension_candidates = 8
+
+(** the only value of sort [s], when [s] has exactly one: a datatype with one
+    constructor whose arguments each have exactly one value, or a tuple of
+    such sorts; [None] otherwise (a datatype met again while it is being
+    examined is taken to have more than one value, so the answer is exact
+    where it is [Some]) *)
+let rec singleton_value ?(building = []) = function
+  | T_tuple.STuple sorts ->
+      Option.map
+        (Option.all (List.map sorts ~f:(singleton_value ~building)))
+        ~f:(T_tuple.mk_tuple_cons sorts)
+  | T_dt.SDT dt as sort
+    when Datatype.is_dt dt && not (List.mem building sort ~equal:Stdlib.( = ))
+    -> (
+      match Datatype.conses_of dt with
+      | [ cons ] ->
+          Option.map
+            (Option.all
+               (List.map (Datatype.sorts_of_cons dt cons)
+                  ~f:(singleton_value ~building:(sort :: building))))
+            ~f:(T_dt.mk_cons dt (Datatype.name_of_cons cons))
+      | _ -> None)
+  | _ -> None
+
+(** Candidate witnesses [s ++ unit c] for the binder [x] of a positive
+    existential of sort [Seq se] where [se] has the single value [c]
+    ([singleton_value]): [s] ranges over the sequence terms of sort [Seq se]
+    of [whole] over its free variables, smallest first.  A sequence of a
+    one-value sort is determined by its length, so what a witness has to get
+    right is only its length, and a step that extends a history by one item
+    (the states of a closure that captures nothing, one per item an adapter
+    has produced) needs a sequence one longer than any the clause writes.
+    Any well-sorted term is a sound instance; at most
+    [max_singleton_extension_candidates] terms. *)
+(* In a forked copy, whose account is off, the phase-report events below are
+   printed on stderr once per copy and name rather than once per binder. *)
+let singleton_events_printed_in_copy : string list ref = ref []
+
+let singleton_event name =
+  let printed =
+    List.mem !singleton_events_printed_in_copy name ~equal:String.equal
+  in
+  PhaseTime.event_here ~in_copy:(not printed) name;
+  if !PhaseTime.in_child && not printed then
+    singleton_events_printed_in_copy :=
+      name :: !singleton_events_printed_in_copy
+
+let singleton_extension_candidates_for ~whole se =
+  match singleton_value se with
+  | None -> []
+  | Some c ->
+      let free = Formula.tvs_of whole in
+      let sort = T_seq.SSeq se in
+      let ts =
+        Formula.filtered_terms_of whole ~f:(fun t ->
+            Stdlib.( = ) (Term.sort_of t) sort
+            && Set.is_subset (Term.tvs_of t) ~of_:free)
+        |> Set.to_list
+        |> List.stable_sort ~compare:(fun t1 t2 ->
+               Int.compare (Term.ast_size t1) (Term.ast_size t2))
+        |> (fun ts -> List.take ts max_singleton_extension_candidates)
+        |> List.map ~f:(fun t -> T_seq.mk_concat se t (T_seq.mk_unit se c))
+      in
+      (* counted only, so that a run's phase report says whether the rule
+         acted: a binder over a one-value sort was met, and terms were
+         offered for it *)
+      singleton_event "singleton-extension-sort";
+      if not (List.is_empty ts) then singleton_event "singleton-extension-offered";
+      ts
+
 (* ---- end of the prepend and pointwise-concatenation candidates ---- *)
 
 (** Every chain of concatenations of [phi] rebuilt nested to the right,
@@ -740,8 +816,12 @@ let extra_rule_candidates ~with_extra ~whole x se body =
     (if !prepend_unit_candidates then prepend_unit_candidates_for ~whole x se body
      else [])
     @
-    if !pointwise_concat_candidates then
-      pointwise_concat_candidates_for ~whole x se body
+    (if !pointwise_concat_candidates then
+       pointwise_concat_candidates_for ~whole x se body
+     else [])
+    @
+    if !singleton_extension_candidates then
+      singleton_extension_candidates_for ~whole se
     else []
 
 (* Array witnesses for a PROOF, built so that they exist in every model of
@@ -1038,6 +1118,138 @@ let pointwise_witness_candidates ?(neq = false) ~free x sort body =
             (Term.subst (Map.Poly.singleton kc (Term.mk_var k T_int.SInt)) b))
   | _ -> []
 
+(* Whether a sequence binder (a positive existential or a negative universal)
+   is also offered POINTWISE LITERALS ([pointwise_seq_literal_candidates]):
+   the sequence [unit u(0) ++ ... ++ unit u(k-1)] for an equation or
+   disequation [seq.nth x j = u(j)] of the binder's body, [j] an integer
+   variable bound inside the body, and a length [k] at which an atom of the
+   body over [seq.len x] alone changes its truth value.  Why: a Rust-derived
+   premise states what an iterator produces as
+   [forall s. len s >= 3 /\ ... => exists i. 0 <= i < len s /\ s[i] != i + c]
+   (the disjunctive form of "no sequence of three items of the form [i + c]
+   is produced"), refuted only by its instance at [[c, c+1, c+2]], a term
+   the clause never writes; with the universal kept beside that instance the
+   solver did not decide the question in 10 s, and with the universal
+   replaced by the instance it answered at once.  Sound as every instance is:
+   an instance of a positive existential implies it, a negative universal
+   implies its instance, so only a proof of validity is read.  Unlike a total
+   lambda offered for an array binder, a literal built from [seq.unit] and
+   [seq.++] denotes a sequence in every model of the sequence theory, so the
+   proof holds in every model and not only in the full function space.  Set
+   by the coordinator from its configuration; process-wide, as
+   [pointwise_array_witnesses] is. *)
+let pointwise_seq_literals = ref false
+
+(* the longest literal offered, and the most literals per binder: a choice
+   that keeps an instance small, not a measurement *)
+let max_pointwise_seq_literal_length = 8
+let max_pointwise_seq_literals = 4
+
+(** the pointwise literals of the sequence binder [x] of element sort [se]
+    read off [body] (see [pointwise_seq_literals]), shortest first and, at
+    one length, smallest definition first; at most
+    [max_pointwise_seq_literals].  [free] is the set of variables a
+    definition may mention besides its index: the free variables of the
+    whole formula.
+
+    The definitions: every atom [t1 = t2] or [t1 != t2] of [body] in which
+    [x] occurs only in one read [seq.nth x j], [j] an integer variable not in
+    [free], isolated with coefficient one ([Ast.Evaluator.isolate_target]) as
+    [u(j)], [u] of sort [se] mentioning only [j] and [free]; at most two, the
+    smallest.  The lengths: every [k] in [1, max_pointwise_seq_literal_length]
+    at which some atom of [body] whose only variable, once each
+    [seq.len x] in it is read as an integer [n], is [n] simplifies to a
+    different truth value at [n = k] than at [n = k - 1] -- the least length
+    of each region the body's length tests cut the naturals into (the
+    region of [0] is the empty sequence, offered by every rule).  Raises
+    nothing but asynchronous exceptions; any term returned is a sound
+    instance, so the choice decides only which instances are tried. *)
+let pointwise_seq_literal_candidates ~free x se body =
+  let occurs t = Set.mem (Term.tvs_of t) x in
+  let is_x = function
+    | Term.Var (y, _, _) -> Ast.Ident.tvar_equal x y
+    | _ -> false
+  in
+  let pos, neg = Formula.atoms_of body in
+  let atoms = Set.to_list (Set.union pos neg) in
+  let kc = Ast.Ident.mk_fresh_tvar () in
+  let defs =
+    List.filter_map atoms ~f:(function
+      | Atom.App (Predicate.Psym (T_bool.Eq | T_bool.Neq), [ t1; t2 ], _) -> (
+          let reads =
+            Set.to_list
+            @@ Formula.filtered_terms_of (Formula.eq t1 t2) ~f:(function
+              | Term.FunApp (T_seq.SqNth _, [ s; Term.Var (_, T_int.SInt, _) ], _)
+                ->
+                  is_x s
+              | _ -> false)
+          in
+          match reads with
+          | [ (Term.FunApp (_, [ _; Term.Var (j, _, _) ], _) as r) ]
+            when not (Set.mem free j) -> (
+              match
+                Ast.Evaluator.isolate_target ~is_target:(Stdlib.( = ) r)
+                  ~occurs t1 t2
+              with
+              | Some u
+                when (not (occurs u))
+                     && Stdlib.( = ) (Term.sort_of u) se
+                     && Set.for_all (Term.tvs_of u) ~f:(fun y ->
+                         Ast.Ident.tvar_equal y j || Set.mem free y) ->
+                  Some
+                    (Term.subst
+                       (Map.Poly.singleton j (Term.mk_var kc T_int.SInt))
+                       u)
+              | _ -> None)
+          | _ -> None)
+      | _ -> None)
+    |> List.dedup_and_sort ~compare:Stdlib.compare
+    |> by_size
+    |> fun ds -> List.take ds 2
+  in
+  if List.is_empty defs then []
+  else
+    let n = Ast.Ident.mk_fresh_tvar () in
+    let tests =
+      List.filter_map atoms ~f:(fun a ->
+          let f =
+            Formula.map_term (Formula.mk_atom a) ~f:(function
+              | Term.FunApp (T_seq.SqLen _, [ s ], _) when is_x s ->
+                  Term.mk_var n T_int.SInt
+              | t -> t)
+          in
+          let vs = Formula.tvs_of f in
+          if Set.length vs = 1 && Set.mem vs n then Some f else None)
+    in
+    (* the truth value of [f] at [n = k], [None] where it does not simplify
+       to a constant *)
+    let value_at k f =
+      let g =
+        Ast.Evaluator.simplify
+          (Formula.subst (Map.Poly.singleton n (T_int.mk_int (Z.of_int k))) f)
+      in
+      if Formula.is_true g then Some true
+      else if Formula.is_false g then Some false
+      else None
+    in
+    let lengths =
+      List.filter (List.range 1 (max_pointwise_seq_literal_length + 1))
+        ~f:(fun k ->
+          List.exists tests ~f:(fun f ->
+              match (value_at (k - 1) f, value_at k f) with
+              | Some b0, Some b1 -> Bool.( <> ) b0 b1
+              | _ -> false))
+    in
+    List.concat_map lengths ~f:(fun k ->
+        List.map defs ~f:(fun u ->
+            let elem i =
+              Ast.Evaluator.simplify_term
+                (Term.subst (Map.Poly.singleton kc (T_int.mk_int (Z.of_int i))) u)
+            in
+            concat_right se
+              (List.init k ~f:(fun i -> T_seq.mk_unit se (elem i)))))
+    |> fun ts -> List.take ts max_pointwise_seq_literals
+
 (** An INSTANCE of the validity question [phi] at the pointwise definitions
     of its free arrays, for refuting it: every free variable [x] of sort
     [Int -> E] for which [pointwise_witness_candidates] reads a definition
@@ -1130,7 +1342,26 @@ let instantiate_with ?(extra = fun _ -> []) ?budget ~pool ~reads phi =
       match elem_of_seq sort with
       | Some se ->
           ( [ T_seq.mk_empty se ],
-            (if with_extra && !chain_concat_candidates then
+            (* at either sound polarity: a premise's universal is refuted
+               by its instance at a pointwise literal as a goal's
+               existential is proved by one *)
+            (if !pointwise_seq_literals then (
+               let ls =
+                 pointwise_seq_literal_candidates
+                   ~free:(Lazy.force whole_free) x se body
+               in
+               (* two counts of the phase-time report, so that where the
+                  rule acts is read off a run rather than guessed: every
+                  sequence binder it was asked about (counted only where the
+                  account is on, as a forked copy would print a line per
+                  binder), and every binder it offered a literal for *)
+               if !PhaseTime.on then
+                 PhaseTime.event "pointwise-seq-literal-consulted";
+               if not (List.is_empty ls) then
+                 PhaseTime.event "pointwise-seq-literal-offered";
+               ls)
+             else [])
+            @ (if with_extra && !chain_concat_candidates then
                chain_concat_candidates_for ~whole_chains ~whole ~bound x se
                  body
              else [])
@@ -1486,10 +1717,25 @@ let max_int_instances = 32
 
 (* Whether an existential over an element of a sort variable or an
    uninterpreted sort is instantiated at the indices of the reads of the same
-   array (see [instantiate_int]) rather than replaced by [false].  Set by the
-   coordinator from its configuration; process-wide, as the question it
-   answers is. *)
+   array (see [instantiate_int]) rather than replaced by [false], and an
+   existential over an array of any sort at the arrays of its sort the clause
+   mentions and a fresh array.  Set by the coordinator from its
+   configuration; process-wide, as the question it answers is. *)
 let instantiate_element_binders = ref false
+
+(* Whether an existential over an INDEX MAP, an array [Int -> Int], is
+   instantiated (at the candidates [instantiate_element_binders] gives an
+   array binder, and the index-map rules below) even with
+   [instantiate_element_binders] off, which leaves every other element and
+   array binder replaced by [false].  What it is for: a filter's [produces]
+   is witnessed by an inner sequence and an index map, and the map's
+   candidates are what such a step needs; instantiating every element binder
+   of a sort variable as well grows each deep form of an input with
+   quantified sorts (an integer step of tens of thousands of nodes), which
+   costs inputs that need no element witness their answer near the time
+   limit.  Each instance implies its existential, so this only chooses
+   which.  Set by the coordinator from its configuration; process-wide. *)
+let instantiate_index_map_binders = ref false
 
 (* Whether an integer binder used as a read index or a bound of an extraction
    is also offered the positions [t - len u] and [t + len u], where [t] is an
@@ -1525,8 +1771,9 @@ let max_array_read_int_candidates = 8
 
 (* Whether an existential over an index map, an array [Int -> Int], is also
    offered the shifts [lambda k. k + len u] by the lengths the clause mentions
-   outside every binder, and the identity (with [instantiate_element_binders],
-   which is what instantiates array binders at all).  What it is for: a
+   outside every binder, and the identity (with [instantiate_element_binders]
+   or [instantiate_index_map_binders], which are what instantiate array
+   binders at all).  What it is for: a
    filter's [produces] relates the visited items to the inner sequence [s]
    through an index map [f]; after one accepted item [x] following refused
    items [t], [s] is [t ++ [x]] and [f] maps the one visited position to [len
@@ -1541,7 +1788,8 @@ let max_index_map_shift_candidates = 6
 
 (* Whether an existential over an index map, an array [Int -> Int], is also
    offered the joins [lambda k. ite (k < c) g[k] (h[k - c] + d)] of two index
-   maps [g], [h] free in the clause (with [instantiate_element_binders]), [c]
+   maps [g], [h] free in the clause (with [instantiate_element_binders] or
+   [instantiate_index_map_binders]), [c]
    and [d] the lengths of proper prefixes of two different concatenations the
    binder's body mentions outside every binder.  What it is for: the
    transitivity of a filter's [produces], whose index map for the visited
@@ -1564,6 +1812,31 @@ let max_index_map_join_candidates = 8
    names.  Each instance implies the existential, so this only chooses
    which.  Set by the coordinator from its configuration; process-wide. *)
 let literal_range_int_candidates = ref false
+
+(* Whether an integer binder used in a read index (a position, as for
+   [offset_int_candidates]) is also offered [t - 1] for every integer argument
+   [t] of an application of a RECURSIVE function of the environment that the
+   clause makes outside every binder, at most
+   [max_recfun_predecessor_int_candidates] of them, after the candidates of the
+   other rules (so none of those is displaced).  What it is for: a step clause
+   about a function [f] that counts bits, [f s m = f s (m - 1) + bit s (m - 1)],
+   applied at [m] in the conclusion, needs a premise over the bit index ([the
+   bits of two words agree on k .. m]) at [m - 1], the bit [f]'s definition
+   reads at [m]; the read lies inside the body of [f], so no read of the clause
+   names it, and the premise reads the index as [div j 64], so no offset rule
+   does either.  Each instance implies its existential, so this only chooses
+   which terms are offered.  Set by the coordinator; process-wide, as
+   [offset_int_candidates] is. *)
+let recfun_predecessor_int_candidates = ref false
+
+let max_recfun_predecessor_int_candidates = 8
+
+(* [COAR_RECFUN_PRED_CENSUS] set (instrument only): with the rule off, the
+   terms it would add are still computed and an event is counted where they
+   are not empty, so that a run under any configuration tells whether the
+   rule could act on its input; nothing is added *)
+let recfun_predecessor_census =
+  Lazy.from_val (Option.is_some (Sys.getenv "COAR_RECFUN_PRED_CENSUS"))
 
 (* Whether the chain-focused and associativity-matched forms instantiate their
    integer binders as the deep forms do ([instantiate_int ~equated ~nested]):
@@ -1778,7 +2051,9 @@ let int_memo_key :
    memo builds what it would have reused *)
 (* with COAR_INT_MEMO_STATS set, the memo's counts so far go to stderr when
    it is emptied and after every 25th consultation *)
-let int_memo_stats = lazy (Option.is_some (Sys.getenv "COAR_INT_MEMO_STATS"))
+(* evaluated now: a [lazy] forced by two domains at once raises [Lazy.Undefined] *)
+let int_memo_stats =
+  Lazy.from_val (Option.is_some (Sys.getenv "COAR_INT_MEMO_STATS"))
 
 let print_int_memo_stats () =
   if Lazy.force int_memo_stats then
@@ -1857,9 +2132,13 @@ let instantiated_with_memo ~phi ~choices ~budget compute =
 (* [instantiate_int]'s result implies [phi]: an existential over integers is
    replaced by its instances and any other by [false], each of which implies
    it.  With [keep_scalar], an existential [scalar_only] accepts is left as it
-   is instead (by both passes and by the final [drop]), which is exact. *)
+   is instead (by both passes and by the final [drop]), which is exact.  With
+   [keep_all], every existential is kept beside its instances by both passes
+   and none is dropped, so the result is equivalent to [phi] once its fresh
+   variables are read as universals again: the instances only add what a
+   solver's matching would have to find, and the quantifiers stay for it. *)
 let instantiate_int ?(equated = false) ?(nested = false) ?(keep_first = false)
-    ?(keep_scalar = false) ?max_nodes phi =
+    ?(keep_scalar = false) ?(keep_all = false) ?max_nodes phi =
   (* one budget for both passes: the second instantiates the first's
      instances when [nested] is set, so the two multiply *)
   let budget = Option.map max_nodes ~f:ref in
@@ -2148,6 +2427,44 @@ let instantiate_int ?(equated = false) ?(nested = false) ?(keep_first = false)
       if List.is_empty existing then dedup_terms (Lazy.force as_array_index)
       else existing
     in
+    (* [recfun_predecessor_int_candidates]: [t - 1] for each integer argument
+       [t] (mentioning nothing bound) of an application of a recursive
+       function outside every binder of [source], for a binder read as a
+       position; appended after every other rule's candidates *)
+    let census = Lazy.force recfun_predecessor_census in
+    let existing =
+      if not ((!recfun_predecessor_int_candidates || census) && offers_offsets)
+      then existing
+      else
+        let fenv = get_fenv () in
+        let free t = Set.is_empty (Set.inter (Term.tvs_of t) bound) in
+        let preds =
+          collect source ~f:(function
+            | Term.FunApp (FVar (g, _, _), args, _) -> (
+                match Map.Poly.find fenv g with
+                | Some (_, _, _, true, _) ->
+                    Some
+                      (List.filter args ~f:(fun a ->
+                           Stdlib.( = ) (Term.sort_of a) T_int.SInt && free a))
+                | _ -> None)
+            | _ -> None)
+          |> List.concat
+          |> List.map ~f:(fun t -> minus t Z.one)
+          |> dedup_terms
+          |> List.filter ~f:(fun t -> not (List.mem existing t ~equal:Stdlib.( = )))
+        in
+        let preds = List.take preds max_recfun_predecessor_int_candidates in
+        (* the events say where the rule acts: [offered] when it is on and
+           adds a term, [would-offer] when it is off and the census variable
+           is set (then nothing is added) *)
+        if List.is_empty preds then existing
+        else if !recfun_predecessor_int_candidates then (
+          Common.PhaseTime.event "recfun-predecessor-int-offered";
+          existing @ preds)
+        else (
+          Common.PhaseTime.event "recfun-predecessor-int-would-offer";
+          existing)
+    in
     existing
     @
     if offers_offsets then
@@ -2222,6 +2539,8 @@ let instantiate_int ?(equated = false) ?(nested = false) ?(keep_first = false)
     | _ -> false
   in
   let is_array_sort = function
+    | T_array.SArray (T_int.SInt, T_int.SInt) ->
+        !instantiate_element_binders || !instantiate_index_map_binders
     | T_array.SArray _ -> !instantiate_element_binders
     | _ -> false
   in
@@ -2423,8 +2742,7 @@ let instantiate_int ?(equated = false) ?(nested = false) ?(keep_first = false)
           (inst ~keep ~reads ~units ~offsets ~chains ~source p)
           (inst ~keep ~reads ~units ~offsets ~chains ~source q)
     | Formula.Bind (Formula.Exists, senv, _, _)
-      when !instantiate_element_binders
-           && List.exists senv ~f:(fun (_, s) -> is_array_sort s)
+      when List.exists senv ~f:(fun (_, s) -> is_array_sort s)
            && Stdlib.( <> ) phi
                 (Ast.Evaluator.elim_onepoint_and_split_binders phi) ->
         (* the one-point rule first: an array the body equates to a term is
@@ -2561,10 +2879,14 @@ let instantiate_int ?(equated = false) ?(nested = false) ?(keep_first = false)
     in
     Common.PhaseTime.with_phase "int-skolemize" @@ fun () -> skolemize r
   in
-  let first = pass ~keep:(nested && keep_first) base in
+  let first = pass ~keep:(keep_all || (nested && keep_first)) base in
   let source = Formula.mk_and base first in
-  let r = if nested then pass ~target:first source else pass source in
-  Common.PhaseTime.with_phase "int-drop" @@ fun () -> drop (skolemize r)
+  let r =
+    if nested then pass ~keep:keep_all ~target:first source
+    else pass ~keep:keep_all source
+  in
+  Common.PhaseTime.with_phase "int-drop" @@ fun () ->
+  if keep_all then skolemize r else drop (skolemize r)
 
 (* Whether each piece asked by [prove_valid] and [prove_valid_deep] has its
    positive universals replaced by fresh free variables
@@ -2760,12 +3082,69 @@ let cancel_forced_sequence_binders piece =
   in
   if List.is_empty diseqs then piece else go ~bound:Set.Poly.empty piece
 
+(** [unwrap_embedded_formulas phi]: [phi] with every equation or disequation
+    between two Boolean terms that are both embedded formulas
+    ([T_bool.Formula]) written as the formula it states -- [<p> = <true>] as
+    [p], [<p> = <false>] as [not p], [<p> = <q>] as [p <=> q], a disequation
+    as the negation of these -- recursively, also inside the unwrapped
+    formulas.  Equivalent in every model: an embedded formula denotes the
+    truth value of the formula, and the unwrapped formula stays at the
+    position of the atom, so no variable changes scope.
+
+    What it buys: a clause that names a quantified fact by a Boolean variable
+    ([v = forall k. A(k)], the variable then eliminated by the one-point rule)
+    carries the fact as [<forall k. A(k)> = <true>], an atom whose binder no
+    traversal of the formula structure enters.  The matched-instance forms
+    instantiate only the binders they meet, so such a fact was not
+    instantiated in the first round of matching, only after the round's
+    simplification had unwrapped it, one round too late for an index the
+    first round's instances write (a word read at [i div 64]). *)
+let rec unwrap_embedded_formulas phi =
+  let embedded = function
+    | Term.FunApp (T_bool.Formula p, [], _) -> Some p
+    | _ -> None
+  in
+  match phi with
+  | Formula.Atom
+      (Atom.App (Predicate.Psym ((T_bool.Eq | T_bool.Neq) as op), [ t1; t2 ], _), _)
+    -> (
+      match (embedded t1, embedded t2) with
+      | Some p, Some q ->
+          let p = unwrap_embedded_formulas p and q = unwrap_embedded_formulas q in
+          let eq =
+            if Formula.is_true q then p
+            else if Formula.is_false q then Formula.mk_neg p
+            else if Formula.is_true p then q
+            else if Formula.is_false p then Formula.mk_neg q
+            else Formula.mk_iff p q
+          in
+          (match op with T_bool.Neq -> Formula.mk_neg eq | _ -> eq)
+      | _ -> phi)
+  | Formula.UnaryOp (Formula.Not, p, info) ->
+      Formula.mk_neg ~info (unwrap_embedded_formulas p)
+  | Formula.BinaryOp (op, p, q, info) ->
+      Formula.mk_binop ~info op (unwrap_embedded_formulas p)
+        (unwrap_embedded_formulas q)
+  | Formula.Bind (b, senv, body, info) ->
+      Formula.mk_bind ~info b senv (unwrap_embedded_formulas body)
+  | _ -> phi
+
+(* Whether [prepare_piece] first applies [unwrap_embedded_formulas] (an exact
+   rewrite).  Set by the coordinator from its configuration. *)
+let unwrap_embedded_formulas_before_instantiation = ref true
+
 (** [piece] as the forms of [prove_valid] and [prove_valid_deep] start from:
+    [unwrap_embedded_formulas] when its switch is on (the default), then
     [skolemize_positive_universals] applied when its switch is on, then
     [cancel_forced_sequence_binders] when its switch is on, once per piece,
     so that every form of the piece names its fresh variables alike; [piece]
     itself when both are off. *)
 let prepare_piece piece =
+  let piece =
+    if !unwrap_embedded_formulas_before_instantiation then
+      unwrap_embedded_formulas piece
+    else piece
+  in
   let piece =
     if !skolemize_positive_universals_before_instantiation then
       skolemize_positive_universals piece
@@ -3112,7 +3491,7 @@ let chained_app_pairs apps =
 
 (* Whether [match_pattern] also matches a concatenation modulo
    associativity (see [match_concat_operands]).  Set by the coordinator from
-   its configuration ([matched_instance_assoc_open_no_unknown_query]);
+   its configuration ([zero_unknown.matched_instances.assoc_open]);
    process-wide, as [matched_instance_forms] is. *)
 let assoc_concat_matching = ref false
 
@@ -3301,7 +3680,7 @@ let focused_variants ?(keep_scalar = false) focused =
 (* Whether the chain-focused form also fills the OTHER sequence binders of
    the existential it focuses, by the push witnesses [push_witnesses] reads
    off its body.  Set by the coordinator from its configuration
-   ([chain_focus_push_witnesses_no_unknown_query]); process-wide, as
+   ([zero_unknown.chains.focus.push_witnesses]); process-wide, as
    [chain_focus_forms] is. *)
 let chain_focus_push_witnesses = ref false
 
@@ -3712,6 +4091,63 @@ let skip_spent_budget_searches = ref false
    read by the tests *)
 let skipped_spent_searches = ref 0
 
+(* Whether [matched_instance_form] chooses a pass's instances as E-matching
+   would for a goal: every premise instantiated at least once, at the terms the
+   goal's own literals name.  Off, the instance budget of a pass ([per_pass])
+   goes first come first served in traversal order, each existential taking
+   the first [per_existential] substitutions its depth-first search finds, so
+   once [per_pass] instances are spent every existential met later becomes
+   [false], and an existential whose search meets a wrong match first returns
+   only extensions of it.  On, for the existentials at the top of the pass
+   (reached through conjunctions, disjunctions and other binders, not through
+   an instance):
+   - their substitutions are searched first, and the budget is dealt out in
+     rounds: in round [r] each existential that has an [r]-th substitution
+     receives it, in left-to-right order, until the budget or the
+     substitutions run out, so every existential with a substitution receives
+     one before any receives a second whenever there are at most [per_pass]
+     of them; an existential inside an instance draws, first come first
+     served, on what the rounds leave;
+   - with neither [collections_only] nor [prefer] (which choose an
+     existential's best substitutions their own way), which substitutions a
+     share takes is chosen too: the search is seeded with the joint matches
+     of the existential's literals against the piece's literals, up to
+     polarity and a Boolean constant ([literal_anchor_candidates]), the
+     matches of the most selective literal each leading a branch with an even
+     share of the search; arithmetic patterns are searched after the others
+     ([arith_fun]); up to [max_partial_matches] substitutions are found, and
+     the [per_existential] best are kept: in a round after the first those
+     over a constant the previous round's skolemization introduced first,
+     then by literal agreement ([rank_by_atom_agreement]), then by term
+     agreement ([rank_by_ground_agreement]).
+
+   Sound for validity whatever it chooses, as every matched-instance form is:
+   it changes only which instances are taken; each instance implies its
+   existential (it is the body at a witness, every term offered being a term
+   of the piece or of the previous round's skolemized form) and an
+   existential left with none is replaced by [false], which implies it too.
+   So the form still implies the piece: its validity proves the piece's, and
+   a countermodel of it says nothing about the piece.  At most [per_pass]
+   instances are made in a pass, as before, so the form's size stays bounded
+   the same way; what costs more is the search, run for every top-level
+   existential before any is instantiated, and up to [max_partial_matches]
+   substitutions each.
+
+   Why: on four validity questions of a Rust-derived coroutine input (about
+   thirty premise universals, a conclusion of about twenty conjuncts, several
+   restating premises at the clause's fresh constants) the form with the
+   switch off had a countermodel: the 21st existential spent the budget of 64,
+   so a premise [forall t. 0 <= t <= len s -> b[t]] whose instance at the
+   goal's read [b[x]] is all one conjunct needs became [false]; and with the
+   budget shared, each restated premise's 64 substitutions all fixed a binder
+   at the piece's last index, matched first through an arithmetic bound,
+   while the goal's literal [s[k0] = C] names [k0].  With every part above
+   the form of two of the questions was valid (z3 10 s and 34 s), each
+   conclusion conjunct proved by z3 and by cvc5 alone.  Set by the
+   coordinator from its configuration; process-wide, as
+   [matched_instance_forms] is. *)
+let goal_directed_instances = ref false
+
 let max_matched_instances = 8
 let max_partial_matches = 64
 let max_matched_instances_per_pass = 64
@@ -3877,8 +4313,19 @@ let ground_funapps phi =
    [assoc_concat_matching]; process-wide. *)
 let open_scalar_matches = ref false
 
-(** the complete substitutions of [senv] found by matching the subterms of
-    [body] that mention a variable of [senv] against [ground]: a depth-first
+(** whether [f] is an arithmetic operation, an interpreted symbol that
+    E-matching keeps out of its triggers *)
+let arith_fun = function
+  | T_int.(Neg | Abs | Add | Sub | Mul | Div _ | Rem _ | Power)
+  | T_real.(RNeg | RAbs | RAdd | RSub | RMul | RDiv | RPower)
+  | T_num.(NNeg _ | NAdd _ | NSub _ | NMul _ | NDiv _ | NRem _ | NPower _) ->
+      true
+  | _ -> false
+
+(** [matched_substitutions ~ground senv body], defined below after its two
+    stages: the complete substitutions of [senv] found by matching the
+    subterms of [body] that mention a variable of [senv] against [ground]: a
+    depth-first
     search over the patterns, most constrained first (fewest matching ground
     terms), each pattern either taken at one of its matches that agrees with
     the substitution so far or skipped; at most [max_matched_instances]
@@ -3896,9 +4343,27 @@ let open_scalar_matches = ref false
     substitution extends one) are returned, those fixing the most binders
     first, at most [max].  The caller must keep the binders a substitution
     leaves out bound, as [matched_instance_form] does; an instance with those
-    still existential implies the existential as a complete one does. *)
-let matched_substitutions ?(extra = []) ?(max = max_matched_instances)
-    ?(open_scalars = !open_scalar_matches) ~ground senv body =
+    still existential implies the existential as a complete one does.
+    [anchors] are further groups of partial substitutions (each a match of a
+    literal of [body], [literal_anchor_candidates]), searched before the
+    binders' [extra] terms and the patterns, each group taken at one of its
+    substitutions that agrees with the search so far or skipped, as a
+    pattern is, except that the first group's substitutions each lead a
+    branch of their own with an even share of [max] and of the steps (the
+    branch skipping the group last, with what is left); empty by default.  With [arith_patterns_last], a subterm
+    whose head is an arithmetic operation ([arith_fun]) is searched after
+    every other pattern, whatever its number of matches: it matches the
+    piece's ground bounds and offsets of the same shape, and as the most
+    constrained pattern it fixed a binder at the piece's last index for every
+    substitution the search returned; it stays a pattern, since a binder
+    that occurs only under arithmetic (a witness [w] of [len = w * n]) has no
+    other. *)
+
+(* the first stage: each subterm of [body] that mentions a binder of [senv]
+   (a pattern; an embedded formula is none), in [Set.to_list] order, with
+   its distinct nonempty matches against [ground] in [ground]'s order, at
+   most [max_partial_matches]; a pattern with no match is left out *)
+let pattern_matches ~ground senv body =
   let vars = Set.Poly.of_list (List.map senv ~f:fst) in
   let patterns =
     Set.to_list
@@ -3908,19 +4373,36 @@ let matched_substitutions ?(extra = []) ?(max = max_matched_instances)
       | _ -> false)
   in
   let equal_sub = Map.Poly.equal Stdlib.( = ) in
+  List.filter_map patterns ~f:(fun p ->
+      match
+        List.rev
+        @@ List.fold ~init:[] ~f:(fun acc m ->
+               if List.exists acc ~f:(equal_sub m) then acc else m :: acc)
+        @@ List.filter ~f:(Fn.non Map.Poly.is_empty)
+        @@ List.filter_map ground ~f:(fun g ->
+               match_pattern ~vars Map.Poly.empty p g)
+      with
+      | [] -> None
+      | ms -> Some (p, List.take ms max_partial_matches))
+
+(** [matched_substitutions] (below) with its first stage, [pattern_matches
+    ~ground senv body], given as [matches]: the search reads [ground] only
+    through that list. *)
+let matched_substitutions_of_matches ?(extra = []) ?(anchors = [])
+    ?(arith_patterns_last = false) ?(max = max_matched_instances)
+    ?(open_scalars = !open_scalar_matches) ~matches senv _body =
+  let vars = Set.Poly.of_list (List.map senv ~f:fst) in
+  let equal_sub = Map.Poly.equal Stdlib.( = ) in
   let candidates =
-    List.filter_map patterns ~f:(fun p ->
-        match
-          List.rev
-          @@ List.fold ~init:[] ~f:(fun acc m ->
-                 if List.exists acc ~f:(equal_sub m) then acc else m :: acc)
-          @@ List.filter ~f:(Fn.non Map.Poly.is_empty)
-          @@ List.filter_map ground ~f:(fun g ->
-                 match_pattern ~vars Map.Poly.empty p g)
-        with
-        | [] -> None
-        | ms -> Some (List.take ms max_partial_matches))
-    |> List.sort ~compare:(fun a b -> Int.compare (List.length a) (List.length b))
+    List.map matches ~f:(fun (p, ms) ->
+        ( (arith_patterns_last
+          && match p with Term.FunApp (f, _, _) -> arith_fun f | _ -> false),
+          ms ))
+    |> List.sort ~compare:(fun (a1, a) (b1, b) ->
+           match Bool.compare a1 b1 with
+           | 0 -> Int.compare (List.length a) (List.length b)
+           | c -> c)
+    |> List.map ~f:snd
   in
   (* each binder's extra terms, one group per binder, tried before the matched
      patterns: the search takes each group before skipping it, so a binder a
@@ -3936,6 +4418,8 @@ let matched_substitutions ?(extra = []) ?(max = max_matched_instances)
         | ms -> Some ms)
     @ candidates
   in
+  (* [anchors]' groups, searched first *)
+  let candidates = anchors @ candidates in
   let complete s = Set.for_all vars ~f:(Map.Poly.mem s) in
   let merge s1 s2 =
     if
@@ -3953,8 +4437,8 @@ let matched_substitutions ?(extra = []) ?(max = max_matched_instances)
   let record s =
     if not (List.exists !found ~f:(equal_sub s)) then found := s :: !found
   in
-  let rec search sub = function
-    | _ when List.length !found >= max || !steps >= max_match_steps
+  let rec search ?(max = max) ?(max_steps = max_match_steps) sub = function
+    | _ when List.length !found >= max || !steps >= max_steps
       ->
         ()
     | _ when complete sub -> record sub
@@ -3964,11 +4448,30 @@ let matched_substitutions ?(extra = []) ?(max = max_matched_instances)
         List.iter ms ~f:(fun m ->
             match merge sub m with
             | Some sub' when Map.Poly.length sub' > Map.Poly.length sub ->
-                search sub' rest
+                search ~max ~max_steps sub' rest
             | _ -> ());
-        search sub rest
+        search ~max ~max_steps sub rest
   in
-  search Map.Poly.empty candidates;
+  (match (anchors, candidates) with
+   | _ :: _, first :: rest ->
+       (* with anchors, the first group's matches share the substitutions and
+          the steps evenly, each searched as a branch of its own, then the
+          branch that skips the group takes what is left: depth first, the
+          first match's extensions alone could fill [max] (a literal the
+          piece writes at four places, the right one last) *)
+       let k = List.length first + 1 in
+       let share n = Int.max 1 ((n + k - 1) / k) in
+       List.iter first ~f:(fun m ->
+           let found0 = List.length !found and steps0 = !steps in
+           match merge Map.Poly.empty m with
+           | Some sub when not (Map.Poly.is_empty sub) ->
+               search
+                 ~max:(Int.min max (found0 + share max))
+                 ~max_steps:(Int.min max_match_steps (steps0 + share max_match_steps))
+                 sub rest
+           | _ -> ());
+       search Map.Poly.empty rest
+   | _ -> search Map.Poly.empty candidates);
   (* the binders a partial substitution must fix: a binder of an array or
      sequence sort left bound is what the forms exist to remove *)
   let collection =
@@ -4019,6 +4522,11 @@ let matched_substitutions ?(extra = []) ?(max = max_matched_instances)
               not (List.exists leaves ~f:(fun b -> extends b s))))
          ~compare:(fun a b -> Int.compare (Map.Poly.length b) (Map.Poly.length a)))
       max
+
+let matched_substitutions ?extra ?anchors ?arith_patterns_last ?max
+    ?open_scalars ~ground senv body =
+  matched_substitutions_of_matches ?extra ?anchors ?arith_patterns_last ?max
+    ?open_scalars ~matches:(pattern_matches ~ground senv body) senv body
 
 (* Whether the matched-instance forms also offer a sequence binder the
    candidates its element equations name ([element_equation_candidates_for]).
@@ -4103,6 +4611,25 @@ let matched_instance_chain_join_candidates = ref false
    rather than through a common term.  Set by the coordinator from its
    configuration; process-wide.  Off by default. *)
 let chain_join_direct_reads = ref false
+
+(* Whether [matched_forms] lists a piece's chain-join forms before its other
+   matched forms instead of after them.  Only the order of the questions
+   changes, and each form is a strengthening read only for a proof, so what
+   is proved of a piece never changes, only what it costs.  Why the shape
+   says which to ask first: a chain-join form exists only when a positive
+   existential's every sequence binder gets a join (or a chain
+   concatenation) of sequences the piece itself chains -- the existential
+   states a chain from one end state to another and the piece's facts state
+   two chains meeting in a middle state, the shape of a transitivity law.
+   The other matched forms instantiate that binder only at terms the piece
+   writes, so they can witness it only where the piece happens to write the
+   joined chain.  Measured on a Rust-derived
+   iterator's transitivity piece: the two plain matched forms ran to their
+   budget (one invalid in 3-4 s, one timed out at 10 s), the lemma route
+   spent 39-60 s, a third matched form timed out, and then the chain-join
+   form was proved (in process within 5 s, or by the external retry in
+   3 s).  Set by the coordinator; process-wide.  Off by default *)
+let chain_join_forms_first = ref false
 
 (* at most this many chain-join candidates per binder *)
 let max_chain_join_candidates = 4
@@ -4194,9 +4721,7 @@ let chain_join_candidates_for ~whole ~bound x se body =
        common term: what the pairs above become once the middle state, a
        field of a tuple, is a variable that the one-point rule replaced by
        one of the two reads *)
-    let direct =
-      if not !chain_join_direct_reads then []
-      else
+    let direct_joins () =
         List.concat_map ends ~f:(fun (u, i, m) ->
             match m with
             | Term.FunApp (T_seq.SqNth _, [ w; j ], _)
@@ -4205,6 +4730,16 @@ let chain_join_candidates_for ~whole ~bound x se body =
                    && not (Stdlib.( = ) u w) ->
                 join (u, i) w
             | _ -> [])
+    in
+    let direct =
+      if !chain_join_direct_reads then direct_joins ()
+      else (
+        (* act census (instrument only): would the direct reads add a join *)
+        if
+          Common.ActCensus.on ()
+          && not (List.is_empty (direct_joins ()))
+        then Common.ActCensus.note "zero_unknown.chains.join.direct_reads";
+        [])
     in
     List.take (dedup_terms (joins @ direct)) max_chain_join_candidates
 
@@ -4364,12 +4899,179 @@ let rank_by_ground_agreement ?(prefer = fun _ -> false) ~ground senv body
          match Int.compare b1 a1 with 0 -> Int.compare b2 a2 | c -> c)
   |> List.map ~f:snd
 
+(** an atom read as a literal up to polarity, for matching one literal
+    against another: an equation or a disequation is its two sides (the
+    predicate read as [Eq]), and a side that is a Boolean constant is left
+    out, so [b[i] = true] and [b[i] = false] are both the literal [b[i]].
+    Why: a premise and the goal conjunct restating it meet in the negated
+    question with opposite polarities, and this tree writes a Boolean read
+    as an equation with a constant, so the two are different atoms. *)
+let literal_key = function
+  | Atom.App (Predicate.Psym (T_bool.Eq | T_bool.Neq), args, _) ->
+      Some
+        ( Predicate.Psym T_bool.Eq,
+          List.filter args ~f:(fun t ->
+              not (T_bool.is_true t || T_bool.is_false t)) )
+  | Atom.App (p, args, _) -> Some (p, args)
+  | _ -> None
+
+(** for each atom of [body] over a binder of [senv], the substitutions that
+    match it against an atom of [atoms] (as literals, [literal_key]: same
+    predicate, arguments matched jointly by [match_pattern]), at most [max_partial_matches]; one group per
+    atom, the groups with fewest matches first, empty groups left out.
+    Offered by [goal_directed_instances]'s plan to [matched_substitutions] as
+    groups searched before the term patterns, so a literal the piece writes
+    fixes the binders it mentions together, as the goal fixes them.  Why: the
+    search over the body's terms takes its most constrained pattern first and
+    enumerates every extension of that pattern's first match before its
+    second, so when the first match is a wrong one the [max_partial_matches]
+    complete substitutions it returns can all share it.  On a Rust-derived
+    question a premise [forall k i j. s[k] = C /\ ... -> ...] restated by a
+    goal conjunct at the clause's constants had 64 substitutions found, every
+    one with [k] at the piece's last index, none at the goal's; the goal's
+    literal [s[k0] = C] names [k0] at once.  A literal written with a
+    constructor or a constant is the most specific trigger the piece has.
+    Each term so offered is a ground term of the piece, so every instance
+    built from it is an instance as any other is.  An arithmetic literal is
+    no anchor (an ordering, or a literal applying an arithmetic operation to
+    a binder), for the reason E-matching keeps interpreted symbols out of its
+    triggers: [0 <= -1 - k + len s] matches every ground bound of that shape
+    and fixed [k] at a product the piece compared with a length. *)
+let literal_anchor_candidates ~atoms senv body =
+  let vars = Set.Poly.of_list (List.map senv ~f:fst) in
+  let anchor = function
+    | Atom.App
+        ( Predicate.Psym
+            ( T_int.(Leq | Geq | Lt | Gt | PDiv | NotPDiv)
+            | T_real.(RLeq | RGeq | RLt | RGt)
+            | T_num.(NLeq _ | NGeq _ | NLt _ | NGt _) ),
+          _,
+          _ ) ->
+        false
+    | a ->
+        Set.is_empty
+          (Formula.filtered_terms_of (Formula.mk_atom a) ~f:(function
+            | Term.FunApp (f, _, _) as t ->
+                arith_fun f
+                && not (Set.is_empty (Set.inter (Term.tvs_of t) vars))
+            | _ -> false))
+  in
+  let pos, neg = Formula.atoms_of body in
+  Set.to_list (Set.union pos neg)
+  |> List.filter ~f:(fun a ->
+         (not (Set.is_empty (Set.inter (Atom.tvs_of a) vars))) && anchor a)
+  |> List.filter_map ~f:(fun a ->
+         match literal_key a with
+         | Some (p, args) -> (
+             Set.to_list atoms
+             |> List.filter_map ~f:(fun g ->
+                    match literal_key g with
+                    | Some (p', args')
+                      when Stdlib.( = ) p p'
+                           && List.length args = List.length args' ->
+                        match_patterns ~vars Map.Poly.empty args args'
+                    | _ -> None)
+             |> List.filter ~f:(Fn.non Map.Poly.is_empty)
+             |> List.stable_dedup ~compare:Stdlib.compare
+             |> fun ms -> List.take ms max_partial_matches
+             |> function [] -> None | ms -> Some ms)
+         | _ -> None)
+  |> List.stable_sort ~compare:(fun a b ->
+         Int.compare (List.length a) (List.length b))
+
+(** [subs] stably sorted by how many distinct atoms of [body] each
+    substitution's instance makes equal to an atom of [atoms] as a literal
+    ([literal_key]: up to polarity and a Boolean constant), most first.
+    Why atoms as well as terms ([rank_by_ground_agreement]): a goal that is an
+    instance of a premise -- a conclusion restating, at the clause's fresh
+    constants, a fact a premise states for all values -- writes every term the
+    right instance writes, but so do the instances at the other positions the
+    piece reads; only the right one also writes the goal's literals, the
+    constructor tests and constants included ([s[k] = C] for the goal's [k]).
+    On a Rust-derived question five goal conjuncts were such restatements and
+    term agreement tied the right instance with three to six others. *)
+let rank_by_atom_agreement ~atoms body subs =
+  let pos, neg = Formula.atoms_of body in
+  let body_atoms = Set.to_list (Set.union pos neg) in
+  let keys = Set.Poly.filter_map atoms ~f:literal_key in
+  let score sub =
+    List.count
+      (List.dedup_and_sort ~compare:Stdlib.compare
+         (List.filter_map body_atoms ~f:(fun a -> literal_key (Atom.subst sub a))))
+      ~f:(Set.mem keys)
+  in
+  List.map subs ~f:(fun sub -> (score sub, sub))
+  |> List.stable_sort ~compare:(fun (a, _) (b, _) -> Int.compare b a)
+  |> List.map ~f:snd
+
 (* the number of instances the [collections_only] form makes per existential,
    the best-ranked ones ([rank_by_ground_agreement]): with all eight a
    matched instance set at once, Z3 left a from_iter loop piece undecided at
    20 s, and the one instance every ground fact agrees with, asked alone,
    was proved at once *)
 let collections_only_instances = 1
+
+(* A memo of [matched_instance_form]'s substitution searches (its calls of
+   [matched_substitutions]), live only inside [with_subs_memo] and only in
+   the domain that opened it.
+
+   Why: a clause's pieces are asked one after another, and each piece's forms
+   instantiate the same hypotheses (the earlier pieces, the premises)
+   against the same ground terms, so the search for one existential's
+   substitutions is repeated with identical inputs although the pieces
+   themselves differ.  On a Rust-derived clause of about 60 pieces, asked
+   in 120 passes, every pass had the same 118 ground terms and planned the
+   same 20 existentials: 2,400 searches with few distinct inputs, which took
+   about three minutes.  The ground terms themselves differ from piece to
+   piece (a piece's own constructor application), but not in a term any
+   pattern matches.
+
+   Contract: a hit returns the list a recomputation would make.  The search
+   is a function of what the key holds, compared extensionally (polymorphic
+   comparison, with a hash that reads 100 nodes -- the default hash reads
+   ten, and on formulas sharing their top that is one bucket):
+   - the existential's binders [senv] and body, the extra terms in their
+     order, the anchor groups, whether arithmetic patterns go last, and the
+     bound on the substitutions;
+   - the first stage's result, [pattern_matches ~ground senv body]: each
+     pattern with its matches against the pass's ground terms, in order,
+     which is all the search reads of the ground terms (each substitution,
+     here and in the anchors, as its sorted association list, so that two
+     equal maps built in different shapes are one key);
+   - the process-wide switches the search reads ([memo_switches]): set from
+     the configuration before solving and not changed while a scope is
+     open, but in the key all the same, so a change cannot be answered from
+     the memo.
+   Everything else the search reads is a constant of this module.  It makes
+   no fresh names, asks no solver, and keeps no state between calls, so the
+   same inputs give the same list; a hit skips only the time.
+
+   Scope: [with_subs_memo f] opens an empty memo for the dynamic extent of
+   [f] in the current domain and restores the previous one when [f] returns
+   or raises, so no entry outlives the call, crosses a domain, or is shared
+   between solves.  Outside a scope nothing is remembered. *)
+type subs_memo =
+  ( ( Formula.t
+      * sort_env_list
+      * (Ast.Ident.tvar * Term.t) list
+      * (Ast.Ident.tvar * Term.t) list list list )
+    * (bool * int * bool list)
+    * (Term.t * (Ast.Ident.tvar * Term.t) list list) list,
+    (Ast.Ident.tvar, Term.t) Map.Poly.t list )
+  Hashtbl.t
+
+let subs_memo_key : subs_memo option ref Stdlib.Domain.DLS.key =
+  Stdlib.Domain.DLS.new_key (fun () -> ref None)
+
+(* the process-wide switches [matched_substitutions] reads: its default for
+   [open_scalars], and [match_pattern]'s for [assoc] *)
+let memo_switches () = [ !open_scalar_matches; !assoc_concat_matching ]
+
+let with_subs_memo f =
+  let cell = Stdlib.Domain.DLS.get subs_memo_key in
+  let saved = !cell in
+  cell := Some (Hashtbl.PolyDeep.create ());
+  Common.Timer.protect ~finally:(fun () -> cell := saved) f
 
 (** the matched-instance form of [piece] (see above).  With [keep_scalar],
     an existential that binds no array or sequence is kept beside its
@@ -4395,7 +5097,10 @@ let collections_only_instances = 1
     universal over indices can then be instantiated at.  The last round's
     instances have their positive universals skolemized too unless
     [skolemize_last] is false (then a universal the solver is to instantiate
-    stays).  At most [per_pass] instances are made in one pass.  Each step is
+    stays).  At most [per_pass] instances are made in one pass, shared
+    first come first served in the traversal's order or, with
+    [goal_directed_instances], in rounds over the pass's top-level
+    existentials.  Each step is
     a strengthening (an instance implies its existential; a positive
     universal not under an existential is valid exactly when its instance at
     a fresh constant is), so the result implies the piece.  Raises
@@ -4413,7 +5118,9 @@ let matched_instance_form ?(keep_scalar = false) ?(collections_only = false)
     List.exists ~f:(fun (_, s) -> Term.is_array_sort s || is_seq_sort s)
   in
   let ph = Common.PhaseTime.with_phase in
-  let pass ~keep_all phi =
+  (* the constants the previous round's skolemization introduced, which a
+     later round is there to match against *)
+  let pass ?(fresh = Set.Poly.empty) ~keep_all phi =
     let phi = ph "mf-nnf" (fun () -> Formula.nnf_of phi) in
     let whole = phi in
     let whole_chains = lazy (ph "mf-chains" (fun () -> select_chains whole)) in
@@ -4423,6 +5130,17 @@ let matched_instance_form ?(keep_scalar = false) ?(collections_only = false)
     !clause_trace
       (lazy (sprintf "matched form: %d ground terms" (List.length ground)));
     let bound_of senv = Set.Poly.of_list (List.map senv ~f:fst) in
+    (* every atom of the pass's formula, either polarity, all of whose
+       variables are free in it: what an instance's atoms are looked up in,
+       and an existential's atoms matched against, when
+       [goal_directed_instances] plans *)
+    let whole_atoms =
+      lazy
+        (let free = Formula.fvs_of whole in
+         let pos, neg = Formula.atoms_of whole in
+         Set.filter (Set.union pos neg) ~f:(fun a ->
+             Set.is_subset (Atom.fvs_of a) ~of_:free))
+    in
     (* a sequence binder is offered the chain rule's concatenations
        ([chain_concat_candidates_for]): a transitivity premise's witness
        [x0 ++ x1] is written nowhere in the piece, so no pattern can match
@@ -4443,7 +5161,39 @@ let matched_instance_form ?(keep_scalar = false) ?(collections_only = false)
                 (candidates ~bound:(bound_of senv) x se body)
                 ~f:(fun t -> (x, t)))
     in
-    let subs_of senv body =
+    (* [matched_substitutions] over this pass's [ground], answered from the
+       open [with_subs_memo] scope's table when a search with the same
+       inputs was made before; a hit returns the list a recomputation would
+       (see [subs_memo]).  The first stage ([pattern_matches]) is always
+       computed: it is what the search reads of [ground], and pieces of one
+       clause differ in a few ground terms that match none of the patterns *)
+    let memo = lazy !(Stdlib.Domain.DLS.get subs_memo_key) in
+    let search ?(extra = []) ?(anchors = []) ?(arith_patterns_last = false)
+        ~max senv body =
+      let matches = pattern_matches ~ground senv body in
+      let compute () =
+        matched_substitutions_of_matches ~extra ~anchors ~arith_patterns_last
+          ~max ~matches senv body
+      in
+      match Lazy.force memo with
+      | None -> compute ()
+      | Some table -> (
+          let alist = Map.Poly.to_alist in
+          let key =
+            ( (body, senv, extra, List.map anchors ~f:(List.map ~f:alist)),
+              (arith_patterns_last, max, memo_switches ()),
+              List.map matches ~f:(fun (p, ms) -> (p, List.map ms ~f:alist)) )
+          in
+          match Hashtbl.find table key with
+          | Some subs ->
+              Common.PhaseTime.event_here "mf-subs-memo-hit";
+              subs
+          | None ->
+              let subs = compute () in
+              Hashtbl.set table ~key ~data:subs;
+              subs)
+    in
+    let subs_of ?(ranked = false) senv body =
       let chain =
         extra_of (chain_concat_candidates_for ~whole ~whole_chains) senv body
         @ (if !matched_instance_last_index_candidates then
@@ -4462,12 +5212,22 @@ let matched_instance_form ?(keep_scalar = false) ?(collections_only = false)
             senv body
         else []
       in
+      let ranked_plain =
+        ranked && (not collections_only) && Option.is_none prefer
+      in
+      let anchors =
+        if ranked_plain then
+          literal_anchor_candidates ~atoms:(Lazy.force whole_atoms) senv body
+        else []
+      in
       let search_max =
-        if Option.is_some prefer then Int.max per_existential max_partial_matches
+        if Option.is_some prefer || ranked then
+          Int.max per_existential max_partial_matches
         else per_existential
       in
       let base =
-        matched_substitutions ~extra:chain ~max:search_max ~ground senv body
+        search ~extra:chain ~anchors ~arith_patterns_last:ranked_plain
+          ~max:search_max senv body
       in
       if
         (not !matched_instance_element_candidates)
@@ -4482,8 +5242,8 @@ let matched_instance_form ?(keep_scalar = false) ?(collections_only = false)
             let equal_sub = Map.Poly.equal Stdlib.( = ) in
             let more =
               List.filter
-                (matched_substitutions ~extra:(chain @ elems)
-                   ~max:per_existential ~ground senv body)
+                (search ~extra:(chain @ elems) ~max:per_existential senv
+                   body)
                 ~f:(fun s -> not (List.mem base s ~equal:equal_sub))
             in
             List.take (base @ more) per_existential
@@ -4492,6 +5252,121 @@ let matched_instance_form ?(keep_scalar = false) ?(collections_only = false)
        instantiated in turn), so a pass makes at most [per_pass] of them in
        all *)
     let budget = ref per_pass in
+    (* the number of an existential's substitutions the cuts below can keep
+       before the budget's: one with [collections_only], [per_existential]
+       under [prefer], all of them otherwise *)
+    let rank_cut n =
+      if collections_only then Int.min n collections_only_instances
+      else match prefer with None -> n | Some _ -> Int.min n per_existential
+    in
+    (* a top-level disjunct of [keep_as_is] is left as it is; its terms are
+       still among the ground terms the others are matched against *)
+    let kept = List.map keep_as_is ~f:Formula.nnf_of in
+    let targets =
+      if List.is_empty kept then [ phi ]
+      else
+        List.filter (Formula.disjuncts_list_of phi) ~f:(fun d ->
+            not (List.mem kept d ~equal:Stdlib.( = )))
+    in
+    (* a stable sort putting first the substitutions that give a binder a
+       term over a constant the previous round's skolemization introduced:
+       the goal's witness a premise's instance names only through such a
+       constant (a premise [forall a. g(a) -> exists j. R(a, j)] instantiated
+       at the goal's [c] leaves [forall j. not R(c, j)], skolemized to
+       [not R(c, j0)], and the goal [exists j. R(c, j)] needs [j := j0]),
+       which is what a later round exists for *)
+    let prefer_fresh subs =
+      if Set.is_empty fresh then subs
+      else
+        let mentions sub =
+          Map.Poly.exists sub ~f:(fun t ->
+              not (Set.is_empty (Set.inter (Term.fvs_of t) fresh)))
+        in
+        List.stable_sort subs ~compare:(fun a b ->
+            Bool.compare (mentions b) (mentions a))
+    in
+    (* with [goal_directed_instances], each top-level existential (physically a
+       subterm of [targets], met by [go] before any instance is made) with its
+       substitutions and its share of the budget, dealt in rounds in the
+       existentials' left-to-right order; [budget] keeps what the shares leave
+       for the nested existentials.  An entry is taken by [go] when it meets
+       the existential, so a subterm occurring twice takes two entries. *)
+    let plan =
+      ref
+        (if not !goal_directed_instances then []
+         else
+           let rec collect acc = function
+             | Formula.BinaryOp ((Formula.And | Formula.Or), p, q, _) ->
+                 collect (collect acc p) q
+             | Formula.Bind (Formula.Exists, senv, _, _)
+               when collections_only && not (binds_collection senv) ->
+                 acc
+             | Formula.Bind (Formula.Exists, senv, body, _) as e ->
+                 (e, senv, body) :: acc
+             | Formula.Bind (_, _, body, _) -> collect acc body
+             | _ -> acc
+           in
+           let entries =
+             List.map
+               (List.rev (List.fold targets ~init:[] ~f:collect))
+               ~f:(fun (e, senv, body) ->
+                 let subs = ph "mf-subs" (fun () -> subs_of ~ranked:true senv body) in
+                 (* with neither [collections_only] nor [prefer] (which rank
+                    below), the [per_existential] best by ground agreement:
+                    a share smaller than the substitutions found takes the
+                    instances whose terms the piece already writes, not the
+                    first the search happened to find *)
+                 ( e,
+                   if collections_only || Option.is_some prefer then subs
+                   else
+                     List.take
+                       (prefer_fresh
+                          (rank_by_atom_agreement ~atoms:(Lazy.force whole_atoms)
+                             body
+                             (rank_by_ground_agreement ~ground senv body subs)))
+                       per_existential ))
+           in
+           let avail =
+             Array.of_list
+               (List.map entries ~f:(fun (_, subs) -> rank_cut (List.length subs)))
+           in
+           let share = Array.create ~len:(Array.length avail) 0 in
+           let dealt = ref true in
+           while !budget > 0 && !dealt do
+             dealt := false;
+             Array.iteri avail ~f:(fun k a ->
+                 if !budget > 0 && share.(k) < a then (
+                   share.(k) <- share.(k) + 1;
+                   decr budget;
+                   dealt := true))
+           done;
+           List.mapi entries ~f:(fun k (e, subs) ->
+               !clause_trace
+                 (lazy
+                   (sprintf "matched form: planned existential %d of %d: %d substitutions, share %d: %s"
+                      k (List.length entries) (List.length subs) share.(k)
+                      (String.prefix (Formula.str_of e) 200
+                      ^ " SUBS "
+                      ^ String.concat ~sep:" | "
+                          (List.map subs ~f:(fun sub ->
+                               String.concat ~sep:","
+                                 (List.map (Map.Poly.to_alist sub) ~f:(fun (x, t) ->
+                                      Ast.Ident.name_of_tvar x ^ ":=" ^ Term.str_of t)))))));
+               (e, (subs, share.(k)))))
+    in
+    (* one answer-neutral event per pass the plan changes: with no top-level
+       existential the plan is empty and the pass is the unplanned one, so a
+       run without the row built every form as it would with the switch off *)
+    if not (List.is_empty !plan) then
+      Common.PhaseTime.event_here ~in_copy:true "goal-directed-plan";
+    let is_planned e = List.exists !plan ~f:(fun (e', _) -> phys_equal e e') in
+    let take_planned e =
+      match List.findi !plan ~f:(fun _ (e', _) -> phys_equal e e') with
+      | None -> None
+      | Some (k, (_, entry)) ->
+          plan := List.filteri !plan ~f:(fun k' _ -> k' <> k);
+          Some entry
+    in
     let rec go phi =
       match phi with
       | Formula.BinaryOp (((Formula.And | Formula.Or) as op), p, q, _) ->
@@ -4500,7 +5375,8 @@ let matched_instance_form ?(keep_scalar = false) ?(collections_only = false)
         when collections_only && not (binds_collection senv) ->
           phi
       | Formula.Bind (Formula.Exists, senv, _, _)
-        when !skip_spent_budget_searches && !budget <= 0 ->
+        when !skip_spent_budget_searches && !budget <= 0
+             && not (is_planned phi) ->
           (* the general branch below with no substitution taken, which is
              what it takes once the budget is spent (see
              [skip_spent_budget_searches]) *)
@@ -4516,10 +5392,17 @@ let matched_instance_form ?(keep_scalar = false) ?(collections_only = false)
             (lazy
               (sprintf "matched form: existential over %d nodes"
                  (Formula.ast_size body)));
-          let subs =
-            ph
-              (if !budget <= 0 then "mf-subs-spent" else "mf-subs")
-              (fun () -> subs_of senv body)
+          (* [limit]: the instances this existential may take, its planned
+             share or, unplanned, what is left of the budget *)
+          let subs, limit, planned =
+            match take_planned phi with
+            | Some (subs, share) -> (subs, share, true)
+            | None ->
+                ( ph
+                    (if !budget <= 0 then "mf-subs-spent" else "mf-subs")
+                    (fun () -> subs_of senv body),
+                  !budget,
+                  false )
           in
           !clause_trace
             (lazy (sprintf "matched form: %d substitutions" (List.length subs)));
@@ -4528,17 +5411,7 @@ let matched_instance_form ?(keep_scalar = false) ?(collections_only = false)
              permutation, so this raises exactly when the test after the
              cuts would, with the same estimate *)
           (if !matched_bound_before_ranking then
-             let kept =
-               let n = List.length subs in
-               let n =
-                 if collections_only then Int.min n collections_only_instances
-                 else
-                   match prefer with
-                   | None -> n
-                   | Some _ -> Int.min n per_existential
-               in
-               Int.min n (Int.max 0 !budget)
-             in
+             let kept = Int.min (rank_cut (List.length subs)) (Int.max 0 limit) in
              if kept > 0 then
                match max_size with
                | Some bound
@@ -4561,8 +5434,8 @@ let matched_instance_form ?(keep_scalar = false) ?(collections_only = false)
                     per_existential
           in
           !clause_trace (lazy "matched form: substitutions ranked");
-          let subs = List.take subs (max 0 !budget) in
-          budget := !budget - List.length subs;
+          let subs = List.take subs (max 0 limit) in
+          if not planned then budget := !budget - List.length subs;
           if not (List.is_empty subs) then (
             estimate := !estimate + (List.length subs * Formula.ast_size body);
             last_matched_form_estimate := !estimate;
@@ -4589,23 +5462,21 @@ let matched_instance_form ?(keep_scalar = false) ?(collections_only = false)
     in
     if List.is_empty keep_as_is then go phi
     else
-      (* a top-level disjunct of [keep_as_is] is left as it is; its terms are
-         still among the ground terms the others are matched against *)
-      let kept = List.map keep_as_is ~f:Formula.nnf_of in
       Formula.or_of
         (List.map (Formula.disjuncts_list_of phi) ~f:(fun d ->
              if List.mem kept d ~equal:Stdlib.( = ) then d else go d))
   in
-  let rec loop n phi =
+  let rec loop ?fresh n phi =
     if n <= 1 then
       if skolemize_last then
-        let p = ph "mf-pass" (fun () -> pass ~keep_all:false phi) in
+        let p = ph "mf-pass" (fun () -> pass ?fresh ~keep_all:false phi) in
         ph "mf-skolem" (fun () -> skolemize_positive_universals p)
-      else ph "mf-pass" (fun () -> pass ~keep_all:false phi)
+      else ph "mf-pass" (fun () -> pass ?fresh ~keep_all:false phi)
     else
       let p = ph "mf-pass" (fun () -> between (pass ~keep_all:true phi)) in
       let p = ph "mf-mid-simplify" (fun () -> Ast.Evaluator.simplify p) in
-      loop (n - 1) (ph "mf-skolem" (fun () -> skolemize_positive_universals p))
+      let p' = ph "mf-skolem" (fun () -> skolemize_positive_universals p) in
+      loop ~fresh:(Set.diff (Formula.fvs_of p') (Formula.fvs_of p)) (n - 1) p'
   in
   let instantiated = loop rounds piece in
   !clause_trace
@@ -4991,16 +5862,26 @@ let chain_join_forms_of ?(per_existential = 1)
     [prove_valid_deep] do.  A form past [max_matched_form_size] is forced to
     [None], which the callers skip. *)
 let matched_forms ?aligned ?hyp_budget ~earlier piece =
+  let joins =
+    if !matched_instance_chain_join_candidates then chain_join_forms_of piece
+    else []
+  in
+  let joins_first, joins_after =
+    if !chain_join_forms_first then (joins, []) else ([], joins)
+  in
+  (* counted only: a piece whose forms this switch reorders *)
+  if !chain_join_forms_first && not (List.is_empty joins) then
+    Common.PhaseTime.event_here "chain-join-first/reordered";
   List.map ~f:skip_too_large
-  @@ [
-       lazy (matched_instance_form piece);
-       lazy (matched_instance_form ~keep_scalar:true piece);
-     ]
+  @@ joins_first
+  @ [
+      lazy (matched_instance_form piece);
+      lazy (matched_instance_form ~keep_scalar:true piece);
+    ]
   @ (if !matched_instance_collections_only then
        [ lazy (matched_instance_form ~collections_only:true piece) ]
      else [])
-  @ (if !matched_instance_chain_join_candidates then chain_join_forms_of piece
-     else [])
+  @ joins_after
   @
   if List.is_empty earlier then []
   else earlier_pieces_form ?aligned ?hyp_budget ~earlier piece
@@ -5085,7 +5966,9 @@ exception Deep_form_too_large
    from the same replay position and process-global counters, and the two are
    compared; one line per form goes to stderr, [int-memo-check equal] or
    [int-memo-check DIFFERENT]. *)
-let int_memo_check = lazy (Option.is_some (Sys.getenv "COAR_CHECK_INT_MEMO"))
+(* evaluated now: a [lazy] forced by two domains at once raises [Lazy.Undefined] *)
+let int_memo_check =
+  Lazy.from_val (Option.is_some (Sys.getenv "COAR_CHECK_INT_MEMO"))
 
 let int_memo_check_counters =
   Ast.Ident.
@@ -5246,8 +6129,9 @@ let deep_shape_hits = ref 0
 let deep_shape_builds = ref 0
 let deep_shape_declined = ref 0
 
+(* evaluated now: a [lazy] forced by two domains at once raises [Lazy.Undefined] *)
 let deep_shape_stats =
-  lazy (Option.is_some (Sys.getenv "COAR_DEEP_SHAPE_STATS"))
+  Lazy.from_val (Option.is_some (Sys.getenv "COAR_DEEP_SHAPE_STATS"))
 
 let print_deep_shape_stats () =
   if Lazy.force deep_shape_stats then
@@ -5650,7 +6534,9 @@ let instantiate_deep_shaped ?equated ?max_nodes ?max_int_input piece =
    same replay position and counters, and the two are compared as formulas
    (and by the exception raised, and by the replay position); one line per form goes
    to stderr, [deep-shape-check equal] or [deep-shape-check DIFFERENT]. *)
-let deep_shape_check = lazy (Option.is_some (Sys.getenv "COAR_CHECK_DEEP_SHAPES"))
+(* evaluated now: a [lazy] forced by two domains at once raises [Lazy.Undefined] *)
+let deep_shape_check =
+  Lazy.from_val (Option.is_some (Sys.getenv "COAR_CHECK_DEEP_SHAPES"))
 
 let instantiate_deep_first ?equated ?max_nodes ?max_int_input piece =
   let shaped () =
@@ -5727,6 +6613,98 @@ let deep_forms_with_first ?equated ?max_nodes ?max_int_input piece =
 let deep_forms ?equated ?max_nodes piece =
   snd (deep_forms_with_first ?equated ?max_nodes piece)
 
+(* The single index-map witness forms built most recently (the last
+   [max_single_witness_seen], by identity), so that a proof by one of them is
+   counted ([single-index-map-form-proved]).  A diagnostic: membership is read
+   only to raise that event, and no answer depends on it. *)
+let single_witness_seen : Formula.t list ref = ref []
+
+let single_witness_seen_lock = Stdlib.Mutex.create ()
+
+let max_single_witness_seen = 64
+
+let note_single_witness_form phi =
+  Common.PhaseTime.event "single-index-map-form-built";
+  Stdlib.Mutex.protect single_witness_seen_lock (fun () ->
+      single_witness_seen :=
+        List.take (phi :: !single_witness_seen) max_single_witness_seen)
+
+let note_if_single_witness_proved phi =
+  if
+    Stdlib.Mutex.protect single_witness_seen_lock (fun () ->
+        List.exists !single_witness_seen ~f:(phys_equal phi))
+  then Common.PhaseTime.event "single-index-map-form-proved"
+
+(* Whether [prove_valid] also asks, for each positive existential over one
+   index map (an array [Int -> Int]) reached from a piece's root through
+   conjunctions and disjunctions, the piece with that existential replaced by
+   its body at ONE free index map of the piece ([single_index_map_witness_forms]).
+   Set by the coordinator from its configuration; process-wide. *)
+let single_index_map_witness_forms = ref false
+
+let max_single_index_map_witnesses = 4
+
+(** The forms of [piece] with one index-map existential witnessed by one free
+    index map each: [piece] in negation normal form with its positive
+    universals made fresh variables ([skolemize_positive_universals]), a
+    positive existential [exists f. body] binding one array [Int -> Int]
+    replaced by [body[f := a]] for a variable [a] of that sort free in the
+    result (at most [max_single_index_map_witnesses] of them, in order of
+    occurrence), and then its integer binders instantiated with every
+    existential kept beside its instances ([instantiate_int ~keep_all]).
+
+    Contract, for validity only: each form implies [piece] in every model --
+    the instance [body[f := a]] implies the existential, and the integer step
+    keeps every quantifier and adds instances of existentials, each of which
+    implies its existential -- so only a proof is read from it.
+
+    What it is for: a goal [exists f. enumerates f ..] whose witness is the
+    index map a premise opens (a filter's [produces]) is proved within a
+    second once that map is the only candidate and the premises keep their
+    quantifiers beside the instances, while a form holding the four candidate
+    maps at once was not decided in a minute even with the instances it needs
+    added by hand, and the deep forms, which replace every premise quantifier
+    by its instances, were refuted for want of an instance (a premise over
+    the rest of the iterated slice, read at the slice iterator's position plus
+    the binder, is needed at the goal's own position minus that position). *)
+let single_index_map_witness_forms_of piece =
+  let index_map = T_array.SArray (T_int.SInt, T_int.SInt) in
+  let phi = skolemize_positive_universals (Formula.nnf_of piece) in
+  let maps =
+    Set.to_list (Formula.term_sort_env_of phi)
+    |> List.filter_map ~f:(fun (x, s) ->
+        if Stdlib.( = ) s index_map then Some (Term.mk_var x s) else None)
+    |> fun ts -> List.take ts max_single_index_map_witnesses
+  in
+  let rec blocks = function
+    | Formula.BinaryOp ((Formula.And | Formula.Or), p, q, _) ->
+        blocks p @ blocks q
+    | Formula.Bind (Formula.Exists, [ (_, s) ], _, _) as e
+      when Stdlib.( = ) s index_map ->
+        [ e ]
+    | _ -> []
+  in
+  let rec replace e by = function
+    | Formula.BinaryOp (((Formula.And | Formula.Or) as op), p, q, _) ->
+        Formula.mk_binop op (replace e by p) (replace e by q)
+    | f when phys_equal f e -> by
+    | f -> f
+  in
+  List.concat_map (blocks phi) ~f:(function
+    | Formula.Bind (Formula.Exists, [ (f, _) ], body, _) as e ->
+        List.map maps ~f:(fun a ->
+            lazy
+              (let form =
+                 Ast.Evaluator.simplify
+                 @@ instantiate_int ~equated:true ~nested:true ~keep_all:true
+                 @@ replace e
+                      (Formula.subst (Map.Poly.singleton f a) body)
+                      phi
+               in
+               note_single_witness_form form;
+               form))
+    | _ -> [])
+
 (* Whether [prove_valid] first asks a clause of several pieces through one
    instantiation of the whole clause ([shared_pieces]) before instantiating
    each piece on its own.  Set by the coordinator from its configuration;
@@ -5789,7 +6767,7 @@ let force_traced form =
 
 (* Whether a form that is literally [true] is taken as proved without being
    asked ([first_proved_with]).  Set by the coordinator from its configuration
-   ([ladder_proof_shortcuts_no_unknown_query]); process-wide, as the other form
+   ([zero_unknown.external.proof_shortcuts]); process-wide, as the other form
    switches are.  [false] asks it like any other form. *)
 let true_forms_proved = ref false
 
@@ -5814,8 +6792,16 @@ let proved_by_syntax form =
    Used to ask a proof-only attempt that is cheap where the forms are not
    ([lemma_after_form_timeout]); it must answer [true] only for a valid
    piece.  Without it the forms are asked exactly as before. *)
+(* [?on_undecided form r]: asked about a form right after its question came
+   back with an answer [r] other than [`Valid], before [?on_timeout] and
+   before any later form; a [true] proves the piece.  The caller decides from
+   [r] whether to act ([piece_proved] acts on a budget cut or a refusal, never
+   on a countermodel).  Used to give the same form at once to another solver
+   that reads only proofs ([cvc5_on_undecided_form]); it must answer [true]
+   only for a valid form.  Without it the forms are asked exactly as
+   before. *)
 let first_proved_with ?(proved_by_syntax = fun _ -> false) ~force ?second_pass
-    ?on_timeout ~ask forms =
+    ?on_timeout ?(on_undecided = fun _ _ -> false) ~ask forms =
   let tried = ref false in
   let after_timeout () =
     match on_timeout with
@@ -5828,36 +6814,50 @@ let first_proved_with ?(proved_by_syntax = fun _ -> false) ~force ?second_pass
   | None ->
       List.exists forms ~f:(fun form ->
           match force form with
-          | Some form when proved_by_syntax form -> true
+          | Some form when proved_by_syntax form ->
+              note_if_single_witness_proved form;
+              true
           | Some form -> (
               match ask form with
-              | `Valid -> true
-              | `Timeout -> after_timeout ()
-              | _ -> false)
+              | `Valid ->
+                  note_if_single_witness_proved form;
+                  true
+              | `Timeout -> on_undecided form `Timeout || after_timeout ()
+              | r -> on_undecided form r)
           | None -> false)
   | Some (deferred, ask_long) ->
       let retry = ref [] in
       List.exists forms ~f:(fun form ->
           match force form with
-          | Some form when proved_by_syntax form -> true
+          | Some form when proved_by_syntax form ->
+              note_if_single_witness_proved form;
+              true
           | Some form -> (
               match ask form with
-              | `Valid -> true
+              | `Valid ->
+                  note_if_single_witness_proved form;
+                  true
               | r ->
-                  if deferred r then retry := form :: !retry;
-                  false)
+                  on_undecided form r
+                  ||
+                  (if deferred r then retry := form :: !retry;
+                   false))
           | None -> false)
       || ((not (List.is_empty !retry)) && after_timeout ())
       || List.exists (List.rev !retry) ~f:(fun form ->
-             match ask_long form with `Valid -> true | _ -> false)
+             match ask_long form with
+             | `Valid ->
+                 note_if_single_witness_proved form;
+                 true
+             | r -> on_undecided form r)
 
 let first_proved ?second_pass ~ask forms =
   first_proved_with ~force:Lazy.force ?second_pass ~ask forms
 
 (* [first_proved] over formulas, each form's build traced ([force_traced]) *)
-let first_proved_formula ?second_pass ?on_timeout ~ask forms =
+let first_proved_formula ?second_pass ?on_timeout ?on_undecided ~ask forms =
   first_proved_with ~proved_by_syntax ~force:force_traced ?second_pass
-    ?on_timeout ~ask forms
+    ?on_timeout ?on_undecided ~ask forms
 
 (* Whether [prove_valid] also asks each piece, after every other form (the
    grouped question of [PieceGroups] included, which is asked before any
@@ -5981,6 +6981,14 @@ let piece_forms_with_first_lead ?(earlier = []) piece =
       [ lazy (contextual_ite_form ~plain:(Lazy.force plain) piece) ]
     else []
   in
+  (* the single index-map witness forms, before the deep ones: small, and
+     a piece one proves costs no deep form *)
+  let singles =
+    if !single_index_map_witness_forms then
+      List.map (single_index_map_witness_forms_of piece)
+        ~f:(Lazy.map ~f:Option.some)
+    else []
+  in
   let first, deep =
     deep_forms_with_first ?max_nodes ?max_int_input:!piece_max_int_input_nodes
       piece
@@ -6001,19 +7009,20 @@ let piece_forms_with_first_lead ?(earlier = []) piece =
        (List.length contextual));
   ( first,
     List.map pushed ~f:(Lazy.map ~f:Option.some)
-    @ matched @ deep
+    @ matched @ singles @ deep
     @ List.map (plain :: witness) ~f:(Lazy.map ~f:Option.some)
     @ drop
     @ List.map focused ~f:(Lazy.map ~f:Option.some)
     @ contextual,
-    List.length pushed + List.length matched )
+    List.length pushed + List.length matched + List.length singles )
 
 (** [piece_forms_with_first_lead piece] is [(first, forms, n)]: [forms] the
     forms [prove_valid] asks of [piece] in order, [first] the first DEEP form
     before its last [Ast.Evaluator.simplify] (a lazy value the deep form in
     [forms] is forced from, so forcing both builds the instantiation once), and
-    [n] the number of forms that come before the deep ones (the push-witness
-    and matched-instance forms), none of which forces [first]. *)
+    [n] the number of forms that come before the deep ones (the push-witness,
+    matched-instance and single index-map witness forms), none of which forces
+    [first]. *)
 let piece_forms_with_first ?earlier piece =
   let first, forms, _ = piece_forms_with_first_lead ?earlier piece in
   (first, forms)
@@ -6047,7 +7056,7 @@ let undecided_piece_prover : (Formula.t -> bool) option ref = ref None
 (* [lemma_application_prover]: asked about a piece (the piece itself, not a
    form) after every form and [undecided_piece_prover] have failed; [None],
    the default, asks nothing.  Set by the coordinator
-   ([lemma_application_ms_no_unknown_query]); process-wide.  Contract asked of
+   ([zero_unknown.lemmas]); process-wide.  Contract asked of
    it: [true] only when the piece is valid in every model.  Asked last, it can
    only add a proof. *)
 let lemma_application_prover : (Formula.t -> bool) option ref = ref None
@@ -6055,7 +7064,7 @@ let lemma_application_prover : (Formula.t -> bool) option ref = ref None
 (* [lemma_before_retry]: ask [lemma_application_prover] before
    [undecided_piece_prover] instead of after it.  Each reads only a proof, so
    the order changes what a piece costs and never what is proved of it.  Set by
-   the coordinator ([lemma_application_before_cvc5_no_unknown_query]);
+   the coordinator ([zero_unknown.lemmas (Lemmas before_cvc5)]);
    process-wide. *)
 let lemma_before_retry = ref false
 
@@ -6068,7 +7077,7 @@ let lemma_before_retry = ref false
    without the switch.  Why: on a Rust-derived iterator law the route proves
    in a few seconds, three of the piece's thirteen forms each ran to their
    10 s budget (34 s of the piece's 37 s) before the route was reached.  Set by
-   the coordinator ([lemma_application_after_form_timeout_no_unknown_query]);
+   the coordinator ([zero_unknown.lemmas (Lemmas after_form_timeout)]);
    process-wide. *)
 let lemma_after_form_timeout = ref false
 
@@ -6115,6 +7124,27 @@ let last_attempt_allowed () =
 let undecided_piece_asked = ref 0
 let undecided_piece_proved = ref 0
 
+(* Whether [piece_proved] gives a form to [undecided_piece_prover] as soon as
+   that form's question comes back undecided ([`Timeout] or [`Unknown _]),
+   rather than only the piece's largest built form once after every form.
+   A form so asked is not asked again by the last attempt.  Each answer read
+   is a proof of a form, which implies its piece, so what is proved is sound
+   as before; which questions are asked, and when, changes: the external
+   solver may be asked about several forms of one piece, each under its own
+   budget.  Why: on a Rust-derived counter input the produces-transitivity
+   piece's chain-join form was undecided by Z3 at its 10 s budget and proved
+   by cvc5 in 2.8 s, but only after 86 s of further forms and the lemma
+   route, when it was given to cvc5 as the largest form.  Set by the
+   coordinator from its configuration; process-wide, as
+   [undecided_piece_prover] is. *)
+let cvc5_on_undecided_form = ref false
+
+(* How many forms [cvc5_on_undecided_form] handed over, and how many of them
+   were proved, in this process; read by the coordinator's trace and the
+   tests *)
+let undecided_form_asked = ref 0
+let undecided_form_proved = ref 0
+
 (** The largest (in formula nodes) of [forms] that has been built, i.e. forced
     to [Some] form, and [None] when none has.  Size stands for the number of
     instances, which is what a form is grown by.  Forces nothing. *)
@@ -6130,14 +7160,14 @@ let best_built_form forms =
 (* Whether a form is asked, before itself, as the three cases of the position
    of an index against the prefix of a concatenation it reads
    ([index_split_candidates]).  Set by the coordinator from its configuration
-   ([case_split_index_forms_no_unknown_query]); process-wide, as
+   ([zero_unknown.case_split_index]); process-wide, as
    [witness_forms] is. *)
 let case_split_index_forms = ref false
 
 (* When [Some r], [index_cases_outcome] asks a candidate split only when each
    of its three case questions is at most [r] times the form's AST size, and
    skips it, asking nothing, otherwise.  Set by the coordinator from its
-   configuration ([case_split_index_max_size_ratio_no_unknown_query]) and
+   configuration ([zero_unknown.case_split_index (Index_cases max_size_ratio)]) and
    reset with the other switches; process-wide, as [case_split_index_forms]
    is.  [None] asks every candidate.
 
@@ -6314,7 +7344,8 @@ let case_form phi lit =
     only when each of its three case questions has an AST size
     ([Formula.ast_size]) at most [r] times [phi]'s; the three are then built
     before the first is asked, and a candidate failing the test is skipped
-    without any question, as one whose cases are not proved.  So the test
+    without any question, as one whose cases are not proved (its cases are
+    built in order only up to the first one past the bound).  So the test
     only removes case questions: when every candidate is skipped the
     outcome is [`Not_proved] and the form is asked whole. *)
 let index_cases_outcome ~ask phi =
@@ -6346,22 +7377,37 @@ let index_cases_outcome ~ask phi =
         in
         match !index_case_max_size_ratio with
         | None -> asked (List.map lits ~f:(fun lit -> lazy (case_form phi lit)))
-        | Some ratio ->
-            let forms = List.map lits ~f:(case_form phi) in
-            let sizes = List.map forms ~f:Formula.ast_size in
+        | Some ratio -> (
             let bound = ratio *. Float.of_int (Lazy.force size) in
-            if List.for_all sizes ~f:(fun n -> Float.(of_int n <= bound)) then
-              asked (List.map forms ~f:Lazy.from_val)
-            else (
-              !clause_trace
-                (lazy
-                  (sprintf
-                     "index cases: %s against seq.len %s skipped, case sizes \
-                      %s of %d above ratio %g"
-                     (Term.str_of i) (Term.str_of u)
-                     (String.concat ~sep:"/" (List.map sizes ~f:Int.to_string))
-                     (Lazy.force size) ratio));
-              candidates rest))
+            (* the case forms built in order and the test stopped at the
+               first one past the bound: the candidate is skipped exactly
+               when some case is past it, as when all three are built first,
+               and when none is, all three are built, in the same order,
+               before any is asked.  Why: each case form is a
+               simplification of the whole form, and on a Rust-derived
+               loop-body clause whose 84 pieces each had two candidates
+               skipped on their first case, building the other two cases
+               took about two thirds of the 1 s a piece spent on the test *)
+            let rec build acc = function
+              | [] -> Ok (List.rev acc)
+              | lit :: more ->
+                  let form = case_form phi lit in
+                  let n = Formula.ast_size form in
+                  if Float.(of_int n <= bound) then build ((form, n) :: acc) more
+                  else Error (List.rev_map ((form, n) :: acc) ~f:snd)
+            in
+            match build [] lits with
+            | Ok forms -> asked (List.map forms ~f:(fun (f, _) -> Lazy.from_val f))
+            | Error sizes ->
+                !clause_trace
+                  (lazy
+                    (sprintf
+                       "index cases: %s against seq.len %s skipped, case \
+                        sizes %s of %d above ratio %g"
+                       (Term.str_of i) (Term.str_of u)
+                       (String.concat ~sep:"/" (List.map sizes ~f:Int.to_string))
+                       (Lazy.force size) ratio));
+                candidates rest))
   in
   candidates (index_split_candidates phi)
 
@@ -6374,7 +7420,7 @@ let prove_by_index_cases ~ask phi =
    shorter budget, answering [`Valid] only for a proof, [`Invalid ()] only for a
    countermodel and [`Undecided] otherwise (out of its budget included).  Set
    by the coordinator around its sequence instantiation from its
-   configuration ([case_split_index_budget_no_unknown_query]) and reset to
+   configuration ([zero_unknown.case_split_index (Index_cases budget_ms)]) and reset to
    [None] with the other switches; process-wide, as [case_split_index_forms]
    is.  [None] asks the cases as the form is asked.
 
@@ -6469,13 +7515,44 @@ let piece_proved ?second_pass ?piece ?(lead = 0) ~ask forms =
   let on_timeout =
     if !lemma_after_form_timeout then Some lemma else None
   in
+  (* the forms already handed to [undecided_piece_prover] as they came back
+     undecided, compared physically: the last attempt does not ask one again *)
+  let handed = ref [] in
+  (* a budget cut or a refusal only: a countermodel of a form says nothing
+     of the piece (a form is a strengthening), and another solver could only
+     refute it too; and a form handed over once is not handed over again
+     (the second pass re-asks a deferred form) *)
+  let on_undecided form r =
+    let undecided = match r with `Timeout | `Unknown _ -> true | _ -> false in
+    match !undecided_piece_prover with
+    | Some prove
+      when undecided && !cvc5_on_undecided_form && last_attempt_allowed ()
+           && not (List.mem !handed form ~equal:phys_equal) ->
+        handed := form :: !handed;
+        incr undecided_form_asked;
+        !clause_trace
+          (lazy
+            (sprintf "undecided form (size %d) handed to the external prover"
+               (Formula.ast_size form)));
+        let proved = prove form in
+        if proved then incr undecided_form_proved;
+        !clause_trace
+          (lazy
+            (sprintf "undecided form: %s"
+               (if proved then "proved by the external prover"
+                else "still undecided")));
+        proved
+    | _ -> false
+  in
   let lead_forms, rest = List.split_n forms (max lead 0) in
   ((not (List.is_empty lead_forms))
    && Common.PhaseTime.with_phase "group-lead-forms" (fun () ->
-          first_proved_formula ?second_pass ~ask:ask_first lead_forms)
+          first_proved_formula ?second_pass ~on_undecided ~ask:ask_first
+            lead_forms)
    && (incr lead_forms_unasked_proved;
        true))
-  || first_proved_formula ?second_pass ?on_timeout ~ask:ask_first rest
+  || first_proved_formula ?second_pass ?on_timeout ~on_undecided ~ask:ask_first
+       rest
   || (!lemma_before_retry && lemma ())
   || (match !undecided_piece_prover with
      | None -> false
@@ -6484,6 +7561,7 @@ let piece_proved ?second_pass ?piece ?(lead = 0) ~ask forms =
          match best_built_form forms with
          | None -> false
          | Some form when proved_by_syntax form -> true
+         | Some form when List.mem !handed form ~equal:phys_equal -> false
          | Some form ->
              incr undecided_piece_asked;
              !clause_trace
@@ -7014,6 +8092,9 @@ module PieceGroups = struct
       [`Undecided] at the first piece that is not, as [prove_valid]'s
       per-piece loop.  [keep] is the clause's free variables. *)
   let prove ?second_pass ~ask ~keep ps =
+    (* one memo of the substitution search for the clause's pieces, whose
+       forms instantiate the same hypotheses over the same formulas *)
+    with_subs_memo @@ fun () ->
     (* each piece with the pieces before it, for [piece_forms]'s hypotheses *)
     let ps = List.mapi ps ~f:(fun k p -> (List.take ps k, p)) in
     (* with [replay_piece_names], the scope every piece's forms are listed
@@ -7861,11 +8942,42 @@ let word_ask_form ~ask c =
   then ask c
   else `Unknown "not a quantifier-free word question"
 
+(* Whether [word_piece_proved] skips a form whose question (after
+   [word_ask_form]'s one-point rule) is structurally equal to one it has
+   already asked for the same piece, answering it as not proved.  On a
+   quantifier-free piece no matched-instance form instantiates anything, so
+   the piece itself and its two- and one-round forms are one formula: a
+   bit-vector question no budget decides was asked three times under the full
+   budget (three 5 s asks of one formula, 15 of the question's 28 s).  Exact:
+   only a proof is read from [ask], an equal question asked again is the same
+   question, and the forms are tried in the same order otherwise; so the
+   outcome differs from the unskipped one only where the solver answers one
+   question differently on a second ask. *)
+let word_forms_skip_repeats = ref true
+
+(* how many repeated word questions [word_piece_proved] skipped, in this
+   process (read by the tests) *)
+let word_forms_repeats_skipped = ref 0
+
 (* whether one piece (not yet prepared) is proved through its words: the
    prepared piece itself, then its [word_forms], the first proved form
-   deciding *)
+   deciding; with [word_forms_skip_repeats], a form equal to one already asked
+   is not asked again *)
 let word_piece_proved ?two_rounds_first ~ask p =
   let p = Common.PhaseTime.with_phase "w-prepare" (fun () -> prepare_piece p) in
+  let asked = ref [] in
+  let same a b =
+    phys_equal a b || (try Stdlib.( = ) a b with Invalid_argument _ -> false)
+  in
+  let ask c =
+    if !word_forms_skip_repeats && List.exists !asked ~f:(same c) then (
+      incr word_forms_repeats_skipped;
+      Common.PhaseTime.with_phase "w-repeat-skipped" (fun () -> ());
+      `Unknown "asked before for this piece")
+    else (
+      asked := c :: !asked;
+      ask c)
+  in
   first_proved_formula ~ask:(word_ask_form ~ask)
     (lazy (Some p) :: word_forms ?two_rounds_first p)
 

@@ -230,6 +230,32 @@ let inters sets =
   in
   inner sets
 
+(* The solutions for [v] of [t = 0], for an affine integer term [t], at most
+   one.  [AffineTerm.extract_term] reads [v]'s coefficient from the first
+   subterm a bottom-up traversal meets, which is [v] itself even inside
+   [-1 * v] or [2 * v], so for any coefficient but 1 it returns a term that is
+   not a solution: [x := 1 - y] from [-1 + y - x = 0].  Here such a term is a
+   substitution for a functional predicate's result, i.e. the choice of that
+   predicate, and a wrong one made the termination problem unsolvable for a
+   minimal solution.  Each candidate and its negation is therefore
+   substituted back, and only a term making [t] simplify to [0] is
+   returned.  [AffineTerm.extract_term ~exact_coeff:true] returns only roots,
+   which would make this filter redundant; it is not used here so that this
+   module's answers do not change with that option's default. *)
+let affine_roots v t =
+  let open Ast.LogicOld in
+  let simplify = Evaluator.simplify_term >> Normalizer.normalize_term in
+  let is_root s =
+    Formula.is_true @@ Evaluator.simplify
+    @@ Formula.eq
+         (simplify @@ Term.subst (Map.Poly.singleton v s) t)
+         (T_int.zero ())
+  in
+  AffineTerm.extract_term (v, T_int.SInt) simplify t
+  |> Set.to_list
+  |> List.concat_map ~f:(fun s -> [ s; simplify (T_int.mk_neg s) ])
+  |> List.filter ~f:is_root |> Set.Poly.of_list
+
 let has v t = Set.mem (LogicOld.Term.tvs_of t) v
 
 let is v = function
@@ -290,17 +316,28 @@ let simple_get_eq_pair_with_dnf fnsols_senv v dnf check_flag phi0 =
             Stdlib.(v1 <> v)
             && (not @@ List.Assoc.mem ~equal:Stdlib.( = ) fnsols_senv v1))
       in
+      (* [v]'s sort in the question: the model is read at it, since a pooled
+         context can hold [v]'s name at another sort too *)
+      let v_sort =
+        Set.find_map (Formula.sort_env_of phi) ~f:(fun (x, s) ->
+            if Stdlib.(x = v) then Some s else None)
+      in
       let phi = Formula.mk_forall (Set.to_list bound) phi in
       Debug.print_log ~tag:"simple get eq pair" @@ lazy (Formula.str_of phi);
+      (* [phi] is universally closed here, so Z3 may not decide it: it is
+         asked within what is left of the run's armed budget, and not at all
+         when its shape is one Z3's budget does not hold over.  Undecided, no
+         pair is found, which only leaves [v] uneliminated. *)
       match
-        Z3Smt.Z3interface.check_sat ~id:(Atomic.get id) (get_fenv ()) [ phi ]
+        if Z3Smt.Z3interface.may_not_return phi then
+          `Unknown "a quantified sort Z3's budget does not hold over"
+        else
+          Z3Smt.Z3interface.check_sat
+            ~timeout:(Z3Smt.Z3interface.armed_budget_ms ())
+            ~id:(Atomic.get id) (get_fenv ()) [ phi ]
       with
       | `Sat models -> (
-          let models =
-            List.map models ~f:(fun ((v, _s), r) -> (v, r))
-            |> Map.Poly.of_alist_exn
-          in
-          match Map.Poly.find models v with
+          match Option.bind v_sort ~f:(fun s -> model_find models (v, s)) with
           | Some (Some ret) ->
               if false (*ToDo*) && Stdlib.(`NeedCheck = check_flag) then
                 if is_elimable_pair fnsols_senv phi0 (v, ret) then
@@ -381,12 +418,7 @@ let complex_get_eq_pair v args atms exi_senv fnsols_senv check_flag phi0 =
                     else None
                 | Atom.App (Predicate.Psym (T_bool.Eq | T_int.Geq), [ t1; _ ], _)
                   when AffineTerm.is_affine t1 && has v t1 && useable t1 -> (
-                    match
-                      Set.choose
-                      @@ AffineTerm.extract_term (v, T_int.SInt)
-                           (Evaluator.simplify_term >> Normalizer.normalize_term)
-                           t1
-                    with
+                    match Set.choose @@ affine_roots v t1 with
                     | Some t1'
                       when is_elimable_pair fnsols_senv check_is_elimable_phi
                              (v, t1') ->
@@ -450,12 +482,7 @@ let qe_subst_of v args exi_senv uni_senv fnsols_senv pure_phi phi0 =
               else None
           | Atom.App (Predicate.Psym T_bool.Eq, [ t1; _ ], _)
             when AffineTerm.is_affine t1 && has v t1 && useable t1 -> (
-              match
-                Set.choose
-                @@ AffineTerm.extract_term (v, T_int.SInt)
-                     (Evaluator.simplify_term >> Normalizer.normalize_term)
-                     t1
-              with
+              match Set.choose @@ affine_roots v t1 with
               | Some t -> Some (v, t)
               | _ -> None)
           | _ -> None))
@@ -497,12 +524,7 @@ let merge_eqs_with v args exi_senv uni_senv pure_phi phi_map =
             | Atom.App (Predicate.Psym T_bool.Eq, [ t1; _ ], _)
               when (Term.is_int_sort @@ Term.sort_of t1)
                    && Set.length (Term.tvs_of t1) > 2 -> (
-                match
-                  Set.choose
-                  @@ AffineTerm.extract_term (v1, T_int.SInt)
-                       (Evaluator.simplify_term >> Normalizer.normalize_term)
-                       t1
-                with
+                match Set.choose @@ affine_roots v1 t1 with
                 | Some affine
                   when Evaluator.is_valid
                          (Z3Smt.Z3interface.is_valid ~id:(Atomic.get id)
@@ -527,12 +549,7 @@ let merge_eqs_with v args exi_senv uni_senv pure_phi phi_map =
             | Atom.App (Predicate.Psym T_bool.Eq, [ t1; _ ], _)
               when has v t1 && AffineTerm.is_affine t1
                    && Set.length (Term.tvs_of t1) > 2 -> (
-                match
-                  Set.choose
-                  @@ AffineTerm.extract_term (v, T_int.SInt)
-                       (Evaluator.simplify_term >> Normalizer.normalize_term)
-                       t1
-                with
+                match Set.choose @@ affine_roots v t1 with
                 | Some affine ->
                     let pairs = search_eq_pairs ps affine in
                     Set.union pairs

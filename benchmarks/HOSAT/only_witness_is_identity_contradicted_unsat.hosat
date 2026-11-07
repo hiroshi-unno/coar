@@ -1,0 +1,2 @@
+(* the identity is the only function with f(true) and not f(false), and it fails f(false) *)
+_exists f : bool -> bool. (f(|true|) && not (f(|false|)) && f(|false|))

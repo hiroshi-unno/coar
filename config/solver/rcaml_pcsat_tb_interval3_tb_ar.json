@@ -5,7 +5,7 @@
             "Filename",
             "./config/solver/pcsat_tb.json"
         ],
-        "optimizer": [
+        "chc_optimizer": [
             "Filename",
             "./config/solver/optpcsat_nc_tb_interval3_tb_ar.json"
         ],

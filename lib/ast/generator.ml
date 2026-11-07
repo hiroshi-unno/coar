@@ -170,12 +170,26 @@ let lb_and_ub vertex rvar ephi t1 t2 =
   let e = List.map e ~f:(fun ((s1, _), (s2, _)) -> (s1, s2)) in
   (vertex, e)
 
+(* A real draw [Uniform(t1, t2)] whose bounds at the model leave an interval
+   of width zero or less.  Width zero is the point mass at [t1] (the measure
+   [Uniform(t1, t2)] tends to as [t2] tends to [t1]), not probability 0: the
+   propositional checks of the exact solver read the bounds constraint
+   [t1 <= y <= t2] as that point, so measuring the slice as 0 would make the
+   two readings disagree.  The interval lists built here drop the strictness
+   of their end points, which a point mass on an end point needs, so the
+   functions below refuse such a model instead of measuring it; a negative
+   width is no distribution at all.  Callers answer [unknown].  The exact
+   solver replaces equal constant bounds by a substitution and refuses
+   bounds that mention a variable before measuring, so this is a guard on
+   its contract, not a path it takes. *)
+exception Degenerate_real_support
+
 let compute_real_sub (model, glb, lub) t1 t2 =
   let r1 = Value.real_of @@ Evaluator.eval_term @@ Term.subst model t1 in
   let r2 = Value.real_of @@ Evaluator.eval_term @@ Term.subst model t2 in
-  let rlb, rub = if Q.(r1 < r2) then (r1, r2) else (r2, r1) in
-  if Q.(rlb = rub) then Q.zero
+  if Q.(r1 >= r2) then raise Degenerate_real_support
   else
+    let rlb, rub = (r1, r2) in
     let glb =
       match Set.nth glb 0 with
       | None -> assert false
@@ -188,6 +202,9 @@ let compute_real_sub (model, glb, lub) t1 t2 =
       | Some term ->
           Value.real_of @@ Evaluator.eval_term @@ Term.subst model term
     in
+    (* an empty event subinterval, or one of width zero (by the division
+       below), has probability 0 under the density [1 / (rub - rlb)]; only a
+       support of width zero is refused above *)
     if Q.(glb > lub) then Q.zero
     else
       let _ = 1 in
@@ -222,7 +239,10 @@ let find_same e =
               | Some l ->
                   let lb = Set.inter lb lb' in
                   let ub = Set.inter ub ub' in
-                  Some ((lb, ub) :: l)
+                  (* Both endpoint witnesses must survive. Equal interval
+                     counts alone do not supply a shared affine boundary. *)
+                  if Set.is_empty lb || Set.is_empty ub then None
+                  else Some ((lb, ub) :: l)
               | None -> None)
         in
         match op with Some l -> Some (vt, l) | None -> None
@@ -264,10 +284,10 @@ let mk_numterm (model, e) =
 let mk_denterm model t1 t2 =
   let r1 = Value.real_of @@ Evaluator.eval_term @@ Term.subst model t1 in
   let r2 = Value.real_of @@ Evaluator.eval_term @@ Term.subst model t2 in
-  if Q.(r1 = r2) then assert false
-  else
-    let t, t' = if Q.(r1 > r2) then (t1, t2) else (t2, t1) in
-    Normalizer.normalize_term @@ T_real.mk_rsub t t'
+  (* the support's width [t2 - t1]; refused where it is not positive, as in
+     [compute_real_sub] *)
+  if Q.(r1 >= r2) then raise Degenerate_real_support
+  else Normalizer.normalize_term @@ T_real.mk_rsub t2 t1
 
 let mk_newterm num den theta =
   let th = T_real.mk_real theta in
@@ -303,9 +323,9 @@ let mk_rayvertex vt ray =
   ((vertex, e), mk_raytv vertex ray)
 
 let number_of_int r1 r2 =
-  let lb = Float.iround_up_exn (Q.to_float r1) in
-  let ub = Float.iround_down_exn (Q.to_float r2) in
-  Z.of_int (ub - lb + 1)
+  let lb = Z.cdiv (Q.num r1) (Q.den r1) in
+  let ub = Z.fdiv (Q.num r2) (Q.den r2) in
+  Z.succ (Z.sub ub lb)
 
 let compute_int_sub (model, glb, lub) t1 t2 =
   let r1 = Value.real_of @@ Evaluator.eval_term @@ Term.subst model t1 in
@@ -333,40 +353,34 @@ let compute_int (model, e) t1 t2 =
   List.fold e ~init:Q.zero ~f:(fun p (glb, lub) ->
       Q.(p + compute_int_sub (model, glb, lub) t1 t2))
 
-let mk_int_numterm (model, e) =
-  let terms =
-    List.map e ~f:(fun (lb, ub) ->
-        let lbterm, glb =
-          Set.fold lb
-            ~init:(T_real.rzero (), Q.minus_inf)
-            ~f:(fun (t, m) term ->
-              let r =
-                Value.real_of @@ Evaluator.eval_term @@ Term.subst model term
-              in
-              if Q.(r >= m) then (term, r) else (t, m))
-        in
-        let ubterm, lub =
-          Set.fold ub
-            ~init:(T_real.rzero (), Q.inf)
-            ~f:(fun (t, m) term ->
-              let r =
-                Value.real_of @@ Evaluator.eval_term @@ Term.subst model term
-              in
-              if Q.(r <= m) then (term, r) else (t, m))
-        in
-        let num = number_of_int glb lub in
-        if Z.Compare.(num < Z.zero) then T_real.rzero ()
-        else T_real.mk_rsub ubterm lbterm)
-  in
-  Normalizer.normalize_term @@ T_real.mk_rsum (T_real.rzero ()) terms
+(* Lattice cardinality is generally a staircase, not an affine expression.
+   Only constant endpoint expressions have a region-independent count here. *)
+exception Integer_probability_interpolation_unsupported
 
-let mk_int_denterm model t1 t2 =
-  let r1 = Value.real_of @@ Evaluator.eval_term @@ Term.subst model t1 in
-  let r2 = Value.real_of @@ Evaluator.eval_term @@ Term.subst model t2 in
-  let t, t' = if Q.(r1 > r2) then (t1, t2) else (t2, t1) in
-  let term =
-    Normalizer.normalize_term
-    @@ T_real.mk_radd (T_real.mk_rsub t t') (T_real.rone ())
+let constant_integer_endpoint term =
+  if not (Set.is_empty (Term.tvs_of term)) then
+    raise Integer_probability_interpolation_unsupported;
+  Value.real_of (Evaluator.eval_term term)
+
+let mk_int_numterm (_model, e) =
+  let count =
+    List.fold e ~init:Z.zero ~f:(fun total (lb, ub) ->
+        if Set.is_empty lb || Set.is_empty ub then
+          raise Integer_probability_interpolation_unsupported;
+        let lower =
+          Set.fold lb ~init:Q.minus_inf ~f:(fun acc t ->
+              Q.max acc (constant_integer_endpoint t))
+        in
+        let upper =
+          Set.fold ub ~init:Q.inf ~f:(fun acc t ->
+              Q.min acc (constant_integer_endpoint t))
+        in
+        Z.add total (Z.max Z.zero (number_of_int lower upper)))
   in
-  if false then print_endline ("den term is " ^ Term.str_of term);
-  term
+  T_real.mk_real (Q.of_bigint count)
+
+let mk_int_denterm _model t1 t2 =
+  let r1 = constant_integer_endpoint t1 in
+  let r2 = constant_integer_endpoint t2 in
+  let lower, upper = if Q.leq r1 r2 then (r1, r2) else (r2, r1) in
+  T_real.mk_real (Q.of_bigint (number_of_int lower upper))

@@ -1,18 +1,4 @@
-pkill -9 main
-sleep 0.1
-echo "call tb ar nu parallel:"
-./script/popl2023mod/muval_parallel_nu_tb_ar.sh >./popl2023mod_parallel_nu_tb_ar_$1.csv
-pkill -9 main
-sleep 0.1
-echo "call tb nu parallel:"
-./script/popl2023mod/muval_parallel_nu_tb.sh >./popl2023mod_parallel_nu_tb_$1.csv
-pkill -9 main
-sleep 0.1
-echo "call tb ar nu script:"
-./script/popl2023mod/muval_script_nu_tb_ar.sh >./popl2023mod_script_nu_tb_ar_$1.csv
-pkill -9 main
-sleep 0.1
-echo "call tb nu script:"
-./script/popl2023mod/muval_script_nu_tb.sh >./popl2023mod_script_nu_tb_$1.csv
-pkill -9 main
-sleep 0.1
+# The run of this corpus at MuVal's default configuration (since 2026-10-31 the old fixed
+# configurations this script compared all run the default, so they are one run).
+echo "call muval (default configuration):"
+./script/popl2023mod/muval_600.sh >./popl2023mod_muval_600_$1.csv

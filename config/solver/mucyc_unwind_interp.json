@@ -1,0 +1,31 @@
+[
+    "MuCyc",
+    {
+        "pcsp_solver": [
+            "Filename",
+            "./config/solver/spacer_sol.json"
+        ],
+        "refinement_strategy": [
+            "Solve"
+        ],
+        "expansion_solver": [
+            "Interpolation",
+            [
+                "Single_refutation"
+            ],
+            [
+                [
+                    "Farkas_lia"
+                ],
+                [
+                    "Farkas_lra"
+                ],
+                [
+                    "Spacer_chc"
+                ]
+            ]
+        ],
+        "report_counterexample": true,
+        "enable_pvar_elim": false
+    }
+]

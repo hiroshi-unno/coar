@@ -2,12 +2,13 @@
  (name PCSat)
  (public_name CoAR.PCSat)
  (preprocess
-  (pps ppx_deriving_yojson))
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
  (libraries
   CoAR.pCSP
   CoAR.SMT
   CoAR.PCSat.template
   CoAR.PCSat.coordination
-  CoAR.PCSat.preprocessing)
+  CoAR.preprocessing
+  CoAR.houdini)
  (modules config solPrinter witnessChecker solver)
  (synopsis "A CHC/pfwnCSP/SyGuS solver based on CEGIS"))

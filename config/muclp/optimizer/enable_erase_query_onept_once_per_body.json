@@ -1,0 +1,1 @@
+{"quantifier_erasure":["Erase",{"keep_query_binder":false}],"inline_cycle_passthrough":["Fix_passthrough_once_per_body"],"one_point_quantifiers":true}

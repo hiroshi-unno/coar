@@ -538,6 +538,7 @@ module Make (Config : Config.ConfigType) :
           sigma = (* dummy *) Map.Poly.empty;
           trunc = (* dummy *) Fn.id;
           acc_set = (* dummy *) Set.Poly.empty;
+          priority_switch = None;
         }
       in
       List.iter idxs ~f:(fun (key, (_, data, _)) ->
@@ -608,8 +609,10 @@ module Make (Config : Config.ConfigType) :
         @@ PCSP.Problem.formulas_of
         @@ PCSP.Problem.of_clauses ~params clauses
       in
+      (* [maximality_keeps_tseitin_preds]: the Tseitin predicates are kept
+         from elimination; off, nothing is *)
       let bpvs =
-        if true then Set.Poly.empty
+        if not config.maximality_keeps_tseitin_preds then Set.Poly.empty
         else Set.filter ~f:OptimalityChecker.is_ptseitin @@ Map.key_set exi_senv
       in
       (* Solver.reset (); *)

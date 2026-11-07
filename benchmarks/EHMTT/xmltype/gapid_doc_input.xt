@@ -1,0 +1,7 @@
+type Doc      = doc[Preface, (Div|P|Note)*]
+type Preface  = preface[Header, P*]
+type Header   = header[A*]
+type P        = p[A*]
+type Div      = div[(Div|P|Note|A)*]
+type Note     = note[(P|A)*]
+type A        = a[A*]

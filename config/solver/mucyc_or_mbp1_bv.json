@@ -15,6 +15,9 @@
                 "Or"
             ]
         ],
-        "name_subterms_in_projection": true
+        "projection_lets": [
+            "Name_subterms",
+            {}
+        ]
     }
 ]

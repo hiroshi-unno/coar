@@ -8,7 +8,7 @@
  (name pCSP)
  (public_name CoAR.pCSP)
  (preprocess
-  (pps ppx_deriving_yojson))
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
  (libraries
   core
   camlzip

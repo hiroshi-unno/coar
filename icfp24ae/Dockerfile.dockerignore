@@ -1,7 +1,8 @@
 # Context filter for `docker build -f icfp24ae/Dockerfile ..`, read by BuildKit in
 # preference to the repository's root `.dockerignore`, which it REPLACES rather
 # than extends -- so this file repeats the root's entries and leaves out only
-# `icfp24ae` itself.  Without it, the root file removes `icfp24ae` from the context and the
+# `icfp24ae` itself, re-admitting the three files under `script/` that `run.sh`
+# runs.  Without it, the root file removes `icfp24ae` from the context and the
 # image is built without the experiment scripts this package's README tells the
 # reader to run; the build succeeds anyway, which is how that went unnoticed for
 # a year.  Requires BuildKit (the default since Docker 23.0); under the classic
@@ -21,3 +22,8 @@ cav26ae
 script/starexec
 learner
 script
+
+# what run.sh runs (the root file excludes all of script/)
+!script/run_corpus.sh
+!script/bench_runs.txt
+!script/run_bench.sh

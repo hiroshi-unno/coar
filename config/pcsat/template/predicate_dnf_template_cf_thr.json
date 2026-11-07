@@ -1,4 +1,10 @@
 {
-    "threshold_const": 3,
+    "bounds": {
+        "atom": {
+            "const": {
+                "unbounded_above": 3
+            }
+        }
+    },
     "disj_first": false
 }

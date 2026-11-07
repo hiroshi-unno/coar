@@ -1,0 +1,5 @@
+X 5.0 >= 0.25
+s.t.
+X (x : real) : real =mu
+  if x >= 0.0 then unif r. (if x >= 10.0 then 0.0 else X (x + r * 3.0 - 2.0))
+  else 1.0;

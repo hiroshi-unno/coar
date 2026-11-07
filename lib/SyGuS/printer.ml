@@ -1,5 +1,5 @@
 (* Printing of answers in the SyGuS output format: a solution as one
-   [define-fun] per synthesised predicate (simplified first, with
+   [define-fun] per synthesised function (simplified first, with
    disequalities expanded since the format has none), and the [fail] or
    [infeasible] lines that the selected version of the format uses for an
    unsatisfiable or undecided problem. *)
@@ -11,6 +11,16 @@ open Ast.LogicOld
 type mode = SyGuS_IF1 | SyGuS_IF2
 
 let mode = SyGuS_IF1
+
+(* The functions a SyGuS input asks for -- each [synth-fun] and [synth-inv]
+   with its declared sort.  The solution a solver returns is a map over the
+   predicates of the problem it finally solved, which after preprocessing
+   includes auxiliaries the input never declared (a copy of a predicate with
+   its constant arguments dropped, for one); the SyGuS answer must define
+   exactly the requested functions, so the answer printer is given this
+   signature with the solution, and needs each one's return sort to know
+   whether its body is a formula or a term. *)
+type signature = (Ident.tvar, Logic.Sort.t) Map.Poly.t
 
 let rec str_of_sort = function
   | T_int.SInt -> "Int"
@@ -95,12 +105,20 @@ and str_of_term = function
   | Term.FunApp (T_array.AConst (index, value), [ default ], _) ->
       sprintf "((as const %s) %s)" (str_of_sort (T_array.SArray (index, value)))
         (str_of_term default)
+  | Term.FunApp (T_int.Case _, _, _) ->
+      (* a template's choice between branches by a selector the solver
+         instantiates to a constant; [str_of_definition] resolves it first,
+         so one reaching this point has a selector that is not a constant in
+         range, where the template leaves the value unspecified and no SMT-LIB
+         term means the same *)
+      failwith "[SyGuS printing] a case selection with an unresolved selector"
   | Term.FunApp (op, [ t1; t2 ], _) ->
       sprintf "(%s %s %s)" (str_of_funsym op) (str_of_term t1) (str_of_term t2)
   | Term.FunApp (T_int.Neg, [ t ], _) -> (
       match mode with
       | SyGuS_IF1 -> sprintf "(- 0 %s)" (str_of_term t)
       | SyGuS_IF2 -> sprintf "(- %s)" (str_of_term t))
+  | Term.FunApp (T_int.Abs, [ t ], _) -> sprintf "(abs %s)" (str_of_term t)
   | _ -> failwith "unknown function application"
 
 and str_of_funsym = function
@@ -129,17 +147,43 @@ and str_of_psym = function
      message is about was dropped *)
   | psym -> failwith @@ "unknown pred symbol " ^ Predicate.str_of_psym psym
 
+(* A definition's body as the printer takes it: a predicate's is a formula,
+   any other function's a term of the given return sort. *)
+type body = Pred of Formula.t | Fun of Sort.t * Term.t
+
+(* [str_of_definition (f, params, body)] is the [define-fun] of [f].
+   Assumes that [body] mentions no variable outside [params] and applies no
+   predicate or function variable; the caller checks it.  Both kinds of body
+   are simplified before printing, and disequalities expanded (the format has
+   none).  A function's body is simplified by [Evaluator.simplify_term], and
+   that is what resolves a template's case selection exactly: a [Case] whose
+   selector is an integer constant in range becomes the branch it selects,
+   and one whose branches are all equal becomes that branch, each equal to
+   the original wherever the original is defined; any other [Case] makes
+   [str_of_term] raise, so nothing is printed for it. *)
+let str_of_definition (Ident.Tvar ident, params, body) =
+  match body with
+  | Pred formula ->
+      sprintf "(define-fun %s (%s) Bool %s)" (str_of_ident ident)
+        (str_of_params params)
+      @@ str_of_formula @@ Formula.elim_neq
+      (* T_bool.Neq is not supported by SyGuS-IF *)
+      @@ Z3Smt.Z3interface.simplify ~id:None Map.Poly.empty
+      (* TODO *) @@ Evaluator.simplify formula
+  | Fun (sort, term) ->
+      sprintf "(define-fun %s (%s) %s %s)" (str_of_ident ident)
+        (str_of_params params) (str_of_sort sort)
+      @@ str_of_term @@ Term.elim_neq @@ Evaluator.simplify_term term
+
+let str_of_definitions defs =
+  String.concat_map_list ~sep:"\n" defs ~f:str_of_definition
+
 let str_of_solution (params, sol) =
   if Fn.non Map.Poly.is_empty params && Set.is_empty sol then assert false
   else
     String.concat_map_set ~sep:"\n" sol
       ~f:(fun (Ident.Pvar ident, (params, formula)) ->
-        sprintf "(define-fun %s (%s) Bool %s)" (str_of_ident ident)
-          (str_of_params params)
-        @@ str_of_formula @@ Formula.elim_neq
-        (* T_bool.Neq is not supported by SyGuS-IF *)
-        @@ Z3Smt.Z3interface.simplify ~id:None Map.Poly.empty
-        (* TODO *) @@ Evaluator.simplify formula)
+        str_of_definition (Ident.Tvar ident, params, Pred formula))
 
 let str_of_unsat () =
   match mode with SyGuS_IF1 -> "(fail)" | SyGuS_IF2 -> "infeasible"

@@ -1,5 +1,5 @@
 {
-  "strategy": [
+  "synthesizer": [
     "Template",
     {
       "verbose": true,
@@ -8,7 +8,9 @@
           "UnsatCore"
         ],
         "compute_ucores": true,
-        "reduce_quals_terms": true,
+        "learning": {
+          "reduce_quals_terms": true
+        },
         "learn_quals_from_ucores": false,
         "qualifier_generator": [
           "Filename",

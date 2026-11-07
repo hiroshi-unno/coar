@@ -49,9 +49,47 @@
   let varname_of_cond_assign stmt =
     let varname, t = Statement.let_assign stmt in
     (varname, sort_of_c t)
+
+  (* [varname = term;]: a nondeterministic draw is bounded by the width of its
+     C type; anything else is an ordinary assignment *)
+  let assign_of_c varname term =
+    match type_of_nondet term with
+    | Some (T_int.SInt, bits, signed) ->
+      Statement.mk_compound
+        (Statement.mk_nondet_int_assign varname)
+        (Statement.mk_assume (nondet_range varname bits signed))
+    | Some (T_real.SReal, _(*32*), _(*true*)) ->
+      Statement.mk_nondet_real_assign varname (*ToDo*)
+    | Some (s, _, _) -> failwith (sprintf "%s not supported in assign" (Term.str_of_sort s))
+    | None -> Statement.mk_assign varname term
+
+  (* the variables a block declares in its own scope, not in nested ones *)
+  let rec top_level_vardecls stmt =
+    if Statement.is_vardecl stmt then [ fst (Statement.let_vardecl stmt) ]
+    else if Statement.is_compound stmt then
+      let stmt1, stmt2 = Statement.let_compound stmt in
+      top_level_vardecls stmt1 @ top_level_vardecls stmt2
+    else []
+
+  (* a loop body followed by [rest] (a [for] loop's updates, a [do] loop's
+     test), with the body's [continue]s jumping to the point between the two:
+     C's [continue] skips the rest of the body, not the update or the test *)
+  let body_then rest body =
+    let body, cont = Statement.close_continue body in
+    Statement.of_statements ((body :: Option.to_list cont) @ rest)
+
+  let switch_temps = ref 0
+
+  (* [x++] and [x--] as a [for] loop's update *)
+  let step_by varname up =
+    let var = Term.mk_var (Ident.Tvar varname) T_int.SInt ~info:Dummy in
+    Statement.mk_assign varname
+      (if up then T_int.mk_add var (T_int.one ()) ~info:Dummy
+       else T_int.mk_sub var (T_int.one ()) ~info:Dummy)
 %}
 
-%token IF ELSE DO WHILE WHILE_TRUE FOR BREAK RETURN GOTO
+%token IF ELSE DO WHILE WHILE_TRUE FOR BREAK CONTINUE RETURN GOTO
+%token SWITCH CASE DEFAULT
 %token LPAREN RPAREN LBLOCK RBLOCK EOF
 %token EQUAL
 %token NOT AND OR IMPLY
@@ -74,7 +112,7 @@
 %token <string> STRINGL
 
 %start toplevel
-%type <CSyntax.cltl * CSyntax.Define.t list * CSyntax.FunDecl.t list> toplevel
+%type <CSyntax.cltl * string list * CSyntax.Define.t list * CSyntax.FunDecl.t list> toplevel
 %%
 
 toplevel:
@@ -82,8 +120,44 @@ toplevel:
     match d Map.Poly.empty(*ToDo*) with
     | _, (None, _, _, _, _, _) -> raise (SemanticError "function ltl formula is not declared")
     | _, (_, _, _, None, _, _) -> raise (SemanticError "function main is not declared")
-    | senv, (Some phi, decls, init, Some body, defs, fundecls) ->
-      (phi senv, decls, init, body), defs, fundecls
+    | senv, (Some phi, decls, init, Some (body, main_locals), defs, fundecls) ->
+      (* the property's terms are sorted by the variable each name means *)
+      let phi =
+        phi
+          (List.fold main_locals ~init:senv ~f:(fun senv (name, sort) ->
+               if Map.Poly.mem senv name then senv
+               else Map.Poly.set senv ~key:name ~data:sort))
+      in
+      (* A property names a variable that has a value in every state of the
+         run: a global, or a local declared in main's outermost block, which
+         lives from main's entry to its exit -- the run itself.  A global wins
+         over a main local of the same name: the property is written at file
+         scope, where the global is the one visible, and so every property
+         naming a global keeps the meaning it had before main's locals could
+         be named.  Any other name (a nested block's local, a callee's local or
+         parameter, a typo) is refused: it is no single variable of the whole
+         run, and an unassigned name was read as an arbitrary constant, so
+         `[](i == 0)` over a local `int i = 0` came out invalid.
+         Requires: senv holds every global, those declared with a type and
+         those declared by a typeless file-scope assignment (implicit int);
+         main_locals holds exactly the names main's outermost block declares,
+         each with its sort.
+         Ensures: the names returned are the property's free variables that
+         are main locals and not globals, for the caller to bind each to the
+         variable that local is renamed to. *)
+      let property_locals =
+        Variables.to_list (Ltl.get_fv phi)
+        |> List.filter_map ~f:(fun (name, _) ->
+            if Map.Poly.mem senv name then None
+            else if List.Assoc.mem main_locals name ~equal:String.equal then Some name
+            else
+              raise (SemanticError
+                (sprintf "the property names %s, which is neither a global \
+                          variable nor a local declared in main's outermost \
+                          block: not supported" name)))
+        |> List.dedup_and_sort ~compare:String.compare
+      in
+      (phi, decls, init, body), property_locals, defs, fundecls
   }
 
 /* Functions and Variables Declarations */
@@ -112,8 +186,10 @@ Decls:
 Decl:
   /* ignore: extern void __VERIFIER_error(); */
   | EXTERN VOID ERROR LPAREN RPAREN Attributes SEMI
-  /* ignore: extern void __VERIFIER_assume(); */
-  | EXTERN VOID ASSUME LPAREN RPAREN Attributes SEMI
+  /* ignore: extern void __VERIFIER_assume(); and its prototype form extern void __VERIFIER_assume(int);
+     (the SV-COMP declaration, with or without a parameter name).  The declaration is ignored either way:
+     a call of __VERIFIER_assume is recognised by its name, so the parameter list carries nothing. */
+  | EXTERN VOID ASSUME LPAREN AssumeParameter RPAREN Attributes SEMI
   /* ignore: extern int __VERIFIER_nondet_bool(); */
   | EXTERN INT NONDET_BOOL LPAREN RPAREN Attributes SEMI
   /* ignore: extern char __VERIFIER_nondet_char(); */
@@ -153,15 +229,23 @@ Decl:
        List.map decls ~f:(function Declare.INT s -> s, T_int.SInt | Declare.REAL s -> s, T_real.SReal)),
     (None, decls, inits, None, [], [])
   }
-  /* p = 0; */
+  /* p = 0; -- with no type this is C89's implicit-int declaration of a global p, so p
+     enters the file-scope environment as an int and a property may name it */
   | inits=Init { fun senv ->
-    senv, (None, [], inits senv, None, [], []) }
+    let varnames, inits = inits senv in
+    let senv =
+      List.fold varnames ~init:senv ~f:(fun senv v ->
+          if Map.Poly.mem senv v then senv else Map.Poly.set senv ~key:v ~data:T_int.SInt)
+    in
+    senv, (None, [], inits, None, [], []) }
   /* void main() { ... } */
-  | VOID MAIN LPAREN VOID? RPAREN LBLOCK stmts=Statements RBLOCK { fun senv ->
-    senv, (None, [], [], Some (Statement.of_statements (snd @@ stmts senv)), [], []) }
+  | VOID MAIN LPAREN VOID? RPAREN LBLOCK stmts=MainStatements RBLOCK { fun senv ->
+    let _, stmts, locals = stmts senv in
+    senv, (None, [], [], Some (Statement.of_statements stmts, locals), [], []) }
   /* int main() { ... } */
-  | Int MAIN LPAREN VOID? RPAREN LBLOCK stmts=Statements RBLOCK { fun senv ->
-    senv, (None, [], [], Some (Statement.of_statements (snd @@ stmts senv)), [], []) }
+  | Int MAIN LPAREN VOID? RPAREN LBLOCK stmts=MainStatements RBLOCK { fun senv ->
+    let _, stmts, locals = stmts senv in
+    senv, (None, [], [], Some (Statement.of_statements stmts, locals), [], []) }
   /* void f(int a, int *b) { ... } */
   | VOID funname=ID LPAREN params=Parameters RPAREN LBLOCK stmts=Statements RBLOCK {
     fun senv ->
@@ -186,7 +270,14 @@ Decl:
        [FunDecl.mk_fun_real funname params (Statement.of_statements (snd @@ stmts senv))])
   }
 
-Int: CHAR | SHORT | INT | LONG | LONG LONG { () }
+/* the width of a narrow integer type; [None] for the int-ranked ones */
+IntWidth:
+  | CHAR { Some 8 }
+  | SHORT { Some 16 }
+  | INT | LONG | LONG LONG { None }
+
+/* the type of a declaration, a parameter or a function's result */
+Int: n=IntWidth { refuse_narrow_decl n }
 
 /* int a, b, c = 0; */
 VarDecl:
@@ -219,6 +310,11 @@ VarDeclIntType:
   | STATIC CONST Int
   | STATIC VOLATILE Int
   | STATIC VOID { () }
+
+/* The parameter list of an ignored __VERIFIER_assume declaration: empty, int, or int with a name. */
+AssumeParameter:
+  | { () }
+  | INT ID? { () }
 
 Attributes:
   | { () }
@@ -254,14 +350,13 @@ Type:
   | FLOAT | DOUBLE { T_real.SReal }
   | FLOAT ASTERISK | DOUBLE ASTERISK { failwith "pointer to float or double is not supported" }
 
-/* CAG( CAP(x > 1) ) */
+/* CAG( CAP(x > 1) )
+   Precedence, loosest first, as in Ultimate's grammar for these properties
+   (the `ltlexpr` rule of its ACSL parser): ==> (right), ||, &&, then the
+   binary temporal operators U, R, WU (left), then the prefix operators
+   [], <>, X, !.  So `a ==> b U c` is `a ==> (b U c)` and `a && b U c` is
+   `a && (b U c)`; the binary temporal operators used to be the loosest. */
 Phi:
-  | phi=PhiUntil { phi }
-
-PhiUntil:
-  | phi1=PhiImp U phi2=PhiUntil { fun senv -> Ltl.mk_u (phi1 senv) (phi2 senv) }
-  | phi1=PhiImp R phi2=PhiUntil { fun senv -> Ltl.mk_r (phi1 senv) (phi2 senv) }
-  | phi1=PhiImp WU phi2=PhiUntil { fun senv -> Ltl.mk_wu (phi1 senv) (phi2 senv) }
   | phi=PhiImp { phi }
 
 PhiImp:
@@ -273,7 +368,13 @@ PhiOr:
   | phi=PhiAnd { phi }
 
 PhiAnd:
-  | phi1=PhiUnary AND phi2=PhiAnd { fun senv -> Ltl.mk_and (phi1 senv) (phi2 senv) }
+  | phi1=PhiUntil AND phi2=PhiAnd { fun senv -> Ltl.mk_and (phi1 senv) (phi2 senv) }
+  | phi=PhiUntil { phi }
+
+PhiUntil:
+  | phi1=PhiUntil U phi2=PhiUnary { fun senv -> Ltl.mk_u (phi1 senv) (phi2 senv) }
+  | phi1=PhiUntil R phi2=PhiUnary { fun senv -> Ltl.mk_r (phi1 senv) (phi2 senv) }
+  | phi1=PhiUntil WU phi2=PhiUnary { fun senv -> Ltl.mk_wu (phi1 senv) (phi2 senv) }
   | phi=PhiUnary { phi }
 
 PhiUnary:
@@ -288,13 +389,18 @@ PhiAtom:
   | LPAREN phi=Phi RPAREN { phi }
 
 /* Init */
+/* the variables assigned, and the initial-state assignments */
 Init:
   | init=InitOne SEMI { init }
-  | init=InitOne COMMA inits=Init { fun senv -> init senv @ inits senv }
+  | init=InitOne COMMA inits=Init { fun senv ->
+    let vs1, init = init senv in
+    let vs2, inits = inits senv in
+    vs1 @ vs2, init @ inits }
 
 InitOne:
   | data=MultipleAssignInit { fun senv ->
     let varnames, term = data senv in
+    varnames,
     match type_of_nondet term with
     | Some (T_int.SInt, bits, signed) ->
       assert (List.length varnames <= 1);
@@ -325,6 +431,41 @@ Statements:
     let senv, stmt = stmt senv in
     let senv, stmts = stmts senv in
     senv, stmt :: stmts }
+
+/* the body of a switch: its case labels and statements, in order */
+SwitchItems:
+  | { fun _ -> [] }
+  | CASE c=CaseValue COLON items=SwitchItems { fun senv ->
+    Statement.Case c :: items senv }
+  | DEFAULT COLON items=SwitchItems { fun senv -> Statement.Default :: items senv }
+  | stmt=Statement items=SwitchItems { fun senv ->
+    let senv, stmt = stmt senv in
+    Statement.Stmt stmt :: items senv }
+
+CaseValue:
+  | n=INTL { T_int.from_int n ~info:Dummy }
+  | MINUS n=INTL { T_int.from_int (-n) ~info:Dummy }
+
+/* main's body: its statements, and the names its outermost block declares
+   with their sorts.
+   A statement declares exactly when it returns an environment other than the
+   one it was given -- every rule of Statement returns its argument itself
+   unless it is a declaration, and a declaration's statement begins with the
+   declarations of exactly the names it declares.  The statement's shape alone
+   cannot tell: a bare block that redeclares nothing is flattened into the same
+   sequence a declaration is, and its locals end with the block. */
+MainStatements:
+  | { fun senv -> senv, [], [] }
+  | stmt=Statement stmts=MainStatements { fun senv ->
+    let senv', stmt = stmt senv in
+    let declared =
+      if phys_equal senv senv' then []
+      else
+        List.map (top_level_vardecls stmt) ~f:(fun name ->
+            name, Map.Poly.find_exn senv' name)
+    in
+    let senv, stmts, locals = stmts senv' in
+    senv, stmt :: stmts, declared @ locals }
 
 Statement:
   | stmt=StatementGeneral { stmt }
@@ -369,40 +510,45 @@ FormulaAssignOne:
   | stmt=ForInitOne { stmt }
   | LPAREN stmt=FormulaAssignOne RPAREN { stmt }
 
+/* A loop body's [continue]s jump to the point C gives them -- the end of the
+   body, before a [for] loop's update and a [do] loop's test -- which
+   [body_then] places; each loop closes its own, its nested loops having
+   closed theirs.  [continue] used to be read as an expression statement
+   naming a variable, a no-op, so the rest of the body ran. */
 While:
-  | WHILE_TRUE { fun senv stmt -> Statement.mk_loop (snd @@ stmt senv) }
+  | WHILE_TRUE { fun senv stmt ->
+    Statement.mk_loop (body_then [] (snd @@ stmt senv)) }
   | WHILE LPAREN cond_fml=Formula RPAREN { fun senv stmt ->
     Statement.mk_loop @@
-    Statement.mk_if (cond_fml senv) (snd @@ stmt senv) (Statement.mk_break ())
+    Statement.mk_if (cond_fml senv) (body_then [] (snd @@ stmt senv))
+      (Statement.mk_break ())
   }
 
-/* do { ... } while (...); */
+/* do { ... } while (...);  The lexer reads [while (1)] as one token. */
 DoWhile:
   | DO LBLOCK stmts=Statements RBLOCK WHILE LPAREN cond_fml=Formula RPAREN SEMI { fun senv ->
     senv,
     Statement.mk_loop @@
-    Statement.of_statements [
-      Statement.of_statements (snd @@ stmts senv);
-      Statement.mk_if (cond_fml senv) (Statement.mk_nop ()) (Statement.mk_break ())
-    ]
+    body_then
+      [ Statement.mk_if (cond_fml senv) (Statement.mk_nop ()) (Statement.mk_break ()) ]
+      (Statement.of_statements (snd @@ stmts senv))
+  }
+  | DO LBLOCK stmts=Statements RBLOCK WHILE_TRUE SEMI { fun senv ->
+    senv,
+    Statement.mk_loop (body_then [] (Statement.of_statements (snd @@ stmts senv)))
   }
 
+/* for (init; cond; update, ...) -- the updates run after the body and after a
+   [continue], in order; an update used to be only [i++], and every other form
+   was a syntax error */
 For:
-    /* TODO */
-  | FOR LPAREN init_stmt=ForInit SEMI cond_fml=ForCond SEMI step_var=ID PLUSPLUS RPAREN {
+  | FOR LPAREN init_stmt=ForInit SEMI cond_fml=ForCond SEMI steps=ForSteps RPAREN {
     fun senv stmt ->
       Statement.of_statements [
         init_stmt senv;
         Statement.mk_loop @@
         Statement.mk_if (cond_fml senv)
-          (Statement.of_statements [
-            snd @@ stmt senv;
-            Statement.mk_assign step_var
-              (T_int.mk_add
-                (Term.mk_var (Ident.Tvar step_var) T_int.SInt ~info:Dummy)
-                (T_int.one ())
-                ~info:Dummy)
-          ])
+          (body_then (steps senv) (snd @@ stmt senv))
           (Statement.mk_break ())
       ]
     }
@@ -411,9 +557,19 @@ For:
       Statement.of_statements [
         init_stmt senv;
         Statement.mk_loop @@
-        Statement.mk_if (cond_fml senv) (snd @@ stmt senv) (Statement.mk_break ())
+        Statement.mk_if (cond_fml senv) (body_then [] (snd @@ stmt senv))
+          (Statement.mk_break ())
       ]
   }
+
+ForStepOne:
+  | stmt=ForInitOne { stmt }
+  | varname=ID PLUSPLUS | PLUSPLUS varname=ID { fun _ -> step_by varname true }
+  | varname=ID MINUSMINUS | MINUSMINUS varname=ID { fun _ -> step_by varname false }
+
+ForSteps:
+  | stmt=ForStepOne { fun senv -> [ stmt senv ] }
+  | stmt=ForStepOne COMMA stmts=ForSteps { fun senv -> stmt senv :: stmts senv }
 
 ForCond:
   | fml=Formula { fml }
@@ -488,26 +644,20 @@ RealVarDecls:
 
 StatementGeneral:
   | varname=ID EQUAL term=Term SEMI { fun senv ->
-    let term = term senv in
-    senv,
-    match type_of_nondet term with
-    | Some (T_int.SInt, bits, signed) ->
-      (* the value is bounded by the width of the C type *)
-      Statement.mk_compound
-        (Statement.mk_nondet_int_assign varname)
-        (Statement.mk_assume (nondet_range varname bits signed))
-    | Some (T_real.SReal, _(*32*), _(*true*)) ->
-      Statement.mk_nondet_real_assign varname (*ToDo*)
-    | Some (s, _, _) -> failwith (sprintf "%s not supported in assign" (Term.str_of_sort s))
-    | None -> Statement.mk_assign varname term
+    senv, assign_of_c varname (term senv)
   }
-  /* TODO */
+  /* x = y = term; is x = (y = term);: term is evaluated once, assigned to y,
+     and x receives the value y then holds.  Assigning term to each variable in
+     turn evaluated it twice, after x had already changed (x = y = x + 1 left y
+     one ahead of x) and, for a call, drew two different values. */
   | varname1=ID EQUAL varname2=ID EQUAL term=Term SEMI { fun senv ->
     let term = term senv in
+    let sort2 = Option.value (Map.Poly.find senv varname2) ~default:T_int.SInt in
     senv,
     Statement.mk_compound
-      (Statement.mk_assign varname1 term)
-      (Statement.mk_assign varname2 term) }
+      (assign_of_c varname2 term)
+      (Statement.mk_assign varname1
+         (Term.mk_var (Ident.Tvar varname2) sort2 ~info:Dummy)) }
   | LPAREN ASTERISK varname=ID RPAREN EQUAL term=Term SEMI { fun senv ->
     senv,
     Statement.mk_unref_assign varname (term senv) }
@@ -534,30 +684,70 @@ StatementGeneral:
     Statement.of_statements @@
     List.map varnames ~f:(Fn.flip Statement.mk_vardecl T_real.SReal) @ stmts }
   | BREAK SEMI { fun senv -> senv, Statement.mk_break () }
+  | CONTINUE SEMI { fun senv -> senv, Statement.mk_continue () }
+  /* switch (e) { case c: ... default: ... }: e is evaluated once, into a
+     temporary unless it is a variable (no C identifier contains '#').  Its
+     body is a block, so a declaration there that shadows a name in scope is
+     scoped to it as in the block rule below. */
+  | SWITCH LPAREN t=Term RPAREN LBLOCK items=SwitchItems RBLOCK { fun senv ->
+    let t = t senv in
+    let items = items senv in
+    let switch scrutinee =
+      let stmt = Statement.mk_switch scrutinee items in
+      if List.exists (top_level_vardecls stmt) ~f:(Map.Poly.mem senv) then
+        Statement.mk_if (Formula.mk_true () ~info:Dummy) stmt (Statement.mk_nop ())
+      else stmt
+    in
+    senv,
+    if Term.is_var t then switch t
+    else (
+      incr switch_temps;
+      let tmp = sprintf "#switch_on%d" !switch_temps in
+      Statement.mk_compound (assign_of_c tmp t)
+        (switch (Term.mk_var (Ident.Tvar tmp) T_int.SInt ~info:Dummy))) }
   | RETURN term=Term SEMI { fun senv ->
     let term = term senv in
     senv,
     match type_of_nondet term with
-    | Some (T_int.SInt, _(*32*), _(*true*)) ->
-      Statement.mk_return_nondet_int () (*ToDo*)
+    | Some (T_int.SInt, _, _) ->
+      (* the call is returned as a call, so that it is lifted and inlined like
+         any other and its result keeps the range of its C type; returning a
+         bare nondeterministic value made [return __VERIFIER_nondet_char();]
+         produce any integer at all *)
+      Statement.mk_return_int term
     | Some (T_real.SReal, _(*32*), _(*true*)) ->
       Statement.mk_return_nondet_real () (*ToDo*)
     | Some (s, _, _) -> failwith (sprintf "%s not supported in return" (Term.str_of_sort s))
     | None -> Statement.mk_return_int term
   }
   | RETURN SEMI { fun senv -> senv, Statement.mk_return_void () }
+  /* A block is a scope, but the statement language has no block: a sequence
+     of statements is one, and the pass renaming local variables apart scopes
+     a declaration only to the branch or the loop body that holds it.  A
+     declaration in a bare block therefore shadowed the outer variable for the
+     rest of the enclosing body, so `int a = 1; { int a = 2; } z = a;` set z to
+     2.  A block declaring a name already in scope is therefore wrapped in a
+     branch that is always taken, which that pass does scope; any other block
+     is left as it was, since a name it declares cannot be read after it. */
   | LBLOCK stmts=Statements RBLOCK { fun senv ->
+    let block = Statement.of_statements (snd @@ stmts senv) in
     senv,
-    Statement.of_statements (snd @@ stmts senv) }
+    if List.exists (top_level_vardecls block) ~f:(Map.Poly.mem senv) then
+      Statement.mk_if (Formula.mk_true () ~info:Dummy) block (Statement.mk_nop ())
+    else block }
   /* goto */
   | GOTO label_name=ID SEMI { fun senv -> senv, Statement.mk_goto label_name }
   /* label */
   | label_name=ID COLON { fun senv -> senv, Statement.mk_label label_name }
   | ASSUME LPAREN fml=Formula RPAREN SEMI { fun senv -> senv, Statement.mk_assume (fml senv) }
-  /* abort */
-  | ERROR LPAREN RPAREN SEMI { fun senv -> senv, Statement.mk_nop ()(*ToDo*) }
-  | ABORT LPAREN RPAREN SEMI { fun senv -> senv, Statement.mk_nop ()(*ToDo*) }
-  | ASSERT_FAIL LPAREN args=Arguements RPAREN SEMI { fun senv -> ignore args; senv, Statement.mk_nop ()(*ToDo*) }
+  /* abort(), __VERIFIER_error() and __assert_fail(...) do not return: the run
+     ends there, as it does at a return from main (an exit, after which the
+     final state repeats forever).  Reading them as a no-op let the statements
+     after them run and decide the property.  An exit inside a function body
+     survives inlining, where only returns are rewritten. */
+  | ERROR LPAREN RPAREN SEMI { fun senv -> senv, Statement.mk_exit () }
+  | ABORT LPAREN RPAREN SEMI { fun senv -> senv, Statement.mk_exit () }
+  | ASSERT_FAIL LPAREN args=Arguements RPAREN SEMI { fun senv -> ignore args; senv, Statement.mk_exit () }
   /* nops */
   | t=Term SEMI { fun senv ->
     let t = t senv in
@@ -585,10 +775,30 @@ FormulaAnd:
     Formula.mk_and (left senv) (right senv) ~info:Dummy }
   | fml=FormulaNeg { fml }
 
+/* C's `!` is a unary operator: it binds tighter than every binary operator,
+   comparisons included, so `!x > 0` is `(!x) > 0`, true exactly when x is 0.
+   Negating the whole comparison read it as `x <= 0`, which differs at every
+   negative x.  A `!` whose operand is followed by an arithmetic operator or a
+   comparison is therefore the term `!t` of T_intUnary; this rule takes only a
+   `!` that ends where its operand does -- before `&&`, `||` or a closing
+   parenthesis -- or that negates a parenthesised formula, and there the two
+   readings agree: `!t` used as a condition is `t == 0`.  A `!` over a term
+   is always the term's, so `!!x` has one derivation, `!(!x)` with the inner
+   `!` a term; only a run of `!` ending in a parenthesised formula is
+   negation of formulas throughout. */
 FormulaNeg:
-  | NOT fml=FormulaNeg { fun senv ->
+  | NOT fml=FormulaNegOperand { fun senv ->
     Formula.mk_neg (fml senv) ~info:Dummy }
   | fml=FormulaAtom { fml }
+
+FormulaNegOperand:
+  | fml=FormulaNegParen { fml }
+  | term=T_intUnary { fun senv -> formula_of_term (term senv) }
+
+FormulaNegParen:
+  | NOT fml=FormulaNegParen { fun senv ->
+    Formula.mk_neg (fml senv) ~info:Dummy }
+  | LPAREN fml=Formula RPAREN { fml }
 
 FormulaAtom:
   | atom=Atom { fun senv -> Formula.mk_atom (atom senv) ~info:Dummy }
@@ -653,13 +863,28 @@ T_intMulDivMod:
 
 T_intUnary:
   | t=T_intParen { t }
-  | Cast t=T_intUnary { t }
+  /* a cast to char or short converts modulo 2^bits; one to an int-ranked
+     type is the identity, these types being mathematical integers here */
+  | c=Cast t=T_intUnary { fun senv ->
+    let t = t senv in
+    match c with
+    | None -> t
+    | Some (bits, signed) ->
+      (match sort_of_c t with
+       | T_int.SInt -> convert_to_narrow bits signed t
+       | _ -> raise (SemanticError "a cast of a non-integer value to char or short is not supported")) }
   | MINUS t=T_intUnary { fun senv ->
     let t = t senv in
     match sort_of_c t with
     | T_int.SInt -> T_int.mk_neg t ~info:Dummy
     | T_real.SReal -> T_real.mk_rneg t ~info:Dummy
     | _ -> T_num.mk_nneg t ~info:Dummy }
+  /* C's logical negation as a value: an int, 1 when the operand is zero and
+     0 otherwise, whatever the operand's own type */
+  | NOT t=T_intUnary { fun senv ->
+    let t = t senv in
+    let zero = match sort_of_c t with T_real.SReal -> T_real.rzero () | _ -> T_int.zero () in
+    T_bool.ifte (Formula.eq t zero) (T_int.one ()) (T_int.zero ()) ~info:Dummy }
 
 T_intParen:
   | t=T_intAtom { t }
@@ -729,9 +954,12 @@ T_intAtom:
   | NONDET_DOUBLE LPAREN RPAREN { fun _ -> Term.mk_fsym_app (FunCall funname_nondet_double) [] ~info:Dummy }
 
 Cast:
-  | LPAREN UNSIGNED Int RPAREN { unsigned_seen := true }
-  | LPAREN Int RPAREN
-  | LPAREN VOID RPAREN { () }
+  | LPAREN UNSIGNED n=IntWidth RPAREN {
+    match n with
+    | None -> unsigned_seen := true; None
+    | Some bits -> Some (bits, false) }
+  | LPAREN n=IntWidth RPAREN { Option.map n ~f:(fun bits -> (bits, true)) }
+  | LPAREN VOID RPAREN { None }
 
 /* Ast.LogicOld.T_bool */
 T_bool:

@@ -1,0 +1,9 @@
+# x and y are nat variables, so y := x - 2 is truncated subtraction (monus): y is
+# max(1 - 2, 0) = 0, and the strict upper bound 0 on its expectation is false.
+# Expected: unknown (the bound is false).  Read as ordinary subtraction, y was -1 and the
+# bound was proved.
+nat x;
+nat y;
+x := 1;
+y := x - 2;
+?Ex [y] < 0

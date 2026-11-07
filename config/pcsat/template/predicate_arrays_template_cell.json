@@ -1,0 +1,9 @@
+{
+  "number_of_disj": 3,
+  "cells": {
+    "number_of_cells_per_array": 1,
+    "replace_array_terms": true,
+    "boundary_quals": true,
+    "quals_only": true
+  }
+}

@@ -1,0 +1,19 @@
+// x decreases on every pass through the BUCHI location 2, so every run ends in the self-loop at 3.
+// Expected: NO (-p ltsbuchi), NO (-p ltsexbuchi).
+START: 1;
+BUCHI: {2};
+
+FROM: 1;
+assume(x>0);
+x := x - 1;
+TO: 2;
+
+FROM: 2;
+TO: 1;
+
+FROM: 1;
+assume(x<=0);
+TO: 3;
+
+FROM: 3;
+TO: 3;

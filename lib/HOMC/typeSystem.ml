@@ -112,12 +112,31 @@ let rec g env t typ =
 let pr = EHMTT.pr_type
 let pr_bn ppf (x, t) = Format.fprintf ppf "%s:%a" (Ident.name_of_tvar x) pr t
 
-let f rules =
+exception Type_error of string
+
+(* Infer the input/output type of every non-terminal, terminal and variable of
+   the EHMTT [rules], under the discipline of the EHMTT verifier this reduction
+   was taken from: a type is [In] (an input tree, inspected only by [case]),
+   [Out] (an output tree, built from terminals) or a function between types,
+   and every rule's body has type [Out], so a rule may build an output tree
+   but never return an input tree.  The reduction to higher-order model
+   checking relies on that: a rule returning its input would make the
+   generated HORS hand an input-tree node to the output automaton, and TRecS
+   aborts on such a HORS instead of answering.  Returns the type environment
+   (non-terminals first, then terminals), whose types may still contain
+   unresolved variables.  [start], when given, is typed as a body, of type
+   [Out], under the same environment: the reduction's start term applies the
+   main non-terminal to the main type's most general arguments (an input
+   tree for a base type), and a main type that gives a parameter an input
+   tree where the rule uses an output (or more parameters than the rule
+   has) would otherwise reach the model checker as an ill-sorted scheme.
+   Raises [Type_error] with a one-line description when the rules or [start]
+   are not typable; [print] then receives the type environment reached at
+   that point. *)
+let f ?(print = fun (_ : string lazy_t) -> ()) ?start rules =
   let env =
     List.map rules ~f:(fun (id, (ids, _t)) ->
-        ( id,
-          con (List.map ~f:(fun _ -> TVar (ref None)) ids) (TVar (ref None))
-          (*Out*) ))
+        (id, con (List.map ~f:(fun _ -> TVar (ref None)) ids) Out))
   in
 
   let tenv =
@@ -127,17 +146,28 @@ let f rules =
   in
   let env = env @ tenv in
   List.iter rules ~f:(fun (id, (ids, t)) ->
-      let typs, ret = args_and_ret (assoc_var id env) in
+      let typs, _ = args_and_ret (assoc_var id env) in
       let env = List.map2_exn ~f:Tuple2.create ids typs @ env in
-      try g env t ret
+      try g env t Out
       with Unify (typ1, typ2) ->
-        let _ =
-          Format.eprintf "unification error for %a in %s: %a and %a@." EHMTT.pr
+        let msg =
+          Format.asprintf "unification error for %a in %s: %a and %a" EHMTT.pr
             !rterm (Ident.name_of_tvar id) pr typ1 pr typ2
         in
         List.iter (List.rev env) ~f:(fun (id, typ) ->
-            Format.printf "%s: %a@." (Ident.name_of_tvar id) pr typ);
-        failwith "type error");
+            print
+            @@ lazy
+                 (Format.asprintf "%s: %a" (Ident.name_of_tvar id) pr typ));
+        raise (Type_error msg));
+  Option.iter start ~f:(fun t ->
+      try g env t Out
+      with Unify (typ1, typ2) ->
+        raise
+          (Type_error
+             (Format.asprintf
+                "the main type does not fit the main rule: unification error \
+                 for %a in %a: %a and %a"
+                EHMTT.pr !rterm EHMTT.pr t pr typ1 pr typ2)));
 
   (*xxx*)
   List.iter tenv ~f:(fun (id, typ) ->
@@ -151,8 +181,9 @@ let f rules =
       in
       try h typ
       with Unify (typ1, typ2) ->
-        Format.eprintf "unification error for %s: %a and %a@."
-          (Ident.name_of_tvar id) pr typ1 pr typ2;
-        failwith "type error");
+        raise
+          (Type_error
+             (Format.asprintf "unification error for %s: %a and %a"
+                (Ident.name_of_tvar id) pr typ1 pr typ2)));
   env
 (*  Format.printf "[%a]" (List.pr pr_bn ", ") env *)

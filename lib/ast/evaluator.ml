@@ -4,6 +4,114 @@ open Common.Util
 open Common.Combinator
 open LogicOld
 
+(* Shared scope facts for unfolding and the scalar rewrites (one-point and
+   definition elimination, unfolding, existential closing, equation merging)
+   that check a substitution before applying it. A plain substitution there
+   could rename an independent function head that happens to share the
+   replaced name, mask an outer Boolean value beneath a binder of another
+   sort, or capture a local predicate, and each changed the verdict; these
+   facts let a caller refuse such a substitution. The old pair-returning
+   helper is kept as a wrapper for other readers. *)
+type scalar_substitution_scope = {
+  bound_names : Ident.tvar_set;
+  function_heads : Ident.tvar_set;
+  term_binders : (Ident.tvar * Sort.t) Set.Poly.t;
+  predicate_binders : Ident.tvar_set;
+}
+
+let scalar_substitution_scope_of body =
+  let empty = {
+    bound_names = Set.Poly.empty; function_heads = Set.Poly.empty;
+    term_binders = Set.Poly.empty; predicate_binders = Set.Poly.empty;
+  } in
+  let union a b = {
+    bound_names = Set.union a.bound_names b.bound_names;
+    function_heads = Set.union a.function_heads b.function_heads;
+    term_binders = Set.union a.term_binders b.term_binders;
+    predicate_binders = Set.union a.predicate_binders b.predicate_binders;
+  } in
+  let add_bound params scope =
+    List.fold params ~init:scope ~f:(fun scope ((var, _) as formal) ->
+      { scope with
+        bound_names = Set.add scope.bound_names var;
+        term_binders = Set.add scope.term_binders formal })
+  in
+  let rec terms args =
+    List.fold args ~init:empty ~f:(fun acc arg -> union acc (term arg))
+  and term (value : Term.t) = match value with
+    | Var _ -> empty
+    | LetTerm (var, sort, def, body, _) ->
+        add_bound [ (var, sort) ] (union (term def) (term body))
+    | FunApp (T_bool.Formula phi, args, _) -> union (formula phi) (terms args)
+    | FunApp (T_array.ALambda ((var, sort), _), args, _) ->
+        add_bound [ (var, sort) ] (terms args)
+    | FunApp (FVar (var, _, _), args, _) ->
+        let scope = terms args in
+        { scope with function_heads = Set.add scope.function_heads var }
+    | FunApp (_, args, _) -> terms args
+  and definition def =
+    let scope = add_bound def.Formula.args (formula def.Formula.body) in
+    let name = Ident.pvar_to_tvar def.Formula.name in
+    { scope with
+      bound_names = Set.add scope.bound_names name;
+      predicate_binders = Set.add scope.predicate_binders name }
+  and formula = function
+    | Formula.Atom (Atom.App (Predicate.Fixpoint def, args, _), _) ->
+        union (definition def) (terms args)
+    | Formula.Atom (Atom.App (_, args, _), _) -> terms args
+    | Formula.Atom _ -> empty
+    | Formula.UnaryOp (_, phi, _) -> formula phi
+    | Formula.BinaryOp (_, left, right, _) -> union (formula left) (formula right)
+    | Formula.Bind (binder, params, phi, _) ->
+        let payload = match binder with
+          | Formula.Random rand -> terms (Rand.terms_of rand)
+          | _ -> empty
+        in
+        add_bound params (union payload (formula phi))
+    | Formula.LetFormula (var, sort, def, phi, _) ->
+        add_bound [ (var, sort) ] (union (term def) (formula phi))
+    | Formula.LetRec (defs, phi, _) ->
+        List.fold defs ~init:(formula phi)
+          ~f:(fun acc def -> union acc (definition def))
+  in term body
+
+let unfolding_body_substitution_names body =
+  let scope = scalar_substitution_scope_of body in
+  (scope.bound_names, scope.function_heads)
+
+let scalar_substitution_is_safe_in_scope scope sub =
+  try
+    Set.are_disjoint scope.function_heads (Map.key_set sub)
+    && Set.for_all scope.term_binders ~f:(fun (var, sort) ->
+         match Map.Poly.find sub var with
+         | None -> true
+         | Some value -> Stdlib.( = ) (Term.sort_of value) sort)
+    && Set.for_all scope.predicate_binders ~f:(fun var ->
+         match Map.Poly.find sub var with
+         | None -> true
+         | Some value -> not (Term.is_bool_sort (Term.sort_of value)))
+    && (Set.is_empty scope.bound_names
+        || Set.are_disjoint scope.bound_names (Lazy.force (Term.range_fvs sub)))
+  with exn when not (Common.Timer.is_async exn) -> false
+
+let scalar_substitution_is_safe sub phi =
+  try
+    scalar_substitution_is_safe_in_scope
+      (scalar_substitution_scope_of
+         (Term.mk_fsym_app (T_bool.Formula phi) [])) sub
+  with exn when not (Common.Timer.is_async exn) -> false
+
+(* Boolean scalars can occur as nullary predicate aliases inside terms.
+   Positive-arity relation heads are independent of scalar binders. *)
+let scalar_occurrences_of_term term =
+  Set.fold (Formula.predicate_signatures_of_term term)
+    ~init:(Term.tvs_of term) ~f:(fun vars (name, args) ->
+      if List.is_empty args then Set.add vars (Ident.pvar_to_tvar name)
+      else vars)
+
+let scalar_occurrences_of_formula phi =
+  scalar_occurrences_of_term (Term.mk_fsym_app (T_bool.Formula phi) [])
+
 let simplify_theory_atoms = true
 let simplify_ite_case = true
 let elim_case = true
@@ -34,6 +142,63 @@ let elim_case = true
    on a formula's shape) is decided by measuring answers, not assumed. *)
 let simplify_skip_simplified = Atomic.make false
 
+(* Whether a conditional is lifted out of a binary application only when the
+   lift multiplies nothing.  [simplify_term] and [simplify_atom] lift a
+   conditional out of an application ([f t (ite c a b)] to
+   [ite c (f t a) (f t b)]) and then simplify each rebuilt application; when
+   [t] is itself a conditional, that simplification lifts [t] out of both
+   copies, so the result carries the product of the two conditionals' leaves,
+   and an application nested in a branch of another multiplies again.  On a
+   sequence question whose reads of two-element concatenations are split by
+   index into three-way conditionals, each nested in a constructor of two
+   arguments four levels deep, an 81,195-node formula grew to 16.5 million
+   nodes this way (and its simplification did not return in 200 s).
+
+   With this switch on (the default), a binary application whose two arguments
+   are both [ite]s is lifted only when the two test one condition
+   ([f (ite c a b) (ite c d e)] to [ite c (f a d) (f b e)], which is no
+   product), and is otherwise left as it is, its arguments simplified; an
+   application with one conditional argument is lifted as before.  So no lift
+   puts an [ite]'s branches under another [ite], and the result's size is
+   linear in the conditionals' leaves, not their product.
+   Exceptions, where lifting goes on as before: a [Case] is always lifted, and
+   so is an [ite] when either of the two [ite]s has a [Case] among its leaves.
+   Invariant the consumers rely on: simplify's output has no [Case] below an
+   application or inside an atom except under a binder or where the lifting
+   rules do not apply (a bit-vector operand): every [Case] that reaches an atom
+   is turned into a disjunction over its selector's values there, and the Z3
+   encoding has no [Case] case (a [Case] left inside an atom fails with
+   "not supported").  An [ite] left inside an application or an atom is
+   encodable and is taken by [Formula.elim_ite] where a consumer needs
+   conditional-free atoms.
+   Contract: each rule replaces a term or atom by one equal to it in every
+   model ([ite c (f a d) (f b e)] is [f (ite c a b) (ite c d e)]), and leaving
+   an application unlifted keeps it; so the output is equivalent to the input,
+   as before; it differs in shape only where both arguments of an application
+   are [ite]s without a [Case] leaf.  Process-wide; written before any solver
+   domain exists, or by a test. *)
+let lift_without_product = Atomic.make true
+
+(* Does the [ite] tree [t] have a [Case] among its leaves (the branches,
+   followed through nested [ite]s)? *)
+let rec ite_has_case_leaf = function
+  | Term.FunApp (T_int.Case _, _, _) -> true
+  | Term.FunApp (T_bool.IfThenElse, [ _; a; b ], _) ->
+      ite_has_case_leaf a || ite_has_case_leaf b
+  | _ -> false
+
+(* Does lifting the [ite] with branches [branches] out of a binary
+   application whose other argument is [other] multiply, so that
+   [lift_without_product] declines it?  Only when [other] is an [ite] too and
+   neither has a [Case] leaf (see the invariant above). *)
+let lift_multiplies other branches =
+  Atomic.get lift_without_product
+  && (match other with
+     | Term.FunApp (T_bool.IfThenElse, _, _) -> true
+     | _ -> false)
+  && (not (ite_has_case_leaf other))
+  && not (List.exists branches ~f:ite_has_case_leaf)
+
 (* Normal-form outputs.  Some rules of [simplify_term] and [simplify] build
    their result from simplified parts without applying the rules to the node
    they build, so the result is one rewrite short of the form a second pass
@@ -60,6 +225,32 @@ let simplify_skip_simplified = Atomic.make false
    changes the simplifier's output on those shapes, and consumers that depend
    on a formula's shape are judged by measuring answers. *)
 let simplify_normal_forms = Atomic.make false
+
+(* The order of a merged quantifier block.  [simplify] merges a binder whose
+   simplified body is a binder of the same quantifier into one block.  Off
+   (the default), the block lists the inner binder's variables first
+   ([bounds' @ bounds]); on, the outer binder's first ([bounds @ bounds']),
+   the order in which they were bound.  The term representation the problem
+   is stored in binds one variable per binder, so every block reaches
+   [simplify] as nested binders again on the next pass: with the inner
+   variables first, each pass reverses the block, and a second normalisation
+   of a normalised formula differs from the first (a cycle of period two);
+   with the outer first, the merge reproduces the nesting it read, and a
+   formula whose only change on a second pass was that reversal is a fixed
+   point.
+   Contract: either order gives a formula equal to the input in every model,
+   since reordering the variables of one block of one quantifier is exact
+   (forall x. forall y. phi is forall y. forall x. phi) when the block's
+   variables are distinct; with a variable bound by both binders, the outer
+   first is the order a consumer reading the block as nested binders, left to
+   right, needs for the inner binding to shadow the outer one.  It starts
+   off, so the input reader's own simplification, which runs before any
+   solver is configured, keeps the inner-first order; PCSat's configuration
+   turns it on by default.  It changes the order of every merged block, which
+   moves single CEGIS runs, so the default rests on measured answers rather
+   than on the reorder being exact.  Process-wide once on, written before any
+   solver domain exists. *)
+let merge_binders_outer_first = Atomic.make false
 
 (* A memo for [simplify] and [simplify_neg] that lives for one scope of
    [with_shared_simplify], keyed by node address.
@@ -92,6 +283,13 @@ module PhysFml = Stdlib.Hashtbl.Make (struct
   let hash = Common.Ext.Hashtbl.phys_hash
 end)
 
+module PhysTerm = Stdlib.Hashtbl.Make (struct
+  type t = Term.t
+
+  let equal = phys_equal
+  let hash = Common.Ext.Hashtbl.phys_hash
+end)
+
 type simplify_tables = { pos : Formula.t PhysFml.t; neg : Formula.t PhysFml.t }
 
 let simplify_scope : simplify_tables option Stdlib.Domain.DLS.key =
@@ -108,6 +306,25 @@ let with_shared_simplify f =
         Exn.protect ~f ~finally:(fun () ->
             Stdlib.Domain.DLS.set simplify_scope None)
 
+(* [without_shared_simplify f] runs [f] with this domain's scope of
+   [with_shared_simplify] closed, so [simplify] and [simplify_neg] remember
+   nothing during [f], and reopens it afterwards (on a return or a raise) with
+   its tables as they were.  Contract: [f ()] returns what it returns in the
+   scope, value for value and draw for draw, since the memo changes only
+   sharing; what changes is that nothing [f] simplifies is kept alive by the
+   tables.  Why: a table keeps every node it stores reachable until its scope
+   closes, so nodes built afresh inside [f] that no later call can meet again
+   (each is a new value, and the tables compare by identity) only grow the
+   heap, and storing a young node in a table that lives in the major heap
+   makes the minor collector promote it. *)
+let without_shared_simplify f =
+  match Stdlib.Domain.DLS.get simplify_scope with
+  | None -> f ()
+  | Some _ as scope ->
+      Stdlib.Domain.DLS.set simplify_scope None;
+      Exn.protect ~f ~finally:(fun () ->
+          Stdlib.Domain.DLS.set simplify_scope scope)
+
 (* Whether the simplifier decides a [let]'s inlining by the size the inlining
    would give the body as a tree, rather than admitting any small definition at
    any number of uses (see [inline_let]).  Off by default: on, a chain of small
@@ -117,49 +334,48 @@ let with_shared_simplify f =
    with its equation).  Process-wide once on. *)
 let inline_by_expanded_size = Atomic.make false
 
+(* Whether the simplifier inlines the [let]s of a nest in one pass, outermost
+   first, substituting an inlined definition at the variable's leaves while it
+   simplifies the body (see [LetOnce]), instead of simplifying the body,
+   substituting into it and simplifying it again at every inlined [let], which
+   costs a walk of the whole body below each link: a chain of n inlined [let]s
+   costs Theta(n^2) that way.  The decision reads the use count in the body as
+   written rather than in the simplified body and the definition's size after
+   the outer inlinings; both results are equivalent to the input in every
+   model, and the outputs can differ in shape and in the fresh names they
+   carry.  Off by default.  Process-wide once on. *)
+let simplify_inline_lets_once = Atomic.make false
+
+(* Whether the simplifier skips its attempt to evaluate a bit-vector
+   application one of whose simplified arguments is a variable or a
+   bit-vector operation (see [settled_bv_arg]).  The attempt evaluates the
+   arguments first, so it walks the argument down to the variable before it
+   fails, and on a nested operation this is a walk of the whole subterm at
+   every level: Theta(n^2) on a chain of n operations.  The output is the same
+   either way (the argument for it is at [settled_bv_arg]).  Off by default.
+   Process-wide once on. *)
+let simplify_skip_settled_bv_eval = Atomic.make false
+
+let check_bv_eval_skip =
+  lazy
+    (match Sys.getenv "COAR_CHECK_BV_EVAL_SKIP" with
+    | Some ("1" | "true" | "yes") -> true
+    | _ -> false)
+
+(* [| skipped attempts; of which evaluated to a value |], see
+   [settled_bv_eval_skipped] *)
+let bv_eval_skip_counts = Array.init 2 ~f:(fun _ -> Atomic.make 0)
+let bv_eval_skip_report_registered = Atomic.make false
+
 (* The tree size a term or formula has once every [let] in it is inlined,
-   computed without inlining: a [let]-bound variable counts as its definition's
-   expanded size, and the [let] node itself counts nothing.  Elsewhere the node
-   counts are those of [Term.ast_size] and [Formula.ast_size], which agree with
-   this on a let-free value but do not carry a binding's size into a formula
-   embedded in a term (an [ite]'s condition) or into a [let] formula's body, and
-   so undercount a chain whose bound variables occur there.  Assumes the value
-   is alpha-renamed, as the simplifier's input is: a binder never shadows a
-   [let]-bound name. *)
-let rec expanded_size_term ex = function
-  | Term.Var (x, _, _) -> Option.value ~default:1 (Map.Poly.find ex x)
-  | Term.FunApp (T_bool.Formula phi, args, _) ->
-      expanded_size_fml ex phi
-      + List.sum (module Int) args ~f:(expanded_size_term ex)
-  | Term.FunApp (_, args, _) ->
-      1 + List.sum (module Int) args ~f:(expanded_size_term ex)
-  | Term.LetTerm (x, _, def, body, _) ->
-      expanded_size_term
-        (Map.Poly.set ex ~key:x ~data:(expanded_size_term ex def))
-        body
-
-and expanded_size_atom ex = function
-  | Atom.True _ | Atom.False _ -> 1
-  | Atom.App (Predicate.Fixpoint def, args, _) ->
-      1 + Formula.ast_size def.body
-      + List.sum (module Int) args ~f:(expanded_size_term ex)
-  | Atom.App (_, args, _) ->
-      1 + List.sum (module Int) args ~f:(expanded_size_term ex)
-
-and expanded_size_fml ex = function
-  | Formula.Atom (atom, _) -> expanded_size_atom ex atom
-  | Formula.UnaryOp (_, phi, _) | Formula.Bind (_, _, phi, _) ->
-      1 + expanded_size_fml ex phi
-  | Formula.BinaryOp (_, phi1, phi2, _) ->
-      1 + expanded_size_fml ex phi1 + expanded_size_fml ex phi2
-  | Formula.LetRec _ as phi -> Formula.ast_size phi
-  | Formula.LetFormula (x, _, def, body, _) ->
-      expanded_size_fml
-        (Map.Poly.set ex ~key:x ~data:(expanded_size_term ex def))
-        body
-
-let expanded_size_of_term = expanded_size_term Map.Poly.empty
-let expanded_size_of_formula = expanded_size_fml Map.Poly.empty
+   computed without inlining ([Term.expanded_size], whose comment states the
+   count).  [Term.ast_size] and [Formula.ast_size], the counts read elsewhere,
+   agree with this on a let-free value but do not carry a binding's size into
+   a formula embedded in a term (an [ite]'s condition) or into a [let]
+   formula's body, and so undercount a chain whose bound variables occur
+   there. *)
+let expanded_size_of_term t = Term.expanded_size t
+let expanded_size_of_formula phi = Formula.expanded_size phi
 
 (* The tree size of [body] with [def] substituted for every free occurrence of
    [x], both read as their expansions, computed without substituting: every
@@ -168,6 +384,406 @@ let expanded_size_of_formula = expanded_size_fml Map.Poly.empty
 let let_inlined_size x ~def ~body =
   expanded_size_of_term body
   + (Term.occur_times x body * (expanded_size_of_term def - 1))
+
+(* The use counts that [simplify] reads to decide whether to inline a [let]:
+   [term x t] is [Term.occur_times x t] and [formula x phi] is
+   [Formula.occur_times x phi] for every [x], [t] and [phi], including raising
+   where those raise (a [let] rebinding a name inside the body of a [let] of
+   the same name, and [LetRec]).  So the inlining decisions, and the output of
+   [simplify], are those of the per-variable walks.
+
+   Why: [simplify] decides the [let]s of a nest innermost first, and each
+   decision counts its variable in the whole simplified body, so a nest of n
+   [let]s around a formula of size s costs n walks of size s (the frontend's
+   [let]s around a transition relation, simplified again inside the search for
+   every countermodel).  Here one walk gathers the counts of every variable,
+   and the counts of [let v = d in b] are composed from those of [d] and [b]:
+   for [x <> v] each use of [v] in [b] stands for [d], so the count is
+   [count x b + count v b * count x d], and for [v] itself it is [count v b]
+   (an occurrence equal to the variable asked for counts as 1 before any
+   binding is looked up, as in [occur_times]).  The counts of the last body
+   counted are kept, per domain, with the body itself, and reused when that
+   body (physically) is the body of the next [let] met: when a [let] is kept,
+   the body the next decision outwards counts is that [let] around the body
+   just counted, so a nest of kept [let]s costs one walk of the innermost body
+   plus one composition per [let].  A miss costs one full walk, as before, with
+   a map update per leaf instead of a comparison.  The cache is a memo of a
+   function of an immutable value, so what it holds never changes a count.
+
+   Counts saturate at [max_int] instead of wrapping.  A count through a nest
+   of [let]s is a count of the expansion and grows as the product of the uses
+   along the nest: a chain of about 62 [let]s each using the previous one twice
+   counts 2^62 uses of the outermost, past [max_int], and the wrapped value is
+   negative, which [inline_let] reads as "used at most once" and inlines -- an
+   exponential expansion.  Below [max_int] the counts are exact, so they are
+   [occur_times]'s wherever that does not overflow. *)
+let sat_add a b = if a > Int.max_value - b then Int.max_value else a + b
+
+(* [a * b] for non-negative [a] and [b], saturating at [max_int] *)
+let sat_mul a b =
+  if a <> 0 && b > Int.max_value / a then Int.max_value else a * b
+
+module UseCount = struct
+  type t = {
+    counts : (Ident.tvar, int) Map.Poly.t;
+    bound : Ident.tvar Set.Poly.t;  (** the [let]-bound names inside *)
+  }
+
+  let empty = { counts = Map.Poly.empty; bound = Set.Poly.empty }
+
+  let add_count counts x n =
+    if n = 0 then counts
+    else
+      Map.Poly.update counts x ~f:(function
+        | None -> n
+        | Some m -> sat_add m n)
+
+  let get counts x = Option.value ~default:0 (Map.Poly.find counts x)
+
+  (* the counts of [let v = def in body] from those of [def] and [body]; a
+     [let v] inside [body] raises as the per-variable walk raises (it adds [v]
+     to a map that already has it) *)
+  let compose v ~def ~body =
+    if Set.mem body.bound v then
+      ignore (Map.Poly.add_exn (Map.Poly.singleton v 0) ~key:v ~data:0);
+    let k = get body.counts v in
+    {
+      counts =
+        (if k = 0 then body.counts
+         else
+           Map.Poly.fold def.counts ~init:body.counts
+             ~f:(fun ~key ~data acc ->
+               if Stdlib.(key = v) then acc
+               else add_count acc key (sat_mul k data)));
+      bound = Set.union (Set.add body.bound v) def.bound;
+    }
+
+  (* the sum of two counts, adding the smaller map into the larger one *)
+  let merge c1 c2 =
+    let small, large =
+      if Map.length c1.counts <= Map.length c2.counts then (c1, c2)
+      else (c2, c1)
+    in
+    {
+      counts =
+        Map.Poly.fold small.counts ~init:large.counts ~f:(fun ~key ~data acc ->
+            add_count acc key data);
+      bound = Set.union c1.bound c2.bound;
+    }
+
+  let last_term : (Term.t * t) option ref Stdlib.Domain.DLS.key =
+    Stdlib.Domain.DLS.new_key (fun () -> ref None)
+
+  let last_formula : (Formula.t * t) option ref Stdlib.Domain.DLS.key =
+    Stdlib.Domain.DLS.new_key (fun () -> ref None)
+
+  let rec term_acc acc = function
+    | Term.Var (x, _, _) -> { acc with counts = add_count acc.counts x 1 }
+    | FunApp (T_bool.Formula phi, _, _) -> formula_acc acc phi
+    | FunApp (_, ts, _) -> List.fold ts ~init:acc ~f:term_acc
+    | LetTerm (v, _, def, body, _) ->
+        merge acc (compose v ~def:(of_term def) ~body:(of_term body))
+
+  and formula_acc acc = function
+    | Formula.Atom (Atom.App (_, ts, _), _) ->
+        List.fold ts ~init:acc ~f:term_acc
+    | Atom ((Atom.True _ | Atom.False _), _) -> acc
+    | BinaryOp (_, phi1, phi2, _) -> formula_acc (formula_acc acc phi1) phi2
+    | UnaryOp (_, phi1, _) | Bind (_, _, phi1, _) -> formula_acc acc phi1
+    | LetRec _ -> failwith "[occur_times_in_formula]unsupported letrec"
+    | LetFormula (v, _, def, body, _) ->
+        merge acc (compose v ~def:(of_term def) ~body:(of_formula body))
+
+  and of_term t =
+    match !(Stdlib.Domain.DLS.get last_term) with
+    | Some (t', c) when phys_equal t t' -> c
+    | _ -> term_acc empty t
+
+  and of_formula phi =
+    match !(Stdlib.Domain.DLS.get last_formula) with
+    | Some (phi', c) when phys_equal phi phi' -> c
+    | _ -> formula_acc empty phi
+
+  let term x t =
+    let c = of_term t in
+    Stdlib.Domain.DLS.get last_term := Some (t, c);
+    get c.counts x
+
+  let formula x phi =
+    let c = of_formula phi in
+    Stdlib.Domain.DLS.get last_formula := Some (phi, c);
+    get c.counts x
+end
+
+(* The state of [simplify_inline_lets_once].  A nest is taken in one pass when
+   the outermost [let] of a term or formula is met: one walk of that node
+   counts the leaves of every name and checks that the nest is alpha-clean --
+   no name is bound twice in it, and no name bound in it also occurs outside
+   the binder's scope (free in the node).  On an alpha-clean nest a definition
+   substituted at a leaf cannot be captured (a binder between the [let] and the
+   leaf would rebind a name in scope) and no [let] shadows another, so the
+   [let]s can be decided against one environment of the definitions inlined so
+   far.  A node that is not alpha-clean, or holds a [LetRec] or a fixpoint
+   predicate (whose parameters are binders this walk does not follow), is
+   simplified by the default rule throughout, nested [let]s included.
+
+   Contract of a pass: the simplifier, run with the environment, returns a
+   value equivalent in every model to the node with every inlined definition
+   substituted, provided no inlined name is left free in the result -- every
+   rule is an equivalence valid for all values of the free variables, so a rule
+   that read a leaf before it was substituted is still sound for the value the
+   definition gives it.  The caller checks that proviso on the result and,
+   when it fails, simplifies the node again by the default rule.  The
+   environment is per domain and is consulted only while a pass runs; a term
+   simplified during the pass that did not come from the node and has a free
+   variable spelled like one of the node's inlined [let]s would also be
+   rewritten, which no rule of the simplifier does (it reads no definition
+   table while simplifying). *)
+module LetOnce = struct
+  type active = {
+    counts : (Ident.tvar, int) Hashtbl.t;
+        (** the leaves of each name in the node as written *)
+    mutable env : (Ident.tvar, Term.t) Map.Poly.t;
+        (** the simplified definition of each [let] inlined around the point
+            being simplified *)
+    mutable inlined : Ident.tvar Set.Poly.t;  (** every [let] inlined *)
+    term_scopes : scalar_substitution_scope PhysTerm.t;
+    formula_scopes : scalar_substitution_scope PhysFml.t;
+        (** the scope of each [let] body of the node met so far, keyed by
+            physical identity ([body_scope_of_term]) *)
+  }
+
+  type state =
+    | Outside  (** no nest is being simplified in one pass *)
+    | Default  (** inside a nest the default rule simplifies *)
+    | Active of active
+
+  let state : state ref Stdlib.Domain.DLS.key =
+    Stdlib.Domain.DLS.new_key (fun () -> ref Outside)
+
+  exception Not_clean
+
+  (* the leaf counts of [walk]'s node when it is alpha-clean, [None] otherwise *)
+  let scan walk =
+    let counts = Hashtbl.Poly.create () in
+    let binders = Hashtbl.Poly.create () in
+    let free = Hashtbl.Poly.create () in
+    let bind x =
+      if Hashtbl.mem binders x then raise Not_clean
+      else Hashtbl.set binders ~key:x ~data:()
+    in
+    let leaf scope x =
+      Hashtbl.update counts x ~f:(function None -> 1 | Some n -> sat_add n 1);
+      if not (Set.mem scope x) then Hashtbl.set free ~key:x ~data:()
+    in
+    let rec term scope = function
+      | Term.Var (x, _, _) -> leaf scope x
+      | FunApp (T_bool.Formula phi, ts, _) ->
+          formula scope phi;
+          List.iter ts ~f:(term scope)
+      | FunApp (T_array.ALambda ((x, _), _), ts, _) ->
+          bind x;
+          List.iter ts ~f:(term (Set.add scope x))
+      | FunApp (_, ts, _) -> List.iter ts ~f:(term scope)
+      | LetTerm (x, _, def, body, _) ->
+          term scope def;
+          bind x;
+          term (Set.add scope x) body
+    and formula scope = function
+      | Formula.Atom (Atom.App (Predicate.Fixpoint _, _, _), _) ->
+          raise Not_clean
+      | Atom (Atom.App (_, ts, _), _) -> List.iter ts ~f:(term scope)
+      | Atom ((Atom.True _ | Atom.False _), _) -> ()
+      | UnaryOp (_, phi1, _) -> formula scope phi1
+      | BinaryOp (_, phi1, phi2, _) ->
+          formula scope phi1;
+          formula scope phi2
+      | Bind (_, senv, phi1, _) ->
+          List.iter senv ~f:(fun (x, _) -> bind x);
+          formula
+            (List.fold senv ~init:scope ~f:(fun s (x, _) -> Set.add s x))
+            phi1
+      | LetRec _ -> raise Not_clean
+      | LetFormula (x, _, def, body, _) ->
+          term scope def;
+          bind x;
+          formula (Set.add scope x) body
+    in
+    match walk ~term ~formula Set.Poly.empty with
+    | () ->
+        if Hashtbl.existsi free ~f:(fun ~key ~data:() -> Hashtbl.mem binders key)
+        then None
+        else Some counts
+    | exception Not_clean -> None
+
+  (* [inline_let] answers the same for every size above 17 (a use count of at
+     least 2 inlines only a definition of at most 8 nodes, a count of at most 1
+     whatever the size), so the size is computed up to that bound: on a chain
+     whose definitions grow by the inlining of the previous link, the full size
+     would be a walk of the whole chain at every link *)
+  let size_bound = 17
+
+  exception Over
+
+  (* [let_def_size def] if it is at most [size_bound], else [size_bound + 1];
+     the node counts are those of [Term.ast_size] or, with
+     [inline_by_expanded_size] on, of [expanded_size_of_term] *)
+  let capped_def_size def =
+    let n = ref 0 in
+    let tick k =
+      n := sat_add !n k;
+      if !n > size_bound then raise Over
+    in
+    let part f =
+      let saved = !n in
+      n := 0;
+      let s = try f (); !n with Over -> size_bound + 1 in
+      n := saved;
+      s
+    in
+    (* [exp]: a [let]'s size is carried into formulas and [let] formulas *)
+    let rec term exp ex = function
+      | Term.Var (x, _, _) -> tick (Option.value ~default:1 (Map.Poly.find ex x))
+      | FunApp (T_bool.Formula phi, ts, _) ->
+          formula exp (if exp then ex else Map.Poly.empty) phi;
+          List.iter ts ~f:(term exp ex)
+      | FunApp (_, ts, _) ->
+          tick 1;
+          List.iter ts ~f:(term exp ex)
+      | LetTerm (x, _, def, body, _) ->
+          let s = part (fun () -> term exp ex def) in
+          term exp (Map.Poly.set ex ~key:x ~data:s) body
+    and formula exp ex = function
+      | Formula.Atom ((Atom.True _ | Atom.False _), _) -> tick 1
+      | Atom (Atom.App (Predicate.Fixpoint def, ts, _), _) ->
+          tick 1;
+          formula false Map.Poly.empty def.body;
+          List.iter ts ~f:(term exp ex)
+      | Atom (Atom.App (_, ts, _), _) ->
+          tick 1;
+          List.iter ts ~f:(term exp ex)
+      | UnaryOp (_, phi1, _) | Bind (_, _, phi1, _) ->
+          tick 1;
+          formula exp ex phi1
+      | BinaryOp (_, phi1, phi2, _) ->
+          tick 1;
+          formula exp ex phi1;
+          formula exp ex phi2
+      | LetRec (funcs, phi1, _) ->
+          tick 1;
+          formula false Map.Poly.empty phi1;
+          List.iter funcs ~f:(fun def -> formula false Map.Poly.empty def.body)
+      | LetFormula (x, _, def, body, _) ->
+          if exp then
+            let s = part (fun () -> term exp ex def) in
+            formula exp (Map.Poly.set ex ~key:x ~data:s) body
+          else formula exp ex body
+    in
+    try
+      term (Atomic.get inline_by_expanded_size) Map.Poly.empty def;
+      !n
+    with Over -> size_bound + 1
+
+  (* The scope of a [let] body, equal to [scalar_substitution_scope_of] of it:
+     a [let] whose body is a [let] reads the inner body's scope from the table
+     and adds the inner binder and definition exactly as the [LetTerm] and
+     [LetFormula] arms of [scalar_substitution_scope_of] do (the binder added
+     to [bound_names] and [term_binders] over the union of the definition's and
+     the body's scopes); any other body is computed by
+     [scalar_substitution_scope_of] itself.  Why: each [let] of a nest asks the
+     safety of its substitution against its body, the rest of the nest, so
+     building the scope afresh at every [let] made a nest of n [let]s cost
+     n^2; along a chain each body's scope is now built once.  A body not met
+     before (rebuilt by a rule, or not the original node) misses the table and
+     is computed -- a lost reuse, never a different scope. *)
+  let add_let_binder (var, sort) def_scope body_scope =
+    {
+      bound_names =
+        Set.add (Set.union def_scope.bound_names body_scope.bound_names) var;
+      function_heads = Set.union def_scope.function_heads body_scope.function_heads;
+      term_binders =
+        Set.add
+          (Set.union def_scope.term_binders body_scope.term_binders)
+          (var, sort);
+      predicate_binders =
+        Set.union def_scope.predicate_binders body_scope.predicate_binders;
+    }
+
+  let rec body_scope_of_term a (body : Term.t) =
+    match PhysTerm.find_opt a.term_scopes body with
+    | Some scope -> scope
+    | None ->
+        let scope =
+          match body with
+          | LetTerm (var, sort, def, body', _) ->
+              add_let_binder (var, sort)
+                (scalar_substitution_scope_of def)
+                (body_scope_of_term a body')
+          | _ -> scalar_substitution_scope_of body
+        in
+        PhysTerm.replace a.term_scopes body scope;
+        scope
+
+  let rec body_scope_of_formula a (body : Formula.t) =
+    match PhysFml.find_opt a.formula_scopes body with
+    | Some scope -> scope
+    | None ->
+        let scope =
+          match body with
+          | Formula.LetFormula (var, sort, def, body', _) ->
+              add_let_binder (var, sort)
+                (scalar_substitution_scope_of def)
+                (body_scope_of_formula a body')
+          | _ ->
+              scalar_substitution_scope_of
+                (Term.mk_fsym_app (T_bool.Formula body) [])
+        in
+        PhysFml.replace a.formula_scopes body scope;
+        scope
+
+  (* [scalar_substitution_is_safe sub body] (for a term body, of
+     [Formula.eq body body], whose scope is the term's) with the body's scope
+     read through the table *)
+  let substitution_is_safe_in_term a sub body =
+    try scalar_substitution_is_safe_in_scope (body_scope_of_term a body) sub
+    with exn when not (Common.Timer.is_async exn) -> false
+
+  let substitution_is_safe_in_formula a sub body =
+    try scalar_substitution_is_safe_in_scope (body_scope_of_formula a body) sub
+    with exn when not (Common.Timer.is_async exn) -> false
+
+  (* runs [f] in state [s] and leaves the state [Outside] however [f] ends *)
+  let with_state st s f =
+    st := s;
+    Exn.protect ~f ~finally:(fun () -> st := Outside)
+
+  (* the simplification of a [let] node met in state [Outside]: [walk] is the
+     node for [scan], [pass] simplifies it with the environment, [default] by
+     the default rule, [fvs] gives a result's free variables *)
+  let region st walk ~pass ~default ~fvs =
+    match scan walk with
+    | None ->
+        Common.PhaseTime.event_here ~in_copy:false "let-once-not-clean";
+        with_state st Default default
+    | Some counts ->
+        let a =
+          {
+            counts;
+            env = Map.Poly.empty;
+            inlined = Set.Poly.empty;
+            term_scopes = PhysTerm.create 64;
+            formula_scopes = PhysFml.create 64;
+          }
+        in
+        let out = with_state st (Active a) (fun () -> pass a) in
+        if Set.is_empty a.inlined then out
+        else
+          let fv = fvs out in
+          if Set.exists a.inlined ~f:(Set.mem fv) then (
+            Common.PhaseTime.event_here ~in_copy:false "let-once-left-free";
+            with_state st Default default)
+          else out
+end
 
 (* A measurement instrument for the premise above: with this on (and the switch
    above off), every lift also re-simplifies each part it hands over and counts
@@ -183,6 +799,24 @@ let probe_max_examples = 200
 let probing = Stdlib.Domain.DLS.new_key (fun () -> ref false)
 
 (*val eval_term: Term.t -> Value.t*)
+(* A scalar index binds term variables and Boolean aliases, while an arrow
+   index binds only callable heads with that exact signature. *)
+let rename_array_index (x, sort) target body =
+  Formula.alpha_rename_term_vars
+    (Map.Poly.singleton x target)
+    (if Term.is_bool_sort sort then Map.Poly.singleton x target else Map.Poly.empty)
+    (if Sort.is_arrow sort then Map.Poly.singleton (x, sort) target
+     else Map.Poly.empty)
+    body
+
+let fresh_array_index t1 t2 =
+  let taken = Formula.names_spelled_in (Formula.eq t1 t2) in
+  let rec draw () =
+    let x = Ident.mk_fresh_tvar () in
+    if Set.mem taken x then draw () else x
+  in
+  draw ()
+
 (* structural equality modulo the bound variables of Z3-style array lambdas
    ([T_array.ALambda]); every other node is compared structurally *)
 let rec alpha_equiv t1 t2 =
@@ -190,7 +824,12 @@ let rec alpha_equiv t1 t2 =
   | ( Term.FunApp (T_array.ALambda ((x1, s1), se1), [ b1 ], _),
       Term.FunApp (T_array.ALambda ((x2, s2), se2), [ b2 ], _) ) ->
       Stdlib.(s1 = s2 && se1 = se2)
-      && alpha_equiv b1 (Term.rename (Map.Poly.singleton x2 x1) b2)
+      && (if Ident.tvar_equal x1 x2 then alpha_equiv b1 b2
+          else
+            let index = fresh_array_index t1 t2 in
+            alpha_equiv
+              (rename_array_index (x1, s1) index b1)
+              (rename_array_index (x2, s2) index b2))
   | Term.FunApp (f1, ts1, _), Term.FunApp (f2, ts2, _) ->
       Stdlib.(f1 = f2)
       && List.length ts1 = List.length ts2
@@ -702,7 +1341,7 @@ and subst_var_definitions phi =
    is not substituted either *)
 and subst_clause_definitions ?(conjunct_siblings = true) ~accept phi =
   let def_of x sort t =
-    if accept sort t && not (Set.mem (Term.tvs_of t) x) then Some (x, t)
+    if accept sort t && not (Set.mem (scalar_occurrences_of_term t) x) then Some (x, t)
     else None
   in
   let definition = function
@@ -738,7 +1377,13 @@ and subst_clause_definitions ?(conjunct_siblings = true) ~accept phi =
           match
             List.find_mapi ds ~f:(fun k d ->
                 match definition d with
-                | Some (x, t) when not (ctx x) -> Some (k, x, t)
+                | Some (x, t)
+                  when not (ctx x)
+                    && List.for_alli ds ~f:(fun j other ->
+                         j = k
+                         || scalar_substitution_is_safe
+                              (Map.Poly.singleton x t) other) ->
+                    Some (k, x, t)
                 | _ -> None)
           with
           | None -> ds
@@ -756,7 +1401,7 @@ and subst_clause_definitions ?(conjunct_siblings = true) ~accept phi =
      other sibling: those occurring in more siblings than [k] itself
      accounts for *)
   and with_siblings ctx fs =
-    let tvss = List.map fs ~f:Formula.tvs_of in
+    let tvss = List.map fs ~f:scalar_occurrences_of_formula in
     let count = Hashtbl.Poly.create () in
     List.iter tvss ~f:(Set.iter ~f:(fun x -> Hashtbl.incr count x));
     List.map2_exn fs tvss ~f:(fun f tvs ->
@@ -842,7 +1487,9 @@ let subst_seq_projection_definitions phi =
     | _ -> None
   in
   let replace (s, x, t) =
-    let fvt = Term.tvs_of t in
+    (* Nullary predicate aliases also denote Boolean scalars. Their binders
+       must block insertion just like ordinary variables of the replacement. *)
+    let fvt = scalar_occurrences_of_term t in
     let blocked y = Stdlib.(y = x) || Set.mem fvt y in
     let rec rt u =
       if Stdlib.(u = s) then t
@@ -994,9 +1641,15 @@ let seq_existential_is_length_only x body =
    explicitly, because an integer does not carry it. *)
 let eliminate_seq_existential (x, sort) body =
   let se = T_seq.elem_sort_of sort in
-  let n = Ident.mk_fresh_tvar () in
+  let occupied = ref (Set.add (Formula.names_spelled_in body) x) in
+  let rec fresh () =
+    let v = Ident.mk_fresh_tvar () in
+    if Set.mem !occupied v then fresh ()
+    else (occupied := Set.add !occupied v; v)
+  in
+  let n = fresh () in
   let nt = Term.mk_var n T_int.SInt in
-  let last = Ident.mk_fresh_tvar () in
+  let last = fresh () in
   let lastt =
     T_bool.mk_if_then_else
       (T_bool.of_formula @@ Formula.geq nt (T_int.one ()))
@@ -1005,6 +1658,8 @@ let eliminate_seq_existential (x, sort) body =
   in
   let rec on_term t =
     match t with
+    | Term.LetTerm _
+    | Term.FunApp ((T_array.ALambda _ | T_bool.Formula _), _, _) -> t
     | Term.FunApp (T_seq.SqLen _, [ Term.Var (y, _, _) ], _) when Stdlib.(y = x)
       ->
         nt
@@ -1013,17 +1668,16 @@ let eliminate_seq_existential (x, sort) body =
         lastt
     | Term.FunApp (fsym, args, info) ->
         Term.mk_fsym_app ~info fsym (List.map args ~f:on_term)
-    | Term.LetTerm (y, sort, def, b, info) ->
-        Term.mk_let_term ~info y sort (on_term def) (on_term b)
     | Term.Var _ -> t
   in
-  Formula.exists
-    [ (n, T_int.SInt); (last, se) ]
-    (Formula.and_of
-       [
-         Formula.leq (T_int.zero ()) nt;
-         Formula.map_term_no_binders ~f:on_term body;
-       ])
+  let replaced = Formula.map_term_no_binders ~f:on_term body in
+  (* The mapper deliberately stops at inner binders. Keep the sequence
+     existential when such a scope still contains one of its reads. *)
+  if Set.mem (Formula.fvs_of replaced) x then Formula.exists [x, sort] body
+  else
+    Formula.exists
+      [ (n, T_int.SInt); (last, se) ]
+      (Formula.and_of [Formula.leq (T_int.zero ()) nt; replaced])
 
 (* One formula: every existential over a sequence whose body reads it only
    through its length is replaced.  Nothing else is touched. *)
@@ -1109,11 +1763,37 @@ let rec elim_seq_existentials phi =
    real), so its coefficient is one and no division is introduced.  [target] is
    a bound variable for the one-point rule and [seq.len s] for the
    sequence-length split. *)
+(* Does [isolate_target] also isolate the target through a conditional whose
+   branches both contain it, inside [elim_onepoint_and_split_binders]?
+   Switched per process by the caller, off unless set.  The rule:
+   [ite c a b = r] holds exactly when [a = r] under [c] and [b = r] under
+   [not c], so with [c] free of the target and the target isolated in [a] as
+   [s_a] and in [b] as [s_b], it is [target = ite c s_a s_b], in every model.
+   What it buys: the simplifier lifts a conditional out of a sum, so a
+   variable defined as [w - (s + ite c 0 p) = 0] reaches the one-point rule as
+   [ite c (w - s) (w - (p + s)) = 0], which the plain rule cannot read. *)
+let isolate_through_ite = ref false
+
+(* Is the split of a bound variable of a single-constructor datatype into its
+   fields LEFT OUT of [elim_onepoint_and_split_binders]?  Switched per process
+   by the caller, off unless set (the split is then made, as before).  Both
+   choices are exact; what differs is what a solver can match: a premise
+   [forall d. not (A d) \/ ..] is instantiated at a ground [A t], while its
+   split form [forall f1 .. fn. not (A (C f1 .. fn)) \/ ..] needs a ground
+   term written as [C(..)], which an obligation over a variable [t] does not
+   contain; the shape proof keeps the binders whole. *)
+let keep_single_cons_binders = ref false
+
 let isolate_target ~is_target ~occurs lhs rhs =
   let rec go lhs rhs =
     if is_target lhs then Some rhs
     else
       match lhs with
+      | Term.FunApp (T_bool.IfThenElse, [ c; a; b ], _)
+        when !isolate_through_ite && (not (occurs c)) && occurs a && occurs b
+             && not (occurs rhs) ->
+          Option.map2 (go a rhs) (go b rhs) ~f:(fun sa sb ->
+              T_bool.mk_if_then_else c sa sb)
       | Term.FunApp (T_int.Add, [ a; b ], _) ->
           if occurs a && not (occurs b) then go a (T_int.mk_sub rhs b)
           else if occurs b && not (occurs a) then go b (T_int.mk_sub rhs a)
@@ -1178,7 +1858,7 @@ let spine_literals binder body =
 (* [x] as a one-point variable of [lit]: the term the equation defines it as *)
 let point_of_literal binder x lit =
   Option.bind (equation_of_literal binder lit) ~f:(fun (t1, t2) ->
-      let occurs t = Set.mem (Term.tvs_of t) x in
+      let occurs t = Set.mem (scalar_occurrences_of_term t) x in
       let is_target = function
         | Term.Var (y, _, _) -> Ident.tvar_equal x y
         | _ -> false
@@ -1266,6 +1946,14 @@ let rec split_single_cons_binders ?(selected_only = false) changed senv body
   if round >= max_split_rounds then (senv, body)
   else
     let selected = if selected_only then selected_vars body else Set.Poly.empty in
+    let occupied = ref
+      (Set.union (Formula.names_spelled_in body)
+         (Set.Poly.of_list (List.map senv ~f:fst))) in
+    let rec fresh_field () =
+      let v = Ident.mk_fresh_tvar () in
+      if Set.mem !occupied v then fresh_field ()
+      else (occupied := Set.add !occupied v; v)
+    in
     let senv', sub =
       List.fold_right senv ~init:([], Map.Poly.empty)
         ~f:(fun (x, sort) (acc, sub) ->
@@ -1274,7 +1962,7 @@ let rec split_single_cons_binders ?(selected_only = false) changed senv body
               ((x, sort) :: acc, sub)
           | Some (dt, cons, sorts) ->
               let fields =
-                List.map sorts ~f:(fun s -> (Ident.mk_fresh_tvar (), s))
+                List.map sorts ~f:(fun s -> (fresh_field (), s))
               in
               let t =
                 T_dt.mk_cons dt (Datatype.name_of_cons cons)
@@ -1352,6 +2040,526 @@ let split_single_cons_free_vars ?(selected_only = false) (senv : sort_env_map)
         phi',
         List.length cands )
 
+(* The inverse of the single-constructor split where it frees nothing: a
+   group of free variables [y1 .. yn] (n >= 1, pairwise distinct) of [phi]
+   that occurs ONLY inside one constructor application [c(y1 .. yn)], where
+   [c] is the only constructor of an inductive datatype none of whose fields
+   has its own sort, is folded back into one fresh variable [z] of that
+   datatype: every occurrence of [c(y1 .. yn)] becomes [z], and [y1 .. yn] no
+   longer occur.
+
+   Contract: the result is EQUIVALENT to [phi] under the universal (or, read
+   as a negation, existential) closure over its free variables, in every model
+   of the theory: [c] is a bijection from the tuples of field values onto the
+   datatype's values (every value is [c] applied to its selectors, and the
+   datatype is free), so letting [z] range over the datatype is letting
+   [y1 .. yn] range over the fields.  The second component is the number of
+   groups folded; 0 means [phi] came back untouched (physically).
+   Preserves: the free variables other than [y1 .. yn]; binders are renamed
+   apart first ([Formula.aconv_tvar]) so that a binder that shadows some [yi]
+   cannot be mistaken for it, and only when a group is folded.
+   Left alone: a formula with a [let], a constructor applied to anything but
+   distinct free variables, a codatatype, a datatype with several
+   constructors (there [z = c(..)] would also say which constructor), and a
+   group of which some variable also occurs elsewhere.
+
+   Why: the split is applied while a selector still reads the variable; once
+   predicate elimination has removed every such read, a clause can be left
+   with the fields only as [c(y1 .. yn)] -- an equation [w = c(y1 .. yn)]
+   against a bound [w] where the unsplit clause had [w = x].  On a
+   Rust-derived input whose verdict is decided after every unknown is
+   eliminated, that one change was the whole difference between the split
+   and the unsplit residual, and the solver's countermodel search on it
+   stopped finding what it found on the unsplit form. *)
+let rejoin_single_cons_fields (phi : Formula.t) : Formula.t * int =
+  let group_of = function
+    | Term.FunApp (T_dt.DTCons (name, _, dt), (_ :: _ as args), _) -> (
+        match splittable_sort (T_dt.SDT dt) with
+        | None -> None
+        | Some _ ->
+            let ys =
+              List.filter_map args ~f:(function
+                | Term.Var (y, _, _) -> Some y
+                | _ -> None)
+            in
+            if
+              List.length ys = List.length args
+              && not (List.contains_dup ~compare:Ident.tvar_compare ys)
+            then Some (name, Datatype.name_of dt, ys, dt)
+            else None)
+    | _ -> None
+  in
+  let groups phi =
+    let acc = ref [] in
+    ignore
+    @@ Formula.map_term phi ~f:(fun t ->
+        (match group_of t with
+        | Some g -> acc := g :: !acc
+        | None -> ());
+        t);
+    !acc
+  in
+  if not (Formula.is_let_free phi) then (phi, 0)
+  else
+    let free = Formula.tvs_of phi in
+    let cands =
+      List.filter (groups phi) ~f:(fun (_, _, ys, _) ->
+          List.for_all ys ~f:(Set.mem free))
+    in
+    if List.is_empty cands then (phi, 0)
+    else
+      let phi0 = Formula.aconv_tvar phi in
+      let occupied = ref (Formula.names_spelled_in phi0) in
+      let rec fresh () =
+        let v = Ident.mk_fresh_tvar () in
+        if Set.mem !occupied v then fresh ()
+        else (
+          occupied := Set.add !occupied v;
+          v)
+      in
+      let same (n, d, ys, _) (n', d', ys', _) =
+        String.(n = n') && String.(d = d')
+        && List.equal Ident.tvar_equal ys ys'
+      in
+      let cands =
+        List.fold cands ~init:[] ~f:(fun acc g ->
+            if List.exists acc ~f:(same g) then acc else g :: acc)
+      in
+      List.fold cands ~init:(phi0, 0) ~f:(fun (phi, n) ((_, _, ys, dt) as g) ->
+          let z = fresh () in
+          let zt = Term.mk_var z (T_dt.SDT dt) in
+          let phi' =
+            Formula.map_term phi ~f:(fun t ->
+                match group_of t with
+                | Some g' when same g g' -> zt
+                | _ -> t)
+          in
+          let free' = Formula.tvs_of phi' in
+          if List.exists ys ~f:(Set.mem free') then (phi, n) else (phi', n + 1))
+      |> fun (phi', n) -> if n = 0 then (phi, 0) else (phi', n)
+
+(* [rejoin_single_cons_fields] on a clause given with its variable
+   environment [senv] (its implicitly universal variables): the folded fields
+   leave the environment and the fresh variables join it with their datatype
+   sorts.  Same contract; the third component is the number of groups folded,
+   and with 0 the clause and its environment come back untouched. *)
+let rejoin_single_cons_fields_in (senv : sort_env_map) phi =
+  let phi', n = rejoin_single_cons_fields phi in
+  if n = 0 then (senv, phi, 0)
+  else
+    let free = Formula.tvs_of phi' in
+    let kept = Map.Poly.filter_keys senv ~f:(fun x ->
+        Set.mem free x || not (Set.mem (Formula.tvs_of phi) x)) in
+    let added =
+      Map.Poly.filter_keys
+        (Map.Poly.of_alist_reduce ~f:(fun s _ -> s)
+           (Set.to_list (Formula.term_sort_env_of phi')))
+        ~f:(fun x -> not (Map.Poly.mem senv x))
+    in
+    (Map.force_merge kept added, phi', n)
+
+(* ---- Tester-guarded selector reads ----
+
+   The lemma behind everything below (the SMT-LIB datatype theory): let [C] be
+   a constructor of an inductive datatype with selectors [s_1 .. s_n], [t] a
+   term of that datatype, and [ys] fresh variables.  In every model, and
+   whatever value the model gives a selector applied off its own constructor,
+
+     is_C t /\ phi[s_1 t .. s_n t]    iff   exists ys. t = C(ys) /\ phi[ys]
+     ~is_C t \/ psi[s_1 t .. s_n t]   iff   forall ys. t != C(ys) \/ psi[ys]
+
+   provided no binder of [phi] (resp. [psi]) above a replaced read binds a
+   variable of [t].  Forward: the tester holds, so [t] is [C] applied to its
+   selectors, and [ys := s_i t] is a witness; backward: [t = C(ys)] makes the
+   tester hold and [s_i t = s_i (C ys) = y_i] by injectivity.  The second line
+   is the negation of the first.  Neither direction reads a selector off its
+   constructor, so a read guarded this way has the value the theory fixes. *)
+
+(* [constructor_stated ~holds phi]: [Some (c, dt, t)] when [phi] (with
+   [~holds:true]) or its negation (with [~holds:false]) says exactly that [t]
+   is built by the constructor named [c] of the inductive datatype [dt], and
+   [dt] has at least two constructors (with one, every selector is total and
+   there is nothing to guard).  A literal [is_c' t] of a datatype with exactly
+   two constructors states the other one when negated. *)
+let constructor_stated ~holds phi =
+  let rec statement = function
+    | Formula.Atom
+        (Atom.App (Predicate.Psym (T_dt.IsCons (name, dt)), [ t ], _), _) ->
+        Some (true, name, dt, t)
+    | Formula.Atom
+        (Atom.App (Predicate.Psym (T_dt.NotIsCons (name, dt)), [ t ], _), _) ->
+        Some (false, name, dt, t)
+    | Formula.UnaryOp (Formula.Not, phi, _) ->
+        Option.map (statement phi) ~f:(fun (b, name, dt, t) ->
+            (not b, name, dt, t))
+    | _ -> None
+  in
+  match statement phi with
+  | Some (b, name, dt, t) when Datatype.is_dt dt -> (
+      match Datatype.conses_of dt with
+      | [] | [ _ ] -> None
+      | conses ->
+          if Bool.equal b holds then Some (name, dt, t)
+          else (
+            match conses with
+            | [ c1; c2 ] ->
+                let other =
+                  if String.(Datatype.name_of_cons c1 = name) then c2 else c1
+                in
+                Some (Datatype.name_of_cons other, dt, t)
+            | _ -> None))
+  | _ -> None
+
+(* [replace_guarded_reads (c, dt, t) field phi]: [phi] with each read
+   [s_i t] of a field of constructor [c] replaced by [field i], and the number
+   of reads replaced.  Not entered: a quantifier binding a variable of [t]
+   (there [t] names something else), and, through
+   [Formula.map_term_no_binders], [let]/[letrec], array lambdas and formulas
+   embedded in terms; a read left there keeps its selector, which is the
+   safe direction for every caller (the result is still equivalent, or still
+   reported open).  [t] is compared structurally. *)
+let replace_guarded_reads (c, dt, t) field phi =
+  let fvs_t = Term.fvs_of t in
+  let sels =
+    match Datatype.look_up_cons dt c with
+    | Some cons -> List.map (Datatype.sels_of_cons cons) ~f:Datatype.name_of_sel
+    | None -> []
+  in
+  let count = ref 0 in
+  let on_term = function
+    | Term.FunApp (T_dt.DTSel (sel, _, _), [ u ], _) as s -> (
+        match List.findi sels ~f:(fun _ name -> String.(name = sel)) with
+        | Some (i, _) when Stdlib.( = ) u t ->
+            incr count;
+            field i
+        | _ -> s)
+    | s -> s
+  in
+  let rec go = function
+    | Formula.Atom _ as phi -> Formula.map_term_no_binders ~f:on_term phi
+    | Formula.UnaryOp (op, phi, info) -> Formula.mk_unop ~info op (go phi)
+    | Formula.BinaryOp (op, phi1, phi2, info) ->
+        Formula.mk_binop ~info op (go phi1) (go phi2)
+    | Formula.Bind (((Formula.Forall | Formula.Exists) as b), params, body, info)
+      when List.for_all params ~f:(fun (x, _) -> not (Set.mem fvs_t x)) ->
+        Formula.mk_bind ~info b params (go body)
+    | phi -> phi
+  in
+  let phi = go phi in
+  (phi, !count)
+
+(* One step of the lemma over the operands [ds] of one conjunction
+   ([~holds:true]) or disjunction ([~holds:false]): the first operand that is
+   a tester guard of the right polarity, for a constructor some of whose
+   fields the OTHER operands read, is replaced by [t = C(ys)] (resp.
+   [t != C(ys)]) and those reads by [ys], [ys] being [fresh_fields] of the
+   constructor's field sorts.  [None] when no operand qualifies; then
+   [fresh_fields] has not been called, so no fresh name was drawn.  The result
+   is equivalent to [ds] (as the same connective) under [exists ys] (resp.
+   [forall ys]); the caller owns that quantifier. *)
+let settle_one_tester_guard ~holds ~fresh_fields ds =
+  List.find_mapi ds ~f:(fun k d ->
+      Option.bind (constructor_stated ~holds d) ~f:(fun ((c, dt, t) as guard) ->
+          match Datatype.look_up_cons dt c with
+          | None -> None
+          | Some cons ->
+              let others = List.filteri ds ~f:(fun j _ -> j <> k) in
+              let reads d = snd (replace_guarded_reads guard (fun _ -> t) d) in
+              if not (List.exists others ~f:(fun d -> reads d > 0)) then None
+              else
+                let ys = fresh_fields (Datatype.sorts_of_cons dt cons) in
+                let field i = List.nth_exn ys i in
+                let tc = T_dt.mk_cons dt c ys in
+                let eq = if holds then Formula.eq t tc else Formula.neq t tc in
+                Some
+                  (List.mapi ds ~f:(fun j d ->
+                       if j = k then eq
+                       else fst (replace_guarded_reads guard field d)))))
+
+let rec or_operands = function
+  | Formula.BinaryOp (Formula.Or, phi1, phi2, _) ->
+      or_operands phi1 @ or_operands phi2
+  | phi -> [ phi ]
+
+let rec and_operands = function
+  | Formula.BinaryOp (Formula.And, phi1, phi2, _) ->
+      and_operands phi1 @ and_operands phi2
+  | phi -> [ phi ]
+
+(* [tester_normal_form_free_vars senv phi]: the tester normal form of a
+   clause, at negative polarity only.  [senv] is the clause's variable
+   environment and [phi] its body in negation normal form; a clause premise
+   [is_C t /\ psi[s_i t]] is there the disjunction [~is_C t \/ ~psi[s_i t]].
+
+   Contract: every disjunction of [phi] reached from the root through [/\],
+   [\/] and universal quantifiers only, one of whose operands is a guard
+   [~is_C t] (for a datatype with at least two constructors) while another
+   reads a field [s_i t] of [C], has the guard replaced by [t != C(ys)] and
+   those reads by [ys], fresh variables added to the returned environment;
+   repeated until no such disjunction is left (a guard whose term was itself
+   a guarded read is met again with [ys] in it).  The result is EQUIVALENT to
+   the input under the universal closure over the environment, in every model
+   of the theory and whatever value a selector off its constructor takes: the
+   lemma above gives [forall ys] at the disjunction, and a universal over
+   fresh variables commutes with [/\], [\/] and the universals above it.
+   Nothing under an existential is touched, nor a conjunction [is_C t /\ ..]
+   (a positive tester: the existential it would need lands in the
+   conclusion, which [constructor_point_testers] rewrites the other way), nor
+   a read with no guard (its value is the theory's open question, and
+   rewriting it would decide it).  The third component counts the guards
+   rewritten; with 0 the input comes back physically unchanged and no fresh
+   name has been drawn.  A clause containing [let] or [letrec] is left. *)
+let tester_normal_form_free_vars (senv : sort_env_map) phi =
+  if not (Formula.is_let_free phi) then (senv, phi, 0)
+  else
+    let occupied =
+      ref (Set.union (Formula.names_spelled_in phi) (Map.key_set senv))
+    in
+    let rec fresh () =
+      let v = Ident.mk_fresh_tvar () in
+      if Set.mem !occupied v then fresh ()
+      else (
+        occupied := Set.add !occupied v;
+        v)
+    in
+    let added = ref [] in
+    let count = ref 0 in
+    let fresh_fields sorts =
+      List.map sorts ~f:(fun sort ->
+          let y = fresh () in
+          added := (y, sort) :: !added;
+          Term.mk_var y sort)
+    in
+    let rec settle ds =
+      match settle_one_tester_guard ~holds:false ~fresh_fields ds with
+      | Some ds ->
+          incr count;
+          settle ds
+      | None -> ds
+    in
+    let rec map_or_operands f = function
+      | Formula.BinaryOp (Formula.Or, phi1, phi2, info) ->
+          Formula.mk_or ~info (map_or_operands f phi1) (map_or_operands f phi2)
+      | phi -> f phi
+    in
+    let rec go = function
+      | Formula.BinaryOp (Formula.And, phi1, phi2, info) ->
+          Formula.mk_and ~info (go phi1) (go phi2)
+      | Formula.Bind (Formula.Forall, params, body, info) ->
+          Formula.mk_bind ~info Formula.Forall params (go body)
+      | Formula.BinaryOp (Formula.Or, _, _, _) as phi ->
+          let before = !count in
+          let ds = settle (or_operands phi) in
+          (* rebuilt only when a guard was rewritten here, so an untouched
+             disjunction keeps its shape *)
+          if !count = before then map_or_operands go phi
+          else Formula.or_of (List.map ds ~f:go)
+      | phi -> phi
+    in
+    let phi' = go phi in
+    if !count = 0 then (senv, phi, 0)
+    else
+      ( List.fold !added ~init:senv ~f:(fun senv (y, sort) ->
+            Map.Poly.add_exn senv ~key:y ~data:sort),
+        phi',
+        !count )
+
+(* ---- Tidying what the tester normal form leaves behind ----
+
+   Once [tester_normal_form_free_vars] has replaced a guard by [t != C(ys)],
+   the clause's one-point rule substitutes [t := C(ys)] and then the fields
+   [ys] by whatever the clause equates them with, so an existential the input
+   wrote as [exists u. t = C(u) /\ ..] reaches the solver as
+   [exists u. u = 0 /\ ..] or [exists u. 0 = x - u /\ ..], and the
+   elimination of the unknowns can merge into one clause two copies of a
+   premise whose operands come in different orders.  The two functions below
+   remove both shapes; each is an equivalence in every model. *)
+
+(* [elim_exists_onepoint phi]: [phi] with every existential variable that a
+   conjunct of its binder's body defines -- [x = t] or [t = x] up to integer
+   or real [+], [-] and negation around [x], [x] not in [t] -- replaced by
+   that definition and removed from the binder, innermost binders first, and
+   the number of variables removed.
+
+   Contract: the result is equivalent to [phi] in every model (the one-point
+   rule [exists x. x = t /\ psi  iff  psi[t/x]] for [x] not free in [t]).
+   A Boolean or function-sorted variable is not eliminated.
+   Assumes nothing of [phi]'s shape beyond what the constructors say.  The
+   substitution is the capture-avoiding [Formula.subst], and a definition is
+   used only where [scalar_substitution_is_safe] admits it in every remaining
+   conjunct, so no binder inside the body captures a variable of [t].  Only
+   [Formula.Bind Exists] is acted on and nothing is moved across a binder:
+   universals, [let]/[letrec], array lambdas and formulas embedded in terms
+   are not entered for elimination (a formula under a universal is), so the
+   binder of an [ALambda] or a [T_bool.Formula] never has anything lifted out
+   through it.  A formula with nothing to remove comes back physically
+   unchanged. *)
+let elim_exists_onepoint phi =
+  let count = ref 0 in
+  let rec step senv body =
+    let lits = Formula.conjuncts_list_of body in
+    let found =
+      List.find_map senv ~f:(fun (x, sort) ->
+          (* a Boolean variable can also be spelled as a nullary predicate,
+             which a term substitution does not reach *)
+          if Term.is_bool_sort sort || Sort.is_arrow sort then None
+          else
+            List.find_mapi lits ~f:(fun i lit ->
+                Option.bind (point_of_literal Formula.Exists x lit)
+                  ~f:(fun t ->
+                    let sub = Map.Poly.singleton x t in
+                    let rest = List.filteri lits ~f:(fun j _ -> j <> i) in
+                    if List.for_all rest ~f:(scalar_substitution_is_safe sub)
+                    then Some (x, sub, rest)
+                    else None)))
+    in
+    match found with
+    | None -> (senv, body)
+    | Some (x, sub, rest) ->
+        incr count;
+        step
+          (List.filter senv ~f:(fun (y, _) -> not (Ident.tvar_equal x y)))
+          (Formula.and_of (List.map rest ~f:(Formula.subst sub)))
+  in
+  let rec go phi =
+    match phi with
+    | Formula.Atom _ | Formula.LetRec _ | Formula.LetFormula _ -> phi
+    | Formula.UnaryOp (op, phi1, info) ->
+        let phi1' = go phi1 in
+        if phys_equal phi1 phi1' then phi else Formula.mk_unop ~info op phi1'
+    | Formula.BinaryOp (op, phi1, phi2, info) ->
+        let phi1' = go phi1 and phi2' = go phi2 in
+        if phys_equal phi1 phi1' && phys_equal phi2 phi2' then phi
+        else Formula.mk_binop ~info op phi1' phi2'
+    | Formula.Bind (Formula.Exists, senv, body, info) ->
+        let before = !count in
+        let body' = go body in
+        let senv', body' = step senv body' in
+        if !count = before && phys_equal body body' then phi
+        else Formula.mk_bind_if_bounded ~info Formula.Exists senv' body'
+    | Formula.Bind (binder, senv, body, info) ->
+        let body' = go body in
+        if phys_equal body body' then phi
+        else Formula.mk_bind ~info binder senv body'
+  in
+  let phi' = go phi in
+  (phi', !count)
+
+(* [dedup_ac_operands phi]: [phi] with every operand of a conjunction or a
+   disjunction (flattened) dropped when an earlier operand of the same
+   connective has the same [ac_key], and the number of operands dropped.
+
+   [ac_key] identifies a formula up to the names of its quantified variables
+   and the order and multiplicity of the operands of every [/\] and [\/]:
+   operands become a sorted set of keys, and the variables of a quantifier
+   block at nesting depth [d] are renamed to names of depth [d] by
+   position (with their sorts in the key), so siblings at the same depth get
+   the same names.  An atom, and anything that is not [/\], [\/], [~] or a
+   [forall]/[exists] block, is keyed by its printed form, which is assumed to
+   determine it, as [Problem.alpha_canonical_key] assumes; a block that binds
+   one name twice, or a Boolean or function-sorted variable, is keyed by its
+   printed form too (so only an identical block matches it), and the formula
+   is left as it is when its printed form already mentions the renaming's
+   prefix.
+
+   Contract: the result is equivalent to [phi] in every model (two operands
+   with one key are equivalent, by induction on the key: commutativity,
+   associativity and idempotence of the connective, and alpha-conversion of a
+   block; an equivalent duplicate operand is dropped by idempotence).  Nothing
+   is moved across a binder: an operand is dropped only beside its twin under
+   the same binders, and terms (array lambdas, embedded formulas) are not
+   entered.  Operands kept keep their order and their names; a formula with
+   nothing dropped comes back physically unchanged. *)
+let ac_key_prefix = "#ack"
+
+let rec ac_key depth phi =
+  match phi with
+  | Formula.Atom (atom, _) -> "a" ^ Atom.str_of atom
+  | Formula.UnaryOp (Formula.Not, phi1, _) -> "~(" ^ ac_key depth phi1 ^ ")"
+  | Formula.BinaryOp (((Formula.And | Formula.Or) as op), _, _, _) ->
+      let ops =
+        match op with
+        | Formula.And -> and_operands phi
+        | _ -> or_operands phi
+      in
+      let keys =
+        List.dedup_and_sort ~compare:String.compare
+          (List.map ops ~f:(ac_key depth))
+      in
+      sprintf "%s[%s]"
+        (match op with Formula.And -> "&" | _ -> "|")
+        (String.concat ~sep:";" keys)
+  | Formula.Bind (((Formula.Forall | Formula.Exists) as binder), senv, body, _)
+    when (not
+            (List.contains_dup senv ~compare:(fun (x, _) (y, _) ->
+                 Ident.tvar_compare x y)))
+         (* a Boolean variable can also be spelled as a nullary predicate,
+            which the renaming would not reach, leaving its old name in the
+            key where a free predicate of that name could match it *)
+         && not
+              (List.exists senv ~f:(fun (_, sort) ->
+                   Term.is_bool_sort sort || Sort.is_arrow sort)) ->
+      let sub =
+        Map.Poly.of_alist_exn
+        @@ List.mapi senv ~f:(fun i (x, sort) ->
+               ( x,
+                 Term.mk_var
+                   (Ident.Tvar (sprintf "%s%d_%d" ac_key_prefix depth i))
+                   sort ))
+      in
+      sprintf "%s(%s).%s"
+        (match binder with Formula.Forall -> "A" | _ -> "E")
+        (String.concat ~sep:","
+           (List.map senv ~f:(fun (_, sort) -> Term.str_of_sort sort)))
+        (ac_key (depth + 1) (Formula.subst sub body))
+  | _ -> "r" ^ Formula.str_of phi
+
+let dedup_ac_operands phi =
+  if String.is_substring (Formula.str_of phi) ~substring:ac_key_prefix then
+    (phi, 0)
+  else
+    let count = ref 0 in
+    let rec go phi =
+      match phi with
+      | Formula.Atom _ | Formula.LetRec _ | Formula.LetFormula _ -> phi
+      | Formula.UnaryOp (op, phi1, info) ->
+          let phi1' = go phi1 in
+          if phys_equal phi1 phi1' then phi else Formula.mk_unop ~info op phi1'
+      | Formula.BinaryOp (((Formula.And | Formula.Or) as op), _, _, _) ->
+          let ops =
+            match op with
+            | Formula.And -> and_operands phi
+            | _ -> or_operands phi
+          in
+          let ops' = List.map ops ~f:go in
+          let kept =
+            List.rev @@ snd
+            @@ List.fold ops' ~init:(Set.Poly.empty, []) ~f:(fun (seen, acc) d ->
+                   let key = ac_key 0 d in
+                   if Set.mem seen key then (seen, acc)
+                   else (Set.add seen key, d :: acc))
+          in
+          if
+            List.length kept = List.length ops
+            && List.for_all2_exn ops ops' ~f:phys_equal
+          then phi
+          else (
+            count := !count + (List.length ops - List.length kept);
+            match op with
+            | Formula.And -> Formula.and_of kept
+            | _ -> Formula.or_of kept)
+      | Formula.BinaryOp (op, phi1, phi2, info) ->
+          let phi1' = go phi1 and phi2' = go phi2 in
+          if phys_equal phi1 phi1' && phys_equal phi2 phi2' then phi
+          else Formula.mk_binop ~info op phi1' phi2'
+      | Formula.Bind (binder, senv, body, info) ->
+          let body' = go body in
+          if phys_equal body body' then phi
+          else Formula.mk_bind ~info binder senv body'
+    in
+    let phi' = go phi in
+    (phi', !count)
+
 (* Is an equation between two applications of one constructor split into
    the equations of their fields, inside [elim_onepoint_and_split_binders]?
    Switched per process by the caller, off unless set. *)
@@ -1396,7 +2604,74 @@ let split_cons_equations changed phi =
         | None -> Formula.mk_atom atom)
     | _ -> Formula.mk_atom atom
   in
-  Formula.map_atom ~f:split phi
+  let phi' = Formula.map_atom ~f:split phi in
+  (* a split under a negation is pushed through it, so that the field
+     disequations are spine literals the one-point rule reads *)
+  if !changed then Formula.nnf_of phi' else phi'
+
+(* Is an equation between a term and an application of the ONLY constructor
+   of an inductive datatype split into the equations of the fields, wherever
+   it is written, inside [elim_onepoint_and_split_binders]?  Switched per
+   process by the caller, off unless set.
+
+   The rule (surjective pairing, as for [surjective_pairing], but at every
+   atom and whatever the fields are): for a datatype with one constructor
+   [C], every value [u] is [C(sel_1 u, .., sel_n u)] and [C] is injective, so
+   [u = C(a_1, .., a_n)] is [sel_1 u = a_1 /\ .. /\ sel_n u = a_n] and
+   [u != C(..)] the disjunction of the fields' disequations, in every model.
+   An equation whose other side is a constructor application too is left to
+   [split_cons_equations].  What it buys: a wrapped integer [u = Int (e)] (a
+   newtype of the source program) becomes the arithmetic equation
+   [val u = e], which an arithmetic solver propagates and the case merge
+   below can read. *)
+let split_single_cons_equations = ref false
+
+let split_single_cons_eqs changed phi =
+  let here = ref false in
+  let fields_of = function
+    | Term.FunApp (T_dt.DTCons (name, _, dt), args, _) when Datatype.is_dt dt
+      -> (
+        match Datatype.conses_of dt with
+        | [ cons ]
+          when String.(Datatype.name_of_cons cons = name)
+               && (not (List.is_empty args))
+               && List.length (Datatype.sels_of_cons cons) = List.length args
+          ->
+            Some (dt, name, args)
+        | _ -> None)
+    | _ -> None
+  in
+  let rec split atom =
+    match atom with
+    | Atom.App (Predicate.Psym ((T_bool.Eq | T_bool.Neq) as op), [ t1; t2 ], _)
+      -> (
+        let side c u =
+          if T_dt.is_cons u then None
+          else
+            Option.map (fields_of c) ~f:(fun (dt, name, args) ->
+                List.mapi args ~f:(fun i a ->
+                    let sel = T_dt.mk_sel_by_cons dt name i u in
+                    split
+                      (match op with
+                      | T_bool.Eq -> T_bool.mk_eq sel a
+                      | _ -> T_bool.mk_neq sel a)))
+        in
+        match (match side t2 t1 with Some r -> Some r | None -> side t1 t2) with
+        | Some parts ->
+            here := true;
+            (match op with
+            | T_bool.Eq -> Formula.and_of parts
+            | _ -> Formula.or_of parts)
+        | None -> Formula.mk_atom atom)
+    | _ -> Formula.mk_atom atom
+  in
+  let phi' = Formula.map_atom ~f:split phi in
+  (* a split under a negation is pushed through it, so that the field
+     disequations are spine literals the one-point rule reads *)
+  if !here then (
+    changed := true;
+    Formula.nnf_of phi')
+  else phi
 
 (* Exact cancellation of a common prefix and suffix across a sequence
    equation: an atom [s = t] or [s != t] whose sides are sequences is read as
@@ -1681,7 +2956,14 @@ let array_pointwise_of_literal ~outer s sort lit =
           then None
           else
             let nonzero = not (Z.equal c Z.zero) in
-            let j = Ident.mk_fresh_tvar () in
+            (* The lambda also contains the original guard and value. Its
+               index must not capture any name already spelled there. *)
+            let taken = Set.add (Set.union outer (Formula.names_spelled_in lit)) s in
+            let rec fresh_index () =
+              let j = Ident.mk_fresh_tvar () in
+              if Set.mem taken j then fresh_index () else j
+            in
+            let j = fresh_index () in
             let back =
               Map.Poly.singleton i
                 (T_int.mk_sub (Term.mk_var j T_int.SInt) (T_int.mk_int c))
@@ -1786,6 +3068,310 @@ let pairing_of_literal binder senv lit =
       in
       match try_side t1 t2 with Some ls -> Some ls | None -> try_side t2 t1)
 
+(* [x] as an integer bound variable confined to one value by the integer
+   bounds among [lits] (read under [binder]: a conjunct under an existential,
+   the negation of a disjunct under a universal): the constant [c] when the
+   greatest constant lower bound and the least constant upper bound are both
+   [c].  Each bound is a literal [a * x + k >= 0] (after the integer step for a
+   strict comparison) with [a] one or minus one and nothing else in it.  Then
+   [exists x. /\ lits] is [/\ lits[c/x]] (every model of the body has
+   [x = c]), and dually [forall x. \/ lits] is [\/ lits[c/x]] (at any other
+   [x] one of the disjuncts whose negation bounds [x] is true) -- the bound
+   literals become ground comparisons, true at [c].  Defined only after
+   [ctx_lin_lit] below, so taken by reference. *)
+let singleton_range_hook : (Formula.binder -> Ident.tvar -> Formula.t list -> Term.t option) ref =
+  ref (fun _ _ _ -> None)
+
+(* Is a bound variable that an equation fixes as a field of a constructor
+   application removed by the one-point rule even when the datatype has
+   SEVERAL constructors (the tester of the constructor kept as a literal), and
+   when the variable sits under nested constructors, inside
+   [elim_onepoint_and_split_binders]?  Switched per process by the caller, off
+   unless set.
+
+   The rule: for an inductive datatype constructor [C] with selectors
+   [sel_1 .. sel_n], [u = C(t_1, .., t_n)] holds in a model exactly when
+   [is_C u] and [sel_j u = t_j] for every [j] (constructors are injective and
+   disjoint, every value built by [C] is [C] applied to its selectors).  When
+   [x] does not occur in [u] and occurs in [t_i] along a path of constructor
+   applications ending at [x] itself, that is [x = s /\ G] for [s] the
+   selector path on [u] and [G] the testers on the path and the other fields'
+   equations (in which [x] may occur, [s] being substituted for it), so
+   [exists x. u = C(..) /\ R] is [G[s/x] /\ R[s/x]] and dually
+   [forall x. u != C(..) \/ R] is [not G[s/x] \/ R[s/x]].  An equivalence in
+   every model of the theory: a selector applied off its constructor is read
+   only where a tester of [G] has excluded that case (under [exists] the
+   tester is a conjunct, under [forall] its negation is a disjunct).  A
+   codatatype is not decomposed.
+
+   What it buys: a layout contract stated as [forall q. v != Some (q) \/ ..]
+   or [forall a b. v != Pair (Int a) (Int b) \/ ..] over a datatype with
+   several constructors keeps [q] (resp. [a], [b]) bound with no ground term
+   of its sort to instantiate it with; once it is [sel v], the solver needs
+   no instance at all. *)
+let constructor_point_testers = ref false
+
+(* [solve_constructor_point x lhs rhs]: [Some (s, guards)] when [rhs]
+   contains [x] along a path of inductive constructor applications ending at
+   [x] and [lhs] does not contain [x]; then [lhs = rhs] is equivalent in every
+   model to [x = s /\ guards] with [s] free of [x] ([guards] may mention [x]:
+   the equations of the other fields) *)
+let rec solve_constructor_point x lhs rhs =
+  if Set.mem (scalar_occurrences_of_term lhs) x then None
+  else match rhs with
+  | Term.Var (y, _, _) when Ident.tvar_equal x y -> Some (lhs, [])
+  | Term.FunApp (T_dt.DTCons (name, _, dt), ts, _) when Datatype.is_dt dt ->
+      let occurs t = Set.mem (scalar_occurrences_of_term t) x in
+      let tester =
+        match Datatype.conses_of dt with
+        | [ _ ] -> []
+        | _ -> [ Formula.mk_atom (T_dt.mk_is_cons dt name lhs) ]
+      in
+      List.find_mapi ts ~f:(fun i t ->
+          if not (occurs t) then None
+          else
+            Option.map
+              (solve_constructor_point x (T_dt.mk_sel_by_cons dt name i lhs) t)
+              ~f:(fun (s, guards) ->
+                let others =
+                  List.filter_mapi ts ~f:(fun j t' ->
+                      if j = i then None
+                      else
+                        Some (Formula.eq (T_dt.mk_sel_by_cons dt name j lhs) t'))
+                in
+                (s, tester @ others @ guards)))
+  | _ ->
+      (* an arithmetic side: [lhs = rhs] is [x = s] when [x] occurs in [rhs]
+         once along sums and differences with coefficient one *)
+      let occurs t = Set.mem (scalar_occurrences_of_term t) x in
+      let is_target = function
+        | Term.Var (y, _, _) -> Ident.tvar_equal x y
+        | _ -> false
+      in
+      if occurs lhs then None
+      else
+        Option.map (isolate_target ~is_target ~occurs lhs rhs) ~f:(fun s ->
+            (s, []))
+
+(* [x], its value and the literals (read under [binder]) that replace [lit]
+   when [lit] fixes a variable of [senv] through a constructor application as
+   [solve_constructor_point] states *)
+let cons_point_of_literal binder senv lit =
+  Option.bind (equation_of_literal binder lit) ~f:(fun (t1, t2) ->
+      List.find_map senv ~f:(fun (x, _) ->
+          let occurs t = Set.mem (scalar_occurrences_of_term t) x in
+          let try_ lhs rhs =
+            match rhs with
+            | Term.FunApp (T_dt.DTCons _, _, _) when occurs rhs && not (occurs lhs)
+              ->
+                Option.map (solve_constructor_point x lhs rhs)
+                  ~f:(fun (s, guards) ->
+                    let guards =
+                      match binder with
+                      | Formula.Exists -> guards
+                      | _ -> List.map guards ~f:Formula.mk_neg
+                    in
+                    (x, s, guards))
+            | _ -> None
+          in
+          match try_ t1 t2 with Some r -> Some r | None -> try_ t2 t1))
+
+(* Is a bound variable defined by cases on the constructor of one term
+   replaced by its definition as a conditional, inside
+   [elim_onepoint_and_split_binders]?  Switched per process by the caller, off
+   unless set.
+
+   The rule: under [exists x], a conjunct [\/_k (g_k /\ x = s_k)] whose guards
+   [g_k] are exhaustive and mutually exclusive -- the testers of every
+   constructor of one datatype applied to one term, or a tester and its
+   negation -- is [x = ite g_1 s_1 (ite .. s_m)], [s_k] being free of [x]
+   (each read off its equation as the one-point rule reads it); dually under
+   [forall x], a disjunct [/\_k (not g_k \/ x != s_k)] is [x != ite ..].  In
+   every model exactly one guard holds, so both sides say [x = s_k] for that
+   one.  The one-point rule then removes [x].
+
+   What it buys: a contract's total "weight" [w] is defined by cases on
+   whether an optional field is present, [(present /\ w = a + b) \/ (absent /\
+   w = a)], and its only other occurrences are arithmetic, so the solver has
+   no term to instantiate [w] at; as a conditional the variable disappears. *)
+let merge_guarded_definitions = ref false
+
+(* [lit] as a guard on one term: the term, a label naming the case (a
+   constructor's name, or the printed integer literal the term is equated
+   with), the guard asserted as a formula, whether [lit] asserts (true) or
+   denies it, and -- for a constructor -- the labels of all the datatype's
+   constructors (the cases that together are exhaustive) *)
+let guard_of_literal lit =
+  let cons t n dt pos =
+    Some
+      ( t,
+        n,
+        Formula.mk_atom (T_dt.mk_is_cons dt n t),
+        pos,
+        Some (List.map (Datatype.conses_of dt) ~f:Datatype.name_of_cons) )
+  in
+  let rec go pos = function
+    | Formula.UnaryOp (Formula.Not, p, _) -> go (not pos) p
+    | Formula.Atom
+        (Atom.App (Predicate.Psym (T_dt.IsCons (n, dt)), [ t ], _), _)
+      when Datatype.is_dt dt ->
+        cons t n dt pos
+    | Formula.Atom
+        (Atom.App (Predicate.Psym (T_dt.NotIsCons (n, dt)), [ t ], _), _)
+      when Datatype.is_dt dt ->
+        cons t n dt (not pos)
+    | Formula.Atom
+        ( Atom.App
+            ( Predicate.Psym ((T_bool.Eq | T_bool.Neq) as op),
+              [ t; Term.FunApp (T_dt.DTCons (n, _, dt), [], _) ],
+              _ ),
+          _ )
+      when Datatype.is_dt dt ->
+        cons t n dt (match op with T_bool.Eq -> pos | _ -> not pos)
+    | Formula.Atom
+        ( Atom.App
+            ( Predicate.Psym ((T_bool.Eq | T_bool.Neq) as op),
+              [ t; (Term.FunApp (T_int.Int n, [], _) as c) ],
+              _ ),
+          _ )
+    | Formula.Atom
+        ( Atom.App
+            ( Predicate.Psym ((T_bool.Eq | T_bool.Neq) as op),
+              [ (Term.FunApp (T_int.Int n, [], _) as c); t ],
+              _ ),
+          _ ) ->
+        (* [u + m = n] is read as [u = n - m], so that the guards of one
+           term written with its offset moved across agree on the term *)
+        let lit = function
+          | Term.FunApp (T_int.Int m, [], _) -> Some m
+          | Term.FunApp (T_int.Neg, [ Term.FunApp (T_int.Int m, [], _) ], _) ->
+              Some (Z.neg m)
+          | _ -> None
+        in
+        let rec split t n =
+          match t with
+          | Term.FunApp (T_int.Add, [ a; u ], _) when Option.is_some (lit a) ->
+              split u Z.(n - Option.value_exn (lit a))
+          | Term.FunApp (T_int.Add, [ u; a ], _) when Option.is_some (lit a) ->
+              split u Z.(n - Option.value_exn (lit a))
+          | Term.FunApp (T_int.Sub, [ u; a ], _) when Option.is_some (lit a) ->
+              split u Z.(n + Option.value_exn (lit a))
+          | _ -> (t, n)
+        in
+        let t', n' = split t n in
+        let c' = if Stdlib.( == ) t' t then c else T_int.mk_int n' in
+        Some
+          ( t',
+            Z.to_string n',
+            Formula.eq t' c',
+            (match op with T_bool.Eq -> pos | _ -> not pos),
+            None )
+    | _ -> None
+  in
+  go true lit
+
+(* the literal [guarded_definition] replaces [lit] by, when [lit] defines
+   [x : sort] by cases as [merge_guarded_definitions] states: the guards must
+   be mutually exclusive (distinct labels on one term, or one guard and its
+   negation); when they are not also exhaustive (every constructor of a
+   datatype, or a guard and its negation), the disjunction of the guards is
+   kept beside the definition, so [\/_k (g_k /\ x = s_k)] becomes
+   [(\/_k g_k) /\ x = ite ..] and dually -- still an equivalence in every
+   model, exactly one guard holding wherever the disjunction does *)
+let guarded_definition binder x sort lit =
+  let parts, inner =
+    match binder with
+    | Formula.Exists -> (Formula.disjuncts_list_of lit, Formula.conjuncts_list_of)
+    | _ -> (Formula.conjuncts_list_of lit, Formula.disjuncts_list_of)
+  in
+  let occurs phi = Set.mem (Formula.tvs_of phi) x in
+  let case part =
+    match inner part with
+    | [ a; b ] ->
+        let read g e =
+          (* the guard as asserted in this case *)
+          let g =
+            match binder with
+            | Formula.Exists -> guard_of_literal g
+            | _ ->
+                Option.map (guard_of_literal g)
+                  ~f:(fun (t, n, gf, pos, all) -> (t, n, gf, not pos, all))
+          in
+          match g with
+          | Some ((t, _, _, _, _) as g) when not (Set.mem (Term.tvs_of t) x) -> (
+              match point_of_literal binder x e with
+              | Some s -> Some (g, s)
+              | None ->
+                  (* an equation through single-constructor applications,
+                     [u = Int (x - c)]: read [x] off it when no tester and no
+                     other field is needed *)
+                  Option.bind (equation_of_literal binder e) ~f:(fun (t1, t2) ->
+                      let via lhs rhs =
+                        match solve_constructor_point x lhs rhs with
+                        | Some (s, []) -> Some (g, s)
+                        | _ -> None
+                      in
+                      match via t1 t2 with Some r -> Some r | None -> via t2 t1))
+          | _ -> None
+        in
+        if occurs a && not (occurs b) then read b a
+        else if occurs b && not (occurs a) then read a b
+        else None
+    | _ -> None
+  in
+  if List.length parts < 2 then None
+  else
+    match Option.all (List.map parts ~f:case) with
+    | None -> None
+    | Some cases -> (
+        let same_term =
+          let (t0, _, _, _, _), _ = List.hd_exn cases in
+          List.for_all cases ~f:(fun ((t, _, _, _, _), _) ->
+              try Stdlib.( = ) t t0 with _ -> false)
+        in
+        let labels = List.map cases ~f:(fun ((_, n, _, _, _), _) -> n) in
+        let complementary =
+          match cases with
+          | [ ((_, n1, _, p1, _), _); ((_, n2, _, p2, _), _) ] ->
+              String.equal n1 n2 && Bool.(p1 <> p2)
+          | _ -> false
+        in
+        let exclusive =
+          complementary
+          || List.for_all cases ~f:(fun ((_, _, _, p, _), _) -> p)
+             && not (List.contains_dup labels ~compare:String.compare)
+        in
+        let exhaustive =
+          complementary
+          ||
+          match cases with
+          | ((_, _, _, _, Some all), _) :: _ ->
+              List.equal String.equal
+                (List.sort labels ~compare:String.compare)
+                (List.sort all ~compare:String.compare)
+          | _ -> false
+        in
+        if not (same_term && exclusive) then None
+        else
+          let guard (_, _, gf, pos, _) = if pos then gf else Formula.mk_neg gf in
+          let rec chain = function
+            | [ (_, s) ] -> s
+            | (g, s) :: rest -> T_bool.ifte (guard g) s (chain rest)
+            | [] -> assert false
+          in
+          let def = chain cases in
+          let v = Term.mk_var x sort in
+          let some_guard = Formula.or_of (List.map cases ~f:(fun (g, _) -> guard g)) in
+          match binder with
+          | Formula.Exists ->
+              Some
+                (if exhaustive then Formula.eq v def
+                 else Formula.and_of [ some_guard; Formula.eq v def ])
+          | _ ->
+              Some
+                (if exhaustive then Formula.neq v def
+                 else Formula.or_of [ Formula.mk_neg some_guard; Formula.neq v def ]))
+
 (* what one step at a binder does: remove [x] and substitute [t] for it
    (one-point), replace the sequence [x] by [t] over the fresh [bound]
    (sequence-length split), or substitute [t] for the array [x], which stays
@@ -1797,13 +3383,33 @@ type binder_step =
   | ArrayRead of Ident.tvar * Term.t * Formula.t list * bool
   | Pairing of Formula.t list
 
-let rec onepoint_binders ~outer changed binder senv body =
+let rec onepoint_binders ?(singleton = false) ~outer changed binder senv body =
   let lits = spine_literals binder body in
+  let admissible_step = function
+    | Point (x, t, rest) | ArrayRead (x, t, rest, _) ->
+        let sub = Map.Poly.singleton x t in
+        List.for_all rest ~f:(scalar_substitution_is_safe sub)
+    | SeqShape (x, t, _) ->
+        scalar_substitution_is_safe (Map.Poly.singleton x t) body
+    | Pairing _ -> true
+  in
+  let admit step = if admissible_step step then Some step else None in
   let point =
     List.find_map senv ~f:(fun (x, _) ->
         List.find_mapi lits ~f:(fun i lit ->
-            Option.map (point_of_literal binder x lit) ~f:(fun t ->
-                Point (x, t, List.filteri lits ~f:(fun j _ -> j <> i)))))
+            Option.bind (point_of_literal binder x lit) ~f:(fun t ->
+                admit (Point (x, t, List.filteri lits ~f:(fun j _ -> j <> i))))))
+  in
+  let point =
+    match point with
+    | None when singleton ->
+        List.find_map senv ~f:(fun (x, sort) ->
+            match sort with
+            | T_int.SInt ->
+                Option.bind (!singleton_range_hook binder x lits) ~f:(fun c ->
+                    admit (Point (x, c, lits)))
+            | _ -> None)
+    | _ -> point
   in
   let point =
     match point with
@@ -1815,6 +3421,40 @@ let rec onepoint_binders ~outer changed binder senv body =
                   @@ List.mapi lits ~f:(fun j l -> if i = j then ls else [ l ]))))
     | _ -> point
   in
+  let point =
+    match point with
+    | None when !constructor_point_testers ->
+        List.find_mapi lits ~f:(fun i lit ->
+            Option.bind (cons_point_of_literal binder senv lit)
+              ~f:(fun (x, t, guards) ->
+                admit
+                  (Point
+                     (x, t, List.filteri lits ~f:(fun j _ -> j <> i) @ guards))))
+    | _ -> point
+  in
+  let point =
+    match point with
+    | None when !merge_guarded_definitions -> (
+        (* a definition whose cases mention another variable that is itself
+           defined by cases in the block is not merged yet: merging
+           [w = ite g (p + a) p] for [p] would put [w] under a conditional in
+           [p]'s own definition, where no equation isolates it any more, while
+           merging [p]'s definition first (its cases mention no such
+           variable) leaves [w]'s free of [p] too *)
+        let cands =
+          List.concat_mapi lits ~f:(fun i lit ->
+              List.filter_map senv ~f:(fun (x, sort) ->
+                  Option.map (guarded_definition binder x sort lit)
+                    ~f:(fun l' -> (i, x, l'))))
+        in
+        let defined = Set.Poly.of_list (List.map cands ~f:(fun (_, x, _) -> x)) in
+        List.find_map cands ~f:(fun (i, x, l') ->
+            if Set.are_disjoint (Formula.tvs_of l') (Set.remove defined x) then
+              Some
+                (Pairing (List.mapi lits ~f:(fun j l -> if i = j then l' else l)))
+            else None))
+    | _ -> point
+  in
   let step =
     match point with
     | Some _ -> point
@@ -1823,9 +3463,20 @@ let rec onepoint_binders ~outer changed binder senv body =
             match sort with
             | T_seq.SSeq se ->
                 List.find_map lits ~f:(fun lit ->
-                    Option.map (seq_length_of_literal binder s lit) ~f:(fun n ->
+                    Option.bind (seq_length_of_literal binder s lit) ~f:(fun n ->
+                        let occupied = ref
+                          (Set.union outer
+                             (Set.union (Formula.names_spelled_in body)
+                                (Set.Poly.of_list (List.map senv ~f:fst)))) in
+                        let fresh_element () =
+                          let rec draw () =
+                            let v = Ident.mk_fresh_tvar () in
+                            if Set.mem !occupied v then draw ()
+                            else (occupied := Set.add !occupied v; v)
+                          in draw ()
+                        in
                         let elems =
-                          List.init n ~f:(fun _ -> (Ident.mk_fresh_tvar (), se))
+                          List.init n ~f:(fun _ -> (fresh_element (), se))
                         in
                         let t =
                           match
@@ -1836,7 +3487,7 @@ let rec onepoint_binders ~outer changed binder senv body =
                           | u :: us ->
                               List.fold us ~init:u ~f:(T_seq.mk_concat se)
                         in
-                        SeqShape (s, t, elems)))
+                        admit (SeqShape (s, t, elems))))
             | _ -> None)
   in
   let step =
@@ -1870,6 +3521,7 @@ let rec onepoint_binders ~outer changed binder senv body =
            either by the other; the shifted one is taken, so the array left
            bound is read at the plain index, where a solver can match it
            against a read of the same shape (either choice is exact) *)
+        let found = List.filter found ~f:(fun (_, step) -> admissible_step step) in
         Option.map ~f:snd
           (match List.find found ~f:fst with
           | Some x -> Some x
@@ -1884,13 +3536,14 @@ let rec onepoint_binders ~outer changed binder senv body =
             match sort with
             | T_array.SArray (si, se) ->
                 List.find_mapi lits ~f:(fun i lit ->
-                    Option.map (array_read_of_literal binder s lit)
+                    Option.bind (array_read_of_literal binder s lit)
                       ~f:(fun (k, t) ->
-                        ArrayRead
-                          ( s,
-                            T_array.mk_store si se (Term.mk_var s sort) k t,
-                            List.filteri lits ~f:(fun j _ -> j <> i),
-                            false )))
+                        admit
+                          (ArrayRead
+                            ( s,
+                              T_array.mk_store si se (Term.mk_var s sort) k t,
+                              List.filteri lits ~f:(fun j _ -> j <> i),
+                              false ))))
             | _ -> None)
     | None -> None
   in
@@ -1906,7 +3559,7 @@ let rec onepoint_binders ~outer changed binder senv body =
         | _ -> Formula.or_of rest
       in
       let body = if simp then !simplify_hook body else body in
-      onepoint_binders ~outer changed binder senv body
+      onepoint_binders ~singleton ~outer changed binder senv body
   | Some (Pairing lits) ->
       changed := true;
       let body =
@@ -1914,7 +3567,7 @@ let rec onepoint_binders ~outer changed binder senv body =
         | Formula.Exists -> Formula.and_of lits
         | _ -> Formula.or_of lits
       in
-      onepoint_binders ~outer changed binder senv body
+      onepoint_binders ~singleton ~outer changed binder senv body
   | Some (Point (x, t, rest)) ->
       changed := true;
       let sub = Map.Poly.singleton x t in
@@ -1926,7 +3579,7 @@ let rec onepoint_binders ~outer changed binder senv body =
         | Formula.Exists -> Formula.and_of rest
         | _ -> Formula.or_of rest
       in
-      onepoint_binders ~outer changed binder
+      onepoint_binders ~singleton ~outer changed binder
         (List.filter senv ~f:(fun (y, _) -> not (Ident.tvar_equal x y)))
         body
   | Some (SeqShape (s, t, elems)) ->
@@ -1934,7 +3587,7 @@ let rec onepoint_binders ~outer changed binder senv body =
       let body =
         fold_constructor_reads @@ Formula.subst (Map.Poly.singleton s t) body
       in
-      onepoint_binders ~outer changed binder
+      onepoint_binders ~singleton ~outer changed binder
         (List.filter senv ~f:(fun (y, _) -> not (Ident.tvar_equal s y)) @ elems)
         body
 
@@ -1981,7 +3634,28 @@ let lift_spine_blocks_of changed binder senv body =
                  not
                    (List.exists others ~f:(fun q ->
                         let fv = Formula.tvs_of q in
-                        List.exists senv' ~f:(fun (y, _) -> Set.mem fv y))) ->
+                        let predicates =
+                          Formula.predicate_signatures_of_term
+                            (Term.mk_fsym_app (T_bool.Formula q) [])
+                        in
+                        List.exists senv' ~f:(fun (y, sort) ->
+                            Set.mem fv y
+                            (* A Boolean scalar can also be spelled as a
+                               nullary predicate. Moving its binder across
+                               that spelling would capture a sibling's free
+                               occurrence. Positive-arity heads are separate
+                               unless the moved binder has their full rank. *)
+                            ||
+                            let signature =
+                              if Term.is_bool_sort sort then Some []
+                              else if Sort.is_arrow sort
+                                      && Term.is_bool_sort (Sort.ret_of sort)
+                              then Some (Sort.args_of sort)
+                              else None
+                            in
+                            Option.exists signature ~f:(fun args ->
+                                Set.mem predicates
+                                  (Ident.tvar_to_pvar y, args))))) ->
               (senv @ senv', body' :: acc, true)
           | _ -> (senv, p :: acc, lifted))
     in
@@ -1990,19 +3664,37 @@ let lift_spine_blocks_of changed binder senv body =
       (senv, join (List.rev parts)))
     else (senv, body)
 
-let rec onepoint_split_pass ?(outer = Set.Poly.empty) changed phi =
+let rec onepoint_split_pass ?(singleton = false) ?(outer = Set.Poly.empty) changed phi =
   match phi with
   | Formula.Atom _ -> phi
   | Formula.UnaryOp (op, phi1, info) ->
-      Formula.mk_unop ~info op (onepoint_split_pass ~outer changed phi1)
+      Formula.mk_unop ~info op (onepoint_split_pass ~singleton ~outer changed phi1)
   | Formula.BinaryOp (op, phi1, phi2, info) ->
       Formula.mk_binop ~info op
-        (onepoint_split_pass ~outer changed phi1)
-        (onepoint_split_pass ~outer changed phi2)
+        (onepoint_split_pass ~singleton ~outer changed phi1)
+        (onepoint_split_pass ~singleton ~outer changed phi2)
   | Formula.Bind
       (((Formula.Forall | Formula.Exists) as binder), senv, body, info) ->
+      (* with the merge of definitions by cases, the spine blocks are merged
+         BEFORE the body is rewritten: a definition by cases of an outer
+         variable [w] that mentions an inner one [p] would otherwise be read
+         at the inner block as a definition of [p] in terms of [w], leaving
+         [w] under a conditional where no equation isolates it *)
+      let senv, body =
+        if !merge_guarded_definitions && !lift_spine_blocks then
+          let rec lift k senv body =
+            let c = ref false in
+            let senv', body' = lift_spine_blocks_of c binder senv body in
+            if !c && k < 8 then (
+              changed := true;
+              lift (k + 1) senv' body')
+            else (senv', body')
+          in
+          lift 0 senv body
+        else (senv, body)
+      in
       let body =
-        onepoint_split_pass
+        onepoint_split_pass ~singleton
           ~outer:(Set.union outer (Set.Poly.of_list (List.map senv ~f:fst)))
           changed body
       in
@@ -2024,12 +3716,15 @@ let rec onepoint_split_pass ?(outer = Set.Poly.empty) changed phi =
         if !lift_spine_blocks then lift_spine_blocks_of changed binder senv body
         else (senv, body)
       in
-      let senv, body = split_single_cons_binders changed senv body 0 in
+      let senv, body =
+        if !keep_single_cons_binders then (senv, body)
+        else split_single_cons_binders changed senv body 0
+      in
       let body =
         if !split_constructor_equations then split_cons_equations changed body
         else body
       in
-      let senv, body = onepoint_binders ~outer changed binder senv body in
+      let senv, body = onepoint_binders ~singleton ~outer changed binder senv body in
       let used = Formula.fvs_of body in
       let senv' = List.filter senv ~f:(fun (x, _) -> Set.mem used x) in
       if List.length senv' <> List.length senv then changed := true;
@@ -2130,6 +3825,35 @@ let ctx_lin_lit phi =
       of_psym true psym t1 t2
   | _ -> None
 
+let () =
+  singleton_range_hook :=
+    fun binder x lits ->
+      let effective lit =
+        match binder with
+        | Formula.Exists -> lit
+        | _ -> Formula.nnf_of (Formula.mk_neg lit)
+      in
+      let lo, hi =
+        List.fold lits ~init:(None, None) ~f:(fun (lo, hi) lit ->
+            match ctx_lin_lit (effective lit) with
+            | Some (`Ge ([ (Term.Var (y, _, _), a) ], c))
+              when Ident.tvar_equal x y ->
+                if Q.equal a Q.one then
+                  (* x + c >= 0 *)
+                  let b = Q.neg c in
+                  ( Some (match lo with Some l -> Q.max l b | None -> b),
+                    hi )
+                else if Q.equal a Q.minus_one then
+                  (* -x + c >= 0 *)
+                  (lo, Some (match hi with Some h -> Q.min h c | None -> c))
+                else (lo, hi)
+            | _ -> (lo, hi))
+      in
+      match (lo, hi) with
+      | Some l, Some h when Q.equal l h && Z.equal (Q.den l) Z.one ->
+          Some (T_int.mk_int (Q.num l))
+      | _ -> None
+
 (* [d = k * t + c] for some [k > 0] and [c >= 0]: then [t >= 0] implies
    [d >= 0]; [false] may be wrong, [true] may not *)
 let ctx_lin_implies (mt, ct) (md, cd) =
@@ -2229,7 +3953,7 @@ let ctx_without ctx bound =
   if Set.is_empty bound then ctx
   else
     List.filter ctx ~f:(fun l ->
-        Set.is_empty (Set.inter (Formula.tvs_of l) bound))
+        Set.is_empty (Set.inter (scalar_occurrences_of_formula l) bound))
 
 let rec ctx_formula changed ctx phi =
   match phi with
@@ -2332,12 +4056,16 @@ let max_onepoint_split_rounds = 8
    [contextual_ite], and [elim_onepoint_and_split_binders_contextual] runs it
    on one formula only, without switching it on for every other rewrite in the
    process.  Either way the result is equivalent to [phi] in every model. *)
-let elim_onepoint_and_split_binders_with ~contextual phi =
+let elim_onepoint_and_split_binders_with ?(singleton = false) ~contextual phi =
   let rec loop phi round =
     if round >= max_onepoint_split_rounds then phi
     else
       let changed = ref false in
-      let phi' = onepoint_split_pass changed phi in
+      let phi' =
+        if !split_single_cons_equations then split_single_cons_eqs changed phi
+        else phi
+      in
+      let phi' = onepoint_split_pass ~singleton changed phi' in
       let phi' =
         if contextual then ctx_formula changed [] phi' else phi'
       in
@@ -2355,6 +4083,14 @@ let decide_contextual_ites phi = ctx_formula (ref false) [] phi
 
 let elim_onepoint_and_split_binders_contextual phi =
   elim_onepoint_and_split_binders_with ~contextual:true phi
+
+(* [elim_onepoint_and_split_binders] with, besides, an integer bound variable
+   that its binder's constant bounds confine to one value replaced by that
+   value (the singleton-range rule of [singleton_range_hook]); equivalent to
+   [phi] in every model *)
+let elim_onepoint_singleton_and_split_binders phi =
+  elim_onepoint_and_split_binders_with ~singleton:true
+    ~contextual:!contextual_ite phi
 
 let head_str_of_term = function
   | Term.Var (tvar, _, _) -> Ident.name_of_tvar tvar
@@ -2522,6 +4258,22 @@ let rec eval_term ?(env = Map.Poly.empty) =
       Value.Int (Z.fdiv (Q.num r) (Q.den r)) (* SMT-LIB to_int is floor *)
   | FunApp (T_irb.IntToReal, [ FunApp (T_int.Int i, [], _) ], _) ->
       Value.Real (Q.of_bigint i)
+  (* [int2bv] is the integer modulo [2^w]; [bv2nat] the unsigned value and its
+     signed variant the two's-complement one.  The width and signedness are
+     read exactly as the Z3 encoding reads them, through [bits_of] and
+     [is_signed], so a fold and the solver agree on every input. *)
+  | FunApp (T_irb.IntToBV size, [ t ], _) -> (
+      match eval_term ~env t with
+      | Value.Int i -> Value.BV (size, int2bv (T_bv.bits_of size) i)
+      | _ -> failwith "[eval_term] int2bv of a non-integer")
+  | FunApp (T_irb.BVToInt (_, signed), [ t ], _) -> (
+      match eval_term ~env t with
+      | Value.BV (Some s, i) when s > 0 ->
+          Value.Int
+            (if T_bv.is_signed signed && Z.testbit i (s - 1) then
+               Z.sub i (Z.shift_left Z.one s)
+             else i)
+      | _ -> failwith "[eval_term] bv2int of a bit-vector of unknown width")
   | FunApp ((T_int.Neg | T_real.RNeg), [ t1 ], _) ->
       Value.neg (eval_term ~env t1)
   | FunApp (T_int.Nop, [ t1 ], _) -> eval_term ~env t1
@@ -2545,8 +4297,19 @@ let rec eval_term ?(env = Map.Poly.empty) =
       Value.rsub (eval_term ~env t1) (eval_term ~env t2)
   | FunApp (T_real.RMul, [ t1; t2 ], _) ->
       Value.rmul (eval_term ~env t1) (eval_term ~env t2)
+  (* A real quotient has a value only at a nonzero divisor.  The theory leaves
+     [x / 0] open -- a value fixed within a model and free across models -- and
+     [Value.rdiv] would return Zarith's [inf], [-inf] or [undef] there, which is
+     no real number: [(/ 1.0 0.0)] and [(/ 2.0 0.0)] then folded to one literal,
+     equal to each other, and [(<= (/ 1.0 0.0) 0.0)] folded to [false], while a
+     model where the quotient is 0 makes it true.  So a zero divisor is a
+     failure, which every caller reads as "leave this term alone". *)
   | FunApp (T_real.RDiv, [ t1; t2 ], _) ->
-      Value.rdiv (eval_term ~env t1) (eval_term ~env t2)
+      let v1 = eval_term ~env t1 in
+      let v2 = eval_term ~env t2 in
+      if Q.equal (Value.cast_real_of v2) Q.zero then
+        failwith "[eval_term] real division by zero: the theory leaves it open"
+      else Value.rdiv v1 v2
   (*| FunApp (T_real.RPower, [ t1; t2 ], _) ->
       Value.rpow (eval_term ~env t1) (eval_term ~env t2)*)
   | FunApp
@@ -2583,6 +4346,26 @@ let rec eval_term ?(env = Map.Poly.empty) =
     when T_bv.eq_size size1 size2 ->
       let size = T_bv.merge_size size1 size2 in
       Value.BV (size, bvxor (T_bv.bits_of size) i1 i2)
+  (* bvnand, bvnor and bvxnor are the negations of bvand, bvor and bvxor
+     (SMT-LIB's FixedSizeBitVectors definitions); without them a model check
+     of a term holding one fails instead of answering *)
+  | FunApp
+      ( ((T_bv.BVNand _ | T_bv.BVNor _ | T_bv.BVXnor _) as fsym),
+        [
+          FunApp (T_bv.BVNum (size1, i1), [], _);
+          FunApp (T_bv.BVNum (size2, i2), [], _);
+        ],
+        _ )
+    when T_bv.eq_size size1 size2 ->
+      let size = T_bv.merge_size size1 size2 in
+      let n = T_bv.bits_of size in
+      let op =
+        match fsym with
+        | T_bv.BVNand _ -> bvand
+        | T_bv.BVNor _ -> bvor
+        | _ -> bvxor
+      in
+      Value.BV (size, bvnot n (op n i1 i2))
   | FunApp (T_bv.BVNeg _ (*ToDo*), [ FunApp (T_bv.BVNum (size1, i1), [], _) ], _)
     ->
       Value.BV (size1, bvneg (T_bv.bits_of size1) i1)
@@ -2642,6 +4425,44 @@ let rec eval_term ?(env = Map.Poly.empty) =
         ( size,
           (if T_bv.is_signed signed then bvsrem else bvurem)
             (T_bv.bits_of size) i1 i2 )
+  (* [bvsmod] is the remainder of the flooring division of the two signed
+     values, so it takes the divisor's sign; SMT-LIB fixes [bvsmod s 0 = s]. *)
+  | FunApp
+      ( T_bv.BVSMod _,
+        [
+          FunApp (T_bv.BVNum (size1, i1), [], _);
+          FunApp (T_bv.BVNum (size2, i2), [], _);
+        ],
+        _ )
+    when T_bv.eq_size size1 size2 ->
+      let size = T_bv.merge_size size1 size2 in
+      let n = T_bv.bits_of size in
+      let two_n = Z.shift_left Z.one n in
+      let to_signed z =
+        if Z.testbit z (n - 1) then Z.sub z two_n else z
+      in
+      let sx = to_signed i1 and sy = to_signed i2 in
+      Value.BV
+        ( size,
+          if Z.equal sy Z.zero then i1
+          else Z.erem Z.(sx - (sy * fdiv sx sy)) two_n )
+  | FunApp
+      ( T_bv.((BVNand _ | BVNor _ | BVXnor _) as fsym),
+        [
+          FunApp (T_bv.BVNum (size1, i1), [], _);
+          FunApp (T_bv.BVNum (size2, i2), [], _);
+        ],
+        _ )
+    when T_bv.eq_size size1 size2 ->
+      let size = T_bv.merge_size size1 size2 in
+      let n = T_bv.bits_of size in
+      let op =
+        match fsym with
+        | T_bv.BVNand _ -> bvand
+        | T_bv.BVNor _ -> bvor
+        | _ -> bvxor
+      in
+      Value.BV (size, bvnot n (op n i1 i2))
   (* The three shifts take the shift amount as a [Z.t] of any size:
      [Common.Util.bvshl], [bvlshr] and [bvashr] answer a shift of the width or
      more without narrowing it to a native int. *)
@@ -2912,11 +4733,11 @@ and inline_let ~size ~count =
      and every [let] the switch keeps that the default rule would inline *)
   Common.PhaseTime.event_here ~in_copy:false "let-inline-decision";
   count <= count_threshold
-  || size * count <= prod_threshold
+  || sat_mul size count <= prod_threshold
   || size <= size_threshold
      && ((not (Atomic.get inline_by_expanded_size))
         || size <= 1
-        || (size - 1) * (count - 1) <= prod_threshold
+        || sat_mul (size - 1) (count - 1) <= prod_threshold
         || (Common.PhaseTime.event_here ~in_copy:false
               "let-kept-by-expanded-size";
             false))
@@ -3014,7 +4835,10 @@ and finite_array_of_lambda (x, si) se body =
               Some (nf_app (T_array.mk_const_array si se els))
           | Some lo, Some hi
             when Z.leq lo hi
-                 && Z.(leq (hi - lo + one) (Z.of_int max_finite_array_size)) ->
+                 && Z.(leq (hi - lo + one) (Z.of_int max_finite_array_size))
+                 && scalar_substitution_is_safe
+                      (Map.Poly.singleton x (T_int.zero ()))
+                      (Formula.eq body body) ->
               let rec elements k acc =
                 if Z.gt k hi then acc
                 else
@@ -3081,9 +4905,55 @@ and range_bounds_of_lambda = function
   | _ -> Set.Poly.empty
 
 (*val simplify_term: Term.t -> Term.t*)
+(* [t], an argument [simplify_term] has already simplified, is a variable or an
+   application of a bit-vector operation other than a numeral.  Then
+   [eval_term] (without an environment) fails on [t], and so on any bit-vector
+   application over [t]: every bit-vector case of [eval_term] needs numerals,
+   and the general bit-vector case evaluates every argument.  For a variable
+   this is immediate.  For an operation, by induction on [simplify_term]: an
+   output headed by one is either an application [simplify_app] tried to
+   evaluate and failed on, rebuilt with the same symbol and arguments; or
+   [bvneg t2] from [bvsub 0 t2], whose evaluation failed and so [t2]'s did;
+   or a part (an argument, a branch, a definition, a body) that is itself an
+   output of [simplify_term].  The evaluation is a function of the term alone
+   here (no environment, no unfolding in progress), so a failure stays a
+   failure. *)
+and settled_bv_arg = function
+  | Term.Var _ -> true
+  | FunApp (T_bv.BVNum _, _, _) -> false
+  | FunApp (fsym, _, _) -> T_bv.is_bv_fsym fsym
+  | LetTerm _ -> false
+
+(* the evaluation attempt [simplify_app] skips under
+   [simplify_skip_settled_bv_eval]: it fails.  With [COAR_CHECK_BV_EVAL_SKIP=1]
+   the evaluation is run anyway and its value used if it has one, and the
+   skips and such values are counted and printed to stderr at exit; a nonzero
+   second count refutes the argument at [settled_bv_arg] *)
+and settled_bv_eval_skipped fsym ts' info =
+  if not (Lazy.force check_bv_eval_skip) then failwith "settled bit-vector"
+  else (
+    if not (Atomic.exchange bv_eval_skip_report_registered true) then
+      Stdlib.at_exit (fun () ->
+          Stdlib.Printf.eprintf "[bv-eval-skip] skipped=%d evaluated=%d\n%!"
+            (Atomic.get bv_eval_skip_counts.(0))
+            (Atomic.get bv_eval_skip_counts.(1)));
+    Atomic.incr bv_eval_skip_counts.(0);
+    let v =
+      Term.of_value (get_dtenv ()) @@ eval_term @@ Term.mk_fsym_app ~info fsym ts'
+    in
+    Atomic.incr bv_eval_skip_counts.(1);
+    v)
+
 and simplify_term = function
   | Term.Var (_, sort, _) when Datatype.is_unit_sort sort -> Datatype.mk_unit ()
-  | Var (tvar, sort, info) -> Term.mk_var ~info tvar sort
+  | Var (tvar, sort, info) -> (
+      let var () = Term.mk_var ~info tvar sort in
+      if not (Atomic.get simplify_inline_lets_once) then var ()
+      else
+        match !(Stdlib.Domain.DLS.get LetOnce.state) with
+        | LetOnce.Active a -> (
+            match Map.Poly.find a.env tvar with Some def' -> def' | None -> var ())
+        | Outside | Default -> var ())
   | FunApp (T_bool.IfThenElse, [ t1; t2; t3 ], info) ->
       let t1' = simplify_term t1 in
       let t2' = simplify_term t2 in
@@ -3092,16 +4962,66 @@ and simplify_term = function
   | FunApp (T_int.Case n, t1 :: branches, info) ->
       let t1' = simplify_term t1 in
       simplify_case_parts n t1' (List.map ~f:simplify_term branches) info
-  | LetTerm (tvar, sort, def, body, info) ->
-      let def' = simplify_term def in
-      let body' = simplify_term body in
-      let size = let_def_size def' in
-      let count = Term.occur_times tvar body' in
-      if inline_let ~size ~count then
-        simplify_term @@ Term.subst (Map.Poly.singleton tvar def') body'
-      else Term.mk_let_term ~info tvar sort def' body'
+  | LetTerm (tvar, sort, def, body, info) as t ->
+      if not (Atomic.get simplify_inline_lets_once) then
+        simplify_let_term tvar sort def body info
+      else (
+        let st = Stdlib.Domain.DLS.get LetOnce.state in
+        match !st with
+        | LetOnce.Default -> simplify_let_term tvar sort def body info
+        | Active a -> simplify_let_term_once a tvar sort def body info
+        | Outside ->
+            LetOnce.region st
+              (fun ~term ~formula:_ scope -> term scope t)
+              ~pass:(fun a -> simplify_let_term_once a tvar sort def body info)
+              ~default:(fun () -> simplify_let_term tvar sort def body info)
+              ~fvs:Term.fvs_of)
   | FunApp (fsym, ts, info) ->
       simplify_app fsym (List.map ~f:simplify_term ts) info
+
+(* the default rule: the body is simplified, the [let] decided on it, and an
+   inlined definition substituted into it and the result simplified again *)
+and simplify_let_term tvar sort def body info =
+  let def' = simplify_term def in
+  let body' = simplify_term body in
+  let size = let_def_size def' in
+  let count = UseCount.term tvar body' in
+  let sub = Map.Poly.singleton tvar def' in
+  if inline_let ~size ~count
+     && scalar_substitution_is_safe sub (Formula.eq body' body')
+  then simplify_term @@ Term.subst sub body'
+  else Term.mk_let_term ~info tvar sort def' body'
+
+(* [simplify_inline_lets_once]: the [let] is decided before its body is
+   simplified, on its definition simplified under the inlinings around it and
+   on its leaves in the body as written ([LetOnce]); an inlined definition is
+   then substituted at the leaves while the body is simplified.  The count is
+   an upper bound on the occurrences the substitution meets -- simplifying
+   removes occurrences and never adds them, and a definition inlined inside
+   the body was itself decided on its size with this definition already in it.
+   A [let] built by a rule during the pass has no recorded count and is
+   counted in its body. *)
+and simplify_let_term_once a tvar sort def body info =
+  let def' = simplify_term def in
+  let size = LetOnce.capped_def_size def' in
+  let count =
+    match Hashtbl.find a.LetOnce.counts tvar with
+    | Some c -> c
+    | None -> UseCount.term tvar body
+  in
+  if
+    inline_let ~size ~count
+    && LetOnce.substitution_is_safe_in_term a
+         (Map.Poly.singleton tvar def')
+         body
+  then (
+    let saved = a.env in
+    a.env <- Map.Poly.set saved ~key:tvar ~data:def';
+    a.inlined <- Set.add a.inlined tvar;
+    let body' = simplify_term body in
+    a.env <- saved;
+    body')
+  else Term.mk_let_term ~info tvar sort def' (simplify_term body)
 
 (* the [ite] rules of [simplify_term], on a condition and branches that are
    already simplified *)
@@ -3154,9 +5074,15 @@ and nf_app t =
    formula ([T_bool.Formula]) uses it. *)
 and simplify_app ?known fsym ts' info =
       try
-        Term.of_value (get_dtenv ())
-        @@ eval_term
-        @@ Term.mk_fsym_app ~info fsym ts'
+        if
+          Atomic.get simplify_skip_settled_bv_eval
+          && T_bv.is_bv_fsym fsym
+          && List.exists ts' ~f:settled_bv_arg
+        then settled_bv_eval_skipped fsym ts' info
+        else
+          Term.of_value (get_dtenv ())
+          @@ eval_term
+          @@ Term.mk_fsym_app ~info fsym ts'
       with exn_ when not (Common.Timer.is_async exn_) -> (
         match (fsym, ts') with
         | T_bool.Formula phi, [] -> (
@@ -3189,15 +5115,30 @@ and simplify_app ?known fsym ts' info =
             @@ T_bool.mk_if_then_else t1
                  (Term.mk_fsym_app fsym [ t2 ])
                  (Term.mk_fsym_app fsym [ t3 ])
+        | ( fsym,
+            [
+              FunApp (T_bool.IfThenElse, [ c1; a1; b1 ], _);
+              FunApp (T_bool.IfThenElse, [ c2; a2; b2 ], _);
+            ] )
+          when simplify_ite_case && Atomic.get lift_without_product
+               && (not @@ T_bv.is_sbv a1) && Stdlib.(c1 = c2) ->
+            (* two conditionals on one condition: lifted together, which
+               multiplies nothing *)
+            resimplify ~parts:[ c1; a1; b1; a2; b2 ]
+            @@ T_bool.mk_if_then_else c1
+                 (Term.mk_fsym_app fsym [ a1; a2 ])
+                 (Term.mk_fsym_app fsym [ b1; b2 ])
         | fsym, [ t1; FunApp (T_bool.IfThenElse, [ t21; t22; t23 ], _) ]
-          when simplify_ite_case && (not @@ T_bv.is_sbv t1) ->
+          when simplify_ite_case && (not @@ T_bv.is_sbv t1)
+               && not (lift_multiplies t1 [ t22; t23 ]) ->
             (* the following could make z3 much slower *)
             resimplify ~parts:[ t1; t21; t22; t23 ]
             @@ T_bool.mk_if_then_else t21
                  (Term.mk_fsym_app fsym [ t1; t22 ])
                  (Term.mk_fsym_app fsym [ t1; t23 ])
         | fsym, [ FunApp (T_bool.IfThenElse, [ t21; t22; t23 ], _); t1 ]
-          when simplify_ite_case && (not @@ T_bv.is_sbv t1) ->
+          when simplify_ite_case && (not @@ T_bv.is_sbv t1)
+               && not (lift_multiplies t1 [ t22; t23 ]) ->
             (* the following could make z3 much slower *)
             resimplify ~parts:[ t1; t21; t22; t23 ]
             @@ T_bool.mk_if_then_else t21
@@ -3322,10 +5263,14 @@ and simplify_app ?known fsym ts' info =
               match (t1, t2) with
               | FunApp (T_int.Int n1, [], _), FunApp (T_int.Int n2, [], _)
                 when Z.Compare.(n1 <> Z.zero || n2 <> Z.zero)
-                     && Z.Compare.(n2 >= Z.zero) ->
-                  (* a negative exponent is undefined for Z.pow (it raises) *)
+                     && Z.Compare.(n2 >= Z.zero)
+                     && Z.fits_int n2 ->
+                  (* a negative exponent is undefined for Z.pow (it raises),
+                     and an exponent past a native int cannot be narrowed: this
+                     arm runs outside the handler that guards [eval_term], so
+                     [Z.to_int] raising [Overflow] here ended simplification *)
                   Term.mk_fsym_app ~info
-                    (T_int.Int Z.(pow n1 (to_int (*ToDo*) n2)))
+                    (T_int.Int Z.(pow n1 (to_int n2)))
                     []
               | _, _ -> Term.mk_fsym_app ~info T_int.Power [ t1; t2 ])
         | T_real.RNeg, [ t ] -> (
@@ -3448,9 +5393,17 @@ and simplify_app ?known fsym ts' info =
                 (if T_bv.is_signed signed && Z.testbit i (s - 1) then
                    Z.sub i (Z.shift_left Z.one s)
                  else i)
-        | ( T_irb.IntToBV size1,
-            [ FunApp (T_irb.BVToInt (size2, Some true), [ t ], _) ] )
-          when T_bv.eq_size size1 size2 ->
+        (* [int2bv_w (sbv2int t) = t] holds only when [t] is [w] bits wide:
+           for a wider [t] the left side keeps the low [w] bits.  The widths
+           are compared as known numbers, read off [t]'s sort, and never
+           through [T_bv.eq_size], which calls an unknown width equal to any
+           width -- and the SMT-LIB reader builds [sbv_to_int] with an
+           unknown one, so [int2bv_8 (sbv2int y16)] was replaced by [y16]. *)
+        | ( T_irb.IntToBV (Some w1),
+            [ FunApp (T_irb.BVToInt (_, Some true), [ t ], _) ] )
+          when match Term.sort_of t with
+               | T_bv.SBV (Some w2) -> w1 = w2
+               | _ -> false ->
             t
         | T_trace.TrConcat _, [ FunApp (T_trace.TrEpsilon, [], _); t ]
         | T_trace.TrConcat _, [ t; FunApp (T_trace.TrEpsilon, [], _) ] ->
@@ -3671,6 +5624,14 @@ and simplify_pred = function
   | Fixpoint def -> Fixpoint { def with body = simplify def.body }
 
 (*val simplify_pred_neg: Predicate.t -> Predicate.t option*)
+(* [simplify_pred_neg pred] is a predicate denoting the complement of [pred],
+   or [None] where there is none to give; assumes [simplify_neg phi] is
+   equivalent to [not phi].  A fixpoint is dualised by the De Morgan law for
+   fixpoints, [not (mu P. F(P)) = nu P. not F(not P)]: besides flipping the
+   kind and negating the body, every recursive occurrence of [P] in the body
+   is complemented.  Negating the body alone gives [nu P. not F(P)], whose
+   operator is antitone; on [mu P. \x. P(x)], empty, whose complement is
+   everything, it gives [nu P. \x. not P(x)], which is empty again. *)
 and simplify_pred_neg = function
   | Predicate.Var _ -> None
   | Fixpoint def ->
@@ -3679,7 +5640,7 @@ and simplify_pred_neg = function
            {
              def with
              kind = Predicate.flip_fop def.kind;
-             body = simplify_neg def.body;
+             body = Formula.subst_neg def.name (simplify_neg def.body);
            }
   | Psym psym -> (
       try Option.return @@ Predicate.Psym (Predicate.negate_psym psym)
@@ -3706,6 +5667,23 @@ and simplify_atom = function
         (List.map ~f:simplify_term terms)
         info
 
+(* Is [t] a read of a sequence or an array ([seq.nth], [select])? *)
+and is_read = function
+  | Term.FunApp ((T_seq.SqNth _ | T_array.ASelect _), _, _) -> true
+  | _ -> false
+
+(* Is [t] the constructor of a datatype with that one constructor, taking
+   no argument (so the datatype has exactly one value)? *)
+and single_valued_cons t =
+  match t with
+  | Term.FunApp (T_dt.DTCons (_, _, dt), [], _) -> (
+      try
+        match Datatype.conses_of dt with
+        | [ c ] -> List.is_empty (Datatype.sels_of_cons c)
+        | _ -> false
+      with exn_ when not (Common.Timer.is_async exn_) -> false)
+  | _ -> false
+
 (* the rules of [simplify_atom], on a predicate and arguments that are already
    simplified *)
 and simplify_atom_app pred' ts' info =
@@ -3720,10 +5698,10 @@ and simplify_atom_app pred' ts' info =
              b2[i/y]; Z3 cannot decide (dis)equalities between lambda arrays
              inside a validity query, but it can handle the quantified form *)
           let (x1, s1), _, b1, _ = T_array.let_lambda t1 in
-          let (x2, _), _, b2, _ = T_array.let_lambda t2 in
-          let i = Ident.mk_fresh_tvar () in
-          let b1 = Term.rename (Map.Poly.singleton x1 i) b1 in
-          let b2 = Term.rename (Map.Poly.singleton x2 i) b2 in
+          let (x2, s2), _, b2, _ = T_array.let_lambda t2 in
+          let i = fresh_array_index t1 t2 in
+          let b1 = rename_array_index (x1, s1) i b1 in
+          let b2 = rename_array_index (x2, s2) i b2 in
           simplify
           @@
           if Stdlib.(psym = T_bool.Eq) then
@@ -3752,9 +5730,22 @@ and simplify_atom_app pred' ts' info =
             Formula.and_of @@ List.map2_exn es1 es2 ~f:Formula.eq
           else Formula.or_of @@ List.map2_exn es1 es2 ~f:Formula.neq
       | ( Predicate.Psym psym,
+          [
+            FunApp (T_bool.IfThenElse, [ c1; a1; b1 ], _);
+            FunApp (T_bool.IfThenElse, [ c2; a2; b2 ], _);
+          ] )
+        when simplify_ite_case && Atomic.get lift_without_product
+             && (not (T_bv.is_sbv a1)) && Stdlib.(c1 = c2) ->
+          (* two conditionals on one condition: lifted together, which
+             multiplies nothing *)
+          orient_nf @@ Formula.of_bool_term @@ resimplify ~parts:[ c1; a1; b1; a2; b2 ]
+          @@ T_bool.mk_if_then_else c1
+               (T_bool.of_atom @@ Atom.mk_psym_app psym [ a1; a2 ])
+               (T_bool.of_atom @@ Atom.mk_psym_app psym [ b1; b2 ])
+      | ( Predicate.Psym psym,
           [ t1; FunApp (T_bool.IfThenElse, [ t21; t22; t23 ], _) ] )
         when simplify_ite_case && ((not (T_bv.is_sbv t1)) || T_bv.is_bvnum t1)
-        ->
+             && not (lift_multiplies t1 [ t22; t23 ]) ->
           (* the following makes z3 much slower *)
           orient_nf @@ Formula.of_bool_term @@ resimplify ~parts:[ t1; t21; t22; t23 ]
           @@ T_bool.mk_if_then_else t21
@@ -3763,7 +5754,7 @@ and simplify_atom_app pred' ts' info =
       | ( Predicate.Psym psym,
           [ FunApp (T_bool.IfThenElse, [ t21; t22; t23 ], _); t1 ] )
         when simplify_ite_case && ((not (T_bv.is_sbv t1)) || T_bv.is_bvnum t1)
-        ->
+             && not (lift_multiplies t1 [ t22; t23 ]) ->
           (* the following makes z3 much slower *)
           orient_nf @@ Formula.of_bool_term @@ resimplify ~parts:[ t1; t21; t22; t23 ]
           @@ T_bool.mk_if_then_else t21
@@ -3980,12 +5971,34 @@ and simplify_atom_app pred' ts' info =
               simplify
               @@ Formula.mk_or (Formula.neq te t23) (Formula.neq t1 t21)
           | None -> Formula.neq t1 t2)
-      | ( Predicate.Psym (T_tuple.IsTuple _),
-          [ Term.FunApp (T_tuple.TupleCons _, _, _) ] ) ->
-          Formula.mk_true ()
-      | ( Predicate.Psym (T_tuple.NotIsTuple _),
-          [ Term.FunApp (T_tuple.TupleCons _, _, _) ] ) ->
-          Formula.mk_false ()
+      (* A tuple sort has exactly one constructor, so every value of it is a
+         tuple: the tester holds of any argument and its negation of none
+         (the Z3 encoding reads them so as well).  Folded on a literal tuple
+         only, a tester on a variable would stay in the formula, where a
+         disjunct [is_tuple x] -- the negated "not matched" guard of a tuple
+         pattern in RCaml's constraint generation -- keeps a valid clause in
+         the predicate elimination: it is resolved, condensed and inlined
+         like any other, and the condensation of a 2,000-node resolvent
+         normalises a thousand images looking for one that matches it. *)
+      | Predicate.Psym (T_tuple.IsTuple _), [ _ ] -> Formula.mk_true ()
+      | Predicate.Psym (T_tuple.NotIsTuple _), [ _ ] -> Formula.mk_false ()
+      (* A datatype whose only constructor takes no argument (unit) has one
+         value, so an equation with that constructor holds whatever the
+         other side is, and a disequation never does.  Left alone, the
+         "not unit" disjuncts of a tuple pattern's component stay in every
+         clause that inlines the match, inflating it with literals that are
+         false.  Not folded when the other side is a sequence or array read:
+         the literal is as exact there, but it is the only place the read
+         occurs, and a solver uses the read -- as the trigger of a universal
+         whose other reads are at shifted indices, and as a term whose index
+         it must place inside the sequence when it builds a model -- so
+         folding it turned countermodels Z3 found in seconds into timeouts on
+         the verification conditions of Rust iterator clients ([fold],
+         [filter]), whose closures return unit. *)
+      | Predicate.Psym (T_bool.(Eq | Neq) as psym), [ t1; t2 ]
+        when (single_valued_cons t1 && not (is_read t2))
+             || (single_valued_cons t2 && not (is_read t1)) ->
+          Formula.mk_bool (Stdlib.(psym = T_bool.Eq))
       | ( Predicate.Psym T_bool.Eq,
           [
             Term.FunApp (T_tuple.TupleCons _, ts1, _);
@@ -4441,7 +6454,11 @@ and simplify_node ~next = function
   | Bind (binder, bounds, phi, info) ->
       simplify phi ~next:(function
         | Bind (binder', bounds', phi'', _) when Stdlib.(binder' = binder) ->
-            next @@ Formula.mk_bind ~info binder (bounds' @ bounds) phi''
+            let block =
+              if Atomic.get merge_binders_outer_first then bounds @ bounds'
+              else bounds' @ bounds
+            in
+            next @@ Formula.mk_bind ~info binder block phi''
         | phi' -> next @@ Formula.mk_bind ~info binder bounds phi')
   | LetRec (funcs, phi, info) ->
       if true then assert false
@@ -4451,14 +6468,8 @@ and simplify_node ~next = function
             @@ Formula.mk_letrec ~info
                  (Formula.map_funcs ~f:(*ToDo*) simplify funcs)
                  phi')
-  | LetFormula (var, sort, def, body, info) ->
-      let def' = simplify_term def in
-      simplify body ~next:(fun body' ->
-          let size = let_def_size def' in
-          let count = Formula.occur_times var body' in
-          if inline_let ~size ~count then
-            simplify (Formula.apply_pred (var, body') def') ~next
-          else next @@ Formula.mk_let_formula ~info var sort def' body')
+  | LetFormula (var, sort, def, body, info) as phi ->
+      simplify_let_formula_arm ~neg:false phi var sort def body info ~next
 
 and conj_leaves acc = function
   | Formula.BinaryOp (And, phi1, phi2, _) ->
@@ -4577,14 +6588,63 @@ and simplify_neg_node ~next = function
                         body = simplify_neg @@ f def.body;
                       }))
                  (f phi'))
-  | LetFormula (var, sort, def, body, info) ->
-      let def' = simplify_term def in
-      simplify_neg body ~next:(fun body' ->
-          let size = let_def_size def' in
-          let count = Formula.occur_times var body' in
-          if inline_let ~size ~count then
-            simplify (Formula.apply_pred (var, body') def') ~next
-          else next @@ Formula.mk_let_formula ~info var sort def' body')
+  | LetFormula (var, sort, def, body, info) as phi ->
+      simplify_let_formula_arm ~neg:true phi var sort def body info ~next
+
+(* the [LetFormula] arms of [simplify] ([neg] false) and [simplify_neg] ([neg]
+   true, the body read under a negation), [phi] being the node itself; see the
+   [LetTerm] arm of [simplify_term] *)
+and simplify_let_formula_arm ~neg phi var sort def body info ~next =
+  if not (Atomic.get simplify_inline_lets_once) then
+    simplify_let_formula ~neg var sort def body info ~next
+  else
+    let st = Stdlib.Domain.DLS.get LetOnce.state in
+    match !st with
+    | LetOnce.Default -> simplify_let_formula ~neg var sort def body info ~next
+    | Active a -> next @@ simplify_let_formula_once ~neg a var sort def body info
+    | Outside ->
+        next
+        @@ LetOnce.region st
+             (fun ~term:_ ~formula scope -> formula scope phi)
+             ~pass:(fun a ->
+               simplify_let_formula_once ~neg a var sort def body info)
+             ~default:(fun () ->
+               simplify_let_formula ~neg var sort def body info ~next:Fn.id)
+             ~fvs:Formula.fvs_of
+
+and simplify_let_formula ~neg var sort def body info ~next =
+  let def' = simplify_term def in
+  (if neg then simplify_neg else simplify) body ~next:(fun body' ->
+      let size = let_def_size def' in
+      let count = UseCount.formula var body' in
+      let sub = Map.Poly.singleton var def' in
+      if inline_let ~size ~count && scalar_substitution_is_safe sub body' then
+        simplify (Formula.subst sub body') ~next
+      else next @@ Formula.mk_let_formula ~info var sort def' body')
+
+(* the formula case of [simplify_let_term_once] *)
+and simplify_let_formula_once ~neg a var sort def body info =
+  let def' = simplify_term def in
+  let size = LetOnce.capped_def_size def' in
+  let count =
+    match Hashtbl.find a.LetOnce.counts var with
+    | Some c -> c
+    | None -> UseCount.formula var body
+  in
+  let simplify_body phi = if neg then simplify_neg phi else simplify phi in
+  if
+    inline_let ~size ~count
+    && LetOnce.substitution_is_safe_in_formula a
+         (Map.Poly.singleton var def')
+         body
+  then (
+    let saved = a.env in
+    a.env <- Map.Poly.set saved ~key:var ~data:def';
+    a.inlined <- Set.add a.inlined var;
+    let body' = simplify_body body in
+    a.env <- saved;
+    body')
+  else Formula.mk_let_formula ~info var sort def' (simplify_body body)
 
 and simplify_keep_imply phi =
   Formula.fold phi
@@ -4624,6 +6684,10 @@ and simplify_keep_imply phi =
            Formula.mk_let_formula var sort def body
       end)
 
+(* [simplify_neg_keep_imply phi] is equivalent to [not phi].  [Formula.fold]
+   hands every method its children already folded, i.e. already NEGATED, so
+   each method returns the negation of its node from the negations of its
+   children: [not (a /\ b)] from [not a] and [not b], and so on. *)
 and simplify_neg_keep_imply phi =
   (*ToDo*)
   Formula.fold phi
@@ -4639,7 +6703,10 @@ and simplify_neg_keep_imply phi =
            simplify_and
              (Set.union (Formula.conjuncts_of p1) (Formula.conjuncts_of p2))
 
-         method fnot p1 = p1
+         (* [p1] is [not q] for the node [not q]; its negation [q] is wanted,
+            not [p1] itself, which made [not (a /\ not b)] come out as
+            [not a \/ not b] *)
+         method fnot p1 = simplify_neg_keep_imply p1
 
          method fbind binder senv p1 =
            Formula.mk_bind (Formula.flip_quantifier binder) senv p1
@@ -4661,6 +6728,37 @@ and simplify_neg_keep_imply phi =
 
 
 let () = simplify_hook := fun phi -> simplify phi
+
+(* A memo of [simplify] and [simplify_neg] that a caller keeps across several
+   calls, for formulas that share subformulas physically: the tables of
+   [with_shared_simplify], made by [simplify_memo_create] and handed to
+   [simplify_in_memo].
+
+   Contract of [simplify_in_memo memo phi]: it is [simplify phi], value for
+   value and fresh-name draw for fresh-name draw, for the reason given at
+   [with_shared_simplify] -- a node's simplification is remembered only when
+   it drew no fresh name, and is a function of the node and of state no
+   simplification changes -- PROVIDED that the function and datatype
+   environments and the simplifier's switches are the same at every call
+   with one [memo]; a caller keeps a memo only over such a stretch.  Inside a
+   scope of [with_shared_simplify] the scope's tables are used instead.  The
+   memo holds every node it has seen alive until it is dropped.
+
+   Why: the Houdini pre-pass asks, for each (clause, head atom) pair, one
+   question per candidate atom, each the disjunction of the same physically
+   shared parts and its own head; without a memo every question simplified
+   the shared parts again. *)
+let simplify_memo_create () =
+  { pos = PhysFml.create 256; neg = PhysFml.create 64 }
+
+let simplify_in_memo memo phi =
+  match Stdlib.Domain.DLS.get simplify_scope with
+  | Some _ -> simplify phi
+  | None ->
+      Stdlib.Domain.DLS.set simplify_scope (Some memo);
+      Exn.protect
+        ~f:(fun () -> simplify phi)
+        ~finally:(fun () -> Stdlib.Domain.DLS.set simplify_scope None)
 
 let is_sat is_sat phi =
   try eval phi
@@ -4806,7 +6904,10 @@ let abstract_out_of_range_reads phi =
       in
       if (not !ok) || List.is_empty !reads || not distinct_indices then phi
       else
-        let used = Set.Poly.map (Formula.tvs_of phi) ~f:Ident.name_of_tvar in
+        (* Predicate aliases and defined function heads can carry scalar
+           values too. A term-only free-variable set does not reserve their
+           spellings, so an otherwise fresh read variable could alias them. *)
+        let used = Set.Poly.map (Formula.names_spelled_in phi) ~f:Ident.name_of_tvar in
         let fresh i k =
           let rec go suffix =
             let name =
@@ -4857,11 +6958,12 @@ let abstract_length_only_sequences phi =
     in
     if Set.is_empty seq_vars then phi
     else
-      let used = Set.Poly.map (Formula.tvs_of phi) ~f:Ident.name_of_tvar in
+      let used = ref (Set.Poly.map (Formula.names_spelled_in phi) ~f:Ident.name_of_tvar) in
       let name_of (Ident.Tvar x) =
         let rec go k =
           let n = if k = 0 then "#len_" ^ x else sprintf "#len_%s_%d" x k in
-          if Set.mem used n then go (k + 1) else n
+          if Set.mem !used n then go (k + 1)
+          else (used := Set.add !used n; n)
         in
         Ident.Tvar (go 0)
       in
@@ -4895,6 +6997,713 @@ let abstract_length_only_sequences phi =
                     (T_int.zero ()))))
           (replace keep)
 
+(* [eliminate_guarded_length_only_sequences ~valid phi]: a validity question
+   equivalent to [phi] in which every integer-sequence variable [x] that is
+   free in [phi] (or bound by its outermost universal prefix) and observed only
+   through [seq.len x] and through ELEMENT GUARDS is replaced by a fresh
+   integer [n] with [0 <= n] as a premise; [phi] itself (physically) when no
+   variable qualifies.
+
+   An element guard of [x] is a quantified subformula [Q = B vs. body] whose
+   only free variable is [x], whose body is quantifier-free and reads [x] only
+   as [seq.nth x v] with [v] one of [vs] (besides [seq.len x]), and which
+   stands either as a universal at negative polarity (a premise such as
+   "every element of [x] is in [0, 2^32)") or as an existential at positive
+   polarity (the same premise after negation normal form).  It qualifies when,
+   for one integer [e] shared by all guards of [x], the constant sequence of
+   [e] of any length [n >= 0] makes it true (universal) or false (existential)
+   whatever value the theory gives a read outside the sequence: [valid] must
+   prove [0 <= n => body'] (respectively [0 <= n => not body']), where
+   [body'] reads [x] at [v] as [ite (0 <= v < n) e u_v] with [u_v] free and
+   [seq.len x] as [n].  A guard is replaced by [true] (universal) or [false]
+   (existential), and then [seq.len x] by [n].
+
+   Contract: the result is valid iff [phi] is, whenever [valid] answers [true]
+   only on valid formulas.  Proof.  Write [phi'] for the result without the
+   premise [0 <= n].  (1) Replacing a negative-polarity subformula by [true],
+   or a positive-polarity one by [false], gives a formula implied by the
+   original at every assignment, and the length replacement agrees with it at
+   [n = len x]; so [phi'] valid on [n >= 0] implies [phi] valid.  (2) For an
+   assignment with [n >= 0], take [x] the constant sequence of [e] of length
+   [n]: every guard of [x] then has exactly the replaced constant (that is
+   what [valid] proved, for every out-of-range value), and [x] occurs nowhere
+   else, so [phi] at that assignment is [phi'] at [n]; [phi] valid implies
+   [phi'] valid on [n >= 0].  Nothing else changes: a guard of another
+   variable is left alone, and a variable some other occurrence reads stays.
+   Declines (keeps [x]) when [x] is rebound anywhere in [phi], and returns
+   [phi] when [phi] holds a [let] or an array lambda, whose binders the
+   occurrence test does not see.
+
+   Why: a refutation of an overflow check such as [cnt + 1 < 2^64] under
+   [cnt = seq.len s] needs a sequence of length [2^64 - 1], which no solver
+   builds: Z3 5.1.0 takes 8.7 s to satisfy [seq.len s = 100] alone and does
+   not return within 20 s at 300, and cvc5 1.4.2 answers [unknown] past its
+   model length cap of 65536.  The integer question is decided at once. *)
+let eliminate_guarded_length_only_sequences ~valid phi =
+  if
+    (not (Formula.is_let_free phi))
+    || Set.exists (Formula.funsyms_of phi) ~f:(function
+         | T_array.ALambda _ -> true
+         | _ -> false)
+  then phi
+  else
+    let rec strip acc = function
+      | Formula.Bind (Formula.Forall, bound, body, _) -> strip (acc @ bound) body
+      | body -> (acc, body)
+    in
+    let prefix, body = strip [] phi in
+    let bound_names =
+      let rec go acc = function
+        | Formula.Atom _ -> acc
+        | Formula.UnaryOp (_, p, _) -> go acc p
+        | Formula.BinaryOp (_, p, q, _) -> go (go acc p) q
+        | Formula.Bind (_, bound, p, _) ->
+            go (List.fold bound ~init:acc ~f:(fun acc (v, _) -> Set.add acc v)) p
+        | Formula.LetRec (_, p, _) -> go acc p
+        | Formula.LetFormula (v, _, _, p, _) -> go (Set.add acc v) p
+      in
+      go Set.Poly.empty body
+    in
+    let candidates =
+      Set.to_list (Formula.term_sort_env_of body)
+      |> List.filter ~f:(fun (x, sort) ->
+             (match sort with T_seq.SSeq T_int.SInt -> true | _ -> false)
+             && not (Set.mem bound_names x))
+    in
+    if List.is_empty candidates then phi
+    else
+      let taken = ref (Formula.names_spelled_in phi) in
+      let fresh prefix =
+        let v =
+          Ident.mk_fresh_tvar_avoiding ~prefix ~taken:(Set.mem !taken) ()
+        in
+        taken := Set.add !taken v;
+        v
+      in
+      let is_x x = function
+        | Term.Var (y, _, _) -> Ident.tvar_equal x y
+        | _ -> false
+      in
+      let flip = function `Pos -> `Neg | `Neg -> `Pos in
+      (* the guards of [x] in [phi] with their polarity: [Some] the list when
+         every one is of a supported (binder, polarity), [None] when a
+         candidate guard is not *)
+      let guard_body_w x n e (vs : sort_env_list) gbody =
+        let us =
+          List.map vs ~f:(fun (v, _) -> (v, Term.mk_var (fresh "#u") T_int.SInt))
+        in
+        Formula.map_term gbody ~f:(function
+          | Term.FunApp (T_seq.SqNth _, [ s; Term.Var (v, _, _) ], _)
+            when is_x x s && List.Assoc.mem us ~equal:Ident.tvar_equal v ->
+              let vt = Term.mk_var v T_int.SInt in
+              T_bool.ifte
+                (Formula.and_of
+                   [ Formula.geq vt (T_int.zero ()); Formula.lt vt n ])
+                e
+                (List.Assoc.find_exn us ~equal:Ident.tvar_equal v)
+          | Term.FunApp (T_seq.SqLen _, [ s ], _) when is_x x s -> n
+          | t -> t)
+      in
+      let is_guard_shape x binder pol vs gbody =
+        (match (binder, pol) with
+        | Formula.Forall, `Neg | Formula.Exists, `Pos -> true
+        | _ -> false)
+        && Formula.is_quantifier_free gbody
+        && List.for_all vs ~f:(fun (_, s) ->
+               match s with T_int.SInt -> true | _ -> false)
+        &&
+        let fv = Formula.tvs_of (Formula.mk_bind binder vs gbody) in
+        Set.length fv = 1 && Set.mem fv x
+      in
+      (* rewrite [x]'s guards with the witness element [e]; [None] when some
+         guard of [x] is not proved for [e] *)
+      let rewrite_guards x n e body =
+        let ok = ref true in
+        let rec go pol phi =
+          match phi with
+          | Formula.Atom _ -> phi
+          | Formula.UnaryOp (Formula.Not, p, info) ->
+              Formula.mk_unop ~info Formula.Not (go (flip pol) p)
+          | Formula.BinaryOp (((Formula.And | Formula.Or) as op), p, q, info) ->
+              Formula.mk_binop ~info op (go pol p) (go pol q)
+          | Formula.BinaryOp (Formula.Imply, p, q, info) ->
+              Formula.mk_binop ~info Formula.Imply (go (flip pol) p) (go pol q)
+          | Formula.Bind (((Formula.Forall | Formula.Exists) as b), vs, gbody, info)
+            ->
+              if is_guard_shape x b pol vs gbody then
+                let w = guard_body_w x n e vs gbody in
+                let goal =
+                  match b with Formula.Forall -> w | _ -> Formula.mk_neg w
+                in
+                if
+                  (not (Set.mem (Formula.tvs_of w) x))
+                  && valid
+                       (Formula.mk_imply (Formula.geq n (T_int.zero ())) goal)
+                then
+                  match b with
+                  | Formula.Forall -> Formula.mk_true ()
+                  | _ -> Formula.mk_false ()
+                else (
+                  ok := false;
+                  phi)
+              else Formula.mk_bind ~info b vs (go pol gbody)
+          | phi -> phi
+        in
+        let r = go `Pos body in
+        if !ok then Some r else None
+      in
+      let literals_of x body =
+        let acc = ref [ Z.zero ] in
+        let rec go = function
+          | Formula.Atom _ as a ->
+              ignore
+                (Formula.map_term a ~f:(function
+                  | Term.FunApp (T_int.Int k, [], _) as t ->
+                      acc := Z.pred k :: k :: Z.succ k :: !acc;
+                      t
+                  | t -> t))
+          | Formula.UnaryOp (_, p, _) -> go p
+          | Formula.BinaryOp (_, p, q, _) -> go p; go q
+          | Formula.Bind (_, _, p, _) as b ->
+              if Set.mem (Formula.tvs_of b) x then go p
+          | _ -> ()
+        in
+        go body;
+        List.take
+          (List.rev
+             (List.fold (List.rev !acc) ~init:[] ~f:(fun seen k ->
+                  if List.mem seen k ~equal:Z.equal then seen else k :: seen)))
+          8
+      in
+      let len_of x n phi =
+        Formula.map_term phi ~f:(function
+          | Term.FunApp (T_seq.SqLen _, [ s ], _) when is_x x s -> n
+          | t -> t)
+      in
+      let body', gone =
+        List.fold candidates ~init:(body, []) ~f:(fun (body, gone) (x, _) ->
+            let nv = fresh "#len" in
+            let n = Term.mk_var nv T_int.SInt in
+            let found =
+              List.find_map (literals_of x body) ~f:(fun k ->
+                  match rewrite_guards x n (T_int.mk_int k) body with
+                  | None -> None
+                  | Some r ->
+                      let r = len_of x n r in
+                      if Set.mem (Formula.tvs_of r) x then None else Some r)
+            in
+            match found with
+            | Some r -> (r, (x, nv) :: gone)
+            | None -> (body, gone))
+      in
+      if List.is_empty gone then phi
+      else
+        let gone = List.rev gone in
+        let in_prefix (x, _) =
+          List.exists prefix ~f:(fun (y, _) -> Ident.tvar_equal x y)
+        in
+        let prefix' =
+          List.filter prefix ~f:(fun (y, _) ->
+              not (List.exists gone ~f:(fun (x, _) -> Ident.tvar_equal x y)))
+          @ List.filter_map gone ~f:(fun ((_, nv) as g) ->
+                if in_prefix g then Some (nv, T_int.SInt) else None)
+        in
+        Formula.mk_bind_if_bounded Formula.Forall prefix'
+        @@ Formula.mk_imply
+             (Formula.and_of
+                (List.map gone ~f:(fun (_, nv) ->
+                     Formula.geq (Term.mk_var nv T_int.SInt) (T_int.zero ()))))
+             body'
+
+(* [eliminate_pointwise_defined_sequences ~valid phi]: [phi] with every
+   existential over a sequence that is defined pointwise replaced by an
+   existential over its length, and the number of sequences so eliminated;
+   [(phi, 0)] (physically [phi]) when none qualifies.
+
+   The shape, for an existential block that stands at positive polarity in
+   [phi] (a clause's conclusion, or a premise's negated existential after
+   negation normal form) and one sequence variable [s : Seq T] of the block:
+   the block's body is [F[len s, U]] with
+   - [U = forall q:Int. D(q, nth s q, len s)], [D] quantifier-free and
+     let-free, reading [s] only as [nth s q] at the bound [q] and as [len s];
+   - [U] the only subformula of the body reading an element of [s], reached
+     from the body's root through [and], [or] and existential binders alone
+     (no negation, no universal in between; an inner existential commutes
+     with the one over [s], so its variables may occur in [U]);
+   - every other occurrence of [s] is [len s], none inside an array lambda,
+     an embedded formula, a [let] or a binder that rebinds [s];
+   - the side condition [(0 <= q /\ q < n) \/ D(q, e, n)] proved by [valid]
+     with [q], [e], [n] free: outside the sequence [D] holds whatever element
+     is read.
+   It becomes [exists n:Int. 0 <= n /\ F[n, forall q. exists e:T. D(q, e, n)]],
+   the binder of [n] placed inside the chain of existentials the body starts
+   with (existentials commute); the element existential is pushed into the
+   disjuncts of [D] that mention it and each [exists e. B] is handed to the
+   one-point rule, so [D = G \/ e = t(q)] with [t] free of [e] leaves no
+   element part at all, and the universal is then simplified.  The
+   rewritten block as a whole is then given to the one-point rule, the
+   single-constructor split and constructor injectivity, so a length the
+   block defines by an equation leaves no binder.
+
+   Contract: the result is equivalent to [phi] in every model of the
+   background theory, under every assignment, whenever [valid] answers
+   [true] only on valid formulas.  Proof: in a model the domain of [Seq T] is
+   every finite sequence over [T] ([len] its length, [nth] its element in
+   range and a model-chosen function value outside), and [T] is non-empty.
+   Commute the existentials between [exists s] and [U] outward first.
+   (=>) take [n = len s] and [e = nth s q]; [F] is monotone in [U] because
+   [U] sits under [and]/[or] alone.  (<=) given [n >= 0], choose for each [i]
+   in [[0, n)] an element satisfying [D(i, -, n)] when one exists; the
+   sequence of those [n] elements has length [n], satisfies [U] in range by
+   the choice and outside the range by the side condition, so [U] holds of it
+   exactly when [forall q. exists e. D] holds of [n].  Exactly one [U]
+   because one sequence must serve every condition on its elements; [D] may
+   contain terms the theory leaves open, which are functions in each model.
+   Free variables of the result are those of [phi].  The fresh [n] and [e]
+   avoid every name spelled in [phi].
+
+   Why: a loop exit whose postcondition says "some produced sequence has
+   length [c] and its [i]-th item is [start + i]" needs the witness
+   [[start, ..., start + c - 1]], which no term of the clause denotes and the
+   theory has no constructor for; neither the instantiation of sequence
+   binders nor Z3 finds it (Z3 did not answer the obligation in 20 s and
+   proved its rewritten form in 0.06 s). *)
+let eliminate_pointwise_defined_sequences ~valid phi =
+  let taken = ref (Formula.names_spelled_in phi) in
+  let fresh prefix =
+    let v = Ident.mk_fresh_tvar_avoiding ~prefix ~taken:(Set.mem !taken) () in
+    taken := Set.add !taken v;
+    v
+  in
+  let count = ref 0 in
+  let is_x x = function
+    | Term.Var (y, _, _) -> Ident.tvar_equal x y
+    | _ -> false
+  in
+  (* [t] with [len x] replaced by [n] and, when [read = Some (q, e)], [nth x q]
+     by [e]; [bad] is set at any other occurrence of [x] *)
+  let on_term ~x ~n ~read bad t =
+    let rec go t =
+      match t with
+      | Term.Var (y, _, _) ->
+          if Ident.tvar_equal x y then bad := true;
+          t
+      | Term.FunApp (T_seq.SqLen _, [ s ], _) when is_x x s -> n
+      | Term.FunApp (T_seq.SqNth _, [ s; Term.Var (v, _, _) ], _)
+        when is_x x s
+             && (match read with
+                | Some (q, _) -> Ident.tvar_equal q v
+                | None -> false) ->
+          snd (Option.value_exn read)
+      | Term.FunApp ((T_array.ALambda _ | T_bool.Formula _), _, _)
+      | Term.LetTerm _ ->
+          if Set.mem (Term.tvs_of t) x then bad := true;
+          t
+      | Term.FunApp (fsym, args, info) ->
+          Term.mk_fsym_app ~info fsym (List.map args ~f:go)
+    in
+    go t
+  in
+  let rec on_formula ~x ~n ~read bad phi =
+    match phi with
+    | Formula.Atom (Atom.App (pred, args, ainfo), info) ->
+        (match pred with
+        | Predicate.Fixpoint _ ->
+            if Set.mem (Formula.tvs_of phi) x then bad := true
+        | _ -> ());
+        Formula.mk_atom ~info
+          (Atom.mk_app ~info:ainfo pred
+             (List.map args ~f:(on_term ~x ~n ~read bad)))
+    | Formula.Atom _ -> phi
+    | Formula.UnaryOp (op, p, info) ->
+        Formula.mk_unop ~info op (on_formula ~x ~n ~read bad p)
+    | Formula.BinaryOp (op, p, q, info) ->
+        Formula.mk_binop ~info op
+          (on_formula ~x ~n ~read bad p)
+          (on_formula ~x ~n ~read bad q)
+    | Formula.Bind (((Formula.Forall | Formula.Exists) as b), vs, p, info) ->
+        if List.exists vs ~f:(fun (v, _) -> Ident.tvar_equal v x) then (
+          bad := true;
+          phi)
+        else Formula.mk_bind ~info b vs (on_formula ~x ~n ~read bad p)
+    | Formula.Bind _ | Formula.LetRec _ | Formula.LetFormula _ ->
+        if Set.mem (Formula.tvs_of phi) x then bad := true;
+        phi
+  in
+  let reads_element_of x phi =
+    let found = ref false in
+    ignore
+      (Formula.map_term phi ~f:(fun t ->
+           (match t with
+           | Term.FunApp (T_seq.SqNth _, s :: _, _) when is_x x s ->
+               found := true
+           | _ -> ());
+           t)
+        : Formula.t);
+    !found
+  in
+  let rebinds x vs = List.exists vs ~f:(fun (v, _) -> Ident.tvar_equal v x) in
+  (* the subformulas of the spine of [body] -- its [and], [or] and inner
+     existential binders, the latter commuting with the existential over
+     [x] -- that read an element of [x]; a spine leaf that is not a universal
+     is returned too, so that the caller declines on it *)
+  let rec element_readers x acc phi =
+    match phi with
+    | Formula.BinaryOp ((Formula.And | Formula.Or), p, q, _) ->
+        element_readers x (element_readers x acc p) q
+    | Formula.Bind (Formula.Exists, vs, p, _) when not (rebinds x vs) ->
+        element_readers x acc p
+    | _ -> if reads_element_of x phi then phi :: acc else acc
+  in
+  (* [exists e. d] with [e] pushed into the disjuncts of [d] that mention it
+     and each such existential given to the one-point rule *)
+  let exists_elem e se d =
+    let mentions p = Set.mem (Formula.tvs_of p) e in
+    let ds = Formula.disjuncts_list_of (Formula.nnf_of d) in
+    let free_of_e, with_e = List.partition_tf ds ~f:(Fn.non mentions) in
+    Formula.or_of
+      (free_of_e
+      @ List.map with_e ~f:(fun b ->
+            elim_onepoint_and_split_binders (Formula.exists [ (e, se) ] b)))
+  in
+  let try_one (x, sort) body =
+    match sort with
+    | T_seq.SSeq se -> (
+        match element_readers x [] body with
+        | [ (Formula.Bind (Formula.Forall, [ (q, T_int.SInt) ], d, _) as u) ]
+          when Formula.is_quantifier_free d && Formula.is_let_free d ->
+            let nv = fresh "#seqlen" in
+            let n = Term.mk_var nv T_int.SInt in
+            let e = fresh "#seqelem" in
+            let bad = ref false in
+            let d' =
+              on_formula ~x ~n ~read:(Some (q, Term.mk_var e se)) bad d
+            in
+            let qt = Term.mk_var q T_int.SInt in
+            let side =
+              Formula.or_of
+                [
+                  Formula.and_of
+                    [ Formula.leq (T_int.zero ()) qt; Formula.lt qt n ];
+                  d';
+                ]
+            in
+            let u' () =
+              simplify
+                (Formula.forall [ (q, T_int.SInt) ] (exists_elem e se d'))
+            in
+            let rec spine phi =
+              if phys_equal phi u then u' ()
+              else
+                match phi with
+                | Formula.BinaryOp (((Formula.And | Formula.Or) as op), p, r, info)
+                  ->
+                    Formula.mk_binop ~info op (spine p) (spine r)
+                | Formula.Bind (Formula.Exists, vs, p, info)
+                  when not (rebinds x vs) ->
+                    Formula.mk_bind ~info Formula.Exists vs (spine p)
+                | _ -> on_formula ~x ~n ~read:None bad phi
+            in
+            if !bad || Set.mem (Formula.tvs_of d') x then None
+            else
+              let body' = spine body in
+              if !bad || Set.mem (Formula.tvs_of body') x then None
+              else if not (valid side) then None
+              else
+                (* the binder of [n] goes inside the chain of existentials
+                   the body starts with (they commute), so that an equation
+                   of the innermost body defining [n] is a top-level
+                   conjunct of [n]'s own binder for the one-point rule *)
+                let rec push_in = function
+                  | Formula.Bind (Formula.Exists, ws, p, info) ->
+                      Formula.mk_bind ~info Formula.Exists ws (push_in p)
+                  | p ->
+                      Formula.mk_exists [ (nv, T_int.SInt) ]
+                        (Formula.and_of [ Formula.leq (T_int.zero ()) n; p ])
+                in
+                Some (push_in body')
+        | _ -> None)
+    | _ -> None
+  in
+  let flip = function `Pos -> `Neg | `Neg -> `Pos in
+  let rec go pol phi =
+    match phi with
+    | Formula.Atom _ -> phi
+    | Formula.UnaryOp (Formula.Not, p, info) ->
+        Formula.mk_unop ~info Formula.Not (go (flip pol) p)
+    | Formula.BinaryOp (((Formula.And | Formula.Or) as op), p, q, info) ->
+        Formula.mk_binop ~info op (go pol p) (go pol q)
+    | Formula.BinaryOp (Formula.Imply, p, q, info) ->
+        Formula.mk_binop ~info Formula.Imply (go (flip pol) p) (go pol q)
+    | Formula.BinaryOp ((Formula.Iff | Formula.Xor), _, _, _) -> phi
+    | Formula.Bind (((Formula.Forall | Formula.Exists) as b), vs, body, info)
+      -> (
+        let body = go pol body in
+        match (b, pol) with
+        | Formula.Exists, `Pos
+          when List.exists vs ~f:(fun (_, s) ->
+                   match s with T_seq.SSeq _ -> true | _ -> false) ->
+            let before = !count in
+            let vs, body =
+              List.fold vs ~init:([], body) ~f:(fun (acc, body) v ->
+                  match try_one v body with
+                  | Some body' ->
+                      incr count;
+                      (acc, body')
+                  | None -> (v :: acc, body))
+            in
+            let block = Formula.mk_bind_if_bounded ~info b (List.rev vs) body in
+            (* a rewritten block goes through the one-point rule and the
+               single-constructor split, then constructor injectivity
+               ([C(a..) = C(b..)] as the fields' equations, which the split
+               leaves behind) and the one-point rule again (each exact in
+               every model): the
+               length is usually defined by an equation of the block
+               ([c = len s]), and an existential left over it is one the later
+               passes, which ran before this rewrite, no longer remove *)
+            if !count > before then
+              elim_onepoint_and_split_binders
+                (split_cons_equations (ref false)
+                   (elim_onepoint_and_split_binders block))
+            else block
+        | _ -> Formula.mk_bind ~info b vs body)
+    | Formula.Bind _ | Formula.LetRec _ | Formula.LetFormula _ -> phi
+  in
+  let r = go `Pos phi in
+  if !count = 0 then (phi, 0) else (r, !count)
+
+(* [merge_concatenated_sequence_existentials phi]: [phi] with every pair of
+   existentially bound sequences [p], [x] that the formula reads only as
+   [len p], [len x] and the one concatenation [p ++ x] replaced by a single
+   sequence [y] (standing for [p ++ x]) and an integer [a] (standing for
+   [len p]), and the number of pairs so merged; [(phi, 0)] (physically [phi])
+   when none qualifies.
+
+   The shape, for an existential block at positive polarity in [phi] (a
+   clause's conclusion, or a premise's negated universal after negation
+   normal form): the existentials of the block's spine -- its [and], [or] and
+   inner existential binders, with no negation and no universal in between --
+   are first moved to the block under fresh names (exact: an existential
+   commutes with [and] and [or] over a part that does not mention its
+   variable, and every sort is non-empty).  Then, for two sequence binders
+   [p], [x] of one element sort whose every occurrence is [len p], [len x] or
+   the term [p ++ x] (outside any array lambda, embedded formula, [let] or
+   binder that rebinds them), the block
+     [exists p x. F[len p, len x, p ++ x]]
+   becomes
+     [exists y a. 0 <= a /\ a <= len y /\ F[a, len y - a, y]].
+   Repeated until no pair is left, so a chain [r ++ (q ++ x)] is merged
+   inside out.  A block with no pair is returned as it was (its existentials
+   are not moved).
+
+   Contract: the result is equivalent to [phi] in every model of the
+   background theory, under every assignment.  Proof: in a model the domain of
+   [Seq T] is every finite sequence over [T].  (=>) given [p], [x], take
+   [y = p ++ x] and [a = len p]; then [0 <= a <= len y] and
+   [len x = len y - a].  (<=) given [y] and [0 <= a <= len y], take [p] the
+   first [a] elements of [y] and [x] the remaining [len y - a]; then
+   [p ++ x = y], [len p = a], [len x = len y - a].  [F] reads [p] and [x]
+   only through those three terms, so it has the same value on both sides.
+   Free variables of the result are those of [phi]; [y], [a] and the moved
+   binders' new names avoid every name spelled in [phi].
+
+   Why: a skip adapter nested [k] deep gives its "completed" postcondition a
+   premise [forall s r. produces(c, s, r) => len s <= n], in which the inner
+   adapter's [produces] reads [s] only through [len s] and [q ++ s], [q] the
+   skipped prefix bound by an existential of its own.  Once merged, the
+   sequence is read only through its length and one pointwise condition,
+   which [eliminate_pointwise_defined_sequences] then replaces by its length;
+   with both sequences left, the refutation of that premise needs a witness
+   sequence no term of the clause denotes, and the obligation (Z3 and cvc5
+   both undecided on it) stayed open for 300 s, where the merged form is
+   answered in under a second. *)
+let merge_concatenated_sequence_existentials phi =
+  let taken = ref (Formula.names_spelled_in phi) in
+  let fresh prefix =
+    let v = Ident.mk_fresh_tvar_avoiding ~prefix ~taken:(Set.mem !taken) () in
+    taken := Set.add !taken v;
+    v
+  in
+  let count = ref 0 in
+  let is_x x = function
+    | Term.Var (y, _, _) -> Ident.tvar_equal x y
+    | _ -> false
+  in
+  let rebinds x vs = List.exists vs ~f:(fun (v, _) -> Ident.tvar_equal v x) in
+  let is_pair ~p ~x = function
+    | Term.FunApp (T_seq.SqConcat _, [ l; r ], _) -> is_x p l && is_x x r
+    | _ -> false
+  in
+  let opaque = function
+    | Term.FunApp ((T_array.ALambda _ | T_bool.Formula _), _, _)
+    | Term.LetTerm _ ->
+        true
+    | _ -> false
+  in
+  let mentions ~p ~x vs = Set.mem vs p || Set.mem vs x in
+  (* whether [p] and [x] occur in [t] only as [len p], [len x] and [p ++ x] *)
+  let rec term_ok ~p ~x t =
+    match t with
+    | Term.Var (y, _, _) ->
+        not (Ident.tvar_equal y p || Ident.tvar_equal y x)
+    | Term.FunApp (T_seq.SqLen _, [ s ], _) when is_x p s || is_x x s -> true
+    | _ when is_pair ~p ~x t -> true
+    | _ when opaque t -> not (mentions ~p ~x (Term.tvs_of t))
+    | Term.FunApp (_, args, _) -> List.for_all args ~f:(term_ok ~p ~x)
+    | _ -> not (mentions ~p ~x (Term.tvs_of t))
+  in
+  let rec formula_ok ~p ~x phi =
+    match phi with
+    | Formula.Atom (Atom.App (Predicate.Fixpoint _, _, _), _) ->
+        not (mentions ~p ~x (Formula.tvs_of phi))
+    | Formula.Atom (Atom.App (_, args, _), _) ->
+        List.for_all args ~f:(term_ok ~p ~x)
+    | Formula.Atom _ -> not (mentions ~p ~x (Formula.tvs_of phi))
+    | Formula.UnaryOp (_, q, _) -> formula_ok ~p ~x q
+    | Formula.BinaryOp (_, q, r, _) -> formula_ok ~p ~x q && formula_ok ~p ~x r
+    | Formula.Bind ((Formula.Forall | Formula.Exists), vs, q, _) ->
+        (not (rebinds p vs || rebinds x vs)) && formula_ok ~p ~x q
+    | Formula.Bind _ | Formula.LetRec _ | Formula.LetFormula _ ->
+        not (mentions ~p ~x (Formula.tvs_of phi))
+  in
+  (* [len p] by [a], [len x] by [len y - a], [p ++ x] by [y]; called only
+     where [formula_ok] holds, so nothing else mentions [p] or [x] *)
+  let rec rw_term ~p ~x ~y ~a se t =
+    match t with
+    | Term.FunApp (T_seq.SqLen _, [ s ], _) when is_x p s -> a
+    | Term.FunApp (T_seq.SqLen _, [ s ], _) when is_x x s ->
+        T_int.mk_sub (T_seq.mk_len se y) a
+    | _ when is_pair ~p ~x t -> y
+    | _ when opaque t -> t
+    | Term.FunApp (fsym, args, info) ->
+        Term.mk_fsym_app ~info fsym (List.map args ~f:(rw_term ~p ~x ~y ~a se))
+    | _ -> t
+  in
+  let rec rw_formula ~p ~x ~y ~a se phi =
+    match phi with
+    | Formula.Atom (Atom.App (pred, args, ainfo), info) ->
+        Formula.mk_atom ~info
+          (Atom.mk_app ~info:ainfo pred
+             (List.map args ~f:(rw_term ~p ~x ~y ~a se)))
+    | Formula.UnaryOp (op, q, info) ->
+        Formula.mk_unop ~info op (rw_formula ~p ~x ~y ~a se q)
+    | Formula.BinaryOp (op, q, r, info) ->
+        Formula.mk_binop ~info op
+          (rw_formula ~p ~x ~y ~a se q)
+          (rw_formula ~p ~x ~y ~a se r)
+    | Formula.Bind (((Formula.Forall | Formula.Exists) as b), vs, q, info) ->
+        Formula.mk_bind ~info b vs (rw_formula ~p ~x ~y ~a se q)
+    | _ -> phi
+  in
+  (* the concatenations [v ++ w] of two variables, in [phi]'s terms *)
+  let pairs_in phi =
+    let acc = ref [] in
+    let rec on_term t =
+      match t with
+      | Term.FunApp (T_seq.SqConcat se, [ Term.Var (v, _, _); Term.Var (w, _, _) ], _)
+        ->
+          acc := (v, w, se) :: !acc
+      | _ when opaque t -> ()
+      | Term.FunApp (_, args, _) -> List.iter args ~f:on_term
+      | _ -> ()
+    in
+    let rec on_formula = function
+      | Formula.Atom (Atom.App (_, args, _), _) -> List.iter args ~f:on_term
+      | Formula.UnaryOp (_, q, _) -> on_formula q
+      | Formula.BinaryOp (_, q, r, _) -> on_formula q; on_formula r
+      | Formula.Bind ((Formula.Forall | Formula.Exists), _, q, _) -> on_formula q
+      | _ -> ()
+    in
+    on_formula phi;
+    List.rev !acc
+  in
+  (* the existentials of [phi]'s spine moved to the front under fresh names *)
+  let rec lift phi =
+    match phi with
+    | Formula.BinaryOp (((Formula.And | Formula.Or) as op), q, r, info) ->
+        let vq, q = lift q in
+        let vr, r = lift r in
+        (vq @ vr, Formula.mk_binop ~info op q r)
+    | Formula.Bind (Formula.Exists, vs, q, _) ->
+        let ren =
+          List.map vs ~f:(fun (v, s) -> (v, fresh (Ident.name_of_tvar v), s))
+        in
+        let sub =
+          List.fold ren ~init:Map.Poly.empty ~f:(fun m (v, v', s) ->
+              Map.Poly.set m ~key:v ~data:(Term.mk_var v' s))
+        in
+        let vq, q = lift (Formula.subst sub q) in
+        (List.map ren ~f:(fun (_, v', s) -> (v', s)) @ vq, q)
+    | _ -> ([], phi)
+  in
+  let bound_seq vs v =
+    List.exists vs ~f:(fun (w, s) ->
+        Ident.tvar_equal v w && match s with T_seq.SSeq _ -> true | _ -> false)
+  in
+  (* merge one pair of [vs] in [body], when one qualifies *)
+  let merge_one (vs, body) =
+    List.find_map (pairs_in body) ~f:(fun (p, x, se) ->
+        if
+          Ident.tvar_equal p x
+          || (not (bound_seq vs p))
+          || (not (bound_seq vs x))
+          || not (formula_ok ~p ~x body)
+        then None
+        else
+          let yv = fresh "#seqcat" and av = fresh "#seqcatlen" in
+          let y = Term.mk_var yv (T_seq.SSeq se) in
+          let a = Term.mk_var av T_int.SInt in
+          let body' = rw_formula ~p ~x ~y ~a se body in
+          let vs' =
+            List.filter vs ~f:(fun (v, _) ->
+                not (Ident.tvar_equal v p || Ident.tvar_equal v x))
+            @ [ (yv, T_seq.SSeq se); (av, T_int.SInt) ]
+          in
+          Some
+            ( vs',
+              Formula.and_of
+                [
+                  Formula.leq (T_int.zero ()) a;
+                  Formula.leq a (T_seq.mk_len se y);
+                  body';
+                ] ))
+  in
+  let try_block vs body =
+    let lifted, body' = lift body in
+    let rec loop k st =
+      match merge_one st with Some st' -> loop (k + 1) st' | None -> (k, st)
+    in
+    match loop 0 (vs @ lifted, body') with
+    | 0, _ -> None
+    | k, (vs', body'') ->
+        count := !count + k;
+        Some (vs', body'')
+  in
+  let flip = function `Pos -> `Neg | `Neg -> `Pos in
+  let rec go pol phi =
+    match phi with
+    | Formula.Atom _ -> phi
+    | Formula.UnaryOp (Formula.Not, p, info) ->
+        Formula.mk_unop ~info Formula.Not (go (flip pol) p)
+    | Formula.BinaryOp (((Formula.And | Formula.Or) as op), p, q, info) ->
+        Formula.mk_binop ~info op (go pol p) (go pol q)
+    | Formula.BinaryOp (Formula.Imply, p, q, info) ->
+        Formula.mk_binop ~info Formula.Imply (go (flip pol) p) (go pol q)
+    | Formula.BinaryOp ((Formula.Iff | Formula.Xor), _, _, _) -> phi
+    | Formula.Bind (((Formula.Forall | Formula.Exists) as b), vs, body, info)
+      -> (
+        let body = go pol body in
+        match (b, pol) with
+        | Formula.Exists, `Pos -> (
+            match try_block vs body with
+            | Some (vs', body') -> Formula.mk_bind_if_bounded ~info b vs' body'
+            | None -> Formula.mk_bind ~info b vs body)
+        | _ -> Formula.mk_bind ~info b vs body)
+    | Formula.Bind _ | Formula.LetRec _ | Formula.LetFormula _ -> phi
+  in
+  let r = go `Pos phi in
+  if !count = 0 then (phi, 0) else (r, !count)
+
 (* [abstract_out_of_range_reads_guarded phi]: the rewrite of
    [abstract_out_of_range_reads] for a formula WITH binders, where the plain one
    declines.  Every read [seq.nth s k] whose sequence [s] has a length its
@@ -4911,7 +7720,8 @@ let abstract_length_only_sequences phi =
    rewrite's case), holds a [let] or an array lambda, has no such read, or two
    such reads share an index.
 
-   Contract: the result is valid iff [phi] is, and satisfiable iff [phi] is.
+   Contract: the complete result is valid iff [phi] is. Before the optional
+   length reduction, the read replacement also preserves satisfiability.
    A read outside a sequence is the term of the sequence theory the theory
    leaves open: a function of the sequence and the index with no other
    constraint, so a model may give the point [(s, k)] any value of the element
@@ -4923,9 +7733,11 @@ let abstract_length_only_sequences phi =
    that point only in [ite] branches its guards do not select -- and gives
    [phi] that value too.  [s] mentioning no bound variable is what makes the
    point one point for the whole formula; distinct indices keep two replaced
-   reads from being one point under two names.  The length step is exact
-   because a free sequence observed only through its length ranges over
-   exactly the non-negative integers.
+   reads from being one point under two names. The length step preserves
+   validity because a free sequence observed only through its length ranges
+   over exactly the non-negative integers. It adds nonnegativity as an
+   implication premise, so negative integer assignments can satisfy the
+   transformed formula vacuously: satisfiability is not preserved overall.
    Why: a truth-table cell's validity question over a model's large integer
    held [0 <= k - len (seq.nth (seq.unit (seq.unit d)) k)] beside quantified
    disjuncts reading the same sequence at bound indices; Z3 5.1.0 spends its
@@ -4955,6 +7767,13 @@ let abstract_out_of_range_reads_guarded phi =
       let bound =
         Set.Poly.map (Formula.quantified_sort_env_of phi) ~f:fst
       in
+      let bound_predicates =
+        Set.Poly.filter_map (Formula.quantified_sort_env_of phi) ~f:(fun (x, sort) ->
+            if Term.is_bool_sort sort then Some (Ident.tvar_to_pvar x, [])
+            else if Sort.is_arrow sort && Term.is_bool_sort (Sort.ret_of sort)
+            then Some (Ident.tvar_to_pvar x, Sort.args_of sort)
+            else None)
+      in
       let mentions_nth t =
         Set.exists (Term.funsyms_of t) ~f:(function
           | T_seq.SqNth _ -> true
@@ -4971,6 +7790,8 @@ let abstract_out_of_range_reads_guarded phi =
               when Z.(Compare.(k < zero) || Compare.(k >= n))
                    && (not (mentions_nth sq))
                    && Set.are_disjoint (Term.tvs_of sq) bound
+                   && Set.are_disjoint
+                        (Formula.predicate_signatures_of_term sq) bound_predicates
                    && not
                         (List.exists !cands ~f:(fun (t', _, _, _, _) ->
                              Stdlib.( = ) t t')) ->
@@ -4986,9 +7807,7 @@ let abstract_out_of_range_reads_guarded phi =
       then phi
       else
         let used =
-          Set.union
-            (Set.Poly.map (Formula.tvs_of phi) ~f:Ident.name_of_tvar)
-            (Set.Poly.map bound ~f:Ident.name_of_tvar)
+          ref (Set.Poly.map (Formula.names_spelled_in phi) ~f:Ident.name_of_tvar)
         in
         let fresh prefix i k =
           let rec go suffix =
@@ -4996,7 +7815,8 @@ let abstract_out_of_range_reads_guarded phi =
               sprintf "%s%d_%s%s" prefix i (Z.to_string k)
                 (if suffix = 0 then "" else sprintf "_%d" suffix)
             in
-            if Set.mem used name then go (suffix + 1) else Ident.Tvar name
+            if Set.mem !used name then go (suffix + 1)
+            else (used := Set.add !used name; Ident.Tvar name)
           in
           go 0
         in
@@ -5205,11 +8025,122 @@ let mentions_sequence phi =
         true
     | _ -> false)
 
+(* A memo for the simplifications [check] makes, keyed by the formula's
+   value, that lives for one scope of [with_check_simplify_memo].
+
+   Contract of [with_check_simplify_memo f]: [f ()] runs with this domain's
+   [check] taking the result of [simplify psi] from the memo when a formula
+   structurally equal to [psi] was simplified by [check] earlier in the scope,
+   and remembering a result only when computing it drew no fresh name
+   ([Ident.fresh_stamp] unchanged).  The memo is emptied whenever the function
+   or datatype environment is no longer physically the one it was filled
+   under, and dropped when [f] returns or raises; a scope inside a scope uses
+   the outer one.
+
+   Why it is exact: [simplify] of a formula is a function of its value and of
+   state no simplification changes (the two environments, which are checked,
+   and the simplifier's switches, which are set when a solver is configured
+   and not inside a scope), so a recomputation returns a structurally equal
+   value; and a remembered computation drew no name, so skipping it leaves
+   every later draw as it was.  The answers [check] gives are therefore the
+   ones without the scope, value for value and draw for draw.
+
+   Why: a truth-table row evaluates every qualifier at one atom, twice (the
+   qualifier and its negation), and qualifiers mention only some of a
+   predicate's arguments, so across the rows of one synthesis round the same
+   instantiated qualifier recurs.  On a Thrust input with 67 qualifiers per
+   row, 241,996 simplifications in 1,737 rows were of 4,314 distinct formulas,
+   and those simplifications were more than half the time spent building
+   rows. *)
+type check_simplify_memo = {
+  table : (Formula.t, Formula.t) Hashtbl.t;
+  mutable memo_fenv : FunEnv.t;
+  mutable memo_dtenv : DTEnv.t;
+}
+
+let check_simplify_scope : check_simplify_memo option Stdlib.Domain.DLS.key =
+  Stdlib.Domain.DLS.new_key (fun () -> None)
+
+let with_check_simplify_memo f =
+  match Stdlib.Domain.DLS.get check_simplify_scope with
+  | Some _ -> f ()
+  | None ->
+      Stdlib.Domain.DLS.set check_simplify_scope
+        (Some
+           {
+             table = Hashtbl.PolyDeep.create ();
+             memo_fenv = get_fenv ();
+             memo_dtenv = get_dtenv ();
+           });
+      Exn.protect ~f ~finally:(fun () ->
+          Stdlib.Domain.DLS.set check_simplify_scope None)
+
+(* A CHECK, NOT A PASS: with [COAR_CHECK_SIMPLIFY_MEMO=1] every memo hit is
+   also recomputed and compared with the remembered value, and the counts
+   ([hits], [mismatches], [misses], [unstored] for a computation that drew a
+   name) are printed to stderr at exit; a mismatch would mean the memo changed
+   a value.  Without the variable nothing is recomputed. *)
+let check_simplify_memo_verify =
+  Lazy.from_val
+    (match Sys.getenv "COAR_CHECK_SIMPLIFY_MEMO" with
+    | Some ("1" | "true" | "yes") -> true
+    | _ -> false)
+
+(* [| hits; mismatches; misses; unstored |] *)
+let check_simplify_memo_counts = Array.init 4 ~f:(fun _ -> Atomic.make 0)
+let check_simplify_memo_registered = Atomic.make false
+
+let check_simplify_memo_count i =
+  (* also at the phase-time account's report, which a run stopped by a
+     signal makes and [at_exit] does not; printed once *)
+  if not (Atomic.exchange check_simplify_memo_registered true) then (
+    let printed = Atomic.make false in
+    let report () =
+      if not (Atomic.exchange printed true) then
+        let g i = Atomic.get check_simplify_memo_counts.(i) in
+        Stdlib.Printf.eprintf
+          "[check-simplify-memo] hits=%d mismatches=%d misses=%d unstored=%d\n%!"
+          (g 0) (g 1) (g 2) (g 3)
+    in
+    Stdlib.at_exit report;
+    Common.PhaseTime.at_report report);
+  Atomic.incr check_simplify_memo_counts.(i)
+
+(* [simplify psi], through the memo of [with_check_simplify_memo] when a
+   scope is active.  Contract: returns a value structurally equal to
+   [simplify psi], and draws a fresh name exactly when [simplify psi] would. *)
+let simplify_in_check_scope psi =
+  match Stdlib.Domain.DLS.get check_simplify_scope with
+  | None -> simplify psi
+  | Some m -> (
+      let fenv = get_fenv () and dtenv = get_dtenv () in
+      if not (phys_equal fenv m.memo_fenv && phys_equal dtenv m.memo_dtenv)
+      then (
+        Hashtbl.clear m.table;
+        m.memo_fenv <- fenv;
+        m.memo_dtenv <- dtenv);
+      let verify = Lazy.force check_simplify_memo_verify in
+      match Hashtbl.find m.table psi with
+      | Some r ->
+          if verify then (
+            check_simplify_memo_count 0;
+            if Stdlib.compare (simplify psi) r <> 0 then
+              check_simplify_memo_count 1);
+          r
+      | None ->
+          let stamp = Ident.fresh_stamp () in
+          let r = simplify psi in
+          let drew = Ident.fresh_stamp () <> stamp in
+          if verify then check_simplify_memo_count (if drew then 3 else 2);
+          if not drew then Hashtbl.set m.table ~key:psi ~data:r;
+          r)
+
 (* return
    Some true if cond => phi is valid
    Some false if cond => not phi is valid
    None otherwise *)
 let check ?(cond = Formula.mk_true ()) is_valid_fun phi =
+  let simplify = simplify_in_check_scope in
   let is_valid phi =
     try eval phi
     with exn_ when not (Common.Timer.is_async exn_) ->
@@ -5239,11 +8170,69 @@ let check ?(cond = Formula.mk_true ()) is_valid_fun phi =
   then Some false
   else None
 
+(* Raw term variables, nullary Boolean predicate aliases and local predicate
+   references can all be captured when a definition is inserted under a caller
+   binder. Background function heads keep their own identity. Check the three
+   binding namespaces separately; an Int formal does not bind a Boolean alias. *)
+let known_function_body_is_closed params body =
+  let extend (bound, bool_bound, pred_bound) params =
+    List.fold params ~init:(bound, bool_bound, pred_bound)
+      ~f:(fun (bound, bool_bound, pred_bound) (var, sort) ->
+        (Set.add bound var,
+         (if Term.is_bool_sort sort then Set.add bool_bound var else bool_bound),
+         pred_bound))
+  in
+  let bind_preds (bound, bool_bound, pred_bound) names =
+    (bound, bool_bound, Set.union pred_bound (Set.Poly.of_list names))
+  in
+  let rec term ((bound, _, _) as scope) (value : Term.t) =
+    match value with
+    | Var (var, _, _) -> Set.mem bound var
+    | LetTerm (var, sort, def, body, _) ->
+        term scope def && term (extend scope [ (var, sort) ]) body
+    | FunApp (T_bool.Formula phi, args, _) ->
+        formula scope phi && List.for_all args ~f:(term scope)
+    | FunApp (T_array.ALambda ((var, sort), _), args, _) ->
+        List.for_all args ~f:(term (extend scope [ (var, sort) ]))
+    | FunApp (_, args, _) -> List.for_all args ~f:(term scope)
+  and formula ((_, bool_bound, pred_bound) as scope) = function
+    | Formula.Atom (Atom.App (pred, args, _), _) ->
+        (match pred with
+          | Predicate.Var (var, sorts) ->
+              Set.mem pred_bound var
+              || (List.is_empty sorts && List.is_empty args
+                  && Set.mem bool_bound (Ident.pvar_to_tvar var))
+          | Predicate.Fixpoint def ->
+              formula
+                (extend (bind_preds scope [ def.Formula.name ]) def.Formula.args)
+                def.Formula.body
+          | Predicate.Psym _ -> true)
+        && List.for_all args ~f:(term scope)
+    | Formula.Atom _ -> true
+    | Formula.UnaryOp (_, phi, _) -> formula scope phi
+    | Formula.BinaryOp (_, left, right, _) ->
+        formula scope left && formula scope right
+    | Formula.Bind (binder, params, phi, _) ->
+        (match binder with
+          | Formula.Random rand ->
+              List.for_all (Rand.terms_of rand) ~f:(term scope)
+          | _ -> true)
+        && formula (extend scope params) phi
+    | Formula.LetFormula (var, sort, def, phi, _) ->
+        term scope def && formula (extend scope [ (var, sort) ]) phi
+    | Formula.LetRec (defs, phi, _) ->
+        let scope = bind_preds scope (List.map defs ~f:(fun def -> def.Formula.name)) in
+        List.for_all defs ~f:(fun def ->
+            formula (extend scope def.Formula.args) def.Formula.body)
+        && formula scope phi
+  in
+  term (extend (Set.Poly.empty, Set.Poly.empty, Set.Poly.empty) params) body
+
 (* Unfolding the defined functions of a formula, guided by their guards.
 
    [unfold_rec_apps ?fuel phi] rewrites every application [f(t1, ..., tn)] of
-   a function of the global function environment (a [define-fun-rec], a
-   datatype's size function) into the definition's body with the parameters
+   a function of the function environment ([?fenv], the global one when
+   omitted: a [define-fun-rec], a datatype's size function) into the definition's body with the parameters
    replaced by the arguments, and repeats inside the result.  An [ite] whose
    condition simplifies to [true] or [false] is replaced by the chosen branch
    before that branch is looked at, so the recursion of a definition written
@@ -5291,11 +8280,15 @@ exception Unfold_stop_at_guard of Term.t
    [Error (Stop_at_guard c)] when the first undecided guard met over an
    application was [c] (after unfolding and simplification).  The first such
    guard is reported; the traversal stops there. *)
-let unfold_rec_apps_why ?(fuel = 4096) phi =
-  let fenv = get_fenv () in
+let unfold_rec_apps_why ?(fuel = 4096) ?fenv phi =
+  let fenv = match fenv with Some fenv -> fenv | None -> get_fenv () in
   if Map.Poly.is_empty fenv || Set.is_empty (Formula.fvar_apps_of phi) then
     Error Stop_other
   else
+    let body_substitution_names =
+      Map.Poly.map fenv ~f:(fun (_, _, body, _, _) ->
+        lazy (scalar_substitution_scope_of body))
+    in
     let fuel = ref fuel in
     let has_app t = not (Set.is_empty (Term.fvar_apps_of t)) in
     let rec unf t =
@@ -5314,6 +8307,8 @@ let unfold_rec_apps_why ?(fuel = 4096) phi =
           match Map.Poly.find fenv f with
           | None -> raise Unfold_stop
           | Some (params, _, body, _, _) ->
+              if not (known_function_body_is_closed params body) then
+                raise Unfold_stop;
               if !fuel <= 0 then raise Unfold_stop;
               decr fuel;
               let ts' = List.map ts ~f:(fun t -> simplify_term (unf t)) in
@@ -5322,6 +8317,13 @@ let unfold_rec_apps_why ?(fuel = 4096) phi =
                 | Ok l -> Map.Poly.of_alist_exn l
                 | Unequal_lengths -> raise Unfold_stop
               in
+              let scope =
+                Lazy.force (Map.Poly.find_exn body_substitution_names f)
+              in
+              (* Preserve independent heads and typed shadowing; do not enter
+                 legacy substitution's alpha-freshening branches. *)
+              if not (scalar_substitution_is_safe_in_scope scope sub)
+              then raise Unfold_stop;
               unf (Term.subst sub body))
       | FunApp (T_array.ALambda _, _, _) when has_app t -> raise Unfold_stop
       | FunApp (fsym, ts, info) -> Term.mk_fsym_app ~info fsym (List.map ts ~f:unf)
@@ -5339,4 +8341,548 @@ let unfold_rec_apps_why ?(fuel = 4096) phi =
     | exception Unfold_stop -> Error Stop_other
     | exception Unfold_stop_at_guard c -> Error (Stop_at_guard c)
 
-let unfold_rec_apps ?fuel phi = Result.ok (unfold_rec_apps_why ?fuel phi)
+let unfold_rec_apps ?fuel ?fenv phi =
+  Result.ok (unfold_rec_apps_why ?fuel ?fenv phi)
+
+(* Unfolding a defined function where one step removes it.
+
+   [unfold_eliminable_apps ?fuel ?fenv phi] rewrites, atom by atom, an
+   application [f(t1, ..., tn)] of a function of the function environment
+   ([?fenv], the global one when omitted) into the definition's body with the
+   parameters replaced by the arguments, lifts the [ite]s of the result out of
+   the atom ([Atom.elim_ite]) and simplifies -- and keeps the rewrite only when
+   the result applies strictly fewer distinct defined-function terms than the
+   atom did.  So [hd (append x nil)] becomes
+   [ite (is_nil x) (hd nil) (hd x)] (the recursive call sits under a
+   constructor the selector takes apart), [is_cons (append x x)] becomes
+   [is_cons x], [append x x = nil] becomes [is_nil x], and [append nil x]
+   becomes [x]; [tl (append x y)], whose unfolding keeps a recursive call, is
+   left as it was.  Atoms are rewritten again until no step decreases the
+   count or [fuel] steps have been taken.  Unlike [unfold_rec_apps], which
+   either removes every application or gives up, this keeps what it cannot
+   remove, so it never fails and returns [phi] itself when nothing applies.
+
+   Why it is wanted: a question that applies a recursive function to free
+   variables of a datatype sort is decided by Z3 only by unfolding the
+   definition under growing depth bounds, which is heavy-tailed (one
+   counterexample query under a candidate built from [hd (append x y)] atoms
+   took 0.1 s to over 60 s on one Z3 build depending on the random seed and the
+   solver's history), while the same question with each such application
+   unfolded once is quantifier-free and recursion-free.
+
+   EXACTNESS.  As for [unfold_rec_apps]: every model of the problem satisfies
+   each definition's equation, so replacing an application by the body
+   instantiated at its arguments is an equivalence in every model (whether or
+   not the definition terminates); [Atom.elim_ite] (an atom over an [ite] as
+   the disjunction of its two guarded cases) and [simplify] are equivalences;
+   the substitution is capture-avoiding.  A definition whose body has a free
+   variable other than its parameters is not unfolded (the body would then
+   be read in the caller's scope).  Termination: each kept step strictly
+   decreases the number of distinct defined-function applications of the atom
+   it rewrites, and [fuel] bounds the steps in all.  Formulas with a [let] are
+   returned unchanged. *)
+let unfold_eliminable_apps ?(fuel = 1024) ?fenv phi =
+  let fenv = match fenv with Some fenv -> fenv | None -> get_fenv () in
+  let defined t =
+    match t with
+    | Term.FunApp (FVar (f, _, _), _, _) -> (
+        match Map.Poly.find fenv f with
+        | Some (params, _, body, _, _) ->
+            known_function_body_is_closed params body
+        | None -> false)
+    | _ -> false
+  in
+  let apps_of_formula phi = Set.filter (Formula.fvar_apps_of phi) ~f:defined in
+  if
+    Map.Poly.is_empty fenv
+    || Set.is_empty (apps_of_formula phi)
+    || not (Formula.is_let_free phi)
+  then phi
+  else
+    let body_substitution_names =
+      Map.Poly.map fenv ~f:(fun (_, _, body, _, _) ->
+        lazy (scalar_substitution_scope_of body))
+    in
+    let fuel = ref fuel in
+    let changed = ref false in
+    (* replace every occurrence of [app] outside embedded formulas and array
+       lambdas, whose binders the unfolded body must not be moved under *)
+    let rec replace app body t =
+      if Stdlib.(t = app) then body
+      else
+        match t with
+        | Term.Var _ | LetTerm _ -> t
+        | FunApp ((T_bool.Formula _ | T_array.ALambda _), _, _) -> t
+        | FunApp (fsym, ts, info) ->
+            Term.mk_fsym_app ~info fsym (List.map ts ~f:(replace app body))
+    in
+    let unfold_once = function
+      | Term.FunApp (FVar (f, _, _), ts, _) -> (
+          match Map.Poly.find fenv f with
+          | Some (params, _, body, _, _) -> (
+              match List.zip (List.map ~f:fst params) ts with
+              | Ok l ->
+                  let sub = Map.Poly.of_alist_exn l in
+                  let scope =
+                    Lazy.force (Map.Poly.find_exn body_substitution_names f)
+                  in
+                  if not (scalar_substitution_is_safe_in_scope scope sub)
+                  then None
+                  else Some (simplify_term (Term.subst sub body))
+              | Unequal_lengths -> None)
+          | None -> None)
+      | _ -> None
+    in
+    let rec rw_atom atom =
+      match atom with
+      | Atom.App ((Predicate.Psym _ as pred), ts, info) ->
+          let apps = Set.filter (Atom.fvar_apps_of atom) ~f:defined in
+          if Set.is_empty apps || !fuel <= 0 then Formula.mk_atom atom
+          else
+            let n = Set.length apps in
+            (* innermost (smallest) applications first *)
+            let cands =
+              List.sort (Set.to_list apps) ~compare:(fun a b ->
+                  Int.compare (Term.ast_size a) (Term.ast_size b))
+            in
+            let rec try_cands = function
+              | [] -> Formula.mk_atom atom
+              | app :: rest -> (
+                  match unfold_once app with
+                  | None -> try_cands rest
+                  | Some body ->
+                      let atom' =
+                        Atom.mk_app ~info pred (List.map ts ~f:(replace app body))
+                      in
+                      let phi' = simplify (Atom.elim_ite atom') in
+                      if Set.length (apps_of_formula phi') < n then (
+                        decr fuel;
+                        changed := true;
+                        Formula.map_atom phi' ~f:rw_atom)
+                      else try_cands rest)
+            in
+            try_cands cands
+      | atom -> Formula.mk_atom atom
+    in
+    let phi' = Formula.map_atom phi ~f:rw_atom in
+    if !changed then simplify phi' else phi
+
+(* A universally quantified pointwise equality of two sequences,
+     [forall k:Int. k < 0 \/ k >= len a \/ a[k] = b[k + t]]
+   (the guards in any form [ctx_lin_lit] reads as exactly [k >= 0] and
+   [len a - k - 1 >= 0], the equation either way round, [a], [b] and [t] free
+   of [k]), replaced by
+     [(B /\ a = extract b t (len a)) \/ (not B /\ P)]
+   with [B] = [0 <= t /\ t + len a <= len b] and [P] the quantified formula
+   itself.  Exact in every model: under [B], [extract b t (len a)] has length
+   [len a] and its [k]-th element is [b[t + k]] for every [k] in range, and two
+   sequences are equal exactly when their lengths and their in-range elements
+   are; outside [B] the formula is kept as it was (a read of [b] outside its
+   range is a value the theory leaves open, so nothing else can be said there).
+   No variable is added.  The dual, [exists k. 0 <= k < len a /\ a[k] !=
+   b[k + t]] (the conjuncts in any form whose negations read as above), is
+   replaced by [(B /\ a != extract b t (len a)) \/ (not B /\ the
+   existential)], exact for the same reason.  Applied wherever either occurs,
+   bottom-up; a formula with none is returned physically.
+
+   Why: a validation question whose premises say a sequence agrees with a
+   slice of another pointwise, beside a disequation of the two, is unsat by
+   sequence extensionality, and Z3 5.1.0 does not find that through the
+   quantifier: on a Thrust input it did not answer within 25 s standalone and
+   ran 60 s past a 5 s budget in process, while the same question with the
+   equation written as an [extract] is unsat in 0.1 s. *)
+let seq_pointwise_eqs_as_extract phi =
+  let is_k k = function
+    | Term.Var (x, _, _) -> Ident.tvar_equal x k
+    | _ -> false
+  in
+  (* [k >= 0] as [ctx_lin_lit] gives it *)
+  let lower k (m, c) =
+    Q.equal c Q.zero
+    && match m with [ (x, q) ] -> is_k k x && Q.equal q Q.one | _ -> false
+  in
+  (* [len a - k - 1 >= 0] *)
+  let upper k a (m, c) =
+    Q.equal c Q.minus_one
+    && List.length m = 2
+    && List.exists m ~f:(fun (x, q) -> is_k k x && Q.equal q Q.minus_one)
+    && List.exists m ~f:(fun (x, q) ->
+           Q.equal q Q.one
+           &&
+           match x with
+           | Term.FunApp (T_seq.SqLen _, [ a' ], _) -> (
+               try Stdlib.( = ) a a' with Invalid_argument _ -> false)
+           | _ -> false)
+  in
+  let of_disjuncts k disjuncts =
+    (* Local predicate binders must not hide an independent scalar spelling.
+       Syntactic non-occurrence is conservative across all namespaces. *)
+    let free_of_k t =
+      not (Set.mem (Formula.names_spelled_in (Formula.eq t t)) k)
+    in
+    let rec nth_eq = function
+      | Formula.UnaryOp
+          ( Formula.Not,
+            Formula.Atom (Atom.App (Predicate.Psym T_bool.Neq, args, _), _),
+            _ ) ->
+          nth_eq
+            (Formula.mk_atom (Atom.mk_app (Predicate.Psym T_bool.Eq) args))
+      | Formula.Atom
+          ( Atom.App
+              ( Predicate.Psym T_bool.Eq,
+                [
+                  (Term.FunApp (T_seq.SqNth se1, [ s1; i1 ], _) as _r1);
+                  (Term.FunApp (T_seq.SqNth _, [ s2; i2 ], _) as _r2);
+                ],
+                _ ),
+            _ ) ->
+          let as_bare s i = match i with
+            | Term.Var (x, _, _) when Ident.tvar_equal x k && free_of_k s -> true
+            | _ -> false
+          in
+          let shifted s i =
+            if not (free_of_k s) then None
+            else
+              match affine_part_in k i with
+              | Some (a, off) when Z.equal a Z.one && free_of_k off -> Some (s, off)
+              | _ -> None
+          in
+          let pick a i_b b =
+            Option.map (shifted b i_b) ~f:(fun (b, off) -> (se1, a, b, off))
+          in
+          if as_bare s1 i1 then
+            match pick s1 i2 s2 with
+            | Some r -> Some r
+            | None -> if as_bare s2 i2 then pick s2 i1 s1 else None
+          else if as_bare s2 i2 then pick s2 i1 s1
+          else None
+      | _ -> None
+    in
+    if List.length disjuncts <> 3 then None
+    else
+      List.find_map disjuncts ~f:(fun d ->
+          match nth_eq d with
+          | None -> None
+          | Some (se, a, b, off) -> (
+              let guards = List.filter disjuncts ~f:(fun d' -> not (phys_equal d d')) in
+              let len_a = T_seq.mk_len se a in
+              (* the in-range literals, as the negations of the guards must
+                 read: [k >= 0] and [len a - k - 1 >= 0] *)
+              let lits =
+                List.map guards ~f:(fun g ->
+                    ctx_lin_lit (Formula.nnf_of (Formula.mk_neg g)))
+              in
+              match lits with
+              | [ Some (`Ge l1); Some (`Ge l2) ]
+                when (lower k l1 && upper k a l2) || (lower k l2 && upper k a l1) ->
+                  let bounds =
+                    Formula.and_of
+                      [
+                        Formula.leq (T_int.zero ()) off;
+                        Formula.leq (T_int.mk_add off len_a) (T_seq.mk_len se b);
+                      ]
+                  in
+                  let eqf = Formula.eq a (T_seq.mk_extract se b off len_a) in
+                  Some (bounds, eqf)
+              | _ -> None))
+  in
+  let changed = ref false in
+  let rec formula phi =
+    match phi with
+    | Formula.Atom _ -> phi
+    | Formula.UnaryOp (op, p, info) ->
+        let p' = formula p in
+        if phys_equal p p' then phi else Formula.mk_unop ~info op p'
+    | Formula.BinaryOp (op, p, q, info) ->
+        let p' = formula p and q' = formula q in
+        if phys_equal p p' && phys_equal q q' then phi
+        else Formula.mk_binop ~info op p' q'
+    | Formula.Bind (b, senv, p, info) -> (
+        let p' = formula p in
+        let phi = if phys_equal p p' then phi else Formula.mk_bind ~info b senv p' in
+        match (b, senv) with
+        | Formula.Forall, [ (k, T_int.SInt) ] -> (
+            match of_disjuncts k (Formula.disjuncts_list_of p') with
+            | Some (bounds, eqf) ->
+                changed := true;
+                Formula.or_of
+                  [
+                    Formula.and_of [ bounds; eqf ];
+                    Formula.and_of [ Formula.mk_neg bounds; phi ];
+                  ]
+            | None -> phi)
+        (* the dual, [exists k. 0 <= k < len a /\ a[k] != b[k + t]], the
+           negation of the universal above, as a clause premise reaches a
+           validity question: rewritten to the negation of its rewrite *)
+        | Formula.Exists, [ (k, T_int.SInt) ] -> (
+            match
+              of_disjuncts k
+                (List.map (Formula.conjuncts_list_of p') ~f:(fun c ->
+                     Formula.nnf_of (Formula.mk_neg c)))
+            with
+            | Some (bounds, eqf) ->
+                changed := true;
+                Formula.or_of
+                  [
+                    Formula.and_of [ bounds; Formula.mk_neg eqf ];
+                    Formula.and_of [ Formula.mk_neg bounds; phi ];
+                  ]
+            | None -> phi)
+        | _ -> phi)
+    | Formula.LetRec _ -> phi
+    | Formula.LetFormula (x, s, d, b, info) ->
+        let b' = formula b in
+        if phys_equal b b' then phi else Formula.mk_let_formula ~info x s d b'
+  in
+  let phi' = formula phi in
+  if !changed then phi' else phi
+
+(* [abstract_seq_reads_and_functions phi]: [phi] with every read
+   [seq.nth s i] (of an element sort [E]) replaced by
+   [select (select a_E s) i] and every application [f(t_1, .., t_n)] of a
+   defined function replaced by [select (.. (select h_f t_1) ..) t_n], for one
+   fresh array variable [a_E : Seq E -> Int -> E] per element sort and one
+   fresh [h_f] per function, curried over the function's argument sorts.
+
+   Contract: a WEAKENING for validity -- [phi] is [phi'] with [a_E] read as
+   [fun s i -> seq.nth s i] and [h_f] as [f], so if [phi'] is valid for every
+   value of its free variables, [phi] is valid; nothing may be read from
+   [phi'] being invalid or undecided.  The fresh names are drawn by
+   [Ident.mk_fresh_tvar], rejecting every spelling already in [phi]; a binder
+   of [phi] cannot capture them. [seq.nth] out of range is left open by SMT-LIB and a
+   model fixes it, so the reading of [a_E] as [seq.nth] is one interpretation
+   among those [phi'] quantifies over.
+
+   Why: Z3 (5.1.0) does not instantiate a quantified hypothesis whose only
+   patterns read a sequence through [seq.nth] at the ground reads a goal
+   makes: a ten-line injectivity question over [seq.nth] is undecided at 30 s
+   while the same question with the read written as an uninterpreted function
+   is unsat at once.  And a recursive definition is unfolded lazily without
+   end on a question that does not need its definition at all. *)
+let abstract_seq_reads_and_functions phi =
+  let tbl = Hashtbl.Poly.create () in
+  let taken = ref (Formula.names_spelled_in phi) in
+  let rec draw () =
+    let x = Ident.mk_fresh_tvar () in
+    if Set.mem !taken x then draw ()
+    else (taken := Set.add !taken x; x)
+  in
+  let fresh key sort =
+    Hashtbl.find_or_add tbl key ~default:(fun () ->
+        Term.mk_var (draw ()) sort)
+  in
+  let curried sargs sret =
+    List.fold_right sargs ~init:sret ~f:(fun s acc -> T_array.SArray (s, acc))
+  in
+  let rec apply t sargs sret args =
+    match (sargs, args) with
+    | s :: ss, a :: rest ->
+        apply (T_array.mk_select s (curried ss sret) t a) ss sret rest
+    | _ -> t
+  in
+  Formula.map_term phi ~f:(function
+    | Term.FunApp (T_seq.SqNth elem, [ s; i ], _) ->
+        let ss = T_seq.SSeq elem in
+        let a =
+          fresh (`Nth elem) (curried [ ss; T_int.SInt ] elem)
+        in
+        apply a [ ss; T_int.SInt ] elem [ s; i ]
+    | Term.FunApp (FVar (f, sargs, sret), args, _)
+      when (not (List.is_empty sargs)) && List.length sargs = List.length args ->
+        let h = fresh (`Function (f, sargs, sret)) (curried sargs sret) in
+        apply h sargs sret args
+    | t -> t)
+
+(* [with_shape_rewrites f]: [f ()] with every switch of
+   [elim_onepoint_and_split_binders] that the shape proof of
+   [PCSatCommon.ShapeProof] relies on set (single-constructor pairing, nested
+   too, merged spine blocks, the constructor one-point through testers, the
+   merge of definitions by cases and the single-constructor split of
+   equations everywhere), restored afterwards whatever [f] does.  Every
+   switch adds an equivalence in every model, so the rewrite stays exact; the
+   switches are process-wide, so a caller in a parallel domain must not rely
+   on another domain's reading of them meanwhile (the callers run [f] in a
+   forked copy). *)
+let with_shape_rewrites f =
+  let refs =
+    [
+      surjective_pairing;
+      surjective_pairing_nested;
+      lift_spine_blocks;
+      constructor_point_testers;
+      merge_guarded_definitions;
+      split_single_cons_equations;
+      isolate_through_ite;
+      keep_single_cons_binders;
+    ]
+  in
+  let saved = List.map refs ~f:( ! ) in
+  List.iter refs ~f:(fun r -> r := true);
+  Common.Timer.protect
+    ~finally:(fun () -> List.iter2_exn refs saved ~f:( := ))
+    f
+
+(* [relevant_premises ~k phi]: [phi] (in negation normal form) with only some
+   of its top-level disjuncts: the GOAL -- the largest disjunct that is a
+   conjunction -- and every disjunct sharing with it a free term variable
+   that occurs free in at most [k] disjuncts, or (with [linked]) that the goal
+   equates with a variable free in the goal alone; [None] when nothing would
+   be dropped or there is no such goal.
+
+   Contract: the result implies [phi] (it is a sub-disjunction of it), so a
+   proof that the result is valid proves [phi]; nothing may be read from the
+   result being invalid.  What it is for: an obligation produced by predicate
+   elimination over a loop carries every earlier iteration's contract as a
+   premise (a thousand of them), and the solver drowns in instances of
+   premises about other values, while the premises about the goal's own
+   values are few: rare variables tie the goal to them, frequent ones (the
+   input itself) tie it to everything. *)
+let relevant_premises ?(linked = false) ~k phi =
+  let ds = Formula.disjuncts_list_of (Formula.nnf_of phi) in
+  let size d = Formula.ast_size d in
+  let conj d =
+    match d with Formula.BinaryOp (Formula.And, _, _, _) -> true | _ -> false
+  in
+  match
+    List.max_elt
+      (List.filter_mapi ds ~f:(fun i d -> if conj d then Some (size d, i) else None))
+      ~compare:(fun (a, _) (b, _) -> Int.compare a b)
+  with
+  | None -> None
+  | Some (_, g) ->
+      let vs = List.map ds ~f:Formula.tvs_of in
+      let freq = Hashtbl.Poly.create () in
+      List.iter vs ~f:(Set.iter ~f:(fun v -> Hashtbl.incr freq v));
+      let count v = Hashtbl.find freq v |> Option.value ~default:0 in
+      let goal = List.nth_exn ds g in
+      (* with [linked], also the variables the goal equates with one of its
+         own (a variable free in the goal alone): the goal's subject, the
+         value its conclusion is about, however many premises mention it *)
+      let linked_vars =
+        if not linked then Set.Poly.empty
+        else
+          let acc = ref Set.Poly.empty in
+          ignore
+            (Formula.map_atom goal ~f:(fun atom ->
+                 (match atom with
+                 | Atom.App
+                     ( Predicate.Psym (T_bool.Eq | T_bool.Neq),
+                       [ Term.Var (a, _, _); Term.Var (b, _, _) ],
+                       _ ) ->
+                     if count a = 1 && count b > 1 then acc := Set.add !acc b
+                     else if count b = 1 && count a > 1 then
+                       acc := Set.add !acc a
+                 | _ -> ());
+                 Formula.mk_atom atom));
+          !acc
+      in
+      let keys =
+        Set.union linked_vars
+          (Set.filter (List.nth_exn vs g) ~f:(fun v -> count v <= k))
+      in
+      let keep =
+        List.filteri ds ~f:(fun i _ ->
+            i = g || not (Set.are_disjoint (List.nth_exn vs i) keys))
+      in
+      if List.length keep = List.length ds then None
+      else Some (Formula.or_of keep)
+
+(* [literal_closures ~k ~hops ~max phi]: for top-level disjuncts of [phi] (in
+   negation normal form) that are literals with a free term variable, the
+   sub-disjunction made of that literal and the disjuncts it reaches in
+   [hops] steps: the first step through any variable of the literal, every
+   later step through the variables of the disjuncts reached last that occur
+   free in at most [k] disjuncts.  At most [max] of them, distinct as sets of
+   disjuncts, each a strict sub-disjunction; the literals are taken in the
+   order of how many candidate literals share their shape (the literal with
+   every free variable renamed to one name), fewest first, and then by
+   position.
+
+   Contract: each result implies [phi] (a sub-disjunction of it), so a proof
+   that one is valid proves [phi]; nothing may be read from one being
+   invalid.  What it is for: an obligation whose conclusion is one literal
+   among hundreds of premise literals, with nothing marking which (a loop
+   body whose head is a single comparison, after predicate elimination has
+   flattened it into the premises' disjunction), so the largest-conjunction
+   goal of [relevant_premises] does not exist; trying each literal as the
+   goal, with the premises a few rare variables away, finds the one whose
+   closure is valid.  Why the shape order: the premises of such an
+   obligation are the contract of every earlier iteration, one copy each, so
+   a premise literal's shape recurs once per copy while the conclusion's
+   occurs once -- in both loop-body obligations of a layout computation
+   (about 570 literals in 45 shapes) the conclusion is among the two to four
+   literals of a shape of their own. *)
+let literal_closures ~k ~hops ~max phi =
+  if max <= 0 then []
+  else
+    let ds = Array.of_list (Formula.disjuncts_list_of (Formula.nnf_of phi)) in
+    let n = Array.length ds in
+    let literal d =
+      Formula.is_atom d
+      || (match d with
+         | Formula.UnaryOp (Formula.Not, a, _) -> Formula.is_atom a
+         | _ -> false)
+    in
+    let vs = Array.map ds ~f:Formula.tvs_of in
+    let freq = Hashtbl.Poly.create () in
+    Array.iter vs ~f:(Set.iter ~f:(fun v -> Hashtbl.incr freq v));
+    let count v = Hashtbl.find freq v |> Option.value ~default:0 in
+    (* the disjuncts in which each variable occurs, to follow a step without
+       scanning every disjunct *)
+    let occ = Hashtbl.Poly.create () in
+    Array.iteri vs ~f:(fun i s ->
+        Set.iter s ~f:(fun v -> Hashtbl.add_multi occ ~key:v ~data:i));
+    let closure g =
+      let keep = Hash_set.Poly.create () in
+      Hash_set.add keep g;
+      let front = ref (Set.to_list vs.(g)) in
+      for _ = 1 to hops do
+        let next = ref [] in
+        List.iter !front ~f:(fun v ->
+            List.iter (Hashtbl.find_multi occ v) ~f:(fun j ->
+                if not (Hash_set.mem keep j) then (
+                  Hash_set.add keep j;
+                  next := j :: !next)));
+        front :=
+          List.concat_map !next ~f:(fun j ->
+              List.filter (Set.to_list vs.(j)) ~f:(fun v -> count v <= k))
+          |> List.dedup_and_sort ~compare:Stdlib.compare
+      done;
+      List.sort (Hash_set.to_list keep) ~compare:Int.compare
+    in
+    (* one name for every free variable: literals equal up to which values
+       they are about *)
+    let anon = Ident.Tvar "#shape" in
+    let shape i =
+      Formula.str_of
+        (Formula.rename
+           (Map.Poly.of_alist_exn
+              (List.map (Set.to_list vs.(i)) ~f:(fun v -> (v, anon))))
+           ds.(i))
+    in
+    let lits =
+      List.filter_map (List.init n ~f:Fn.id) ~f:(fun i ->
+          if literal ds.(i) && not (Set.is_empty vs.(i)) then Some (shape i, i)
+          else None)
+    in
+    let shapes = Hashtbl.Poly.create () in
+    List.iter lits ~f:(fun (sh, _) -> Hashtbl.incr shapes sh);
+    let candidates =
+      List.map lits ~f:(fun (sh, i) -> (Hashtbl.find_exn shapes sh, i))
+      |> List.stable_sort ~compare:(fun (a, _) (b, _) -> Int.compare a b)
+    in
+    let seen = Hash_set.Poly.create () in
+    let rec take acc m = function
+      | [] -> List.rev acc
+      | _ when m = 0 -> List.rev acc
+      | (_, g) :: rest ->
+          let keep = closure g in
+          if List.length keep = n || Hash_set.mem seen keep then
+            take acc m rest
+          else (
+            Hash_set.add seen keep;
+            take
+              (Formula.or_of (List.map keep ~f:(Array.get ds)) :: acc)
+              (m - 1) rest)
+    in
+    take [] max candidates

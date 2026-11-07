@@ -1,0 +1,21 @@
+{
+  "ub_reading": ["Stop_path"],
+  "int_reading": ["Mathematical"],
+  "signed_overflow": ["Undefined"],
+  "conditional_value": ["Split"],
+  "signedness_conversion": ["Split"],
+  "variable_length_copy": ["Lambda"],
+  "bounds_conditions": true,
+  "inline_acyclic_joins": false,
+  "every_point": false,
+  "data_model": ["Auto"],
+  "passes": {
+    "simplifycfg": false,
+    "licm": false,
+    "tail_call_elimination": true,
+    "inline": false,
+    "promote": false,
+    "hoist": false
+  },
+  "dump_ll": null
+}

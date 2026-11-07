@@ -1,9 +1,17 @@
 {
     "number_of_disj": 2,
     "number_of_conj": 2,
-    "upper_bound_coeff": 4,
-    "upper_bound_const": 1,
-    "threshold_const": 3,
+    "bounds": {
+        "atom": {
+            "coeff": {
+                "initial": 4
+            },
+            "const": {
+                "initial": 1,
+                "unbounded_above": 3
+            }
+        }
+    },
     "eq_atom": true,
     "add_mod2_quals": false
 }

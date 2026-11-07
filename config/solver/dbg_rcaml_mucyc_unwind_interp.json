@@ -1,0 +1,11 @@
+[
+    "RCaml",
+    {
+        "mucyc_solver": "./config/solver/dbg_mucyc_unwind_interp.json",
+        "chc_optimizer": [
+            "Filename",
+            "./config/solver/dbg_optpcsat_nc_tb_ar.json"
+        ],
+        "enable_pvar_elim": false
+    }
+]

@@ -1,0 +1,11 @@
+# The constant p is 1/2, a probability, so / in its definition is exact rational division
+# and the expectation of c is 1/2 * 1 + 1/2 * 3 = 2.
+# Expected: valid.
+nat c;
+const p := 1/2;
+{
+	c := 1;
+}[p]{
+	c := 3;
+}
+?Ex [c] <= 2

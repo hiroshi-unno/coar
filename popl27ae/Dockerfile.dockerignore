@@ -1,4 +1,5 @@
 .git
+**/.git
 _build
 .vscode
 
@@ -12,3 +13,5 @@ pldi26ae_omega
 cav26ae
 script/starexec
 learner
+script/bench_runs_private.txt
+cvc5

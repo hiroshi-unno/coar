@@ -1,0 +1,11 @@
+[
+    "SPACER",
+    {
+        "preprocessor": [
+            "Filename",
+            "./config/pcsat/preprocessor/disable.json"
+        ],
+        "enable_global_guidance": false,
+        "flat_and_or": true
+    }
+]

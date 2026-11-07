@@ -1,0 +1,16 @@
+(library
+ (name PolyQEntTempl)
+ (public_name CoAR.PolyQEntTempl)
+ (preprocess
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
+ (libraries
+  core
+  yojson
+  CoAR.common
+  CoAR.ast
+  CoAR.pCSP
+  CoAR.Z3Smt
+  CoAR.PCSat.common
+  CoAR.preprocessing
+  CoAR.PolyQEnt)
+ (modules config templates translate solver))

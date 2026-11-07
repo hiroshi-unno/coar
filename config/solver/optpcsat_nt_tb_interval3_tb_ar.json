@@ -9,7 +9,7 @@
             "Filename",
             "./config/solver/pcsat_tb_ar.json"
         ],
-        "mode": [
+        "side_conditions": [
             "NonTrivial"
         ]
     }

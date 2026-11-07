@@ -1,0 +1,14 @@
+# x is a nat variable equal to 1.  Inside the program -- assignments, guards, observed
+# conditions -- / between integers is integer division (truncating), so the guard x / 2 > 0
+# is 0 > 0, which fails, and c is 0.
+# Expected: unknown (the bound is false).  Read as exact division, x / 2 was 1/2, the guard
+# held, c was 1, and the false bound was proved.
+nat x;
+nat c;
+x := 1;
+if (x / 2 > 0) {
+	c := 1;
+} else {
+	c := 0;
+}
+?Ex [c] >= 1

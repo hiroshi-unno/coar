@@ -1,0 +1,31 @@
+; Athena inside CoAR: the route from a C program to MuVal through Ptr2ArrFC
+; (Frama-C), clang 19 and llvm2lts or the LLVM frontend (Config.Athena of
+; lib/solver.ml).  The library is always built, so that its configuration
+; reads everywhere; the steps that need Frama-C or LLVM 19's OCaml bindings
+; are optional, and a build without one has a stub that refuses its step.
+
+(library
+ (name Athena)
+ (public_name CoAR.Athena)
+ (preprocess
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
+ (libraries
+  unix
+  core
+  core_unix
+  core_unix.filename_unix
+  core_unix.sys_unix
+  yojson
+  CoAR.common
+  CoAR.MuVal
+  (select
+   p2aEntry.ml
+   from
+   (frama-c-ptr2arr.cli -> p2aEntry.framac.ml)
+   (-> p2aEntry.none.ml))
+  (select
+   llvm2ltsEntry.ml
+   from
+   (llvm2lts -> llvm2ltsEntry.llvm.ml)
+   (-> llvm2ltsEntry.none.ml)))
+ (synopsis "C programs to MuVal through Frama-C and LLVM IR"))

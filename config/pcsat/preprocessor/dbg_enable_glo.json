@@ -1,0 +1,12 @@
+{
+    "verbose": true,
+    "elimination": {
+        "resolution_threshold": 4,
+        "bool_vars": 0,
+        "questions": {
+            "rewrites": {
+                "guarded_length_only_sequences": true
+            }
+        }
+    }
+}

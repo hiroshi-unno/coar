@@ -1,0 +1,7 @@
+c forall x1 x2. exists y3(x1). y3 <=> x2
+c y3 is a function of x1 only, so it cannot follow x2: false.
+p cnf 3 2
+a 1 2 0
+d 3 1 0
+-3 2 0
+3 -2 0

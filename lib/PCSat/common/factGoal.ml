@@ -117,7 +117,7 @@ let structured_sort sort =
    clause bind a variable, of a sort that [structured_sort] accepts?  Decided
    from the sort environments alone (no term is converted), so it costs a walk
    over the declarations.  This is the firing condition of the resolver's
-   [fact_goal_structured_only]: on a problem over integers and reals alone the
+   [fact_goal_clauses] with [structured_only]: on a problem over integers and reals alone the
    pass's questions were measured to decide nothing the loop lacked, while
    asking them still moved the trajectory (they go to the pooled solver context
    and allocate), so there the only harmless pass is one that asks nothing. *)
@@ -127,8 +127,8 @@ let structured_problem exi_senv clauses =
   || Set.exists clauses ~f:(fun cl ->
          Map.Poly.exists (Clause.sort_env_of cl) ~f:structured_lsort)
 
-(* The resolver's gate for the pass: [enabled] is [decide_by_fact_goal_clauses],
-   [structured_only] is [fact_goal_structured_only].  When it is false the pass
+(* The resolver's gate for the pass: [enabled] is [fact_goal_clauses] other
+   than [No_fact_goal_pass], [structured_only] is that constructor's field.  When it is false the pass
    returns before building an entry or asking the solver anything. *)
 let fires ~enabled ~structured_only exi_senv clauses =
   enabled && ((not structured_only) || structured_problem exi_senv clauses)
@@ -330,13 +330,29 @@ let validity_rule = "fact-goal-validity"
    so the under-approximation [U] can only make the formula harder to prove.
    Members are closed separately; reading a shared name as one variable takes
    an instance of each.  Validity, never satisfiability, licenses the answer:
-   an undecided or refused question decides nothing. *)
+   an undecided or refused question decides nothing.
+
+   FOREIGN members (only with [~foreign_heads]).  A clause with the group's
+   functional atoms whose head is some other atom [pi(t)] -- another head, or
+   one that mentions a result [y], which is what an existential clause head
+   [phi(x) => exists y. R(x, y) /\ phi(y)] leaves after skolemisation -- may
+   join the group with the disjunct [Phi_m /\ U(B_m) /\ L_pi(t)], where
+   [L_pi(s)] is the same disjunction as [U_pi(s)] taken over atoms known FALSE
+   in every solution (decided negative unit examples and goal clauses with one
+   atom, both consequences of the problem).  Sound: if that disjunct is the
+   one true at [(x, y0)], [m]'s instance gives [pi(t)] while [L_pi(t)] says
+   [not pi(t)] in every solution, so there is no solution and [H(v)] (or
+   [false]) holds vacuously.  It is what refutes a one-step existential: a
+   state forced into [phi] whose every successor is forced out of it. *)
 
 type wmember = {
   mclause : Clause.t;
   mbinders : sort_env_list;
   mbody : Formula.t;  (** [Phi_m] *)
   mothers : (Ident.pvar * Term.t list) list;  (** [B_m] *)
+  mforeign : (Ident.pvar * Term.t list) option;
+      (** a foreign member's head [pi(t)], read through [L_pi]; [None] for a
+          member whose head is the group's *)
 }
 
 type wgroup = {
@@ -355,79 +371,170 @@ let str_of_wgroup g =
     (List.length g.gmembers)
     (String.concat_map_list ~sep:"," g.gys ~f:(fun (y, _) -> Ident.name_of_tvar y))
 
-let wgroups_of_problem ~fnpvs exi_senv clauses =
+(* Can the solution's functions give every result at once?  The proof of rule
+   W takes, at a fixed [x], the values the witnesses' functions give and needs
+   every functional atom of the member true at them.  That holds when each
+   result is the result of ONE atom and the atoms can be ordered so that an
+   atom's inputs mention only the results of atoms before it: the values are
+   then chosen one atom at a time.  It fails when one variable is the result
+   of two atoms with different inputs ([f(0, y) /\ f(x, y)] asks [f(0) =
+   f(x)], which totality does not give, and the rule then refuted a
+   satisfiable problem) or when a result feeds its own atom, directly or
+   around a cycle ([f(y, y)] asks for a fixed point). *)
+let results_chosen_in_order fns ys =
+  (not
+     (List.contains_dup ys ~compare:(fun (y1, _) (y2, _) ->
+          Ident.tvar_compare y1 y2)))
+  &&
+  let ins (_, args) =
+    Set.Poly.union_list
+    @@ List.map (List.drop_last_exn args) ~f:Term.tvs_of
+  in
+  let rec go pending =
+    match pending with
+    | [] -> true
+    | _ -> (
+        let unchosen =
+          Set.Poly.of_list
+          @@ List.filter_map pending ~f:(fun (_, args) ->
+              match List.last args with
+              | Some (Term.Var (y, _, _)) -> Some y
+              | _ -> None)
+        in
+        match
+          List.partition_tf pending ~f:(fun a ->
+              Set.is_empty (Set.inter (ins a) unchosen))
+        with
+        | [], _ -> false
+        | _, rest -> go rest)
+  in
+  go fns
+
+(* The groups of rule W.  A clause qualifies when it has at most one head
+   atom, every atom is an application of an unknown, at least one body atom is
+   functional, every functional result is a variable, and the results can be
+   chosen one atom at a time ([results_chosen_in_order]); it is a member of
+   the group keyed by its head (written out) and its functional atoms (written
+   out, sorted) when no result occurs in its head.  With [~foreign_heads], a
+   qualifying clause with a head is moreover a foreign member of every other
+   group with the same functional atoms (see the head of this section);
+   foreign members never create a group.  Groups are returned sorted by
+   [str_of_wgroup], members in the order the clause set lists them. *)
+let wgroups_of_problem ?(foreign_heads = false) ~fnpvs exi_senv clauses =
   let app = function
     | Atom.App (Predicate.Var (pv, _), args, _) -> Some (pv, args)
     | _ -> None
   in
-  let tbl = Hashtbl.Poly.create () in
-  Set.iter clauses ~f:(fun cl ->
-      try
-        let uni_senv, ps, ns, phi = Clause.to_old_clause exi_senv cl in
-        let binders =
-          Map.Poly.to_alist @@ Map.Poly.map uni_senv ~f:Logic.ExtTerm.to_old_sort
-        in
-        match
-          ( List.map (Set.to_list ps) ~f:app |> Option.all,
-            List.map (Set.to_list ns) ~f:app |> Option.all )
-        with
-        | Some heads, Some bodies when List.length heads <= 1 -> (
-            let fns, others =
-              List.partition_tf bodies ~f:(fun (pv, _) ->
-                  Set.mem fnpvs (Ident.pvar_to_tvar pv))
-            in
-            let ys =
-              List.map fns ~f:(fun (_, args) ->
-                  match List.last args with
-                  | Some (Term.Var (y, s, _)) -> Some (y, s)
-                  | _ -> None)
-              |> Option.all
-            in
-            let head = List.hd heads in
-            match ys with
-            | Some (_ :: _ as ys)
-              when not
-                     (List.exists ys ~f:(fun (y, _) ->
-                          match head with
-                          | None -> false
-                          | Some (_, args) ->
-                              List.exists args ~f:(fun t ->
-                                  Set.mem (Term.tvs_of t) y))) ->
-                let key =
-                  ( Option.map head ~f:(fun (pv, args) ->
-                        Ident.name_of_pvar pv
-                        :: List.map args ~f:Term.str_of),
+  let str_of_app (pv, args) =
+    Ident.name_of_pvar pv :: List.map args ~f:Term.str_of
+  in
+  (* each qualifying clause: (fn key, head, results, the member, proper) *)
+  let cands =
+    Set.to_list clauses
+    |> List.filter_map ~f:(fun cl ->
+        try
+          let uni_senv, ps, ns, phi = Clause.to_old_clause exi_senv cl in
+          let binders =
+            Map.Poly.to_alist
+            @@ Map.Poly.map uni_senv ~f:Logic.ExtTerm.to_old_sort
+          in
+          match
+            ( List.map (Set.to_list ps) ~f:app |> Option.all,
+              List.map (Set.to_list ns) ~f:app |> Option.all )
+          with
+          | Some heads, Some bodies when List.length heads <= 1 -> (
+              let fns, others =
+                List.partition_tf bodies ~f:(fun (pv, _) ->
+                    Set.mem fnpvs (Ident.pvar_to_tvar pv))
+              in
+              let ys =
+                List.map fns ~f:(fun (_, args) ->
+                    match List.last args with
+                    | Some (Term.Var (y, s, _)) -> Some (y, s)
+                    | _ -> None)
+                |> Option.all
+              in
+              let head = List.hd heads in
+              match ys with
+              | Some (_ :: _ as ys) when results_chosen_in_order fns ys ->
+                  let proper =
+                    not
+                      (List.exists ys ~f:(fun (y, _) ->
+                           match head with
+                           | None -> false
+                           | Some (_, args) ->
+                               List.exists args ~f:(fun t ->
+                                   Set.mem (Term.tvs_of t) y)))
+                  in
+                  let fkey =
                     List.sort ~compare:String.compare
                     @@ List.map fns ~f:(fun (pv, args) ->
                         Ident.name_of_pvar pv ^ "("
                         ^ String.concat_map_list ~sep:"," args ~f:Term.str_of
-                        ^ ")") )
-                in
-                let m =
-                  {
-                    mclause = cl;
-                    mbinders = binders;
-                    mbody = Formula.mk_neg phi;
-                    mothers = others;
-                  }
-                in
-                Hashtbl.Poly.update tbl key ~f:(function
-                  | None -> (head, List.dedup_and_sort ~compare:Stdlib.compare ys, [ m ])
-                  | Some (h, ys', ms) -> (h, ys', m :: ms))
-            | _ -> ())
-        | _ -> ()
-      with exn_ when not (Common.Timer.is_async exn_) -> ())
-  |> fun () ->
-  Hashtbl.Poly.data tbl
-  |> List.map ~f:(fun (ghead, gys, ms) -> { ghead; gys; gmembers = List.rev ms })
+                        ^ ")")
+                  in
+                  let m =
+                    {
+                      mclause = cl;
+                      mbinders = binders;
+                      mbody = Formula.mk_neg phi;
+                      mothers = others;
+                      mforeign = None;
+                    }
+                  in
+                  Some (fkey, head, ys, m, proper)
+              | _ -> None)
+          | _ -> None
+        with exn_ when not (Common.Timer.is_async exn_) -> None)
+  in
+  let tbl = Hashtbl.Poly.create () in
+  List.iter cands ~f:(fun (fkey, head, ys, m, proper) ->
+      if proper then
+        let key = (Option.map head ~f:str_of_app, fkey) in
+        Hashtbl.Poly.update tbl key ~f:(function
+          | None -> (head, List.dedup_and_sort ~compare:Stdlib.compare ys, [ m ])
+          | Some (h, ys', ms) -> (h, ys', m :: ms)));
+  Hashtbl.Poly.to_alist tbl
+  |> List.map ~f:(fun ((hkey, fkey), (ghead, gys, ms)) ->
+      let foreign =
+        if not foreign_heads then []
+        else
+          List.filter_map cands ~f:(fun (fkey', head, _, m, proper) ->
+              match head with
+              | Some h
+                when Stdlib.( = ) fkey fkey'
+                     && not
+                          (proper
+                          && Stdlib.( = ) (Some (str_of_app h)) hkey) ->
+                  Some { m with mforeign = Some h }
+              | _ -> None)
+      in
+      { ghead; gys; gmembers = List.rev ms @ foreign })
   |> List.sort ~compare:(fun a b ->
          String.compare (str_of_wgroup a) (str_of_wgroup b))
+
+(* The problem's fact clauses ([pos]) and goal clauses with one atom ([neg]) as
+   parametric atom parts [(pi, binders, Phi, args)]: [forall x. Phi(x) =>
+   pi(a(x))] and [forall x. Phi(x) => not pi(a(x))] hold in every solution, so
+   they may serve wherever decided positive or negative unit examples do. *)
+let clause_parts exi_senv clauses =
+  List.fold (entries_of_problem exi_senv clauses) ~init:([], [])
+    ~f:(fun (pos, neg) e ->
+      let part args =
+        (e.pvar, Map.Poly.of_alist_exn e.binders, e.body, args)
+      in
+      match (e.role, e.arg_lists) with
+      | Fact, [ args ] -> (part args :: pos, neg)
+      | Goal, [ args ] -> (pos, part args :: neg)
+      | _ -> (pos, neg))
+  |> fun (pos, neg) -> (List.rev pos, List.rev neg)
 
 let wprefix = "wg__"
 
 (* [U_pi(s)] over the decided positives [pos] (atom parts: params, guard,
-   arguments), each positive's parameters renamed apart by its index *)
-let under pos pv args =
+   arguments), each positive's parameters renamed apart by its index and
+   [tag]; over decided negatives it is [L_pi(s)] *)
+let under ?(tag = "u") pos pv args =
   Formula.or_of
   @@ List.filter_mapi pos ~f:(fun k (pv', params, cond, targs) ->
       if not (Ident.pvar_equal pv pv') then None
@@ -438,7 +545,7 @@ let under pos pv args =
             let ren =
               Map.Poly.to_alist params
               |> List.map ~f:(fun (x, s) ->
-                  (x, (Ident.Tvar (sprintf "wgu%d__%s" k (Ident.name_of_tvar x)), s)))
+                  (x, (Ident.Tvar (sprintf "wg%s%d__%s" tag k (Ident.name_of_tvar x)), s)))
             in
             let sub =
               Map.Poly.of_alist_exn
@@ -454,7 +561,7 @@ let under pos pv args =
 (* the question rule W asks about [atm] (a head atom of the group's predicate)
    or, for a group without a head, about nothing; [None] when the atom does not
    fit the group, a member's sorts disagree, or a name could collide *)
-let witness_query (g : wgroup) pos atm =
+let witness_query ?(neg = []) (g : wgroup) pos atm =
   let binders =
     List.concat_map g.gmembers ~f:(fun m -> m.mbinders)
     |> List.dedup_and_sort ~compare:Stdlib.compare
@@ -478,7 +585,11 @@ let witness_query (g : wgroup) pos atm =
       @@ List.map g.gmembers ~f:(fun m ->
           Formula.and_of
             (Formula.subst sub m.mbody
-            :: List.map m.mothers ~f:(fun (pv, args) ->
+            :: (match m.mforeign with
+               | None -> []
+               | Some (pv, args) ->
+                   [ under ~tag:"l" neg pv (List.map args ~f:(Term.subst sub)) ])
+            @ List.map m.mothers ~f:(fun (pv, args) ->
                 under pos pv (List.map args ~f:(Term.subst sub)))))
     in
     let body = Formula.forall ys inner in
@@ -505,9 +616,9 @@ let witness_query (g : wgroup) pos atm =
         | _ -> None)
     | _ -> None
 
-let decide_witness ~id ~timeout fenv g pos atm =
+let decide_witness ?(neg = []) ~id ~timeout fenv g pos atm =
   try
-    match witness_query g pos atm with
+    match witness_query ~neg g pos atm with
     | None -> Undecided
     | Some phi -> (
         if Z3Smt.Z3interface.may_not_return phi then Undecided

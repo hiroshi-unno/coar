@@ -1,0 +1,8 @@
+/* A loop whose updates are written as the transition-system translation writes them: each
+   deterministic update as a universally quantified variable fixed by a disequation
+   (BubbleSort.jar-obl-8 of the TermCOMP ITS set, its inner loop). */
+S 1 0 99
+s.t.
+S (a1: int) (a2: int) (a3: int): bool =mu
+  (0 <= -1 - a2 \/ 0 <= a2 - a3 \/ 0 <= -99 + a2 \/ 0 <= -100 + a2 \/ 0 <= -a1 \/ (forall (n9: int) (n8: int). 0 != 1 - n8 + a2 \/ 0 != -100 + n9 + a1 \/ S a1 n8 n9))
+  /\ (0 <= -1 - a1 \/ 0 <= -1 - a2 + a3 \/ 0 <= -99 + a1 \/ S (1 + a1) 0 (99 - a1));

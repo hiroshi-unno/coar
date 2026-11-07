@@ -1,0 +1,114 @@
+# What the source map must contain, per input and options (read by
+# tests/source_map.sh). A section starts with "== INPUT OPTIONS..." (INPUT
+# under tests/cases); each line after it is "ROLE PROPERTY LINE COLUMN
+# [COUNT]": COUNT entries (default 1) with that role and property ("-" for
+# none) at that input position ("null null" for none), or "no ROLE
+# PROPERTY": none at all.
+
+== c120_srcmap_loops.c
+# for: the head and its condition at "for"
+loop-head - 12 3
+branch - 12 3
+loop-head - 14 5
+branch - 14 5
+# if (i == 3) continue;
+branch - 13 5
+# while
+loop-head - 16 3
+branch - 16 3
+# do: its head is not before the condition; the condition is a branch at "do"
+loop-head - 17 3 0
+branch - 17 3
+# a condition with && is two conditionals, neither a branch
+loop-head - 18 3
+branch - 18 3 0
+# for (;;)
+loop-head - 19 3
+branch - 19 14
+# several statements on one line
+branch - 20 36
+# a tab before the statement: one column
+branch - 21 2
+# a two-byte character before it: columns count bytes
+branch - 22 12
+target unreach-call 22 24
+target unreach-call 23 17
+
+== c120_srcmap_loops.c --line-directives
+loop-head - 12 3
+branch - 17 3
+target unreach-call 22 24
+target unreach-call 23 17
+
+== c121_srcmap_switch.c
+target unreach-call 12 11
+call - 9 3
+no branch -
+no loop-head -
+
+== c122_srcmap_overflow.c --check-overflow
+# an initialiser, a for clause, an expression statement, a condition, a
+# macro's expansion, a returned value
+target no-overflow 11 11
+target no-overflow 13 23
+target no-overflow 13 34
+target no-overflow 14 7
+target no-overflow 16 3
+target no-overflow 17 10
+# the input's reach_error is renamed and is an ordinary call
+no target unreach-call
+call - 15 16
+
+== c122_srcmap_overflow.c
+# without the checks, the input's reach_error is the target
+target unreach-call 15 16
+no target no-overflow
+
+== c123_srcmap_memory.c --memory-safety
+target valid-deref 13 3
+target valid-deref 14 7
+target valid-deref 14 21
+target valid-deref 15 3
+target valid-memtrack 16 15
+target valid-free 17 3
+target valid-free 18 15
+# the end check after main returns: at main's return
+target valid-memtrack 19 3
+no target unreach-call
+
+== c123_srcmap_memory.c --memory-cleanup
+target valid-deref 13 3
+target valid-memcleanup 16 15
+target valid-free 18 15
+target valid-memcleanup 19 3
+no target valid-memtrack
+
+== c123_srcmap_memory.c --memory-safety --violation-markers=reach-error
+# one marker for every property: each target still names its check's
+target valid-deref 13 3
+target valid-deref 15 3
+target valid-memtrack 16 15
+target valid-free 18 15
+target valid-memtrack 19 3
+
+== c123_srcmap_memory.c --assume-safety
+no target valid-deref
+no target valid-free
+no target unreach-call
+
+== c124_srcmap_header.c
+# the header's loop has no input position
+loop-head - null null 1
+loop-head - 4 3 0
+call - 10 3 2
+# a macro in the middle of a line: at the macro's name
+branch - 11 14
+target unreach-call 11 14
+
+== c125_srcmap_lines.i
+# physical positions of the .i, whatever its line markers say
+loop-head - 9 3
+branch - 9 3
+call - 17 3 2
+branch - 18 3
+target unreach-call 18 15

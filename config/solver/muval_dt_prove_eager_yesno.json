@@ -1,0 +1,18 @@
+[
+    "MuVal",
+    {
+        "task": [
+            "Prove"
+        ],
+        "pcsp_solver_primal": [
+            "Filename",
+            "./config/solver/pcsat_dt_fixpoint.json"
+        ],
+        "pcsp_solver_dual": [
+            "Filename",
+            "./config/solver/pcsat_dt_fixpoint.json"
+        ],
+        "output_iteration": false,
+        "output_yes_no": true
+    }
+]

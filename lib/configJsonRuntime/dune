@@ -1,0 +1,4 @@
+(library
+ (name configJsonRuntime)
+ (public_name CoAR.config_json_runtime)
+ (libraries threads.posix))

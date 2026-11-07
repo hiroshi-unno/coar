@@ -1,0 +1,1 @@
+_forall or : bool. _exists y : bool. (y () <=> or ())

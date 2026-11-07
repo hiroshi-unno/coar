@@ -42,10 +42,21 @@ module Config = struct
         (** Type of qualifiers (for eager halfspace generation) *)
     approx_level : int; [@default 0]
         (** Approximation level of hyperplanes obtained from svm. If
-            approx_level > 0, then use truncated continued fractions with length
-            at most approx_level. If approx_level = 0, then the length of
-            truncated continued fractions is chosen automatically. *)
+            approx_level > 0, it is the depth of the ratio recursion or the
+            denominator bound of the per-coordinate method
+            ([rational_approximation]). If approx_level = 0, it is chosen
+            automatically: the first that classifies every state example as
+            the exact hyperplane does. *)
     csvm : float; [@default 10.0]  (** c parameter for csvm *)
+    rational_approximation : ContFrac.rational_approximation;
+        [@default ContFrac.Ratio_recursion]
+        (** how the SVM hyperplane is turned into small integers:
+            [Ratio_recursion] (a multidimensional continued-fraction recursion
+            over the depth [approx_level]) or [Per_coordinate] (each
+            coefficient's last convergent with denominator at most
+            [approx_level], over a common denominator); with [approx_level] = 0
+            the parameter is searched upwards until the halfspace classifies
+            every state example as the exact one does *)
     eager_halfspace_gen : bool; [@default true]  (** Enable eager halfspace generation. *)
     optimize_sum_coeff : bool; [@default true]
         (** Optimize the sum of absolute values of coefficients of a piecewise
@@ -759,56 +770,29 @@ struct
         List.map ~f:(fun x -> Q.(x * of_bigint bw_q_den_lcm |> num)) bw_q
       in
       let exact_bw = bw_z in
-      let abs_exact_bw = List.map ~f:Z.abs exact_bw in
-      let sorted_abs_exact_bw = List.sort ~compare:Z.compare abs_exact_bw in
       let halfspace_of_bw bw =
         let w = List.zip_exn tvars (List.tl_exn bw) in
         let b = List.hd_exn bw in
         Affine.make w b |> Halfspace.of_affine
       in
-      if config.approx_level > 0 then
-        let abs_approx_bw =
-          ContFrac.approximate_ratio abs_exact_bw config.approx_level
-        in
-        let approx_bw =
-          List.zip_exn abs_approx_bw exact_bw
-          |> List.map ~f:(fun (a, s) ->
-              if Z.Compare.(s < Z.zero) then Z.(~-a) else a)
-        in
-        halfspace_of_bw approx_bw
-      else
-        let state_examples =
-          Set.Poly.of_list @@ List.concat_map ex ~f:(fun (x, y) -> [ x; y ])
-        in
-        let exact_halfspace = halfspace_of_bw bw_z in
-        let len_tvars = List.length tvars in
-        let rec loop level cut =
-          let lb = List.nth_exn sorted_abs_exact_bw cut in
-          let abs_exact_bw' =
-            List.map abs_exact_bw ~f:(fun n ->
-                if Z.Compare.(n >= lb) then n else Z.zero)
-          in
-          let abs_approx_bw' = ContFrac.approximate_ratio abs_exact_bw' level in
-          let approx_bw =
-            List.zip_exn abs_approx_bw' exact_bw
-            |> List.map ~f:(fun (a, s) ->
-                if Z.Compare.(s < Z.zero) then Z.(~-a) else a)
-          in
-          let h = halfspace_of_bw approx_bw in
-          let params_src_tvar = Table.get_params_src t |> List.map ~f:fst in
-          if
-            Set.for_all state_examples ~f:(fun ex ->
-                let ex_term =
-                  Table.get_state_example t ex |> StateExample.term_of
-                in
-                Bool.(
-                  Halfspace.eval params_src_tvar ex_term h
-                  = Halfspace.eval params_src_tvar ex_term exact_halfspace))
-          then h
-          else if cut <= 0 then loop (level + 1) len_tvars
-          else loop level (cut - 1)
-        in
-        loop 1 len_tvars
+      let state_examples =
+        Set.Poly.of_list @@ List.concat_map ex ~f:(fun (x, y) -> [ x; y ])
+      in
+      let exact_halfspace = halfspace_of_bw bw_z in
+      let params_src_tvar = Table.get_params_src t |> List.map ~f:fst in
+      ContFrac.approximate_bw ~method_:config.rational_approximation
+        ~level:config.approx_level
+        ~accept:(fun bw ->
+          let h = halfspace_of_bw bw in
+          Set.for_all state_examples ~f:(fun ex ->
+              let ex_term =
+                Table.get_state_example t ex |> StateExample.term_of
+              in
+              Bool.(
+                Halfspace.eval params_src_tvar ex_term h
+                = Halfspace.eval params_src_tvar ex_term exact_halfspace)))
+        exact_bw
+      |> halfspace_of_bw
 
     let choose_halfspace_lazy lex2wf t transition_example_id_list =
       let samples, labels = assign_label t transition_example_id_list in
@@ -1228,7 +1212,18 @@ struct
                 ~max:true (T_int.mk_neg obj)
             with
             | Some (_, _, model) -> model
-            | None -> assert false
+            | None ->
+                (* The optimiser gave no optimum (undecided under the run's
+                   budget, or its own unknown).  The minimisation only
+                   prefers small coefficients among the models of the same
+                   constraints, so the model found above, which satisfies
+                   them, is as correct a choice -- only possibly a larger
+                   one. *)
+                Debug.print
+                @@ lazy
+                     "  no optimum of the coefficient sum; keeping the model \
+                      found";
+                model
           else model
         in
         let model =

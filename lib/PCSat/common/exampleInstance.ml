@@ -66,16 +66,12 @@ let chooser ~id ?(timeout = Some 1000) fenv param_senv cond =
     incr asked;
     match Z3Smt.Z3interface.check_sat ~id ~timeout fenv [ cond ] with
     | `Sat model ->
-        let from_model =
-          try
-            Map.Poly.filter_keys ~f:(Map.Poly.mem param_senv)
-            @@ Map.Poly.of_alist_exn @@ LogicOld.remove_dontcare model
-          with exn_ when not (Common.Timer.is_async exn_) -> Map.Poly.empty
-        in
+        (* each parameter read by name and sort: an entry a pooled context
+           holds at another sort says nothing about it, and is absent *)
         let sub =
           Map.Poly.mapi param_senv ~f:(fun ~key ~data ->
-              match Map.Poly.find from_model key with
-              | Some t -> t
+              match LogicOld.model_find model (key, data) with
+              | Some v -> snd (LogicOld.remove_dontcare_elem ((key, data), v))
               | None -> T_dt.mk_dummy_for key data)
         in
         incr found;

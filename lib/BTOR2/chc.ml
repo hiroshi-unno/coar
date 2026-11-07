@@ -574,6 +574,7 @@ let pcsp_of ?(print = fun _ -> ()) ?bads (ts : ts) =
       kind_map = Map.Poly.singleton (Ident.pvar_to_tvar inv) Kind.Ord;
       fenv = Map.Poly.empty;
       dtenv = Map.Poly.empty;
+      lifted_universals = Map.Poly.empty;
       candidates = Map.Poly.empty;
     }
   in

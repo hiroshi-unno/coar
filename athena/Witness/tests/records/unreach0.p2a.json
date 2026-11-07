@@ -1,0 +1,14 @@
+{
+  "input": { "path": "unreach0.c", "sha256": "2fe293efde1a82e54aff22e1cf2cdb1069b04600b7d0466cf063c79abc0c4987", "frama_c": "33.0 (Arsenic)", "args": [], "machdep": "gcc_x86_64" },
+  "source_map": {
+    "input_file": "unreach0.c",
+    "statements": [
+    { "output_line": 10, "output_column": 3, "function": "main", "role": "call", "input": { "line": 4, "column": 3, "function": "main" }, "property": null, "cond_negated": null },
+    { "output_line": 11, "output_column": 3, "function": "main", "role": "branch", "input": { "line": 6, "column": 3, "function": "main" }, "property": null, "cond_negated": false },
+    { "output_line": 12, "output_column": 3, "function": "main", "role": "other", "input": { "line": 7, "column": 3, "function": "main" }, "property": null, "cond_negated": null },
+    { "output_line": 13, "output_column": 3, "function": "main", "role": "loop-head", "input": { "line": 7, "column": 3, "function": "main" }, "property": null, "cond_negated": null },
+    { "output_line": 14, "output_column": 5, "function": "main", "role": "branch", "input": { "line": 7, "column": 3, "function": "main" }, "property": null, "cond_negated": true },
+    { "output_line": 17, "output_column": 3, "function": "main", "role": "other", "input": { "line": 9, "column": 3, "function": "main" }, "property": null, "cond_negated": null }
+    ]
+  }
+}

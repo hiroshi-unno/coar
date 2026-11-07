@@ -40,7 +40,7 @@ let to_formula pred =
   match pred.kind with
   | Predicate.Mu -> Formula.mk_imply pred.body atm
   | Predicate.Nu -> Formula.mk_imply atm pred.body
-  | Predicate.Fix -> failwith "to_formula"
+  | Predicate.MuOrNu -> failwith "to_formula"
 
 let sort_env_of_list preds =
   Set.Poly.of_list @@ Logic.of_old_sort_env_list
@@ -48,8 +48,11 @@ let sort_env_of_list preds =
       Term.pred_to_sort_bind (pred.name, List.map pred.args ~f:snd))
 
 let subst tsub pred =
-  let tsub = Map.remove_keys tsub (List.map ~f:fst pred.args) in
-  { pred with body = Formula.subst tsub pred.body }
+  (* The formals bind the body: filtering substitution domains alone does not
+     prevent a replacement's free variable from being captured by a formal. *)
+  match Formula.subst tsub (Formula.mk_forall pred.args pred.body) with
+  | Formula.Bind (Forall, args, body, _) -> { pred with args; body }
+  | _ -> assert false
 
 let lookup preds pvar =
   match List.find preds ~f:(fun pred -> Stdlib.( = ) pvar pred.name) with

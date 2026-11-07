@@ -42,6 +42,187 @@ let rec bvs pat acc =
   | Tpat_or (p1, p2, _) -> bvs p1 (bvs p2 acc)
   | _ -> acc
 
+(* Alias patterns [p as y] in match, function and try cases are removed before
+   translation: the case [P[q as y] -> e] (guard included) becomes
+   [P[q'] -> let y = q'' in e], where [q'] is [q] with each wildcard replaced by
+   a fresh variable and [q''] is [q'] read as an expression.  This preserves the
+   meaning because the values matched here are immutable: the value [q'] matched
+   is structurally equal to the expression rebuilt from its parts.  The pattern
+   translation has no alias form, and reading [q as y] as the bare variable [y]
+   would make the case match every value.  A case whose alias covers a pattern
+   that cannot be rebuilt as an expression (a constant, an or-pattern, a
+   record, ...) is left as it is, and the pattern translation refuses it. *)
+let alias_part_count = ref 0
+
+let desugar_case_aliases (ts : structure) : structure =
+  let mk_var_pat (p : pattern) =
+    incr alias_part_count;
+    let name = sprintf "alias_part%d" !alias_part_count in
+    let id = Ident.create_local name in
+    ( {
+        p with
+        pat_desc =
+          Tpat_var
+            ( id,
+              Location.mknoloc name,
+              Types.Uid.internal_not_actually_unique );
+      },
+      id )
+  in
+  let ident_expr (p : pattern) env id =
+    let name = Ident.name id in
+    {
+      exp_desc =
+        Texp_ident
+          ( Path.Pident id,
+            Location.mkloc (Longident.Lident name) p.pat_loc,
+            {
+              Types.val_type = p.pat_type;
+              val_kind = Types.Val_reg;
+              val_loc = p.pat_loc;
+              val_attributes = [];
+              val_uid = Types.Uid.internal_not_actually_unique;
+            } );
+      exp_loc = p.pat_loc;
+      exp_extra = [];
+      exp_type = p.pat_type;
+      exp_env = env;
+      exp_attributes = [];
+    }
+  in
+  let exception Unsupported in
+  (* [strip in_alias env p] is [p] without aliases, wildcards under an alias
+     replaced by fresh variables, together with the bindings [(y, q'')] the
+     removed aliases stand for; [expr_of] rebuilds a stripped pattern under an
+     alias as an expression *)
+  let rec expr_of env (p : pattern) =
+    let desc =
+      match p.pat_desc with
+      | Tpat_var (id, _, _) -> (ident_expr p env id).exp_desc
+      | Tpat_construct (lid, cd, ps, _) ->
+          Texp_construct (lid, cd, List.map ps ~f:(expr_of env))
+      | Tpat_tuple ps ->
+          Texp_tuple (List.map ps ~f:(fun (l, p) -> (l, expr_of env p)))
+      | _ -> raise Unsupported
+    in
+    {
+      exp_desc = desc;
+      exp_loc = p.pat_loc;
+      exp_extra = [];
+      exp_type = p.pat_type;
+      exp_env = env;
+      exp_attributes = [];
+    }
+  in
+  let rec strip in_alias env (p : pattern) =
+    match p.pat_desc with
+    | Tpat_any when in_alias -> (fst (mk_var_pat p), [])
+    | Tpat_alias (q, y, _, _, _) ->
+        let q', binds = strip true env q in
+        (q', binds @ [ (y, q', expr_of env q') ])
+    | Tpat_construct (lid, cd, ps, ann) ->
+        let ps', bindss = List.unzip @@ List.map ps ~f:(strip in_alias env) in
+        ( { p with pat_desc = Tpat_construct (lid, cd, ps', ann) },
+          List.concat bindss )
+    | Tpat_tuple ps ->
+        let ps', bindss =
+          List.unzip
+          @@ List.map ps ~f:(fun (l, p) ->
+              let p', binds = strip in_alias env p in
+              ((l, p'), binds))
+        in
+        ({ p with pat_desc = Tpat_tuple ps' }, List.concat bindss)
+    | Tpat_var _ | Tpat_any -> (p, [])
+    | _ -> if in_alias then raise Unsupported else (p, [])
+  in
+  let wrap binds (body : expression) =
+    List.fold_right binds ~init:body ~f:(fun (y, (q' : pattern), e) body ->
+        let vb =
+          {
+            vb_pat =
+              {
+                q' with
+                pat_desc =
+                  Tpat_var
+                    ( y,
+                      Location.mknoloc (Ident.name y),
+                      Types.Uid.internal_not_actually_unique );
+                pat_extra = [];
+                pat_attributes = [];
+              };
+            vb_expr = e;
+            vb_rec_kind = Value_rec_types.Dynamic;
+            vb_attributes = [];
+            vb_loc = body.exp_loc;
+          }
+        in
+        { body with exp_desc = Texp_let (Nonrecursive, [ vb ], body) })
+  in
+  let has_alias (p : pattern) =
+    let found = ref false in
+    let it =
+      {
+        Tast_iterator.default_iterator with
+        pat =
+          (fun (type k) sub (p : k general_pattern) ->
+            (match p.pat_desc with Tpat_alias _ -> found := true | _ -> ());
+            Tast_iterator.default_iterator.pat sub p);
+      }
+    in
+    it.pat it p;
+    !found
+  in
+  let value_case (c : value case) : value case =
+    if not (has_alias c.c_lhs) then c
+    else
+      try
+        let env = c.c_rhs.exp_env in
+        let lhs, binds = strip false env c.c_lhs in
+        {
+          c with
+          c_lhs = lhs;
+          c_guard = Option.map c.c_guard ~f:(wrap binds);
+          c_rhs = wrap binds c.c_rhs;
+        }
+      with Unsupported -> c
+  in
+  let computation_case (c : computation case) : computation case =
+    match c.c_lhs.pat_desc with
+    | Tpat_value arg ->
+        let c' = value_case { c with c_lhs = (arg :> pattern) } in
+        if phys_equal c'.c_lhs (arg :> pattern) then c
+        else { c' with c_lhs = as_computation_pattern c'.c_lhs }
+    | _ -> c
+  in
+  let expr sub e =
+    let e = Tast_mapper.default.expr sub e in
+    match e.exp_desc with
+    | Texp_match (e1, cases, eff_cases, partial) ->
+        {
+          e with
+          exp_desc =
+            Texp_match
+              (e1, List.map cases ~f:computation_case, eff_cases, partial);
+        }
+    | Texp_function (params, Tfunction_cases fc) ->
+        {
+          e with
+          exp_desc =
+            Texp_function
+              ( params,
+                Tfunction_cases
+                  { fc with cases = List.map fc.cases ~f:value_case } );
+        }
+    | Texp_try (e1, cases, eff_cases) ->
+        {
+          e with
+          exp_desc = Texp_try (e1, List.map cases ~f:value_case, eff_cases);
+        }
+    | _ -> e
+  in
+  let m = { Tast_mapper.default with expr } in
+  m.structure m ts
+
 let occurs bound (target : Ident.t) (e : expression) =
   let found = ref false in
   let bound = ref bound in
@@ -82,7 +263,26 @@ let occurs bound (target : Ident.t) (e : expression) =
   !found
 
 module Config = struct
-  type t = { verbose : bool; [@default false] for_cps_trans : bool [@default false] } [@@deriving yojson]
+  (* Which operations are answer-type polymorphic (ATP): called like a
+     function, with no answer types, and handled only by tail-resumptive
+     clauses ([fun k -> let x = N in continue k x], [k] not free in [N]),
+     whose body [N] is typed under the handling construct's signature
+     (Sekiyama, Dal Lago, Unno, "On Higher-Order Model Checking of Effectful
+     Answer-Type-Polymorphic Programs", OOPSLA 2025).  [Off]: none, as in
+     Kawamata et al., POPL 2024; EffCaml decides its own with
+     [for_cps_trans].  [Annotated]: an operation is ATP iff every [perform] of
+     it in the file is written [perform_atp], so a file with no [perform_atp]
+     is generated exactly as under [Off].  The per-operation decision is
+     [Make(..).is_atp_operation]; an inferring mode would fill the same
+     decision from the constraints instead of from the annotation. *)
+  type atp_operations = Off | Annotated [@@deriving yojson]
+
+  type t = {
+    verbose : bool; [@default false]
+    for_cps_trans : bool; [@default false]
+    atp_operations : atp_operations; [@default Off]
+  }
+  [@@deriving yojson]
 
   module type ConfigType = sig
     val config : t
@@ -342,10 +542,19 @@ module Make (Config : Config.ConfigType) = struct
         failwith
         @@ sprintf "[pattern_of] %s needs to be a tuple type"
         @@ Term.str_of_sort sort
-    | Tpat_alias (_pat' (*ToDo*), name, _, _, _), _ ->
+    | Tpat_alias ({ pat_desc = Tpat_any; _ }, name, _, _, _), _ ->
         Ast.Pattern.PVar (Tvar (Ident.name name), sort)
-    (* ToDo: pattern_of dtenv pat' *)
-    (*failwith ((Ast.Pattern.str_of @@ pattern_of dtenv pat') ^ " and " ^ Ident.name name)*)
+    | Tpat_alias (_, name, _, _, _), _ ->
+        (* the pattern language has no alias form, and reading [p as y] as the
+           variable [y] would match values [p] rejects; the aliases of match,
+           function and try cases are removed by [desugar_case_aliases], so
+           only an alias elsewhere (a let or parameter pattern) or over a
+           pattern that cannot be rebuilt as an expression reaches here *)
+        failwith
+        @@ sprintf
+             "[pattern_of] unsupported pattern: an alias (... as %s) over a \
+              pattern other than _ in this position"
+             (Ident.name name)
     | Tpat_constant _, _ ->
         failwith "[pattern_of] unsupported pattern: Tpat_constant"
     | Tpat_construct (_, cd, pats, _), T_dt.SDT dt ->
@@ -412,7 +621,9 @@ module Make (Config : Config.ConfigType) = struct
   let is_keyword_arity3 s = is_try_with s || is_match_with s
 
   let is_interpreted name =
-    Ast.Rtype.(is_fsym name || is_psym name || is_unop name || is_binop name)
+    Ast.Rtype.(
+      is_fsym name || is_psym name || is_unop name || is_binop name
+      || is_stdlib_model name)
 
   let content_of attr =
     match attr.Parsetree.attr_payload with
@@ -522,6 +733,129 @@ module Make (Config : Config.ConfigType) = struct
   let is_hrec = ref false
   let rec_vars = ref Set.Poly.empty
 
+  (* [atp_ops str] reads the annotated ATP reading off a typed structure: it
+     returns the constructors that occur as the argument of [perform_atp] and
+     never as the argument of [perform] or [raise] anywhere in [str]
+     (functor bodies and local modules included).  A constructor performed
+     both ways is not ATP; each such constructor is reported once through
+     [Debug.print].  It depends on [str] only. *)
+  let atp_ops (str : structure) : string Set.Poly.t =
+    let atp = ref Set.Poly.empty and atm = ref Set.Poly.empty in
+    let iterator =
+      {
+        Tast_iterator.default_iterator with
+        expr =
+          (fun self e ->
+            (match e.exp_desc with
+            | Texp_apply
+                (e_fun, [ (_, Arg { exp_desc = Texp_construct (_, cd, _); _ }) ])
+              ->
+                if is_ is_perform_atp e_fun then atp := Set.add !atp cd.cstr_name
+                else if is_ (fun x -> is_perform x || is_raise x) e_fun then
+                  atm := Set.add !atm cd.cstr_name
+            | _ -> ());
+            Tast_iterator.default_iterator.expr self e);
+      }
+    in
+    iterator.structure iterator str;
+    let mixed = Set.inter !atp !atm in
+    Set.iter mixed ~f:(fun name ->
+        Debug.print
+        @@ lazy
+             (sprintf
+                "operation %s is performed both by perform_atp and by \
+                 perform or raise: it is read as answer-type modifying"
+                name));
+    Set.diff !atp mixed
+
+  (* The operations the current file reads as ATP: empty under [Off] and
+     under [for_cps_trans] (EffCaml's own reading), else set by
+     [set_atp_operations] once per file before its first item. *)
+  let atp_operation_names : string Set.Poly.t ref = ref Set.Poly.empty
+
+  let set_atp_operations (str : structure) =
+    atp_operation_names :=
+      match config.atp_operations with
+      | Off -> Set.Poly.empty
+      | Annotated -> atp_ops str
+
+  (* The per-operation ATP decision every rule of the generator reads.  An
+     operation it calls ATP has every perform generated as a call with a pure
+     control effect and every clause handling it required to be
+     tail-resumptive; one it calls ATM is generated exactly as under [Off]. *)
+  let is_atp_operation name = Set.mem !atp_operation_names name
+
+  (* [mentions id e]: the identifier [id] occurs anywhere in [e].  Typed-tree
+     identifiers are unique (by stamp), so an occurrence is a free occurrence
+     of the binding [id] names; no binder can shadow it. *)
+  let mentions (id : Ident.t) (e : expression) =
+    let found = ref false in
+    let iterator =
+      {
+        Tast_iterator.default_iterator with
+        expr =
+          (fun self e ->
+            (match e.exp_desc with
+            | Texp_ident (Path.Pident id', _, _) when Ident.same id id' ->
+                found := true
+            | _ -> ());
+            if not !found then Tast_iterator.default_iterator.expr self e);
+      }
+    in
+    iterator.expr iterator e;
+    !found
+
+  (* [tail_resumptive_body k body]: [Some n] when the clause body [body] is
+     [continue k e] with [k] not in [e], possibly under [let]s and sequences
+     whose bound expressions do not mention [k], and [n] is [body] with that
+     [continue k e] replaced by [e]; so [body] behaves as
+     [let x = n in continue k x] with [k] not free in [n].  [None] otherwise.
+     The test is syntactic and sound: a [k] anywhere but in that one tail
+     position makes it fail. *)
+  let rec tail_resumptive_body (k : Ident.t) (body : expression) =
+    match body.exp_desc with
+    | Texp_apply (e_cont, [ (_, Arg e_k); (_, Arg e_arg) ])
+      when is_ is_continue e_cont
+           && (match e_k.exp_desc with
+              | Texp_ident (Path.Pident k', _, _) -> Ident.same k k'
+              | _ -> false)
+           && not (mentions k e_arg) ->
+        Some e_arg
+    | Texp_let (flag, vbs, e) ->
+        if List.exists vbs ~f:(fun vb -> mentions k vb.vb_expr) then None
+        else
+          Option.map (tail_resumptive_body k e) ~f:(fun n ->
+              { body with exp_desc = Texp_let (flag, vbs, n); exp_type = n.exp_type })
+    | Texp_sequence (e1, e2) ->
+        if mentions k e1 then None
+        else
+          Option.map (tail_resumptive_body k e2) ~f:(fun n ->
+              { body with exp_desc = Texp_sequence (e1, n); exp_type = n.exp_type })
+    | _ -> None
+
+  (* The label of a call written [(f a1 ... an [@copy lbl])]: [Some lbl] when
+     [attrs] carry a [copy] attribute whose payload is one identifier.  The
+     label names the copy of [f]'s refinement predicates this call makes, for
+     the lemmas and properties that speak about it; whether the attribute
+     stands on a call of a top-level function, and whether the label is
+     unique, is the constraint generator's to check and report. *)
+  let copy_label_of_attrs (attrs : Parsetree.attributes) =
+    List.find_map attrs ~f:(fun attr ->
+        if String.(attr.attr_name.txt = "copy") then
+          match attr.attr_payload with
+          | PStr
+              [
+                {
+                  pstr_desc =
+                    Pstr_eval
+                      ({ pexp_desc = Pexp_ident { txt = Lident l; _ }; _ }, _);
+                  _;
+                };
+              ] ->
+              Some l
+          | _ -> None
+        else None)
+
   let rec fold_expr ~f dtenv is_handled senv expr c0 =
     let call_fold = fold_expr ~f dtenv is_handled in
     let call_fold_handled = fold_expr ~f dtenv true in
@@ -530,8 +864,11 @@ module Make (Config : Config.ConfigType) = struct
       match e.exp_desc with
       | Texp_ident (p, _, _)
         when (Fn.non is_interpreted @@ Path.name p)
-             && (Fn.non is_keyword @@ Path.name p) ->
-          (* if [Path.name p] is a variable *)
+             && (Fn.non is_keyword @@ Path.name p)
+             && not (f#has_scheme p) ->
+          (* if [Path.name p] is a variable; a variable with an effect scheme
+             is typed as an expression, so that its occurrence is an
+             instance with its own continuation (the [Texp_ident] arm) *)
           let econstrs, oconstrs, _next =
             call_fold senv e (Sort.mk_triple_from_sort sort)
           in
@@ -679,6 +1016,51 @@ module Make (Config : Config.ConfigType) = struct
           (econstrs, oconstrs, f#f_annot (expr.exp_attributes, next))
         else
           match expr.exp_desc with
+          | Texp_ident (p, _, _) when f#has_scheme p ->
+              (* An occurrence of a binding that has an effect scheme: [f]
+                 copies the scheme's constraints under fresh variables and
+                 returns the copy's sort for the bound name, the copied
+                 constraints, and the continuation that types this instance.
+                 The occurrence is then related to [c0] as an ordinary
+                 variable's instantiated sort is, its sort variables being
+                 the instance's unknowns. *)
+              let x_sort, econstrs0, oconstrs0, next =
+                f#f_scheme_instance p
+              in
+              let map, econstrs, oconstrs =
+                subeff
+                  (Map.of_set_exn
+                  @@ Set.Poly.map ~f:(Fn.flip Tuple2.create None)
+                  @@ Term.svs_of_sort x_sort)
+                  (Sort.mk_triple_from_sort x_sort)
+                  c0
+              in
+              (ref_id :=
+                 let stheta =
+                   Map.Poly.map ~f:(Term.subst_sorts_sort !ref_id)
+                   @@ Map.Poly.filter_map map ~f:Fn.id
+                 in
+                 let ref_id =
+                   Map.Poly.map !ref_id ~f:(Term.subst_sorts_sort stheta)
+                 in
+                 Map.force_merge ref_id stheta);
+              (* the instance's sort variables bound here are recorded in
+                 [ref_id] only, as an ordinary occurrence's are: they are
+                 substituted into the copied constraints, so that the
+                 solver does not bind them a second time *)
+              let sub = Map.Poly.filter_map map ~f:Fn.id in
+              let econstrs0 =
+                Set.Poly.map econstrs0 ~f:(fun (effs, eff) ->
+                    ( List.map effs ~f:(Term.subst_sorts_cont sub),
+                      Term.subst_sorts_cont sub eff ))
+              in
+              let oconstrs0 =
+                Set.Poly.map oconstrs0 ~f:(fun (o1, o2) ->
+                    (Term.subst_sorts_opsig sub o1, Term.subst_sorts_opsig sub o2))
+              in
+              ( Set.union econstrs0 econstrs,
+                Set.union oconstrs0 oconstrs,
+                next )
           | Texp_ident (p, _, ty) ->
               let name = Path.name p in
               let x_sort =
@@ -745,8 +1127,15 @@ module Make (Config : Config.ConfigType) = struct
                   @@ sprintf "[fold_expr] %s cannot be used as an identifier"
                        name
                 else
-                  f#f_var (is_handled, !rec_vars)
-                    (Ast.Ident.Tvar name, x_sort (*c0.val_type*)) )
+                  let next =
+                    f#f_var (is_handled, !rec_vars)
+                      (Ast.Ident.Tvar name, x_sort (*c0.val_type*))
+                  in
+                  (* the head of a labelled call: its instantiation is the
+                     labelled copy *)
+                  match copy_label_of_attrs expr.exp_attributes with
+                  | Some lbl -> f#f_copy_label lbl next
+                  | None -> next )
           | Texp_apply (e, [ (_, Arg e') ]) when is_ is_shift0 e -> (
               match e'.exp_desc with
               | Texp_function (param :: params, body) -> (
@@ -917,11 +1306,14 @@ module Make (Config : Config.ConfigType) = struct
                     List.unzip3 @@ List.map args ~f:(mk_either senv)
                   in
                   let is_atp =
-                    (*ToDo: support ATP handlers in RCaml *)
-                    config.for_cps_trans
-                    &&
-                    (*ToDo: ad hoc*)
-                    is_ is_perform_atp e
+                    match config.atp_operations with
+                    | Off ->
+                        (* EffCaml reads each [perform_atp] call as ATP *)
+                        config.for_cps_trans && is_ is_perform_atp e
+                    | Annotated ->
+                        (* the file's per-operation decision: every perform
+                           of an ATP operation is a [perform_atp] *)
+                        is_atp_operation cd.cstr_name
                   in
                   let op_sort, op_cont =
                     if is_atp then
@@ -1012,6 +1404,10 @@ module Make (Config : Config.ConfigType) = struct
                 in
                 match body.exp_desc with
                 | Texp_match (e_op, cases, _, _) ->
+                    (* the third component, the effect cases, is empty here:
+                       [EffectSyntax.desugar] rewrites every match with effect
+                       cases into a handler application before typing, so an
+                       [effc] body that had one is no longer a match *)
                     let sort_op = sort_of_expr ~lift:true dtenv e_op in
                     List.unzip7
                     @@ List.map ~f:(fun case ->
@@ -1088,6 +1484,108 @@ module Make (Config : Config.ConfigType) = struct
                           Map.update_with (*shadowing*) senv' pat_senv
                         in
                         match case.c_rhs.exp_desc with
+                        | Texp_construct
+                            ( _,
+                              { cstr_name = "Some"; _ },
+                              [
+                                {
+                                   exp_desc = Texp_function (k_arg :: args, body);
+                                   _;
+                                 };
+                              ] )
+                          when (match config.atp_operations with
+                               | Off -> false
+                               | Annotated -> is_atp_operation op_name) -> (
+                            (* A clause for an ATP operation (the annotated
+                               reading).  It must be tail-resumptive; its
+                               resumed continuation is then not typed: the
+                               clause steps to [let x = N in] the handled
+                               computation resumed with [x], which is what
+                               resuming does, so only [N] is generated,
+                               typed pure under a signature contained in the
+                               handling construct's, and the operation's
+                               entry is the function sort from its
+                               parameters to [N]'s value sort.  A clause that
+                               discards, stores or re-enters [k] has no
+                               typing here: the operation is refused. *)
+                            let n_opt =
+                              match (args, body) with
+                              | [], Tfunction_body e ->
+                                  tail_resumptive_body k_arg.fp_param e
+                              | _ -> None
+                            in
+                            match n_opt with
+                            | None ->
+                                Common.Refusal.refuse
+                                  "RCaml does not support an \
+                                   answer-type-polymorphic operation handled \
+                                   by a clause that does not resume its \
+                                   continuation in tail position: every \
+                                   perform of %s is perform_atp, and its \
+                                   clause is not of the form [fun k -> let x \
+                                   = N in continue k x] with k not in N"
+                                  op_name
+                            | Some e_n ->
+                                let k_pat =
+                                  match k_arg.fp_kind with
+                                  | Tparam_pat k_pat -> k_pat
+                                  | _ -> failwith "handling @ atp1"
+                                in
+                                let s_arity =
+                                  match
+                                    sort_of_type_expr ~lift:true
+                                      ~env:k_pat.pat_env dtenv k_pat.pat_type
+                                  with
+                                  | T_dt.SDT dt
+                                    when String.(
+                                           Datatype.name_of dt = "continuation")
+                                    -> (
+                                      match Datatype.params_of dt with
+                                      | [ s_arity; _s_ans ] -> s_arity
+                                      | _ -> failwith "handling @ atp2")
+                                  | _ -> failwith "handling @ atp3"
+                                in
+                                Debug.print
+                                @@ lazy
+                                     (sprintf "ATP clause for %s"
+                                        (Ast.Pattern.str_of pat));
+                                let op_sig_gen =
+                                  Sort.mk_fresh_empty_open_opsig ()
+                                in
+                                let c_n =
+                                  Sort.
+                                    {
+                                      op_sig = op_sig_gen;
+                                      val_type = s_arity;
+                                      cont_eff = Sort.Pure;
+                                    }
+                                in
+                                let econstrs, oconstrs, next =
+                                  call_fold senv'' e_n c_n
+                                in
+                                let op_sort =
+                                  (Sort.mk_eff_fun s_op_params
+                                     Sort.
+                                       {
+                                         op_sig = Sort.empty_closed_opsig;
+                                         val_type = s_arity;
+                                         cont_eff = Sort.Pure;
+                                       })
+                                    .val_type
+                                in
+                                ( econstrs,
+                                  (* [N]'s operations are the handling
+                                     construct's *)
+                                  Set.add oconstrs (c0.op_sig, op_sig_gen),
+                                  next,
+                                  op_name,
+                                  ATPHandler,
+                                  op_sort,
+                                  ( x_op_params,
+                                    s_op_params,
+                                    None,
+                                    Sort.SArrow (s_arity, c_n) (* not read *),
+                                    c_n ) ))
                         | Texp_construct
                             ( _,
                               { cstr_name = "Some"; _ },
@@ -1648,6 +2146,20 @@ module Make (Config : Config.ConfigType) = struct
               in
               let ovar1 = Sort.mk_fresh_empty_open_opsig () in
               let evar1 = Sort.mk_fresh_evar () in
+              (* a call's [copy] label goes to its head, whose instantiation
+                 makes the copy the label names *)
+              let e1 =
+                match (e1.exp_desc, copy_label_of_attrs expr.exp_attributes) with
+                | Texp_ident _, Some _ ->
+                    {
+                      e1 with
+                      exp_attributes =
+                        List.filter expr.exp_attributes ~f:(fun attr ->
+                            String.(attr.attr_name.txt = "copy"))
+                        @ e1.exp_attributes;
+                    }
+                | _ -> e1
+              in
               let econstrs1, oconstrs1, next1 =
                 call_fold senv e1
                   { op_sig = ovar1; val_type = sort_fun; cont_eff = evar1 }
@@ -1993,7 +2505,7 @@ module Make (Config : Config.ConfigType) = struct
                   let dt_of = function
                     | T_dt.SDT dt -> Some (dt, Datatype.params_of dt)
                     | T_dt.SUS (*ToDo*) (name, params)
-                      when Map.Poly.mem dtenv name -> (
+                      when Option.is_some (DTEnv.look_up_dt dtenv name) -> (
                         match DTEnv.look_up_dt dtenv name with
                         | None -> failwith ""
                         | Some dt -> Some (dt, params))
@@ -2086,7 +2598,19 @@ module Make (Config : Config.ConfigType) = struct
                    @@ List.filter_map nexts_either ~f:ovar_of_either)
                    :: (oconstrss @ oconstrss'),
                 f#f_tuple nexts_either )
-          | Texp_match (e1, cases, _, _) ->
+          | Texp_match (_, _, _ :: _, _) ->
+              (* effect cases ([effect P, k -> e], OCaml 5.3) handle what the
+                 scrutinee performs; the arm below types the scrutinee as a
+                 plain computation, so reading such a match there would
+                 translate it as if its handler were absent *)
+              failwith
+              @@ "[fold_expr] a match with effect cases is not supported here: "
+              ^ str_of_expr expr
+          | Texp_try (_, _, _ :: _) ->
+              failwith
+              @@ "[fold_expr] a try with effect cases is not supported here: "
+              ^ str_of_expr expr
+          | Texp_match (e1, cases, [], _) ->
               let econstrs, oconstrs, matched = mk_either senv e1 in
               let ovar1 = ovar_of_either matched in
               let sort1 = sort_of_either matched in
@@ -2094,6 +2618,14 @@ module Make (Config : Config.ConfigType) = struct
               let pats, econstrss, oconstrss, nexts, evars =
                 List.unzip5
                 @@ List.map ~f:(fun case ->
+                    (* a case is read by its pattern alone, so a guard would
+                       be dropped and its case read as taken whenever the
+                       pattern matches *)
+                    if Option.is_some case.c_guard then
+                      failwith
+                      @@ "[fold_expr] a guard on a match case is not supported \
+                          here: "
+                      ^ str_of_expr expr;
                     let evar = Sort.mk_fresh_evar () in
                     let pat = pattern_of dtenv ~sort:(Some sort1) case.c_lhs in
                     let econstrs, oconstrs, next =

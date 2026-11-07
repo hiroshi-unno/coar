@@ -1,0 +1,19 @@
+{
+  "synthesizer": [
+    "Classification",
+    {
+      "classifier": [
+        "Filename",
+        "./config/pcsat/classifier/bfsb_mcts10_poly3333_all.json"
+      ],
+      "wf_classifier": [
+        "Filename",
+        "./config/pcsat/classifier/wf_dt.json"
+      ],
+      "fn_classifier": [
+        "Filename",
+        "./config/pcsat/classifier/fn_tb.json"
+      ]
+    }
+  ]
+}

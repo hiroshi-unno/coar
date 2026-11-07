@@ -1,0 +1,20 @@
+# The weight p of the choice is a real program variable, never assigned, so the bound is asked
+# for every initial p; the choice is reached only where 0 <= p <= 1, where p is a probability,
+# so the guard that makes a run abort at an out-of-range weight never fires there:
+#   wp(S, c) = p * 1 + (1 - p) * 0 = p   for 0 <= p <= 1,   and 1 elsewhere (c := 1),
+# so the upper bound 1 holds at every p.
+# Expected: valid.  The twin of choice_weight_state_above_one_lower_unknown.pgcl: a weight over
+# program variables that is a probability where it is used keeps its answer.
+real p;
+nat c;
+c := 0;
+if (0 <= p & p <= 1) {
+	{
+		c := 1;
+	}[p]{
+		c := 0;
+	}
+} else {
+	c := 1;
+}
+?Ex [c] <= 1

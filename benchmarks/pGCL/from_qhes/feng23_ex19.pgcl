@@ -1,5 +1,5 @@
-nat n;
-nat b;
+int n;
+int b;
 
 while (0 < n){
 	{

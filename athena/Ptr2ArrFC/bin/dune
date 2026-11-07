@@ -1,0 +1,7 @@
+; The standalone executable: the Frama-C kernel with the plugin linked in.
+
+(executable
+ (optional)
+ (name ptr2arr)
+ (flags :standard -open Frama_c_kernel -linkall)
+ (libraries unix frama-c.kernel frama-c.init ptr2arr_cli))

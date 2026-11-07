@@ -1,0 +1,40 @@
+/* A list of a and b converted to a Church list, filtered by a predicate
+   keeping b, and converted back: the result holds only b.  The predicate's
+   answer is an output tree, analysed after a coercion; an element is both
+   tested and copied. */
+%BEGING
+S l -> ToList (Filter IsB (ToChurch l)).
+Nil f z -> z.
+Cons x y f z -> f x (y f z).
+ToChurch l f z -> case l of
+	  nil => Nil f z
+	| cons x y => Cons x (ToChurch y) f z.
+Kons x y -> cons (copy x) y.
+ToList l -> l Kons nil.
+ConsIf p f x r -> ConsIf2 (coerce qBool (p x)) f x r.
+ConsIf2 b f x r -> case b of
+	  true => f x r
+	| false => r.
+Filter p l f z -> l (ConsIf p f) z.
+IsB x -> case x of
+	  a => false
+	| b => true.
+%ENDG
+
+%BEGINA
+qBool true -> .
+qBool false -> .
+
+qABList cons -> qAB qABList.
+qABList nil -> .
+qAB a -> .
+qAB b -> .
+
+qBList cons -> qB qBList.
+qBList nil -> .
+qB b -> .
+%ENDA
+
+%BEGINT
+S : qABList -> qBList.
+%ENDT

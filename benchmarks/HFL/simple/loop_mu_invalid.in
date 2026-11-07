@@ -1,0 +1,5 @@
+/* Loop is a least fixed point that never reaches a base case, so it is
+   false everywhere and the main formula is invalid. */
+%HES
+Main x =μ Loop x.
+Loop x =μ Loop (x + 1).

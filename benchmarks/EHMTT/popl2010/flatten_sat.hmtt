@@ -1,0 +1,28 @@
+%BEGING
+Flatten x = F x nil.
+F x z = case x of
+	  nil => z
+	| cons x1 x2 => F x1 (F x2 z)
+	| a => cons a z
+	| b => cons b z
+.
+%ENDG
+
+%BEGINA
+/* qi0 : the input, a nested list of a and b */
+qi0 nil -> .
+qi0 cons -> qi1 qi0.
+qi1 a -> .
+qi1 b -> .
+qi1 nil -> .
+qi1 cons -> qi1 qi0.
+/* q0 : the output, a flat list of a and b */
+q0 nil -> .
+q0 cons -> q1 q0.
+q1 a -> .
+q1 b -> .
+%ENDA
+
+%BEGINT
+Flatten : qi0 -> q0.
+%ENDT

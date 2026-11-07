@@ -1,0 +1,38 @@
+diff --git a/query-generator/main.ml b/query-generator/main.ml
+index 82c0962..a2f87f3 100644
+--- a/query-generator/main.ml
++++ b/query-generator/main.ml
+@@ -268,8 +268,33 @@ let check_implementability (prot: symbolic_protocol) (dirname: string) (timeout:
+         (* Note to self: no semi-colon after final statement! *)
+ 
+ 
++(* Generation without solving, added for CoAR's benchmark corpus: write every muCLP instance that the
++   given version generates, GCLTS and implementability alike, and call no solver.  The original flow
++   generates the implementability instances only after MuVal has found the protocol GCLTS-eligible,
++   and none for a binary protocol or one failing the syntactic checks; this mode generates them
++   whenever the syntactic checks pass and the protocol is not binary, which is the set the original
++   flow solves for a GCLTS-eligible protocol, and reports the classification on one line. *)
++let generate_only filename version =
++  let (protocol, b) = process_protocol filename in
++  if not b then (Printf.printf "SPROUT-GEN %s not-well-formed\n" filename; exit 3);
++  let current_dir = Sys.getcwd () in
++  let dirname = Filename.concat current_dir (filename ^ "-generated") in
++  let gclts_dirname = Filename.concat current_dir (filename ^ "-generated-gclts") in
++  let perm = 0o777 in
++  if not (create_newdir dirname perm && create_newdir gclts_dirname perm) then exit 4;
++  generate_gclts_queries protocol gclts_dirname version;
++  let sd = sender_driven protocol and sf = sink_final protocol and bin = is_binary protocol in
++  if sd && sf && not bin then generate_implementability_queries protocol dirname version;
++  Printf.printf "SPROUT-GEN %s version=%s sender_driven=%b sink_final=%b binary=%b\n"
++    filename version sd sf bin
++
+ let () =
+   Logs.set_reporter (Logs.format_reporter ());
++  if Array.length Sys.argv = 2 && Sys.argv.(1) = "--version" then
++    print_endline "sprout-gen nyu-acsys/sprout dea05ba0 + coar generate-only patch 1"
++  else if Array.length Sys.argv = 4 && Sys.argv.(1) = "--generate-only" then
++    generate_only Sys.argv.(2) Sys.argv.(3)
++  else
+   if Array.length Sys.argv < 5 then
+     Printf.eprintf "Usage: %s <input_file> <timeout> <version> <parallel | parallel_exc> \n" Sys.argv.(0)
+   else

@@ -54,9 +54,9 @@ COPY --from=builder /home/opam/.opam/5.4/share/apron/lib/*.so /opt/apron/lib/
 
 # Optional cvc5 (off by default): some solver paths call `cvc5` from PATH or as `./cvc5` from the
 # working directory, so the static release binary is placed in /root/coar, which is on PATH.
-#   docker build --build-arg WITH_CVC5=1 [--build-arg CVC5_VERSION=1.4.1] .
+#   docker build --build-arg WITH_CVC5=1 [--build-arg CVC5_VERSION=1.4.2] .
 ARG WITH_CVC5=0
-ARG CVC5_VERSION=1.4.1
+ARG CVC5_VERSION=1.4.2
 ARG TARGETARCH
 RUN if [ "$WITH_CVC5" = "1" ]; then \
       case "${TARGETARCH:-amd64}" in amd64) a=x86_64 ;; arm64) a=arm64 ;; *) echo "no cvc5 build for ${TARGETARCH}" >&2; exit 1 ;; esac \

@@ -1,10 +1,11 @@
 (* Qualifier domain that separates the positive from the negative examples
    of a predicate by halfspaces found with a linear support vector machine
    (libsvm), recursively on each side until one side is empty.  The float
-   hyperplane is turned into an integer one either exactly or, with
-   [approx_level] > 0, by continued fractions of at most that length; with
-   [approx_level] <= 0 the shortest approximation that classifies every
-   example as the exact one does is searched for.  Examples must be integer
+   hyperplane is made exact ([Q.of_float]) and integral, then replaced by a
+   vector of small integers ([ContFrac.approximate_bw], by the method
+   [rational_approximation] selects): with [approx_level] > 0 at that depth
+   or denominator bound; with [approx_level] <= 0 the first candidate that
+   classifies every example as the exact hyperplane does.  Examples must be integer
    points: a parameter of any other sort fails. *)
 open Core
 open Common
@@ -34,7 +35,7 @@ let get_hyperplane_float c ?(weights = []) params_x x y :
   (w, b)
 
 (* [params] may contain a boolean parameter*)
-let rec classify approx_level csvm params pos_examples neg_examples =
+let rec classify rational_approximation approx_level csvm params pos_examples neg_examples =
   let open Lacaml.D in
   if Set.is_empty pos_examples || Set.is_empty neg_examples then Set.Poly.empty
   else
@@ -139,58 +140,24 @@ let rec classify approx_level csvm params pos_examples neg_examples =
           exact_b
           :: List.map params ~f:(fun (key, _) -> Map.Poly.find_exn exact_w key)
         in
-        let abs_exact_bw = List.map ~f:Z.abs exact_bw in
-        let sorted_abs_exact_bw = List.sort ~compare:Z.compare abs_exact_bw in
         let all_examples = Set.union pos_examples neg_examples in
         let h =
-          if approx_level <= 0 then
-            let exact_halfspace = make_halfspace exact_w exact_b in
-            let len_params = List.length params in
-            let rec loop level cut =
-              let lb = List.nth_exn sorted_abs_exact_bw cut in
-              let abs_exact_bw' =
-                List.map
-                  ~f:(fun n -> if Z.Compare.(n >= lb) then n else Z.zero)
-                  abs_exact_bw
-              in
-              let abs_approx_bw' =
-                ContFrac.approximate_ratio abs_exact_bw' level
-              in
-              let approx_bw' =
-                List.zip_exn abs_approx_bw' exact_bw
-                |> List.map ~f:(fun (a, s) ->
-                       if Z.Compare.(s < Z.zero) then Z.(~-a) else a)
-              in
-              let w' =
-                List.zip_exn (List.map ~f:fst params) (List.tl_exn approx_bw')
-                |> Map.Poly.of_alist_exn
-              in
-              let b' = List.hd_exn approx_bw' in
-              let h = make_halfspace w' b' in
-              if
-                Set.for_all all_examples ~f:(fun ex ->
-                    Bool.(
-                      eval_halfspace h ex = eval_halfspace exact_halfspace ex))
-              then h
-              else if cut <= 0 then loop (level + 1) len_params
-              else loop level (cut - 1)
-            in
-            loop 1 len_params
-          else
-            let abs_approx_bw =
-              ContFrac.approximate_ratio abs_exact_bw approx_level
-            in
-            let approx_bw =
-              List.zip_exn abs_approx_bw exact_bw
-              |> List.map ~f:(fun (a, s) ->
-                     if Z.Compare.(s < Z.zero) then Z.(~-a) else a)
-            in
+          let exact_halfspace = make_halfspace exact_w exact_b in
+          let halfspace_of_bw bw =
             let w' =
-              List.zip_exn (List.map ~f:fst params) (List.tl_exn approx_bw)
+              List.zip_exn (List.map ~f:fst params) (List.tl_exn bw)
               |> Map.Poly.of_alist_exn
             in
-            let b' = List.hd_exn approx_bw in
-            make_halfspace w' b'
+            make_halfspace w' (List.hd_exn bw)
+          in
+          ContFrac.approximate_bw ~method_:rational_approximation
+            ~level:approx_level
+            ~accept:(fun bw ->
+              let h = halfspace_of_bw bw in
+              Set.for_all all_examples ~f:(fun ex ->
+                  Bool.(eval_halfspace h ex = eval_halfspace exact_halfspace ex)))
+            exact_bw
+          |> halfspace_of_bw
         in
         if Set.Poly.map all_examples ~f:(eval_halfspace h) |> Set.length < 2
         then
@@ -213,11 +180,11 @@ let rec classify approx_level csvm params pos_examples neg_examples =
     let neg_examples_t, neg_examples_f =
       Set.partition_tf neg_examples ~f:(eval_halfspace h)
     in
-    let hst = classify approx_level csvm params pos_examples_t neg_examples_t in
-    let hsf = classify approx_level csvm params pos_examples_f neg_examples_f in
+    let hst = classify rational_approximation approx_level csvm params pos_examples_t neg_examples_t in
+    let hsf = classify rational_approximation approx_level csvm params pos_examples_f neg_examples_f in
     Set.add (Set.union hst hsf) h
 
-let svm_half_spaces_of approx_level csvm sorts pos_examples neg_examples =
+let svm_half_spaces_of rational_approximation approx_level csvm sorts pos_examples neg_examples =
   let params = LogicOld.sort_env_list_of_sorts sorts in
   ( params,
     Set.union
@@ -228,11 +195,13 @@ let svm_half_spaces_of approx_level csvm sorts pos_examples neg_examples =
            | _, T_real.SReal -> failwith "real"
            | _, s -> failwith ("not supported" ^ Term.str_of_sort s))
       |> Set.Poly.map ~f:(fun x -> Formula.eq x (T_bool.mk_true ())))
-      (classify approx_level csvm params pos_examples neg_examples) )
+      (classify rational_approximation approx_level csvm params pos_examples
+         neg_examples) )
 
 module Make (Config : sig
   val approx_level : int
   val csvm : float
+  val rational_approximation : ContFrac.rational_approximation
 end) =
 struct
   let qualifiers_of _pvar sorts labeled_atoms _examples =
@@ -249,7 +218,8 @@ struct
           else None)
     in
     let params, quals =
-      svm_half_spaces_of Config.approx_level Config.csvm sorts pos_examples
+      svm_half_spaces_of Config.rational_approximation Config.approx_level
+        Config.csvm sorts pos_examples
         neg_examples
     in
     Set.Poly.map quals ~f:(fun qual -> (params, Normalizer.normalize qual))
@@ -259,4 +229,6 @@ struct
     ^ string_of_int Config.approx_level
     ^ " csvm="
     ^ string_of_float Config.csvm
+    ^ " rational_approximation="
+    ^ ContFrac.string_of_rational_approximation Config.rational_approximation
 end

@@ -1,0 +1,57 @@
+# Sprout(A) (PLDI 2026 artifact, Zenodo record 19600644) Table 1 protocols, in the order of the artifact's
+# verify_all.sh: the file under benchmarks/sprouta/examples/sprout/, its Table 1 row name and |P| (both from
+# examples/table1_empty.txt of the image), and the expected implementability per network -- p2p (p2pbox),
+# sb (senderbox), mb (mailbox), monob (monobox), bag -- as Y, N or ? (not known to this tree), then the source:
+#   paper:table1  Table 1 of the paper, Li and Wies, "Implementability of Global Distributed Protocols modulo
+#                 Network Architectures", arXiv 2602.10320 v1 (read 2026-10-23); its marks are Sprout(A)'s
+#                 results, which the paper states were checked consistent with SPROUT's CAV 2025 p2p results,
+#                 with Lemma 7.9's relations between architectures, and by manual inspection (Section 7.1).
+#                 A ? there is an inconclusive run (a timeout), not a ground truth, and stays ? here, except
+#   p2p:cav25     where the p2p column is ? in the paper and SPROUT's CAV 2025 Table 2 gives the answer
+#                 (fwd-auth-no N, higher-lower-winning Y; script/fetch/sprout.expected).
+# The artifact README's sample rows disagree with the paper on HigherLower under mb and monob (README Y, paper N);
+# the paper is followed. The artifact carries no ground-truth column: table1_empty.txt has only names and |P|.
+# travel-agency is listed with |P| = 2 although its file has three participants (as in CAV 2025's Table 2).
+# Columns are separated by one TAB.
+calculator	Calculator	2	Y	Y	Y	Y	N	paper:table1
+fibonacci	Fibonacci	2	Y	Y	Y	Y	N	paper:table1
+higher-lower	HigherLower	3	Y	Y	N	N	N	paper:table1
+http	HTTP	2	Y	Y	Y	Y	N	paper:table1
+negotiation	Negotiation	2	Y	Y	Y	Y	N	paper:table1
+online-wallet	OnlineWallet	3	Y	Y	Y	Y	N	paper:table1
+sh	SH	3	Y	Y	Y	Y	?	paper:table1
+ticket	Ticket	2	Y	Y	Y	Y	N	paper:table1
+travel-agency	TravelAgency	2	Y	Y	N	N	N	paper:table1
+two-buyer	TwoBuyer	3	Y	Y	N	N	Y	paper:table1
+double-buffering	DoubleBuffering	3	Y	Y	N	N	Y	paper:table1
+oauth	OAuth	3	Y	Y	Y	Y	N	paper:table1
+plus-minus	PlusMinus	3	Y	Y	N	N	Y	paper:table1
+ring-max	RingMax	7	Y	Y	Y	Y	Y	paper:table1
+simple-auth	SimpleAuth	2	Y	Y	Y	Y	N	paper:table1
+travel-agency2	TravelAgency2	2	Y	Y	Y	Y	Y	paper:table1
+send-validity-yes	send-validity-yes	4	Y	Y	Y	Y	Y	paper:table1
+send-validity-no	send-validity-no	4	N	N	N	N	N	paper:table1
+receive-validity-yes	receive-validity-yes	3	Y	Y	Y	Y	Y	paper:table1
+receive-validity-no	receive-validity-no	3	N	N	N	N	N	paper:table1
+symbolic-two-bidder-yes	symbolic-two-bidder-yes	3	Y	Y	Y	Y	Y	paper:table1
+symbolic-two-bidder-no1	symbolic-two-bidder-no1	3	N	N	N	N	N	paper:table1
+figure12-yes	figure12-yes	3	Y	Y	Y	Y	Y	paper:table1
+figure12-no	figure12-no	3	N	N	N	N	N	paper:table1
+symbolic-send-validity-yes	symbolic-send-validity-yes	4	Y	Y	Y	Y	Y	paper:table1
+symbolic-send-validity-no	symbolic-send-validity-no	4	N	N	N	N	N	paper:table1
+symbolic-receive-validity-yes	symbolic-receive-validity-yes	3	Y	Y	N	N	Y	paper:table1
+symbolic-receive-validity-no	symbolic-receive-validity-no	3	N	N	N	N	N	paper:table1
+fwd-auth-yes	fwd-auth-yes	3	Y	Y	Y	Y	N	paper:table1
+fwd-auth-no	fwd-auth-no	3	N	?	N	N	N	paper:table1,p2p:cav25
+symbolic-two-bidder-no2	symbolic-two-bidder-no2	3	N	N	N	N	N	paper:table1
+higher-lower-ultimate	higher-lower-ultimate	3	Y	Y	N	N	N	paper:table1
+higher-lower-winning	higher-lower-winning	3	Y	Y	N	N	Y	paper:table1,p2p:cav25
+higher-lower-no	higher-lower-no	3	N	N	N	N	N	paper:table1
+higher-lower-encrypt-yes	higher-lower-encrypt-yes	4	Y	Y	N	N	Y	paper:table1
+higher-lower-encrypt-no	higher-lower-encrypt-no	4	N	N	N	N	N	paper:table1
+higher-lower-mixed	higher-lower-mixed	3	N	N	N	N	N	paper:table1
+bag-no-p2p-yes	bag-no-p2p-yes	2	Y	Y	Y	Y	N	paper:table1
+mb-no-p2p-yes	mb-no-p2p-yes	3	Y	Y	N	N	Y	paper:table1
+p2p-no-sb-yes	p2p-no-sb-yes	4	N	Y	N	N	N	paper:table1
+mb-no-monob-no	mb-no-monob-no	3	N	Y	N	N	N	paper:table1
+monob-no-mb-no	monob-no-mb-no	4	Y	Y	N	N	Y	paper:table1

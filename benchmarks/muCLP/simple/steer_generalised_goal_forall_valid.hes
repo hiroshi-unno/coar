@@ -1,0 +1,9 @@
+/* Stay or step down by two, from every z >= 0: the universal form of
+   steer_generalised_goal_valid.hes.  Valid: the prover's winning strategy is
+   y := x - 2, ranked by x.  Unlike the ground query, the refuter here has a
+   decision (z), so the prover's move is refined against counter-plays; a
+   refinement that selects the move on the play with its goal generalised
+   must still install a ranking that contains the played pairs at the goal. */
+forall (z: int). z >= 0 => P z
+s.t.
+P (x: int): bool =mu x <= -1 \/ (exists (y: int). (y = x - 2 \/ y = x) /\ P y);

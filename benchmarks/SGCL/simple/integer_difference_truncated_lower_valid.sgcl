@@ -1,0 +1,9 @@
+# A binary `-` between integers is truncated at 0 like `-=`: y := x - 2 with x in {0, 1, 2}
+# uniformly leaves y = 0 on every branch, so y + 1 is 1 everywhere.
+# Expected: valid. Read with real subtraction, y was -2, -1, 0 and the expectation of y + 1
+# was 0, so this bound did not hold.
+x ~ UniformDisc(0, 3);
+y := x - 2;
+y += 1;
+return y
+?Ex[y] >= 1

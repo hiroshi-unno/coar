@@ -2,7 +2,7 @@
  (name qualifier)
  (public_name CoAR.PCSat.qualifier)
  (preprocess
-  (pps ppx_deriving_yojson))
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
  (libraries
   core
   yojson

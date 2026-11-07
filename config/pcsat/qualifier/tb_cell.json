@@ -1,9 +1,19 @@
 {
   "extract_pcsp": true,
   "add_bool": true,
-  "offset_parity_quals": true,
+  "families": {
+    "offset_parity": true,
+    "arg_transpositions": [
+      "Transpositions",
+      {}
+    ],
+    "lift": {
+      "index": [
+        "Lift",
+        {}
+      ]
+    }
+  },
   "add_homogeneous": true,
-  "filter_out_quantified": true,
-  "add_arg_transpositions": true,
-  "lift_index_quals": true
+  "filter_out_quantified": true
 }

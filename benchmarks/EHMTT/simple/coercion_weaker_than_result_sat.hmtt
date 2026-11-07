@@ -1,0 +1,24 @@
+%BEGING
+Main xs -> Copies (coerce qCD (AllC xs)).
+AllC xs -> case xs of
+  nil => nil
+| cons y ys => cons c (AllC ys).
+Copies xs -> case xs of
+  nil => nil
+| cons y ys => cons (copy y) (Copies ys).
+%ENDG
+
+%BEGINA
+qCD nil -> .
+qCD cons -> qcd qCD.
+qcd c -> .
+qcd d -> .
+
+qC nil -> .
+qC cons -> qc qC.
+qc c -> .
+%ENDA
+
+%BEGINT
+Main : qCD -> qC.
+%ENDT

@@ -1,0 +1,9 @@
+// The value of X is the number of unit steps from x down to 0.  On the
+// integers it is x for x >= 0, so the lower bound X 3 >= 3 holds and the
+// linear post-fixpoint X x = x (for x >= 0) proves it; on the reals the same
+// equation has the value floor(x), and no linear post-fixpoint valid at
+// every real state reaches more than x - 1, so a bound checker that relaxes
+// the integer state to a real one cannot prove the bound.
+X 3 >= 3.0
+s.t.
+X (x : int) : real =mu if x >= 1 then 1.0 + X (x - 1) else 0.0;

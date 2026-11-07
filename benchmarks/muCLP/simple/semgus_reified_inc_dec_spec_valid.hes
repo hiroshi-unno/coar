@@ -1,0 +1,9 @@
+/* semgus_unreified_inc_dec_spec_valid.hes after reification: one relation per subterm of the
+   program, no datatype left. */
+forall (x: int) (y: int). S0 x y => y = x + 2
+s.t.
+S0 (x: int) (y: int) : bool =mu S1 (x + 1) y;
+S1 (x: int) (y: int) : bool =mu S2 (x + 1) y;
+S2 (x: int) (y: int) : bool =mu S3 (x - 1) y;
+S3 (x: int) (y: int) : bool =mu S4 (x + 1) y;
+S4 (x: int) (y: int) : bool =mu y = x;

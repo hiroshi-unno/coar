@@ -2,7 +2,7 @@
  (name CoAR)
  (public_name CoAR)
  (preprocess
-  (pps ppx_deriving.std ppx_deriving_yojson))
+  (pps ppx_deriving.std ppx_deriving_yojson CoAR.ppx_config_full_json))
  (libraries
   core
   CoAR.Z3Sat
@@ -14,6 +14,7 @@
   CoAR.SPACER
   CoAR.Hoice
   CoAR.PolyQEnt
+  CoAR.PolyQEntTempl
   CoAR.SyGuS
   CoAR.PCSat
   CoAR.MuVal
@@ -22,8 +23,19 @@
   CoAR.Printer
   CoAR.RCaml
   CoAR.EffCaml
+  CoAR.MuValHFL
+  CoAR.MuValQHFL
   CoAR.c
   CoAR.pGCL
   CoAR.SGCL
-  CoAR.BTOR2)
- (modules problemKind solver))
+  CoAR.BTOR2
+  CoAR.Athena
+  CoAR.LLVMWitness
+  ; the direct LLVM frontend is optional: without the LLVM 19 bindings the
+  ; stub refuses -p llvm*
+  (select
+   llvmEntry.ml
+   from
+   (CoAR.LLVMFront -> llvmEntry.llvm.ml)
+   (-> llvmEntry.none.ml)))
+ (modules problemKind solver llvmEntry))

@@ -1,0 +1,7 @@
+(library
+ (name houdiniConfig)
+ (public_name CoAR.houdini.config)
+ (preprocess
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
+ (libraries core yojson CoAR.common)
+ (modules houdiniConfig))

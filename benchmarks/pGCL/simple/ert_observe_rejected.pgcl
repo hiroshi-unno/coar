@@ -1,0 +1,9 @@
+# The expected-runtime calculus has no rule for observe: a bound on the expected runtime
+# of a program with observe is refused.
+nat x;
+
+tick(1);
+{x := 1}[1/2]{x := 0}
+observe(x = 1);
+
+?Ert[0] <= 1

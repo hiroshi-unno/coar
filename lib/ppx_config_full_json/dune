@@ -1,0 +1,6 @@
+(library
+ (name ppx_config_full_json)
+ (public_name CoAR.ppx_config_full_json)
+ (kind ppx_rewriter)
+ (libraries ppxlib)
+ (ppx_runtime_libraries CoAR.config_json_runtime))

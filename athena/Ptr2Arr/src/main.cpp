@@ -40,6 +40,10 @@ static std::string ShellQuote(const std::filesystem::path &Path) {
 
 int main(int argc, char *argv[]) {
     llvm::cl::ParseCommandLineOptions(argc, argv, "Ptr2Arr - C-to-C rewriter\n");
+    if (safetyModesConflict()) {
+        std::cerr << "--memory-safety and --assume-safety cannot be combined: the first checks memory safety, the second assumes it." << std::endl;
+        return 1;
+    }
 
     std::filesystem::path executablePath = std::filesystem::canonical("/proc/self/exe");
     executableDirectory = executablePath.parent_path();

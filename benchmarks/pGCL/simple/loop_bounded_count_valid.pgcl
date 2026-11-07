@@ -1,0 +1,10 @@
+# loop(3) { S } runs S exactly three times: from c = 0 three increments leave c = 3, so
+# wp(loop(3) { c := c + 1 }, c) = c + 3 and at the initial state the expectation of c is 3.
+# Expected: valid.  The bounded loop statement used to parse and then stop the run with an
+# assertion failure in the weakest-preexpectation transformer.
+nat c;
+c := 0;
+loop(3) {
+	c := c + 1;
+}
+?Ex [c] <= 3

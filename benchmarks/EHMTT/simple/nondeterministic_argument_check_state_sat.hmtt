@@ -1,0 +1,24 @@
+/* F hands K to h, whose type demands a function from the trees qin accepts
+   (t and f) to the trees qarg accepts.  K returns a t or a f, both of which
+   qarg accepts, through one of its two transitions on a each.  An
+   abstraction that joins K's two outcomes into one choice node below a
+   checks the choice from one of those transitions and rejects it, which
+   is a refutation no input causes: the property holds. */
+%BEGING
+F h -> h K.
+K y -> a (case y of t => t | f => f).
+%ENDG
+
+%BEGINA
+qin t -> .
+qin f -> .
+qarg a -> q1.
+qarg a -> q2.
+q1 t -> .
+q2 f -> .
+qo ok -> .
+%ENDA
+
+%BEGINT
+F : ((qin -> qarg) -> qo) -> qo.
+%ENDT

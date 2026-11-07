@@ -1,0 +1,6 @@
+; abs (from the SMT-LIB Ints theory) in a clause head: P(|-5|) holds, so P(5)
+(set-logic HORN)
+(declare-fun P (Int) Bool)
+(assert (forall ((x Int)) (=> (= x (- 5)) (P (abs x)))))
+(assert (forall ((y Int)) (=> (and (P y) (= y 5)) false)))
+(check-sat)

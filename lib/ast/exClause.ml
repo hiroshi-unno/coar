@@ -367,30 +367,212 @@ let matched_by_prepared ?(check_inst = false) unknowns units atm =
 let matched_by ?(check_inst = false) unknowns atms atm =
   matched_by_prepared ~check_inst unknowns (prepare_units atms) atm
 
-let simplify_prepared unknowns pos neg (clause, srcs) =
+(* An index over decided unit atoms that answers exactly what
+   [matched_by_prepared] answers over the same units, without scanning them all.
+
+   [matched_by_prepared units atm] returns the FIRST unit of [units] -- the
+   units in increasing polymorphic order of the pair (atom, sources), the order
+   [Set.to_list] gives a [Set.Poly] of such pairs -- that matches [atm]:
+   - a literal with no first-order form matches a unit [ExAtom.equal] to it;
+   - a literal with one matches a unit with one whose atom [Atom.pattern_match]es
+     it (the unit is the pattern), and with [check_inst] the two instantiated
+     atoms must also print the same.
+   The index keeps every unit in buckets that contain each unit a literal can
+   match, sorted in that order, so the first unit of a bucket that passes the
+   same test is the unit the scan finds:
+   - [by_equal]: every unit, by a hash of what [ExAtom.equal] compares;
+   - [ground]: a unit whose atom applies a predicate variable to arguments with
+     no variable at all, by a hash of the predicate and the arguments.  Against
+     a pattern with no variable, [Term.pattern_match] succeeds only on a
+     structurally equal term or on a numeral, real, bit-vector or Boolean
+     constant of the same value, and [arg_key] gives those the same hash;
+   - [param]: any other unit applying a predicate variable, by that variable
+     ([Atom.pattern_match] requires the same predicate);
+   - [other]: the rest ([true], [false]), which only a literal that is not a
+     predicate variable's application can match.
+   Measured on chain-shaped example sets of four to five thousand ground
+   examples, where each literal used to be compared with every unit, one
+   propagation took 230-290 s. *)
+type 'a unit_entry = {
+  u_atm : ExAtom.t;
+  u_old : (sort_env_map * Atom.t) option;
+  u_src : 'a;
+}
+
+(* the order of [matched_by_prepared]'s list: polymorphic order on the pair *)
+let compare_unit_entry e1 e2 =
+  let c = Stdlib.compare e1.u_atm e2.u_atm in
+  if c <> 0 then c else Stdlib.compare e1.u_src e2.u_src
+
+let hash_deep x = Stdlib.Hashtbl.hash_param 100 1000 x
+
+(* equal for any two ground terms [Term.pattern_match] matches *)
+let arg_key = function
+  | Term.FunApp (T_int.Int n, [], _) -> Stdlib.Hashtbl.hash (1, Z.hash n)
+  | Term.FunApp (T_real.Real r, [], _) ->
+      Stdlib.Hashtbl.hash (2, Z.hash (Q.num r), Z.hash (Q.den r))
+  | Term.FunApp (T_bv.BVNum (_, n), [], _) -> Stdlib.Hashtbl.hash (3, Z.hash n)
+  | Term.FunApp (T_bool.Formula (Formula.Atom (atm, _)), [], _)
+    when Atom.is_true atm ->
+      4
+  | Term.FunApp (T_bool.Formula (Formula.Atom (atm, _)), [], _)
+    when Atom.is_false atm ->
+      5
+  | t -> hash_deep t
+
+let ground_key (Ident.Pvar name) args =
+  List.fold args
+    ~init:(Stdlib.Hashtbl.hash (name, List.length args))
+    ~f:(fun h t -> (h * 65599) + arg_key t)
+
+(* equal for any two atoms [ExAtom.equal] identifies *)
+let equal_key = function
+  | ExAtom.FCon (_, phi) -> hash_deep (0, phi)
+  | ExAtom.PApp (_, ts) -> hash_deep (1, ts)
+  | ExAtom.PPApp ((_, phi), (_, ts)) -> hash_deep (2, phi, ts)
+
+let is_ground_args = List.for_all ~f:(Term.tvs_of >> Set.is_empty)
+
+(* The buckets of the reverse question: which literals can a unit match?  A
+   literal is filed under every key it can be found by, a unit names the keys
+   of the literals it can match; a literal a unit matches shares a key with it
+   (see the index above). *)
+type lookup_key =
+  | Ground of int
+  | Pred of Ident.pvar
+  | Equal of int
+  | Other
+
+let literal_keys atm =
+  match ExAtom.to_old_atom atm with
+  | None -> [ Equal (equal_key atm) ]
+  | Some (_, Atom.App (Predicate.Var (pvar, _), args, _)) ->
+      [ Ground (ground_key pvar args); Pred pvar ]
+  | Some _ -> [ Other ]
+
+let unit_keys atm =
+  Equal (equal_key atm)
+  ::
+  (match ExAtom.to_old_atom atm with
+  | None -> []
+  | Some (_, Atom.App (Predicate.Var (pvar, _), args, _)) ->
+      if is_ground_args args then [ Ground (ground_key pvar args) ]
+      else [ Pred pvar ]
+  | Some _ -> [ Other ])
+
+module UnitIndex = struct
+  type 'a t = {
+    by_equal : (int, 'a unit_entry list) Hashtbl.t;
+    ground : (int, 'a unit_entry list) Hashtbl.t;
+    param : (Ident.pvar, 'a unit_entry list) Hashtbl.t;
+    mutable other : 'a unit_entry list;
+  }
+
+  let create () =
+    {
+      by_equal = Hashtbl.Poly.create ();
+      ground = Hashtbl.Poly.create ();
+      param = Hashtbl.Poly.create ();
+      other = [];
+    }
+
+  let insert e l = List.merge ~compare:compare_unit_entry [ e ] l
+
+  let add_to tbl key e =
+    Hashtbl.update tbl key ~f:(function
+      | None -> [ e ]
+      | Some l -> insert e l)
+
+  (* Precondition: no unit equal to [(atm, src)] is in the index yet. *)
+  let add idx (atm, src) =
+    let e = { u_atm = atm; u_old = ExAtom.to_old_atom atm; u_src = src } in
+    add_to idx.by_equal (equal_key atm) e;
+    match e.u_old with
+    | None -> ()
+    | Some (_, Atom.App (Predicate.Var (pvar, _), args, _)) ->
+        if is_ground_args args then add_to idx.ground (ground_key pvar args) e
+        else add_to idx.param pvar e
+    | Some _ -> idx.other <- insert e idx.other
+
+  let bucket tbl key = Option.value ~default:[] (Hashtbl.find tbl key)
+
+  (* [check_inst] compares the printed instantiations, as [matched_by_prepared]
+     does; two structurally equal atoms with no variable instantiate to
+     themselves and print alike, so they are answered without printing *)
+  let inst_equal o' oatm inst =
+    (Set.is_empty (Atom.tvs_of oatm)
+    && try Stdlib.(o' = oatm)
+       with exn_ when not (Common.Timer.is_async exn_) -> false)
+    || String.equal (Atom.str_of @@ Atom.instantiate o') (Lazy.force inst)
+
+  (* the answer of [matched_by_prepared ~check_inst unknowns units atm], where
+     [units] are the units added to [idx] in their sorted order *)
+  let find ?(check_inst = false) unknowns idx atm =
+    (match ExAtom.to_old_atom atm with
+    | None ->
+        List.find (bucket idx.by_equal (equal_key atm)) ~f:(fun e ->
+            ExAtom.equal atm e.u_atm)
+    | Some (_, oatm) -> (
+        let inst = lazy (Atom.str_of @@ Atom.instantiate oatm) in
+        let ok e =
+          match e.u_old with
+          | None -> false
+          | Some (_, o') ->
+              Option.is_some (Atom.pattern_match unknowns o' oatm)
+              && ((not check_inst) || inst_equal o' oatm inst)
+        in
+        match oatm with
+        | Atom.App (Predicate.Var (pvar, _), args, _) -> (
+            let g = List.find (bucket idx.ground (ground_key pvar args)) ~f:ok in
+            let p = List.find (bucket idx.param pvar) ~f:ok in
+            match (g, p) with
+            | Some eg, Some ep ->
+                Some (if compare_unit_entry eg ep <= 0 then eg else ep)
+            | Some e, None | None, Some e -> Some e
+            | None, None -> None)
+        | _ -> List.find idx.other ~f:ok))
+    |> Option.map ~f:(fun e -> (e.u_atm, e.u_src))
+end
+
+(* [simplify_gen unknowns ~match_pos ~match_neg (clause, srcs)] removes from
+   [clause] each literal that a unit of the opposite polarity matches, and adds that unit's
+   sources to [srcs]; [None] when a unit of the same polarity subsumes the
+   clause.  The sources are a set: a unit derived through a clause with several
+   removed literals carries the sources of all of them, and propagation through
+   a chain of such clauses shares sources between branches, so a list that
+   appended them kept every shared ancestor once per path -- exponentially
+   many copies in the nesting depth of the derivation (a termination problem's
+   dual, whose head disjunctions merge two negative units per step, grew one
+   list past 150 000 entries over at most a few hundred distinct examples, and
+   on another draw exhausted 20 GB).  Every consumer reads the sources as a
+   set, so deduplicating them here changes no result.
+   [match_pos check_inst atm] ([match_neg]) is the first positive (negative)
+   unit matching [atm] together with its sources, as [matched_by_prepared]
+   defines it; [simplify_prepared] and [simplify_indexed] give it over a list
+   from [prepare_units] and over a [UnitIndex].  Postcondition: the returned sources contain [srcs] and the sources
+   of every unit that removed a literal. *)
+let simplify_gen unknowns ~match_pos ~match_neg (clause, srcs) =
   let srcs = ref srcs in
   let cl_pos =
     Set.filter clause.positive ~f:(fun atm ->
-        match matched_by_prepared unknowns neg atm with
+        match match_neg false atm with
         | Some (_, src) ->
-            srcs := src @ !srcs;
+            srcs := Set.union src !srcs;
             false
         | None -> true)
   in
   let cl_neg =
     Set.filter clause.negative ~f:(fun atm ->
-        match matched_by_prepared unknowns pos atm with
+        match match_pos false atm with
         | Some (_, src) ->
-            srcs := src @ !srcs;
+            srcs := Set.union src !srcs;
             false
         | None -> true)
   in
   if
-    Set.exists cl_pos
-      ~f:(matched_by_prepared unknowns pos ~check_inst:true >> Option.is_some)
+    Set.exists cl_pos ~f:(match_pos true >> Option.is_some)
     (* clause is subsumed by pos *)
-    || Set.exists cl_neg
-         ~f:(matched_by_prepared unknowns neg ~check_inst:true >> Option.is_some)
+    || Set.exists cl_neg ~f:(match_neg true >> Option.is_some)
     (* clause is subsumed by neg *)
     ||
     (*ToDo: this never holds?*)
@@ -399,6 +581,18 @@ let simplify_prepared unknowns pos neg (clause, srcs) =
   else
     Some
       (normalize_params unknowns { positive = cl_pos; negative = cl_neg }, !srcs)
+
+let simplify_prepared unknowns pos neg =
+  simplify_gen unknowns
+    ~match_pos:(fun check_inst -> matched_by_prepared ~check_inst unknowns pos)
+    ~match_neg:(fun check_inst -> matched_by_prepared ~check_inst unknowns neg)
+
+(* [simplify_prepared] with the units looked up in an index (see [UnitIndex]):
+   the same result for the same units *)
+let simplify_indexed unknowns pos neg =
+  simplify_gen unknowns
+    ~match_pos:(fun check_inst -> UnitIndex.find ~check_inst unknowns pos)
+    ~match_neg:(fun check_inst -> UnitIndex.find ~check_inst unknowns neg)
 
 let simplify unknowns pos neg =
   simplify_prepared unknowns (prepare_units pos) (prepare_units neg)

@@ -17,14 +17,124 @@ type t = { preds : Pred.t list; query : query }
 type solution = Common.Verdict.t = Valid | Invalid | Unknown | Timeout
 
 let make preds query = { preds; query }
+exception Syntax_error of string
 let flip_solution = Common.Verdict.flip
 let str_of_solution = Common.Verdict.str_of
 let lts_str_of_solution = Common.Verdict.lts_str_of
 
+(* The SMT-LIB [declare-datatypes] commands this format's reader takes as a
+   prelude, one per declaration group of a datatype the problem mentions, so
+   that a printed problem over datatypes reads back.  Empty for a problem
+   without datatypes, which then prints exactly as before.  The reader takes
+   only monomorphic datatypes, and so does this: a parametric one, or a field
+   of a sort SMT-LIB's core, integers, reals, arrays and datatypes cannot
+   spell, is refused rather than printed as a file that reads differently. *)
+let datatype_prelude muclp =
+  (* The SMT reader retains bars around literal-like and reserved names. *)
+  let symbol name =
+    let quoted = String.length name >= 2
+      && Char.equal name.[0] '|' && Char.equal name.[String.length name - 1] '|' in
+    let plain = not (String.is_empty name) && not (Char.is_digit name.[0])
+      && String.for_all name ~f:(fun c ->
+          Char.is_alphanum c || String.mem "~!@$%^&*_-+=<>.?/" c) in
+    if quoted || plain then name else "|" ^ name ^ "|"
+  in
+  let rec smt_sort = function
+    | T_int.SInt -> "Int"
+    | T_bool.SBool -> "Bool"
+    | T_real.SReal -> "Real"
+    | T_array.SArray (s1, s2) ->
+        sprintf "(Array %s %s)" (smt_sort s1) (smt_sort s2)
+    | T_dt.SDT dt when List.is_empty (Datatype.params_of dt) ->
+        symbol (Datatype.name_of dt)
+    | s ->
+        failwith
+          (sprintf "a datatype field of sort %s has no spelling in this format"
+             (Term.str_of_sort s))
+  in
+  let formulas =
+    muclp.query :: List.map muclp.preds ~f:(fun (pred : Pred.t) -> pred.body)
+  in
+  let roots = DTEnv.of_formulas formulas |> Map.Poly.data in
+  let visited = ref Set.Poly.empty in
+  let definitions = ref Map.Poly.empty in
+  let owners = ref Map.Poly.empty in
+  let ordered = ref [] in
+  let rec visit_sort = function
+    | T_dt.SDT dt when not (Datatype.is_undef dt) -> visit dt
+    | T_array.SArray (s1, s2) -> visit_sort s1; visit_sort s2
+    | _ -> ()
+  and visit t =
+    let members =
+      List.sort (Datatype.dts_of t) ~compare:(fun a b ->
+          String.compare (Datatype.name_of_dt a) (Datatype.name_of_dt b))
+    in
+    let key =
+      List.map members ~f:(fun dt ->
+          Datatype.structural_sort_key
+            (T_dt.SDT { t with Datatype.name = Datatype.name_of_dt dt }))
+    in
+    (* Instance keys are nominal; consistency of their definitions is a
+       separate obligation, including declarations reached only by metadata. *)
+    (match Map.Poly.find !definitions key with
+    | Some previous when Stdlib.compare previous (Datatype.dts_of t) <> 0 ->
+        failwith (sprintf "distinct datatype groups share the printed sort name %s"
+          (Datatype.name_of t))
+    | _ -> definitions := Map.Poly.set !definitions ~key ~data:(Datatype.dts_of t));
+    if not (Set.mem !visited key) then (
+      if not (List.is_empty (Datatype.params_of t)) then
+        failwith
+          (sprintf "the datatype %s is parametric, which this format cannot declare"
+             (Datatype.name_of t));
+      (* This syntax has one printed name per sort, with no instance
+         annotation. Distinct structural groups cannot share that name. *)
+      List.iter members ~f:(fun dt ->
+          let name = Datatype.name_of_dt dt in
+          match Map.find !owners name with
+          | Some old when not (List.equal Sexp.equal old key) ->
+              failwith (sprintf "distinct datatype groups share the printed sort name %s" name)
+          | _ -> owners := Map.set !owners ~key:name ~data:key);
+      visited := Set.add !visited key;
+      List.iter (Datatype.dts_of t) ~f:(fun dt ->
+          let member = { t with Datatype.name = Datatype.name_of_dt dt } in
+          List.iter (Datatype.conses_of_dt dt) ~f:(fun cons ->
+              List.iter (Datatype.sorts_of_cons member cons) ~f:visit_sort));
+      ordered := t :: !ordered)
+  in
+  List.iter muclp.preds ~f:(fun (pred : Pred.t) ->
+      List.iter pred.args ~f:(fun (_, sort) -> visit_sort sort));
+  List.iter formulas ~f:(fun phi ->
+      Set.iter (Formula.quantified_sort_env_of phi)
+        ~f:(fun (_, sort) -> visit_sort sort));
+  List.iter roots ~f:(fun t ->
+      if not (Datatype.is_undef t) then visit t);
+  let groups = List.rev !ordered in
+  List.map groups ~f:(fun t ->
+      let dts = Datatype.dts_of t in
+      sprintf "(declare-datatypes (%s) (%s))"
+        (String.concat_map_list ~sep:" " dts ~f:(fun dt ->
+             sprintf "(%s 0)" (symbol (Datatype.name_of_dt dt))))
+        (String.concat_map_list ~sep:" " dts ~f:(fun dt ->
+             let t = { t with Datatype.name = Datatype.name_of_dt dt } in
+             sprintf "(%s)"
+             (* the reader keeps constructors last-declared first; printing
+                them reversed gives back the declared order, so a printed
+                file prints again unchanged *)
+             @@ String.concat_map_list ~sep:" "
+                  (List.rev (Datatype.conses_of_dt dt))
+                  ~f:(fun cons ->
+                    sprintf "(%s)"
+                    @@ String.concat ~sep:" "
+                    @@ symbol (Datatype.name_of_cons cons)
+                       :: List.map (Datatype.sels_of_cons cons) ~f:(fun sel ->
+                              sprintf "(%s %s)" (symbol (Datatype.name_of_sel sel))
+                                (smt_sort (Datatype.sort_of_sel t sel)))))))
+
 let str_of muclp =
-  sprintf "%s\ns.t.\n%s"
-    (Formula.str_of muclp.query)
-    (Pred.str_of_list muclp.preds)
+  String.concat_map_list (datatype_prelude muclp) ~f:(fun d -> d ^ "\n")
+  ^ sprintf "%s\ns.t.\n%s"
+      (Formula.str_of muclp.query)
+      (Pred.str_of_list muclp.preds)
 
 let has_only_mu muclp =
   List.for_all ~f:(fun pred -> Stdlib.( = ) pred.kind Predicate.Mu) muclp.preds
@@ -88,7 +198,25 @@ let elim_neg muclp =
   if not (List.exists formulas ~f:needs) then muclp
   else
     let pvars = Set.Poly.of_list @@ List.map muclp.preds ~f:(fun p -> p.name) in
-    let dual_name (Ident.Pvar n) = Ident.Pvar (n ^ "_neg") in
+    (* The dual of [P] is named [P_neg], or [P_neg<k>] with the least [k >= 2]
+       that is free, when the input defines that name itself or it is the
+       dual of another predicate: a file defining both [P] and [P_neg] and
+       negating [P] got two equations named [P_neg], and the occurrences of
+       either meant whichever lookup ran first.  Allocated once, in the order
+       of the equations, so the names are a function of the input. *)
+    let dual_names =
+      let taken = ref (Set.Poly.map pvars ~f:Ident.name_of_pvar) in
+      List.fold muclp.preds ~init:Map.Poly.empty ~f:(fun duals (pred : Pred.t) ->
+          let base = Ident.name_of_pvar pred.name ^ "_neg" in
+          let rec draw k =
+            let name = if k = 1 then base else base ^ string_of_int k in
+            if Set.mem !taken name then draw (k + 1) else name
+          in
+          let name = draw 1 in
+          taken := Set.add !taken name;
+          Map.Poly.set duals ~key:pred.name ~data:(Ident.Pvar name))
+    in
+    let dual_name pvar = Map.Poly.find_exn dual_names pvar in
     let rec elim_iff = function
       | Formula.BinaryOp (Formula.Iff, phi1, phi2, info) ->
           let phi1 = elim_iff phi1 and phi2 = elim_iff phi2 in
@@ -178,6 +306,12 @@ let elim_neg muclp =
 
 let map_formula f muclp = make (Pred.map_list f muclp.preds) (f muclp.query)
 let size_of muclp = List.length muclp.preds
+
+(* the formula nodes of the query and of every predicate body
+   ([Formula.ast_size]); [size_of] counts predicates only *)
+let ast_size_of muclp =
+  List.fold muclp.preds ~init:(Formula.ast_size muclp.query) ~f:(fun acc pred ->
+      acc + Formula.ast_size pred.Pred.body)
 
 let penv_of ?(init = Map.Poly.empty) muclp =
   Pred.pred_sort_env_map_of_list init muclp.preds
@@ -328,7 +462,12 @@ let detect_undefined_preds muclp =
            (sprintf "fpvs: %s"
            @@ String.concat_map_set ~sep:"," fpv ~f:Ident.name_of_pvar);
     match Set.find ~f:(Map.Poly.mem map >> not) fpv with
-    | Some (Ident.Pvar pid) -> failwith @@ "undefined predicates: " ^ pid
+    | Some (Ident.Pvar pid) ->
+        (* an ill-formed input, refused in one line rather than raised as an
+           internal failure that the command line prints with a backtrace *)
+        Common.Refusal.refuse
+          "undefined predicate %s: it is applied but no equation defines it"
+          pid
     | None -> ()
   in
   let rec mk_env map = function
@@ -341,8 +480,35 @@ let detect_undefined_preds muclp =
   List.iter muclp.preds ~f:(fun pred -> check map pred.body);
   muclp
 
-(* What a muCLP solver validates about its input when its config asks for it
-   ([check_problem], set in every dbg_ config).  Only the undefined-predicate
+(* [refuse_free_body_vars muclp]: [muclp] unchanged when every term variable
+   free in a predicate's body is one of that predicate's parameters; otherwise
+   a refusal naming the variable and the predicate.
+   An equation [P x =nu ... c ...] whose [c] no parameter or binder binds has
+   no meaning of its own: unlike an open query, whose universal closure is the
+   standard reading of validity, a variable free in a fixpoint equation could
+   be a parameter shared by the whole system (universally closed outside the
+   query) or a placeholder for a constant, and the two readings give different
+   answers.  Left open it reached the engines unbound, and the conversion of
+   the clause set for a constraint solver stopped with an internal failure. *)
+let refuse_free_body_vars muclp =
+  List.iter muclp.preds ~f:(fun pred ->
+      let params = Set.Poly.of_list @@ List.map ~f:fst pred.Pred.args in
+      match
+        Set.find (Formula.tvs_of pred.body) ~f:(Set.mem params >> not)
+      with
+      | Some x ->
+          Common.Refusal.refuse
+            "%s is not bound in the equation of %s: a variable of a \
+             predicate's body must be one of its parameters or bound by a \
+             quantifier"
+            (Ident.name_of_tvar x)
+            (Ident.name_of_pvar pred.name)
+      | None -> ());
+  muclp
+
+(* What a muCLP solver validates about its input: MuVal always, MuStrat when
+   its config asks for it ([check_problem], set in every dbg_ config).  One
+   pass over the problem's formulas.  Only the undefined-predicate
    check runs: a predicate applied in the query or in a body with no definition
    in [preds] used to reach the reducer, which looks its arity up with
    [Hashtbl.find_exn] and died with [Not_found_s "Hashtbl.find_exn: not found"]

@@ -1,0 +1,13 @@
+(library
+ (name CPS)
+ (public_name CoAR.CPS)
+ (libraries
+  core
+  compiler-libs.bytecomp
+  compiler-libs.common
+  CoAR.common
+  CoAR.ast
+  CoAR.automata
+  CoAR.HOMC
+  CoAR.RCaml)
+ (modules cpsLang cpsAnnot cpsElab cpsScheme schemeO24 cpsHors pipeline))

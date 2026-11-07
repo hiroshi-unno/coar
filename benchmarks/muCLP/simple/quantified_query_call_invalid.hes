@@ -1,0 +1,6 @@
+/* The twin of quantified_query_call_valid.hes: the query applies a fixpoint
+   predicate under its own universal quantifier.  Invalid: from a negative x,
+   counting down never reaches a non-negative value. */
+forall (x: int). I x
+s.t.
+I (x: int): bool =mu x >= 0 \/ I (x - 1);

@@ -11,6 +11,11 @@
 #include "../include/bit_variable_visitor/bit_variable_action.h"
 #include "../include/nondet_variable_visitor/nondet_variable_action.h"
 
+// The name the in-memory source is parsed under. Its extension selects the language: the input is
+// C, and parsed as C++ (the tooling default, "input.cc") a call of an undeclared function is an
+// error rather than an implicit declaration, so the visitors would see no such call at all.
+static const char *const kInputName = "input.c";
+
 std::string MapName_BitVariable(std::string llFile, std::string cName, std::string declLine) {
     std::string t2Name;
     if (cName.starts_with("gtv_")) {
@@ -53,9 +58,20 @@ std::string MapName_BitVariable(std::string llFile, std::string cName, std::stri
     return t2Name;
 }
 
-std::string MapName_NondetVariable(const std::string &llFile, const std::string &cName, const std::string &declLine, size_t i) {
+// The T2 name of the value of the i-th nondeterministic call in main, in source order, paired by
+// position with the i-th entry the AST visitors collect. Every call form is matched, so that one
+// unmatched call cannot shift the pairing: the prototyped call `call zeroext i16 @__VERIFIER_nondet_ushort()`,
+// the call of an undeclared function `call i32 (...)* @__VERIFIER_nondet_ushort()` (C gives an
+// undeclared function the type `int ()`), and a call through a cast of the function,
+// `call i16 bitcast (i32 (...)* @__VERIFIER_nondet_ushort to i16 ()*)()`. For the last two the
+// value the call defines has the width of the call's own result type, not that of the name's type,
+// and *irBitwidth is set to it; for a prototyped call it is left empty and the caller's width stands.
+std::string MapName_NondetVariable(const std::string &llFile, const std::string &cName, const std::string &declLine, size_t i,
+                                   std::string *irBitwidth = nullptr) {
     std::string t2Name;
-    std::regex pattern("(%\"?[\\w\\.]+\"?)\\s*=\\s*(tail\\s*)?call\\s+(?:\\w+\\s+)*?(i\\d+)\\s+@__VERIFIER_nondet_(\\w+)\\(\\)(?:[^!]*?)!dbg\\s*!?\\d+");
+    std::regex pattern("(%\"?[\\w\\.]+\"?)\\s*=\\s*(tail\\s*)?call\\s+(?:\\w+\\s+)*?i(\\d+)\\s+"
+                       "(?:(\\([^()]*\\)\\*)\\s+|(bitcast)\\s+\\([^@]*)?"
+                       "@__VERIFIER_nondet_(\\w+)(?:\\(\\)|\\s+to\\s+[^)]*\\)\\*\\)\\(\\))(?:[^!]*?)!dbg\\s*!?\\d+");
     std::string mainBody = llFile.substr(llFile.find("define i32 @main()"));
     size_t counter = 0;
     for (std::sregex_iterator it(mainBody.begin(), mainBody.end(), pattern), end; it != end; ++it, ++counter) {
@@ -63,6 +79,10 @@ std::string MapName_NondetVariable(const std::string &llFile, const std::string 
             t2Name = (*it)[1].str();
             t2Name.erase(std::remove(t2Name.begin(), t2Name.end(), '%'), t2Name.end());
             t2Name.erase(std::remove(t2Name.begin(), t2Name.end(), '"'), t2Name.end());
+            if (irBitwidth != nullptr) {
+                if ((*it)[4].matched || (*it)[5].matched) *irBitwidth = (*it)[3].str();
+                else irBitwidth->clear();
+            }
         }
     }
     return "v" + t2Name;
@@ -129,10 +149,10 @@ int main(int argc, char *argv[]) {
 
     else if (mode == "--mode=only-bv") {
         bool hasBitOperation = false;
-        clang::tooling::runToolOnCode(std::make_unique<BitOperationAction>(hasBitOperation), cFile);
+        clang::tooling::runToolOnCode(std::make_unique<BitOperationAction>(hasBitOperation), cFile, kInputName);
         if (hasBitOperation) {
             std::vector<BitVariable> bitVariables;
-            clang::tooling::runToolOnCode(std::make_unique<BitVariableAction>(bitVariables), cFile);
+            clang::tooling::runToolOnCode(std::make_unique<BitVariableAction>(bitVariables), cFile, kInputName);
             std::set<std::string> uniqueTypes;
             for (const auto &item : bitVariables) {
                 std::string cName = item.name;
@@ -155,13 +175,13 @@ int main(int argc, char *argv[]) {
 
     else if (mode == "--mode=only-nobv") {
         bool hasBitOperation = false;
-        clang::tooling::runToolOnCode(std::make_unique<BitOperationAction>(hasBitOperation), cFile);
+        clang::tooling::runToolOnCode(std::make_unique<BitOperationAction>(hasBitOperation), cFile, kInputName);
         if (hasBitOperation) {
             outFile << "\n";
         }
         else {
             std::vector<NondetVariable> nondetVariables;
-            clang::tooling::runToolOnCode(std::make_unique<NondetVariableAction>(nondetVariables), cFile);
+            clang::tooling::runToolOnCode(std::make_unique<NondetVariableAction>(nondetVariables), cFile, kInputName);
             std::set<std::string> uniqueTypes;
             for (size_t i = 0; i < nondetVariables.size(); ++i) {
                 const auto &item = nondetVariables[i];
@@ -169,7 +189,9 @@ int main(int argc, char *argv[]) {
                 std::string declLine = std::to_string(item.declLine + (cName.starts_with("gtv_") ? 1 : 11));
                 std::string bitwidth = item.bitwidth;
                 std::string signedness = item.signedness;
-                std::string t2Name = MapName_NondetVariable(llFile, cName, declLine, i);
+                std::string irBitwidth;
+                std::string t2Name = MapName_NondetVariable(llFile, cName, declLine, i, &irBitwidth);
+                if (!irBitwidth.empty()) bitwidth = irBitwidth;
                 if (!t2Name.empty()) {
                     uniqueTypes.insert("TYPE " + t2Name + ": bv(" + bitwidth + ");");
                 }
@@ -182,10 +204,10 @@ int main(int argc, char *argv[]) {
 
     else if (mode == "--mode=all") {
         bool hasBitOperation = false;
-        clang::tooling::runToolOnCode(std::make_unique<BitOperationAction>(hasBitOperation), cFile);
+        clang::tooling::runToolOnCode(std::make_unique<BitOperationAction>(hasBitOperation), cFile, kInputName);
         if (hasBitOperation) {
             std::vector<BitVariable> bitVariables;
-            clang::tooling::runToolOnCode(std::make_unique<BitVariableAction>(bitVariables), cFile);
+            clang::tooling::runToolOnCode(std::make_unique<BitVariableAction>(bitVariables), cFile, kInputName);
             std::set<std::string> uniqueTypes;
             for (const auto &item : bitVariables) {
                 std::string cName = item.name;
@@ -203,7 +225,7 @@ int main(int argc, char *argv[]) {
         }
         else {
             std::vector<NondetVariable> nondetVariables;
-            clang::tooling::runToolOnCode(std::make_unique<NondetVariableAction>(nondetVariables), cFile);
+            clang::tooling::runToolOnCode(std::make_unique<NondetVariableAction>(nondetVariables), cFile, kInputName);
             std::set<std::string> uniqueTypes;
             for (size_t i = 0; i < nondetVariables.size(); ++i) {
                 const auto &item = nondetVariables[i];
@@ -211,7 +233,9 @@ int main(int argc, char *argv[]) {
                 std::string declLine = std::to_string(item.declLine + (cName.starts_with("gtv_") ? 1 : 11));
                 std::string bitwidth = item.bitwidth;
                 std::string signedness = item.signedness;
-                std::string t2Name = MapName_NondetVariable(llFile, cName, declLine, i);
+                std::string irBitwidth;
+                std::string t2Name = MapName_NondetVariable(llFile, cName, declLine, i, &irBitwidth);
+                if (!irBitwidth.empty()) bitwidth = irBitwidth;
                 if (!t2Name.empty()) {
                     uniqueTypes.insert("TYPE " + t2Name + ": bv(" + bitwidth + ");");
                 }

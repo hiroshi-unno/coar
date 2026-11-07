@@ -1,0 +1,19 @@
+[
+    "RCaml",
+    {
+        "solver": [
+            "Filename",
+            "./config/solver/printer_smt2_wopp.json"
+        ],
+        "chc_optimizer": [
+            "Filename",
+            "./config/solver/optpcsat_nc_tb_ar.json"
+        ],
+        "verbose": false,
+        "cgen_config": {
+            "pred_poly_encoding": [
+                "Universal_interface"
+            ]
+        }
+    }
+]

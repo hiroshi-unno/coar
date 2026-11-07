@@ -1,0 +1,8 @@
+/* `frem` and `crem` are the remainders that pair with `fdiv` and `cdiv`:
+   x = y * (x fdiv y) + x frem y, and likewise for the ceiling pair.
+   -7 fdiv 2 is -4, so -7 frem 2 is 1; 7 fdiv -2 is -4, so 7 frem -2 is -1;
+   -7 cdiv 2 is -3, so -7 crem 2 is -1.  All three are ground, and folding
+   them used to raise out of simplification. */
+forall (x: int). P x
+s.t.
+P (x: int): bool =mu (0 - 7) frem 2 = 1 /\ 7 frem (0 - 2) = 0 - 1 /\ (0 - 7) crem 2 = 0 - 1;

@@ -100,7 +100,8 @@ let images ~fast ((_, _, sub, ids1_set, ids2_set) : pair)
 
 (* the census behind [COAR_PROPAGATE_CENSUS]: per round, the pairs visited,
    the qualifiers produced and how many were new *)
-let census = lazy (Option.is_some (Sys.getenv "COAR_PROPAGATE_CENSUS"))
+(* evaluated now: a [lazy] forced by two domains at once raises [Lazy.Undefined] *)
+let census = Lazy.from_val (Option.is_some (Sys.getenv "COAR_PROPAGATE_CENSUS"))
 
 let fixpoint ?(print = fun (_ : string lazy_t) -> ()) ~fast
     (pairs : pair Set.Poly.t)

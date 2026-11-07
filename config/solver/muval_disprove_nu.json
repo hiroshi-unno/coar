@@ -1,0 +1,14 @@
+[
+    "MuVal",
+    {
+        "task": [
+            "Disprove"
+        ],
+        "qelim": {
+            "elimination": [
+                "Nu",
+                100
+            ]
+        }
+    }
+]

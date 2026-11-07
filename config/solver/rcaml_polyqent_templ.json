@@ -1,0 +1,14 @@
+[
+    "RCaml",
+    {
+        "solver": [
+            "Filename",
+            "./config/solver/polyqent_templ.json"
+        ],
+        "chc_optimizer": [
+            "Filename",
+            "./config/solver/optpcsat_nc_tb_ar.json"
+        ],
+        "verbose": false
+    }
+]

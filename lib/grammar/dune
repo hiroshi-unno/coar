@@ -8,6 +8,7 @@
  (name grammar)
  (public_name CoAR.grammar)
  (preprocess
-  (pps ppx_deriving_yojson))
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
  (libraries core yojson CoAR.common CoAR.automata)
- (modules regWordExp regTreeExp regTreeExpLexer regTreeExpParser))
+ (modules regWordExp regTreeExp regTreeExpLexer regTreeExpParser
+  regTreeExpReader))

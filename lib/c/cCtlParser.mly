@@ -3,9 +3,16 @@
   open Ast
   open Ast.LogicOld
   open CSyntax
+
+  (* a loop body whose [continue]s jump to its end, the loop's next iteration;
+     [continue] used to be read as an expression statement naming a variable,
+     a no-op, so the rest of the body ran *)
+  let loop_body body =
+    let body, cont = Statement.close_continue body in
+    Statement.of_statements (body :: Option.to_list cont)
 %}
 
-%token IF ELSE DO WHILE FOR BREAK RETURN GOTO
+%token IF ELSE DO WHILE FOR BREAK CONTINUE RETURN GOTO
 %token LPAREN RPAREN LBLOCK RBLOCK EOF
 %token EQUAL
 %token NOT AND OR
@@ -63,8 +70,10 @@ Decls:
 Decl:
   /* ignore: extern void __VERIFIER_error(); */
   | EXTERN VOID ERROR LPAREN RPAREN Attributes SEMI { None, [], None, None, [], [] }
-  /* ignore: extern void __VERIFIER_assume(); */
-  | EXTERN VOID ASSUME LPAREN RPAREN Attributes SEMI { None, [], None, None, [], [] }
+  /* ignore: extern void __VERIFIER_assume(); and its prototype form extern void __VERIFIER_assume(int);
+     (the SV-COMP declaration, with or without a parameter name).  The declaration is ignored either way:
+     a call of __VERIFIER_assume is recognised by its name, so the parameter list carries nothing. */
+  | EXTERN VOID ASSUME LPAREN AssumeParameter RPAREN Attributes SEMI { None, [], None, None, [], [] }
   /* ignore: extern int __VERIFIER_nondet_bool(); */
   | EXTERN INT NONDET_BOOL LPAREN RPAREN Attributes SEMI { None, [], None, None, [], [] }
   /* ignore: extern char __VERIFIER_nondet_char(); */
@@ -115,6 +124,10 @@ Decl:
   | SHARPDEFINE id=ID value=INTL {
     None, [], None, None, [Define.mk_def id value], []
   }
+  /* #define XX -12 (a literal carries no sign: x-1 is a subtraction) */
+  | SHARPDEFINE id=ID MINUS value=INTL {
+    None, [], None, None, [Define.mk_def id (- value)], []
+  }
   /* #define hoge() nondet() */
   | SHARPDEFINE funname=ID LPAREN RPAREN NONDET LPAREN RPAREN {
     None, [], None, None, [], [FunDecl.mk_fun_nondet_int(*ToDo*) funname []]
@@ -155,7 +168,14 @@ Decl:
     None, [], None, None, [], [FunDecl.mk_fun_nondet_int funname params]
   }
 
-Int: CHAR | SHORT | INT | LONG | LONG LONG { () }
+/* the width of a narrow integer type; [None] for the int-ranked ones */
+IntWidth:
+  | CHAR { Some 8 }
+  | SHORT { Some 16 }
+  | INT | LONG | LONG LONG { None }
+
+/* the type of a declaration, a parameter or a function's result */
+Int: n=IntWidth { refuse_narrow_decl n }
 
 /* int a, b, c; */
 VarDecl:
@@ -181,6 +201,11 @@ Variables:
 Variable:
   | varname=ID { [varname] }
   | LNONDET { [] }
+
+/* The parameter list of an ignored __VERIFIER_assume declaration: empty, int, or int with a name. */
+AssumeParameter:
+  | { () }
+  | INT ID? { () }
 
 Attributes:
   | { () }
@@ -233,7 +258,9 @@ Init:
     List.fold_left ~init:inits varnames
       ~f:(fun inits varname -> Init.mk_assign varname term :: inits)
   }
-  | MultipleNondetAssignInit inits=Init { inits }
+  | varnames=MultipleNondetAssignInit inits=Init {
+    List.map varnames ~f:Init.mk_nondet_int_assign @ inits
+  }
   | ASSUME LPAREN fml=Formula RPAREN SEMI inits=Init { Init.mk_assume fml :: inits }
 
 /* a = b = c = 10; */
@@ -244,11 +271,12 @@ MultipleAssignInit:
     varname :: varnames, term
   }
 
-/* a = b = c = nondet(); */
+/* a = b = c = nondet(); -- a draw each, kept so that one overwrites an
+   earlier assignment in init */
 MultipleNondetAssignInit:
-  | ID EQUAL NONDET LPAREN RPAREN SEMI {}
-  | ID EQUAL LNONDET SEMI {}
-  | ID EQUAL MultipleNondetAssignInit {}
+  | varname=ID EQUAL NONDET LPAREN RPAREN SEMI { [varname] }
+  | varname=ID EQUAL LNONDET SEMI { [varname] }
+  | varname=ID EQUAL varnames=MultipleNondetAssignInit { varname :: varnames }
 
 /* a = 3; if (x > 0) { y = 10; } */
 Statements:
@@ -265,7 +293,7 @@ Statement:
       if cond_n = 0 then
         Statement.mk_nop ()
       else
-        Statement.mk_loop stmt
+        Statement.mk_loop (loop_body stmt)
     }
 
 StatementIfT:
@@ -276,7 +304,7 @@ StatementIfT:
       if cond_n = 0 then
         Statement.mk_nop ()
       else
-        Statement.mk_loop stmt
+        Statement.mk_loop (loop_body stmt)
     }
 
 StatementGeneral:
@@ -284,8 +312,13 @@ StatementGeneral:
   | varname=ID EQUAL NONDET LPAREN RPAREN SEMI { Statement.mk_nondet_int_assign varname }
   | varname=ID EQUAL LNONDET SEMI { Statement.mk_nondet_int_assign varname }
   | BREAK SEMI { Statement.mk_break () }
-  | RETURN INTL SEMI { Statement.mk_exit () }
-  | RETURN SEMI { Statement.mk_exit () }
+  | CONTINUE SEMI { Statement.mk_continue () }
+  /* A return leaves the function it is in: inlining turns a helper's into a
+     jump to its call site, and those left in body or main end the run.
+     Reading every return as the end of the run let a helper's return 1;
+     stop the program at its call. */
+  | RETURN t=Term SEMI { Statement.mk_return_int t }
+  | RETURN SEMI { Statement.mk_return_void () }
   | LBLOCK stmts=Statements RBLOCK { Statement.of_statements stmts }
   /* label */
   | ID COLON { Statement.mk_nop () }
@@ -312,10 +345,12 @@ StatementGeneral:
   | varname=ID EQUAL funname=ID LPAREN args=Arguements RPAREN SEMI {
     Statement.mk_call_assign varname funname args
   }
-  /* abort */
-  | ERROR LPAREN RPAREN SEMI { Statement.mk_nop ()(*ToDo*) }
-  | ABORT LPAREN RPAREN SEMI { Statement.mk_nop ()(*ToDo*) }
-  | ASSERT_FAIL LPAREN args=Arguements RPAREN SEMI { ignore args; Statement.mk_nop ()(*ToDo*) }
+  /* abort(), __VERIFIER_error() and __assert_fail(...) do not return: the run
+     ends there, as it does at a return from main.  Reading them as a no-op let
+     the statements after them run and decide the property. */
+  | ERROR LPAREN RPAREN SEMI { Statement.mk_exit () }
+  | ABORT LPAREN RPAREN SEMI { Statement.mk_exit () }
+  | ASSERT_FAIL LPAREN args=Arguements RPAREN SEMI { ignore args; Statement.mk_exit () }
   /* nops */
   | t=Term SEMI {
     if Term.is_funcall t then
@@ -340,9 +375,18 @@ FormulaAnd:
   | left=FormulaNeg AND right=FormulaAnd { Formula.mk_and left right ~info:Dummy }
   | fml=FormulaNeg { fml }
 
+/* C's ! binds tighter than a comparison: !x > 0 is (!x) > 0, which is x == 0,
+   not !(x > 0).  So a negated formula is a parenthesised formula, another
+   negation or a bare term; a ! that a comparison follows is the term
+   operator of T_intUnary. */
 FormulaNeg:
-  | NOT fml=FormulaNeg { Formula.mk_neg fml ~info:Dummy }
+  | NOT fml=FormulaNegOperand { Formula.mk_neg fml ~info:Dummy }
   | fml=FormulaAtom { fml }
+
+FormulaNegOperand:
+  | NOT fml=FormulaNegOperand { Formula.mk_neg fml ~info:Dummy }
+  | LPAREN fml=Formula RPAREN { fml }
+  | term=T_intAtom { formula_of_term term }
 
 FormulaAtom:
   | atom=Atom { Formula.mk_atom atom ~info:Dummy }
@@ -375,8 +419,17 @@ T_intMulDivMod:
 
 T_intUnary:
   | t=T_intParen { t }
-  | Cast t=T_intUnary { t }
+  /* a cast to char or short converts modulo 2^bits; one to an int-ranked
+     type is the identity, these types being mathematical integers here */
+  | c=Cast t=T_intUnary {
+    match c with
+    | None -> t
+    | Some (bits, signed) -> convert_to_narrow bits signed t }
   | MINUS t=T_intUnary { T_int.mk_neg t ~info:Dummy }
+  /* !e as a value: 1 when e is 0, else 0 */
+  | NOT t=T_intUnary {
+    T_bool.ifte (Formula.eq t (T_int.zero ())) (T_int.one ()) (T_int.zero ()) ~info:Dummy
+  }
 
 T_intParen:
   | t=T_intAtom { t }
@@ -420,9 +473,12 @@ T_intAtom:
   | NONDET_DOUBLE LPAREN RPAREN { Term.mk_fsym_app (FunCall funname_nondet_double) [] ~info:Dummy }
 
 Cast:
-  | LPAREN UNSIGNED Int RPAREN { unsigned_seen := true }
-  | LPAREN Int RPAREN
-  | LPAREN VOID RPAREN { () }
+  | LPAREN UNSIGNED n=IntWidth RPAREN {
+    match n with
+    | None -> unsigned_seen := true; None
+    | Some bits -> Some (bits, false) }
+  | LPAREN n=IntWidth RPAREN { Option.map n ~f:(fun bits -> (bits, true)) }
+  | LPAREN VOID RPAREN { None }
 
 /* Ast.LogicOld.T_bool */
 T_bool:

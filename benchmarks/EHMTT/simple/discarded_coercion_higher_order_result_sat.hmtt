@@ -1,0 +1,29 @@
+/* Apply coerces f x, a list of c and d, to q0 (lists of a and b), which
+   fails, but only as the argument of H, which discards it.  The language is
+   call-by-name: a coercion is checked when its value is demanded, so this
+   one never is, and the output c (d e) is in q1: sat.  The reduction's
+   coercion problem checks every coercion where it is written and refutes,
+   so the answer is unknown, never unsat. */
+%BEGING
+Apply f x -> c (H (coerce q0 (f x))).
+H y -> d e.
+Copy x -> case x of
+	 e => e
+| a x' => a (Copy x')
+| b x' => b (Copy x')
+| c x' => c (Copy x')
+| d x' => d (Copy x').
+%ENDG
+
+%BEGINA
+q0 a -> q0.
+q0 b -> q0.
+q0 e -> .
+q1 c -> q1.
+q1 d -> q1.
+q1 e -> .
+%ENDA
+
+%BEGINT
+Apply : (q0 -> q1) -> q0 -> q1.
+%ENDT

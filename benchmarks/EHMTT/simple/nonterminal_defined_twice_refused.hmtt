@@ -1,0 +1,17 @@
+/* Main is defined twice.  A program is a set of definitions, one per
+   name, so this input is refused.  It was read with the first definition
+   winning, silently, and answered sat, although the second definition
+   outputs b, which q0 rejects. */
+%BEGING
+Main x -> e.
+Main x -> b.
+%ENDG
+
+%BEGINA
+q0 a -> q0.
+q0 e -> .
+%ENDA
+
+%BEGINT
+Main : q0 -> q0.
+%ENDT

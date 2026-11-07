@@ -5,9 +5,11 @@
 (define-fun-rec defined_length ((x (List X))) Int (
      ite ((_ is nil) x) 0 (+ (defined_length (tl x)) 1)
 ))
-(set-info defined_length (forall ((x (List X)))
-  (or ((_ is nil) x) (> (defined_length x) 0))
-))
+; A law of defined_length: on a cons it is at least 1 (by induction on x, since defined_length is never
+; negative).  Written as a lemma CoAR proves before it uses it; other solvers skip
+; (set-info :lemma ...), so the problem is the same for them.
+(define-fun defined_length_pos_on_cons ((x (List X))) Bool (or ((_ is nil) x) (> (defined_length x) 0)))
+(set-info :lemma defined_length_pos_on_cons)
 
 (declare-fun length ((List X) Int) Bool)
 
@@ -32,9 +34,7 @@
 
 (assert (forall ((l (List X)) (ret Int) (x X))
 (=>
-    (and
-        (length l ret)
-    )
+    (length l ret)
     (>= ret 0)
 )))
 

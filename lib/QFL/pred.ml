@@ -19,6 +19,7 @@ type t = {
 
 let make ?(annots = []) ?(arg_constrs = []) kind name args body =
   { kind; name; args; body; annots; arg_constrs }
+
 let map f pred = { pred with body = f pred.body }
 let map_list f = List.map ~f:(map f)
 let pvars_of_list = List.map ~f:(fun pred -> pred.name)
@@ -46,7 +47,7 @@ let to_formula pred =
   match pred.kind with
   | Predicate.Mu -> Formula.leq pred.body term
   | Predicate.Nu -> Formula.leq term pred.body
-  | Predicate.Fix -> failwith "to_formula"
+  | Predicate.MuOrNu -> failwith "to_formula"
 
 let sort_env_of_list preds =
   Set.Poly.of_list @@ Logic.of_old_sort_env_list
@@ -54,12 +55,78 @@ let sort_env_of_list preds =
       (pred.name, Sort.mk_fun (List.map pred.args ~f:snd @ [ T_real.SReal ])))
 
 let subst tsub pred =
-  let tsub = Map.remove_keys tsub (List.map ~f:fst pred.args) in
-  { pred with body = Term.subst tsub pred.body }
+  let tsub = Map.remove_keys tsub (List.map pred.args ~f:fst) in
+  let free = Lazy.force (Term.range_fvs tsub) in
+  if not (List.exists pred.args ~f:(fun (var, _) -> Set.mem free var)) then
+    { pred with body = Term.subst tsub pred.body }
+  else
+    (* Reconstruct the formal scope for capture-avoiding substitution. The
+     nonnullary carrier contains the body and metadata only to make the common
+     binder traversal see their names; it never escapes to a solver/output.
+     Metadata keeps its existing contract: alpha-renaming only, not [tsub]. *)
+    let terms =
+      pred.body
+      :: List.map (pred.annots @ pred.arg_constrs) ~f:T_bool.of_formula
+    in
+    let carrier =
+      Formula.mk_atom
+        (Atom.mk_pvar_app (Ident.Pvar "qfl_substitution_scope_carrier")
+           (List.map terms ~f:Term.sort_of)
+           terms)
+    in
+    match Formula.subst tsub (Formula.mk_forall pred.args carrier) with
+    | Formula.Bind
+        (Forall, args, Formula.Atom (Atom.App (_, body :: _, _), _), _) ->
+        let ren =
+          List.map2_exn pred.args args ~f:(fun (old, sort) (fresh, _) ->
+              if Stdlib.(old = fresh) then None
+              else Some (old, Term.mk_var fresh sort))
+          |> List.filter_opt |> Map.Poly.of_alist_exn
+        in
+        {
+          pred with
+          args;
+          body;
+          annots = List.map pred.annots ~f:(Formula.subst ren);
+          arg_constrs = List.map pred.arg_constrs ~f:(Formula.subst ren);
+        }
+    | _ -> assert false
 
 let subst_funcs fsub pred =
   let fsub = Map.remove fsub pred.name in
-  { pred with body = Term.subst_funcs fsub pred.body }
+  if Map.Poly.is_empty fsub || List.is_empty pred.args then
+    { pred with body = Term.subst_funcs fsub pred.body }
+  else
+    (* As in [subst], the formals scope the detached body. Include metadata in
+       the temporary carrier so fresh formals cannot collide with its names;
+       metadata receives only the resulting alpha change. *)
+    let terms =
+      pred.body
+      :: List.map (pred.annots @ pred.arg_constrs) ~f:T_bool.of_formula
+    in
+    let carrier =
+      Formula.mk_atom
+        (Atom.mk_pvar_app (Ident.Pvar "qfl_function_substitution_scope_carrier")
+           (List.map terms ~f:Term.sort_of)
+           terms)
+    in
+    let args, carrier, fsub =
+      Term.scope_func_subst fsub pred.args (T_bool.of_formula carrier)
+    in
+    match Formula.of_bool_term carrier with
+    | Formula.Atom (Atom.App (_, body :: metadata, _), _) ->
+        let metadata = List.map metadata ~f:Formula.of_bool_term in
+        let annots, arg_constrs =
+          List.split_n metadata (List.length pred.annots)
+        in
+        {
+          pred with
+          args;
+          body = Term.subst_funcs fsub body;
+          annots;
+          arg_constrs;
+        }
+    | _ -> assert false
 
 let lookup preds tvar =
   match List.find preds ~f:(fun pred -> Stdlib.( = ) tvar pred.name) with

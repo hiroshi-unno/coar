@@ -1,0 +1,16 @@
+[
+    "SPACER",
+    {
+        "preprocessor": [
+            "Filename",
+            "./config/pcsat/preprocessor/disable.json"
+        ],
+        "xform_options": [
+            "slice",
+            "inline_linear",
+            "inline_eager",
+            "subsumption_checker"
+        ],
+        "verdict_only": true
+    }
+]

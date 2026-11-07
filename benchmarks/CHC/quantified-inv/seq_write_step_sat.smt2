@@ -20,14 +20,7 @@
 ; seq.store (seq.store s i 0) i 0 = seq.store s i 0 whenever i is in range.
 ;
 ; What the candidate needs is an equality between two WHOLE sequences, which a
-; cell qualifier (one position of one sequence) cannot state.  Recorded
-; 2026-09-25, one run each at 120 s: pcsat_tbq_ar answers sat,4, and the cell
-; chains pcsat_tbq_cell_seq2 and pcsat_tbq_cell_seq3 answer nothing.  The
-; equality t = seq.store s i 0 is offered to W by the ordinary extraction (the
-; fact clause states it over W's own arguments), and under the seq3 chain it
-; also survives the cell-only cut, but the celled example rows replace the
-; sequences by their cells, so a whole-sequence equality separates no two of
-; them.
+; cell qualifier (one position of one sequence) cannot state.
 (set-logic HORN)
 (declare-fun W ((Seq Int) Int (Seq Int)) Bool)
 (assert (forall ((s (Seq Int)) (i Int) (t (Seq Int)))

@@ -1,6 +1,10 @@
 {
 open Core
 open RegTreeExpParser
+
+(* raised for input the lexer cannot read; the caller reports it with the
+   lexer's position *)
+exception SyntaxError of string
 }
 
 let space = [' ' '\t' '\r']
@@ -43,7 +47,7 @@ rule token = parse
 | eof
     { EOF }
 | _
-    { failwith ("unknown token: " ^ Lexing.lexeme lexbuf) }
+    { raise (SyntaxError ("unknown token: " ^ Lexing.lexeme lexbuf)) }
 and comment = parse
 | '\n'
     { Lexing.new_line lexbuf;
@@ -53,6 +57,6 @@ and comment = parse
 | "(*"
     { comment lexbuf; comment lexbuf }
 | eof
-    { failwith "unterminated comment" }
+    { raise (SyntaxError "unterminated comment") }
 | _
     { comment lexbuf }

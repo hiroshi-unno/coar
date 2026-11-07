@@ -341,6 +341,57 @@ let open_seq_elements ?discharge ?(max_tries = 64) exi_senv phi map =
               if all_unguarded (of_subst ?discharge exi_senv phi map') then map'
               else map)))
 
+(* The variables of a clause that are the RESULT of a witness and nothing else:
+   [x] such that the clause is one clause of its clausal form, [x] is the
+   last argument of exactly one of its atoms, that atom is a negative
+   (premise) application of a predicate [is_fn] says is functional, [x]
+   appears there as the bare variable and in no other argument of any atom,
+   and the pure part is free to mention it.
+
+   Why these may be left open in a counterexample.  A counterexample's model
+   gives [x] the candidate's own value, so the example built from it says
+   only "this witness does not take that value at these arguments", which a
+   candidate meets by moving one witness off one point.  Left open, the
+   example is [forall x. phi(x) \/ not F(a, x) \/ ...] at the model's other
+   values: an instance of the clause, hence a consequence of the problem, and
+   the model's point is one of its instances, so it still excludes the
+   candidate the model refuted.  What it adds is read by a synthesizer that
+   knows [F]'s template is the graph [x = t(a)]: there the universal over [x]
+   is discharged by the one-point rule and the example becomes [phi(t(a))],
+   the clause's own demand at these arguments.
+
+   Contract: returns a subset of the clause's free term variables; the empty
+   set when the clausal form has more than one clause or no such variable. *)
+let fn_result_vars ~is_fn exi_senv phi =
+  match
+    Set.to_list
+      (Formula.cnf_of (Logic.to_old_sort_env_map exi_senv) phi)
+  with
+  | [ (ps, ns, _pure) ] ->
+      let apps polarity atoms =
+        List.filter_map (Set.to_list atoms) ~f:(function
+          | Atom.App (Predicate.Var (pvar, _), args, _) ->
+              Some (polarity, pvar, args)
+          | _ -> None)
+      in
+      let all = apps true ps @ apps false ns in
+      let occurrences x =
+        List.count all ~f:(fun (_, _, args) ->
+            List.exists args ~f:(fun t -> Set.mem (Term.tvs_of t) x))
+      in
+      Set.Poly.of_list
+      @@ List.filter_map all ~f:(fun (polarity, pvar, args) ->
+          match List.rev args with
+          | Term.Var (x, _, _) :: rest
+            when (not polarity) && is_fn pvar
+                 && (not
+                       (List.exists rest ~f:(fun t ->
+                            Set.mem (Term.tvs_of t) x)))
+                 && occurrences x = 1 ->
+              Some x
+          | _ -> None)
+  | _ -> Set.Poly.empty
+
 (* also returns the substitution applied to the clause (the countermodel,
    with dummies/don't-cares for the variables it leaves open); the parameters
    of the resulting examples are renamed by [normalize_params], so the
@@ -348,7 +399,8 @@ let open_seq_elements ?discharge ?(max_tries = 64) exi_senv phi map =
 let of_model_with_subst ?discharge ?(stated_literals = None)
     ?(partial_model = false) ?(partial_seq_elements = false)
     ?(partial_seq_elements_goal_only = false) ?(group_equal = false)
-    ?(settle_pure = false) exi_senv pex (senv, phi) (* clause*) model :
+    ?(settle_pure = false) ?(open_vars = Set.Poly.empty) exi_senv pex
+    (senv, phi) (* clause*) model :
     LogicOld.TermSubst.t * t =
   (* the values a model invented, opened as parameters -- the rule and its
      soundness argument are with the rewriting in the term language.  The set is
@@ -381,14 +433,10 @@ let of_model_with_subst ?discharge ?(stated_literals = None)
              No match at the right sort means the model said nothing about this
              variable, which is the case the next branch already handles. *)
           match
-            List.find model ~f:(fun ((x, msort), _) ->
-                Stdlib.(x = id)
-                && String.(
-                     Term.str_of_sort msort
-                     = Term.str_of_sort (Logic.ExtTerm.to_old_sort sort)))
+            LogicOld.model_find model (id, Logic.ExtTerm.to_old_sort sort)
           with
           | None -> None
-          | Some (_, v) -> v ))
+          | Some v -> v ))
     |> List.map ~f:(function
       | (x, s), Some v ->
           let v = generalise v in
@@ -441,7 +489,25 @@ let of_model_with_subst ?discharge ?(stated_literals = None)
     then open_seq_elements ?discharge exi_senv phi map
     else map
   in
-  (map, of_subst ?discharge ~settle_pure exi_senv phi map)
+  let exs = of_subst ?discharge ~settle_pure exi_senv phi map in
+  (* [open_vars] ([fn_result_vars]): the examples with those variables left
+     open are added BESIDE the point's, last, after every step above has
+     decided what to keep; only where examples may be parametric, as above.
+     Beside and not instead: a reader that does not discharge the open
+     results by the one-point rule grounds them at a default value, which
+     says less than the point, so replacing the point could only lose.  The
+     returned substitution is the point's. *)
+  if pex && not (Set.is_empty open_vars) then
+    let opened =
+      Map.Poly.mapi map ~f:(fun ~key ~data ->
+          if Set.mem open_vars key then
+            Term.mk_var
+              (Ident.mk_fresh_dontcare (Ident.name_of_tvar key))
+              (Term.sort_of data)
+          else data)
+    in
+    (map, Set.union exs (of_subst ?discharge ~settle_pure exi_senv phi opened))
+  else (map, exs)
 
 (* The maximally partial form of a counterexample, to be kept BESIDE the
    model's point rather than instead of it.
@@ -514,26 +580,37 @@ let refresh_params senv = Set.Poly.map ~f:(ExClause.refresh_params senv)
 let refresh_params_with_src senv =
   Set.Poly.map ~f:(fun (ex, src) -> (ExClause.refresh_params senv ex, src))
 
-let inter_check ?(enable = true) pos_atoms neg_atoms =
+(* Do a positive and a negative unit atom conflict?  Only two applications of
+   one predicate can, so a caller may pair atoms by predicate variable first. *)
+let conflicting_atoms unknowns atm1 atm2 =
+  match (ExAtom.to_old_atom atm1, ExAtom.to_old_atom atm2) with
+  | ( Some (_, (Atom.App (psym1, _, _) as atm1)),
+      Some (_, (Atom.App (psym2, _, _) as atm2)) ) -> (
+      if Stdlib.(psym1 <> psym2) then false
+      else
+        (* Example parameters may be instantiated to find a conflict, but
+           existential unknowns are shared choices of the solution. Binding
+           a Skolem constant to a negative example's value would refute only
+           that choice, not the constraint problem. *)
+        try Option.is_some @@ Atom.unify unknowns atm1 atm2
+        with exn_ when not (Common.Timer.is_async exn_) -> false)
+  | _ -> false
+
+let inter_check ?(enable = true) ?(unknowns = Set.Poly.empty) pos_atoms neg_atoms =
   if not enable then Set.Poly.map ~f:fst @@ Set.inter pos_atoms neg_atoms
   else
-    let atm_eq atm1 atm2 =
-      match (ExAtom.to_old_atom atm1, ExAtom.to_old_atom atm2) with
-      | ( Some (_, (Atom.App (psym1, _, _) as atm1)),
-          Some (_, (Atom.App (psym2, _, _) as atm2)) ) -> (
-          if Stdlib.(psym1 <> psym2) then false
-          else
-            try Option.is_some @@ Atom.unify Set.Poly.empty atm1 atm2
-            with exn_ when not (Common.Timer.is_async exn_) -> false)
-      | _ -> false
-    in
+    let atm_eq = conflicting_atoms unknowns in
     Set.fold pos_atoms ~init:Set.Poly.empty ~f:(fun confits (atm1, _) ->
         Set.fold neg_atoms ~init:confits ~f:(fun confits (atm2, _) ->
             if atm_eq atm1 atm2 then
               Set.union confits @@ Set.Poly.of_list [ atm1; atm2 ]
             else confits))
 
-let unit_propagation unknowns
+(* The reference implementation of [unit_propagation] below: every round
+   re-simplifies every undecided clause against every unit and re-checks every
+   pair of units.  Kept as the specification the incremental version is tested
+   against. *)
+let unit_propagation_reference unknowns
     (pos_clauses : (ExClause.t * ExClause.t list) Set.Poly.t)
     (neg_clauses : (ExClause.t * ExClause.t list) Set.Poly.t)
     (undecided : (ExClause.t * ExClause.t list) Set.Poly.t) =
@@ -546,7 +623,7 @@ let unit_propagation unknowns
       Set.Poly.map neg ~f:(fun (ex, srcs) ->
           (ExClause.exatom_of_uclause ex, srcs))
     in
-    let conflicts = inter_check pos_atms neg_atms in
+    let conflicts = inter_check ~unknowns pos_atms neg_atms in
     if Fn.non Set.is_empty conflicts then `Unsat conflicts
     else
       let und =
@@ -566,18 +643,189 @@ let unit_propagation unknowns
           in
           inner (Set.union pos pos') (Set.union neg neg') nucs
   in
-  let pos =
-    Set.Poly.map pos_clauses ~f:(fun (ex, srcs) ->
-        (ExClause.normalize ex, srcs))
+  (* the sources travel as sets inside the propagation (see
+     [ExClause.simplify_prepared]) and leave as duplicate-free lists *)
+  let enter =
+    Set.Poly.map ~f:(fun (ex, srcs) ->
+        (ExClause.normalize ex, Set.Poly.of_list srcs))
   in
-  let neg =
-    Set.Poly.map neg_clauses ~f:(fun (ex, srcs) ->
-        (ExClause.normalize ex, srcs))
+  let leave = Set.Poly.map ~f:(fun (ex, srcs) -> (ex, Set.to_list srcs)) in
+  match inner (enter pos_clauses) (enter neg_clauses) (enter undecided) with
+  | `Unsat conflicts -> `Unsat conflicts
+  | `Result (pos, neg, und) -> `Result (leave pos, leave neg, leave und)
+
+(* Unit propagation over example clauses, each paired with the input examples
+   it was derived from.  [pos_clauses] and [neg_clauses] are positive and
+   negative unit clauses, [undecided] the rest.  Each round (1) answers
+   [`Unsat] with every atom of a positive and a negative unit atom that unify
+   (the unknowns rigid), if there is such a pair; (2) removes from every
+   undecided clause each literal that a unit of the opposite polarity matches,
+   adding that unit's sources, and drops a clause that a unit of its own
+   polarity subsumes; (3) answers [`Unsat] with no atom if a clause became
+   empty; (4) makes the clauses left with one literal units and runs again,
+   until no clause does: [`Result (pos, neg, undecided)].
+
+   Contract: the answer of [unit_propagation_reference] -- the same sets, the
+   same sources for every example, the same conflicts.  The rounds are the
+   same and so is each round's result; only which work is repeated differs:
+   - the units are looked up in an index ([ExClause.UnitIndex]) that finds the
+     unit the reference's linear scan finds, so a removed literal brings the
+     same sources;
+   - a pair of units is checked once, in the round the later of the two
+     appears: a round is reached only if no earlier pair conflicted;
+   - an undecided clause is simplified again only if its last simplification
+     changed it or a unit new in this round can match one of its literals.
+     Otherwise the last round mapped it to itself against a subset of this
+     round's units, no unit matched any of its literals, and none of the new
+     ones does, so this round would map it to itself again.  A clause that
+     changed is always simplified again, because renaming its parameters
+     changes what the subsumption test's printed instantiation compares, so
+     the earlier units may match the renamed clause.
+   Before this, a chain of d ground examples took d rounds, each matching every
+   undecided literal against every unit: one call took 230-290 s on four to
+   five thousand examples. *)
+let unit_propagation_incremental unknowns
+    (pos_clauses : (ExClause.t * ExClause.t list) Set.Poly.t)
+    (neg_clauses : (ExClause.t * ExClause.t list) Set.Poly.t)
+    (undecided : (ExClause.t * ExClause.t list) Set.Poly.t) =
+  let enter =
+    Set.Poly.map ~f:(fun (ex, srcs) ->
+        (ExClause.normalize ex, Set.Poly.of_list srcs))
   in
-  let und =
-    Set.Poly.map undecided ~f:(fun (ex, srcs) -> (ExClause.normalize ex, srcs))
+  let leave = Set.Poly.map ~f:(fun (ex, srcs) -> (ex, Set.to_list srcs)) in
+  let atoms =
+    Set.Poly.map ~f:(fun (ex, srcs) -> (ExClause.exatom_of_uclause ex, srcs))
   in
-  inner pos neg und
+  let pvar_of atm =
+    match ExAtom.to_old_atom atm with
+    | Some (_, Atom.App (Predicate.Var (pvar, _), _, _)) -> Some pvar
+    | _ -> None
+  in
+  let pos_idx = ExClause.UnitIndex.create () in
+  let neg_idx = ExClause.UnitIndex.create () in
+  let pos_by_pvar = Hashtbl.Poly.create () in
+  let neg_by_pvar = Hashtbl.Poly.create () in
+  (* the live undecided clauses by id; [unstable] holds the ids whose last
+     simplification changed them, [filed] the ids of the clauses whose
+     literals carry each [ExClause.lookup_key] (stale ids are harmless: a
+     clause looked up needlessly is simplified to the same result) *)
+  let clauses = Hashtbl.Poly.create () in
+  let unstable = Hash_set.Poly.create () in
+  let filed = Hashtbl.Poly.create () in
+  let file id (cl, _) =
+    Set.iter (ExClause.exatoms_of cl) ~f:(fun atm ->
+        List.iter (ExClause.literal_keys atm) ~f:(fun key ->
+            Hashtbl.add_multi filed ~key ~data:id))
+  in
+  let add_units idx by_pvar =
+    Set.iter ~f:(fun ((atm, _) as u) ->
+        ExClause.UnitIndex.add idx u;
+        Option.iter (pvar_of atm) ~f:(fun key ->
+            Hashtbl.add_multi by_pvar ~key ~data:atm))
+  in
+  let conflicts_with fresh others ~fresh_positive =
+    Set.fold fresh ~init:Set.Poly.empty ~f:(fun acc (atm, _) ->
+        match pvar_of atm with
+        | None -> acc
+        | Some pvar ->
+            List.fold (Hashtbl.find_multi others pvar) ~init:acc
+              ~f:(fun acc atm' ->
+                let atm1, atm2 =
+                  if fresh_positive then (atm, atm') else (atm', atm)
+                in
+                if conflicting_atoms unknowns atm1 atm2 then
+                  Set.add (Set.add acc atm1) atm2
+                else acc))
+  in
+  let rec round pos neg pos_atms neg_atms new_pos new_neg =
+    add_units pos_idx pos_by_pvar new_pos;
+    add_units neg_idx neg_by_pvar new_neg;
+    let conflicts =
+      Set.union
+        (conflicts_with new_pos neg_by_pvar ~fresh_positive:true)
+        (conflicts_with new_neg pos_by_pvar ~fresh_positive:false)
+    in
+    if Fn.non Set.is_empty conflicts then `Unsat conflicts
+    else
+      let touched = Hash_set.Poly.create () in
+      Hash_set.iter unstable ~f:(Hash_set.add touched);
+      Hash_set.clear unstable;
+      Set.iter (Set.union new_pos new_neg) ~f:(fun (atm, _) ->
+          List.iter (ExClause.unit_keys atm) ~f:(fun key ->
+              List.iter (Hashtbl.find_multi filed key) ~f:(fun id ->
+                  if Hashtbl.mem clauses id then Hash_set.add touched id)));
+      let falsified = ref false in
+      let units = ref [] in
+      Hash_set.iter touched ~f:(fun id ->
+          let ((cl, _) as ex) = Hashtbl.find_exn clauses id in
+          match ExClause.simplify_indexed unknowns pos_idx neg_idx ex with
+          | None -> Hashtbl.remove clauses id
+          | Some ((cl', _) as ex') ->
+              if ExClause.is_false cl' then falsified := true;
+              if ExClause.is_unit cl' then (
+                Hashtbl.remove clauses id;
+                units := ex' :: !units)
+              else (
+                Hashtbl.set clauses ~key:id ~data:ex';
+                if Stdlib.compare ex' ex <> 0 then (
+                  Hash_set.add unstable id;
+                  if Stdlib.compare cl' cl <> 0 then file id ex')));
+      if !falsified then `Unsat Set.Poly.empty
+        (* ToDo: recover conflicting literals *)
+      else if List.is_empty !units then
+        `Result (pos, neg, Set.Poly.of_list (Hashtbl.data clauses))
+      else
+        let pos', neg' =
+          List.partition_tf !units ~f:(fst >> ExClause.is_unit_positive)
+        in
+        let pos' = Set.Poly.of_list pos' in
+        let neg' = Set.Poly.of_list neg' in
+        let new_pos = Set.diff (atoms pos') pos_atms in
+        let new_neg = Set.diff (atoms neg') neg_atms in
+        round (Set.union pos pos') (Set.union neg neg')
+          (Set.union pos_atms new_pos) (Set.union neg_atms new_neg) new_pos
+          new_neg
+  in
+  let pos = enter pos_clauses in
+  let neg = enter neg_clauses in
+  List.iteri (Set.to_list (enter undecided)) ~f:(fun id ex ->
+      Hashtbl.set clauses ~key:id ~data:ex;
+      Hash_set.add unstable id;
+      file id ex);
+  let pos_atms = atoms pos in
+  let neg_atms = atoms neg in
+  match round pos neg pos_atms neg_atms pos_atms neg_atms with
+  | `Unsat conflicts -> `Unsat conflicts
+  | `Result (pos, neg, und) -> `Result (leave pos, leave neg, leave und)
+
+(* Do two answers of unit propagation agree: the same conflicts, or the same
+   positive, negative and undecided examples with the same sources? *)
+let same_propagation_result r1 r2 =
+  match (r1, r2) with
+  | `Unsat c1, `Unsat c2 -> Set.equal c1 c2
+  | `Result (p1, n1, u1), `Result (p2, n2, u2) ->
+      Set.equal p1 p2 && Set.equal n1 n2 && Set.equal u1 u2
+  | _ -> false
+
+(* With COAR_UNITPROP_CHECK set in the environment, every call also runs the
+   reference implementation and fails loudly if the answers differ: a check of
+   the incremental version on the example sets real runs produce. *)
+let unitprop_check = lazy (Option.is_some (Sys.getenv "COAR_UNITPROP_CHECK"))
+
+let unit_propagation unknowns pos_clauses neg_clauses undecided =
+  let res =
+    unit_propagation_incremental unknowns pos_clauses neg_clauses undecided
+  in
+  if Lazy.force unitprop_check then (
+    let reference =
+      unit_propagation_reference unknowns pos_clauses neg_clauses undecided
+    in
+    if not (same_propagation_result res reference) then
+      failwith
+        "[unit_propagation] the incremental propagation disagrees with the \
+         reference implementation";
+    prerr_endline "[unit_propagation] COAR_UNITPROP_CHECK: agrees");
+  res
 
 (* let discard_unused_exs pcsp exs =
    let senv = PCSP.Problem.senv_of pcsp in

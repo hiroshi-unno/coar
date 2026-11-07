@@ -1,0 +1,16 @@
+# A loop whose choice weight is written as a fraction: the loop stops with probability 1/2
+# per round, so it terminates almost surely and the termination probability is at most 1.
+# The weights 1/2 and 1 - 1/2 must reach the QFL equation as numbers; left as a division
+# while the body was normalised, (1 - 1/2) * X became X - X * 1/2, an unknown under a
+# subtraction, and the reduction was refused as not a QFL input.
+# Expected: valid.
+nat b;
+b := 1;
+while (b = 1) {
+	{
+		b := 0;
+	}[1/2]{
+		skip
+	}
+}
+?Ex [1] <= 1

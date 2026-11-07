@@ -1,0 +1,21 @@
+[
+    "MuVal",
+    {
+        "optimizer": [
+            "Filename",
+            "./config/muclp/optimizer/dbg_enable.json"
+        ],
+        "pcsp_solver_primal": [
+            "Filename",
+            "./config/solver/dbg_pcsat_fixpoint_cnfdefsh.json"
+        ],
+        "pcsp_solver_dual": [
+            "Filename",
+            "./config/solver/dbg_pcsat_muval.json"
+        ],
+        "qelim": {
+            "verbose": true
+        },
+        "verbose": true
+    }
+]

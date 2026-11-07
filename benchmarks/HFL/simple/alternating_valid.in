@@ -1,0 +1,6 @@
+/* A greatest fixed point whose body uses a least one: alternation, refused.
+   Valid: from every x, counting down terminates, at every step. */
+%HES
+Main x =v Always x.
+Always x =v Down x && Always (x + 1).
+Down x =μ x <= 0 || Down (x - 1).

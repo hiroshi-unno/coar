@@ -1,0 +1,27 @@
+# Olmedo et al., TOPLAS 2018, Example 4.9 (p. 4:20): a fair coin chooses between diverging and
+# tossing two fair coins (0 is heads) observed to show at least one head.  The probability that
+# the last toss is heads is 2/7 under cwp, 6/7 under cwlp (wlp/wlp(1), where the diverging half
+# counts as establishing the event) and 2/3 under r2.
+# Expected: valid (cwlp is 6/7 >= 0.85).  The reduction is the dual, an upper bound on a least
+# fixpoint: wp_(1-q)(S, 1 - [y = 0]) <= 1 - q for q = 0.85, and
+# 1/2 * (1/4 + (1 - q)/4) = 0.14375 <= 0.15; it holds exactly when q <= 6/7.
+nat x;
+nat y;
+{
+	while (true) {
+		skip;
+	}
+}[1/2]{
+	{
+		x := 0;
+	}[1/2]{
+		x := 1;
+	}
+	{
+		y := 0;
+	}[1/2]{
+		y := 1;
+	}
+	observe(x = 0 || y = 0);
+}
+?Ex [[y = 0]] >= 0.85 cwlp

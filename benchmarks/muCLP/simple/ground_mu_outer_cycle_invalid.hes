@@ -1,0 +1,8 @@
+/* a closed program: the ground atoms X 0, Y 0, X 1, Y 1, X 2, Y 2 form one
+   cycle through both predicates.  X is listed first, so its least fixpoint
+   is the outer one and decides the cycle: the query is false.  Read with the
+   last equation outermost it would be true. */
+X 0
+s.t.
+X (x: int): bool =mu Y x;
+Y (x: int): bool =nu (x >= 2 /\ X 0) \/ (x < 2 /\ X (x + 1));

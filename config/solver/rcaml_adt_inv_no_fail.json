@@ -1,0 +1,11 @@
+[
+    "RCaml",
+    {
+        "cgen_config": {
+            "gen_ref_type_temp_for_constructors": true,
+            "never_fail": true,
+            "can_fail_only_at_total_apps": true
+        },
+        "verbose": false
+    }
+]

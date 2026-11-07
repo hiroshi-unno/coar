@@ -1,0 +1,144 @@
+%BEGING
+S x -> Appendix (coerce qd0 (F x (a leaf leaf))) leaf.
+Box v x -> v x.
+Nogap w v x -> w x.
+Node l p v x -> l (p v leaf) x.
+Conc p q v x -> p v (q v x).
+Leaf x -> leaf.
+Gapid n x v y ->
+  case x of
+    doc x1 x2 => Gapid1 v y doc x1 x2
+  | preface x1 x2 => Gapid1 v y preface x1 x2
+  | header x1 x2 => Gapid1 v y header x1 x2
+  | p x1 x2 => Gapid1 v y p x1 x2
+  | div x1 x2 => Gapid1 v y div x1 x2
+  | note x1 x2 => Gapid1 v y note x1 x2
+  | a x1 x2 => Gapid1 v y a x1 x2
+  | leaf => Gapid2 v y n.
+Gapid1 v x l x1 x2 -> Conc (Node l (Gapid Box x1)) (Gapid (Nogap Leaf) x2) v x.
+Gapid2 v x n -> n v x.
+F x y -> Gapid Box x A y.
+A x -> a leaf x.
+
+Appendix x y ->
+  case x of
+    doc x1 x2 => Appendix1 x y doc x1 x2
+  | preface x1 x2 => Appendix1 x y preface x1 x2
+  | header x1 x2 => Appendix1 x y header x1 x2
+  | p x1 x2 => Appendix1 x y p x1 x2
+  | div x1 x2 => Appendix1 x y div x1 x2
+  | note x1 x2 => Appendix1 x y note x1 x2
+.
+
+Appendix1 x y l x1 x2 ->
+  html
+    (head
+      (title leaf
+      leaf)
+    (body
+      (Body x1
+      (div
+        (h2 leaf
+        (Rest x
+        leaf))
+      leaf))
+    leaf))
+  y.
+Body x y ->
+  case x of
+    doc x1 x2 => doc (Body x1 leaf) (Body x2 y)
+  | preface x1 x2 => Body x2 y
+  | header x1 x2 => header (Body x1 leaf) (Body x2 y)
+  | p x1 x2 => p (Body x1 leaf) (Body x2 y)
+  | div x1 x2 => div (Body x1 leaf) (Body x2 y)
+  | note x1 x2 => Body x2 y
+  | a x1 x2 => y
+  | leaf => y.
+Rest x y ->
+  case x of
+    doc x1 x2 => Rest x1 (Rest x2 y)
+  | preface x1 x2 => Id x1 (Rest x2 y)
+  | header x1 x2 => Rest x1 (Rest x2 y)
+  | p x1 x2 => Rest x1 (Rest x2 y)
+  | div x1 x2 => Rest x1 (Rest x2 y)
+  | note x1 x2 => Id x1 (Rest x2 y)
+  | a x1 x2 => y
+  | leaf => y.
+Id x y ->
+  case x of
+    doc x1 x2 => doc (Id x1 leaf) (Id x2 y)
+  | preface x1 x2 => preface (Id x1 leaf) (Id x2 y)
+  | header x1 x2 => b (Id x1 leaf) (Id x2 y)
+  | p x1 x2 => p (Id x1 leaf) (Id x2 y)
+  | div x1 x2 => div (Id x1 leaf) (Id x2 y)
+  | note x1 x2 => note (Id x1 leaf) (Id x2 y)
+  | a x1 x2 => y
+  | leaf => y.
+%ENDG
+
+%BEGINA
+/*
+Input: Doc
+type Doc      = doc[Preface, (Div|P|Note)*]
+type Preface  = preface[Header, P*]
+type Header   = header[A*]
+type P        = p[A*]
+type Div      = div[(Div|P|Note|A)*]
+type Note     = note[(P|A)*]
+type A        = a[A*]
+*/
+
+qd0 doc -> qd13 qd12.
+qd1 preface -> qd14 qd12.
+qd2 header -> qd9 qd12.
+qd3 p -> qd9 qd12.
+qd4 div -> qd10 qd12.
+qd5 note -> qd11 qd12.
+qd6 a -> qd9 qd12.
+qd7 div -> qd10 qd7.
+qd7 p -> qd9 qd7.
+qd7 note -> qd11 qd7.
+qd7 leaf -> .
+qd8 p -> qd9 qd8.
+qd8 leaf -> .
+qd9 a -> qd9 qd9.
+qd9 leaf -> .
+qd10 div -> qd10 qd10.
+qd10 p -> qd9 qd10.
+qd10 note -> qd11 qd10.
+qd10 a -> qd9 qd10.
+qd10 leaf -> .
+qd11 p -> qd9 qd11.
+qd11 a -> qd9 qd11.
+qd11 leaf -> .
+qd12 leaf -> .
+qd13 preface -> qd14 qd7.
+qd14 header -> qd9 qd8.
+
+
+q0 html -> q4 q3.
+q1 leaf -> .
+q1 b -> q3 q1.
+q1 div -> q1 q1.
+q1 h1 -> q3 q1.
+q1 h2 -> q3 q1.
+q1 h3 -> q3 q1.
+q1 h4 -> q3 q1.
+q1 h5 -> q3 q1.
+q1 h6 -> q3 q1.
+q1 h7 -> q3 q1.
+q1 h8 -> q3 q1.
+q1 h9 -> q3 q1.
+q1 p -> q3 q1.
+q2 leaf -> .
+q2 meta -> q3 q2.
+q3 leaf -> .
+q4 head -> q6 q5.
+q5 body -> q1 q3.
+q6 meta -> q3 q6.
+q6 title -> q3 q2.
+%ENDA
+
+%BEGINT
+S: qd0 -> q0.
+%ENDT

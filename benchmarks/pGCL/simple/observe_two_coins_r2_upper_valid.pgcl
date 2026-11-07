@@ -1,0 +1,19 @@
+# The right branch of Olmedo et al., TOPLAS 2018, Example 4.9 (p. 4:20): two fair coins (0 is
+# heads), observing at least one head.  Three of the four runs pass, two of them with y = 0,
+# so every normalisation gives 2/3; the program has no loop, so r2 (wp(S, f) / wp(S, 1)) is
+# cwp here.
+# Expected: valid.
+nat x;
+nat y;
+{
+	x := 0;
+}[1/2]{
+	x := 1;
+}
+{
+	y := 0;
+}[1/2]{
+	y := 1;
+}
+observe(x = 0 || y = 0);
+?Ex [[y = 0]] <= 0.7 r2

@@ -84,7 +84,48 @@ module E = struct
     match (e1, e2) with Hide, Normal -> 1 | Normal, Hide -> -1 | _ -> 0
 end
 
-module G = Imperative.Digraph.ConcreteBidirectionalLabeled (V) (E)
+(* [Graph.Imperative.Digraph.ConcreteBidirectionalLabeled (V) (E)], rebuilt
+   from the same blocks and the same wrapper so that it can also offer
+   [add_new_edge_e].  The library's [add_edge_e] first asks [mem_edge_e],
+   which scans the source's whole successor set comparing each successor
+   structurally ([V.compare]); an example that many derived examples cite as a
+   source has thousands of successors, so a seeded labeling's unit propagation,
+   whose derived examples cite their transitive sources (hundreds each, about
+   450,000 edges in one call), spent minutes in that scan.  [add_new_edge_e] is
+   the insertion without the scan; it gives the same graph as [add_edge_e]
+   whenever the edge is absent, which is its precondition. *)
+module G : sig
+  include
+    Sig.I
+      with type V.t = vertex
+       and type V.label = vertex
+       and type E.t = vertex * E.t * vertex
+       and type E.label = E.t
+
+  val add_new_edge_e : t -> E.t -> unit
+  (** [add_new_edge_e g e] adds the edge [e], which must not be in [g] (no
+      edge with [e]'s source, label and a destination equal to [e]'s by
+      [V.compare]); then it is [add_edge_e g e]. *)
+end = struct
+  module B = Blocks.Make (Blocks.Make_Hashtbl)
+  include B.Digraph.ConcreteBidirectionalLabeled (V) (E)
+
+  (* the wrapper of [Graph.Imperative.Digraph.ConcreteBidirectionalLabeled],
+     ocamlgraph 2.2.0, verbatim *)
+  let add_vertex g v = ignore (add_vertex g v)
+  let add_edge g v1 v2 = ignore (add_edge g v1 v2)
+  let add_edge_e g (v1, l, v2) = ignore (add_edge_e g (v1, l, v2))
+  let remove_edge g v1 v2 = ignore (remove_edge g v1 v2)
+  let remove_edge_e g e = ignore (remove_edge_e g e)
+
+  let remove_vertex g v =
+    if HM.mem v g then (
+      iter_pred_e (fun e -> remove_edge_e g e) g v;
+      iter_succ_e (fun e -> remove_edge_e g e) g v;
+      ignore (HM.remove v g))
+
+  let add_new_edge_e g e = ignore (unsafe_add_edge_e g e)
+end
 
 module W = struct
   type t = int
@@ -131,6 +172,17 @@ module Dot (Env : EnvType) = Graph.Graphviz.Dot (struct
   let edge_attributes _ = [ `Color 4711 ]
 end)
 
+(* vertices, and vertices with an edge label, identified as the graph's
+   vertex table identifies them: by [V.equal] and [V.hash] *)
+module VTbl = Stdlib.Hashtbl.Make (V)
+
+module VLTbl = Stdlib.Hashtbl.Make (struct
+  type t = vertex * E.t
+
+  let equal (v1, l1) (v2, l2) = V.equal v1 v2 && E.compare l1 l2 = 0
+  let hash (v, l) = Hashtbl.hash (V.hash v, l)
+end)
+
 (* how an example was obtained: the rule and, when known, the substitution
    applied to its source clause (validator: the countermodel; resolver: the
    unifier).  Kept beside the graph, keyed by the example, so that the edge
@@ -155,11 +207,21 @@ type t = {
   derivations : (ExClause.t, derivation) Hashtbl.Poly.t;
   mutable dedup_normalized : bool;
       (* when set, [add_ex_from] stores at most one spelling of an example
-         per [ExClause.normalize] form; see [spelling_of] *)
+         per [ExClause.normalize] form; see [spelling_of].  PCSat's
+         coordinator always sets it on the graph it solves with; the unset
+         state is kept for a test that shows the identification is what
+         removes the second spelling *)
   mutable norm_index : (ExClause.t, ExClause.t) Map.Poly.t;
       (* maintained only while [dedup_normalized] is set: an example's
          normal form, and each spelling that arrived, mapped to the first
          spelling stored *)
+  edge_targets : unit VTbl.t;
+      (* every vertex that has been the destination of an edge of this graph,
+         removed or not: an out-set entry names one of them, so an example
+         absent from it has no edge into it, not even one that a removal left
+         behind (the library removes an edge by the spelling it is given, so
+         a vertex removed under a spelling [V.equal] to the stored one but
+         structurally different leaves its predecessors' entries in place) *)
 }
 
 let is_example = function Example _ -> true | _ -> false
@@ -183,6 +245,7 @@ let create () =
     derivations = Hashtbl.Poly.create ();
     dedup_normalized = false;
     norm_index = Map.Poly.empty;
+    edge_targets = VTbl.create 64;
   }
 
 let examples_of_graph t =
@@ -219,6 +282,7 @@ let clone t =
     derivations = Hashtbl.copy t.derivations;
     dedup_normalized = t.dedup_normalized;
     norm_index = t.norm_index;
+    edge_targets = VTbl.copy t.edge_targets;
   }
 
 (* the first derivation recorded for an example is kept: one suffices for a
@@ -327,6 +391,9 @@ let spelling_of t ex =
         let nf = ExClause.normalize ex in
         match Map.Poly.find t.norm_index nf with
         | Some s ->
+            (* counted so that a run shows a second spelling was replaced by
+               the stored one; changes nothing *)
+            Common.PhaseTime.event_here "dedup-normalized-twin";
             t.norm_index <- Map.Poly.set t.norm_index ~key:ex ~data:s;
             s
         | None ->
@@ -346,7 +413,55 @@ let set_dedup_normalized t b =
     t.dedup_normalized <- false;
     t.norm_index <- Map.Poly.empty)
 
-let add_ex_from t ex srcs =
+(* [add_edges_into t v_ex srcs]: an edge from each source in [srcs] other
+   than [v_ex] itself into [v_ex], labelled [Hide] (and the source hidden) for
+   a non-unit example whose flag asks for it, [Normal] otherwise.  When [v_ex]
+   has never been the destination of an edge ([edge_targets]) no successor set
+   holds it, so each edge is inserted without the library's membership scan
+   ([G.add_new_edge_e]); the only edge that could already be there is one
+   added earlier in this loop from a source the graph identifies with this
+   one, which [added] remembers: a source is identified with a vertex by
+   [V.equal], as the vertex table does, not by [V.compare], and two spellings
+   of one example among the sources would otherwise put two entries for one
+   edge into [v_ex]'s predecessor set.  Otherwise every edge goes through
+   [G.add_edge_e].  The graph built is the one [add_edges_into_reference]
+   builds (assuming, as the vertex table does, that [V.hash] is consistent
+   with [V.equal]). *)
+let add_edges_into t v_ex srcs =
+  let edge (src, hide_und) =
+    match src with
+    | Example ex when hide_und && (not @@ ExClause.is_unit ex) ->
+        hide_vertex t src;
+        (src, E.Hide, v_ex)
+    | _ -> (src, E.default, v_ex)
+  in
+  let seen = VTbl.mem t.edge_targets v_ex in
+  VTbl.replace t.edge_targets v_ex ();
+  if seen then
+    Set.iter srcs ~f:(fun ((src, _) as s) ->
+        if not @@ V.equal src v_ex then G.add_edge_e t.graph (edge s))
+  else
+    let added = VLTbl.create 16 in
+    Set.iter srcs ~f:(fun ((src, _) as s) ->
+        if not @@ V.equal src v_ex then (
+          let ((src, l, _) as e) = edge s in
+          if not (VLTbl.mem added (src, l)) then (
+            VLTbl.replace added (src, l) ();
+            G.add_new_edge_e t.graph e)))
+
+(* the loop [add_edges_into] replaces, every edge through the library's
+   checked insertion; kept as the specification it is tested against *)
+let add_edges_into_reference t v_ex srcs =
+  VTbl.replace t.edge_targets v_ex ();
+  Set.iter srcs ~f:(fun (src, hide_und) ->
+      if not @@ V.equal src v_ex then
+        match src with
+        | Example ex when hide_und && (not @@ ExClause.is_unit ex) ->
+            hide_vertex t src;
+            G.add_edge_e t.graph (src, E.Hide, v_ex)
+        | _ -> G.add_edge t.graph src v_ex)
+
+let add_ex_from_with add_edges t ex srcs =
   let ex = spelling_of t @@ ExClause.canon ex in
   let v_ex = Example ex in
   (* "new" means absent from the example sets, not from the graph: an edge
@@ -355,27 +470,63 @@ let add_ex_from t ex srcs =
      would then skip the example and lose it for the solver *)
   let present = Set.mem t.pos ex || Set.mem t.neg ex || Set.mem t.und ex in
   if (not present) || Hash_set.Poly.mem t.hide_vertexs v_ex then (
-    Hash_set.Poly.remove t.hide_vertexs v_ex;
+    (* the edges first, which add the vertex: a budget that ends this update
+       half-way ([Common.Timer] raises asynchronously) then leaves the example
+       linked to a source it came from, never a vertex linked to nothing,
+       which pruning by reachability could not remove *)
+    add_edges t v_ex srcs;
     G.add_vertex t.graph v_ex;
-    add_example t v_ex;
-    Set.iter srcs ~f:(fun (src, hide_und) ->
-        if not @@ V.equal src v_ex then
-          match src with
-          | Example ex when hide_und && (not @@ ExClause.is_unit ex) ->
-              hide_vertex t src;
-              G.add_edge_e t.graph (src, E.Hide, v_ex)
-          | _ -> G.add_edge t.graph src v_ex))
+    Hash_set.Poly.remove t.hide_vertexs v_ex;
+    add_example t v_ex)
+
+let add_ex_from t ex srcs = add_ex_from_with add_edges_into t ex srcs
+
+let add_ex_from_reference t ex srcs =
+  add_ex_from_with add_edges_into_reference t ex srcs
 
 let add_clause t clause = G.add_vertex t.graph (Clause (Clause.canon clause))
 
 let add_clause_from t clause srcs =
   let v = Clause (Clause.canon clause) in
   G.add_vertex t.graph v;
+  VTbl.replace t.edge_targets v ();
   List.iter srcs ~f:(fun src ->
       if not @@ V.equal src v then G.add_edge t.graph src v)
 
 let pos_neg_und_examples_of t = (t.pos, t.neg, t.und)
 let examples_of t = Set.Poly.union_list [ t.pos; t.neg; t.und ]
+
+(* [descendants_of_examples t exs]: the examples of [t] that are in [exs]
+   (by their stored spelling, looked up without indexing anything new) or
+   reachable from one of them along the graph's edges, i.e. derived from
+   one, returned as a membership test and its count; clause vertices are not
+   collected.  Reads [t] and changes nothing.  The walk carries a visited
+   set, since examples can cite each other; vertices are keyed by [V.hash],
+   which sees the whole example (a polymorphic hash would not). *)
+let descendants_of_examples t exs =
+  let stored ex =
+    if not t.dedup_normalized then ex
+    else
+      match Map.Poly.find t.norm_index ex with
+      | Some s -> s
+      | None -> (
+          let ex' = ExClause.canon ex in
+          match Map.Poly.find t.norm_index ex' with Some s -> s | None -> ex')
+  in
+  let visited = VTbl.create 1024 in
+  let rec go = function
+    | [] -> ()
+    | v :: rest ->
+        if VTbl.mem visited v || not (G.mem_vertex t.graph v) then go rest
+        else (
+          VTbl.replace visited v ();
+          go (List.rev_append (G.succ t.graph v) rest))
+  in
+  go (List.map (Set.to_list exs) ~f:(fun ex -> Example (stored ex)));
+  let count =
+    VTbl.fold (fun v () n -> match v with Example _ -> n + 1 | _ -> n) visited 0
+  in
+  ((fun ex -> VTbl.mem visited (Example ex)), count)
 
 let remove_succ senv t (v : vertex) =
   ignore senv;
@@ -392,6 +543,27 @@ let remove_succ senv t (v : vertex) =
     let removed_vertexs = dfs Set.Poly.empty [ v ] in
     (* print_endline @@ sprintf "rm_succs(%s):%d" (str_of_vertex senv v) (Set.length removing_vertexs); *)
     Set.iter removed_vertexs ~f:(remove_vertex t)
+
+(* [remove_examples_if senv t ~f]: removes every example vertex, hidden or
+   not, whose example satisfies [f], together with everything derived from it
+   ([remove_succ]); returns how many such examples there were.  Reads only the
+   graph's vertices, so it holds whatever edges the graph has. *)
+let remove_examples_if senv t ~f =
+  let roots =
+    G.fold_vertex
+      (fun v acc -> match v with Example ex when f ex -> v :: acc | _ -> acc)
+      t.graph []
+  in
+  List.iter roots ~f:(remove_succ senv t);
+  List.length roots
+
+(* [refresh_example_sets t]: the example sets recomputed from the graph, as
+   [clone] computes them (the unhidden example vertices). *)
+let refresh_example_sets t =
+  let pos, neg, und = pos_neg_und_examples_of_graph t in
+  t.pos <- pos;
+  t.neg <- neg;
+  t.und <- und
 
 let clauses_of t =
   G.fold_vertex
@@ -523,73 +695,223 @@ let simplify_with ?(falsified = fun _ _ -> false) ?(verified = fun _ _ -> false)
             extra )
       else None)
 
-let resolve_one_step ~print mode ((param_senv, (papp : term)), source) exi_senv
-    (((uni_senv, c_pos, c_neg, c_phi) as cl), source1) =
+(* Whether [papp] applies a predicate of [exi_senv] and [papp'] applies a
+   different variable.  Then the two cannot unify: [papp] becomes an
+   application of that predicate, and [papp'] either an application of
+   another predicate or no predicate application at all, while [unify]
+   requires the same predicate.  So the literal is skipped without the
+   conversion and the unification that would answer [None]; converting every
+   literal of the clause against every unit was half of the resolution's time
+   on a problem with many units.  ([COAR_RESOLVE_ALL_HEADS] tries them all.) *)
+let different_pred_heads exi_senv papp papp' =
+  match (Logic.Term.let_apps papp, Logic.Term.let_apps papp') with
+  | (Logic.Var (p, _), _), (Logic.Var (q, _), _) ->
+      Map.Poly.mem exi_senv p && not (Ident.tvar_equal p q)
+  | _ -> false
+
+let resolve_skip_other_heads =
+  Stdlib.Atomic.make (Option.is_none (Sys.getenv "COAR_RESOLVE_ALL_HEADS"))
+
+(* [bvs], when given, must be [Map.key_set exi_senv]; the caller that resolves
+   many pairs against one [exi_senv] computes it once (rebuilding the key set
+   of every predicate for every literal tried was most of the resolution's
+   time on a problem with many units).
+
+   Staged: the literals of the clause the unit is resolved against, and for
+   one of them, [None] when it does not unify with the unit and otherwise a
+   thunk that builds the resolvent.  The thunk is where the time goes: every
+   body atom of the clause is substituted, converted and normalised.  With
+   [~pure_first:false] it builds heads, body, pure part in that order and
+   always answers [Some]; with [~pure_first:true] it simplifies the pure part
+   first and answers [None], building no atom, when that is [true]. *)
+let resolve_one_step_staged ~print ?bvs mode ((param_senv, (papp : term)), source)
+    exi_senv (((uni_senv, c_pos, c_neg, c_phi) as cl), source1) =
   print @@ lazy ("input clause: " ^ Clause.str_of exi_senv cl);
+  let ph = Common.PhaseTime.with_phase in
   let atm1 =
+    ph "ros-unit" @@ fun () ->
     LogicOld.Atom.alpha_rename_let
     @@ ExtTerm.to_old_atm exi_senv param_senv papp
   in
   let uni_senv' = Map.force_merge uni_senv param_senv in
-  (if Stdlib.(mode = `Forward) then
-     let _ = print @@ lazy "forward:" in
-     c_neg
-   else
-     let _ = print @@ lazy "backward:" in
-     c_pos)
-  |> Set.Poly.filter_map ~f:(fun papp' ->
-         let atm2 = ExtTerm.to_old_atm exi_senv uni_senv' papp' in
-         print
-         @@ lazy
-              (LogicOld.Atom.str_of atm2 ^ " |-> " ^ LogicOld.Atom.str_of atm1);
-         let open Option.Monad_infix in
-         LogicOld.Atom.unify (Map.key_set exi_senv) atm2 atm1
-         >>= fun theta (*ToDo*) ->
-         let theta = Map.Poly.map ~f:ExtTerm.of_old_term theta in
-         let c_pos' =
-           (if Stdlib.(mode = `Backward) then Set.remove c_pos papp' else c_pos)
-           |> Set.Poly.map
-                ~f:
-                  (ExtTerm.subst theta
-                  >> ExtTerm.to_old_atm exi_senv uni_senv'
-                  >> Normalizer.normalize_let_atom >> Normalizer.normalize
-                  >> ExtTerm.of_old_formula)
-         in
-         let c_neg' =
-           (if Stdlib.(mode = `Forward) then Set.remove c_neg papp' else c_neg)
-           |> Set.Poly.map
-                ~f:
-                  (ExtTerm.subst theta
-                  >> ExtTerm.to_old_atm exi_senv uni_senv'
-                  >> Normalizer.normalize_let_atom >> Normalizer.normalize
-                  >> ExtTerm.of_old_formula)
-         in
-         let c_phi' =
-           ExtTerm.(simplify_formula exi_senv uni_senv' @@ subst theta c_phi)
-         in
-         let cl' = Clause.canon (uni_senv', c_pos', c_neg', c_phi') in
-         print @@ lazy ("substituted clause: " ^ Clause.str_of exi_senv cl');
-         Some
-           ( (cl', Set.union source source1),
-             Map.Poly.map theta ~f:(ExtTerm.to_old_trm exi_senv uni_senv'),
-             cl (* the clause resolved, for derivation records *) ))
+  let lits =
+    if Stdlib.(mode = `Forward) then
+      let _ = print @@ lazy "forward:" in
+      c_neg
+    else
+      let _ = print @@ lazy "backward:" in
+      c_pos
+  in
+  let stage papp' =
+    if
+      Stdlib.Atomic.get resolve_skip_other_heads
+      && different_pred_heads exi_senv papp papp'
+    then (
+      (* COAR_EXACT_CROSSCHECK set: the skipped unification is made
+         anyway, and an answer other than [None] reported on stderr *)
+      if PropLogic.Formula.crosscheck then (
+        PropLogic.Formula.crosscheck_tick ();
+        let atm2 = ExtTerm.to_old_atm exi_senv uni_senv' papp' in
+        if
+          Option.is_some
+            (LogicOld.Atom.unify (Map.key_set exi_senv) atm2 atm1)
+        then
+          Stdlib.prerr_endline
+            "exact-crosscheck: ClauseGraph skipped head UNIFIES");
+      None)
+    else
+      let atm2 =
+        ph "ros-lit" @@ fun () -> ExtTerm.to_old_atm exi_senv uni_senv' papp'
+      in
+      print
+      @@ lazy
+           (LogicOld.Atom.str_of atm2 ^ " |-> " ^ LogicOld.Atom.str_of atm1);
+      let open Option.Monad_infix in
+      (ph "ros-unify" @@ fun () ->
+       LogicOld.Atom.unify
+         (match bvs with Some bvs -> bvs | None -> Map.key_set exi_senv)
+         atm2 atm1)
+      >>| fun theta (*ToDo*) ~pure_first ->
+      ph "ros-resolvent" @@ fun () ->
+      let theta = Map.Poly.map ~f:ExtTerm.of_old_term theta in
+      let rewrite lits =
+        Set.Poly.map lits
+          ~f:
+            (ExtTerm.subst theta
+            >> ExtTerm.to_old_atm exi_senv uni_senv'
+            >> Normalizer.normalize_let_atom >> Normalizer.normalize
+            >> ExtTerm.of_old_formula)
+      in
+      let pos () =
+        ph "ros-pos" @@ fun () ->
+        rewrite
+          (if Stdlib.(mode = `Backward) then Set.remove c_pos papp' else c_pos)
+      in
+      let neg () =
+        ph "ros-neg" @@ fun () ->
+        rewrite
+          (if Stdlib.(mode = `Forward) then Set.remove c_neg papp' else c_neg)
+      in
+      let phi () =
+        ph "ros-phi" @@ fun () ->
+        ExtTerm.(simplify_formula exi_senv uni_senv' @@ subst theta c_phi)
+      in
+      let make c_pos' c_neg' c_phi' =
+        let cl' =
+          ph "ros-canon" @@ fun () ->
+          Clause.canon (uni_senv', c_pos', c_neg', c_phi')
+        in
+        print @@ lazy ("substituted clause: " ^ Clause.str_of exi_senv cl');
+        ( (cl', Set.union source source1),
+          Map.Poly.map theta ~f:(ExtTerm.to_old_trm exi_senv uni_senv'),
+          cl (* the clause resolved, for derivation records *) )
+      in
+      if pure_first then
+        (* the pure part alone decides whether the resolvent is dropped as
+           valid; most resolvents of a refutation are, and their atoms are
+           the expensive part *)
+        let c_phi' = phi () in
+        if BoolTerm.is_true c_phi' then None
+        else
+          let c_pos' = pos () in
+          let c_neg' = neg () in
+          Some (make c_pos' c_neg' c_phi')
+      else
+        let c_pos' = pos () in
+        let c_neg' = neg () in
+        let c_phi' = phi () in
+        Some (make c_pos' c_neg' c_phi')
+  in
+  (lits, stage)
+
+(* every resolvent of the clause against the unit, as a set; the same
+   operations, in the same order, on the same values, as before the staging
+   (so the same set, down to its tree) *)
+let resolve_one_step ~print ?bvs mode unit exi_senv clause =
+  let lits, stage = resolve_one_step_staged ~print ?bvs mode unit exi_senv clause in
+  Set.Poly.filter_map lits ~f:(fun papp' ->
+      Option.bind (stage papp') ~f:(fun finish -> finish ~pure_first:false))
+
+(* whether [resolve_one_step_all] computes the predicates' key set once (on)
+   or once per literal tried (off, [COAR_RESOLVE_KEY_SET_PER_LITERAL]); the
+   same set either way *)
+let resolve_hoist_key_set =
+  Stdlib.Atomic.make
+    (Option.is_none (Sys.getenv "COAR_RESOLVE_KEY_SET_PER_LITERAL"))
+
+(* whether a resolvent's pure part is not [true]; one that is is valid, says
+   nothing, and is dropped *)
+let not_trivial ((((_, _, _, phi), _), _, _) : _ * _ * _) =
+  not (BoolTerm.is_true phi)
 
 (* val resolve: Atom.t Set.Poly.t -> Atom.t Set.Poly.t -> t -> t Set.Poly.t *)
 let resolve_one_step_all ~print positive negative exi_senv =
+  let bvs =
+    if Stdlib.Atomic.get resolve_hoist_key_set then Some (Map.key_set exi_senv)
+    else None
+  in
   let resolve_one_step_all ~print positive negative exi_senv c =
     let cs_b =
       Set.fold negative ~init:Set.Poly.empty ~f:(fun acc neg ->
-          Set.union (resolve_one_step ~print `Backward neg exi_senv c) acc)
+          Set.union (resolve_one_step ~print ?bvs `Backward neg exi_senv c) acc)
     in
     let cs_f =
       Set.fold positive ~init:Set.Poly.empty ~f:(fun acc pos ->
-          Set.union (resolve_one_step ~print `Forward pos exi_senv c) acc)
+          Set.union (resolve_one_step ~print ?bvs `Forward pos exi_senv c) acc)
     in
-    Set.filter (Set.union cs_b cs_f)
-      ~f:
-        ((fun (x, _, _) -> x) >> fst >> Quadruple.fth >> BoolTerm.is_true >> not)
+    Set.filter (Set.union cs_b cs_f) ~f:not_trivial
   in
   Set.concat_map ~f:(resolve_one_step_all ~print positive negative exi_senv)
+
+(* How [resolve_find_map] picks the resolvent it answers with.
+   [Whole_set] builds the set [resolve_one_step_all] builds and takes
+   [Set.find_map] over it.  That reads the set's tree in pre-order (a node
+   before its subtrees), so which resolvent comes first depends on the shape
+   of the whole tree -- on every resolvent, the ones never read included, and
+   on the order the per-clause sets were united in -- and not on the
+   resolvents' comparison order alone; no enumeration that builds fewer
+   resolvents can tell which one that is.
+   [Generation] builds the resolvents one at a time, walking the clause set
+   and each clause's literals ([Set.find_map]'s walk), negative units before
+   positive ones, and stops at the first that [f] answers: fewer built, but
+   possibly another resolvent than [Whole_set] answers with.  It also
+   simplifies a resolvent's pure part before its atoms and builds no atom of
+   a resolvent whose pure part is [true] (dropped as valid either way):
+   [Whole_set] cannot skip them, since [Set.filter] keeps the tree's shape,
+   so the dropped elements still decide where the others are read.  Each answer it
+   can give is one [Whole_set] could give on a set holding only that
+   resolvent, so what [f] guarantees of its answer holds for both. *)
+type find_order = Whole_set | Generation
+
+let resolve_find_map ?(order = Whole_set) ~print positive negative exi_senv cs ~f =
+  match order with
+  | Whole_set ->
+      Set.find_map ~f
+        (resolve_one_step_all ~print positive negative exi_senv cs)
+  | Generation ->
+      let bvs =
+        if Stdlib.Atomic.get resolve_hoist_key_set then
+          Some (Map.key_set exi_senv)
+        else None
+      in
+      let try_units mode units c =
+        Set.find_map units ~f:(fun u ->
+            let lits, stage =
+              resolve_one_step_staged ~print ?bvs mode u exi_senv c
+            in
+            Set.find_map lits ~f:(fun papp' ->
+                Option.bind (stage papp') ~f:(fun finish ->
+                    Common.PhaseTime.event "resolvent-tried";
+                    match finish ~pure_first:true with
+                    | None -> None
+                    | Some r ->
+                        Common.PhaseTime.event "resolvent-built";
+                        f r)))
+      in
+      Set.find_map cs ~f:(fun c ->
+          match try_units `Backward negative c with
+          | Some _ as answer -> answer
+          | None -> try_units `Forward positive c)
 
 let to_clause_set_with_src exi_senv sample =
   Set.concat_map sample ~f:(fun (ex, src) ->

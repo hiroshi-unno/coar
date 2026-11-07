@@ -1,0 +1,8 @@
+# A fair coin conditioned on heads: the conditional expectation of x is 1 and the unnormalised
+# one 1/2.  A lower bound on the unnormalised expectation is one on the conditional one, so
+# this query is still reduced.
+# Expected: valid.
+x ~ Bernoulli(1/2);
+observe x = 1;
+return x
+?Ex[x] >= 0.5

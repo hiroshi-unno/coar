@@ -1,0 +1,145 @@
+%BEGING
+S x -> F x leaf.
+F x t -> case x of
+      a x1 x2 => a (F x1 leaf) (F x2 t)
+    | abbr x1 x2 => abbr (F x1 leaf) (F x2 t)
+    | acronym x1 x2 => acronym (F x1 leaf) (F x2 t)
+    | address x1 x2 => address (F x1 leaf) (F x2 t)
+    | area x1 x2 => area (F x1 leaf) (F x2 t)
+    | b x1 x2 => b (F x1 leaf) (F x2 t)
+    | base x1 x2 => base (F x1 leaf) (F x2 t)
+    | bdo x1 x2 => bdo (F x1 leaf) (F x2 t)
+    | big x1 x2 => big (F x1 leaf) (F x2 t)
+    | blockquote x1 x2 => blockquote (F x1 leaf) (F x2 t)
+    | body x1 x2 => body (F x1 leaf) (F x2 t)
+    | brk x1 x2 => brk (F x1 leaf) (F x2 t)
+    | button x1 x2 => button (F x1 leaf) (F x2 t)
+    | caption x1 x2 => caption (F x1 leaf) (F x2 t)
+    | cite x1 x2 => cite (F x1 leaf) (F x2 t)
+    | code x1 x2 => code (F x1 leaf) (F x2 t)
+    | col x1 x2 => col (F x1 leaf) (F x2 t)
+    | colgroup x1 x2 => colgroup (F x1 leaf) (F x2 t)
+    | dd x1 x2 => dd (F x1 leaf) (F x2 t)
+    | del x1 x2 => del (F x1 leaf) (F x2 t)
+    | dfn x1 x2 => dfn (F x1 leaf) (F x2 t)
+    | div x1 x2 => F x1 (F x2 t)
+    | dl x1 x2 => dl (F x1 leaf) (F x2 t)
+    | dt x1 x2 => dt (F x1 leaf) (F x2 t)
+    | em x1 x2 => em (F x1 leaf) (F x2 t)
+    | fieldset x1 x2 => fieldset (F x1 leaf) (F x2 t)
+    | form x1 x2 => form (F x1 leaf) (F x2 t)
+    | h1 x1 x2 => h1 (F x1 leaf) (F x2 t)
+    | h2 x1 x2 => h2 (F x1 leaf) (F x2 t)
+    | h3 x1 x2 => h3 (F x1 leaf) (F x2 t)
+    | h4 x1 x2 => h4 (F x1 leaf) (F x2 t)
+    | h5 x1 x2 => h5 (F x1 leaf) (F x2 t)
+    | h6 x1 x2 => h6 (F x1 leaf) (F x2 t)
+    | head x1 x2 => head (F x1 leaf) (F x2 t)
+    | hr x1 x2 => hr (F x1 leaf) (F x2 t)
+    | html x1 x2 => html (F x1 leaf) (F x2 t)
+    | i x1 x2 => i (F x1 leaf) (F x2 t)
+    | img x1 x2 => img (F x1 leaf) (F x2 t)
+    | input x1 x2 => input (F x1 leaf) (F x2 t)
+    | ins x1 x2 => ins (F x1 leaf) (F x2 t)
+    | kbd x1 x2 => kbd (F x1 leaf) (F x2 t)
+    | label x1 x2 => label (F x1 leaf) (F x2 t)
+    | leaf => t
+    | legend x1 x2 => legend (F x1 leaf) (F x2 t)
+    | li x1 x2 => li (F x1 leaf) (F x2 t)
+    | link x1 x2 => link (F x1 leaf) (F x2 t)
+    | map x1 x2 => map (F x1 leaf) (F x2 t)
+    | meta x1 x2 => meta (F x1 leaf) (F x2 t)
+    | noscript x1 x2 => noscript (F x1 leaf) (F x2 t)
+    | object x1 x2 => object (F x1 leaf) (F x2 t)
+    | ol x1 x2 => ol (F x1 leaf) (F x2 t)
+    | optgroup x1 x2 => optgroup (F x1 leaf) (F x2 t)
+    | option x1 x2 => option (F x1 leaf) (F x2 t)
+    | p x1 x2 => p (F x1 leaf) (F x2 t)
+    | param x1 x2 => param (F x1 leaf) (F x2 t)
+    | pre x1 x2 => pre (F x1 leaf) (F x2 t)
+    | q x1 x2 => q (F x1 leaf) (F x2 t)
+    | samp x1 x2 => samp (F x1 leaf) (F x2 t)
+    | script x1 x2 => script (F x1 leaf) (F x2 t)
+    | select x1 x2 => select (F x1 leaf) (F x2 t)
+    | small x1 x2 => small (F x1 leaf) (F x2 t)
+    | span x1 x2 => span (F x1 leaf) (F x2 t)
+    | strong x1 x2 => strong (F x1 leaf) (F x2 t)
+    | style x1 x2 => style (F x1 leaf) (F x2 t)
+    | sub x1 x2 => sub (F x1 leaf) (F x2 t)
+    | sup x1 x2 => sup (F x1 leaf) (F x2 t)
+    | table x1 x2 => table (F x1 leaf) (F x2 t)
+    | tbody x1 x2 => tbody (F x1 leaf) (F x2 t)
+    | td x1 x2 => td (F x1 leaf) (F x2 t)
+    | text x1 x2 => text (F x1 leaf) (F x2 t)
+    | textarea x1 x2 => textarea (F x1 leaf) (F x2 t)
+    | tfoot x1 x2 => tfoot (F x1 leaf) (F x2 t)
+    | th x1 x2 => th (F x1 leaf) (F x2 t)
+    | thead x1 x2 => thead (F x1 leaf) (F x2 t)
+    | title x1 x2 => title (F x1 leaf) (F x2 t)
+    | tr x1 x2 => tr (F x1 leaf) (F x2 t)
+    | tt x1 x2 => tt (F x1 leaf) (F x2 t)
+    | ul x1 x2 => ul (F x1 leaf) (F x2 t)
+    | var x1 x2 => var (F x1 leaf) (F x2 t)
+.
+%ENDG
+
+%BEGINX
+/* XHTML 1.0 Strict as XML types, written from the trivial tree automaton of
+   xhtml_full/xhtmlf_drop-div.hmtt one type per state: a type is named after
+   its element when the state reads a single element and no end of sequence,
+   and Q<n> (the automaton's state q<n>) otherwise. */
+type Html     = html[Head], Q26
+type Body     = body[Q30], Q26
+type Q2       = caption[Q11], Q37 | col[Q26], Q37 | colgroup[Q16], Q37 | tbody[Tr], Q15 | tfoot[Tr], Q40 | thead[Tr], Q38 | tr[Q41], Q15
+type Q3       = caption[Q11], Q45 | col[Q26], Q45 | colgroup[Q16], Q45 | tbody[Tr47], Q23 | tfoot[Tr47], Q48 | thead[Tr47], Q46 | tr[Q49], Q23
+type Text     = text[Q26], Q26
+type Q5       = () | base[Q26], Q5 | link[Q26], Q5 | meta[Q26], Q5 | object[Q29], Q5 | script[Text], Q5 | style[Text], Q5
+type Q6       = () | a[Q13], Q6 | abbr[Q11], Q6 | acronym[Q11], Q6 | address[Q11], Q6 | b[Q11], Q6 | bdo[Q11], Q6 | big[Q11], Q6 | blockquote[Q7], Q6 | brk[Q26], Q6 | button[Q6], Q6 | cite[Q11], Q6 | code[Q11], Q6 | del[Q6], Q6 | dfn[Q11], Q6 | div[Q6], Q6 | dl[Q36], Q6 | em[Q11], Q6 | fieldset[Legend], Q6 | form[Q19], Q6 | h1[Q11], Q6 | h2[Q11], Q6 | h3[Q11], Q6 | h4[Q11], Q6 | h5[Q11], Q6 | h6[Q11], Q6 | hr[Q26], Q6 | i[Q11], Q6 | img[Q26], Q6 | input[Q26], Q6 | ins[Q6], Q6 | kbd[Q11], Q6 | label[Q11], Q6 | map[Q8], Q6 | noscript[Q7], Q6 | object[Q29], Q6 | ol[Li], Q6 | p[Q11], Q6 | pre[Q11], Q6 | q[Q11], Q6 | samp[Q11], Q6 | select[Q31], Q6 | small[Q11], Q6 | span[Q11], Q6 | strong[Q11], Q6 | sub[Q11], Q6 | sup[Q11], Q6 | table[Q2], Q6 | text[Q26], Q6 | textarea[Text], Q6 | tt[Q11], Q6 | ul[Li], Q6 | var[Q11], Q6
+type Q7       = () | address[Q11], Q7 | blockquote[Q7], Q7 | div[Q6], Q7 | dl[Q36], Q7 | fieldset[Legend], Q7 | form[Q19], Q7 | h1[Q11], Q7 | h2[Q11], Q7 | h3[Q11], Q7 | h4[Q11], Q7 | h5[Q11], Q7 | h6[Q11], Q7 | hr[Q26], Q7 | noscript[Q7], Q7 | ol[Li], Q7 | p[Q11], Q7 | pre[Q11], Q7 | table[Q2], Q7 | ul[Li], Q7
+type Q8       = () | address[Q11], Q8 | area[Q26], Q8 | blockquote[Q7], Q8 | div[Q6], Q8 | dl[Q36], Q8 | fieldset[Legend], Q8 | form[Q19], Q8 | h1[Q11], Q8 | h2[Q11], Q8 | h3[Q11], Q8 | h4[Q11], Q8 | h5[Q11], Q8 | h6[Q11], Q8 | hr[Q26], Q8 | noscript[Q7], Q8 | ol[Li], Q8 | p[Q11], Q8 | pre[Q11], Q8 | table[Q2], Q8 | ul[Li], Q8
+type Q9       = () | optgroup[Option], Q9 | option[Text], Q9
+type Q10      = () | option[Text], Q10
+type Q11      = () | a[Q13], Q11 | abbr[Q11], Q11 | acronym[Q11], Q11 | b[Q11], Q11 | bdo[Q11], Q11 | big[Q11], Q11 | brk[Q26], Q11 | button[Q6], Q11 | cite[Q11], Q11 | code[Q11], Q11 | del[Q6], Q11 | dfn[Q11], Q11 | em[Q11], Q11 | i[Q11], Q11 | img[Q26], Q11 | input[Q26], Q11 | ins[Q6], Q11 | kbd[Q11], Q11 | label[Q11], Q11 | map[Q8], Q11 | object[Q29], Q11 | q[Q11], Q11 | samp[Q11], Q11 | select[Q31], Q11 | small[Q11], Q11 | span[Q11], Q11 | strong[Q11], Q11 | sub[Q11], Q11 | sup[Q11], Q11 | text[Q26], Q11 | textarea[Text], Q11 | tt[Q11], Q11 | var[Q11], Q11
+type Q12      = () | abbr[Q13], Q12 | acronym[Q13], Q12 | address[Q11], Q12 | b[Q13], Q12 | bdo[Q13], Q12 | big[Q13], Q12 | blockquote[Q7], Q12 | brk[Q26], Q12 | button[Q12], Q12 | cite[Q13], Q12 | code[Q13], Q12 | del[Q12], Q12 | dfn[Q13], Q12 | div[Q6], Q12 | dl[Q36], Q12 | em[Q13], Q12 | fieldset[Legend], Q12 | form[Q19], Q12 | h1[Q11], Q12 | h2[Q11], Q12 | h3[Q11], Q12 | h4[Q11], Q12 | h5[Q11], Q12 | h6[Q11], Q12 | hr[Q26], Q12 | i[Q13], Q12 | img[Q26], Q12 | ins[Q12], Q12 | kbd[Q13], Q12 | label[Q13], Q12 | noscript[Q7], Q12 | object[Q33], Q12 | ol[Li], Q12 | p[Q11], Q12 | pre[Q11], Q12 | q[Q13], Q12 | samp[Q13], Q12 | small[Q13], Q12 | span[Q13], Q12 | strong[Q13], Q12 | sub[Q13], Q12 | sup[Q13], Q12 | table[Q2], Q12 | text[Q26], Q12 | tt[Q13], Q12 | ul[Li], Q12 | var[Q13], Q12
+type Q13      = () | abbr[Q13], Q13 | acronym[Q13], Q13 | b[Q13], Q13 | bdo[Q13], Q13 | big[Q13], Q13 | brk[Q26], Q13 | button[Q12], Q13 | cite[Q13], Q13 | code[Q13], Q13 | del[Q12], Q13 | dfn[Q13], Q13 | em[Q13], Q13 | i[Q13], Q13 | img[Q26], Q13 | ins[Q12], Q13 | kbd[Q13], Q13 | label[Q13], Q13 | object[Q33], Q13 | q[Q13], Q13 | samp[Q13], Q13 | small[Q13], Q13 | span[Q13], Q13 | strong[Q13], Q13 | sub[Q13], Q13 | sup[Q13], Q13 | text[Q26], Q13 | tt[Q13], Q13 | var[Q13], Q13
+type Q14      = () | dd[Q6], Q14 | dt[Q11], Q14
+type Q15      = () | tbody[Tr], Q15 | tr[Q41], Q15
+type Q16      = () | col[Q26], Q16
+type Q17      = () | tr[Q41], Q17
+type Q18      = () | td[Q6], Q18 | th[Q6], Q18
+type Q19      = () | address[Q11], Q19 | blockquote[Q21], Q19 | div[Q20], Q19 | dl[Q44], Q19 | fieldset[Legend42], Q19 | h1[Q11], Q19 | h2[Q11], Q19 | h3[Q11], Q19 | h4[Q11], Q19 | h5[Q11], Q19 | h6[Q11], Q19 | hr[Q26], Q19 | noscript[Q21], Q19 | ol[Li43], Q19 | p[Q11], Q19 | pre[Q11], Q19 | script[Text], Q19 | table[Q3], Q19 | ul[Li43], Q19
+type Q20      = () | a[Q13], Q20 | abbr[Q11], Q20 | acronym[Q11], Q20 | address[Q11], Q20 | b[Q11], Q20 | bdo[Q11], Q20 | big[Q11], Q20 | blockquote[Q21], Q20 | brk[Q26], Q20 | button[Q6], Q20 | cite[Q11], Q20 | code[Q11], Q20 | del[Q6], Q20 | dfn[Q11], Q20 | div[Q20], Q20 | dl[Q44], Q20 | em[Q11], Q20 | fieldset[Legend42], Q20 | h1[Q11], Q20 | h2[Q11], Q20 | h3[Q11], Q20 | h4[Q11], Q20 | h5[Q11], Q20 | h6[Q11], Q20 | hr[Q26], Q20 | i[Q11], Q20 | img[Q26], Q20 | input[Q26], Q20 | ins[Q6], Q20 | kbd[Q11], Q20 | label[Q11], Q20 | map[Q8], Q20 | noscript[Q21], Q20 | object[Q29], Q20 | ol[Li43], Q20 | p[Q11], Q20 | pre[Q11], Q20 | q[Q11], Q20 | samp[Q11], Q20 | select[Q31], Q20 | small[Q11], Q20 | span[Q11], Q20 | strong[Q11], Q20 | sub[Q11], Q20 | sup[Q11], Q20 | table[Q3], Q20 | text[Q26], Q20 | textarea[Text], Q20 | tt[Q11], Q20 | ul[Li43], Q20 | var[Q11], Q20
+type Q21      = () | address[Q11], Q21 | blockquote[Q21], Q21 | div[Q20], Q21 | dl[Q44], Q21 | fieldset[Legend42], Q21 | h1[Q11], Q21 | h2[Q11], Q21 | h3[Q11], Q21 | h4[Q11], Q21 | h5[Q11], Q21 | h6[Q11], Q21 | hr[Q26], Q21 | noscript[Q21], Q21 | ol[Li43], Q21 | p[Q11], Q21 | pre[Q11], Q21 | table[Q3], Q21 | ul[Li43], Q21
+type Q22      = () | dd[Q20], Q22 | dt[Q11], Q22
+type Q23      = () | tbody[Tr47], Q23 | tr[Q49], Q23
+type Q24      = () | tr[Q49], Q24
+type Q25      = () | td[Q20], Q25 | th[Q20], Q25
+type Q26      = ()
+type Head     = head[Q28], Body
+type Q28      = base[Q26], Q28 | link[Q26], Q28 | meta[Q26], Q28 | object[Q29], Q28 | script[Text], Q28 | style[Text], Q28 | title[Text], Q5
+type Q29      = () | a[Q13], Q6 | abbr[Q11], Q6 | acronym[Q11], Q6 | address[Q11], Q6 | b[Q11], Q6 | bdo[Q11], Q6 | big[Q11], Q6 | blockquote[Q7], Q6 | brk[Q26], Q6 | button[Q6], Q6 | cite[Q11], Q6 | code[Q11], Q6 | del[Q6], Q6 | dfn[Q11], Q6 | div[Q6], Q6 | dl[Q36], Q6 | em[Q11], Q6 | fieldset[Legend], Q6 | form[Q19], Q6 | h1[Q11], Q6 | h2[Q11], Q6 | h3[Q11], Q6 | h4[Q11], Q6 | h5[Q11], Q6 | h6[Q11], Q6 | hr[Q26], Q6 | i[Q11], Q6 | img[Q26], Q6 | input[Q26], Q6 | ins[Q6], Q6 | kbd[Q11], Q6 | label[Q11], Q6 | map[Q8], Q6 | noscript[Q7], Q6 | object[Q29], Q6 | ol[Li], Q6 | p[Q11], Q6 | param[Q26], Q29 | pre[Q11], Q6 | q[Q11], Q6 | samp[Q11], Q6 | select[Q31], Q6 | small[Q11], Q6 | span[Q11], Q6 | strong[Q11], Q6 | sub[Q11], Q6 | sup[Q11], Q6 | table[Q2], Q6 | text[Q26], Q6 | textarea[Text], Q6 | tt[Q11], Q6 | ul[Li], Q6 | var[Q11], Q6
+type Q30      = address[Q11], Q7 | blockquote[Q7], Q7 | div[Q6], Q7 | dl[Q36], Q7 | fieldset[Legend], Q7 | form[Q19], Q7 | h1[Q11], Q7 | h2[Q11], Q7 | h3[Q11], Q7 | h4[Q11], Q7 | h5[Q11], Q7 | h6[Q11], Q7 | hr[Q26], Q7 | noscript[Q7], Q7 | ol[Li], Q7 | p[Q11], Q7 | pre[Q11], Q7 | table[Q2], Q7 | ul[Li], Q7
+type Q31      = optgroup[Option], Q9 | option[Text], Q9
+type Option   = option[Text], Q10
+type Q33      = () | abbr[Q13], Q12 | acronym[Q13], Q12 | address[Q11], Q12 | b[Q13], Q12 | bdo[Q13], Q12 | big[Q13], Q12 | blockquote[Q7], Q12 | brk[Q26], Q12 | button[Q12], Q12 | cite[Q13], Q12 | code[Q13], Q12 | del[Q12], Q12 | dfn[Q13], Q12 | div[Q6], Q12 | dl[Q36], Q12 | em[Q13], Q12 | fieldset[Legend], Q12 | form[Q19], Q12 | h1[Q11], Q12 | h2[Q11], Q12 | h3[Q11], Q12 | h4[Q11], Q12 | h5[Q11], Q12 | h6[Q11], Q12 | hr[Q26], Q12 | i[Q13], Q12 | img[Q26], Q12 | ins[Q12], Q12 | kbd[Q13], Q12 | label[Q13], Q12 | noscript[Q7], Q12 | object[Q33], Q12 | ol[Li], Q12 | p[Q11], Q12 | param[Q26], Q33 | pre[Q11], Q12 | q[Q13], Q12 | samp[Q13], Q12 | small[Q13], Q12 | span[Q13], Q12 | strong[Q13], Q12 | sub[Q13], Q12 | sup[Q13], Q12 | table[Q2], Q12 | text[Q26], Q12 | tt[Q13], Q12 | ul[Li], Q12 | var[Q13], Q12
+type Legend   = legend[Q11], Q6
+type Li       = li[Q6], Q26
+type Q36      = dd[Q6], Q14 | dt[Q11], Q14
+type Q37      = col[Q26], Q37 | colgroup[Q16], Q37 | tbody[Tr], Q15 | tfoot[Tr], Q40 | thead[Tr], Q38 | tr[Q41], Q15
+type Q38      = tbody[Tr], Q15 | tfoot[Tr], Q40 | tr[Q41], Q15
+type Tr       = tr[Q41], Q17
+type Q40      = tbody[Tr], Q15 | tr[Q41], Q15
+type Q41      = td[Q6], Q18 | th[Q6], Q18
+type Legend42 = legend[Q11], Q20
+type Li43     = li[Q20], Q26
+type Q44      = dd[Q20], Q22 | dt[Q11], Q22
+type Q45      = col[Q26], Q45 | colgroup[Q16], Q45 | tbody[Tr47], Q23 | tfoot[Tr47], Q48 | thead[Tr47], Q46 | tr[Q49], Q23
+type Q46      = tbody[Tr47], Q23 | tfoot[Tr47], Q48 | tr[Q49], Q23
+type Tr47     = tr[Q49], Q24
+type Q48      = tbody[Tr47], Q23 | tr[Q49], Q23
+type Q49      = td[Q20], Q25 | th[Q20], Q25
+%ENDX
+
+%BEGINT
+S : Html -> Html.
+%ENDT

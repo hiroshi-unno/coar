@@ -1,0 +1,14 @@
+/* The input language reserves br for nondeterministic choice.  An
+   automaton that writes the choice's own transition q0 br -> q0 q0, as a
+   recursion-scheme model checker's input would, is refused all the same:
+   br takes no transition from the automaton. */
+%BEGING
+Main -> br a a.
+%ENDG
+%BEGINA
+q0 br -> q0 q0.
+q0 a -> .
+%ENDA
+%BEGINT
+Main : q0.
+%ENDT

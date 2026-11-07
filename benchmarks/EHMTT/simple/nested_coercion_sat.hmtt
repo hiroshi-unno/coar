@@ -1,0 +1,11 @@
+%BEGING
+S x -> copy (coerce q (copy (coerce r b))).
+%ENDG
+%BEGINA
+q a -> .
+q b -> .
+r b -> .
+%ENDA
+%BEGINT
+S : q -> q.
+%ENDT

@@ -1,0 +1,37 @@
+[
+    "MuVal",
+    {
+        "optimizer": [
+            "Filename",
+            "./config/muclp/optimizer/dbg_enable.json"
+        ],
+        "pcsp_solver_primal": [
+            "Filename",
+            "./config/solver/dbg_pcsat_muval.json"
+        ],
+        "pcsp_solver_dual": [
+            "Filename",
+            "./config/solver/dbg_pcsat_muval.json"
+        ],
+        "qelim": {
+            "verbose": true
+        },
+        "verbose": true,
+        "ground_query_solve": [
+            "No_ground_solve"
+        ],
+        "dual_witness_refutation": [
+            "Seed_primal_labeling",
+            {
+                "atom_budget": 20000,
+                "max_combos": 64,
+                "choice_values": [
+                    0
+                ],
+                "seed_keep": [
+                    "Refutation_cone"
+                ]
+            }
+        ]
+    }
+]

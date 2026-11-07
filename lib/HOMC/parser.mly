@@ -9,6 +9,8 @@ let coerce_idx = ref 1
 %token BEGINR ENDR
 %token BEGINATA ENDATA
 %token BEGINT ENDT
+/* the text of a [%BEGINX ... %ENDX] section and the position it begins at */
+%token <string * Lexing.position> XTYPES
 
 /*%token FAIL*/
 %token CASE OF BAR COERCE COPY GEN
@@ -32,13 +34,14 @@ let coerce_idx = ref 1
    LOWEST_CASE exists only to give the two reducing rules a precedence below
    the tokens that may continue a branch. */
 %nonassoc LOWEST_CASE
-%nonassoc BAR UIDENT LIDENT INT LPAREN
+%nonassoc BAR UIDENT LIDENT TRUE FALSE INT LPAREN
 %right MINUS_RANGLE
 %left OR
 %left AND
 
 %type <EHMTT.t * Automata.TreeAutomaton.t> hors
-%type <EHMTT.t * Automata.TTA.pre_trs * (Ident.tvar * Ident.tvar RefType.t)> hmtt
+%type <EHMTT.t * [ `Transitions of Automata.TTA.pre_trs | `XTypes of string * Lexing.position | `Both of Lexing.position ] * (Ident.tvar * Ident.tvar RefType.t)> hmtt
+%type <[ `Transitions of Automata.TTA.pre_trs | `XTypes of string * Lexing.position | `Both of Lexing.position ]> automaton_section
 %type <EHMTT.t> rules
 %type <Automata.TreeAutomaton.t> tree_automata
 %type <Automata.TTA.pre_trs> tta_transitions
@@ -52,8 +55,22 @@ hors:
     { $2, $4 }
 
 hmtt:
-  BEGING rules ENDG BEGINA tta_transitions ENDA BEGINT typedef ENDT EOF
-    { $2, $5, $8 }
+  BEGING rules ENDG automaton_section BEGINT typedef ENDT EOF
+    { $2, $4, $6 }
+
+/* An EHMTT's automaton is given by its transitions, or by regular tree
+   expression type definitions whose types name its states.  Both sections in
+   one file are read, as [`Both] with the position where the second begins,
+   for the reader to refuse with that position. */
+automaton_section:
+  BEGINA tta_transitions ENDA
+    { `Transitions $2 }
+| XTYPES
+    { `XTypes $1 }
+| BEGINA tta_transitions ENDA XTYPES
+    { `Both $startpos($4) }
+| XTYPES BEGINA tta_transitions ENDA
+    { `Both $startpos($2) }
 
 tree_automata:
   BEGINA tta_transitions ENDA
@@ -75,10 +92,24 @@ rule:
 | UIDENT lidents EQUAL term PERIOD
     { Ident.Tvar $1, ($2, EHMTT.elimVarOrTerm $2 $4) }
 
+/* [true] and [false] are keywords only inside the formulas of an alternating
+   tree automaton ([dnf], [cube]); everywhere else -- a variable, a terminal, a
+   case pattern, a state, a base type -- they are ordinary identifiers, as in
+   the inputs written for the original EHMTT verifier ([case c of true => ...],
+   a state [qBool true -> .]).  Every identifier position reads [lident], never
+   the token, so the keywords cannot shadow a name there. */
+lident:
+  LIDENT
+    { $1 }
+| TRUE
+    { "true" }
+| FALSE
+    { "false" }
+
 simple_term:
   LPAREN term RPAREN
     { $2 }
-| LIDENT
+| lident
     { EHMTT.VarOrTerm(Ident.Tvar $1) }
 | UIDENT
     { EHMTT.Nonterm(Ident.Tvar $1) }
@@ -90,9 +121,9 @@ term:
     { $1 }
 | term simple_term
     { EHMTT.App($1, $2) }
-| CASE LIDENT OF pats
+| CASE lident OF pats
     { EHMTT.Case(Ident.Tvar $2, $4) }
-| COERCE LIDENT simple_term
+| COERCE state simple_term
     { 
       let idx = !coerce_idx in
       coerce_idx := idx + 1;
@@ -100,8 +131,17 @@ term:
     }
 | COPY simple_term
     { EHMTT.Copy($2) }
-| GEN LIDENT
+| GEN state
     { EHMTT.Tree(Ident.Tvar $2) }
+
+/* A state where a coercion, a generated tree or a specification names one:
+   a lower-case name is a state of a [%BEGINA] section, an upper-case one a
+   type of a [%BEGINX] section (the reader checks which kind the file has). */
+state:
+  lident
+    { $1 }
+| UIDENT
+    { $1 }
 
 pats:
   pat %prec LOWEST_CASE
@@ -110,19 +150,19 @@ pats:
     { $1::$3 }
 
 pat:
-  LIDENT lidents EQUAL_RANGLE term %prec LOWEST_CASE
+  lident lidents EQUAL_RANGLE term %prec LOWEST_CASE
     { Ident.Tvar $1, ($2, $4) }
 
 lidents:
   /* empty */
     { [] }
-| LIDENT lidents
+| lident lidents
     { (Ident.Tvar $1) :: $2 }
 
 tta_transitions:
   /* empty */
     { [] }
-| LIDENT LIDENT MINUS_RANGLE lidents PERIOD tta_transitions
+| lident lident MINUS_RANGLE lidents PERIOD tta_transitions
     { ($1, ($2, List.map Ident.name_of_tvar $4)) :: $6 }
 | EOF
     { [] }
@@ -130,7 +170,7 @@ tta_transitions:
 ata_arities:
   /* empty */
     { [] }
-| LIDENT MINUS_RANGLE INT PERIOD ata_arities
+| lident MINUS_RANGLE INT PERIOD ata_arities
     { ($1, $3) :: $5 }
 | EOF
     { [] }
@@ -138,7 +178,7 @@ ata_arities:
 ata_transitions:
   /* empty */
     { [] }
-| LIDENT LIDENT MINUS_RANGLE dnf PERIOD ata_transitions
+| lident lident MINUS_RANGLE dnf PERIOD ata_transitions
     { ($1, ($2, $4)) :: $6 }
 | EOF
     { [] }
@@ -150,8 +190,8 @@ dnf:
 
 cube:
   TRUE { [] }
-| LPAREN INT COMMA LIDENT RPAREN { [($2, $4)] }
-| LPAREN INT COMMA LIDENT RPAREN AND cube { ($2, $4) :: $7 }
+| LPAREN INT COMMA lident RPAREN { [($2, $4)] }
+| LPAREN INT COMMA lident RPAREN AND cube { ($2, $4) :: $7 }
 
 
 typedefs:
@@ -165,11 +205,11 @@ typedefs:
 typedef:
   UIDENT COLON typ PERIOD
     { Ident.Tvar $1, $3 }
-| LIDENT COLON typ PERIOD
+| lident COLON typ PERIOD
     { Ident.Tvar $1, $3 }
 
 typ:
-  LIDENT
+  state
     { RefType.Base(Ident.Tvar $1) }
 | typ MINUS_RANGLE typ
     { RefType.Func($1, $3) }

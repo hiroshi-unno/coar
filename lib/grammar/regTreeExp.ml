@@ -14,10 +14,18 @@ type ('sym, 'lab) t =
   | Kleene of ('sym, 'lab) t
   | Option of ('sym, 'lab) t
 
+(** [canonize t] flattens the top-level alternatives of [t] (the [Alter]
+    nodes reachable without entering any other constructor) into one sorted,
+    duplicate-free list and rebuilds a left-nested [Alter] from it.  It
+    denotes the same tree language as [t], and two expressions that differ
+    only in the order, nesting or repetition of their top-level alternatives
+    canonize to the same value.  Each element of the list is the matched
+    subterm itself, not [t]. *)
 let canonize t =
   let rec aux = function
-    | Nil | Symbol _ | Label (_, _) | Concat (_, _) | Kleene _ | Option _ ->
-        [ t ]
+    | (Nil | Symbol _ | Label (_, _) | Concat (_, _) | Kleene _ | Option _) as
+      t' ->
+        [ t' ]
     | Alter (t1, t2) ->
         let x = aux t1 @ aux t2 in
         let x' = List.dedup_keep_last x in
@@ -111,8 +119,15 @@ let elim_option_env env =
   in
   env @ List.map sub ~f:(fun (t, id) -> (id, Alter (t, Nil)))
 
+(** [add wl wl' t] names the expression [t]: a symbol names itself; an
+    expression already named in the worklist [wl] or in the done list [wl']
+    reuses that name; otherwise a fresh name is appended to [wl].  The lookup
+    and the stored expression are both the canonical form of [t], so two
+    expressions that differ only in the order or repetition of their
+    alternatives share one name (and so one automaton state). *)
 let add wl wl' t =
-  match canonize t with
+  let t = canonize t in
+  match t with
   | Symbol id -> (id, wl)
   | _ -> (
       try
@@ -178,6 +193,15 @@ let rec to_ta_env env wl wl' rs =
       let u, wl, wl' = to_ta env t wl ((id, t) :: wl') [] in
       to_ta_env env wl wl' (rs @ [ (id, u) ])
 
+(** [tta_of env] is a trivial tree automaton accepting the trees of the type
+    the first definition of [env] names, in the binary encoding where a label
+    has its content as first child and its following siblings as second, and
+    [leaf] ends a sequence.  Requires [env] non-empty, every referenced type
+    defined, and each type defined once (the first definition of a name is the
+    one used).  The states are [q0], [q1], ... with [q0] the initial state;
+    unreachable states are removed, and two states are merged when their
+    transitions coincide once the two are identified (repeatedly, to a fixed
+    point). *)
 let tta_of env =
   let env = elim_kleene_env env in
   let env = elim_option_env env in
@@ -201,38 +225,107 @@ let tta_of env =
   if false then RTA.pr Format.pp_print_string Format.std_formatter trs;
   RTA.tta_of trs
 
-(*
-let parse_file filename =
-  let inchan = In_channel.create filename in
-  let lb = Lexing.from_channel inchan in
-  lb.Lexing.lex_curr_p <-
-    {
-      Lexing.pos_fname = Filename.basename filename;
-      Lexing.pos_lnum = 1;
-      Lexing.pos_cnum = 0;
-      Lexing.pos_bol = 0;
-    };
-  let tl = RegTreeExpParser.regtreeexpdefs RegTreeExpLexer.token lb in
-  In_channel.close inchan;
-  tl
 
-let parse_string str =
-  let lb = Lexing.from_string str in
-  lb.Lexing.lex_curr_p <-
-    {
-      Lexing.pos_fname = "";
-      Lexing.pos_lnum = 1;
-      Lexing.pos_cnum = 0;
-      Lexing.pos_bol = 0;
-    };
-  RegTreeExpParser.regtreeexpdefs RegTreeExpLexer.token lb
+(* The type names an expression refers to. *)
+let rec symbols = function
+  | Nil -> []
+  | Symbol id -> [ id ]
+  | Label (_, t) | Kleene t | Option t -> symbols t
+  | Concat (t1, t2) | Alter (t1, t2) -> symbols t1 @ symbols t2
 
-let main filename =
-  let env = parse_file filename in
-  Format.printf "@[<v>";
-  let trs = tta_of env in
-  Format.printf "%%BEGINA@,";
-  TTA.pr_map Format.pp_print_string Format.std_formatter trs;
-  Format.printf "%%ENDA@,";
-  Format.printf "@]"
-*)
+(* [groups env] partitions the definitions of [env] into the classes of the
+   symmetric, transitive closure of "one refers to the other", each class in
+   definition order and the classes ordered by their first definition. *)
+let groups env =
+  let names = List.map env ~f:fst in
+  let neighbours n =
+    let refs =
+      Option.value_map ~default:[] ~f:symbols
+      @@ List.Assoc.find ~equal:String.equal env n
+    in
+    let back =
+      List.filter_map env ~f:(fun (m, t) ->
+          if List.mem (symbols t) n ~equal:String.equal then Some m else None)
+    in
+    refs @ back
+  in
+  let rec close seen = function
+    | [] -> seen
+    | n :: ns ->
+        if List.mem seen n ~equal:String.equal then close seen ns
+        else close (n :: seen) (neighbours n @ ns)
+  in
+  List.fold names ~init:[] ~f:(fun gs n ->
+      if
+        List.exists gs
+          ~f:(List.exists ~f:(fun (m, _) -> String.equal m n))
+      then gs
+      else
+        let cls = close [] [ n ] in
+        gs @ [ List.filter env ~f:(fun (m, _) -> List.mem cls m ~equal:String.equal) ])
+
+(** [named_tta_of env] is a trivial tree automaton with a state for every type
+    [env] defines, in the encoding [tta_of] uses: the state named [T] accepts
+    exactly the trees of type [T] (a sequence ended by [leaf]), and the other
+    states accept the languages of the sub-expressions the translation needs.
+    It requires what [tta_of] requires and, in addition, that every type name
+    begins with an upper-case letter.
+
+    The definitions are translated one group at a time, a group being a class
+    of definitions connected by references (two schemas written in one
+    section, such as a program's input and output types, are two groups): each
+    group gives the states [tta_of] gives when started from all its types,
+    minimised the same way and listed in the same order (types first, in
+    definition order), and the groups' automata are listed one after another.
+    So the automaton is the one the original verifier's separate translation
+    of each schema produced, state for state; states of different groups are
+    never merged, even when their languages coincide.
+
+    Naming contract: a type's state is named by the type's name; every other
+    state is named [q<i>], where [i] is its position in the result, so it
+    cannot coincide with a type name.  For a single group whose types are all
+    reachable from the first, the result is [tta_of]'s with [q0] and the
+    other type states renamed to their types.  Minimisation may find two types
+    of a group with the same language: the earlier one keeps the state, and
+    the later one gets a copy of its transitions under its own name, appended
+    at the end, so that every type is still a state. *)
+let named_tta_of env =
+  let names = List.map env ~f:fst in
+  let trs, merges =
+    List.unzip
+    @@ List.map (groups env) ~f:(fun group ->
+           let roots = List.map group ~f:fst in
+           let group = elim_kleene_env group in
+           let group = elim_option_env group in
+           let trs = to_ta_env group group [] [] in
+           let trs =
+             List.map trs ~f:(fun (id, u) -> (id, RTA.canonize_body u))
+           in
+           let trs =
+             TreeAutomaton.remove_unreachable ~next_ids_body:RTA.next_ids_body
+               roots trs
+           in
+           RTA.minimize_with_merges trs)
+  in
+  let trs = List.concat trs and merges = List.concat merges in
+  let rep id =
+    Option.value ~default:id @@ List.Assoc.find ~equal:String.equal merges id
+  in
+  let rn =
+    List.mapi trs ~f:(fun i (id, _) ->
+        ( id,
+          match List.find names ~f:(fun n -> String.equal (rep n) id) with
+          | Some n -> n
+          | None -> "q" ^ string_of_int i ))
+  in
+  let trs =
+    List.map trs ~f:(fun (id, u) ->
+        (List.Assoc.find_exn ~equal:String.equal rn id, RTA.rename_body rn u))
+  in
+  let copies =
+    List.filter_map names ~f:(fun n ->
+        let r = List.Assoc.find_exn ~equal:String.equal rn (rep n) in
+        if String.equal r n then None
+        else Some (n, List.Assoc.find_exn ~equal:String.equal trs r))
+  in
+  RTA.tta_of (trs @ copies)

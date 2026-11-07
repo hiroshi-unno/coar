@@ -1,0 +1,9 @@
+(library
+ (name Interpolation)
+ (public_name CoAR.interpolation)
+ (preprocess
+  (pps ppx_deriving_yojson CoAR.ppx_config_full_json))
+ (libraries core core_unix yojson CoAR.ast CoAR.common CoAR.Z3Smt CoAR.pCSP CoAR.linarith CoAR.Bitwuzla)
+ (modules interpolant queryDump recursionFreeChc unwinding mbpProject mbpRegion spacerBlocking)
+ (synopsis
+  "Theory-generic interpolation and model-based projection: the ordered interpolation leaves, the recursion-free CHC solver built on them, and MBP"))

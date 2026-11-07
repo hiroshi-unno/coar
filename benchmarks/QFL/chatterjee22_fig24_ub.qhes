@@ -1,4 +1,4 @@
-X 100.0 100.0 100.0 >= 1.0
+X 100.0 100.0 100.0 <= 1.0
 s.t.
 X (x : real) (y : real) (z : real) : real =mu
   if x >= 0.0 then

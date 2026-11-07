@@ -1,0 +1,29 @@
+[
+    "MuVal",
+    {
+        "task": [
+            "Prove"
+        ],
+        "optimizer": [
+            "Filename",
+            "./config/muclp/optimizer/disable.json"
+        ],
+        "pcsp_solver_primal": [
+            "Filename",
+            "./config/solver/dbg_pcsat.json"
+        ],
+        "pcsp_solver_dual": [
+            "Filename",
+            "./config/solver/dbg_pcsat.json"
+        ],
+        "output_iteration": false,
+        "qelim": {
+            "verbose": true
+        },
+        "verbose": true,
+        "qfl": {
+            "output_time": true,
+            "output_witness": true
+        }
+    }
+]
